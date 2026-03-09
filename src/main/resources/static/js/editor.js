@@ -274,6 +274,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     valSpan.onclick = (e) => {
                         e.stopPropagation();
                         toggleAssistantFilter(currentPath, val, valSpan, topicName);
+                        toggleAssistantFilter(key, val, valSpan, topicName);
                     };
                     line.appendChild(valSpan);
                 }
