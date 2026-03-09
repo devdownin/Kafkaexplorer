@@ -293,12 +293,6 @@ document.addEventListener('DOMContentLoaded', () => {
             el.classList.remove('fw-bold', 'border-bottom');
         } else {
             assistantColumns.add(columnPath);
-    function toggleAssistantColumn(column, el, topicName) {
-        if (assistantColumns.has(column)) {
-            assistantColumns.delete(column);
-            el.classList.remove('fw-bold', 'border-bottom');
-        } else {
-            assistantColumns.add(column);
             el.classList.add('fw-bold', 'border-bottom');
         }
         updateAssistantQuery(topicName);
@@ -334,17 +328,6 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!assistantColumns.has(columnPath)) {
                 const keyEl = el.parentElement.querySelector('.json-key');
                 if (keyEl) toggleAssistantColumn(columnPath, keyEl, topicName);
-    function toggleAssistantFilter(column, value, el, topicName) {
-        if (assistantFilters.has(column) && assistantFilters.get(column) === value) {
-            assistantFilters.delete(column);
-            el.classList.remove('bg-teal', 'text-dark', 'px-1', 'rounded');
-        } else {
-            assistantFilters.set(column, value);
-            el.classList.add('bg-teal', 'text-dark', 'px-1', 'rounded');
-            // Also ensure it's in columns
-            if (!assistantColumns.has(column)) {
-                const keyEl = el.parentElement.querySelector('.json-key');
-                if (keyEl) toggleAssistantColumn(column, keyEl, topicName);
             }
         }
         updateAssistantQuery(topicName);
@@ -365,8 +348,6 @@ document.addEventListener('DOMContentLoaded', () => {
         let select = assistantColumns.size > 0
             ? Array.from(assistantColumns).map(formatAssistantPath).join(', ')
             : '*';
-    function updateAssistantQuery(topicName) {
-        let select = assistantColumns.size > 0 ? Array.from(assistantColumns).join(', ') : '*';
         let sql = `SELECT ${select} FROM ${topicName}`;
 
         if (assistantFilters.size > 0) {
@@ -442,17 +423,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (prefixInput) prefixInput.addEventListener('input', filterTopics);
         if (fullNameInput) fullNameInput.addEventListener('input', filterTopics);
-    // Topic Search
-    const searchInput = document.getElementById('topicSearch');
-    if (searchInput) {
-        searchInput.addEventListener('input', (e) => {
-            const term = e.target.value.toLowerCase();
-            const rows = document.querySelectorAll('.topic-row');
-            rows.forEach(row => {
-                const name = row.querySelector('td').textContent.toLowerCase();
-                row.style.display = name.includes(term) ? '' : 'none';
-            });
-        });
     }
 });
 
