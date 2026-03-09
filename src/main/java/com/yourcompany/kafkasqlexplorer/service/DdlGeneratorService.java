@@ -26,24 +26,34 @@ public class DdlGeneratorService {
             schema.forEach((col, type) -> sb.append("    ").append(col).append(" ").append(type).append(",\n"));
         }
 
-        sb.append("    event_time TIMESTAMP(3) METADATA FROM 'timestamp',\n");
-        sb.append("    kafka_offset BIGINT METADATA FROM 'offset' VIRTUAL,\n");
-        sb.append("    WATERMARK FOR event_time AS event_time - INTERVAL '5' SECOND\n");
+        // Add special columns as per user example
+        sb.append("    proc_time AS PROCTIME()\n");
         sb.append(") WITH (\n");
-        sb.append("    'connector' = 'kafka',\n");
         sb.append("    'topic' = '").append(topicName).append("',\n");
-        sb.append("    'properties.bootstrap.servers' = '").append(kafkaConfig.getBootstrapServers()).append("',\n");
-        sb.append("    'scan.startup.mode' = 'earliest-offset',\n");
 
-        if (format == MessageFormat.JSON) {
-            sb.append("    'format' = 'json',\n");
-            sb.append("    'json.ignore-parse-errors' = 'true'\n");
-        } else {
-            sb.append("    'format' = 'raw',\n");
-            sb.append("    'value.format' = 'raw'\n");
+        // Try to identify a key field (heuristic: "id" or first column)
+        String keyField = schema.keySet().stream()
+                .filter(k -> k.equalsIgnoreCase("id"))
+                .findFirst()
+                .orElse(schema.keySet().stream().findFirst().orElse(null));
+        if (keyField != null && format != MessageFormat.XML) {
+            sb.append("    'key.fields' = '").append(keyField).append("',\n");
         }
 
-        sb.append(")");
+        sb.append("    'properties.group.id' = 'flink_table_").append(topicName).append("',\n");
+        sb.append("    'connector' = 'kafka',\n");
+        sb.append("    'properties.bootstrap.servers' = '").append(kafkaConfig.getBootstrapServers()).append("',\n");
+
+        if (format == MessageFormat.JSON) {
+            sb.append("    'value.format' = 'json',\n");
+            sb.append("    'json.ignore-parse-errors' = 'true',\n");
+        } else {
+            sb.append("    'value.format' = 'raw',\n");
+        }
+
+        sb.append("    'properties.auto.offset.reset' = 'earliest'\n");
+        sb.append(");");
+
         return sb.toString();
     }
 }

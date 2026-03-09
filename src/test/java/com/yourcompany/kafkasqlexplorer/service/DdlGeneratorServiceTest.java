@@ -23,8 +23,10 @@ public class DdlGeneratorServiceTest {
 
         assertTrue(ddl.contains("CREATE TABLE test_topic"));
         assertTrue(ddl.contains("id BIGINT"));
-        assertTrue(ddl.contains("'format' = 'json'"));
+        assertTrue(ddl.contains("'value.format' = 'json'"));
         assertTrue(ddl.contains("localhost:9092"));
+        assertTrue(ddl.contains("proc_time AS PROCTIME()"));
+        assertTrue(ddl.contains("'properties.group.id' = 'flink_table_test_topic'"));
     }
 
     @Test
@@ -39,6 +41,7 @@ public class DdlGeneratorServiceTest {
         String ddl = service.generateDdl("xml_topic", schema, MessageFormat.XML);
 
         assertTrue(ddl.contains("CREATE TABLE xml_topic"));
-        assertTrue(ddl.contains("'format' = 'raw'"));
+        assertTrue(ddl.contains("'value.format' = 'raw'"));
+        assertTrue(ddl.contains("raw_value STRING"));
     }
 }
