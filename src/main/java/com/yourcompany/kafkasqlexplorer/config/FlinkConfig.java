@@ -14,8 +14,8 @@ public class FlinkConfig {
     @Bean
     public StreamExecutionEnvironment streamEnv() {
         Configuration cfg = new Configuration();
-        cfg.setInteger(TaskManagerOptions.NUM_TASK_SLOTS, 4);
-        cfg.setString(RestOptions.BIND_PORT, "0");   // port UI Flink aleatoire
+        cfg.set(TaskManagerOptions.NUM_TASK_SLOTS, 4);
+        cfg.set(RestOptions.BIND_PORT, "0");   // port UI Flink aleatoire
         return StreamExecutionEnvironment.createLocalEnvironmentWithWebUI(cfg);
     }
 

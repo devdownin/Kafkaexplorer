@@ -5,7 +5,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.2.4</version>
+        <version>3.5.9</version>
         <relativePath/> <!-- lookup parent from repository -->
     </parent>
     <groupId>com.yourcompany</groupId>
@@ -15,7 +15,7 @@
     <description>Kafka SQL Explorer with Flink Embedded</description>
     <properties>
         <java.version>21</java.version>
-        <flink.version>1.19.0</flink.version>
+        <flink.version>2.2.0</flink.version>
     </properties>
     <dependencies>
         <dependency>
@@ -75,7 +75,7 @@
         <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-connector-kafka</artifactId>
-            <version>3.1.0-1.18</version> <!-- Closest to 1.19 if not available -->
+            <version>4.0.0-2.0</version>
         </dependency>
         <dependency>
             <groupId>org.apache.flink</groupId>
