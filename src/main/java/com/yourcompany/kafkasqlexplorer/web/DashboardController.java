@@ -15,9 +15,6 @@ public class DashboardController {
     private final FlinkSqlService flinkSqlService;
 
     public DashboardController(KafkaAdminService kafkaAdminService, FlinkSqlService flinkSqlService) {
-    private final com.yourcompany.kafkasqlexplorer.service.FlinkSqlService flinkSqlService;
-
-    public DashboardController(KafkaAdminService kafkaAdminService, com.yourcompany.kafkasqlexplorer.service.FlinkSqlService flinkSqlService) {
         this.kafkaAdminService = kafkaAdminService;
         this.flinkSqlService = flinkSqlService;
     }

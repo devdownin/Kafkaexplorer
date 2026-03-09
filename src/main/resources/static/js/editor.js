@@ -234,7 +234,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function renderInteractiveJson(obj, topicName, path = '$') {
-    function renderInteractiveJson(obj, topicName, path = '') {
         const container = document.createElement('div');
         container.className = 'interactive-json font-monospace small';
 
@@ -260,7 +259,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 keySpan.onclick = (e) => {
                     e.stopPropagation();
                     toggleAssistantColumn(currentPath, keySpan, topicName);
-                    toggleAssistantColumn(key, keySpan, topicName);
                 };
 
                 line.appendChild(keySpan);
@@ -269,7 +267,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 const val = obj[key];
                 if (typeof val === 'object' && val !== null) {
                     line.appendChild(renderInteractiveJson(val, topicName, currentPath));
-                    line.appendChild(renderInteractiveJson(val, topicName, key));
                 } else {
                     const valSpan = document.createElement('span');
                     valSpan.className = 'json-value text-muted cursor-pointer';
@@ -421,6 +418,30 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 500);
     }
 
+    // Topic Filtering
+    const prefixInput = document.getElementById('prefixFilter');
+    const fullNameInput = document.getElementById('fullNameFilter');
+
+    if (prefixInput || fullNameInput) {
+        const filterTopics = () => {
+            const prefix = prefixInput.value.toLowerCase();
+            const fullName = fullNameInput.value.toLowerCase();
+            const rows = document.querySelectorAll('.topic-row');
+
+            rows.forEach(row => {
+                const name = row.querySelector('td').textContent.toLowerCase();
+                let matchesPrefix = true;
+                let matchesFull = true;
+
+                if (prefix) matchesPrefix = name.startsWith(prefix);
+                if (fullName) matchesFull = (name === fullName);
+
+                row.style.display = (matchesPrefix && matchesFull) ? '' : 'none';
+            });
+        };
+
+        if (prefixInput) prefixInput.addEventListener('input', filterTopics);
+        if (fullNameInput) fullNameInput.addEventListener('input', filterTopics);
     // Topic Search
     const searchInput = document.getElementById('topicSearch');
     if (searchInput) {
