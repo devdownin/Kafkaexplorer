@@ -53,7 +53,20 @@
                 </div>
             </div>
 
-            <h5 class="text-teal fw-bold mb-3">Recent Messages (Sample)</h5>
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="text-teal fw-bold mb-0">Recent Messages (Sample)</h5>
+                <button class="btn btn-outline-teal btn-sm" id="assistantToggleBtn" th:onclick="'toggleAssistant(\'' + ${topic.name} + '\')'">Query Assistant</button>
+            </div>
+
+            <div id="assistantPreviewArea" class="card bg-dark border-teal mb-4 d-none">
+                <div class="card-header bg-dark border-teal d-flex justify-content-between align-items-center">
+                    <span class="text-teal small fw-bold">GENERATED QUERY</span>
+                    <button class="btn btn-teal btn-sm" onclick="openAssistantQuery()">Open in Editor</button>
+                </div>
+                <div class="card-body">
+                    <code id="generatedSqlPreview" class="text-light small">SELECT * FROM topic_name;</code>
+                </div>
+            </div>
             <div class="card bg-dark border-secondary mb-4 shadow-sm">
                 <div class="card-body p-0 overflow-auto" style="max-height: 300px;">
                     <table class="table table-dark table-hover table-sm mb-0">
@@ -65,7 +78,7 @@
                         <tbody>
                             <tr th:each="sample : ${samples}">
                                 <td class="px-4 py-2 position-relative group">
-                                    <pre class="mb-0 text-muted small overflow-auto" style="max-height: 200px;" th:text="${sample}"></pre>
+                                    <pre class="mb-0 text-muted small overflow-auto sample-msg-pre" style="max-height: 200px;" th:text="${sample}"></pre>
                                     <button class="btn btn-sm btn-outline-teal position-absolute top-0 end-0 m-2 opacity-0 group-hover-opacity-100 transition-opacity" onclick="copyToClipboard(this)">Copy</button>
                                 </td>
                             </tr>

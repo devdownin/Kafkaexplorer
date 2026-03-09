@@ -55,3 +55,12 @@ table { font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; }
 .group:hover .group-hover-opacity-100 { opacity: 1 !important; }
 .transition-opacity { transition: opacity 0.2s ease-in-out; }
 .opacity-0 { opacity: 0; }
+
+.cursor-pointer { cursor: pointer; }
+.border-teal { border-color: var(--teal) !important; }
+
+.interactive-json .json-key:hover { background-color: rgba(0, 212, 170, 0.1); }
+.interactive-json .json-value:hover { background-color: rgba(255, 255, 255, 0.05); }
+
+body.assistant-active .topic-row { opacity: 0.5; }
+body.assistant-active .interactive-json { color: #e6edf3; }

@@ -133,6 +133,162 @@ document.addEventListener('DOMContentLoaded', () => {
     // Load history
     renderHistory();
 
+    // Assistant Selection State
+    let assistantColumns = new Set();
+    let assistantFilters = new Map();
+
+    // Query Assistant Toggle
+    window.toggleAssistant = function(topicName) {
+        const assistantMode = document.body.classList.toggle('assistant-active');
+        const btn = document.getElementById('assistantToggleBtn');
+        if (assistantMode) {
+            btn.textContent = 'Exit Assistant';
+            btn.classList.add('btn-teal');
+            btn.classList.remove('btn-outline-teal');
+            initializeAssistant(topicName);
+        } else {
+            btn.textContent = 'Query Assistant';
+            btn.classList.remove('btn-teal');
+            btn.classList.add('btn-outline-teal');
+            exitAssistant();
+        }
+    };
+
+    function initializeAssistant(topicName) {
+        const samples = document.querySelectorAll('.sample-msg-pre');
+        samples.forEach(pre => {
+            const content = pre.textContent.trim();
+            if (content.startsWith('{') || content.startsWith('[')) {
+                try {
+                    const json = JSON.parse(content);
+                    const interactive = renderInteractiveJson(json, topicName);
+                    pre.style.display = 'none';
+                    pre.parentElement.appendChild(interactive);
+                } catch (e) {}
+            }
+        });
+        document.getElementById('assistantPreviewArea').classList.remove('d-none');
+    }
+
+    function exitAssistant() {
+        document.querySelectorAll('.interactive-json').forEach(el => el.remove());
+        document.querySelectorAll('.sample-msg-pre').forEach(pre => pre.style.display = 'block');
+        document.getElementById('assistantPreviewArea').classList.add('d-none');
+        assistantColumns.clear();
+        assistantFilters.clear();
+    }
+
+    function renderInteractiveJson(obj, topicName, path = '') {
+        const container = document.createElement('div');
+        container.className = 'interactive-json font-monospace small';
+
+        if (Array.isArray(obj)) {
+            container.appendChild(document.createTextNode('['));
+            obj.forEach((item, i) => {
+                container.appendChild(renderInteractiveJson(item, topicName, `${path}[${i}]`));
+                if (i < obj.length - 1) container.appendChild(document.createTextNode(', '));
+            });
+            container.appendChild(document.createTextNode(']'));
+        } else if (obj !== null && typeof obj === 'object') {
+            container.appendChild(document.createTextNode('{'));
+            const keys = Object.keys(obj);
+            keys.forEach((key, i) => {
+                const line = document.createElement('div');
+                line.className = 'ms-3';
+
+                const keySpan = document.createElement('span');
+                keySpan.className = 'json-key text-teal cursor-pointer';
+                keySpan.textContent = `"${key}"`;
+                keySpan.onclick = (e) => {
+                    e.stopPropagation();
+                    toggleAssistantColumn(key, keySpan, topicName);
+                };
+
+                line.appendChild(keySpan);
+                line.appendChild(document.createTextNode(': '));
+
+                const val = obj[key];
+                if (typeof val === 'object' && val !== null) {
+                    line.appendChild(renderInteractiveJson(val, topicName, key));
+                } else {
+                    const valSpan = document.createElement('span');
+                    valSpan.className = 'json-value text-muted cursor-pointer';
+                    valSpan.textContent = typeof val === 'string' ? `"${val}"` : val;
+                    valSpan.onclick = (e) => {
+                        e.stopPropagation();
+                        toggleAssistantFilter(key, val, valSpan, topicName);
+                    };
+                    line.appendChild(valSpan);
+                }
+
+                if (i < keys.length - 1) line.appendChild(document.createTextNode(','));
+                container.appendChild(line);
+            });
+            container.appendChild(document.createTextNode('}'));
+        }
+        return container;
+    }
+
+    function toggleAssistantColumn(column, el, topicName) {
+        if (assistantColumns.has(column)) {
+            assistantColumns.delete(column);
+            el.classList.remove('fw-bold', 'border-bottom');
+        } else {
+            assistantColumns.add(column);
+            el.classList.add('fw-bold', 'border-bottom');
+        }
+        updateAssistantQuery(topicName);
+    }
+
+    function toggleAssistantFilter(column, value, el, topicName) {
+        if (assistantFilters.has(column) && assistantFilters.get(column) === value) {
+            assistantFilters.delete(column);
+            el.classList.remove('bg-teal', 'text-dark', 'px-1', 'rounded');
+        } else {
+            assistantFilters.set(column, value);
+            el.classList.add('bg-teal', 'text-dark', 'px-1', 'rounded');
+            // Also ensure it's in columns
+            if (!assistantColumns.has(column)) {
+                const keyEl = el.parentElement.querySelector('.json-key');
+                if (keyEl) toggleAssistantColumn(column, keyEl, topicName);
+            }
+        }
+        updateAssistantQuery(topicName);
+    }
+
+    function updateAssistantQuery(topicName) {
+        let select = assistantColumns.size > 0 ? Array.from(assistantColumns).join(', ') : '*';
+        let sql = `SELECT ${select} FROM ${topicName}`;
+
+        if (assistantFilters.size > 0) {
+            let where = Array.from(assistantFilters.entries())
+                .map(([k, v]) => {
+                    const formattedVal = typeof v === 'string' ? `'${v}'` : v;
+                    return `${k} = ${formattedVal}`;
+                })
+                .join(' AND ');
+            sql += ` WHERE ${where}`;
+        }
+
+        document.getElementById('generatedSqlPreview').textContent = sql + ';';
+    }
+
+    window.openAssistantQuery = function() {
+        const sql = document.getElementById('generatedSqlPreview').textContent;
+        sessionStorage.setItem('pendingAssistantQuery', sql);
+        window.location.href = '/query';
+    };
+
+    // Populate editor from assistant if needed
+    const pendingQuery = sessionStorage.getItem('pendingAssistantQuery');
+    if (pendingQuery && editorElement && !editorElement.value) {
+        setTimeout(() => {
+            const cm = document.querySelector('.CodeMirror').CodeMirror;
+            cm.setValue(pendingQuery);
+            sessionStorage.removeItem('pendingAssistantQuery');
+        }, 500);
+    }
+
     // Topic Search
     const searchInput = document.getElementById('topicSearch');
     if (searchInput) {
