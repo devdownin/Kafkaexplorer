@@ -14,25 +14,30 @@ import java.nio.charset.StandardCharsets;
 
 public class XmlExtractUDF extends ScalarFunction {
 
-    private final DocumentBuilderFactory factory;
-    private final XPathFactory xPathFactory;
+    private transient DocumentBuilderFactory factory;
+    private transient XPathFactory xPathFactory;
 
-    public XmlExtractUDF() {
-        this.factory = DocumentBuilderFactory.newInstance();
-        try {
-            this.factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-            this.factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
-            this.factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
-            this.factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
-        } catch (Exception e) {
-            // Log warning
+    private void init() {
+        if (this.factory == null) {
+            this.factory = DocumentBuilderFactory.newInstance();
+            try {
+                this.factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+                this.factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+                this.factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+                this.factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+            } catch (Exception e) {
+                // Log warning
+            }
+            this.factory.setXIncludeAware(false);
+            this.factory.setExpandEntityReferences(false);
         }
-        this.factory.setXIncludeAware(false);
-        this.factory.setExpandEntityReferences(false);
-        this.xPathFactory = XPathFactory.newInstance();
+        if (this.xPathFactory == null) {
+            this.xPathFactory = XPathFactory.newInstance();
+        }
     }
 
     public String eval(String xml, String xpathExpression) {
+        init();
         if (xml == null || xpathExpression == null) {
             return null;
         }
