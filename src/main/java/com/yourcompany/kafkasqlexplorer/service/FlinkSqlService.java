@@ -30,14 +30,11 @@ public class FlinkSqlService {
             return new QueryResult(Collections.emptyList(), Collections.emptyList(), 0, "Only SELECT, EXPLAIN and CREATE TABLE statements are allowed.");
         }
 
-        try {
-            TableResult result = tableEnv.executeSql(request.sql());
-
+        TableResult result = null;
+        try (org.apache.flink.util.CloseableIterator<Row> it = (result = tableEnv.executeSql(request.sql())).collect()) {
             List<String> columns = result.getResolvedSchema().getColumnNames();
             List<Map<String, Object>> rows = new ArrayList<>();
 
-            // Limit and timeout handling
-            Iterator<Row> it = result.collect();
             int limit = request.maxRows() != null ? request.maxRows() : 50;
             long timeout = request.timeout() != null ? request.timeout() : 10000;
 
@@ -62,6 +59,9 @@ public class FlinkSqlService {
             return new QueryResult(columns, rows, duration, null);
 
         } catch (Exception e) {
+            if (result != null && result.getJobClient().isPresent()) {
+                result.getJobClient().get().cancel();
+            }
             long duration = System.currentTimeMillis() - startTime;
             return new QueryResult(Collections.emptyList(), Collections.emptyList(), duration, e.getMessage());
         }

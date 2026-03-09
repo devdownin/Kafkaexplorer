@@ -20,7 +20,11 @@ public class DdlGeneratorService {
         StringBuilder sb = new StringBuilder();
         sb.append("CREATE TABLE ").append(topicName).append(" (\n");
 
-        schema.forEach((col, type) -> sb.append("    ").append(col).append(" ").append(type).append(",\n"));
+        if (format == MessageFormat.XML) {
+            sb.append("    raw_value STRING,\n");
+        } else {
+            schema.forEach((col, type) -> sb.append("    ").append(col).append(" ").append(type).append(",\n"));
+        }
 
         sb.append("    event_time TIMESTAMP(3) METADATA FROM 'timestamp',\n");
         sb.append("    kafka_offset BIGINT METADATA FROM 'offset' VIRTUAL,\n");

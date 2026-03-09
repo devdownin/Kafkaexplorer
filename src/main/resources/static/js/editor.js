@@ -11,7 +11,20 @@ document.addEventListener('DOMContentLoaded', () => {
             smartIndent: true,
             autofocus: true,
             matchBrackets: true,
-            viewportMargin: Infinity
+            viewportMargin: Infinity,
+            extraKeys: { "Ctrl-Space": "autocomplete" },
+            hintOptions: {
+                completeSingle: false,
+                tables: {} // Will be populated
+            }
+        });
+
+        // Populate tables for auto-completion
+        fetchTopicsForAutocomplete(editor);
+
+        editor.on("inputRead", function(cm, change) {
+            if (change.text[0] === " " || change.text[0] === "." || change.text[0] === "(") return;
+            cm.showHint({ completeSingle: false });
         });
     }
 
@@ -32,6 +45,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (runBtn) {
         runBtn.addEventListener('click', async () => {
             const sql = editor.getValue();
+            if (sql.trim()) {
+                saveToHistory(sql);
+            }
             const statusDiv = document.getElementById('queryStatus');
             const resultsCard = document.getElementById('resultsCard');
 
@@ -114,6 +130,9 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // Load history
+    renderHistory();
+
     // Topic Search
     const searchInput = document.getElementById('topicSearch');
     if (searchInput) {
@@ -127,6 +146,59 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 });
+
+function saveToHistory(sql) {
+    let history = JSON.parse(sessionStorage.getItem('sqlHistory') || '[]');
+    // Remove if already exists to move it to the top
+    history = history.filter(item => item !== sql);
+    history.unshift(sql);
+    if (history.length > 20) history.pop();
+    sessionStorage.setItem('sqlHistory', JSON.stringify(history));
+    renderHistory();
+}
+
+async function fetchTopicsForAutocomplete(editor) {
+    try {
+        const response = await fetch('/api/topics');
+        const topics = await response.json();
+        const tables = {};
+        topics.forEach(topic => {
+            tables[topic] = []; // We could also fetch columns for each topic if needed
+        });
+        editor.setOption("hintOptions", {
+            tables: tables,
+            completeSingle: false
+        });
+    } catch (e) {
+        console.error("Failed to fetch topics for autocomplete", e);
+    }
+}
+
+function renderHistory() {
+    const historyList = document.getElementById('historyList');
+    if (!historyList) return;
+
+    const history = JSON.parse(sessionStorage.getItem('sqlHistory') || '[]');
+    historyList.innerHTML = '';
+
+    if (history.length === 0) {
+        historyList.innerHTML = '<li class="list-group-item bg-dark text-muted small border-secondary">No history yet</li>';
+        return;
+    }
+
+    history.forEach((sql, index) => {
+        const li = document.createElement('li');
+        li.className = 'list-group-item bg-dark text-light small border-secondary history-item';
+        li.style.cursor = 'pointer';
+        li.textContent = sql.substring(0, 50) + (sql.length > 50 ? '...' : '');
+        li.title = sql;
+        li.onclick = () => {
+            const editor = document.querySelector('.CodeMirror').CodeMirror;
+            editor.setValue(sql);
+        };
+        historyList.appendChild(li);
+    });
+}
 
 function copyToClipboard(button) {
     const pre = button.previousElementSibling;

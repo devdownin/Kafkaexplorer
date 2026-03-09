@@ -1,11 +1,39 @@
+# Maven build artifacts
 target/
-*.log
-*.pid
-part*.txt
-.DS_Store
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+buildNumber.properties
+.mvn/timing.properties
+.mvn/wrapper/maven-wrapper.jar
+
+# IDEs
 .idea/
 *.iml
+*.iws
+.project
+.classpath
+.settings/
+.factorypath
 .vscode/
-node_modules/
-dist/
-build/
+
+# Local configuration
+application-local.yml
+application-local.properties
+
+# Logs and PID files
+*.log
+*.pid
+app.pid
+app.log
+
+# Temporary and prompt files
+part*.txt
+/home/jules/verification/
+
+# OS files
+.DS_Store
+Thumbs.db

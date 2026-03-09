@@ -5,7 +5,7 @@
 </head>
 <body th:fragment="content">
     <div class="row">
-        <div class="col-md-12">
+        <div class="col-md-9">
             <h1 class="h3 text-teal fw-bold mb-4">Flink SQL Editor</h1>
 
             <div class="card bg-dark border-secondary mb-4 shadow-sm">
@@ -41,6 +41,16 @@
                         </thead>
                         <tbody id="resultsBody"></tbody>
                     </table>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <h5 class="text-teal fw-bold mb-4">Query History</h5>
+            <div class="card bg-dark border-secondary shadow-sm">
+                <div class="card-body p-0">
+                    <ul class="list-group list-group-flush" id="historyList">
+                        <!-- History items will be injected here -->
+                    </ul>
                 </div>
             </div>
         </div>

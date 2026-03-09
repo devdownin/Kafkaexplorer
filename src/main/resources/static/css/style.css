@@ -49,6 +49,9 @@ table { font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; }
 .breadcrumb { background: var(--card-bg) !important; border: 1px solid var(--border-color); }
 .badge { font-weight: 600; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; letter-spacing: 0.5px; }
 
+.history-item:hover { background-color: rgba(0, 212, 170, 0.1) !important; color: var(--teal) !important; }
+.list-group-item { border-color: var(--border-color) !important; }
+
 .group:hover .group-hover-opacity-100 { opacity: 1 !important; }
 .transition-opacity { transition: opacity 0.2s ease-in-out; }
 .opacity-0 { opacity: 0; }
