@@ -234,6 +234,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function renderInteractiveJson(obj, topicName, path = '$') {
+    function renderInteractiveJson(obj, topicName, path = '') {
         const container = document.createElement('div');
         container.className = 'interactive-json font-monospace small';
 
@@ -259,6 +260,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 keySpan.onclick = (e) => {
                     e.stopPropagation();
                     toggleAssistantColumn(currentPath, keySpan, topicName);
+                    toggleAssistantColumn(key, keySpan, topicName);
                 };
 
                 line.appendChild(keySpan);
@@ -267,6 +269,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const val = obj[key];
                 if (typeof val === 'object' && val !== null) {
                     line.appendChild(renderInteractiveJson(val, topicName, currentPath));
+                    line.appendChild(renderInteractiveJson(val, topicName, key));
                 } else {
                     const valSpan = document.createElement('span');
                     valSpan.className = 'json-value text-muted cursor-pointer';
@@ -274,6 +277,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     valSpan.onclick = (e) => {
                         e.stopPropagation();
                         toggleAssistantFilter(currentPath, val, valSpan, topicName);
+                        toggleAssistantFilter(key, val, valSpan, topicName);
                     };
                     line.appendChild(valSpan);
                 }
@@ -292,6 +296,12 @@ document.addEventListener('DOMContentLoaded', () => {
             el.classList.remove('fw-bold', 'border-bottom');
         } else {
             assistantColumns.add(columnPath);
+    function toggleAssistantColumn(column, el, topicName) {
+        if (assistantColumns.has(column)) {
+            assistantColumns.delete(column);
+            el.classList.remove('fw-bold', 'border-bottom');
+        } else {
+            assistantColumns.add(column);
             el.classList.add('fw-bold', 'border-bottom');
         }
         updateAssistantQuery(topicName);
@@ -327,6 +337,17 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!assistantColumns.has(columnPath)) {
                 const keyEl = el.parentElement.querySelector('.json-key');
                 if (keyEl) toggleAssistantColumn(columnPath, keyEl, topicName);
+    function toggleAssistantFilter(column, value, el, topicName) {
+        if (assistantFilters.has(column) && assistantFilters.get(column) === value) {
+            assistantFilters.delete(column);
+            el.classList.remove('bg-teal', 'text-dark', 'px-1', 'rounded');
+        } else {
+            assistantFilters.set(column, value);
+            el.classList.add('bg-teal', 'text-dark', 'px-1', 'rounded');
+            // Also ensure it's in columns
+            if (!assistantColumns.has(column)) {
+                const keyEl = el.parentElement.querySelector('.json-key');
+                if (keyEl) toggleAssistantColumn(column, keyEl, topicName);
             }
         }
         updateAssistantQuery(topicName);
@@ -347,6 +368,8 @@ document.addEventListener('DOMContentLoaded', () => {
         let select = assistantColumns.size > 0
             ? Array.from(assistantColumns).map(formatAssistantPath).join(', ')
             : '*';
+    function updateAssistantQuery(topicName) {
+        let select = assistantColumns.size > 0 ? Array.from(assistantColumns).join(', ') : '*';
         let sql = `SELECT ${select} FROM ${topicName}`;
 
         if (assistantFilters.size > 0) {
