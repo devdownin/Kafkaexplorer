@@ -27,6 +27,7 @@ body {
 
 .btn-outline-teal { color: var(--teal); border-color: var(--teal); background: transparent; transition: all 0.2s; border-radius: 4px; font-weight: bold; font-family: 'JetBrains Mono', monospace; }
 .btn-outline-teal:hover { background-color: var(--teal); color: var(--bg-dark); border-color: var(--teal); }
+.btn-teal { background-color: var(--teal); color: var(--bg-dark); border-color: var(--teal); font-weight: bold; font-family: 'JetBrains Mono', monospace; }
 
 .form-control { background-color: var(--card-bg) !important; color: var(--text-muted) !important; border: 1px solid var(--border-color) !important; border-radius: 4px; font-family: 'JetBrains Mono', monospace; }
 .form-control:focus { box-shadow: 0 0 0 2px rgba(0, 212, 170, 0.25); border-color: var(--teal) !important; }
@@ -47,3 +48,7 @@ table { font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; }
 
 .breadcrumb { background: var(--card-bg) !important; border: 1px solid var(--border-color); }
 .badge { font-weight: 600; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; letter-spacing: 0.5px; }
+
+.group:hover .group-hover-opacity-100 { opacity: 1 !important; }
+.transition-opacity { transition: opacity 0.2s ease-in-out; }
+.opacity-0 { opacity: 0; }

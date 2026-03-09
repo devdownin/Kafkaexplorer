@@ -2,6 +2,7 @@ package com.yourcompany.kafkasqlexplorer.web;
 
 import com.yourcompany.kafkasqlexplorer.domain.MessageFormat;
 import com.yourcompany.kafkasqlexplorer.domain.TopicDescriptor;
+import com.yourcompany.kafkasqlexplorer.service.MessageFormatterService;
 import com.yourcompany.kafkasqlexplorer.service.DdlGeneratorService;
 import com.yourcompany.kafkasqlexplorer.service.KafkaAdminService;
 import com.yourcompany.kafkasqlexplorer.service.SchemaInferenceService;
@@ -19,11 +20,13 @@ public class TopicController {
     private final KafkaAdminService kafkaAdminService;
     private final SchemaInferenceService schemaInferenceService;
     private final DdlGeneratorService ddlGeneratorService;
+    private final MessageFormatterService messageFormatterService;
 
-    public TopicController(KafkaAdminService kafkaAdminService, SchemaInferenceService schemaInferenceService, DdlGeneratorService ddlGeneratorService) {
+    public TopicController(KafkaAdminService kafkaAdminService, SchemaInferenceService schemaInferenceService, DdlGeneratorService ddlGeneratorService, MessageFormatterService messageFormatterService) {
         this.kafkaAdminService = kafkaAdminService;
         this.schemaInferenceService = schemaInferenceService;
         this.ddlGeneratorService = ddlGeneratorService;
+        this.messageFormatterService = messageFormatterService;
     }
 
     @GetMapping("/topic/{name}")
@@ -37,7 +40,9 @@ public class TopicController {
         model.addAttribute("format", format);
         model.addAttribute("schema", schema);
         model.addAttribute("ddl", ddl);
-        model.addAttribute("samples", kafkaAdminService.getSampleMessages(name, 20));
+        model.addAttribute("samples", kafkaAdminService.getSampleMessages(name, 20).stream()
+                .map(messageFormatterService::format)
+                .toList());
 
         return "topic-detail";
     }

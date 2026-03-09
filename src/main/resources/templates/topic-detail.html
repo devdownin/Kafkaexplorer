@@ -64,8 +64,9 @@
                         </thead>
                         <tbody>
                             <tr th:each="sample : ${samples}">
-                                <td class="px-4 py-2">
-                                    <pre class="mb-0 text-muted small" th:text="${sample}"></pre>
+                                <td class="px-4 py-2 position-relative group">
+                                    <pre class="mb-0 text-muted small overflow-auto" style="max-height: 200px;" th:text="${sample}"></pre>
+                                    <button class="btn btn-sm btn-outline-teal position-absolute top-0 end-0 m-2 opacity-0 group-hover-opacity-100 transition-opacity" onclick="copyToClipboard(this)">Copy</button>
                                 </td>
                             </tr>
                             <tr th:if="${samples.isEmpty()}">

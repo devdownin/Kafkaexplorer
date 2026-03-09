@@ -88,7 +88,25 @@ document.addEventListener('DOMContentLoaded', () => {
             const tr = document.createElement('tr');
             data.columns.forEach(col => {
                 const td = document.createElement('td');
-                td.textContent = row[col] !== null ? row[col] : 'NULL';
+                let value = row[col] !== null ? row[col] : 'NULL';
+
+                if (typeof value === 'string') {
+                    if ((value.startsWith('{') && value.endsWith('}')) || (value.startsWith('[') && value.endsWith(']'))) {
+                        try {
+                            value = JSON.stringify(JSON.parse(value), null, 2);
+                        } catch(e) {}
+                    }
+                }
+
+                if (typeof value === 'string' && value.includes('\n')) {
+                    const pre = document.createElement('pre');
+                    pre.textContent = value;
+                    pre.className = 'mb-0 small text-muted';
+                    td.appendChild(pre);
+                } else {
+                    td.textContent = value;
+                }
+
                 td.className = 'text-muted small';
                 tr.appendChild(td);
             });
@@ -109,3 +127,19 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 });
+
+function copyToClipboard(button) {
+    const pre = button.previousElementSibling;
+    const text = pre.textContent;
+    navigator.clipboard.writeText(text).then(() => {
+        const originalText = button.textContent;
+        button.textContent = 'Copied!';
+        button.classList.add('btn-teal');
+        button.classList.remove('btn-outline-teal');
+        setTimeout(() => {
+            button.textContent = originalText;
+            button.classList.remove('btn-teal');
+            button.classList.add('btn-outline-teal');
+        }, 2000);
+    });
+}
