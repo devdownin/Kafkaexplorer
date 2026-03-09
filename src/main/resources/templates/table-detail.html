@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: html}">
+<head>
+    <title th:text="'Table: ' + ${tableName}">Table Detail</title>
+</head>
+<body th:fragment="content">
+    <div class="row">
+        <div class="col-md-12">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb bg-dark border-secondary p-2 rounded">
+                    <li class="breadcrumb-item"><a href="/" class="text-teal text-decoration-none">Dashboard</a></li>
+                    <li class="breadcrumb-item active text-light" aria-current="page" th:text="${tableName}">table-name</li>
+                </ol>
+            </nav>
+
+            <h1 class="h3 text-teal fw-bold mb-4" th:text="${tableName}">table-name</h1>
+
+            <div class="row mb-4">
+                <div class="col-md-12">
+                    <h5 class="text-teal fw-bold mb-3">Table Schema</h5>
+                    <div class="card bg-dark border-secondary shadow-sm">
+                        <div class="card-body p-0">
+                            <table class="table table-dark table-hover table-sm mb-0">
+                                <thead>
+                                    <tr>
+                                        <th class="text-teal small px-4 py-2">COLUMN</th>
+                                        <th class="text-teal small text-end px-4 py-2">TYPE</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr th:each="entry : ${schema}">
+                                        <td class="px-4 py-2" th:text="${entry.key}">column_name</td>
+                                        <td class="px-4 py-2 text-end text-muted small" th:text="${entry.value}">STRING</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <h5 class="text-teal fw-bold mb-3">Data Preview (First 10 rows)</h5>
+            <div th:if="${preview.error}" class="alert alert-danger" th:text="${preview.error}"></div>
+            <div class="card bg-dark border-secondary shadow-sm overflow-auto" style="max-height: 500px;">
+                <div class="card-body p-0">
+                    <table class="table table-dark table-hover table-sm mb-0">
+                        <thead>
+                            <tr>
+                                <th th:each="col : ${preview.columns}" th:text="${col}" class="text-teal small px-3 py-2">COL</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr th:each="row : ${preview.rows}">
+                                <td th:each="col : ${preview.columns}" class="px-3 py-2 text-muted small">
+                                    <pre class="mb-0" th:text="${row[col]}">value</pre>
+                                </td>
+                            </tr>
+                            <tr th:if="${preview.rows.isEmpty()}">
+                                <td th:colspan="${preview.columns.size()}" class="py-4 text-center text-muted">No data found or timeout.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

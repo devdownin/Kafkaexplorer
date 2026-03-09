@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: html}">
+<head>
+    <title>Cluster Configuration</title>
+</head>
+<body th:fragment="content">
+    <div class="row">
+        <div class="col-md-6 offset-md-3">
+            <h1 class="h3 text-teal fw-bold mb-4">Cluster Configuration</h1>
+
+            <div class="card bg-dark border-secondary mb-4 shadow-sm">
+                <div class="card-body">
+                    <div class="mb-3 d-flex justify-content-between align-items-center">
+                        <label class="form-label text-muted small fw-bold">Cluster Status</label>
+                        <span class="badge rounded-pill bg-success" th:if="${isConnected}">Connected</span>
+                        <span class="badge rounded-pill bg-danger" th:unless="${isConnected}">Disconnected</span>
+                    </div>
+
+                    <form th:action="@{/config}" method="post">
+                        <div class="mb-3">
+                            <label class="form-label text-muted small fw-bold">Bootstrap Servers</label>
+                            <input type="text" class="form-control bg-dark border-secondary text-light" name="bootstrapServers" th:value="${bootstrapServers}" required>
+                        </div>
+                        <div class="d-grid">
+                            <button type="submit" class="btn btn-outline-teal">Update Connection</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <h5 class="text-teal fw-bold mb-3">Multi-Cluster Management</h5>
+            <div class="card bg-dark border-secondary shadow-sm">
+                <div class="card-body p-0">
+                    <table class="table table-dark table-hover table-sm mb-0">
+                        <thead>
+                            <tr>
+                                <th class="text-teal small">NAME</th>
+                                <th class="text-teal small text-end">BOOTSTRAP</th>
+                                <th class="text-teal small text-end">ACTION</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr th:each="cluster : ${clusters}">
+                                <td th:text="${cluster.key}">production</td>
+                                <td class="text-end text-muted small" th:text="${cluster.value}">localhost:9092</td>
+                                <td class="text-end text-muted small">
+                                    <button class="btn btn-outline-danger btn-sm py-0 px-2" disabled>X</button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

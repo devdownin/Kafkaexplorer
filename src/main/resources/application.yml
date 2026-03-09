@@ -1,0 +1,16 @@
+spring:
+  application:
+    name: kafka-sql-explorer
+  thymeleaf:
+    cache: false
+  cache:
+    type: caffeine
+    caffeine:
+      spec: expireAfterWrite=30s
+
+kafka:
+  bootstrap-servers: localhost:9092
+
+logging:
+  level:
+    com.yourcompany.kafkasqlexplorer: DEBUG
