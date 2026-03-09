@@ -136,6 +136,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Assistant Selection State
     let assistantColumns = new Set();
     let assistantFilters = new Map();
+    let assistantFormat = 'JSON';
 
     // Query Assistant Toggle
     window.toggleAssistant = function(topicName) {
@@ -160,10 +161,22 @@ document.addEventListener('DOMContentLoaded', () => {
             const content = pre.textContent.trim();
             if (content.startsWith('{') || content.startsWith('[')) {
                 try {
+                    assistantFormat = 'JSON';
                     const json = JSON.parse(content);
                     const interactive = renderInteractiveJson(json, topicName);
                     pre.style.display = 'none';
                     pre.parentElement.appendChild(interactive);
+                } catch (e) {}
+            } else if (content.startsWith('<')) {
+                try {
+                    assistantFormat = 'XML';
+                    const parser = new DOMParser();
+                    const xmlDoc = parser.parseFromString(content, "text/xml");
+                    if (!xmlDoc.getElementsByTagName("parsererror").length) {
+                        const interactive = renderInteractiveXml(xmlDoc.documentElement, topicName);
+                        pre.style.display = 'none';
+                        pre.parentElement.appendChild(interactive);
+                    }
                 } catch (e) {}
             }
         });
@@ -176,6 +189,48 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('assistantPreviewArea').classList.add('d-none');
         assistantColumns.clear();
         assistantFilters.clear();
+    }
+
+    function renderInteractiveXml(node, topicName, path = '') {
+        const container = document.createElement('div');
+        container.className = 'interactive-json font-monospace small';
+
+        const currentPath = path === '' ? node.nodeName : `${path}/${node.nodeName}`;
+        const line = document.createElement('div');
+        line.className = 'ms-3';
+
+        const tagSpan = document.createElement('span');
+        tagSpan.className = 'json-key text-teal cursor-pointer';
+        tagSpan.textContent = `<${node.nodeName}>`;
+        tagSpan.onclick = (e) => {
+            e.stopPropagation();
+            toggleAssistantColumn(currentPath, tagSpan, topicName);
+        };
+        line.appendChild(tagSpan);
+
+        if (node.children.length > 0) {
+            Array.from(node.children).forEach(child => {
+                line.appendChild(renderInteractiveXml(child, topicName, currentPath));
+            });
+        } else if (node.textContent.trim()) {
+            const val = node.textContent.trim();
+            const valSpan = document.createElement('span');
+            valSpan.className = 'json-value text-muted cursor-pointer ms-1';
+            valSpan.textContent = val;
+            valSpan.onclick = (e) => {
+                e.stopPropagation();
+                toggleAssistantFilter(currentPath, val, valSpan, topicName);
+            };
+            line.appendChild(valSpan);
+        }
+
+        const closeTagSpan = document.createElement('span');
+        closeTagSpan.className = 'text-teal small';
+        closeTagSpan.textContent = `</${node.nodeName}>`;
+        line.appendChild(closeTagSpan);
+
+        container.appendChild(line);
+        return container;
     }
 
     function renderInteractiveJson(obj, topicName, path = '$') {
@@ -277,7 +332,10 @@ document.addEventListener('DOMContentLoaded', () => {
         updateAssistantQuery(topicName);
     }
 
-    function formatJsonPath(path) {
+    function formatAssistantPath(path) {
+        if (assistantFormat === 'XML') {
+            return `XmlExtract(raw_value, '/${path}')`;
+        }
         if (path.includes('.')) {
             // Flink JSON_VALUE or dot notation for nested
             return `JSON_VALUE(raw_value, '$.${path}')`;
@@ -287,14 +345,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function updateAssistantQuery(topicName) {
         let select = assistantColumns.size > 0
-            ? Array.from(assistantColumns).map(formatJsonPath).join(', ')
+            ? Array.from(assistantColumns).map(formatAssistantPath).join(', ')
             : '*';
         let sql = `SELECT ${select} FROM ${topicName}`;
 
         if (assistantFilters.size > 0) {
             let where = Array.from(assistantFilters.entries())
                 .map(([path, filter]) => {
-                    const col = formatJsonPath(path);
+                    const col = formatAssistantPath(path);
                     const formattedVal = typeof filter.value === 'string' ? `'${filter.value}'` : filter.value;
                     return `${col} ${filter.op} ${formattedVal}`;
                 })
