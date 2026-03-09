@@ -136,6 +136,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Assistant Selection State
     let assistantColumns = new Set();
     let assistantFilters = new Map();
+    let assistantFormat = 'JSON';
 
     // Query Assistant Toggle
     window.toggleAssistant = function(topicName) {
@@ -160,10 +161,22 @@ document.addEventListener('DOMContentLoaded', () => {
             const content = pre.textContent.trim();
             if (content.startsWith('{') || content.startsWith('[')) {
                 try {
+                    assistantFormat = 'JSON';
                     const json = JSON.parse(content);
                     const interactive = renderInteractiveJson(json, topicName);
                     pre.style.display = 'none';
                     pre.parentElement.appendChild(interactive);
+                } catch (e) {}
+            } else if (content.startsWith('<')) {
+                try {
+                    assistantFormat = 'XML';
+                    const parser = new DOMParser();
+                    const xmlDoc = parser.parseFromString(content, "text/xml");
+                    if (!xmlDoc.getElementsByTagName("parsererror").length) {
+                        const interactive = renderInteractiveXml(xmlDoc.documentElement, topicName);
+                        pre.style.display = 'none';
+                        pre.parentElement.appendChild(interactive);
+                    }
                 } catch (e) {}
             }
         });
@@ -178,6 +191,49 @@ document.addEventListener('DOMContentLoaded', () => {
         assistantFilters.clear();
     }
 
+    function renderInteractiveXml(node, topicName, path = '') {
+        const container = document.createElement('div');
+        container.className = 'interactive-json font-monospace small';
+
+        const currentPath = path === '' ? node.nodeName : `${path}/${node.nodeName}`;
+        const line = document.createElement('div');
+        line.className = 'ms-3';
+
+        const tagSpan = document.createElement('span');
+        tagSpan.className = 'json-key text-teal cursor-pointer';
+        tagSpan.textContent = `<${node.nodeName}>`;
+        tagSpan.onclick = (e) => {
+            e.stopPropagation();
+            toggleAssistantColumn(currentPath, tagSpan, topicName);
+        };
+        line.appendChild(tagSpan);
+
+        if (node.children.length > 0) {
+            Array.from(node.children).forEach(child => {
+                line.appendChild(renderInteractiveXml(child, topicName, currentPath));
+            });
+        } else if (node.textContent.trim()) {
+            const val = node.textContent.trim();
+            const valSpan = document.createElement('span');
+            valSpan.className = 'json-value text-muted cursor-pointer ms-1';
+            valSpan.textContent = val;
+            valSpan.onclick = (e) => {
+                e.stopPropagation();
+                toggleAssistantFilter(currentPath, val, valSpan, topicName);
+            };
+            line.appendChild(valSpan);
+        }
+
+        const closeTagSpan = document.createElement('span');
+        closeTagSpan.className = 'text-teal small';
+        closeTagSpan.textContent = `</${node.nodeName}>`;
+        line.appendChild(closeTagSpan);
+
+        container.appendChild(line);
+        return container;
+    }
+
+    function renderInteractiveJson(obj, topicName, path = '$') {
     function renderInteractiveJson(obj, topicName, path = '') {
         const container = document.createElement('div');
         container.className = 'interactive-json font-monospace small';
@@ -196,11 +252,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 const line = document.createElement('div');
                 line.className = 'ms-3';
 
+                const currentPath = path === '$' ? key : `${path}.${key}`;
+
                 const keySpan = document.createElement('span');
                 keySpan.className = 'json-key text-teal cursor-pointer';
                 keySpan.textContent = `"${key}"`;
                 keySpan.onclick = (e) => {
                     e.stopPropagation();
+                    toggleAssistantColumn(currentPath, keySpan, topicName);
                     toggleAssistantColumn(key, keySpan, topicName);
                 };
 
@@ -209,6 +268,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 const val = obj[key];
                 if (typeof val === 'object' && val !== null) {
+                    line.appendChild(renderInteractiveJson(val, topicName, currentPath));
                     line.appendChild(renderInteractiveJson(val, topicName, key));
                 } else {
                     const valSpan = document.createElement('span');
@@ -216,6 +276,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     valSpan.textContent = typeof val === 'string' ? `"${val}"` : val;
                     valSpan.onclick = (e) => {
                         e.stopPropagation();
+                        toggleAssistantFilter(currentPath, val, valSpan, topicName);
                         toggleAssistantFilter(key, val, valSpan, topicName);
                     };
                     line.appendChild(valSpan);
@@ -229,6 +290,12 @@ document.addEventListener('DOMContentLoaded', () => {
         return container;
     }
 
+    function toggleAssistantColumn(columnPath, el, topicName) {
+        if (assistantColumns.has(columnPath)) {
+            assistantColumns.delete(columnPath);
+            el.classList.remove('fw-bold', 'border-bottom');
+        } else {
+            assistantColumns.add(columnPath);
     function toggleAssistantColumn(column, el, topicName) {
         if (assistantColumns.has(column)) {
             assistantColumns.delete(column);
@@ -240,6 +307,36 @@ document.addEventListener('DOMContentLoaded', () => {
         updateAssistantQuery(topicName);
     }
 
+    function toggleAssistantFilter(columnPath, value, el, topicName) {
+        if (assistantFilters.has(columnPath) && assistantFilters.get(columnPath).value === value) {
+            assistantFilters.delete(columnPath);
+            el.classList.remove('bg-teal', 'text-dark', 'px-1', 'rounded');
+            const opSelect = el.parentElement.querySelector('.op-select');
+            if (opSelect) opSelect.remove();
+        } else {
+            assistantFilters.set(columnPath, { value: value, op: '=' });
+            el.classList.add('bg-teal', 'text-dark', 'px-1', 'rounded');
+
+            // Add operator selector
+            const opSelect = document.createElement('select');
+            opSelect.className = 'op-select bg-dark text-teal border-0 small ms-1 rounded';
+            ['=', '!=', '>', '<', 'LIKE'].forEach(op => {
+                const opt = document.createElement('option');
+                opt.value = op;
+                opt.textContent = op;
+                opSelect.appendChild(opt);
+            });
+            opSelect.onclick = (e) => e.stopPropagation();
+            opSelect.onchange = (e) => {
+                assistantFilters.get(columnPath).op = e.target.value;
+                updateAssistantQuery(topicName);
+            };
+            el.parentElement.appendChild(opSelect);
+
+            // Also ensure it's in columns
+            if (!assistantColumns.has(columnPath)) {
+                const keyEl = el.parentElement.querySelector('.json-key');
+                if (keyEl) toggleAssistantColumn(columnPath, keyEl, topicName);
     function toggleAssistantFilter(column, value, el, topicName) {
         if (assistantFilters.has(column) && assistantFilters.get(column) === value) {
             assistantFilters.delete(column);
@@ -256,15 +353,31 @@ document.addEventListener('DOMContentLoaded', () => {
         updateAssistantQuery(topicName);
     }
 
+    function formatAssistantPath(path) {
+        if (assistantFormat === 'XML') {
+            return `XmlExtract(raw_value, '/${path}')`;
+        }
+        if (path.includes('.')) {
+            // Flink JSON_VALUE or dot notation for nested
+            return `JSON_VALUE(raw_value, '$.${path}')`;
+        }
+        return path;
+    }
+
+    function updateAssistantQuery(topicName) {
+        let select = assistantColumns.size > 0
+            ? Array.from(assistantColumns).map(formatAssistantPath).join(', ')
+            : '*';
     function updateAssistantQuery(topicName) {
         let select = assistantColumns.size > 0 ? Array.from(assistantColumns).join(', ') : '*';
         let sql = `SELECT ${select} FROM ${topicName}`;
 
         if (assistantFilters.size > 0) {
             let where = Array.from(assistantFilters.entries())
-                .map(([k, v]) => {
-                    const formattedVal = typeof v === 'string' ? `'${v}'` : v;
-                    return `${k} = ${formattedVal}`;
+                .map(([path, filter]) => {
+                    const col = formatAssistantPath(path);
+                    const formattedVal = typeof filter.value === 'string' ? `'${filter.value}'` : filter.value;
+                    return `${col} ${filter.op} ${formattedVal}`;
                 })
                 .join(' AND ');
             sql += ` WHERE ${where}`;
@@ -277,6 +390,25 @@ document.addEventListener('DOMContentLoaded', () => {
         const sql = document.getElementById('generatedSqlPreview').textContent;
         sessionStorage.setItem('pendingAssistantQuery', sql);
         window.location.href = '/query';
+    };
+
+    window.registerTableFromAssistant = async function() {
+        const ddl = document.getElementById('ddlEditor').value;
+        try {
+            const response = await fetch('/query', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sql: ddl, maxRows: 1, timeout: 5000 })
+            });
+            const data = await response.json();
+            if (data.error) {
+                alert('Error registering table: ' + data.error);
+            } else {
+                alert('Table registered successfully in Flink!');
+            }
+        } catch (e) {
+            alert('Failed to register table: ' + e.message);
+        }
     };
 
     // Populate editor from assistant if needed

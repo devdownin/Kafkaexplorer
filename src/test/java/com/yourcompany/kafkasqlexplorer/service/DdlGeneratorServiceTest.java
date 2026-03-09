@@ -23,6 +23,7 @@ public class DdlGeneratorServiceTest {
 
         assertTrue(ddl.contains("CREATE TABLE test_topic"));
         assertTrue(ddl.contains("id BIGINT"));
+        assertTrue(ddl.contains("raw_value STRING METADATA FROM 'value'"));
         assertTrue(ddl.contains("'value.format' = 'json'"));
         assertTrue(ddl.contains("localhost:9092"));
         assertTrue(ddl.contains("proc_time AS PROCTIME()"));

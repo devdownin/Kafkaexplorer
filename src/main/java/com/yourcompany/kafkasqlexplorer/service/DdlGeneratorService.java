@@ -24,6 +24,8 @@ public class DdlGeneratorService {
             sb.append("    raw_value STRING,\n");
         } else {
             schema.forEach((col, type) -> sb.append("    ").append(col).append(" ").append(type).append(",\n"));
+            // Always add raw_value for JSON to support JSON_VALUE queries via Assistant
+            sb.append("    raw_value STRING METADATA FROM 'value',\n");
         }
 
         // Add special columns as per user example

@@ -1,5 +1,6 @@
 package com.yourcompany.kafkasqlexplorer.web;
 
+import com.yourcompany.kafkasqlexplorer.service.FlinkSqlService;
 import com.yourcompany.kafkasqlexplorer.service.KafkaAdminService;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
@@ -11,6 +12,9 @@ import java.util.concurrent.ExecutionException;
 public class DashboardController {
 
     private final KafkaAdminService kafkaAdminService;
+    private final FlinkSqlService flinkSqlService;
+
+    public DashboardController(KafkaAdminService kafkaAdminService, FlinkSqlService flinkSqlService) {
     private final com.yourcompany.kafkasqlexplorer.service.FlinkSqlService flinkSqlService;
 
     public DashboardController(KafkaAdminService kafkaAdminService, com.yourcompany.kafkasqlexplorer.service.FlinkSqlService flinkSqlService) {

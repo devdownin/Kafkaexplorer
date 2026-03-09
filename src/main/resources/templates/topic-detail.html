@@ -61,7 +61,10 @@
             <div id="assistantPreviewArea" class="card bg-dark border-teal mb-4 d-none">
                 <div class="card-header bg-dark border-teal d-flex justify-content-between align-items-center">
                     <span class="text-teal small fw-bold">GENERATED QUERY</span>
-                    <button class="btn btn-teal btn-sm" onclick="openAssistantQuery()">Open in Editor</button>
+                    <div>
+                        <button class="btn btn-outline-teal btn-sm me-2" onclick="registerTableFromAssistant()">Register Table</button>
+                        <button class="btn btn-teal btn-sm" onclick="openAssistantQuery()">Open in Editor</button>
+                    </div>
                 </div>
                 <div class="card-body">
                     <code id="generatedSqlPreview" class="text-light small">SELECT * FROM topic_name;</code>
