@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: html}">
+<head>
+    <title th:text="'Topic: ' + ${topic.name}">Topic Detail</title>
+</head>
+<body th:fragment="content">
+    <div class="row">
+        <div class="col-md-12">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb bg-dark border-secondary p-2 rounded">
+                    <li class="breadcrumb-item"><a href="/" class="text-teal text-decoration-none">Topics</a></li>
+                    <li class="breadcrumb-item active text-light" aria-current="page" th:text="${topic.name}">topic-name</li>
+                </ol>
+            </nav>
+
+            <h1 class="h3 text-teal fw-bold mb-4" th:text="${topic.name}">topic-name</h1>
+
+            <div class="row row-cols-1 row-cols-md-4 g-4 mb-4">
+                <div class="col">
+                    <div class="card bg-dark border-secondary h-100 shadow-sm">
+                        <div class="card-body">
+                            <h6 class="text-muted small fw-bold">Partitions</h6>
+                            <h4 class="text-teal mb-0" th:text="${topic.partitions}">0</h4>
+                        </div>
+                    </div>
+                </div>
+                <div class="col">
+                    <div class="card bg-dark border-secondary h-100 shadow-sm">
+                        <div class="card-body">
+                            <h6 class="text-muted small fw-bold">Estimated Size</h6>
+                            <h4 class="text-teal mb-0" th:text="${topic.estimatedSize}">0</h4>
+                        </div>
+                    </div>
+                </div>
+                <div class="col">
+                    <div class="card bg-dark border-secondary h-100 shadow-sm">
+                        <div class="card-body">
+                            <h6 class="text-muted small fw-bold">Detected Format</h6>
+                            <h4 class="text-teal mb-0" th:text="${format}">AUTO</h4>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <h5 class="text-teal fw-bold mb-3">Flink SQL DDL (Inferred)</h5>
+            <div class="card bg-dark border-secondary mb-4 shadow-sm">
+                <div class="card-header bg-dark border-secondary d-flex justify-content-between align-items-center">
+                    <span class="text-teal small fw-bold">DDL SQL</span>
+                    <button class="btn btn-outline-teal btn-sm" id="copyDdl">Copy</button>
+                </div>
+                <div class="card-body p-0">
+                    <textarea id="ddlEditor" class="form-control bg-dark text-light border-0" rows="12" readonly th:text="${ddl}"></textarea>
+                </div>
+            </div>
+
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="text-teal fw-bold mb-0">Recent Messages (Sample)</h5>
+                <button class="btn btn-outline-teal btn-sm" id="assistantToggleBtn" th:onclick="'toggleAssistant(\'' + ${topic.name} + '\')'">Query Assistant</button>
+            </div>
+
+            <div id="assistantPreviewArea" class="card bg-dark border-teal mb-4 d-none">
+                <div class="card-header bg-dark border-teal d-flex justify-content-between align-items-center">
+                    <span class="text-teal small fw-bold">GENERATED QUERY</span>
+                    <button class="btn btn-teal btn-sm" onclick="openAssistantQuery()">Open in Editor</button>
+                </div>
+                <div class="card-body">
+                    <code id="generatedSqlPreview" class="text-light small">SELECT * FROM topic_name;</code>
+                </div>
+            </div>
+            <div class="card bg-dark border-secondary mb-4 shadow-sm">
+                <div class="card-body p-0 overflow-auto" style="max-height: 300px;">
+                    <table class="table table-dark table-hover table-sm mb-0">
+                        <thead>
+                            <tr>
+                                <th class="text-teal small px-4 py-2">MESSAGE CONTENT</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr th:each="sample : ${samples}">
+                                <td class="px-4 py-2 position-relative group">
+                                    <pre class="mb-0 text-muted small overflow-auto sample-msg-pre" style="max-height: 200px;" th:text="${sample}"></pre>
+                                    <button class="btn btn-sm btn-outline-teal position-absolute top-0 end-0 m-2 opacity-0 group-hover-opacity-100 transition-opacity" onclick="copyToClipboard(this)">Copy</button>
+                                </td>
+                            </tr>
+                            <tr th:if="${samples.isEmpty()}">
+                                <td class="px-4 py-4 text-center text-muted">No messages found in this topic.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-md-6">
+                    <h5 class="text-teal fw-bold mb-3">Inferred Schema</h5>
+                    <div class="card bg-dark border-secondary shadow-sm">
+                        <div class="card-body p-0">
+                            <table class="table table-dark table-hover table-sm mb-0">
+                                <thead>
+                                    <tr>
+                                        <th class="text-teal small">COLUMN</th>
+                                        <th class="text-teal small text-end">TYPE</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr th:each="entry : ${schema}">
+                                        <td th:text="${entry.key}">column_name</td>
+                                        <td class="text-end text-muted small" th:text="${entry.value}">STRING</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <h5 class="text-teal fw-bold mb-3">Partition Metadata</h5>
+                    <div class="card bg-dark border-secondary shadow-sm">
+                        <div class="card-body p-0">
+                            <table class="table table-dark table-hover table-sm mb-0">
+                                <thead>
+                                    <tr>
+                                        <th class="text-teal small">PARTITION</th>
+                                        <th class="text-teal small text-end">MIN OFFSET</th>
+                                        <th class="text-teal small text-end">MAX OFFSET</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr th:each="entry : ${topic.minOffsets}">
+                                        <td th:text="${entry.key}">0</td>
+                                        <td class="text-end text-muted small" th:text="${entry.value}">0</td>
+                                        <td class="text-end text-muted small" th:text="${topic.maxOffsets[entry.key]}">0</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
