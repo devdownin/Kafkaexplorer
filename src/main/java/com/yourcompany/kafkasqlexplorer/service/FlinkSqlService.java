@@ -23,6 +23,26 @@ public class FlinkSqlService {
         this.tableEnv.createTemporarySystemFunction("XmlExtract", XmlExtractUDF.class);
     }
 
+    public List<String> listTables() {
+        return Arrays.asList(tableEnv.listTables());
+    }
+
+    public List<String> listViews() {
+        return Arrays.asList(tableEnv.listViews());
+    }
+
+    public Map<String, String> getTableSchema(String tableName) {
+        Map<String, String> schema = new LinkedHashMap<>();
+        try {
+            tableEnv.from(tableName).getResolvedSchema().getColumns().forEach(col -> {
+                schema.put(col.getName(), col.getDataType().toString());
+            });
+        } catch (Exception e) {
+            // Table not found
+        }
+        return schema;
+    }
+
     public QueryResult executeSql(QueryRequest request) {
         long startTime = System.currentTimeMillis();
         String sql = request.sql().trim().toUpperCase();
