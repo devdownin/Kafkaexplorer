@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: html}">
+<head>
+    <title>SQL Query</title>
+</head>
+<body th:fragment="content">
+    <div class="row">
+        <div class="col-md-12">
+            <h1 class="h3 text-teal fw-bold mb-4">Flink SQL Editor</h1>
+
+            <div class="card bg-dark border-secondary mb-4 shadow-sm">
+                <div class="card-header bg-dark border-secondary">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span class="text-teal small fw-bold">SQL QUERY</span>
+                        <div class="btn-group">
+                            <button class="btn btn-outline-teal btn-sm" id="runQuery">Execute</button>
+                            <button class="btn btn-outline-secondary btn-sm" id="clearEditor">Clear</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    <textarea id="sqlEditor" class="form-control bg-dark text-light border-0" rows="10"></textarea>
+                </div>
+            </div>
+
+            <div id="queryStatus" class="alert d-none mb-4"></div>
+
+            <div class="card bg-dark border-secondary shadow-sm" id="resultsCard" style="display: none;">
+                <div class="card-header bg-dark border-secondary d-flex justify-content-between align-items-center">
+                    <span class="text-teal small fw-bold">RESULTS</span>
+                    <span class="text-muted small" id="queryStats"></span>
+                    <div class="btn-group">
+                        <button class="btn btn-outline-teal btn-sm" id="exportCSV">CSV</button>
+                        <button class="btn btn-outline-teal btn-sm" id="exportJSON">JSON</button>
+                    </div>
+                </div>
+                <div class="card-body p-0 overflow-auto" style="max-height: 500px;">
+                    <table class="table table-dark table-hover table-sm mb-0" id="resultsTable">
+                        <thead>
+                            <tr id="resultsHeader"></tr>
+                        </thead>
+                        <tbody id="resultsBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

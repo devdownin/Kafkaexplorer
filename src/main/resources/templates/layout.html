@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>Kafka SQL Explorer</title>
+    <link rel="stylesheet" th:href="@{/css/style.css}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/theme/material-darker.min.css">
+</head>
+<body class="bg-dark text-light">
+    <nav class="navbar border-bottom">
+        <div class="container-fluid">
+            <a class="navbar-brand text-teal" href="/">KAFKA SQL EXPLORER</a>
+            <div class="nav-links">
+                <a href="/" class="nav-link">Dashboard</a>
+                <a href="/query" class="nav-link">Query</a>
+                <a href="/config" class="nav-link">Config</a>
+            </div>
+        </div>
+    </nav>
+
+    <main class="container py-4">
+        <div th:replace="${content}"></div>
+    </main>
+
+    <footer class="footer border-top mt-5 py-3 text-center">
+        <p class="text-muted small">© 2024 Kafka SQL Explorer - Flink Embedded</p>
+    </footer>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/sql/sql.min.js"></script>
+    <script th:src="@{/js/editor.js}"></script>
+</body>
+</html>
