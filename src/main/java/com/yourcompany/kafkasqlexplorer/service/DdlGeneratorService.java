@@ -44,7 +44,15 @@ public class DdlGeneratorService {
 
         sb.append("    'properties.group.id' = 'flink_table_").append(topicName).append("',\n");
         sb.append("    'connector' = 'kafka',\n");
-        sb.append("    'properties.bootstrap.servers' = '").append(kafkaConfig.getBootstrapServers()).append("',\n");
+
+        // Add Kafka connection properties
+        kafkaConfig.getKafkaProperties().forEach((key, value) -> {
+            // Flink Kafka connector uses 'properties.' prefix for Kafka client configs
+            // bootstrap.servers is handled specially as 'properties.bootstrap.servers' usually,
+            // but also 'scan.startup.mode' etc are connector specific.
+            // For general kafka properties, the prefix is 'properties.'
+            sb.append("    'properties.").append(key).append("' = '").append(value).append("',\n");
+        });
 
         if (format == MessageFormat.JSON) {
             sb.append("    'value.format' = 'json',\n");
