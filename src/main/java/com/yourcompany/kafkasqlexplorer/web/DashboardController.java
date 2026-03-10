@@ -22,10 +22,16 @@ public class DashboardController {
     @GetMapping("/")
     public String index(Model model) {
         try {
-            model.addAttribute("topics", kafkaAdminService.listTopics());
+            java.util.List<String> topics = kafkaAdminService.listTopics();
+            java.util.Map<String, Long> topicSizes = kafkaAdminService.getTopicsSize(topics);
+
+            model.addAttribute("topics", topics);
+            model.addAttribute("topicSizes", topicSizes);
             model.addAttribute("tables", flinkSqlService.listTables());
+            model.addAttribute("jobs", flinkSqlService.getActiveJobs());
         } catch (Exception e) {
             model.addAttribute("topics", java.util.Collections.emptyList());
+            model.addAttribute("topicSizes", java.util.Collections.emptyMap());
             model.addAttribute("error", "Could not connect to Kafka: " + e.getMessage());
         }
         return "dashboard";

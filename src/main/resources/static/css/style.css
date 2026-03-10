@@ -75,3 +75,5 @@ body.assistant-active .topic-row { opacity: 0.5; }
 body.assistant-active .interactive-json { color: #e6edf3; }
 
 .sticky-top { position: sticky !important; top: 0; z-index: 1020; }
+
+.bg-darker { background-color: #010409 !important; }

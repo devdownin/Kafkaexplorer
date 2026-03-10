@@ -15,9 +15,13 @@
         <div class="col-md-3">
             <input type="text" id="fullNameFilter" class="form-control bg-dark border-secondary text-light" placeholder="Full name match...">
         </div>
-        <div class="col-md-4">
+        <div class="col-md-4 d-flex align-items-center">
+            <div class="form-check form-switch me-3">
+                <input class="form-check-input bg-dark border-secondary" type="checkbox" id="hideEmptyTopics">
+                <label class="form-check-label small text-muted text-nowrap" for="hideEmptyTopics">Hide Empty</label>
+            </div>
             <input type="text" id="topicSearch" class="form-control bg-dark border-secondary text-light" placeholder="Search topics...">
-        </div>pm
+        </div>
     </div>
 
     <div th:if="${error}" class="alert alert-danger" th:text="${error}"></div>
@@ -34,9 +38,13 @@
                     </tr>
                 </thead>
                 <tbody id="topicList">
-                    <tr th:each="topic : ${topics}" class="topic-row">
-                        <td class="py-3 px-4 fw-bold text-light" th:text="${topic}">topic-name</td>
+                    <tr th:each="topic : ${topics}" class="topic-row" th:data-size="${topicSizes[topic]}">
+                        <td class="py-3 px-4 fw-bold text-light">
+                            <span th:text="${topic}">topic-name</span>
+                            <small th:if="${topicSizes[topic] == 0}" class="badge bg-secondary ms-2 opacity-50">EMPTY</small>
+                        </td>
                         <td class="py-3 text-end">
+                            <span class="text-muted small me-2" th:text="${topicSizes[topic]} + ' msgs'"></span>
                             <span class="badge rounded-pill bg-outline-teal border border-teal text-teal small">AUTO</span>
                         </td>
                         <td class="py-3 text-end px-4">
@@ -68,6 +76,35 @@
                     </tr>
                     <tr th:if="${tables.isEmpty()}">
                         <td colspan="2" class="py-4 text-center text-muted">No Flink tables registered yet.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <h5 class="text-teal fw-bold mb-3 mt-5">Active Flink Jobs</h5>
+    <div class="card bg-dark border-secondary shadow-sm">
+        <div class="card-body p-0">
+            <table class="table table-dark table-hover table-sm mb-0">
+                <thead>
+                    <tr>
+                        <th class="text-teal small py-3 px-4">JOB ID</th>
+                        <th class="text-teal small py-3">NAME</th>
+                        <th class="text-teal small py-3 text-end px-4">ACTION</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr th:each="job : ${jobs}">
+                        <td class="py-3 px-4 fw-bold text-light" th:text="${job.key}">job-id</td>
+                        <td class="py-3">
+                            <span class="badge rounded-pill bg-success" th:text="${job.value}">RUNNING</span>
+                        </td>
+                        <td class="py-3 text-end px-4">
+                            <!-- Basic display for now -->
+                        </td>
+                    </tr>
+                    <tr th:if="${jobs == null or jobs.isEmpty()}">
+                        <td colspan="3" class="py-4 text-center text-muted">No active background jobs.</td>
                     </tr>
                 </tbody>
             </table>

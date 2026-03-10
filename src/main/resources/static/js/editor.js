@@ -42,7 +42,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Query Execution
     const runBtn = document.getElementById('runQuery');
+    const stopBtn = document.getElementById('stopQuery');
     const clearBtn = document.getElementById('clearEditor');
+
+    let currentQueryId = null;
 
     if (clearBtn) {
         clearBtn.addEventListener('click', () => {
@@ -61,8 +64,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const statusDiv = document.getElementById('queryStatus');
             const resultsCard = document.getElementById('resultsCard');
 
-            runBtn.disabled = true;
-            runBtn.textContent = 'Running...';
+            currentQueryId = Math.random().toString(36).substring(7);
+            runBtn.classList.add('d-none');
+            stopBtn.classList.remove('d-none');
             statusDiv.classList.add('d-none');
             resultsCard.style.display = 'none';
 
@@ -86,12 +90,30 @@ document.addEventListener('DOMContentLoaded', () => {
                         `Found ${data.rows.length} rows in ${data.durationMs}ms`;
                 }
             } catch (err) {
-                statusDiv.textContent = 'Network Error: ' + err.message;
+                if (err.name === 'AbortError') {
+                    statusDiv.textContent = 'Query cancelled by user.';
+                } else {
+                    statusDiv.textContent = 'Network Error: ' + err.message;
+                }
                 statusDiv.classList.remove('d-none');
                 statusDiv.classList.add('alert-danger');
             } finally {
-                runBtn.disabled = false;
-                runBtn.textContent = 'Execute';
+                runBtn.classList.remove('d-none');
+                stopBtn.classList.add('d-none');
+                currentQueryId = null;
+            }
+        });
+    }
+
+    if (stopBtn) {
+        stopBtn.addEventListener('click', async () => {
+            if (currentQueryId) {
+                try {
+                    await fetch(`/query/cancel/${currentQueryId}`, { method: 'POST' });
+                    // The main fetch will probably timeout or error out
+                } catch (e) {
+                    console.error('Failed to cancel query', e);
+                }
             }
         });
     }
@@ -176,17 +198,28 @@ document.addEventListener('DOMContentLoaded', () => {
         window.sqlEditor.focus();
     };
 
+    window.toggleHopFields = function() {
+        const type = document.getElementById('winType').value;
+        const hopFields = document.getElementById('hopFields');
+        if (type === 'HOP') {
+            hopFields.classList.remove('d-none');
+        } else {
+            hopFields.classList.add('d-none');
+        }
+    };
+
     window.applyWindowAssistant = function() {
         const table = document.getElementById('winTable').value;
         const type = document.getElementById('winType').value;
         const size = document.getElementById('winSize').value;
         const unit = document.getElementById('winUnit').value;
+        const slide = document.getElementById('winSlide').value;
 
         let sql = '';
         if (type === 'TUMBLE') {
             sql = `SELECT window_start, window_end, COUNT(*)\nFROM TABLE(\n  TUMBLE(TABLE ${table}, DESCRIPTOR(proc_time), INTERVAL '${size}' ${unit})\n)\nGROUP BY window_start, window_end;`;
         } else if (type === 'HOP') {
-            sql = `SELECT window_start, window_end, COUNT(*)\nFROM TABLE(\n  HOP(TABLE ${table}, DESCRIPTOR(proc_time), INTERVAL '${size}' ${unit}, INTERVAL '${size}' ${unit})\n)\nGROUP BY window_start, window_end;`;
+            sql = `SELECT window_start, window_end, COUNT(*)\nFROM TABLE(\n  HOP(TABLE ${table}, DESCRIPTOR(proc_time), INTERVAL '${slide}' ${unit}, INTERVAL '${size}' ${unit})\n)\nGROUP BY window_start, window_end;`;
         }
 
         if (window.sqlEditor) {
@@ -555,6 +588,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (prefixInput) prefixInput.addEventListener('input', filterTopics);
         if (fullNameInput) fullNameInput.addEventListener('input', filterTopics);
+    }
+
+    const hideEmptySwitch = document.getElementById('hideEmptyTopics');
+    if (hideEmptySwitch) {
+        hideEmptySwitch.addEventListener('change', () => {
+            const hideEmpty = hideEmptySwitch.checked;
+            const rows = document.querySelectorAll('.topic-row');
+            rows.forEach(row => {
+                const size = parseInt(row.getAttribute('data-size') || '0');
+                if (hideEmpty && size === 0) {
+                    row.classList.add('d-none');
+                } else {
+                    row.classList.remove('d-none');
+                }
+            });
+        });
     }
 });
 
