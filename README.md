@@ -1,5 +1,5 @@
 # KAFKA SQL EXPLORER
-**Spring Boot 3.x | Apache Flink 1.19 (Embedded) | Java 21**
+**Spring Boot 3.x | Apache Flink 2.2.x (Embedded) | Java 21**
 
 Kafka SQL Explorer est une application web moderne conçue pour les Data Engineers et Architectes, permettant d'explorer des clusters Kafka et d'interroger les topics en temps réel via SQL Flink.
 
