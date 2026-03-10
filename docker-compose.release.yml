@@ -22,7 +22,9 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
 
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.release
     container_name: kafka-sql-explorer
     ports:
       - "8080:8080"
