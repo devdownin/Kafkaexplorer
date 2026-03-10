@@ -43,8 +43,8 @@ L'assistant transforme la prévisualisation de message en un outil de conception
 ---
 
 ## 🛠️ Stack Technique
-- **Backend** : Spring Boot 3.2.4, Java 21 (Records).
-- **Streaming** : Apache Flink 1.19.0 (Embedded LocalEnvironment).
+- **Backend** : Spring Boot 3.5.x, Java 21 (Records).
+- **Streaming** : Apache Flink 2.2.x (Embedded LocalEnvironment).
 - **Parsing** : Jackson (JSON), JAXB/StAX (XML).
 - **Frontend** : Thymeleaf, CodeMirror 5.65, Bootstrap 5 (Theme Dark).
 - **Cache** : Caffeine (Métadonnées Kafka).
@@ -76,4 +76,4 @@ WHERE total > 1000;
 ```
 
 ---
-*© 2024 Kafka SQL Explorer - Cyberpunk Terminal UI*
+*© 2026 afka SQL Explorer - Compagnons du dev. Terminal UI*
