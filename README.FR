@@ -1,1 +1,74 @@
+Kafkaexplorer
+Repository navigation
+Code
+Issues
+Pull requests
+Actions
+Kafkaexplorer
+/README.md
+devdownin
+devdownin
+33 minutes ago
+79 lines (63 loc) · 3.72 KB
 
+Preview
+
+Code
+
+Blame
+KAFKA SQL EXPLORER
+Spring Boot 3.x | Apache Flink 2.2.x (Embedded) | Java 21
+
+Kafka SQL Explorer est une application web moderne conçue pour les Data Engineers et Architectes, permettant d'explorer des clusters Kafka et d'interroger les topics en temps réel via SQL Flink.
+
+Fonctionnalités Détaillées
+1. Dashboard & Navigation
+Liste des Topics : Vue d'ensemble de tous les topics disponibles sur le cluster Kafka.
+Filtrage Avancé :
+Filtre par Préfixe : Permet de trouver rapidement des topics appartenant à un domaine (ex: order.*).
+Match Nom Complet : Recherche exacte pour isoler un topic spécifique.
+Tables Dynamiques Flink : Section dédiée pour gérer les tables et vues temporaires enregistrées dans le moteur Flink local.
+2. Exploration de Topic
+Métadonnées Temps Réel : Visualisation du nombre de partitions, des offsets min/max et de la taille estimée des données.
+Échantillonnage (Sampling) : Lecture automatique des derniers messages du topic (partition 0) pour analyse.
+Formatage Avancé : Pretty-print natif pour les messages au format JSON et XML.
+Copie Rapide : Bouton de copie en un clic pour chaque message prévisualisé.
+3. Query Assistant (Intelligence Intégrée)
+L'assistant transforme la prévisualisation de message en un outil de conception de requête :
+
+Sélection Interactive : Cliquez sur une clé JSON ou un tag XML pour l'ajouter automatiquement à la clause SELECT.
+Filtres Dynamiques : Cliquez sur une valeur pour l'ajouter à la clause WHERE.
+Opérateurs de Comparaison : Choisissez dynamiquement l'opérateur (=, !=, LIKE, >, <) pour vos filtres.
+Support des Chemins Imbriqués : Génération automatique de JSON_VALUE pour les structures JSON complexes.
+Extraction XML : Utilisation de la fonction personnalisée XmlExtract (basée sur XPath) pour interroger les payloads XML.
+Enregistrement en un clic : Bouton "Register Table" pour exécuter instantanément le DDL généré.
+4. Éditeur SQL Professionnel
+Moteur CodeMirror : Coloration syntaxique SQL et thème Cyberpunk.
+Auto-complétion : Suggestion intelligente des noms de topics et tables enregistrées (Ctrl+Space).
+Historique des Requêtes : Accès rapide aux 20 dernières requêtes exécutées via une sidebar persistante (sessionStorage).
+Gestion des Ressources : Annulation automatique des jobs Flink en cas de timeout ou d'erreur, évitant toute fuite de ressources dans le minicluster.
+5. Sécurité & Robustesse
+Protection XXE : Désactivation stricte des entités externes DTD pour tous les parsers XML (Schema Inferrer, UDF, Formatter).
+Validation SQL : Whitelist de commandes autorisées (SELECT, EXPLAIN, CREATE TABLE) pour empêcher les opérations DML destructrices.
+Gestion des Connexions : Lifecycle propre de l'AdminClient Kafka et des consommateurs.
+Stack Technique
+Backend : Spring Boot 3.5.x, Java 21 (Records).
+Streaming : Apache Flink 2.2.x (Embedded LocalEnvironment).
+Parsing : Jackson (JSON), JAXB/StAX (XML).
+Frontend : Thymeleaf, CodeMirror 5.65, Bootstrap 5 (Theme Dark).
+Cache : Caffeine (Métadonnées Kafka).
+Démarrage Rapide
+Prérequis
+Docker & Docker Compose
+JDK 21+
+Installation
+Lancer Kafka :
+docker-compose up -d
+Lancer l'application :
+./mvnw spring-boot:run
+Accéder à l'interface : http://localhost:8080
+Exemple de Requête XML
+SELECT invoice_id, XmlExtract(raw_value, '/Invoice/Amount') as total
+FROM my_xml_topic
+WHERE total > 1000;
+© 2026 afka SQL Explorer - Compagnons du dev. Terminal UI
