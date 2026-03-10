@@ -6,7 +6,26 @@
 <body th:fragment="content">
     <div class="row">
         <div class="col-md-9">
-            <h1 class="h3 text-teal fw-bold mb-4">Flink SQL Editor</h1>
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h1 class="h3 text-teal fw-bold mb-0">Flink SQL Editor</h1>
+                <div class="d-flex align-items-center">
+                    <button class="btn btn-outline-teal btn-sm me-2" type="button" data-bs-toggle="modal" data-bs-target="#windowAssistantModal">
+                        Window Assistant
+                    </button>
+                    <div class="dropdown">
+                        <button class="btn btn-outline-teal btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                            SQL Templates
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-dark border-secondary">
+                            <li><a class="dropdown-item small" href="#" onclick="insertTemplate('SELECT * FROM {table} LIMIT 10')">Basic Select</a></li>
+                            <li><a class="dropdown-item small" href="#" onclick="insertTemplate('SELECT window_start, window_end, COUNT(*) \nFROM TABLE(TUMBLE(TABLE {table}, DESCRIPTOR(proc_time), INTERVAL \'1\' MINUTE)) \nGROUP BY window_start, window_end')">Tumbling Window</a></li>
+                            <li><a class="dropdown-item small" href="#" onclick="insertTemplate('SELECT * FROM {table} \nWHERE proc_time > PROCTIME() - INTERVAL \'5\' MINUTE')">Recent Data (5m)</a></li>
+                            <li><hr class="dropdown-divider border-secondary"></li>
+                            <li><a class="dropdown-item small" href="#" onclick="insertTemplate('SELECT ML_PREDICT(\'my-model\', {col1}, {col2}) \nFROM {table}')">AI Prediction (Flink 2.1+)</a></li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
 
             <div class="card bg-dark border-secondary mb-4 shadow-sm">
                 <div class="card-header bg-dark border-secondary">
@@ -26,18 +45,18 @@
             <div id="queryStatus" class="alert d-none mb-4"></div>
 
             <div class="card bg-dark border-secondary shadow-sm" id="resultsCard" style="display: none;">
-                <div class="card-header bg-dark border-secondary d-flex justify-content-between align-items-center">
-                    <span class="text-teal small fw-bold">RESULTS</span>
+                <div class="card-header bg-dark border-secondary d-flex justify-content-between align-items-center sticky-top">
+                    <span class="text-teal small fw-bold"><i class="fas fa-list me-2"></i> RESULTS</span>
                     <span class="text-muted small" id="queryStats"></span>
                     <div class="btn-group">
-                        <button class="btn btn-outline-teal btn-sm" id="exportCSV">CSV</button>
-                        <button class="btn btn-outline-teal btn-sm" id="exportJSON">JSON</button>
+                        <button class="btn btn-outline-teal btn-sm" id="exportCSV" title="Export to CSV"><i class="fas fa-file-csv"></i></button>
+                        <button class="btn btn-outline-teal btn-sm" id="exportJSON" title="Export to JSON"><i class="fas fa-file-code"></i></button>
                     </div>
                 </div>
                 <div class="card-body p-0 overflow-auto" style="max-height: 500px;">
                     <table class="table table-dark table-hover table-sm mb-0" id="resultsTable">
-                        <thead>
-                            <tr id="resultsHeader"></tr>
+                        <thead class="sticky-top bg-dark">
+                            <tr id="resultsHeader" class="border-bottom border-secondary"></tr>
                         </thead>
                         <tbody id="resultsBody"></tbody>
                     </table>
@@ -45,12 +64,107 @@
             </div>
         </div>
         <div class="col-md-3">
-            <h5 class="text-teal fw-bold mb-4">Query History</h5>
+            <h5 class="text-teal fw-bold mb-3">Schema Browser <i class="fas fa-info-circle x-small text-muted" title="Click on table/column names to insert them into the editor"></i></h5>
+            <div class="card bg-dark border-secondary shadow-sm mb-4" style="max-height: 400px; overflow-y: auto;">
+                <div class="card-body p-0">
+                    <div class="accordion accordion-flush" id="schemaAccordion">
+                        <div class="accordion-item bg-dark border-secondary">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button collapsed bg-dark text-teal small py-2" type="button" data-bs-toggle="collapse" data-bs-target="#collapseTables">
+                                    <i class="fas fa-table me-2"></i> Flink Tables
+                                </button>
+                            </h2>
+                            <div id="collapseTables" class="accordion-collapse collapse" data-bs-parent="#schemaAccordion">
+                                <div class="accordion-body p-0">
+                                    <ul class="list-group list-group-flush">
+                                        <li th:each="table : ${tables}" class="list-group-item bg-dark text-light border-secondary py-1 px-3 border-0">
+                                            <div class="d-flex justify-content-between align-items-center">
+                                                <span class="small cursor-pointer hover-teal-text" th:text="${table}" th:onclick="'insertAtCursor(\'' + ${table} + '\')'"></span>
+                                                <button class="btn btn-link btn-sm p-0 text-muted" th:onclick="'toggleSchema(this, \'' + ${table} + '\')'">
+                                                    <i class="fas fa-chevron-right x-small"></i>
+                                                </button>
+                                            </div>
+                                            <div class="schema-details d-none mt-1 ms-2 border-start border-secondary ps-2"></div>
+                                        </li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="accordion-item bg-dark border-secondary">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button collapsed bg-dark text-teal small py-2" type="button" data-bs-toggle="collapse" data-bs-target="#collapseTopics">
+                                    <i class="fab fa-buffer me-2"></i> Kafka Topics
+                                </button>
+                            </h2>
+                            <div id="collapseTopics" class="accordion-collapse collapse" data-bs-parent="#schemaAccordion">
+                                <div class="accordion-body p-0">
+                                    <ul class="list-group list-group-flush">
+                                        <li th:each="topic : ${topics}" class="list-group-item bg-dark text-light border-secondary py-1 px-3 border-0">
+                                            <span class="small cursor-pointer hover-teal-text" th:text="${topic}" th:onclick="'insertAtCursor(\'' + ${topic} + '\')'"></span>
+                                        </li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <h5 class="text-teal fw-bold mb-3">Query History</h5>
             <div class="card bg-dark border-secondary shadow-sm">
                 <div class="card-body p-0">
                     <ul class="list-group list-group-flush" id="historyList">
                         <!-- History items will be injected here -->
                     </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Window Assistant Modal -->
+    <div class="modal fade" id="windowAssistantModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content bg-dark border-teal">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title text-teal">Window Assistant</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label text-teal small">Table <i class="fas fa-question-circle x-small text-muted" title="Select the table to apply windowing on"></i></label>
+                        <select id="winTable" class="form-control form-control-sm bg-dark text-light border-secondary">
+                            <option th:each="table : ${tables}" th:value="${table}" th:text="${table}"></option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label text-teal small">Window Type <i class="fas fa-question-circle x-small text-muted" title="Tumble: non-overlapping. Hop: overlapping windows."></i></label>
+                        <select id="winType" class="form-control form-control-sm bg-dark text-light border-secondary" onchange="toggleHopFields()">
+                            <option value="TUMBLE">Tumble (Fixed Interval)</option>
+                            <option value="HOP">Hop (Sliding Interval)</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label text-teal small">Window Size</label>
+                        <div class="input-group input-group-sm">
+                            <input type="number" id="winSize" class="form-control" value="5">
+                            <select id="winUnit" class="form-control">
+                                <option value="MINUTE">Minute(s)</option>
+                                <option value="HOUR">Hour(s)</option>
+                                <option value="SECOND">Second(s)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div id="hopFields" class="mb-3 d-none">
+                        <label class="form-label text-teal small">Slide Interval</label>
+                        <div class="input-group input-group-sm">
+                            <input type="number" id="winSlide" class="form-control" value="1">
+                            <span class="input-group-text bg-dark border-secondary text-teal small">same unit</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer border-secondary">
+                    <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-teal btn-sm" onclick="applyWindowAssistant()" data-bs-dismiss="modal">Generate SQL</button>
                 </div>
             </div>
         </div>
