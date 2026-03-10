@@ -5,6 +5,17 @@ Kafka SQL Explorer is a modern web application designed for Data Engineers and A
 
 ---
 
+## Why Kafka SQL Explorer?
+
+Writing Flink SQL for Kafka topics can be tedious and error-prone, especially when dealing with nested JSON or complex XML payloads. This application innovates by bridging the gap between raw data and SQL queries:
+
+- **From Preview to Query**: No more manual typing of long paths. Click on any field in a message preview to instantly add it to your `SELECT` or `WHERE` clause.
+- **Automated Schema Inference**: It automatically detects JSON structures and generates the necessary `JSON_VALUE` or `XmlExtract` calls for you.
+- **Zero-Configuration DDL**: Instantly register Kafka topics as Flink tables with pre-configured schemas, serialization formats, and watermark settings.
+- **Tailored for Beginners**: Complex operations like windowing (TUMBLE/HOP) and stateful aggregations are simplified through a visual assistant.
+
+---
+
 ## Detailed Features
 
 ### 1. Dashboard & Navigation
