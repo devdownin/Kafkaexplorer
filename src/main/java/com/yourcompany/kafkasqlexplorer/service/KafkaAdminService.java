@@ -35,7 +35,7 @@ public class KafkaAdminService {
             this.adminClient.close();
         }
         Properties props = new Properties();
-        props.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaConfig.getBootstrapServers());
+        props.putAll(kafkaConfig.getKafkaProperties());
         this.adminClient = AdminClient.create(props);
     }
 
@@ -55,7 +55,7 @@ public class KafkaAdminService {
         if (topicNames.isEmpty()) return sizes;
 
         Properties props = new Properties();
-        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaConfig.getBootstrapServers());
+        props.putAll(kafkaConfig.getKafkaProperties());
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         props.put(ConsumerConfig.GROUP_ID_CONFIG, "kafka-sql-explorer-bulk-metadata-" + UUID.randomUUID());
@@ -110,7 +110,7 @@ public class KafkaAdminService {
         Map<Integer, Long> maxOffsets = new HashMap<>();
 
         Properties props = new Properties();
-        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaConfig.getBootstrapServers());
+        props.putAll(kafkaConfig.getKafkaProperties());
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         props.put(ConsumerConfig.GROUP_ID_CONFIG, "kafka-sql-explorer-metadata-" + UUID.randomUUID());
@@ -150,7 +150,7 @@ public class KafkaAdminService {
     public List<String> getSampleMessages(String topicName, int maxMessages) {
         List<String> samples = new ArrayList<>();
         Properties props = new Properties();
-        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaConfig.getBootstrapServers());
+        props.putAll(kafkaConfig.getKafkaProperties());
         props.put(ConsumerConfig.GROUP_ID_CONFIG, "sample-messages-" + UUID.randomUUID());
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
