@@ -8,6 +8,15 @@
         <div class="col-md-12">
             <h1 class="h3 text-teal fw-bold mb-4"><i class="fas fa-question-circle me-2"></i> Flink SQL Cheat Sheet</h1>
 
+            <div class="alert alert-info bg-dark border-teal text-light mb-4">
+                <h6 class="text-teal"><i class="fas fa-info-circle"></i> Comment ça marche ?</h6>
+                <p class="small mb-0">
+                    Contrairement au SQL classique, les requêtes sur Kafka sont <strong>continues</strong>.
+                    L'application échantillonne les résultats et arrête automatiquement le job après 10 secondes ou 50 lignes.
+                    Vous pouvez arrêter manuellement une requête en cours avec le bouton <span class="badge bg-danger">Stop</span>.
+                </p>
+            </div>
+
             <p class="text-muted mb-4">Refer to these common streaming SQL patterns to get started quickly with Kafka and Flink.</p>
 
             <div class="card bg-dark border-secondary shadow-sm">

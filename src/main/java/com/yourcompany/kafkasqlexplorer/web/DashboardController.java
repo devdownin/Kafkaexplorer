@@ -28,6 +28,7 @@ public class DashboardController {
             model.addAttribute("topics", topics);
             model.addAttribute("topicSizes", topicSizes);
             model.addAttribute("tables", flinkSqlService.listTables());
+            model.addAttribute("jobs", flinkSqlService.getActiveJobs());
         } catch (Exception e) {
             model.addAttribute("topics", java.util.Collections.emptyList());
             model.addAttribute("topicSizes", java.util.Collections.emptyMap());

@@ -54,4 +54,10 @@ public class QueryController {
     public Map<String, String> getSchema(@PathVariable String tableName) {
         return flinkSqlService.getTableSchema(tableName);
     }
+
+    @PostMapping("/query/cancel/{queryId}")
+    @ResponseBody
+    public void cancel(@PathVariable String queryId) {
+        flinkSqlService.cancelQuery(queryId);
+    }
 }

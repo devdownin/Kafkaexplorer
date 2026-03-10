@@ -42,7 +42,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Query Execution
     const runBtn = document.getElementById('runQuery');
+    const stopBtn = document.getElementById('stopQuery');
     const clearBtn = document.getElementById('clearEditor');
+
+    let currentQueryId = null;
 
     if (clearBtn) {
         clearBtn.addEventListener('click', () => {
@@ -61,8 +64,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const statusDiv = document.getElementById('queryStatus');
             const resultsCard = document.getElementById('resultsCard');
 
-            runBtn.disabled = true;
-            runBtn.textContent = 'Running...';
+            currentQueryId = Math.random().toString(36).substring(7);
+            runBtn.classList.add('d-none');
+            stopBtn.classList.remove('d-none');
             statusDiv.classList.add('d-none');
             resultsCard.style.display = 'none';
 
@@ -86,12 +90,30 @@ document.addEventListener('DOMContentLoaded', () => {
                         `Found ${data.rows.length} rows in ${data.durationMs}ms`;
                 }
             } catch (err) {
-                statusDiv.textContent = 'Network Error: ' + err.message;
+                if (err.name === 'AbortError') {
+                    statusDiv.textContent = 'Query cancelled by user.';
+                } else {
+                    statusDiv.textContent = 'Network Error: ' + err.message;
+                }
                 statusDiv.classList.remove('d-none');
                 statusDiv.classList.add('alert-danger');
             } finally {
-                runBtn.disabled = false;
-                runBtn.textContent = 'Execute';
+                runBtn.classList.remove('d-none');
+                stopBtn.classList.add('d-none');
+                currentQueryId = null;
+            }
+        });
+    }
+
+    if (stopBtn) {
+        stopBtn.addEventListener('click', async () => {
+            if (currentQueryId) {
+                try {
+                    await fetch(`/query/cancel/${currentQueryId}`, { method: 'POST' });
+                    // The main fetch will probably timeout or error out
+                } catch (e) {
+                    console.error('Failed to cancel query', e);
+                }
             }
         });
     }
