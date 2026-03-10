@@ -50,6 +50,54 @@ public class KafkaAdminService {
         return new ArrayList<>(adminClient.listTopics(new ListTopicsOptions().listInternal(false)).names().get());
     }
 
+    public Map<String, Long> getTopicsSize(List<String> topicNames) {
+        Map<String, Long> sizes = new HashMap<>();
+        if (topicNames.isEmpty()) return sizes;
+
+        Properties props = new Properties();
+        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaConfig.getBootstrapServers());
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        props.put(ConsumerConfig.GROUP_ID_CONFIG, "kafka-sql-explorer-bulk-metadata-" + UUID.randomUUID());
+
+        try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props)) {
+            List<TopicPartition> allPartitions = new ArrayList<>();
+            Map<String, List<TopicPartition>> topicToPartitions = new HashMap<>();
+
+            try {
+                Map<String, TopicDescription> descriptions = adminClient.describeTopics(topicNames).allTopicNames().get();
+                for (String name : topicNames) {
+                    TopicDescription desc = descriptions.get(name);
+                    if (desc != null) {
+                        List<TopicPartition> tps = desc.partitions().stream()
+                                .map(p -> new TopicPartition(name, p.partition()))
+                                .toList();
+                        allPartitions.addAll(tps);
+                        topicToPartitions.put(name, tps);
+                    }
+                }
+
+                Map<TopicPartition, Long> beginningOffsets = consumer.beginningOffsets(allPartitions);
+                Map<TopicPartition, Long> endOffsets = consumer.endOffsets(allPartitions);
+
+                for (String name : topicNames) {
+                    List<TopicPartition> tps = topicToPartitions.get(name);
+                    if (tps != null) {
+                        long size = tps.stream()
+                                .mapToLong(tp -> endOffsets.get(tp) - beginningOffsets.get(tp))
+                                .sum();
+                        sizes.put(name, size);
+                    } else {
+                        sizes.put(name, 0L);
+                    }
+                }
+            } catch (Exception e) {
+                // Return empty/zero sizes if failed
+            }
+        }
+        return sizes;
+    }
+
     public TopicDescriptor getTopicDescriptor(String topicName) throws ExecutionException, InterruptedException {
         Map<String, TopicDescription> descriptions = adminClient.describeTopics(Collections.singletonList(topicName)).allTopicNames().get();
         TopicDescription desc = descriptions.get(topicName);

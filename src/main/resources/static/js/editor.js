@@ -42,6 +42,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Query Execution
     const runBtn = document.getElementById('runQuery');
+    const clearBtn = document.getElementById('clearEditor');
+
+    if (clearBtn) {
+        clearBtn.addEventListener('click', () => {
+            if (confirm('Clear editor?')) {
+                editor.setValue('');
+            }
+        });
+    }
+
     if (runBtn) {
         runBtn.addEventListener('click', async () => {
             const sql = editor.getValue();
@@ -133,9 +143,105 @@ document.addEventListener('DOMContentLoaded', () => {
     // Load history
     renderHistory();
 
+    // Global editor access for helper functions
+    window.sqlEditor = editor;
+
+    window.insertAtCursor = function(text) {
+        if (!window.sqlEditor) return;
+        const doc = window.sqlEditor.getDoc();
+        const cursor = doc.getCursor();
+        doc.replaceRange(text, cursor);
+        window.sqlEditor.focus();
+    };
+
+    window.insertTemplate = function(template) {
+        if (!window.sqlEditor) return;
+
+        // Try to replace {table} with the first available table name
+        const tableItem = document.querySelector('#collapseTables .list-group-item span');
+        const tableName = tableItem ? tableItem.textContent : 'my_table';
+        template = template.replace(/{table}/g, tableName);
+
+        // Try to replace {col1}, {col2} with columns if available
+        const detailsDiv = document.querySelector('#collapseTables .schema-details:not(.d-none)');
+        if (detailsDiv) {
+            const cols = Array.from(detailsDiv.querySelectorAll('.cursor-pointer span:first-child')).map(s => s.textContent);
+            if (cols.length > 0) {
+                template = template.replace(/{col1}/g, cols[0]);
+                if (cols.length > 1) template = template.replace(/{col2}/g, cols[1]);
+            }
+        }
+
+        window.sqlEditor.setValue(template);
+        window.sqlEditor.focus();
+    };
+
+    window.toggleHopFields = function() {
+        const type = document.getElementById('winType').value;
+        const hopFields = document.getElementById('hopFields');
+        if (type === 'HOP') {
+            hopFields.classList.remove('d-none');
+        } else {
+            hopFields.classList.add('d-none');
+        }
+    };
+
+    window.applyWindowAssistant = function() {
+        const table = document.getElementById('winTable').value;
+        const type = document.getElementById('winType').value;
+        const size = document.getElementById('winSize').value;
+        const unit = document.getElementById('winUnit').value;
+        const slide = document.getElementById('winSlide').value;
+
+        let sql = '';
+        if (type === 'TUMBLE') {
+            sql = `SELECT window_start, window_end, COUNT(*)\nFROM TABLE(\n  TUMBLE(TABLE ${table}, DESCRIPTOR(proc_time), INTERVAL '${size}' ${unit})\n)\nGROUP BY window_start, window_end;`;
+        } else if (type === 'HOP') {
+            sql = `SELECT window_start, window_end, COUNT(*)\nFROM TABLE(\n  HOP(TABLE ${table}, DESCRIPTOR(proc_time), INTERVAL '${slide}' ${unit}, INTERVAL '${size}' ${unit})\n)\nGROUP BY window_start, window_end;`;
+        }
+
+        if (window.sqlEditor) {
+            window.sqlEditor.setValue(sql);
+            window.sqlEditor.focus();
+        }
+    };
+
+    window.toggleSchema = async function(btn, tableName) {
+        const detailsDiv = btn.closest('li').querySelector('.schema-details');
+        const icon = btn.querySelector('i');
+        if (detailsDiv.classList.contains('d-none')) {
+            icon.classList.replace('fa-chevron-right', 'fa-chevron-down');
+            detailsDiv.classList.remove('d-none');
+            if (detailsDiv.innerHTML === '') {
+                detailsDiv.innerHTML = '<div class="spinner-border spinner-border-sm text-teal" role="status"></div>';
+                try {
+                    const response = await fetch(`/api/schema/${tableName}`);
+                    const schema = await response.json();
+                    detailsDiv.innerHTML = '';
+                    Object.entries(schema).forEach(([col, type]) => {
+                        const div = document.createElement('div');
+                        div.className = 'small text-muted d-flex justify-content-between cursor-pointer hover-teal';
+                        div.innerHTML = `<span>${col}</span><span class="x-small opacity-50">${type}</span>`;
+                        div.onclick = (e) => {
+                            e.stopPropagation();
+                            insertAtCursor(col);
+                        };
+                        detailsDiv.appendChild(div);
+                    });
+                } catch (e) {
+                    detailsDiv.innerHTML = '<small class="text-danger">Error loading schema</small>';
+                }
+            }
+        } else {
+            icon.classList.replace('fa-chevron-down', 'fa-chevron-right');
+            detailsDiv.classList.add('d-none');
+        }
+    };
+
     // Assistant Selection State
     let assistantColumns = new Set();
     let assistantFilters = new Map();
+    let assistantAggregations = new Map(); // path -> agg
     let assistantFormat = 'JSON';
 
     // Query Assistant Toggle
@@ -291,9 +397,29 @@ document.addEventListener('DOMContentLoaded', () => {
         if (assistantColumns.has(columnPath)) {
             assistantColumns.delete(columnPath);
             el.classList.remove('fw-bold', 'border-bottom');
+            const aggSelect = el.parentElement.querySelector('.agg-select');
+            if (aggSelect) aggSelect.remove();
+            assistantAggregations.delete(columnPath);
         } else {
             assistantColumns.add(columnPath);
             el.classList.add('fw-bold', 'border-bottom');
+
+            // Add aggregation selector for beginner users
+            const aggSelect = document.createElement('select');
+            aggSelect.className = 'agg-select bg-dark text-teal border-0 small ms-1 rounded';
+            ['NONE', 'COUNT', 'SUM', 'AVG', 'MIN', 'MAX'].forEach(agg => {
+                const opt = document.createElement('option');
+                opt.value = agg;
+                opt.textContent = agg;
+                aggSelect.appendChild(opt);
+            });
+            aggSelect.onclick = (e) => e.stopPropagation();
+            aggSelect.onchange = (e) => {
+                if (e.target.value === 'NONE') assistantAggregations.delete(columnPath);
+                else assistantAggregations.set(columnPath, e.target.value);
+                updateAssistantQuery(topicName);
+            };
+            el.parentElement.insertBefore(aggSelect, el.nextSibling);
         }
         updateAssistantQuery(topicName);
     }
@@ -334,20 +460,30 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function formatAssistantPath(path) {
+        let formatted = path;
         if (assistantFormat === 'XML') {
-            return `XmlExtract(raw_value, '/${path}')`;
+            formatted = `XmlExtract(raw_value, '/${path}')`;
+        } else if (path.includes('.')) {
+            formatted = `JSON_VALUE(raw_value, '$.${path}')`;
         }
-        if (path.includes('.')) {
-            // Flink JSON_VALUE or dot notation for nested
-            return `JSON_VALUE(raw_value, '$.${path}')`;
+
+        if (assistantAggregations.has(path)) {
+            return `${assistantAggregations.get(path)}(${formatted})`;
         }
-        return path;
+        return formatted;
     }
 
     function updateAssistantQuery(topicName) {
         let select = assistantColumns.size > 0
             ? Array.from(assistantColumns).map(formatAssistantPath).join(', ')
             : '*';
+
+        const hasAggs = assistantAggregations.size > 0;
+        if (hasAggs && assistantColumns.size > assistantAggregations.size) {
+            // Mixed agg and non-agg requires GROUP BY in SQL, which might be too complex for a simple assistant
+            // but we can try to handle it by grouping by all non-agg columns
+        }
+
         let sql = `SELECT ${select} FROM ${topicName}`;
 
         if (assistantFilters.size > 0) {
@@ -359,6 +495,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 })
                 .join(' AND ');
             sql += ` WHERE ${where}`;
+        }
+
+        if (hasAggs) {
+            const nonAggs = Array.from(assistantColumns).filter(path => !assistantAggregations.has(path));
+            if (nonAggs.length > 0) {
+                sql += ` GROUP BY ${nonAggs.map(formatAssistantPath).join(', ')}`;
+            }
         }
 
         document.getElementById('generatedSqlPreview').textContent = sql + ';';
@@ -423,6 +566,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (prefixInput) prefixInput.addEventListener('input', filterTopics);
         if (fullNameInput) fullNameInput.addEventListener('input', filterTopics);
+    }
+
+    const hideEmptySwitch = document.getElementById('hideEmptyTopics');
+    if (hideEmptySwitch) {
+        hideEmptySwitch.addEventListener('change', () => {
+            const hideEmpty = hideEmptySwitch.checked;
+            const rows = document.querySelectorAll('.topic-row');
+            rows.forEach(row => {
+                const size = parseInt(row.getAttribute('data-size') || '0');
+                if (hideEmpty && size === 0) {
+                    row.classList.add('d-none');
+                } else {
+                    row.classList.remove('d-none');
+                }
+            });
+        });
     }
 });
 

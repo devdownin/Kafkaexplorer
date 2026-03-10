@@ -15,9 +15,13 @@
         <div class="col-md-3">
             <input type="text" id="fullNameFilter" class="form-control bg-dark border-secondary text-light" placeholder="Full name match...">
         </div>
-        <div class="col-md-4">
+        <div class="col-md-4 d-flex align-items-center">
+            <div class="form-check form-switch me-3">
+                <input class="form-check-input bg-dark border-secondary" type="checkbox" id="hideEmptyTopics">
+                <label class="form-check-label small text-muted text-nowrap" for="hideEmptyTopics">Hide Empty</label>
+            </div>
             <input type="text" id="topicSearch" class="form-control bg-dark border-secondary text-light" placeholder="Search topics...">
-        </div>pm
+        </div>
     </div>
 
     <div th:if="${error}" class="alert alert-danger" th:text="${error}"></div>
@@ -34,9 +38,13 @@
                     </tr>
                 </thead>
                 <tbody id="topicList">
-                    <tr th:each="topic : ${topics}" class="topic-row">
-                        <td class="py-3 px-4 fw-bold text-light" th:text="${topic}">topic-name</td>
+                    <tr th:each="topic : ${topics}" class="topic-row" th:data-size="${topicSizes[topic]}">
+                        <td class="py-3 px-4 fw-bold text-light">
+                            <span th:text="${topic}">topic-name</span>
+                            <small th:if="${topicSizes[topic] == 0}" class="badge bg-secondary ms-2 opacity-50">EMPTY</small>
+                        </td>
                         <td class="py-3 text-end">
+                            <span class="text-muted small me-2" th:text="${topicSizes[topic]} + ' msgs'"></span>
                             <span class="badge rounded-pill bg-outline-teal border border-teal text-teal small">AUTO</span>
                         </td>
                         <td class="py-3 text-end px-4">
