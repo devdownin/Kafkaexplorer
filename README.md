@@ -5,7 +5,7 @@ Kafka SQL Explorer est une application web moderne conçue pour les Data Enginee
 
 ---
 
-## 🚀 Fonctionnalités Détaillées
+## Fonctionnalités Détaillées
 
 ### 1. Dashboard & Navigation
 - **Liste des Topics** : Vue d'ensemble de tous les topics disponibles sur le cluster Kafka.
@@ -42,7 +42,7 @@ L'assistant transforme la prévisualisation de message en un outil de conception
 
 ---
 
-## 🛠️ Stack Technique
+## Stack Technique
 - **Backend** : Spring Boot 3.5.x, Java 21 (Records).
 - **Streaming** : Apache Flink 2.2.x (Embedded LocalEnvironment).
 - **Parsing** : Jackson (JSON), JAXB/StAX (XML).
@@ -51,7 +51,7 @@ L'assistant transforme la prévisualisation de message en un outil de conception
 
 ---
 
-## 🚦 Démarrage Rapide
+## Démarrage Rapide
 
 ### Prérequis
 - Docker & Docker Compose
