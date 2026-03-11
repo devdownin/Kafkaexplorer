@@ -52,7 +52,14 @@ The assistant transforms the message preview into a query design tool:
 - **Active Job Tracking**: Real-time visualization of running `INSERT INTO` queries as nodes connecting source and target tables.
 - **Node Inspector**: Click on any node to view detailed information, such as the table schema or topic type.
 
-### 6. Security & Robustness
+### 6. Advanced Topic Comparison
+- **Side-by-Side Analysis**: Compare messages from two Kafka topics in independent columns.
+- **Shared SQL Template**: Apply identical logic to both topics using a shared Flink SQL editor with `{topic}` placeholder support.
+- **Time Synchronization**: Linked time range filters for temporal correlation between datasets.
+- **Intelligent Diffing**: Specify an ID column to highlight value discrepancies and identify missing records across topics.
+- **Live Metrics**: Real-time display of message counts and throughput (msg/s) for the selected topics and time ranges.
+
+### 7. Security & Robustness
 - **XXE Protection**: Strict disabling of external DTD entities for all XML parsers (Schema Inferrer, UDF, Formatter).
 - **SQL Validation**: Whitelist of authorized commands (`SELECT`, `EXPLAIN`, `CREATE TABLE`) to prevent destructive DML operations.
 - **Connection Management**: Clean lifecycle of the Kafka AdminClient and consumers.
