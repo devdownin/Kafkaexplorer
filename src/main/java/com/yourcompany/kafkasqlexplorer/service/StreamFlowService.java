@@ -20,6 +20,7 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Service
@@ -49,17 +50,32 @@ public class StreamFlowService {
     }
 
     public StreamFlowResponse getStreamFlow(StreamFlowRequest request) {
-        List<String> topics;
+        List<String> topicsToScan;
         try {
-            topics = kafkaAdminService.listTopics();
+            if (request.targetTopics() != null && !request.targetTopics().isEmpty()) {
+                topicsToScan = request.targetTopics();
+            } else {
+                topicsToScan = kafkaAdminService.listTopics();
+            }
         } catch (Exception e) {
             log.error("Failed to list topics for stream flow", e);
             return new StreamFlowResponse(Collections.emptyList(), Collections.emptyList());
         }
 
+        Pattern pattern = null;
+        if (request.useRegex() && request.messageKey() != null) {
+            try {
+                pattern = Pattern.compile(request.messageKey());
+            } catch (Exception e) {
+                log.warn("Invalid regex provided: {}", request.messageKey());
+            }
+        }
+
+        final Pattern finalPattern = pattern;
+
         // Parallel scanning with limited thread pool
-        List<CompletableFuture<List<Occurrence>>> futures = topics.stream()
-                .map(topic -> CompletableFuture.supplyAsync(() -> scanTopic(topic, request), executorService))
+        List<CompletableFuture<List<Occurrence>>> futures = topicsToScan.stream()
+                .map(topic -> CompletableFuture.supplyAsync(() -> scanTopic(topic, request, finalPattern), executorService))
                 .toList();
 
         List<Occurrence> allOccurrences = futures.stream()
@@ -99,7 +115,7 @@ public class StreamFlowService {
         return new StreamFlowResponse(nodes, edges);
     }
 
-    private List<Occurrence> scanTopic(String topic, StreamFlowRequest request) {
+    private List<Occurrence> scanTopic(String topic, StreamFlowRequest request, Pattern pattern) {
         List<Occurrence> topicOccurrences = new ArrayList<>();
         List<ConsumerRecord<String, String>> records;
 
@@ -113,7 +129,7 @@ public class StreamFlowService {
             }
 
             for (ConsumerRecord<String, String> record : records) {
-                if (matchesKey(record, request)) {
+                if (matches(record, request, pattern)) {
                     topicOccurrences.add(new Occurrence(topic, record.timestamp()));
                 }
             }
@@ -123,46 +139,52 @@ public class StreamFlowService {
         return topicOccurrences;
     }
 
-    private boolean matchesKey(ConsumerRecord<String, String> record, StreamFlowRequest request) {
-        String key = request.messageKey();
+    private boolean matches(ConsumerRecord<String, String> record, StreamFlowRequest request, Pattern pattern) {
         String path = request.searchPath();
-
-        if (key == null || key.isBlank()) return false;
-
         String value = record.value();
 
         if (path != null && !path.isBlank() && value != null) {
             String trimmed = value.trim();
             if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-                return matchJsonPath(value, path, key);
+                return matchJsonPath(value, path, request.messageKey(), pattern);
             } else if (trimmed.startsWith("<")) {
-                return matchXPath(value, path, key);
+                return matchXPath(value, path, request.messageKey(), pattern);
             }
         }
 
         // Default global search
-        if (record.key() != null && record.key().contains(key)) return true;
-        if (value != null && value.contains(key)) return true;
+        if (record.key() != null && checkMatch(record.key(), request.messageKey(), pattern)) return true;
+        if (value != null && checkMatch(value, request.messageKey(), pattern)) return true;
 
         return false;
     }
 
-    private boolean matchJsonPath(String json, String path, String expectedValue) {
+    private boolean checkMatch(String content, String expected, Pattern pattern) {
+        if (pattern != null) {
+            return pattern.matcher(content).find();
+        }
+        return content.contains(expected);
+    }
+
+    private boolean matchJsonPath(String json, String path, String expectedValue, Pattern pattern) {
         try {
             Object result = JsonPath.read(json, path);
-            return result != null && String.valueOf(result).contains(expectedValue);
+            if (result == null) return false;
+            String resultStr = String.valueOf(result);
+            return checkMatch(resultStr, expectedValue, pattern);
         } catch (Exception e) {
             return false;
         }
     }
 
-    private boolean matchXPath(String xml, String path, String expectedValue) {
+    private boolean matchXPath(String xml, String path, String expectedValue, Pattern pattern) {
         try {
             DocumentBuilder builder = xmlFactory.newDocumentBuilder();
             Document doc = builder.parse(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)));
             XPath xPath = xPathFactory.newXPath();
             String result = (String) xPath.compile(path).evaluate(doc, XPathConstants.STRING);
-            return result != null && result.contains(expectedValue);
+            if (result == null) return false;
+            return checkMatch(result, expectedValue, pattern);
         } catch (Exception e) {
             return false;
         }

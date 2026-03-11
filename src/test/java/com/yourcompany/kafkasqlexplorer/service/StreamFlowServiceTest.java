@@ -36,7 +36,7 @@ public class StreamFlowServiceTest {
         when(kafkaAdminService.getRecentRecords(eq("topic2"), anyInt())).thenReturn(Collections.singletonList(r2));
         when(kafkaAdminService.getRecentRecords(eq("topic3"), anyInt())).thenReturn(Collections.singletonList(r3));
 
-        StreamFlowRequest request = new StreamFlowRequest("key1", 10, null, null);
+        StreamFlowRequest request = new StreamFlowRequest("key1", 10, null, null, false, null);
         StreamFlowResponse response = streamFlowService.getStreamFlow(request);
 
         assertEquals(2, response.nodes().size());
@@ -60,18 +60,41 @@ public class StreamFlowServiceTest {
         when(kafkaAdminService.getRecentRecords(eq("orders"), anyInt())).thenReturn(Collections.singletonList(record));
 
         // Matches correct value
-        StreamFlowRequest request1 = new StreamFlowRequest("ORD-123", 10, "$.orderId", null);
+        StreamFlowRequest request1 = new StreamFlowRequest("ORD-123", 10, "$.orderId", null, false, null);
         StreamFlowResponse response1 = streamFlowService.getStreamFlow(request1);
         assertEquals(1, response1.nodes().size());
 
         // Does not match incorrect value at path
-        StreamFlowRequest request2 = new StreamFlowRequest("ORD-999", 10, "$.orderId", null);
+        StreamFlowRequest request2 = new StreamFlowRequest("ORD-999", 10, "$.orderId", null, false, null);
         StreamFlowResponse response2 = streamFlowService.getStreamFlow(request2);
         assertEquals(0, response2.nodes().size());
 
         // Does not match incorrect path
-        StreamFlowRequest request3 = new StreamFlowRequest("ORD-123", 10, "$.wrongPath", null);
+        StreamFlowRequest request3 = new StreamFlowRequest("ORD-123", 10, "$.wrongPath", null, false, null);
         StreamFlowResponse response3 = streamFlowService.getStreamFlow(request3);
         assertEquals(0, response3.nodes().size());
+    }
+
+    @Test
+    public void testGetStreamFlowWithRegex() throws Exception {
+        KafkaAdminService kafkaAdminService = Mockito.mock(KafkaAdminService.class);
+        StreamFlowService streamFlowService = new StreamFlowService(kafkaAdminService);
+
+        when(kafkaAdminService.listTopics()).thenReturn(Collections.singletonList("logs"));
+
+        String logValue = "ERROR: user-456 failed to login";
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("logs", 0, 0, 100L, org.apache.kafka.common.record.TimestampType.CREATE_TIME, 0, 0, null, logValue, new org.apache.kafka.common.header.internals.RecordHeaders(), java.util.Optional.empty());
+
+        when(kafkaAdminService.getRecentRecords(eq("logs"), anyInt())).thenReturn(Collections.singletonList(record));
+
+        // Matches regex
+        StreamFlowRequest request1 = new StreamFlowRequest("user-.* failed", 10, null, null, true, null);
+        StreamFlowResponse response1 = streamFlowService.getStreamFlow(request1);
+        assertEquals(1, response1.nodes().size());
+
+        // Does not match regex
+        StreamFlowRequest request2 = new StreamFlowRequest("user-\\d{4} failed", 10, null, null, true, null);
+        StreamFlowResponse response2 = streamFlowService.getStreamFlow(request2);
+        assertEquals(0, response2.nodes().size());
     }
 }
