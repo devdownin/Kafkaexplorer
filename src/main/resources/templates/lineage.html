@@ -9,12 +9,33 @@
         </button>
     </div>
 
-    <div class="card bg-dark border-secondary">
-        <div class="card-body p-0" style="height: 700px; position: relative; overflow: hidden;">
-            <div id="lineage-container" style="width: 100%; height: 100%; background-color: #1a1a1a;"></div>
-            <div id="loading-overlay" class="position-absolute top-0 start-0 w-100 h-100 d-flex justify-content-center align-items-center bg-dark opacity-75">
-                <div class="spinner-border text-teal" role="status">
-                    <span class="visually-hidden">Loading...</span>
+    <div class="row">
+        <div class="col-md-9">
+            <div class="card bg-dark border-secondary">
+                <div class="card-body p-0" style="height: 700px; position: relative; overflow: hidden;">
+                    <div id="lineage-container" style="width: 100%; height: 100%; background-color: #1a1a1a;"></div>
+                    <div id="loading-overlay" class="position-absolute top-0 start-0 w-100 h-100 d-flex justify-content-center align-items-center bg-dark opacity-75">
+                        <div class="spinner-border text-teal" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div id="details-panel" class="card bg-dark border-secondary h-100 d-none">
+                <div class="card-header border-secondary bg-dark d-flex justify-content-between align-items-center">
+                    <h5 class="text-teal mb-0" id="details-title">Details</h5>
+                    <button type="button" class="btn-close btn-close-white btn-sm" onclick="hideDetails()"></button>
+                </div>
+                <div class="card-body overflow-auto" id="details-content">
+                    <!-- Dynamic content -->
+                </div>
+            </div>
+            <div id="no-selection-msg" class="card bg-dark border-secondary h-100 d-flex justify-content-center align-items-center text-muted small p-4">
+                <div class="text-center">
+                    <i class="fas fa-mouse-pointer fa-2x mb-3 opacity-25"></i>
+                    <p>Select a node in the graph to view details</p>
                 </div>
             </div>
         </div>
@@ -136,8 +157,64 @@
 
             cy.on('tap', 'node', function(evt){
                 const node = evt.target;
-                console.log('Tapped ' + node.id());
+                showDetails(node.data());
             });
+
+            cy.on('tap', function(evt){
+                if (evt.target === cy) {
+                    hideDetails();
+                }
+            });
+        }
+
+        function showDetails(data) {
+            document.getElementById('no-selection-msg').classList.add('d-none');
+            const panel = document.getElementById('details-panel');
+            panel.classList.remove('d-none');
+
+            document.getElementById('details-title').textContent = data.label;
+
+            let html = `<div class="mb-3"><span class="badge bg-secondary">${data.type.toUpperCase()}</span></div>`;
+
+            if (data.type === 'table' || data.type === 'view') {
+                html += `<h6>Schema</h6>
+                         <div id="schema-loader" class="text-center py-2"><div class="spinner-border spinner-border-sm text-teal"></div></div>
+                         <table class="table table-dark table-sm small d-none" id="details-schema-table">
+                            <thead><tr><th>Field</th><th>Type</th></tr></thead>
+                            <tbody id="details-schema-body"></tbody>
+                         </table>`;
+                fetchSchema(data.label);
+            } else if (data.type === 'topic') {
+                html += `<p class="small text-muted">Kafka topic acting as source or sink.</p>`;
+            } else if (data.type === 'query') {
+                html += `<p class="small text-muted">Active Flink streaming query.</p>`;
+            }
+
+            document.getElementById('details-content').innerHTML = html;
+        }
+
+        function hideDetails() {
+            document.getElementById('details-panel').classList.add('d-none');
+            document.getElementById('no-selection-msg').classList.remove('d-none');
+        }
+
+        function fetchSchema(tableName) {
+            fetch('/api/schema/' + tableName)
+                .then(response => response.json())
+                .then(schema => {
+                    const loader = document.getElementById('schema-loader');
+                    if (loader) loader.remove();
+
+                    const table = document.getElementById('details-schema-table');
+                    const body = document.getElementById('details-schema-body');
+                    if (table && body) {
+                        body.innerHTML = '';
+                        Object.entries(schema).forEach(([field, type]) => {
+                            body.innerHTML += `<tr><td>${field}</td><td class="text-teal">${type}</td></tr>`;
+                        });
+                        table.classList.remove('d-none');
+                    }
+                });
         }
 
         document.addEventListener('DOMContentLoaded', loadLineage);

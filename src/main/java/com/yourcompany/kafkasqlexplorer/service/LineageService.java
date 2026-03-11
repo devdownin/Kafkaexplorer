@@ -16,8 +16,8 @@ public class LineageService {
     private final StreamTableEnvironment tableEnv;
     private final FlinkSqlService flinkSqlService;
     private static final Pattern TOPIC_PATTERN = Pattern.compile("'topic'\\s*=\\s*'([^']+)'");
-    private static final Pattern FROM_PATTERN = Pattern.compile("(?i)FROM\\s+([^\\s,;()]+)", Pattern.MULTILINE);
-    private static final Pattern JOIN_PATTERN = Pattern.compile("(?i)JOIN\\s+([^\\s,;()]+)", Pattern.MULTILINE);
+    private static final Pattern FROM_PATTERN = Pattern.compile("(?i)FROM\\s+([^\\s,;()\\n]+)", Pattern.MULTILINE);
+    private static final Pattern JOIN_PATTERN = Pattern.compile("(?i)JOIN\\s+([^\\s,;()\\n]+)", Pattern.MULTILINE);
 
     public LineageService(StreamTableEnvironment tableEnv, FlinkSqlService flinkSqlService) {
         this.tableEnv = tableEnv;
