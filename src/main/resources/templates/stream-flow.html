@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: html(content=~{::section})}">
+<body>
+<section>
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="fas fa-route text-teal"></i> Stream Flow</h2>
+    </div>
+
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card bg-dark border-secondary">
+                <div class="card-body">
+                    <form id="flow-form" class="row g-3 align-items-end">
+                        <div class="col-md-6">
+                            <label for="messageKey" class="form-label">Message Key (search in key or value)</label>
+                            <input type="text" class="form-control bg-dark text-light border-secondary" id="messageKey" placeholder="e.g. order-123" required>
+                        </div>
+                        <div class="col-md-3">
+                            <label for="maxMessages" class="form-label">Scan Limit (per topic)</label>
+                            <input type="number" class="form-control bg-dark text-light border-secondary" id="maxMessages" value="100" min="1" max="1000">
+                        </div>
+                        <div class="col-md-3">
+                            <button type="submit" class="btn btn-teal w-100">
+                                <i class="fas fa-search"></i> Trace Flow
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-12">
+            <div class="card bg-dark border-secondary">
+                <div class="card-body p-0" style="height: 600px; position: relative; overflow: hidden;">
+                    <div id="flow-container" style="width: 100%; height: 100%; background-color: #1a1a1a;"></div>
+                    <div id="loading-overlay" class="position-absolute top-0 start-0 w-100 h-100 d-flex justify-content-center align-items-center bg-dark opacity-75 d-none">
+                        <div class="text-center">
+                            <div class="spinner-border text-teal mb-2" role="status"></div>
+                            <p class="text-teal">Scanning topics and tracing messages...</p>
+                        </div>
+                    </div>
+                    <div id="empty-state" class="position-absolute top-0 start-0 w-100 h-100 d-flex justify-content-center align-items-center">
+                        <div class="text-center text-muted">
+                            <i class="fas fa-route fa-3x mb-3 opacity-25"></i>
+                            <p>Enter a key and click "Trace Flow" to visualize message propagation</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- cytoscape.js for graph rendering -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.26.0/cytoscape.min.js"></script>
+    <script>
+        document.getElementById('flow-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const messageKey = document.getElementById('messageKey').value;
+            const maxMessages = document.getElementById('maxMessages').value;
+
+            traceFlow(messageKey, maxMessages);
+        });
+
+        function traceFlow(key, max) {
+            document.getElementById('loading-overlay').classList.remove('d-none');
+            document.getElementById('empty-state').classList.add('d-none');
+
+            fetch('/api/stream-flow', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    messageKey: key,
+                    maxMessagesPerTopic: parseInt(max)
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('loading-overlay').classList.add('d-none');
+                if (data.nodes.length === 0) {
+                    document.getElementById('empty-state').classList.remove('d-none');
+                    document.getElementById('empty-state').innerHTML = `
+                        <div class="text-center text-warning">
+                            <i class="fas fa-exclamation-triangle fa-3x mb-3 opacity-25"></i>
+                            <p>No messages found with key: <strong>${key}</strong></p>
+                            <button class="btn btn-sm btn-outline-secondary" onclick="resetState()">Try again</button>
+                        </div>`;
+                } else {
+                    renderGraph(data);
+                }
+            })
+            .catch(error => {
+                console.error('Error tracing flow:', error);
+                document.getElementById('loading-overlay').classList.add('d-none');
+            });
+        }
+
+        function resetState() {
+            document.getElementById('empty-state').innerHTML = `
+                <div class="text-center text-muted">
+                    <i class="fas fa-route fa-3x mb-3 opacity-25"></i>
+                    <p>Enter a key and click "Trace Flow" to visualize message propagation</p>
+                </div>`;
+        }
+
+        function renderGraph(data) {
+            const elements = [];
+
+            // Add nodes
+            data.nodes.forEach(node => {
+                elements.push({
+                    data: {
+                        id: node.id,
+                        label: node.label,
+                        color: '#007bff',
+                        icon: '\uf1c0'
+                    }
+                });
+            });
+
+            // Add edges
+            data.edges.forEach((edge, index) => {
+                elements.push({
+                    data: {
+                        id: 'edge_' + index,
+                        source: edge.from,
+                        target: edge.to,
+                        label: (index + 1).toString()
+                    }
+                });
+            });
+
+            const cy = cytoscape({
+                container: document.getElementById('flow-container'),
+                elements: elements,
+                style: [
+                    {
+                        selector: 'node',
+                        style: {
+                            'label': 'data(label)',
+                            'background-color': 'data(color)',
+                            'color': '#fff',
+                            'text-valign': 'bottom',
+                            'text-margin-y': '5px',
+                            'font-size': '12px',
+                            'width': '40px',
+                            'height': '40px',
+                            'content': 'data(label)'
+                        }
+                    },
+                    {
+                        selector: 'edge',
+                        style: {
+                            'width': 3,
+                            'line-color': '#0dcaf0',
+                            'target-arrow-color': '#0dcaf0',
+                            'target-arrow-shape': 'triangle',
+                            'curve-style': 'bezier',
+                            'label': 'data(label)',
+                            'font-size': '14px',
+                            'font-weight': 'bold',
+                            'color': '#fff',
+                            'text-background-color': '#0dcaf0',
+                            'text-background-opacity': 1,
+                            'text-background-padding': '3px',
+                            'text-background-shape': 'roundrectangle'
+                        }
+                    }
+                ],
+                layout: {
+                    name: 'grid', // Simple layout, can be improved
+                    padding: 50
+                }
+            });
+
+            // Re-run layout for a better look
+            cy.layout({
+                name: 'breadthfirst',
+                directed: true,
+                padding: 50,
+                spacingFactor: 1.5
+            }).run();
+        }
+    </script>
+</section>
+</body>
+</html>
