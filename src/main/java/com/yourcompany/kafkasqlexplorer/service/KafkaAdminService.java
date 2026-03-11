@@ -4,6 +4,8 @@ import com.yourcompany.kafkasqlexplorer.config.KafkaConfig;
 import com.yourcompany.kafkasqlexplorer.domain.MessageFormat;
 import com.yourcompany.kafkasqlexplorer.domain.TopicDescriptor;
 import org.apache.kafka.clients.admin.AdminClient;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.ListTopicsOptions;
 import org.apache.kafka.clients.admin.TopicDescription;
@@ -22,6 +24,7 @@ import java.util.stream.Collectors;
 @Service
 public class KafkaAdminService {
 
+    private static final Logger log = LoggerFactory.getLogger(KafkaAdminService.class);
     private final KafkaConfig kafkaConfig;
     private AdminClient adminClient;
 
@@ -155,10 +158,19 @@ public class KafkaAdminService {
     }
 
     public List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> getRecentRecords(String topicName, int maxMessages) {
+        return getRecordsWithPredicate(topicName, maxMessages, null);
+    }
+
+    public List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> getRecordsSince(String topicName, int minutes, int maxMessages) {
+        long timestampLimit = System.currentTimeMillis() - ((long) minutes * 60 * 1000);
+        return getRecordsWithPredicate(topicName, maxMessages, timestampLimit);
+    }
+
+    private List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> getRecordsWithPredicate(String topicName, int maxMessages, Long timestampLimit) {
         List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records = new ArrayList<>();
         Properties props = new Properties();
         props.putAll(kafkaConfig.getKafkaProperties());
-        props.put(ConsumerConfig.GROUP_ID_CONFIG, "recent-records-" + UUID.randomUUID());
+        props.put(ConsumerConfig.GROUP_ID_CONFIG, "flow-records-" + UUID.randomUUID());
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
 
@@ -172,12 +184,26 @@ public class KafkaAdminService {
                     .toList();
 
             consumer.assign(partitions);
-            Map<TopicPartition, Long> endOffsets = consumer.endOffsets(partitions);
 
-            for (TopicPartition tp : partitions) {
-                long endOffset = endOffsets.get(tp);
-                long startOffset = Math.max(0, endOffset - maxMessages);
-                consumer.seek(tp, startOffset);
+            if (timestampLimit != null) {
+                Map<TopicPartition, Long> timestampsToSearch = partitions.stream()
+                        .collect(Collectors.toMap(tp -> tp, tp -> timestampLimit));
+                Map<TopicPartition, org.apache.kafka.clients.consumer.OffsetAndTimestamp> offsets = consumer.offsetsForTimes(timestampsToSearch);
+                for (TopicPartition tp : partitions) {
+                    org.apache.kafka.clients.consumer.OffsetAndTimestamp oat = offsets.get(tp);
+                    if (oat != null) {
+                        consumer.seek(tp, oat.offset());
+                    } else {
+                        consumer.seekToEnd(Collections.singletonList(tp));
+                    }
+                }
+            } else {
+                Map<TopicPartition, Long> endOffsets = consumer.endOffsets(partitions);
+                for (TopicPartition tp : partitions) {
+                    long endOffset = endOffsets.get(tp);
+                    long startOffset = Math.max(0, endOffset - (maxMessages / partitions.size() + 1));
+                    consumer.seek(tp, startOffset);
+                }
             }
 
             int count = 0;
@@ -192,7 +218,7 @@ public class KafkaAdminService {
                 }
             }
         } catch (Exception e) {
-            // Handle error
+            log.error("Error fetching records for topic {}", topicName, e);
         }
         return records;
     }

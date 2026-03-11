@@ -10,17 +10,38 @@
         <div class="col-md-12">
             <div class="card bg-dark border-secondary">
                 <div class="card-body">
-                    <form id="flow-form" class="row g-3 align-items-end">
-                        <div class="col-md-6">
-                            <label for="messageKey" class="form-label">Message Key (search in key or value)</label>
-                            <input type="text" class="form-control bg-dark text-light border-secondary" id="messageKey" placeholder="e.g. order-123" required>
+                    <form id="flow-form" class="row g-3">
+                        <div class="col-md-4">
+                            <label for="messageKey" class="form-label">Search Value / Regex</label>
+                            <div class="input-group">
+                                <input type="text" class="form-control bg-dark text-light border-secondary" id="messageKey" placeholder="e.g. order-.*" required>
+                                <div class="input-group-text bg-dark border-secondary">
+                                    <input class="form-check-input mt-0" type="checkbox" id="useRegex" title="Use Regular Expression">
+                                    <label class="form-check-label ms-2 text-muted small" for="useRegex">Regex</label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <label for="searchPath" class="form-label">Search Path (JSONPath or XPath)</label>
+                            <input type="text" class="form-control bg-dark text-light border-secondary" id="searchPath" placeholder="e.g. $.id or /order/id">
+                        </div>
+                        <div class="col-md-4">
+                            <label for="targetTopics" class="form-label">Scan Specific Topics (Optional)</label>
+                            <select class="form-select bg-dark text-light border-secondary" id="targetTopics" multiple size="3">
+                                <!-- Populated via JS -->
+                            </select>
+                            <div class="form-text text-muted small">Hold Ctrl/Cmd to select multiple</div>
                         </div>
                         <div class="col-md-3">
-                            <label for="maxMessages" class="form-label">Scan Limit (per topic)</label>
+                            <label for="timeLimit" class="form-label">Time Limit (minutes)</label>
+                            <input type="number" class="form-control bg-dark text-light border-secondary" id="timeLimit" placeholder="e.g. 60">
+                        </div>
+                        <div class="col-md-3">
+                            <label for="maxMessages" class="form-label">Scan Limit (msgs/topic)</label>
                             <input type="number" class="form-control bg-dark text-light border-secondary" id="maxMessages" value="100" min="1" max="1000">
                         </div>
-                        <div class="col-md-3">
-                            <button type="submit" class="btn btn-teal w-100">
+                        <div class="col-md-6 text-end d-flex align-items-end justify-content-end">
+                            <button type="submit" class="btn btn-teal">
                                 <i class="fas fa-search"></i> Trace Flow
                             </button>
                         </div>
@@ -38,13 +59,13 @@
                     <div id="loading-overlay" class="position-absolute top-0 start-0 w-100 h-100 d-flex justify-content-center align-items-center bg-dark opacity-75 d-none">
                         <div class="text-center">
                             <div class="spinner-border text-teal mb-2" role="status"></div>
-                            <p class="text-teal">Scanning topics and tracing messages...</p>
+                            <p class="text-teal" id="loading-text">Scanning topics and tracing messages...</p>
                         </div>
                     </div>
                     <div id="empty-state" class="position-absolute top-0 start-0 w-100 h-100 d-flex justify-content-center align-items-center">
                         <div class="text-center text-muted">
                             <i class="fas fa-route fa-3x mb-3 opacity-25"></i>
-                            <p>Enter a key and click "Trace Flow" to visualize message propagation</p>
+                            <p>Enter search criteria and click "Trace Flow" to visualize message propagation</p>
                         </div>
                     </div>
                 </div>
@@ -55,15 +76,34 @@
     <!-- cytoscape.js for graph rendering -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.26.0/cytoscape.min.js"></script>
     <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Populate topics
+            fetch('/api/topics')
+                .then(response => response.json())
+                .then(topics => {
+                    const select = document.getElementById('targetTopics');
+                    topics.sort().forEach(topic => {
+                        const opt = document.createElement('option');
+                        opt.value = topic;
+                        opt.textContent = topic;
+                        select.appendChild(opt);
+                    });
+                });
+        });
+
         document.getElementById('flow-form').addEventListener('submit', function(e) {
             e.preventDefault();
             const messageKey = document.getElementById('messageKey').value;
+            const searchPath = document.getElementById('searchPath').value;
+            const timeLimit = document.getElementById('timeLimit').value;
             const maxMessages = document.getElementById('maxMessages').value;
+            const useRegex = document.getElementById('useRegex').checked;
+            const targetTopics = Array.from(document.getElementById('targetTopics').selectedOptions).map(o => o.value);
 
-            traceFlow(messageKey, maxMessages);
+            traceFlow(messageKey, searchPath, timeLimit, maxMessages, useRegex, targetTopics);
         });
 
-        function traceFlow(key, max) {
+        function traceFlow(key, path, time, max, regex, topics) {
             document.getElementById('loading-overlay').classList.remove('d-none');
             document.getElementById('empty-state').classList.add('d-none');
 
@@ -74,7 +114,11 @@
                 },
                 body: JSON.stringify({
                     messageKey: key,
-                    maxMessagesPerTopic: parseInt(max)
+                    searchPath: path,
+                    timeLimitMinutes: time ? parseInt(time) : null,
+                    maxMessagesPerTopic: parseInt(max),
+                    useRegex: regex,
+                    targetTopics: topics
                 })
             })
             .then(response => response.json())
@@ -85,7 +129,7 @@
                     document.getElementById('empty-state').innerHTML = `
                         <div class="text-center text-warning">
                             <i class="fas fa-exclamation-triangle fa-3x mb-3 opacity-25"></i>
-                            <p>No messages found with key: <strong>${key}</strong></p>
+                            <p>No messages found matching your criteria.</p>
                             <button class="btn btn-sm btn-outline-secondary" onclick="resetState()">Try again</button>
                         </div>`;
                 } else {
@@ -102,7 +146,7 @@
             document.getElementById('empty-state').innerHTML = `
                 <div class="text-center text-muted">
                     <i class="fas fa-route fa-3x mb-3 opacity-25"></i>
-                    <p>Enter a key and click "Trace Flow" to visualize message propagation</p>
+                    <p>Enter search criteria and click "Trace Flow" to visualize message propagation</p>
                 </div>`;
         }
 
@@ -171,18 +215,12 @@
                     }
                 ],
                 layout: {
-                    name: 'grid', // Simple layout, can be improved
-                    padding: 50
+                    name: 'breadthfirst',
+                    directed: true,
+                    padding: 50,
+                    spacingFactor: 1.5
                 }
             });
-
-            // Re-run layout for a better look
-            cy.layout({
-                name: 'breadthfirst',
-                directed: true,
-                padding: 50,
-                spacingFactor: 1.5
-            }).run();
         }
     </script>
 </section>

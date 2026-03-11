@@ -1,21 +1,3 @@
-Kafkaexplorer
-Repository navigation
-Code
-Issues
-Pull requests
-Actions
-Kafkaexplorer
-/README.md
-devdownin
-devdownin
-33 minutes ago
-79 lines (63 loc) · 3.72 KB
-
-Preview
-
-Code
-
-Blame
 KAFKA SQL EXPLORER
 Spring Boot 3.x | Apache Flink 2.2.x (Embedded) | Java 21
 
@@ -46,12 +28,19 @@ Enregistrement en un clic : Bouton "Register Table" pour exécuter instantanéme
 Graphe Interactif : Propulsé par Cytoscape.js, visualisant les relations entre topics, tables et vues.
 Suivi des Jobs Actifs : Visualisation en temps réel des requêtes INSERT INTO en cours sous forme de nœuds reliant les tables sources et cibles.
 Inspecteur de Nœuds : Cliquez sur n'importe quel nœud pour voir des informations détaillées, comme le schéma de la table ou le type de topic.
-5. Éditeur SQL Professionnel
+5. Propagation de Message (Stream Flow)
+Traçage de Message : Suivez le parcours d'un message spécifique à travers différents topics Kafka en recherchant une clé ou un pattern.
+Ciblage Avancé : Utilisez JSONPath ou XPath pour localiser précisément la clé de recherche dans des payloads complexes.
+Support des Expressions Régulières : Recherche flexible utilisant la syntaxe regex standard.
+Filtrage Temporel : Limitez la recherche à une fenêtre de temps spécifique (ex: messages des 60 dernières minutes).
+Scan Parallèle : Balayage concurrent des topics à haute performance avec gestion des limites de ressources.
+Visualisation Chronologique : Graphe interactif illustrant le flux séquentiel des messages entre les topics.
+6. Éditeur SQL Professionnel
 Moteur CodeMirror : Coloration syntaxique SQL et thème Cyberpunk.
 Auto-complétion : Suggestion intelligente des noms de topics et tables enregistrées (Ctrl+Space).
 Historique des Requêtes : Accès rapide aux 20 dernières requêtes exécutées via une sidebar persistante (sessionStorage).
 Gestion des Ressources : Annulation automatique des jobs Flink en cas de timeout ou d'erreur, évitant toute fuite de ressources dans le minicluster.
-6. Sécurité & Robustesse
+7. Sécurité & Robustesse
 Protection XXE : Désactivation stricte des entités externes DTD pour tous les parsers XML (Schema Inferrer, UDF, Formatter).
 Validation SQL : Whitelist de commandes autorisées (SELECT, EXPLAIN, CREATE TABLE) pour empêcher les opérations DML destructrices.
 Gestion des Connexions : Lifecycle propre de l'AdminClient Kafka et des consommateurs.
@@ -75,4 +64,4 @@ Exemple de Requête XML
 SELECT invoice_id, XmlExtract(raw_value, '/Invoice/Amount') as total
 FROM my_xml_topic
 WHERE total > 1000;
-© 2026 afka SQL Explorer - Compagnons du dev. Terminal UI
+© 2026 Kafka SQL Explorer - Compagnons du dev. Terminal UI

@@ -1,4 +1,13 @@
 package com.yourcompany.kafkasqlexplorer.domain;
 
-public record StreamFlowRequest(String messageKey, int maxMessagesPerTopic) {
+import java.util.List;
+
+public record StreamFlowRequest(
+        String messageKey,
+        int maxMessagesPerTopic,
+        String searchPath,
+        Integer timeLimitMinutes,
+        boolean useRegex,
+        List<String> targetTopics
+) {
 }
