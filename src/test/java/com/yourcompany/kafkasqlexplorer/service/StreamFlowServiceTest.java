@@ -36,7 +36,7 @@ public class StreamFlowServiceTest {
         when(kafkaAdminService.getRecentRecords(eq("topic2"), anyInt())).thenReturn(Collections.singletonList(r2));
         when(kafkaAdminService.getRecentRecords(eq("topic3"), anyInt())).thenReturn(Collections.singletonList(r3));
 
-        StreamFlowRequest request = new StreamFlowRequest("key1", 10);
+        StreamFlowRequest request = new StreamFlowRequest("key1", 10, null, null, false, null);
         StreamFlowResponse response = streamFlowService.getStreamFlow(request);
 
         assertEquals(2, response.nodes().size());
