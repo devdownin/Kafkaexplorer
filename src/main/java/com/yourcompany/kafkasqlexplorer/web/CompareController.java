@@ -7,6 +7,8 @@ import org.springframework.web.bind.annotation.GetMapping;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @Controller
 public class CompareController {
@@ -20,8 +22,14 @@ public class CompareController {
     @GetMapping("/compare")
     public String compare(Model model) {
         try {
-            List<String> topics = kafkaAdminService.listTopics();
-            model.addAttribute("topics", topics);
+            List<String> allTopics = kafkaAdminService.listTopics();
+            Map<String, Long> sizes = kafkaAdminService.getTopicsSize(allTopics);
+
+            List<String> nonEmptyTopics = allTopics.stream()
+                    .filter(name -> sizes.getOrDefault(name, 0L) > 0)
+                    .collect(Collectors.toList());
+
+            model.addAttribute("topics", nonEmptyTopics);
         } catch (Exception e) {
             model.addAttribute("topics", Collections.emptyList());
         }

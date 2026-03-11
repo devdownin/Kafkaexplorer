@@ -53,6 +53,8 @@
                 </div>
                 <div class="card-body">
                     <div class="mb-3">
+                        <label class="form-label small text-muted">Filter Topics</label>
+                        <input type="text" id="topic1Filter" class="form-control form-control-sm mb-2" placeholder="Search topic name...">
                         <label class="form-label small text-muted">Select Topic</label>
                         <select id="topic1Select" class="form-select bg-dark text-light border-secondary">
                             <option value="">-- Choose a topic --</option>
@@ -102,6 +104,8 @@
                 </div>
                 <div class="card-body">
                     <div class="mb-3">
+                        <label class="form-label small text-muted">Filter Topics</label>
+                        <input type="text" id="topic2Filter" class="form-control form-control-sm mb-2" placeholder="Search topic name...">
                         <label class="form-label small text-muted">Select Topic</label>
                         <select id="topic2Select" class="form-select bg-dark text-light border-secondary">
                             <option value="">-- Choose a topic --</option>
@@ -179,6 +183,24 @@
                     document.getElementById('end2').value = e.target.value;
                 }
             });
+
+            // Topic Filtering
+            const setupFilter = (filterId, selectId) => {
+                const filter = document.getElementById(filterId);
+                const select = document.getElementById(selectId);
+                const options = Array.from(select.options).slice(1); // skip first placeholder
+
+                filter.addEventListener('input', (e) => {
+                    const term = e.target.value.toLowerCase();
+                    options.forEach(opt => {
+                        const visible = opt.text.toLowerCase().includes(term);
+                        opt.style.display = visible ? '' : 'none';
+                    });
+                });
+            };
+
+            setupFilter('topic1Filter', 'topic1Select');
+            setupFilter('topic2Filter', 'topic2Select');
 
             async function ensureTopicRegistered(topicName) {
                 if (!topicName || registeredTopics.has(topicName)) return;
