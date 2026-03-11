@@ -42,12 +42,16 @@ Opérateurs de Comparaison : Choisissez dynamiquement l'opérateur (=, !=, LIKE,
 Support des Chemins Imbriqués : Génération automatique de JSON_VALUE pour les structures JSON complexes.
 Extraction XML : Utilisation de la fonction personnalisée XmlExtract (basée sur XPath) pour interroger les payloads XML.
 Enregistrement en un clic : Bouton "Register Table" pour exécuter instantanément le DDL généré.
-4. Éditeur SQL Professionnel
+4. Lineage de Requête Visuel
+Graphe Interactif : Propulsé par Cytoscape.js, visualisant les relations entre topics, tables et vues.
+Suivi des Jobs Actifs : Visualisation en temps réel des requêtes INSERT INTO en cours sous forme de nœuds reliant les tables sources et cibles.
+Inspecteur de Nœuds : Cliquez sur n'importe quel nœud pour voir des informations détaillées, comme le schéma de la table ou le type de topic.
+5. Éditeur SQL Professionnel
 Moteur CodeMirror : Coloration syntaxique SQL et thème Cyberpunk.
 Auto-complétion : Suggestion intelligente des noms de topics et tables enregistrées (Ctrl+Space).
 Historique des Requêtes : Accès rapide aux 20 dernières requêtes exécutées via une sidebar persistante (sessionStorage).
 Gestion des Ressources : Annulation automatique des jobs Flink en cas de timeout ou d'erreur, évitant toute fuite de ressources dans le minicluster.
-5. Sécurité & Robustesse
+6. Sécurité & Robustesse
 Protection XXE : Désactivation stricte des entités externes DTD pour tous les parsers XML (Schema Inferrer, UDF, Formatter).
 Validation SQL : Whitelist de commandes autorisées (SELECT, EXPLAIN, CREATE TABLE) pour empêcher les opérations DML destructrices.
 Gestion des Connexions : Lifecycle propre de l'AdminClient Kafka et des consommateurs.
