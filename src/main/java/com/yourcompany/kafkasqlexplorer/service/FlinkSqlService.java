@@ -19,7 +19,9 @@ import java.util.stream.Collectors;
 public class FlinkSqlService {
 
     private final StreamTableEnvironment tableEnv;
-    private final Map<String, JobClient> activeJobs = new ConcurrentHashMap<>();
+    private final Map<String, JobInfo> activeJobs = new ConcurrentHashMap<>();
+
+    public record JobInfo(String sql, JobClient client) {}
 
     public FlinkSqlService(StreamTableEnvironment tableEnv) {
         this.tableEnv = tableEnv;
@@ -57,7 +59,8 @@ public class FlinkSqlService {
         TableResult result = null;
         try {
             result = tableEnv.executeSql(request.sql());
-            result.getJobClient().ifPresent(client -> activeJobs.put(queryId, client));
+            final String finalSql = request.sql();
+            result.getJobClient().ifPresent(client -> activeJobs.put(queryId, new JobInfo(finalSql, client)));
 
             try (org.apache.flink.util.CloseableIterator<Row> it = result.collect()) {
             List<String> columns = result.getResolvedSchema().getColumnNames();
@@ -96,22 +99,26 @@ public class FlinkSqlService {
     }
 
     public void cancelQuery(String queryId) {
-        JobClient client = activeJobs.remove(queryId);
-        if (client != null) {
-            client.cancel();
+        JobInfo info = activeJobs.remove(queryId);
+        if (info != null) {
+            info.client().cancel();
         }
     }
 
     public Map<String, String> getActiveJobs() {
         Map<String, String> jobs = new HashMap<>();
-        activeJobs.forEach((id, client) -> {
+        activeJobs.forEach((id, info) -> {
             try {
-                jobs.put(id, client.getJobStatus().get(100, TimeUnit.MILLISECONDS).isGloballyTerminalState() ? "TERMINATED" : "RUNNING");
+                jobs.put(id, info.client().getJobStatus().get(100, TimeUnit.MILLISECONDS).isGloballyTerminalState() ? "TERMINATED" : "RUNNING");
             } catch (Exception e) {
                 jobs.put(id, "RUNNING");
             }
         });
         return jobs;
+    }
+
+    public Map<String, JobInfo> getActiveJobsDetails() {
+        return activeJobs;
     }
 
     private void cancelJobInternal(TableResult result) {

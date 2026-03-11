@@ -13,6 +13,7 @@ Writing Flink SQL for Kafka topics can be tedious and error-prone, especially wh
 - **Automated Schema Inference**: It automatically detects JSON structures and generates the necessary `JSON_VALUE` or `XmlExtract` calls for you.
 - **Zero-Configuration DDL**: Instantly register Kafka topics as Flink tables with pre-configured schemas, serialization formats, and watermark settings.
 - **Tailored for Beginners**: Complex operations like windowing (TUMBLE/HOP) and stateful aggregations are simplified through a visual assistant.
+- **Visual Query Lineage**: An interactive graph showing data flow from Kafka topics through Flink tables, views, and active streaming queries.
 
 ---
 
@@ -46,7 +47,12 @@ The assistant transforms the message preview into a query design tool:
 - **Query History**: Quick access to the last 20 queries executed via a persistent sidebar (sessionStorage).
 - **Resource Management**: Automatic cancellation of Flink jobs in case of timeout or error, preventing any resource leak in the minicluster.
 
-### 5. Security & Robustness
+### 5. Visual Query Lineage
+- **Interactive Graph**: Powered by `Cytoscape.js`, visualizing the relationships between topics, tables, and views.
+- **Active Job Tracking**: Real-time visualization of running `INSERT INTO` queries as nodes connecting source and target tables.
+- **Node Inspector**: Click on any node to view detailed information, such as the table schema or topic type.
+
+### 6. Security & Robustness
 - **XXE Protection**: Strict disabling of external DTD entities for all XML parsers (Schema Inferrer, UDF, Formatter).
 - **SQL Validation**: Whitelist of authorized commands (`SELECT`, `EXPLAIN`, `CREATE TABLE`) to prevent destructive DML operations.
 - **Connection Management**: Clean lifecycle of the Kafka AdminClient and consumers.

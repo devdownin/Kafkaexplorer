@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org">
+<html xmlns:th="http://www.thymeleaf.org" th:fragment="html(content)">
 <head>
     <meta charset="UTF-8">
     <title>Kafka SQL Explorer</title>
@@ -16,6 +16,7 @@
             <div class="nav-links">
                 <a href="/" class="nav-link">Dashboard</a>
                 <a href="/query" class="nav-link">Query</a>
+                <a href="/lineage" class="nav-link">Lineage</a>
                 <a href="/config" class="nav-link">Config</a>
                 <a href="/help" class="nav-link text-teal"><i class="fas fa-question-circle"></i> Help</a>
             </div>
