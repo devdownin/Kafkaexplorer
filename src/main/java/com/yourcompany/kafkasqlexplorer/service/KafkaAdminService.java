@@ -148,31 +148,52 @@ public class KafkaAdminService {
     }
 
     public List<String> getSampleMessages(String topicName, int maxMessages) {
-        List<String> samples = new ArrayList<>();
+        return getRecentRecords(topicName, maxMessages).stream()
+                .map(org.apache.kafka.clients.consumer.ConsumerRecord::value)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+    }
+
+    public List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> getRecentRecords(String topicName, int maxMessages) {
+        List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records = new ArrayList<>();
         Properties props = new Properties();
         props.putAll(kafkaConfig.getKafkaProperties());
-        props.put(ConsumerConfig.GROUP_ID_CONFIG, "sample-messages-" + UUID.randomUUID());
+        props.put(ConsumerConfig.GROUP_ID_CONFIG, "recent-records-" + UUID.randomUUID());
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
-        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
 
         try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props)) {
-            TopicPartition tp = new TopicPartition(topicName, 0);
-            consumer.assign(Collections.singletonList(tp));
-            consumer.seekToBeginning(Collections.singletonList(tp));
+            Map<String, TopicDescription> descriptions = adminClient.describeTopics(Collections.singletonList(topicName)).allTopicNames().get();
+            TopicDescription desc = descriptions.get(topicName);
+            if (desc == null) return records;
 
-            org.apache.kafka.clients.consumer.ConsumerRecords<String, String> records = consumer.poll(java.time.Duration.ofSeconds(2));
+            List<TopicPartition> partitions = desc.partitions().stream()
+                    .map(p -> new TopicPartition(topicName, p.partition()))
+                    .toList();
+
+            consumer.assign(partitions);
+            Map<TopicPartition, Long> endOffsets = consumer.endOffsets(partitions);
+
+            for (TopicPartition tp : partitions) {
+                long endOffset = endOffsets.get(tp);
+                long startOffset = Math.max(0, endOffset - maxMessages);
+                consumer.seek(tp, startOffset);
+            }
+
             int count = 0;
-            for (org.apache.kafka.clients.consumer.ConsumerRecord<String, String> record : records) {
-                if (count >= maxMessages) break;
-                if (record.value() != null) {
-                    samples.add(record.value());
+            boolean moreRecords = true;
+            while (count < maxMessages && moreRecords) {
+                org.apache.kafka.clients.consumer.ConsumerRecords<String, String> polled = consumer.poll(java.time.Duration.ofMillis(500));
+                if (polled.isEmpty()) moreRecords = false;
+                for (org.apache.kafka.clients.consumer.ConsumerRecord<String, String> record : polled) {
+                    records.add(record);
                     count++;
+                    if (count >= maxMessages) break;
                 }
             }
         } catch (Exception e) {
-            // Handle error or log
+            // Handle error
         }
-        return samples;
+        return records;
     }
 }
