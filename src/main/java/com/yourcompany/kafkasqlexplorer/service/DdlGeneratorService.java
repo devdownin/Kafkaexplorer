@@ -29,7 +29,9 @@ public class DdlGeneratorService {
         }
 
         // Add special columns as per user example
-        sb.append("    proc_time AS PROCTIME()\n");
+        sb.append("    proc_time AS PROCTIME(),\n");
+        sb.append("    event_time TIMESTAMP(3) METADATA FROM 'timestamp',\n");
+        sb.append("    WATERMARK FOR event_time AS event_time - INTERVAL '5' SECOND\n");
         sb.append(") WITH (\n");
         sb.append("    'topic' = '").append(topicName).append("',\n");
 

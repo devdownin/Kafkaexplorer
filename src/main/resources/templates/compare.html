@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: html}">
+<head>
+    <title>Compare Topics</title>
+</head>
+<body th:fragment="content">
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <h1 class="h3 text-teal fw-bold">Compare Topics</h1>
+        </div>
+    </div>
+
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card bg-dark border-secondary shadow-sm">
+                <div class="card-header bg-dark border-secondary">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span class="text-teal small fw-bold">FLINK SQL QUERY (Shared)</span>
+                        <div class="btn-group">
+                            <button class="btn btn-outline-teal btn-sm" id="runCompare">Execute Comparison</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    <textarea id="sqlEditor" class="form-control bg-dark text-light border-0" rows="6">SELECT * FROM {topic}</textarea>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Topic 1 -->
+        <div class="col-md-6">
+            <div class="card bg-dark border-secondary shadow-sm mb-4">
+                <div class="card-header bg-dark border-secondary">
+                    <h6 class="text-teal mb-0">Topic 1</h6>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label class="form-label small text-muted">Select Topic</label>
+                        <select id="topic1Select" class="form-select bg-dark text-light border-secondary">
+                            <option value="">-- Choose a topic --</option>
+                            <option th:each="topic : ${topics}" th:value="${topic}" th:text="${topic}"></option>
+                        </select>
+                    </div>
+                    <div class="row">
+                        <div class="col-6">
+                            <label class="form-label small text-muted">Start Time</label>
+                            <input type="datetime-local" id="start1" class="form-control form-control-sm">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small text-muted">End Time</label>
+                            <input type="datetime-local" id="end1" class="form-control form-control-sm">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="results1" class="card bg-dark border-secondary shadow-sm overflow-auto" style="display: none; max-height: 500px;">
+                <table class="table table-dark table-hover table-sm mb-0">
+                    <thead class="sticky-top bg-dark">
+                        <tr id="header1" class="border-bottom border-secondary"></tr>
+                    </thead>
+                    <tbody id="body1"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Topic 2 -->
+        <div class="col-md-6">
+            <div class="card bg-dark border-secondary shadow-sm mb-4">
+                <div class="card-header bg-dark border-secondary">
+                    <h6 class="text-teal mb-0">Topic 2</h6>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label class="form-label small text-muted">Select Topic</label>
+                        <select id="topic2Select" class="form-select bg-dark text-light border-secondary">
+                            <option value="">-- Choose a topic --</option>
+                            <option th:each="topic : ${topics}" th:value="${topic}" th:text="${topic}"></option>
+                        </select>
+                    </div>
+                    <div class="row">
+                        <div class="col-6">
+                            <label class="form-label small text-muted">Start Time</label>
+                            <input type="datetime-local" id="start2" class="form-control form-control-sm">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small text-muted">End Time</label>
+                            <input type="datetime-local" id="end2" class="form-control form-control-sm">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="results2" class="card bg-dark border-secondary shadow-sm overflow-auto" style="display: none; max-height: 500px;">
+                <table class="table table-dark table-hover table-sm mb-0">
+                    <thead class="sticky-top bg-dark">
+                        <tr id="header2" class="border-bottom border-secondary"></tr>
+                    </thead>
+                    <tbody id="body2"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const editor = CodeMirror.fromTextArea(document.getElementById('sqlEditor'), {
+                mode: 'text/x-sql',
+                theme: 'material-darker',
+                lineNumbers: true,
+                indentWithTabs: true,
+                smartIndent: true,
+                matchBrackets: true,
+                viewportMargin: Infinity,
+                extraKeys: { "Ctrl-Space": "autocomplete" }
+            });
+
+            const registeredTopics = new Set();
+
+            async function ensureTopicRegistered(topicName) {
+                if (!topicName || registeredTopics.has(topicName)) return;
+                try {
+                    const ddlResponse = await fetch(`/api/topic/${topicName}/ddl`);
+                    const ddl = await ddlResponse.text();
+                    await fetch('/query', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ sql: ddl, maxRows: 1, timeout: 5000 })
+                    });
+                    registeredTopics.add(topicName);
+                } catch (e) {
+                    console.error('Failed to register topic ' + topicName, e);
+                }
+            }
+
+            document.getElementById('runCompare').addEventListener('click', async () => {
+                const topic1 = document.getElementById('topic1Select').value;
+                const topic2 = document.getElementById('topic2Select').value;
+                const template = editor.getValue();
+
+                if (!topic1 || !topic2) {
+                    alert('Please select two topics');
+                    return;
+                }
+
+                await ensureTopicRegistered(topic1);
+                await ensureTopicRegistered(topic2);
+
+                executeTopicQuery(1, topic1, template);
+                executeTopicQuery(2, topic2, template);
+            });
+
+            async function executeTopicQuery(index, topic, template) {
+                const resultsDiv = document.getElementById(`results${index}`);
+                const header = document.getElementById(`header${index}`);
+                const body = document.getElementById(`body${index}`);
+
+                resultsDiv.style.display = 'block';
+                body.innerHTML = '<tr><td class="p-3 text-center"><div class="spinner-border spinner-border-sm text-teal"></div></td></tr>';
+
+                let sql = template.replace(/{topic}/g, topic);
+
+                // Add time filters if specified
+                const start = document.getElementById(`start${index}`).value;
+                const end = document.getElementById(`end${index}`).value;
+
+                const filters = [];
+                if (start) filters.push(`event_time >= TO_TIMESTAMP('${start.replace('T', ' ')}:00')`);
+                if (end) filters.push(`event_time <= TO_TIMESTAMP('${end.replace('T', ' ')}:00')`);
+
+                if (filters.length > 0) {
+                    if (sql.toUpperCase().includes('WHERE')) {
+                        sql += ' AND ' + filters.join(' AND ');
+                    } else {
+                        sql += ' WHERE ' + filters.join(' AND ');
+                    }
+                }
+
+                try {
+                    const response = await fetch('/query', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ sql, maxRows: 50, timeout: 10000 })
+                    });
+                    const data = await response.json();
+
+                    if (data.error) {
+                        body.innerHTML = `<tr><td class="p-3 text-danger small">Error: ${data.error}</td></tr>`;
+                    } else {
+                        renderResults(index, data);
+                    }
+                } catch (e) {
+                    body.innerHTML = `<tr><td class="p-3 text-danger small">Network Error: ${e.message}</td></tr>`;
+                }
+            }
+
+            function renderResults(index, data) {
+                const header = document.getElementById(`header${index}`);
+                const body = document.getElementById(`body${index}`);
+                header.innerHTML = '';
+                body.innerHTML = '';
+
+                data.columns.forEach(col => {
+                    const th = document.createElement('th');
+                    th.textContent = col;
+                    th.className = 'text-teal small px-2 py-1';
+                    header.appendChild(th);
+                });
+
+                data.rows.forEach(row => {
+                    const tr = document.createElement('tr');
+                    data.columns.forEach(col => {
+                        const td = document.createElement('td');
+                        td.className = 'text-muted small px-2 py-1';
+                        let val = row[col];
+                        if (val === null) val = 'NULL';
+                        td.textContent = val;
+                        tr.appendChild(td);
+                    });
+                    body.appendChild(tr);
+                });
+
+                if (data.rows.length === 0) {
+                    body.innerHTML = '<tr><td colspan="100%" class="p-3 text-center text-muted small">No data found</td></tr>';
+                }
+            }
+        });
+    </script>
+    <style>
+        .CodeMirror { height: 150px !important; }
+        input[type="datetime-local"] { font-size: 0.8rem; height: 31px; }
+    </style>
+</body>
+</html>
