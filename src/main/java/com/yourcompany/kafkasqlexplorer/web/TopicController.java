@@ -10,6 +10,7 @@ import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.ResponseBody;
 
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
@@ -45,5 +46,13 @@ public class TopicController {
                 .toList());
 
         return "topic-detail";
+    }
+
+    @GetMapping(value = "/api/topic/{name}/ddl", produces = "text/plain")
+    @ResponseBody
+    public String getDdl(@PathVariable String name) throws ExecutionException, InterruptedException {
+        MessageFormat format = schemaInferenceService.detectFormat(name);
+        Map<String, String> schema = schemaInferenceService.inferSchema(name, format);
+        return ddlGeneratorService.generateDdl(name, schema, format);
     }
 }

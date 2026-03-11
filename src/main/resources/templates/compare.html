@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: html}">
+<head>
+    <title>Compare Topics</title>
+</head>
+<body th:fragment="content">
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <h1 class="h3 text-teal fw-bold">Compare Topics</h1>
+        </div>
+    </div>
+
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card bg-dark border-secondary shadow-sm">
+                <div class="card-header bg-dark border-secondary">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span class="text-teal small fw-bold">FLINK SQL QUERY (Shared)</span>
+                        <div class="btn-group">
+                            <button class="btn btn-outline-teal btn-sm" id="runCompare">Execute Comparison</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    <textarea id="sqlEditor" class="form-control bg-dark text-light border-0" rows="6">SELECT * FROM {topic}</textarea>
+                </div>
+                <div class="card-footer bg-dark border-secondary">
+                    <div class="row align-items-center">
+                        <div class="col-md-4">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="syncTime">
+                                <label class="form-check-label small text-muted" for="syncTime">Sync Time Ranges</label>
+                            </div>
+                        </div>
+                        <div class="col-md-8">
+                            <div class="input-group input-group-sm">
+                                <span class="input-group-text bg-dark border-secondary text-teal small">ID Column for Diff</span>
+                                <input type="text" id="diffIdCol" class="form-control" placeholder="e.g. id, order_id">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Topic 1 -->
+        <div class="col-md-6">
+            <div class="card bg-dark border-secondary shadow-sm mb-4">
+                <div class="card-header bg-dark border-secondary">
+                    <h6 class="text-teal mb-0">Topic 1</h6>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label class="form-label small text-muted">Filter Topics</label>
+                        <input type="text" id="topic1Filter" class="form-control form-control-sm mb-2" placeholder="Search topic name...">
+                        <label class="form-label small text-muted">Select Topic</label>
+                        <select id="topic1Select" class="form-select bg-dark text-light border-secondary">
+                            <option value="">-- Choose a topic --</option>
+                            <option th:each="topic : ${topics}" th:value="${topic}" th:text="${topic}"></option>
+                        </select>
+                    </div>
+                    <div class="row">
+                        <div class="col-6">
+                            <label class="form-label small text-muted">Start Time</label>
+                            <input type="datetime-local" id="start1" class="form-control form-control-sm">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small text-muted">End Time</label>
+                            <input type="datetime-local" id="end1" class="form-control form-control-sm">
+                        </div>
+                    </div>
+                    <div id="stats1" class="mt-3 p-2 bg-darker rounded border border-secondary d-none">
+                        <div class="row text-center">
+                            <div class="col-6 border-end border-secondary">
+                                <div class="x-small text-muted uppercase">Messages</div>
+                                <div class="small text-teal fw-bold" id="count1">-</div>
+                            </div>
+                            <div class="col-6">
+                                <div class="x-small text-muted uppercase">Throughput</div>
+                                <div class="small text-teal fw-bold" id="tps1">- msg/s</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="results1" class="card bg-dark border-secondary shadow-sm overflow-auto" style="display: none; max-height: 500px;">
+                <table class="table table-dark table-hover table-sm mb-0">
+                    <thead class="sticky-top bg-dark">
+                        <tr id="header1" class="border-bottom border-secondary"></tr>
+                    </thead>
+                    <tbody id="body1"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Topic 2 -->
+        <div class="col-md-6">
+            <div class="card bg-dark border-secondary shadow-sm mb-4">
+                <div class="card-header bg-dark border-secondary">
+                    <h6 class="text-teal mb-0">Topic 2</h6>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label class="form-label small text-muted">Filter Topics</label>
+                        <input type="text" id="topic2Filter" class="form-control form-control-sm mb-2" placeholder="Search topic name...">
+                        <label class="form-label small text-muted">Select Topic</label>
+                        <select id="topic2Select" class="form-select bg-dark text-light border-secondary">
+                            <option value="">-- Choose a topic --</option>
+                            <option th:each="topic : ${topics}" th:value="${topic}" th:text="${topic}"></option>
+                        </select>
+                    </div>
+                    <div class="row">
+                        <div class="col-6">
+                            <label class="form-label small text-muted">Start Time</label>
+                            <input type="datetime-local" id="start2" class="form-control form-control-sm">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small text-muted">End Time</label>
+                            <input type="datetime-local" id="end2" class="form-control form-control-sm">
+                        </div>
+                    </div>
+                    <div id="stats2" class="mt-3 p-2 bg-darker rounded border border-secondary d-none">
+                        <div class="row text-center">
+                            <div class="col-6 border-end border-secondary">
+                                <div class="x-small text-muted uppercase">Messages</div>
+                                <div class="small text-teal fw-bold" id="count2">-</div>
+                            </div>
+                            <div class="col-6">
+                                <div class="x-small text-muted uppercase">Throughput</div>
+                                <div class="small text-teal fw-bold" id="tps2">- msg/s</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="results2" class="card bg-dark border-secondary shadow-sm overflow-auto" style="display: none; max-height: 500px;">
+                <table class="table table-dark table-hover table-sm mb-0">
+                    <thead class="sticky-top bg-dark">
+                        <tr id="header2" class="border-bottom border-secondary"></tr>
+                    </thead>
+                    <tbody id="body2"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const editor = CodeMirror.fromTextArea(document.getElementById('sqlEditor'), {
+                mode: 'text/x-sql',
+                theme: 'material-darker',
+                lineNumbers: true,
+                indentWithTabs: true,
+                smartIndent: true,
+                matchBrackets: true,
+                viewportMargin: Infinity,
+                extraKeys: { "Ctrl-Space": "autocomplete" }
+            });
+
+            const registeredTopics = new Set();
+            let lastResults = { 1: null, 2: null };
+
+            // Time Synchronization
+            document.getElementById('syncTime').addEventListener('change', (e) => {
+                if (e.target.checked) {
+                    document.getElementById('start2').value = document.getElementById('start1').value;
+                    document.getElementById('end2').value = document.getElementById('end1').value;
+                }
+            });
+
+            document.getElementById('start1').addEventListener('input', (e) => {
+                if (document.getElementById('syncTime').checked) {
+                    document.getElementById('start2').value = e.target.value;
+                }
+            });
+
+            document.getElementById('end1').addEventListener('input', (e) => {
+                if (document.getElementById('syncTime').checked) {
+                    document.getElementById('end2').value = e.target.value;
+                }
+            });
+
+            // Topic Filtering
+            const setupFilter = (filterId, selectId) => {
+                const filter = document.getElementById(filterId);
+                const select = document.getElementById(selectId);
+                const options = Array.from(select.options).slice(1); // skip first placeholder
+
+                filter.addEventListener('input', (e) => {
+                    const term = e.target.value.toLowerCase();
+                    options.forEach(opt => {
+                        const visible = opt.text.toLowerCase().includes(term);
+                        opt.style.display = visible ? '' : 'none';
+                    });
+                });
+            };
+
+            setupFilter('topic1Filter', 'topic1Select');
+            setupFilter('topic2Filter', 'topic2Select');
+
+            async function ensureTopicRegistered(topicName) {
+                if (!topicName || registeredTopics.has(topicName)) return;
+                try {
+                    const ddlResponse = await fetch(`/api/topic/${topicName}/ddl`);
+                    const ddl = await ddlResponse.text();
+                    await fetch('/query', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ sql: ddl, maxRows: 1, timeout: 5000 })
+                    });
+                    registeredTopics.add(topicName);
+                } catch (e) {
+                    console.error('Failed to register topic ' + topicName, e);
+                }
+            }
+
+            document.getElementById('runCompare').addEventListener('click', async () => {
+                const topic1 = document.getElementById('topic1Select').value;
+                const topic2 = document.getElementById('topic2Select').value;
+                const template = editor.getValue();
+
+                if (!topic1 || !topic2) {
+                    alert('Please select two topics');
+                    return;
+                }
+
+                await ensureTopicRegistered(topic1);
+                await ensureTopicRegistered(topic2);
+
+                lastResults = { 1: null, 2: null };
+                executeTopicQuery(1, topic1, template);
+                executeTopicQuery(2, topic2, template);
+                executeTopicStats(1, topic1);
+                executeTopicStats(2, topic2);
+            });
+
+            async function executeTopicStats(index, topic) {
+                const statsDiv = document.getElementById(`stats${index}`);
+                const countEl = document.getElementById(`count${index}`);
+                const tpsEl = document.getElementById(`tps${index}`);
+
+                statsDiv.classList.remove('d-none');
+                countEl.textContent = '...';
+                tpsEl.textContent = '...';
+
+                const start = document.getElementById(`start${index}`).value;
+                const end = document.getElementById(`end${index}`).value;
+
+                let filters = [];
+                if (start) filters.push(`event_time >= TO_TIMESTAMP('${start.replace('T', ' ')}:00')`);
+                if (end) filters.push(`event_time <= TO_TIMESTAMP('${end.replace('T', ' ')}:00')`);
+
+                let where = filters.length > 0 ? 'WHERE ' + filters.join(' AND ') : '';
+                let sql = `SELECT COUNT(*), MIN(event_time), MAX(event_time) FROM ${topic} ${where}`;
+
+                try {
+                    const response = await fetch('/query', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ sql, maxRows: 1, timeout: 15000 })
+                    });
+                    const data = await response.json();
+                    if (data.rows && data.rows.length > 0) {
+                        const row = data.rows[0];
+                        const count = row['EXPR$0'];
+                        const minTime = new Date(row['EXPR$1']);
+                        const maxTime = new Date(row['EXPR$2']);
+
+                        countEl.textContent = count.toLocaleString();
+
+                        if (count > 1 && maxTime > minTime) {
+                            const durationSec = (maxTime - minTime) / 1000;
+                            const tps = (count / durationSec).toFixed(2);
+                            tpsEl.textContent = tps + ' msg/s';
+                        } else {
+                            tpsEl.textContent = '0 msg/s';
+                        }
+                    }
+                } catch (e) {
+                    countEl.textContent = 'Error';
+                }
+            }
+
+            async function executeTopicQuery(index, topic, template) {
+                const resultsDiv = document.getElementById(`results${index}`);
+                const header = document.getElementById(`header${index}`);
+                const body = document.getElementById(`body${index}`);
+
+                resultsDiv.style.display = 'block';
+                body.innerHTML = '<tr><td class="p-3 text-center"><div class="spinner-border spinner-border-sm text-teal"></div></td></tr>';
+
+                let sql = template.replace(/{topic}/g, topic);
+
+                // Add time filters if specified
+                const start = document.getElementById(`start${index}`).value;
+                const end = document.getElementById(`end${index}`).value;
+
+                const filters = [];
+                if (start) filters.push(`event_time >= TO_TIMESTAMP('${start.replace('T', ' ')}:00')`);
+                if (end) filters.push(`event_time <= TO_TIMESTAMP('${end.replace('T', ' ')}:00')`);
+
+                if (filters.length > 0) {
+                    if (sql.toUpperCase().includes('WHERE')) {
+                        sql += ' AND ' + filters.join(' AND ');
+                    } else {
+                        sql += ' WHERE ' + filters.join(' AND ');
+                    }
+                }
+
+                try {
+                    const response = await fetch('/query', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ sql, maxRows: 50, timeout: 10000 })
+                    });
+                    const data = await response.json();
+
+                    if (data.error) {
+                        body.innerHTML = `<tr><td class="p-3 text-danger small">Error: ${data.error}</td></tr>`;
+                    } else {
+                        lastResults[index] = data;
+                        renderResults(index, data);
+                        if (lastResults[1] && lastResults[2]) {
+                            applyDiffHighlighting();
+                        }
+                    }
+                } catch (e) {
+                    body.innerHTML = `<tr><td class="p-3 text-danger small">Network Error: ${e.message}</td></tr>`;
+                }
+            }
+
+            function renderResults(index, data) {
+                const header = document.getElementById(`header${index}`);
+                const body = document.getElementById(`body${index}`);
+                header.innerHTML = '';
+                body.innerHTML = '';
+
+                data.columns.forEach(col => {
+                    const th = document.createElement('th');
+                    th.textContent = col;
+                    th.className = 'text-teal small px-2 py-1';
+                    header.appendChild(th);
+                });
+
+                data.rows.forEach(row => {
+                    const tr = document.createElement('tr');
+                    data.columns.forEach(col => {
+                        const td = document.createElement('td');
+                        td.className = 'text-muted small px-2 py-1';
+                        let val = row[col];
+                        if (val === null) val = 'NULL';
+                        td.textContent = val;
+                        tr.appendChild(td);
+                    });
+                    body.appendChild(tr);
+                });
+
+                if (data.rows.length === 0) {
+                    body.innerHTML = '<tr><td colspan="100%" class="p-3 text-center text-muted small">No data found</td></tr>';
+                }
+            }
+
+            function applyDiffHighlighting() {
+                const idCol = document.getElementById('diffIdCol').value.trim();
+                if (!idCol) return;
+
+                const res1 = lastResults[1];
+                const res2 = lastResults[2];
+
+                const findRowById = (data, id) => {
+                    return data.rows.find(r => String(r[idCol]) === String(id));
+                };
+
+                const body1 = document.getElementById('body1');
+                const body2 = document.getElementById('body2');
+
+                // Highlight diffs for Topic 1
+                Array.from(body1.rows).forEach((row, i) => {
+                    const rowData = res1.rows[i];
+                    if (!rowData) return;
+                    const idValue = rowData[idCol];
+                    const otherRow = findRowById(res2, idValue);
+
+                    if (otherRow) {
+                        res1.columns.forEach((col, j) => {
+                            if (rowData[col] !== otherRow[col]) {
+                                row.cells[j].classList.add('diff-changed');
+                            }
+                        });
+                    } else {
+                        row.classList.add('diff-missing');
+                    }
+                });
+
+                // Highlight diffs for Topic 2
+                Array.from(body2.rows).forEach((row, i) => {
+                    const rowData = res2.rows[i];
+                    if (!rowData) return;
+                    const idValue = rowData[idCol];
+                    const otherRow = findRowById(res1, idValue);
+
+                    if (otherRow) {
+                        res2.columns.forEach((col, j) => {
+                            if (rowData[col] !== otherRow[col]) {
+                                row.cells[j].classList.add('diff-changed');
+                            }
+                        });
+                    } else {
+                        row.classList.add('diff-missing');
+                    }
+                });
+            }
+        });
+    </script>
+    <style>
+        .CodeMirror { height: 150px !important; }
+        input[type="datetime-local"] { font-size: 0.8rem; height: 31px; }
+        .diff-changed { background-color: rgba(255, 193, 7, 0.2) !important; color: #ffc107 !important; }
+        .diff-missing { background-color: rgba(255, 255, 255, 0.05); border-left: 2px solid #6c757d; }
+    </style>
+</body>
+</html>
