@@ -69,6 +69,18 @@
                             <input type="datetime-local" id="end1" class="form-control form-control-sm">
                         </div>
                     </div>
+                    <div id="stats1" class="mt-3 p-2 bg-darker rounded border border-secondary d-none">
+                        <div class="row text-center">
+                            <div class="col-6 border-end border-secondary">
+                                <div class="x-small text-muted uppercase">Messages</div>
+                                <div class="small text-teal fw-bold" id="count1">-</div>
+                            </div>
+                            <div class="col-6">
+                                <div class="x-small text-muted uppercase">Throughput</div>
+                                <div class="small text-teal fw-bold" id="tps1">- msg/s</div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -104,6 +116,18 @@
                         <div class="col-6">
                             <label class="form-label small text-muted">End Time</label>
                             <input type="datetime-local" id="end2" class="form-control form-control-sm">
+                        </div>
+                    </div>
+                    <div id="stats2" class="mt-3 p-2 bg-darker rounded border border-secondary d-none">
+                        <div class="row text-center">
+                            <div class="col-6 border-end border-secondary">
+                                <div class="x-small text-muted uppercase">Messages</div>
+                                <div class="small text-teal fw-bold" id="count2">-</div>
+                            </div>
+                            <div class="col-6">
+                                <div class="x-small text-muted uppercase">Throughput</div>
+                                <div class="small text-teal fw-bold" id="tps2">- msg/s</div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -188,7 +212,56 @@
                 lastResults = { 1: null, 2: null };
                 executeTopicQuery(1, topic1, template);
                 executeTopicQuery(2, topic2, template);
+                executeTopicStats(1, topic1);
+                executeTopicStats(2, topic2);
             });
+
+            async function executeTopicStats(index, topic) {
+                const statsDiv = document.getElementById(`stats${index}`);
+                const countEl = document.getElementById(`count${index}`);
+                const tpsEl = document.getElementById(`tps${index}`);
+
+                statsDiv.classList.remove('d-none');
+                countEl.textContent = '...';
+                tpsEl.textContent = '...';
+
+                const start = document.getElementById(`start${index}`).value;
+                const end = document.getElementById(`end${index}`).value;
+
+                let filters = [];
+                if (start) filters.push(`event_time >= TO_TIMESTAMP('${start.replace('T', ' ')}:00')`);
+                if (end) filters.push(`event_time <= TO_TIMESTAMP('${end.replace('T', ' ')}:00')`);
+
+                let where = filters.length > 0 ? 'WHERE ' + filters.join(' AND ') : '';
+                let sql = `SELECT COUNT(*), MIN(event_time), MAX(event_time) FROM ${topic} ${where}`;
+
+                try {
+                    const response = await fetch('/query', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ sql, maxRows: 1, timeout: 15000 })
+                    });
+                    const data = await response.json();
+                    if (data.rows && data.rows.length > 0) {
+                        const row = data.rows[0];
+                        const count = row['EXPR$0'];
+                        const minTime = new Date(row['EXPR$1']);
+                        const maxTime = new Date(row['EXPR$2']);
+
+                        countEl.textContent = count.toLocaleString();
+
+                        if (count > 1 && maxTime > minTime) {
+                            const durationSec = (maxTime - minTime) / 1000;
+                            const tps = (count / durationSec).toFixed(2);
+                            tpsEl.textContent = tps + ' msg/s';
+                        } else {
+                            tpsEl.textContent = '0 msg/s';
+                        }
+                    }
+                } catch (e) {
+                    countEl.textContent = 'Error';
+                }
+            }
 
             async function executeTopicQuery(index, topic, template) {
                 const resultsDiv = document.getElementById(`results${index}`);
