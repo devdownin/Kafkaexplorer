@@ -53,6 +53,7 @@ JOINs & Données de Référence : Un topic demo.customers pour pratiquer les joi
 Traitement XML : Un topic demo.orders.xml pour tester l'UDF XmlExtract.
 JSON Complexe : Un topic demo.orders.complex avec des structures imbriquées pour tester l'inférence de schéma.
 Messages Corrompus : Un topic demo.errors.poison contenant des données malformées pour observer la résilience aux erreurs.
+Supply Chain 2.0 (Processus Complexe) : Un pipeline massif en 20 étapes (`demo.sc.01.order.placed.out` à `20.delivered.out`) impliquant 60 topics. Il propose des payloads JSON imbriqués évolutifs (ajout de données de paiement, de préparation, de contrôle qualité et logistiques au fil de l'eau) pour démontrer l'**Inférence de Schéma** avancée et le **Stream Flow** sur des architectures complexes.
 Stack Technique
 Backend : Spring Boot 3.5.x, Java 21 (Records).
 Streaming : Apache Flink 2.2.x (Embedded LocalEnvironment).
@@ -94,5 +95,15 @@ Exemple de Requête JOIN
 SELECT c.name, c.segment, o.amount, o.state
 FROM "demo.orders.1.received" o
 JOIN "demo.customers" c ON o.customer_id = c.customer_id;
+```
+
+Exemple de Requête JSON Complexe (Supply Chain 2.0)
+```sql
+SELECT order_id,
+       step,
+       JSON_VALUE(raw_value, '$.quality_control.score') as qc_score,
+       JSON_VALUE(raw_value, '$.logistics.tracking') as tracking
+FROM "demo.sc.13.carrier.assigned.out"
+WHERE JSON_VALUE(raw_value, '$.quality_control.score') > 95;
 ```
 © 2026 Kafka SQL Explorer - Compagnons du dev. Terminal UI
