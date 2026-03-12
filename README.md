@@ -81,6 +81,7 @@ The application includes an automated demonstration setup to help you explore fe
 - **XML Processing**: A `demo.orders.xml` topic to test `XmlExtract` UDF.
 - **Complex JSON**: A `demo.orders.complex` topic with deep nesting for testing **Schema Inference**.
 - **Poison Messages**: A `demo.errors.poison` topic containing malformed data to observe error resilience.
+- **Supply Chain 2.0 (Complex Process)**: A 20-step massive pipeline (`demo.sc.01.order.placed.out` to `20.delivered.out`) involving 60 topics. It features evolving nested JSON payloads (adding payment, fulfillment, quality control, and logistics data incrementally) to demonstrate advanced **Schema Inference** and **Stream Flow** across complex architectures.
 
 ---
 
@@ -131,6 +132,16 @@ WHERE amount > 100;
 SELECT c.name, c.segment, o.amount, o.state
 FROM "demo.orders.1.received" o
 JOIN "demo.customers" c ON o.customer_id = c.customer_id;
+```
+
+### Complex JSON Query (Supply Chain 2.0)
+```sql
+SELECT order_id,
+       step,
+       JSON_VALUE(raw_value, '$.quality_control.score') as qc_score,
+       JSON_VALUE(raw_value, '$.logistics.tracking') as tracking
+FROM "demo.sc.13.carrier.assigned.out"
+WHERE JSON_VALUE(raw_value, '$.quality_control.score') > 95;
 ```
 
 ---
