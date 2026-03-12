@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kafka SQL Explorer | Real-Time Kafka Intelligence</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <style>
+        :root {
+            --primary-color: #00ff41; /* Cyber green */
+            --bg-dark: #0d0d0d;
+            --card-bg: #1a1a1a;
+            --text-muted: #a0a0a0;
+        }
+        body {
+            background-color: var(--bg-dark);
+            color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        .navbar {
+            background-color: rgba(13, 13, 13, 0.9);
+            border-bottom: 1px solid #333;
+        }
+        .hero-section {
+            padding: 100px 0;
+            background: linear-gradient(180deg, #0d0d0d 0%, #1a1a1a 100%);
+            border-bottom: 1px solid #333;
+        }
+        .feature-card {
+            background-color: var(--card-bg);
+            border: 1px solid #333;
+            transition: transform 0.3s, border-color 0.3s;
+            height: 100%;
+        }
+        .feature-card:hover {
+            transform: translateY(-5px);
+            border-color: var(--primary-color);
+        }
+        .icon-box {
+            font-size: 2.5rem;
+            color: var(--primary-color);
+            margin-bottom: 1rem;
+        }
+        .accent-text {
+            color: var(--primary-color);
+        }
+        .step-number {
+            background-color: var(--primary-color);
+            color: black;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        code {
+            color: #ff79c6;
+            background: #282a36;
+            padding: 2px 5px;
+            border-radius: 4px;
+        }
+        .btn-primary {
+            background-color: var(--primary-color);
+            border-color: var(--primary-color);
+            color: black;
+            font-weight: bold;
+        }
+        .btn-primary:hover {
+            background-color: #00cc33;
+            border-color: #00cc33;
+            color: black;
+        }
+        .section-title {
+            margin-bottom: 50px;
+            text-align: center;
+        }
+        .service-highlight {
+            padding: 60px 0;
+        }
+        .service-highlight:nth-child(even) {
+            background-color: #111;
+        }
+    </style>
+</head>
+<body>
+
+<nav class="navbar navbar-expand-lg navbar-dark sticky-top">
+    <div class="container">
+        <a class="navbar-brand fw-bold" href="#">
+            <i class="bi bi-terminal accent-text"></i> KAFKA <span class="accent-text">SQL</span> EXPLORER
+        </a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="navbarNav">
+            <ul class="navbar-nav ms-auto">
+                <li class="nav-item"><a class="nav-link" href="#originality">Originality</a></li>
+                <li class="nav-item"><a class="nav-link" href="#services">Services</a></li>
+                <li class="nav-item"><a class="nav-link" href="#quickstart">Quickstart</a></li>
+            </ul>
+        </div>
+    </div>
+</nav>
+
+<header class="hero-section text-center">
+    <div class="container">
+        <h1 class="display-3 fw-bold mb-4">Master Your Kafka Streams with <span class="accent-text">Flink SQL</span></h1>
+        <p class="lead mb-5 text-muted">A modern explorer for Data Engineers to preview, query, and trace Kafka data in real-time without the complexity of manual DDL.</p>
+        <div class="d-flex justify-content-center gap-3">
+            <a href="#quickstart" class="btn btn-primary btn-lg px-5">Get Started</a>
+            <a href="../" class="btn btn-outline-light btn-lg px-5"><i class="bi bi-github"></i> GitHub</a>
+        </div>
+    </div>
+</header>
+
+<section id="originality" class="py-5">
+    <div class="container">
+        <div class="section-title">
+            <h2 class="display-5 fw-bold">Why It's <span class="accent-text">Original</span></h2>
+            <p class="text-muted">Moving beyond simple topic listing to a true Query-First experience.</p>
+        </div>
+        <div class="row g-4">
+            <div class="col-md-4">
+                <div class="card feature-card p-4">
+                    <div class="icon-box"><i class="bi bi-magic"></i></div>
+                    <h3>Interactive Query Design</h3>
+                    <p class="text-muted">Stop typing long JSON paths. Click on any field in a message preview to automatically populate your <code>SELECT</code> or <code>WHERE</code> clauses.</p>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card feature-card p-4">
+                    <div class="icon-box"><i class="bi bi-cpu"></i></div>
+                    <h3>Automated Inference</h3>
+                    <p class="text-muted">The engine analyzes message samples to generate optimal Flink DDL, mapping complex nested JSON and XML structures instantly.</p>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card feature-card p-4">
+                    <div class="icon-box"><i class="bi bi-graph-up"></i></div>
+                    <h3>Visual Lineage</h3>
+                    <p class="text-muted">See your data flow. Interactive graphs show how messages propagate between topics and how views transform your streams.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section id="services" class="py-5">
+    <div class="container">
+        <div class="section-title">
+            <h2 class="display-5 fw-bold">Guided <span class="accent-text">Services</span> Tour</h2>
+        </div>
+
+        <div class="row align-items-center service-highlight">
+            <div class="col-md-6">
+                <h3 class="mb-3"><i class="bi bi-search me-2 accent-text"></i> Topic Exploration</h3>
+                <p>Instantly browse all topics in your cluster. Get high-level metadata like partition counts and estimated data sizes. The <strong>Sampling</strong> feature pulls the latest messages so you can understand the data structure immediately.</p>
+                <ul class="list-unstyled">
+                    <li><i class="bi bi-check2 accent-text"></i> Real-time metadata (offsets, partitions)</li>
+                    <li><i class="bi bi-check2 accent-text"></i> Pretty-print for JSON & XML</li>
+                    <li><i class="bi bi-check2 accent-text"></i> Quick copy to clipboard</li>
+                </ul>
+            </div>
+            <div class="col-md-6">
+                <div class="p-4 bg-dark rounded border border-secondary shadow">
+                    <code class="d-block text-white-50 small mb-2">// Sample Data Preview</code>
+                    <pre class="m-0" style="color: #6272a4;">{
+  "order_id": "ORD-123",
+  "customer": { "id": "C-45", "name": "Alice" },
+  "items": [...]
+}</pre>
+                </div>
+            </div>
+        </div>
+
+        <div class="row align-items-center service-highlight flex-md-row-reverse">
+            <div class="col-md-6">
+                <h3 class="mb-3"><i class="bi bi-code-square me-2 accent-text"></i> Flink SQL Assistant</h3>
+                <p>Our integrated editor powered by CodeMirror makes writing complex streaming queries easy. Use the assistant to generate <code>JSON_VALUE</code> or custom <code>XmlExtract</code> calls without looking up the syntax.</p>
+                <ul class="list-unstyled">
+                    <li><i class="bi bi-check2 accent-text"></i> SQL Auto-completion (Ctrl+Space)</li>
+                    <li><i class="bi bi-check2 accent-text"></i> Persistent Query History</li>
+                    <li><i class="bi bi-check2 accent-text"></i> Visual result grid with sorting</li>
+                </ul>
+            </div>
+            <div class="col-md-6">
+                <div class="p-4 bg-dark rounded border border-secondary shadow">
+                    <code class="d-block text-white-50 small mb-2">// Generated Flink SQL</code>
+                    <pre class="m-0" style="color: #f8f8f2;">SELECT <span style="color: #50fa7b;">JSON_VALUE</span>(raw, '$.customer.name'),
+       amount
+FROM "orders"
+WHERE amount > 100;</pre>
+                </div>
+            </div>
+        </div>
+
+        <div class="row align-items-center service-highlight">
+            <div class="col-md-6">
+                <h3 class="mb-3"><i class="bi bi-share me-2 accent-text"></i> Stream Flow & Traceability</h3>
+                <p>Trace a specific message ID (like a Correlation ID) across your entire architecture. Visualize how a message moves from the "Received" topic to "Delivered" through various transformation steps.</p>
+                <ul class="list-unstyled">
+                    <li><i class="bi bi-check2 accent-text"></i> Cross-topic search by ID or Pattern</li>
+                    <li><i class="bi bi-check2 accent-text"></i> Support for JSONPath & XPath</li>
+                    <li><i class="bi bi-check2 accent-text"></i> Chronological flow visualization</li>
+                </ul>
+            </div>
+            <div class="col-md-6">
+                <div class="text-center p-4">
+                    <i class="bi bi-node-plus display-1 accent-text opacity-50"></i>
+                    <p class="mt-3 text-muted italic">Interactive Cytoscape.js graphs</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section id="quickstart" class="py-5 bg-dark">
+    <div class="container">
+        <div class="section-title">
+            <h2 class="display-5 fw-bold">Get Started in <span class="accent-text">Seconds</span></h2>
+        </div>
+        <div class="row justify-content-center">
+            <div class="col-md-8">
+                <div class="card bg-dark border-secondary p-4">
+                    <div class="mb-4">
+                        <h5><span class="step-number">1</span> Spin up Kafka (now with KRaft 4.2 support!)</h5>
+                        <p class="text-muted ms-4">Use our pre-configured Docker Compose to get a production-ready environment.</p>
+                        <div class="ms-4 p-3 bg-black rounded">
+                            <code>docker compose -f docker-compose-kafka4.yml up -d</code>
+                        </div>
+                    </div>
+                    <div class="mb-4">
+                        <h5><span class="step-number">2</span> Run the Explorer</h5>
+                        <p class="text-muted ms-4">Launch the Spring Boot application locally.</p>
+                        <div class="ms-4 p-3 bg-black rounded">
+                            <code>./mvnw spring-boot:run</code>
+                        </div>
+                    </div>
+                    <div>
+                        <h5><span class="step-number">3</span> Explore</h5>
+                        <p class="text-muted ms-4">Open your browser at <span class="accent-text">http://localhost:8080</span> and start querying!</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<footer class="py-4 border-top border-secondary text-center">
+    <div class="container">
+        <p class="mb-0 text-muted">&copy; 2026 Kafka SQL Explorer - Built for Data Engineers by <span class="accent-text">Compagnons du dev</span>.</p>
+    </div>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

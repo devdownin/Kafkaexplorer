@@ -3,6 +3,8 @@ Spring Boot 3.x | Apache Flink 2.2.x (Embedded) | Java 21
 
 Kafka SQL Explorer est une application web moderne conçue pour les Data Engineers et Architectes, permettant d'explorer des clusters Kafka et d'interroger les topics en temps réel via SQL Flink.
 
+🚀 **[Voir le Site de Documentation](https://compagnons-du-dev.github.io/kafka-sql-explorer/)**
+
 Fonctionnalités Détaillées
 1. Dashboard & Navigation
 Liste des Topics : Vue d'ensemble de tous les topics disponibles sur le cluster Kafka.
@@ -63,9 +65,21 @@ Docker & Docker Compose
 JDK 21+
 Installation
 Lancer Kafka :
-docker-compose up -d
-Lancer l'application :
+- Pour Kafka 3.x (mode Zookeeper) :
+  ```bash
+  docker-compose up -d
+  ```
+- Pour Kafka 4.2 (mode KRaft) :
+  ```bash
+  # Ceci lance Kafka ET l'application sur le port 8080
+  docker compose -f docker-compose-kafka4.yml up -d
+  ```
+
+Lancer l'application (si vous n'utilisez pas la version Dockerisée) :
+```bash
+# Si vous avez lancé UNIQUEMENT Kafka via : docker compose -f docker-compose-kafka4.yml up -d kafka
 ./mvnw spring-boot:run
+```
 Accéder à l'interface : http://localhost:8080
 Exemple de Requête XML
 ```sql
