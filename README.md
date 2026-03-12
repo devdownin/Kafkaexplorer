@@ -72,6 +72,14 @@ The assistant transforms the message preview into a query design tool:
 - **SQL Validation**: Whitelist of authorized commands (`SELECT`, `EXPLAIN`, `CREATE TABLE`) to prevent destructive DML operations.
 - **Connection Management**: Clean lifecycle of the Kafka AdminClient and consumers.
 
+### 9. Demo & Sandbox Environment
+The application includes an automated demonstration setup to help you explore features immediately:
+- **6-Step Order Pipeline**: Sequential topics (`demo.orders.1.received` to `6.delivered`) to test **Stream Flow** traceability.
+- **JOINs & Reference Data**: A `demo.customers` topic to practice SQL JOINs with orders.
+- **XML Processing**: A `demo.orders.xml` topic to test `XmlExtract` UDF.
+- **Complex JSON**: A `demo.orders.complex` topic with deep nesting for testing **Schema Inference**.
+- **Poison Messages**: A `demo.errors.poison` topic containing malformed data to observe error resilience.
+
 ---
 
 ## Tech Stack
@@ -102,9 +110,17 @@ The assistant transforms the message preview into a query design tool:
 
 ### XML Query Example
 ```sql
-SELECT invoice_id, XmlExtract(raw_value, '/Invoice/Amount') as total
-FROM my_xml_topic
-WHERE total > 1000;
+SELECT XmlExtract(raw_value, '/Order/Customer') as customer,
+       XmlExtract(raw_value, '/Order/Amount') as amount
+FROM "demo.orders.xml"
+WHERE amount > 100;
+```
+
+### JOIN Query Example
+```sql
+SELECT c.name, c.segment, o.amount, o.state
+FROM "demo.orders.1.received" o
+JOIN "demo.customers" c ON o.customer_id = c.customer_id;
 ```
 
 ---
