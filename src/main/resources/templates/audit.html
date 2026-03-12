@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: html}">
+<head>
+    <title>Functional Audit</title>
+</head>
+<body th:fragment="content">
+    <div class="row mb-4">
+        <div class="col">
+            <h1 class="h3 text-teal fw-bold"><i class="fas fa-clipboard-check me-2"></i>Functional Audit</h1>
+            <p class="text-muted small">Automatic audit of Kafka topics and functional flows using Flink SQL</p>
+        </div>
+        <div class="col-auto">
+            <button id="refreshAuditBtn" class="btn btn-outline-teal"><i class="fas fa-sync-alt me-2"></i>New Audit</button>
+        </div>
+    </div>
+
+    <div id="loadingState" class="text-center py-5" style="display: none;">
+        <div class="spinner-border text-teal mb-3" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+        <h5 class="text-light">Audit in progress...</h5>
+        <p class="text-muted">Analyzing topics, detecting duplicates and calculating latencies.</p>
+    </div>
+
+    <div id="auditContent" th:style="${report == null ? 'display: none;' : ''}">
+        <div th:if="${report}" id="reportSummary">
+            <div class="row mb-5">
+                <div class="col-md-3">
+                    <div class="card bg-dark border-secondary shadow-sm h-100">
+                        <div class="card-body text-center">
+                            <h6 class="text-muted small text-uppercase">Total Topics</h6>
+                            <h2 class="text-light fw-bold" th:text="${report.totalTopics}">0</h2>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card bg-dark border-secondary shadow-sm h-100">
+                        <div class="card-body text-center">
+                            <h6 class="text-muted small text-uppercase">Total Messages</h6>
+                            <h2 class="text-teal fw-bold" th:text="${report.totalMessages}">0</h2>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card bg-dark border-secondary shadow-sm h-100">
+                        <div class="card-body text-center">
+                            <h6 class="text-muted small text-uppercase">Healthy Topics</h6>
+                            <h2 class="text-success fw-bold" th:text="${report.totalTopics - report.unhealthyTopicsCount}">0</h2>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card bg-dark border-secondary shadow-sm h-100">
+                        <div class="card-body text-center">
+                            <h6 class="text-muted small text-uppercase">Unhealthy Topics</h6>
+                            <h2 class="text-danger fw-bold" th:text="${report.unhealthyTopicsCount}">0</h2>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <h5 class="text-teal fw-bold mb-3"><i class="fas fa-project-diagram me-2"></i>Functional Flows</h5>
+            <div class="row mb-5">
+                <div th:each="flow : ${report.flowAudits}" class="col-md-12 mb-4">
+                    <div class="card bg-dark border-secondary shadow-sm">
+                        <div class="card-header border-secondary d-flex justify-content-between align-items-center py-3">
+                            <h6 class="mb-0 fw-bold text-light" th:text="${flow.flowName}">Flow Name</h6>
+                            <span class="badge" th:classappend="${flow.overallHealthScore > 90 ? 'bg-success' : (flow.overallHealthScore > 50 ? 'bg-warning' : 'bg-danger')}"
+                                  th:text="${#numbers.formatDecimal(flow.overallHealthScore, 1, 1)} + '% Success Rate'"></span>
+                        </div>
+                        <div class="card-body">
+                            <div class="d-flex flex-wrap align-items-center">
+                                <th:block th:each="step, iterStat : ${flow.steps}">
+                                    <div class="text-center px-3 mb-3" style="min-width: 150px;">
+                                        <div class="text-muted small mb-1" th:text="'Step ' + ${iterStat.count}"></div>
+                                        <div class="fw-bold text-light truncate-text" th:title="${step.topicName}" th:text="${step.topicName}">Topic</div>
+                                        <div class="h4 my-2" th:text="${step.count}">0</div>
+                                        <div class="progress" style="height: 5px;">
+                                            <div class="progress-bar bg-teal" role="progressbar" th:style="'width: ' + ${step.throughputPercentage} + '%'"></div>
+                                        </div>
+                                        <div class="small text-muted mt-1" th:text="${#numbers.formatDecimal(step.throughputPercentage, 1, 1)} + '%'"></div>
+                                        <div th:if="${step.averageLatencyMs != null}" class="badge bg-outline-warning border border-warning text-warning mt-2">
+                                            <i class="fas fa-clock me-1"></i> +<span th:text="${step.averageLatencyMs}">0</span>ms
+                                        </div>
+                                    </div>
+                                    <div th:if="${!iterStat.last}" class="mx-2 mb-3 text-muted">
+                                        <i class="fas fa-chevron-right"></i>
+                                    </div>
+                                </th:block>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <h5 class="text-teal fw-bold mb-3"><i class="fas fa-vial me-2"></i>Technical Audit Details</h5>
+            <div class="card bg-dark border-secondary shadow-sm">
+                <div class="card-body p-0">
+                    <table class="table table-dark table-hover table-sm mb-0">
+                        <thead>
+                            <tr>
+                                <th class="text-teal small py-3 px-4">TOPIC</th>
+                                <th class="text-teal small py-3 text-end">COUNT (SQL)</th>
+                                <th class="text-teal small py-3 text-center">FORMAT</th>
+                                <th class="text-teal small py-3 text-center">POISON MSGS</th>
+                                <th class="text-teal small py-3 text-center">DUPLICATES</th>
+                                <th class="text-teal small py-3 text-center">STATUS</th>
+                                <th class="text-teal small py-3 px-4">ISSUES</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr th:each="audit : ${report.topicAudits}">
+                                <td class="py-3 px-4 fw-bold text-light" th:text="${audit.name}">topic</td>
+                                <td class="py-3 text-end" th:text="${audit.messageCount}">0</td>
+                                <td class="py-3 text-center">
+                                    <span class="badge border border-teal text-teal" th:text="${audit.format}">AUTO</span>
+                                </td>
+                                <td class="py-3 text-center">
+                                    <span th:if="${audit.poisonMessageCount > 0}" class="text-danger fw-bold" th:text="${audit.poisonMessageCount}">0</span>
+                                    <span th:if="${audit.poisonMessageCount == 0}" class="text-success"><i class="fas fa-check-circle"></i></span>
+                                </td>
+                                <td class="py-3 text-center">
+                                    <span th:if="${audit.duplicateCount > 0}" class="text-warning fw-bold" th:text="${audit.duplicateCount}">0</span>
+                                    <span th:if="${audit.duplicateCount == 0}" class="text-success"><i class="fas fa-check-circle"></i></span>
+                                </td>
+                                <td class="py-3 text-center">
+                                    <span class="badge" th:classappend="${audit.healthStatus == 'HEALTHY' ? 'bg-success' : 'bg-danger'}" th:text="${audit.healthStatus}">STATUS</span>
+                                </td>
+                                <td class="py-3 px-4">
+                                    <ul class="mb-0 small text-warning list-unstyled">
+                                        <li th:each="issue : ${audit.issues}" th:text="${issue}"></li>
+                                    </ul>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script th:inline="javascript">
+        const initialAuditId = [[${auditId}]];
+        const initialReportStatus = [[${report != null ? report.status : null}]];
+
+        function pollAudit(auditId) {
+            document.getElementById('loadingState').style.display = 'block';
+            document.getElementById('auditContent').style.display = 'none';
+
+            const interval = setInterval(() => {
+                fetch('/api/audit/status/' + auditId)
+                    .then(response => response.json())
+                    .then(report => {
+                        if (report.status === 'COMPLETED') {
+                            clearInterval(interval);
+                            window.location.reload();
+                        } else if (report.status === 'FAILED') {
+                            clearInterval(interval);
+                            alert('Audit failed: ' + (report.globalStats.error || 'Unknown error'));
+                            document.getElementById('loadingState').style.display = 'none';
+                        }
+                    });
+            }, 2000);
+        }
+
+        if (initialAuditId) {
+            pollAudit(initialAuditId);
+        } else if (initialReportStatus === 'RUNNING') {
+            const currentAuditId = [[${report != null ? report.auditId : null}]];
+            pollAudit(currentAuditId);
+        }
+
+        document.getElementById('refreshAuditBtn').addEventListener('click', () => {
+            fetch('/api/audit/start', { method: 'POST' })
+                .then(response => response.text())
+                .then(auditId => {
+                    pollAudit(auditId);
+                });
+        });
+    </script>
+
+    <style>
+        .truncate-text {
+            max-width: 150px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: inline-block;
+        }
+    </style>
+</body>
+</html>
