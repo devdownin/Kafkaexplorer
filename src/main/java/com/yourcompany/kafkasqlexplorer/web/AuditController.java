@@ -9,8 +9,6 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.ResponseBody;
 
-import java.util.concurrent.ExecutionException;
-
 @Controller
 public class AuditController {
 
@@ -42,13 +40,5 @@ public class AuditController {
     @ResponseBody
     public AuditReport getAuditStatus(@PathVariable String id) {
         return auditService.getAuditReport(id);
-    }
-        try {
-            AuditReport report = auditService.generateAuditReport();
-            model.addAttribute("report", report);
-        } catch (Exception e) {
-            model.addAttribute("error", "Failed to generate audit report: " + e.getMessage());
-        }
-        return "audit";
     }
 }
