@@ -13,12 +13,6 @@ import org.springframework.stereotype.Service;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import com.yourcompany.kafkasqlexplorer.domain.*;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
-
-import java.util.*;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
 
@@ -43,7 +37,6 @@ public class AuditService {
                         SchemaInferenceService schemaInferenceService,
                         DdlGeneratorService ddlGeneratorService,
                         com.yourcompany.kafkasqlexplorer.config.KafkaConfig kafkaConfig) {
-                        DdlGeneratorService ddlGeneratorService) {
         this.kafkaAdminService = kafkaAdminService;
         this.flinkSqlService = flinkSqlService;
         this.schemaInferenceService = schemaInferenceService;
@@ -110,35 +103,6 @@ public class AuditService {
         }
     }
 
-    public AuditReport generateAuditReport() throws ExecutionException, InterruptedException {
-        List<String> topics = kafkaAdminService.listTopics();
-        Map<String, Long> topicSizes = kafkaAdminService.getTopicsSize(topics);
-
-        List<TopicAudit> topicAudits = new ArrayList<>();
-        int unhealthyCount = 0;
-
-        for (String topic : topics) {
-            TopicAudit audit = auditTopic(topic, topicSizes.getOrDefault(topic, 0L));
-            topicAudits.add(audit);
-            if ("UNHEALTHY".equals(audit.healthStatus())) {
-                unhealthyCount++;
-            }
-        }
-
-        List<FlowAudit> flowAudits = identifyAndAuditFlows(topicAudits);
-
-        long totalMessages = topicSizes.values().stream().mapToLong(Long::longValue).sum();
-
-        return new AuditReport(
-            topics.size(),
-            totalMessages,
-            unhealthyCount,
-            topicAudits,
-            flowAudits,
-            Map.of("timestamp", System.currentTimeMillis())
-        );
-    }
-
     private TopicAudit auditTopic(String topicName, long approximateCount) {
         MessageFormat format = schemaInferenceService.detectFormat(topicName);
         Map<String, String> schema = schemaInferenceService.inferSchema(topicName, format);
@@ -150,26 +114,6 @@ public class AuditService {
 
         // Duplicate detection
         long duplicates = detectDuplicates(topicName, schema);
-
-        // Poison message detection
-        // Register table if not exists
-        if (!flinkSqlService.listTables().contains(topicName)) {
-            String ddl = ddlGeneratorService.generateDdl(topicName, schema, format);
-            try {
-                flinkSqlService.executeSql(new QueryRequest(ddl, null, null, null, null));
-            } catch (Exception e) {
-                log.warn("Could not register table for audit: {}", topicName);
-            }
-        }
-
-        // Execute automated query to get exact count
-        long exactCount = approximateCount;
-        QueryResult countResult = flinkSqlService.executeSql(new QueryRequest("SELECT COUNT(*) FROM \"" + topicName + "\"", null, 1, 5000L, null));
-        if (countResult.error() == null && !countResult.rows().isEmpty()) {
-            Object val = countResult.rows().get(0).get("EXPR$0");
-            if (val instanceof Long) exactCount = (Long) val;
-            else if (val instanceof Integer) exactCount = ((Integer) val).longValue();
-        }
 
         // Poison message detection (simple heuristic)
         int poisonCount = 0;
@@ -228,10 +172,6 @@ public class AuditService {
             if (val instanceof Integer) return ((Integer) val).longValue();
         }
         return 0;
-
-        String status = issues.isEmpty() ? "HEALTHY" : "UNHEALTHY";
-
-        return new TopicAudit(topicName, exactCount, format, poisonCount, status, issues);
     }
 
     private List<FlowAudit> identifyAndAuditFlows(List<TopicAudit> topicAudits) {
@@ -266,9 +206,6 @@ public class AuditService {
                 }
 
                 steps.add(new FlowAudit.StepInfo(topic.name(), topic.messageCount(), throughput, latency));
-            for (TopicAudit topic : sortedTopics) {
-                double throughput = firstStepCount == 0 ? 100.0 : (double) topic.messageCount() / firstStepCount * 100.0;
-                steps.add(new FlowAudit.StepInfo(topic.name(), topic.messageCount(), throughput));
             }
 
             double healthScore = steps.get(steps.size() - 1).throughputPercentage();
@@ -280,13 +217,10 @@ public class AuditService {
 
     private Long calculateLatency(String sourceTopic, String targetTopic) {
         // Simple heuristic for latency: average of (target.event_time - source.event_time) joined by ID
-        // Note: This requires both topics to have a common ID field.
-        // For demo purposes, we look for 'id' or 'order_id'
         String sql = "SELECT AVG(CAST(t2.event_time AS LONG) - CAST(t1.event_time AS LONG)) " +
                      "FROM \"" + sourceTopic + "\" t1 JOIN \"" + targetTopic + "\" t2 ON t1.id = t2.id " +
                      "WHERE t2.event_time > t1.event_time";
 
-        // We need to check if 'id' exists in both. This is complex to do perfectly here, so we wrap in try/catch or rely on QueryResult.error()
         QueryResult result = flinkSqlService.executeSql(new QueryRequest(sql, null, 1, 5000L, null));
         if (result.error() == null && !result.rows().isEmpty()) {
             Object val = result.rows().get(0).values().iterator().next();

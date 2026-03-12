@@ -13,6 +13,5 @@ public record FlowAudit(
         long count,
         double throughputPercentage, // compared to previous step or first step
         Long averageLatencyMs
-        double throughputPercentage // compared to previous step or first step
     ) {}
 }
