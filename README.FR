@@ -42,11 +42,19 @@ Moteur CodeMirror : Coloration syntaxique SQL et thème Cyberpunk.
 Auto-complétion : Suggestion intelligente des noms de topics et tables enregistrées (Ctrl+Space).
 Historique des Requêtes : Accès rapide aux 20 dernières requêtes exécutées via une sidebar persistante (sessionStorage).
 Gestion des Ressources : Annulation automatique des jobs Flink en cas de timeout ou d'erreur, évitant toute fuite de ressources dans le minicluster.
-7. Sécurité & Robustesse
+7. Audit Fonctionnel Automatisé
+Audit Asynchrone : Lancez des audits complets du cluster en arrière-plan sans bloquer l'interface.
+Contrôle de Santé Technique : Détection automatique des "poison messages" (JSON/XML malformés) et comptage précis via SQL Flink.
+Détection de Doublons : Identification intelligente des messages dupliqués basée sur des champs ID communs (ex: id, order_id).
+Analyse de Flux Métier : Groupement automatique des topics en processus logiques (via conventions de nommage) pour visualiser les débits et les taux d'abandon entre les étapes.
+Mesure de Latence : Calcul du temps de traitement moyen entre topics successifs d'un flux via des jointures SQL Flink.
+Historique d'Audit : Persistance des rapports dans un topic Kafka dédié (internal.audit.history) pour un suivi long terme.
+
+8. Sécurité & Robustesse
 Protection XXE : Désactivation stricte des entités externes DTD pour tous les parsers XML (Schema Inferrer, UDF, Formatter).
 Validation SQL : Whitelist de commandes autorisées (SELECT, EXPLAIN, CREATE TABLE) pour empêcher les opérations DML destructrices.
 Gestion des Connexions : Lifecycle propre de l'AdminClient Kafka et des consommateurs.
-8. Environnement de Démo & Sandbox
+9. Environnement de Démo & Sandbox
 L'application inclut une configuration de démonstration automatisée pour explorer les fonctionnalités immédiatement :
 Pipeline de Commande en 6 étapes : Topics séquentiels (demo.orders.1.received à 6.delivered) pour tester la traçabilité Stream Flow.
 JOINs & Données de Référence : Un topic demo.customers pour pratiquer les jointures SQL avec les commandes.

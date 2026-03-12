@@ -4,6 +4,8 @@ import java.util.List;
 import java.util.Map;
 
 public record AuditReport(
+    String auditId,
+    String status,
     long totalTopics,
     long totalMessages,
     int unhealthyTopicsCount,

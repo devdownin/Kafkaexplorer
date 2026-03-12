@@ -69,12 +69,20 @@ The assistant transforms the message preview into a query design tool:
 - **Intelligent Diffing**: Specify an ID column to highlight value discrepancies and identify missing records across topics.
 - **Live Metrics**: Real-time display of message counts and throughput (msg/s) for the selected topics and time ranges.
 
-### 8. Security & Robustness
+### 8. Automated Functional Audit
+- **Asynchronous Auditing**: Launch long-running cluster-wide audits in the background.
+- **Technical Health Checks**: Automatic detection of "poison messages" (malformed JSON/XML) and precise record counting via Flink SQL.
+- **Duplicate Detection**: Intelligent identification of duplicate records based on common ID fields (e.g., `id`, `order_id`).
+- **Functional Flow Analysis**: Automatic grouping of topics into logical business processes (using naming conventions) to visualize throughput and drop-off rates across steps.
+- **Latency Measurement**: Calculation of average processing time between successive topics in a flow using Flink SQL joins.
+- **Audit History**: Persistence of audit reports into a dedicated Kafka topic (`internal.audit.history`) for long-term tracking.
+
+### 9. Security & Robustness
 - **XXE Protection**: Strict disabling of external DTD entities for all XML parsers (Schema Inferrer, UDF, Formatter).
 - **SQL Validation**: Whitelist of authorized commands (`SELECT`, `EXPLAIN`, `CREATE TABLE`) to prevent destructive DML operations.
 - **Connection Management**: Clean lifecycle of the Kafka AdminClient and consumers.
 
-### 9. Demo & Sandbox Environment
+### 10. Demo & Sandbox Environment
 The application includes an automated demonstration setup to help you explore features immediately:
 - **6-Step Order Pipeline**: Sequential topics (`demo.orders.1.received` to `6.delivered`) to test **Stream Flow** traceability.
 - **JOINs & Reference Data**: A `demo.customers` topic to practice SQL JOINs with orders.

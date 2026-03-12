@@ -7,6 +7,7 @@ public record TopicAudit(
     long messageCount,
     MessageFormat format,
     int poisonMessageCount,
+    long duplicateCount,
     String healthStatus,
     List<String> issues
 ) {}
