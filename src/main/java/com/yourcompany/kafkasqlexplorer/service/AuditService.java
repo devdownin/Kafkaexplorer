@@ -14,6 +14,7 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
@@ -84,16 +85,18 @@ public class AuditService {
             List<String> topics = kafkaAdminService.listTopics();
             Map<String, Long> topicSizes = kafkaAdminService.getTopicsSize(topics);
 
-            List<TopicAudit> topicAudits = new ArrayList<>();
-            int unhealthyCount = 0;
+            // Parallelize topic auditing
+            List<CompletableFuture<TopicAudit>> futures = topics.stream()
+                .map(topic -> CompletableFuture.supplyAsync(() -> auditTopic(topic, topicSizes.getOrDefault(topic, 0L))))
+                .toList();
 
-            for (String topic : topics) {
-                TopicAudit audit = auditTopic(topic, topicSizes.getOrDefault(topic, 0L));
-                topicAudits.add(audit);
-                if (HealthStatus.UNHEALTHY.equals(audit.healthStatus())) {
-                    unhealthyCount++;
-                }
-            }
+            List<TopicAudit> topicAudits = futures.stream()
+                .map(CompletableFuture::join)
+                .collect(Collectors.toList());
+
+            long unhealthyCount = topicAudits.stream()
+                .filter(a -> HealthStatus.UNHEALTHY.equals(a.healthStatus()))
+                .count();
 
             List<FlowAudit> flowAudits = identifyAndAuditFlows(topicAudits);
 
@@ -104,7 +107,7 @@ public class AuditService {
                 AuditStatus.COMPLETED,
                 topics.size(),
                 totalMessages,
-                unhealthyCount,
+                (int) unhealthyCount,
                 topicAudits,
                 flowAudits,
                 Map.of("timestamp", System.currentTimeMillis())
@@ -178,7 +181,9 @@ public class AuditService {
 
         if (keyField == null) return 0;
 
-        String sql = "SELECT COUNT(*) FROM (SELECT \"" + keyField + "\" FROM \"" + topicName + "\" GROUP BY \"" + keyField + "\" HAVING COUNT(*) > 1)";
+        // Optimization: use a more efficient subquery or just check if any duplicates exist without full scan if possible
+        // Here we use a query that Flink can optimize well.
+        String sql = "SELECT COUNT(*) FROM (SELECT 1 FROM \"" + topicName + "\" GROUP BY \"" + keyField + "\" HAVING COUNT(*) > 1)";
         QueryResult dupResult = flinkSqlService.executeSql(new QueryRequest(sql, null, 1, explorerConfig.getAuditQueryTimeoutMs(), null));
         if (dupResult.error() == null && !dupResult.rows().isEmpty()) {
             Object val = dupResult.rows().get(0).get("EXPR$0");

@@ -31,7 +31,7 @@ public class TopicController {
     }
 
     @GetMapping("/topic/{name}")
-    public String detail(@PathVariable String name, Model model) throws ExecutionException, InterruptedException {
+    public String detail(@PathVariable String name, Model model) throws Exception {
         TopicDescriptor descriptor = kafkaAdminService.getTopicDescriptor(name);
         MessageFormat format = schemaInferenceService.detectFormat(name);
         Map<String, String> schema = schemaInferenceService.inferSchema(name, format);
@@ -50,7 +50,7 @@ public class TopicController {
 
     @GetMapping(value = "/api/topic/{name}/ddl", produces = "text/plain")
     @ResponseBody
-    public String getDdl(@PathVariable String name) throws ExecutionException, InterruptedException {
+    public String getDdl(@PathVariable String name) throws Exception {
         MessageFormat format = schemaInferenceService.detectFormat(name);
         Map<String, String> schema = schemaInferenceService.inferSchema(name, format);
         return ddlGeneratorService.generateDdl(name, schema, format);

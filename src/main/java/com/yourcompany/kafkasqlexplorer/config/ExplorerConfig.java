@@ -15,6 +15,7 @@ public class ExplorerConfig {
     private long inferencePollTimeoutMs = 2000;
     private boolean allowCrossJoin = false;
     private boolean allowSystemTableAccess = false;
+    private int cacheExpireMinutes = 10;
 
     public String getAuditHistoryTopic() {
         return auditHistoryTopic;
@@ -78,5 +79,13 @@ public class ExplorerConfig {
 
     public void setAllowSystemTableAccess(boolean allowSystemTableAccess) {
         this.allowSystemTableAccess = allowSystemTableAccess;
+    }
+
+    public int getCacheExpireMinutes() {
+        return cacheExpireMinutes;
+    }
+
+    public void setCacheExpireMinutes(int cacheExpireMinutes) {
+        this.cacheExpireMinutes = cacheExpireMinutes;
     }
 }
