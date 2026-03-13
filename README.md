@@ -7,6 +7,11 @@ Kafka SQL Explorer is a modern web application designed for Data Engineers and A
 
 ---
 
+## 🛠️ Developer Resources
+- **Unit Tests**: Coverage for all core services (SQL Execution, Lineage, Auditing, XML Extraction). Run via `mvn test`.
+- **Didactic Code**: The codebase is heavily commented to serve as a learning resource for Flink SQL integration in Spring Boot.
+- **XXE Security**: Integrated protection against XML External Entity attacks in all parsing layers.
+
 ## Why Kafka SQL Explorer?
 
 Writing Flink SQL for Kafka topics can be tedious and error-prone, especially when dealing with nested JSON or complex XML payloads. This application innovates by bridging the gap between raw data and SQL queries:

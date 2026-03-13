@@ -16,10 +16,19 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
 
+/**
+ * Service providing cluster-wide health and performance auditing.
+ * It combines Kafka metadata, Flink SQL queries, and naming convention heuristics
+ * to provide a high-level view of data quality and throughput.
+ */
 @Service
 public class AuditService {
 
     private static final Logger log = LoggerFactory.getLogger(AuditService.class);
+
+    /**
+     * Audit reports are persisted to this internal Kafka topic for historical tracking.
+     */
     private static final String AUDIT_HISTORY_TOPIC = "internal.audit.history";
 
     private final KafkaAdminService kafkaAdminService;
@@ -62,6 +71,10 @@ public class AuditService {
         return lastAuditId != null ? auditRuns.get(lastAuditId) : null;
     }
 
+    /**
+     * Executes the audit process in a background thread to avoid blocking the UI.
+     * The results are stored in an in-memory map and also persisted to Kafka.
+     */
     @Async
     protected void runAuditAsync(String auditId) {
         try {
@@ -174,10 +187,14 @@ public class AuditService {
         return 0;
     }
 
+    /**
+     * Heuristically groups topics into logical business processes (Flows)
+     * based on their naming convention (e.g., 'prefix.domain.step').
+     */
     private List<FlowAudit> identifyAndAuditFlows(List<TopicAudit> topicAudits) {
         List<FlowAudit> flows = new ArrayList<>();
 
-        // Group by prefix (e.g., demo.orders, demo.sc)
+        // Group topics by their first two naming components (e.g., demo.orders)
         Map<String, List<TopicAudit>> grouped = topicAudits.stream()
             .filter(t -> t.name().contains("."))
             .collect(Collectors.groupingBy(t -> {
@@ -229,11 +246,12 @@ public class AuditService {
         return null;
     }
 
-    private void persistAuditHistory(AuditReport report) {
+    protected void persistAuditHistory(AuditReport report) {
         Properties props = new Properties();
         props.putAll(kafkaConfig.getKafkaProperties());
         props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
         props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+        props.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, 500); // Don't block for long in tests or if Kafka is down
 
         try (KafkaProducer<String, String> producer = new KafkaProducer<>(props)) {
             String value = objectMapper.writeValueAsString(report);
