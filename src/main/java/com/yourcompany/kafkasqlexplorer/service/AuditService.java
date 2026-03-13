@@ -1,6 +1,7 @@
 package com.yourcompany.kafkasqlexplorer.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.yourcompany.kafkasqlexplorer.config.ExplorerConfig;
 import com.yourcompany.kafkasqlexplorer.domain.*;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
@@ -26,16 +27,12 @@ public class AuditService {
 
     private static final Logger log = LoggerFactory.getLogger(AuditService.class);
 
-    /**
-     * Audit reports are persisted to this internal Kafka topic for historical tracking.
-     */
-    private static final String AUDIT_HISTORY_TOPIC = "internal.audit.history";
-
     private final KafkaAdminService kafkaAdminService;
     private final FlinkSqlService flinkSqlService;
     private final SchemaInferenceService schemaInferenceService;
     private final DdlGeneratorService ddlGeneratorService;
     private final com.yourcompany.kafkasqlexplorer.config.KafkaConfig kafkaConfig;
+    private final ExplorerConfig explorerConfig;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private final Map<String, AuditReport> auditRuns = new ConcurrentHashMap<>();
@@ -45,12 +42,14 @@ public class AuditService {
                         FlinkSqlService flinkSqlService,
                         SchemaInferenceService schemaInferenceService,
                         DdlGeneratorService ddlGeneratorService,
-                        com.yourcompany.kafkasqlexplorer.config.KafkaConfig kafkaConfig) {
+                        com.yourcompany.kafkasqlexplorer.config.KafkaConfig kafkaConfig,
+                        ExplorerConfig explorerConfig) {
         this.kafkaAdminService = kafkaAdminService;
         this.flinkSqlService = flinkSqlService;
         this.schemaInferenceService = schemaInferenceService;
         this.ddlGeneratorService = ddlGeneratorService;
         this.kafkaConfig = kafkaConfig;
+        this.explorerConfig = explorerConfig;
     }
 
     public String startAudit() {
@@ -161,7 +160,7 @@ public class AuditService {
     }
 
     private long getExactCount(String topicName, long approximateCount) {
-        QueryResult countResult = flinkSqlService.executeSql(new QueryRequest("SELECT COUNT(*) FROM \"" + topicName + "\"", null, 1, 5000L, null));
+        QueryResult countResult = flinkSqlService.executeSql(new QueryRequest("SELECT COUNT(*) FROM \"" + topicName + "\"", null, 1, explorerConfig.getAuditQueryTimeoutMs(), null));
         if (countResult.error() == null && !countResult.rows().isEmpty()) {
             Object val = countResult.rows().get(0).get("EXPR$0");
             if (val instanceof Long) return (Long) val;
@@ -178,7 +177,7 @@ public class AuditService {
         if (keyField == null) return 0;
 
         String sql = "SELECT COUNT(*) FROM (SELECT \"" + keyField + "\" FROM \"" + topicName + "\" GROUP BY \"" + keyField + "\" HAVING COUNT(*) > 1)";
-        QueryResult dupResult = flinkSqlService.executeSql(new QueryRequest(sql, null, 1, 5000L, null));
+        QueryResult dupResult = flinkSqlService.executeSql(new QueryRequest(sql, null, 1, explorerConfig.getAuditQueryTimeoutMs(), null));
         if (dupResult.error() == null && !dupResult.rows().isEmpty()) {
             Object val = dupResult.rows().get(0).get("EXPR$0");
             if (val instanceof Long) return (Long) val;
@@ -238,7 +237,7 @@ public class AuditService {
                      "FROM \"" + sourceTopic + "\" t1 JOIN \"" + targetTopic + "\" t2 ON t1.id = t2.id " +
                      "WHERE t2.event_time > t1.event_time";
 
-        QueryResult result = flinkSqlService.executeSql(new QueryRequest(sql, null, 1, 5000L, null));
+        QueryResult result = flinkSqlService.executeSql(new QueryRequest(sql, null, 1, explorerConfig.getAuditQueryTimeoutMs(), null));
         if (result.error() == null && !result.rows().isEmpty()) {
             Object val = result.rows().get(0).values().iterator().next();
             if (val instanceof Number) return ((Number) val).longValue();
@@ -255,7 +254,7 @@ public class AuditService {
 
         try (KafkaProducer<String, String> producer = new KafkaProducer<>(props)) {
             String value = objectMapper.writeValueAsString(report);
-            producer.send(new ProducerRecord<>(AUDIT_HISTORY_TOPIC, report.auditId(), value)).get();
+            producer.send(new ProducerRecord<>(explorerConfig.getAuditHistoryTopic(), report.auditId(), value)).get();
             log.info("Persisted audit {} to history topic", report.auditId());
         } catch (Exception e) {
             log.warn("Failed to persist audit history: {}", e.getMessage());

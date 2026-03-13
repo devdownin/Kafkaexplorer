@@ -1,5 +1,6 @@
 package com.yourcompany.kafkasqlexplorer.service;
 
+import com.yourcompany.kafkasqlexplorer.config.ExplorerConfig;
 import com.yourcompany.kafkasqlexplorer.domain.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -20,6 +21,7 @@ class AuditServiceTest {
     private SchemaInferenceService schemaInferenceService;
     private DdlGeneratorService ddlGeneratorService;
     private com.yourcompany.kafkasqlexplorer.config.KafkaConfig kafkaConfig;
+    private ExplorerConfig explorerConfig;
     private AuditService auditService;
 
     @BeforeEach
@@ -29,9 +31,10 @@ class AuditServiceTest {
         schemaInferenceService = mock(SchemaInferenceService.class);
         ddlGeneratorService = mock(DdlGeneratorService.class);
         kafkaConfig = mock(com.yourcompany.kafkasqlexplorer.config.KafkaConfig.class);
+        explorerConfig = new ExplorerConfig();
         when(kafkaConfig.getKafkaProperties()).thenReturn(Map.of("bootstrap.servers", "localhost:9092"));
 
-        auditService = new AuditService(kafkaAdminService, flinkSqlService, schemaInferenceService, ddlGeneratorService, kafkaConfig) {
+        auditService = new AuditService(kafkaAdminService, flinkSqlService, schemaInferenceService, ddlGeneratorService, kafkaConfig, explorerConfig) {
             @Override
             protected void persistAuditHistory(AuditReport report) {
                 // Skip Kafka persistence in unit tests

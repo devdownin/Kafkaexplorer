@@ -2,6 +2,7 @@ package com.yourcompany.kafkasqlexplorer.service;
 
 import com.yourcompany.kafkasqlexplorer.domain.QueryRequest;
 import com.yourcompany.kafkasqlexplorer.domain.QueryResult;
+import com.yourcompany.kafkasqlexplorer.config.ExplorerConfig;
 import org.apache.flink.core.execution.JobClient;
 import org.apache.flink.table.api.TableResult;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
@@ -24,6 +25,7 @@ import java.util.stream.Collectors;
 public class FlinkSqlService {
 
     private final StreamTableEnvironment tableEnv;
+    private final ExplorerConfig explorerConfig;
 
     /**
      * Stores metadata about currently running Flink jobs.
@@ -33,8 +35,9 @@ public class FlinkSqlService {
 
     public record JobInfo(String sql, JobClient client) {}
 
-    public FlinkSqlService(StreamTableEnvironment tableEnv) {
+    public FlinkSqlService(StreamTableEnvironment tableEnv, ExplorerConfig explorerConfig) {
         this.tableEnv = tableEnv;
+        this.explorerConfig = explorerConfig;
         // Register our custom XML extraction function globally in the Flink environment.
         // This allows users to use 'XmlExtract(raw_value, '/path/to/tag')' in their queries.
         this.tableEnv.createTemporarySystemFunction("XmlExtract", XmlExtractUDF.class);
@@ -89,8 +92,8 @@ public class FlinkSqlService {
             List<String> columns = result.getResolvedSchema().getColumnNames();
             List<Map<String, Object>> rows = new ArrayList<>();
 
-            int limit = request.maxRows() != null ? request.maxRows() : 50;
-            long timeout = request.timeout() != null ? request.timeout() : 10000;
+            int limit = request.maxRows() != null ? request.maxRows() : explorerConfig.getDefaultMaxRows();
+            long timeout = request.timeout() != null ? request.timeout() : explorerConfig.getDefaultQueryTimeoutMs();
 
             // We use a CompletableFuture to implement the timeout logic.
             // Streaming queries might not produce data immediately, so we don't want to block indefinitely.
