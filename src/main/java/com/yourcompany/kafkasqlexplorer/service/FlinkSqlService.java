@@ -3,6 +3,8 @@ package com.yourcompany.kafkasqlexplorer.service;
 import com.yourcompany.kafkasqlexplorer.domain.QueryRequest;
 import com.yourcompany.kafkasqlexplorer.domain.QueryResult;
 import com.yourcompany.kafkasqlexplorer.config.ExplorerConfig;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.apache.flink.core.execution.JobClient;
 import org.apache.flink.table.api.TableResult;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
@@ -24,8 +26,10 @@ import java.util.stream.Collectors;
 @Service
 public class FlinkSqlService {
 
+    private static final Logger log = LoggerFactory.getLogger(FlinkSqlService.class);
     private final StreamTableEnvironment tableEnv;
     private final ExplorerConfig explorerConfig;
+    private final SqlQueryValidator sqlQueryValidator;
 
     /**
      * Stores metadata about currently running Flink jobs.
@@ -35,9 +39,10 @@ public class FlinkSqlService {
 
     public record JobInfo(String sql, JobClient client) {}
 
-    public FlinkSqlService(StreamTableEnvironment tableEnv, ExplorerConfig explorerConfig) {
+    public FlinkSqlService(StreamTableEnvironment tableEnv, ExplorerConfig explorerConfig, SqlQueryValidator sqlQueryValidator) {
         this.tableEnv = tableEnv;
         this.explorerConfig = explorerConfig;
+        this.sqlQueryValidator = sqlQueryValidator;
         // Register our custom XML extraction function globally in the Flink environment.
         // This allows users to use 'XmlExtract(raw_value, '/path/to/tag')' in their queries.
         this.tableEnv.createTemporarySystemFunction("XmlExtract", XmlExtractUDF.class);
@@ -58,7 +63,7 @@ public class FlinkSqlService {
                 schema.put(col.getName(), col.getDataType().toString());
             });
         } catch (Exception e) {
-            // Table not found
+            log.debug("Table not found: {}", tableName);
         }
         return schema;
     }
@@ -79,6 +84,12 @@ public class FlinkSqlService {
         // In a real-world scenario, you might want more granular control or a proper SQL parser.
         if (!sql.startsWith("SELECT") && !sql.startsWith("EXPLAIN") && !sql.startsWith("CREATE TABLE")) {
             return new QueryResult(Collections.emptyList(), Collections.emptyList(), 0, "Only SELECT, EXPLAIN and CREATE TABLE statements are allowed.");
+        }
+
+        try {
+            sqlQueryValidator.validate(request.sql());
+        } catch (IllegalArgumentException e) {
+            return new QueryResult(Collections.emptyList(), Collections.emptyList(), 0, "SQL Validation Error: " + e.getMessage());
         }
 
         TableResult result = null;

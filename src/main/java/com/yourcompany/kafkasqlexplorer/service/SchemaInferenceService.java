@@ -13,12 +13,16 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.springframework.stereotype.Service;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.time.Duration;
 import java.util.*;
 
 @Service
 public class SchemaInferenceService {
 
+    private static final Logger log = LoggerFactory.getLogger(SchemaInferenceService.class);
     private final KafkaConfig kafkaConfig;
     private final ExplorerConfig explorerConfig;
     private final JsonSchemaInferrer jsonInferrer;
@@ -104,16 +108,20 @@ public class SchemaInferenceService {
 
             int targetSize = explorerConfig.getInferenceSampleSize();
             long timeoutMs = explorerConfig.getInferencePollTimeoutMs();
+            long startTime = System.currentTimeMillis();
 
-            ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(timeoutMs));
-            for (ConsumerRecord<String, String> record : records) {
-                if (record.value() != null) {
-                    samples.add(record.value());
+            while (samples.size() < targetSize && (System.currentTimeMillis() - startTime) < timeoutMs) {
+                ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(200));
+                if (records.isEmpty()) break;
+                for (ConsumerRecord<String, String> record : records) {
+                    if (record.value() != null) {
+                        samples.add(record.value());
+                    }
+                    if (samples.size() >= targetSize) break;
                 }
-                if (samples.size() >= targetSize) break;
             }
         } catch (Exception e) {
-            // Handle error
+            log.error("Failed to sample messages for schema inference on topic: {}", topicName, e);
         }
         return samples;
     }

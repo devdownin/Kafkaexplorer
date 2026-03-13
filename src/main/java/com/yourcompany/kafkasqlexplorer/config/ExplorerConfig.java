@@ -13,6 +13,8 @@ public class ExplorerConfig {
     private long auditQueryTimeoutMs = 5000;
     private int inferenceSampleSize = 10;
     private long inferencePollTimeoutMs = 2000;
+    private boolean allowCrossJoin = false;
+    private boolean allowSystemTableAccess = false;
 
     public String getAuditHistoryTopic() {
         return auditHistoryTopic;
@@ -60,5 +62,21 @@ public class ExplorerConfig {
 
     public void setInferencePollTimeoutMs(long inferencePollTimeoutMs) {
         this.inferencePollTimeoutMs = inferencePollTimeoutMs;
+    }
+
+    public boolean isAllowCrossJoin() {
+        return allowCrossJoin;
+    }
+
+    public void setAllowCrossJoin(boolean allowCrossJoin) {
+        this.allowCrossJoin = allowCrossJoin;
+    }
+
+    public boolean isAllowSystemTableAccess() {
+        return allowSystemTableAccess;
+    }
+
+    public void setAllowSystemTableAccess(boolean allowSystemTableAccess) {
+        this.allowSystemTableAccess = allowSystemTableAccess;
     }
 }

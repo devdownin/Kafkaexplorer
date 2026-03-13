@@ -2,6 +2,7 @@ package com.yourcompany.kafkasqlexplorer.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yourcompany.kafkasqlexplorer.config.ExplorerConfig;
+import com.yourcompany.kafkasqlexplorer.config.KafkaConfig;
 import com.yourcompany.kafkasqlexplorer.domain.*;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
@@ -32,7 +33,7 @@ public class AuditService {
     private final SchemaInferenceService schemaInferenceService;
     private final DdlGeneratorService ddlGeneratorService;
     private final NamingConventionService namingConventionService;
-    private final com.yourcompany.kafkasqlexplorer.config.KafkaConfig kafkaConfig;
+    private final KafkaConfig kafkaConfig;
     private final ExplorerConfig explorerConfig;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -44,7 +45,7 @@ public class AuditService {
                         SchemaInferenceService schemaInferenceService,
                         DdlGeneratorService ddlGeneratorService,
                         NamingConventionService namingConventionService,
-                        com.yourcompany.kafkasqlexplorer.config.KafkaConfig kafkaConfig,
+                        KafkaConfig kafkaConfig,
                         ExplorerConfig explorerConfig) {
         this.kafkaAdminService = kafkaAdminService;
         this.flinkSqlService = flinkSqlService;
@@ -183,6 +184,8 @@ public class AuditService {
             Object val = dupResult.rows().get(0).get("EXPR$0");
             if (val instanceof Long) return (Long) val;
             if (val instanceof Integer) return ((Integer) val).longValue();
+        } else if (dupResult.error() != null) {
+            log.warn("Failed to detect duplicates for topic {}: {}", topicName, dupResult.error());
         }
         return 0;
     }
@@ -221,6 +224,8 @@ public class AuditService {
         if (result.error() == null && !result.rows().isEmpty()) {
             Object val = result.rows().get(0).values().iterator().next();
             if (val instanceof Number) return ((Number) val).longValue();
+        } else if (result.error() != null) {
+            log.warn("Failed to calculate latency between {} and {}: {}", sourceTopic, targetTopic, result.error());
         }
         return null;
     }

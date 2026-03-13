@@ -105,7 +105,7 @@ public class KafkaAdminService {
                     }
                 }
             } catch (Exception e) {
-                // Return empty/zero sizes if failed
+                log.error("Failed to get topics size for: {}", topicNames, e);
             }
         }
         return sizes;
