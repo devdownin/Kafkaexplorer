@@ -39,7 +39,7 @@ public class DashboardController {
 
     @GetMapping("/api/topics")
     @org.springframework.web.bind.annotation.ResponseBody
-    public java.util.List<String> getTopics() throws ExecutionException, InterruptedException {
+    public java.util.List<String> getTopics() throws Exception {
         return kafkaAdminService.listTopics();
     }
 }

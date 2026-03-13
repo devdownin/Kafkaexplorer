@@ -27,7 +27,7 @@
     </nav>
 
     <main class="container py-4">
-        <div th:replace="${content}"></div>
+        <div th:replace="${content} ?: ~{}"></div>
     </main>
 
     <footer class="footer border-top mt-5 py-3 text-center">
