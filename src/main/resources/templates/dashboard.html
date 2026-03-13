@@ -68,10 +68,14 @@
         <div class="col-md-2">
             <input type="text" id="fullNameFilter" class="form-control form-control-sm bg-dark border-secondary text-light" placeholder="Full name...">
         </div>
-        <div class="col-md-4 d-flex align-items-center">
+        <div class="col-md-5 d-flex align-items-center">
             <div class="form-check form-switch me-3">
                 <input class="form-check-input bg-dark border-secondary" type="checkbox" id="hideEmptyTopics">
                 <label class="form-check-label small text-muted text-nowrap" for="hideEmptyTopics">Hide Empty</label>
+            </div>
+            <div class="form-check form-switch me-3">
+                <input class="form-check-input bg-dark border-secondary" type="checkbox" id="hideDltTopics" checked>
+                <label class="form-check-label small text-muted text-nowrap" for="hideDltTopics" title="Hide Dead Letter Topics (*.dlt)">Hide DLT</label>
             </div>
             <input type="text" id="topicSearch" class="form-control form-control-sm bg-dark border-secondary text-light" placeholder="Search topics...">
         </div>
@@ -87,10 +91,13 @@
                     </tr>
                 </thead>
                 <tbody id="topicList">
-                    <tr th:each="topic : ${topics}" class="topic-row" th:data-size="${topicSizes[topic]}">
+                    <tr th:each="topic : ${topics}" class="topic-row"
+                        th:data-size="${topicSizes[topic]}"
+                        th:data-dlt="${topic.toLowerCase().endsWith('.dlt')}">
                         <td class="py-3 px-4 fw-bold text-light">
                             <span th:text="${topic}">topic-name</span>
                             <small th:if="${topicSizes[topic] == 0}" class="badge bg-secondary ms-2 opacity-50">EMPTY</small>
+                            <small th:if="${topic.toLowerCase().endsWith('.dlt')}" class="badge bg-warning text-dark ms-2 opacity-75">DLT</small>
                         </td>
                         <td class="py-3 text-end">
                             <span class="text-muted small me-2" th:text="${topicSizes[topic]} + ' msgs'"></span>

@@ -22,6 +22,15 @@ public class DdlGeneratorService {
     }
 
     public String generateDdl(String topicName, Map<String, String> schema, MessageFormat format) {
+        return generateDdl(topicName, schema, format, "earliest-offset");
+    }
+
+    public String generateDdl(String topicName, Map<String, String> schema, MessageFormat format, String startupMode) {
+        // Validation of startupMode to prevent SQL injection
+        if (startupMode == null || (!startupMode.equals("earliest-offset") && !startupMode.equals("latest-offset"))) {
+            startupMode = "earliest-offset";
+        }
+
         StringBuilder sb = new StringBuilder();
         sb.append("CREATE TABLE ").append(topicName).append(" (\n");
 
@@ -65,7 +74,7 @@ public class DdlGeneratorService {
             sb.append("    'value.format' = 'raw',\n");
         }
 
-        sb.append("    'properties.auto.offset.reset' = 'earliest'\n");
+        sb.append("    'scan.startup.mode' = '").append(startupMode).append("'\n");
         sb.append(");");
 
         return sb.toString();

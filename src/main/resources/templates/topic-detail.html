@@ -13,7 +13,15 @@
                 </ol>
             </nav>
 
-            <h1 class="h3 text-teal fw-bold mb-4" th:text="${topic.name}">topic-name</h1>
+            <div class="d-flex align-items-center mb-4">
+                <h1 class="h3 text-teal fw-bold mb-0" th:text="${topic.name}">topic-name</h1>
+                <span th:if="${topic.name.toLowerCase().endsWith('.dlt')}" class="badge bg-warning text-dark ms-3">DEAD LETTER TOPIC</span>
+            </div>
+
+            <div th:if="${topic.name.toLowerCase().endsWith('.dlt')}" class="alert alert-warning border-warning bg-dark text-warning small mb-4">
+                <i class="fas fa-exclamation-triangle me-2"></i>
+                <strong>Notice:</strong> This is a Dead Letter Topic (DLT). Messages here usually represent failed processing attempts and might have inconsistent schemas or malformed payloads.
+            </div>
 
             <div class="row row-cols-1 row-cols-md-4 g-4 mb-4">
                 <div class="col">
@@ -42,7 +50,15 @@
                 </div>
             </div>
 
-            <h5 class="text-teal fw-bold mb-3">Flink SQL DDL (Inferred)</h5>
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="text-teal fw-bold mb-0">Flink SQL DDL (Inferred)</h5>
+                <div class="btn-group btn-group-sm" role="group">
+                    <input type="radio" class="btn-check" name="readMode" id="earliest" value="earliest-offset" th:checked="${readMode == 'earliest-offset'}" onchange="updateDdl()">
+                    <label class="btn btn-outline-teal" for="earliest">Earliest</label>
+                    <input type="radio" class="btn-check" name="readMode" id="latest" value="latest-offset" th:checked="${readMode == 'latest-offset'}" onchange="updateDdl()">
+                    <label class="btn btn-outline-teal" for="latest">Latest</label>
+                </div>
+            </div>
             <div class="card bg-dark border-secondary mb-4 shadow-sm">
                 <div class="card-header bg-dark border-secondary d-flex justify-content-between align-items-center">
                     <span class="text-teal small fw-bold">DDL SQL</span>
@@ -144,5 +160,29 @@
             </div>
         </div>
     </div>
+
+    <script th:inline="javascript">
+        async function updateDdl() {
+            const topicName = [[${topic.name}]];
+            const readMode = document.querySelector('input[name="readMode"]:checked').value;
+            const response = await fetch(`/api/topic/${topicName}/ddl?readMode=${readMode}`);
+            const ddl = await response.text();
+            document.getElementById('ddlEditor').value = ddl;
+
+            // Refresh CodeMirror if it exists (not used for readonly ddl in topic-detail currently, but for consistency)
+            const cm = document.querySelector('.CodeMirror')?.CodeMirror;
+            if (cm) cm.setValue(ddl);
+        }
+
+        document.getElementById('copyDdl')?.addEventListener('click', () => {
+            const ddl = document.getElementById('ddlEditor').value;
+            navigator.clipboard.writeText(ddl).then(() => {
+                const btn = document.getElementById('copyDdl');
+                const originalText = btn.textContent;
+                btn.textContent = 'Copied!';
+                setTimeout(() => btn.textContent = originalText, 2000);
+            });
+        });
+    </script>
 </body>
 </html>
