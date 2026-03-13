@@ -1,12 +1,17 @@
 <!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: html}">
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: html(~{::body})}">
 <head>
     <title>Cluster Configuration</title>
 </head>
 <body th:fragment="content">
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <h1 class="h3 text-teal fw-bold"><i class="fas fa-cog me-2"></i>Cluster Configuration</h1>
+            <p class="text-muted small">Manage Kafka cluster connections and application settings</p>
+        </div>
+    </div>
     <div class="row">
         <div class="col-md-6 offset-md-3">
-            <h1 class="h3 text-teal fw-bold mb-4">Cluster Configuration</h1>
 
             <div class="card bg-dark border-secondary mb-4 shadow-sm">
                 <div class="card-body">

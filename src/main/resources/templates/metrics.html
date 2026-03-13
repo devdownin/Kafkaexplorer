@@ -6,7 +6,7 @@
 <body th:fragment="content">
     <div class="row mb-4">
         <div class="col">
-            <h1 class="h3 text-teal fw-bold">Prometheus Metrics</h1>
+            <h1 class="h3 text-teal fw-bold"><i class="fas fa-chart-line me-2"></i>Prometheus Metrics</h1>
             <p class="text-muted small">Manage Flink-based metrics for Prometheus export</p>
         </div>
         <div class="col-auto">
@@ -52,7 +52,10 @@
                         </td>
                     </tr>
                     <tr th:if="${metrics == null or metrics.isEmpty()}">
-                        <td colspan="4" class="py-4 text-center text-muted">No metrics defined yet.</td>
+                        <td colspan="4" class="py-5 text-center text-muted">
+                            <i class="fas fa-chart-line fa-2x mb-3 opacity-25 d-block"></i>
+                            No metrics defined yet.
+                        </td>
                     </tr>
                 </tbody>
             </table>
