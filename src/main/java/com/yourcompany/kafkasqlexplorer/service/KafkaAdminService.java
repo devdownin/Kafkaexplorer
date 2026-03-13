@@ -21,11 +21,21 @@ import java.util.*;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
 
+/**
+ * Service for interacting with Kafka at the administrative and consumer level.
+ * It manages the lifecycle of the AdminClient and provides utility methods for
+ * fetching metadata and sampling records.
+ */
 @Service
 public class KafkaAdminService {
 
     private static final Logger log = LoggerFactory.getLogger(KafkaAdminService.class);
     private final KafkaConfig kafkaConfig;
+
+    /**
+     * Shared AdminClient instance for the application.
+     * We initialize it once and reuse it across multiple requests.
+     */
     private AdminClient adminClient;
 
     public KafkaAdminService(KafkaConfig kafkaConfig) {
@@ -166,10 +176,20 @@ public class KafkaAdminService {
         return getRecordsWithPredicate(topicName, maxMessages, timestampLimit);
     }
 
+    /**
+     * Core logic for fetching records from Kafka with optional time-based filtering.
+     *
+     * Strategy:
+     * 1. If timestampLimit is provided, we use offsetsForTimes to find the starting offsets.
+     * 2. Otherwise, we calculate the starting offset by subtracting maxMessages from the end offset.
+     * 3. We use manual partition assignment (assign) instead of group management (subscribe)
+     *    to have full control over seeking.
+     */
     private List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> getRecordsWithPredicate(String topicName, int maxMessages, Long timestampLimit) {
         List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records = new ArrayList<>();
         Properties props = new Properties();
         props.putAll(kafkaConfig.getKafkaProperties());
+        // Use a unique group ID to avoid triggering unnecessary rebalances and to ignore existing offsets.
         props.put(ConsumerConfig.GROUP_ID_CONFIG, "flow-records-" + UUID.randomUUID());
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());

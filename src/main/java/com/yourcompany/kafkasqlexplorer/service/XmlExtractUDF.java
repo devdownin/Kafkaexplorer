@@ -12,15 +12,27 @@ import javax.xml.xpath.XPathFactory;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 
+/**
+ * Custom Flink User Defined Function (UDF) to extract values from XML strings using XPath.
+ * This is particularly useful for querying Kafka topics with XML payloads.
+ *
+ * Performance Note: We use the 'transient' keyword for heavy factories to avoid
+ * serialization issues during Flink job distribution.
+ */
 public class XmlExtractUDF extends ScalarFunction {
 
     private transient DocumentBuilderFactory factory;
     private transient XPathFactory xPathFactory;
 
+    /**
+     * Initializes the XML parser with strict security settings to prevent
+     * XML External Entity (XXE) injection attacks.
+     */
     private void init() {
         if (this.factory == null) {
             this.factory = DocumentBuilderFactory.newInstance();
             try {
+                // Security: Disable DTDs and external entities
                 this.factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
                 this.factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
                 this.factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);

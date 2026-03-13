@@ -10,11 +10,23 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
+/**
+ * Service responsible for visualizing the data flow (lineage) within the Flink engine.
+ * It builds a graph representation where:
+ * - Topics are entry points (Source).
+ * - Tables are Flink abstractions over topics.
+ * - Views are logical transformations on top of tables or other views.
+ * - Queries (Active Jobs) represent live INSERT INTO processes.
+ */
 @Service
 public class LineageService {
 
     private final StreamTableEnvironment tableEnv;
     private final FlinkSqlService flinkSqlService;
+
+    // Regex patterns used to parse DDL and SQL statements to extract relationships.
+    // Flink doesn't provide a direct programmatic lineage API for the Table API in version 2.x,
+    // so we rely on parsing the 'SHOW CREATE' output.
     private static final Pattern TOPIC_PATTERN = Pattern.compile("'topic'\\s*=\\s*'([^']+)'");
     private static final Pattern FROM_PATTERN = Pattern.compile("(?i)FROM\\s+([^\\s,;()\\n]+)", Pattern.MULTILINE);
     private static final Pattern JOIN_PATTERN = Pattern.compile("(?i)JOIN\\s+([^\\s,;()\\n]+)", Pattern.MULTILINE);
@@ -24,6 +36,9 @@ public class LineageService {
         this.flinkSqlService = flinkSqlService;
     }
 
+    /**
+     * Constructs a Cytoscape.js compatible graph of the current SQL environment.
+     */
     public Map<String, Object> getLineage() {
         List<Map<String, String>> nodes = new ArrayList<>();
         List<Map<String, String>> edges = new ArrayList<>();
