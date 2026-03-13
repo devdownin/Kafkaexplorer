@@ -24,14 +24,20 @@ public class DashboardController {
         try {
             java.util.List<String> topics = kafkaAdminService.listTopics();
             java.util.Map<String, Long> topicSizes = kafkaAdminService.getTopicsSize(topics);
+            long totalMessages = topicSizes.values().stream().mapToLong(Long::longValue).sum();
+            boolean health = kafkaAdminService.ping();
 
             model.addAttribute("topics", topics);
             model.addAttribute("topicSizes", topicSizes);
+            model.addAttribute("totalMessages", totalMessages);
+            model.addAttribute("health", health);
             model.addAttribute("tables", flinkSqlService.listTables());
-            model.addAttribute("jobs", flinkSqlService.getActiveJobs());
+            model.addAttribute("jobs", flinkSqlService.getActiveJobsDetails());
         } catch (Exception e) {
             model.addAttribute("topics", java.util.Collections.emptyList());
             model.addAttribute("topicSizes", java.util.Collections.emptyMap());
+            model.addAttribute("totalMessages", 0L);
+            model.addAttribute("health", false);
             model.addAttribute("tables", java.util.Collections.emptyList());
             model.addAttribute("jobs", java.util.Collections.emptyMap());
             model.addAttribute("error", "Could not connect to Kafka: " + e.getMessage());

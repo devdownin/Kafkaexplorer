@@ -554,6 +554,21 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
+    window.cancelJob = async function(jobId) {
+        if (confirm('Are you sure you want to cancel this job?')) {
+            try {
+                const response = await fetch(`/query/cancel/${jobId}`, { method: 'POST' });
+                if (response.ok) {
+                    location.reload();
+                } else {
+                    alert('Failed to cancel job');
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+    };
+
     // Populate editor from assistant if needed
     const pendingQuery = sessionStorage.getItem('pendingAssistantQuery');
     if (pendingQuery && editorElement && !editorElement.value) {
