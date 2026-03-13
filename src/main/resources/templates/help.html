@@ -1,13 +1,17 @@
 <!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: html}">
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: html(~{::body})}">
 <head>
     <title>Help - Flink SQL Guide</title>
 </head>
 <body th:fragment="content">
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <h1 class="h3 text-teal fw-bold"><i class="fas fa-question-circle me-2"></i>Help & Guide</h1>
+            <p class="text-muted small">Learn how to use Flink SQL to explore and analyze your Kafka streams</p>
+        </div>
+    </div>
     <div class="row">
         <div class="col-md-12">
-            <h1 class="h3 text-teal fw-bold mb-4"><i class="fas fa-question-circle me-2"></i> Flink SQL Cheat Sheet</h1>
-
             <div class="alert alert-info bg-dark border-teal text-light mb-4">
                 <h6 class="text-teal"><i class="fas fa-info-circle"></i> Comment ça marche ?</h6>
                 <p class="small mb-0">

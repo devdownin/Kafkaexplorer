@@ -1,12 +1,12 @@
 <!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: html}">
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: html(~{::body})}">
 <head>
     <title>Dashboard</title>
 </head>
 <body th:fragment="content">
     <div class="row mb-4">
         <div class="col">
-            <h1 class="h3 text-teal fw-bold">Topics</h1>
+            <h1 class="h3 text-teal fw-bold"><i class="fas fa-tachometer-alt me-2"></i>Dashboard</h1>
             <p class="text-muted small">Explore and query Kafka topics with Flink SQL</p>
         </div>
         <div class="col-md-3">
@@ -75,7 +75,10 @@
                         </td>
                     </tr>
                     <tr th:if="${tables.isEmpty()}">
-                        <td colspan="2" class="py-4 text-center text-muted">No Flink tables registered yet.</td>
+                        <td colspan="2" class="py-5 text-center text-muted">
+                            <i class="fas fa-table fa-2x mb-3 opacity-25 d-block"></i>
+                            No Flink tables registered yet.
+                        </td>
                     </tr>
                 </tbody>
             </table>
@@ -104,7 +107,10 @@
                         </td>
                     </tr>
                     <tr th:if="${jobs == null or jobs.isEmpty()}">
-                        <td colspan="3" class="py-4 text-center text-muted">No active background jobs.</td>
+                        <td colspan="3" class="py-5 text-center text-muted">
+                            <i class="fas fa-bolt fa-2x mb-3 opacity-25 d-block"></i>
+                            No active background jobs.
+                        </td>
                     </tr>
                 </tbody>
             </table>

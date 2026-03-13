@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: html}">
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: html(~{::body})}">
 <head>
     <title th:text="'Topic: ' + ${topic.name}">Topic Detail</title>
 </head>
@@ -7,9 +7,9 @@
     <div class="row">
         <div class="col-md-12">
             <nav aria-label="breadcrumb">
-                <ol class="breadcrumb bg-dark border-secondary p-2 rounded">
-                    <li class="breadcrumb-item"><a href="/" class="text-teal text-decoration-none">Topics</a></li>
-                    <li class="breadcrumb-item active text-light" aria-current="page" th:text="${topic.name}">topic-name</li>
+                <ol class="breadcrumb bg-darker border-secondary p-2 rounded small">
+                    <li class="breadcrumb-item"><a href="/" class="text-teal text-decoration-none"><i class="fas fa-tachometer-alt me-1"></i>Dashboard</a></li>
+                    <li class="breadcrumb-item active text-muted" aria-current="page" th:text="${topic.name}">topic-name</li>
                 </ol>
             </nav>
 
@@ -86,7 +86,10 @@
                                 </td>
                             </tr>
                             <tr th:if="${samples.isEmpty()}">
-                                <td class="px-4 py-4 text-center text-muted">No messages found in this topic.</td>
+                                <td class="px-4 py-5 text-center text-muted">
+                                    <i class="fas fa-envelope-open fa-2x mb-3 opacity-25 d-block"></i>
+                                    No messages found in this topic.
+                                </td>
                             </tr>
                         </tbody>
                     </table>

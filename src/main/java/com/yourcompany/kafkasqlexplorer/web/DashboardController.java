@@ -32,6 +32,8 @@ public class DashboardController {
         } catch (Exception e) {
             model.addAttribute("topics", java.util.Collections.emptyList());
             model.addAttribute("topicSizes", java.util.Collections.emptyMap());
+            model.addAttribute("tables", java.util.Collections.emptyList());
+            model.addAttribute("jobs", java.util.Collections.emptyMap());
             model.addAttribute("error", "Could not connect to Kafka: " + e.getMessage());
         }
         return "dashboard";

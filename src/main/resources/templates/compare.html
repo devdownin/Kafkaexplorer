@@ -1,12 +1,13 @@
 <!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: html}">
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: html(~{::body})}">
 <head>
     <title>Compare Topics</title>
 </head>
 <body th:fragment="content">
     <div class="row mb-4">
         <div class="col-md-12">
-            <h1 class="h3 text-teal fw-bold">Compare Topics</h1>
+            <h1 class="h3 text-teal fw-bold"><i class="fas fa-columns me-2"></i>Compare Topics</h1>
+            <p class="text-muted small">Compare messages and metrics between two Kafka topics side-by-side</p>
         </div>
     </div>
 
