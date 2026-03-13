@@ -13,7 +13,15 @@
                 </ol>
             </nav>
 
-            <h1 class="h3 text-teal fw-bold mb-4" th:text="${topic.name}">topic-name</h1>
+            <div class="d-flex align-items-center mb-4">
+                <h1 class="h3 text-teal fw-bold mb-0" th:text="${topic.name}">topic-name</h1>
+                <span th:if="${topic.name.toLowerCase().endsWith('.dlt')}" class="badge bg-warning text-dark ms-3">DEAD LETTER TOPIC</span>
+            </div>
+
+            <div th:if="${topic.name.toLowerCase().endsWith('.dlt')}" class="alert alert-warning border-warning bg-dark text-warning small mb-4">
+                <i class="fas fa-exclamation-triangle me-2"></i>
+                <strong>Notice:</strong> This is a Dead Letter Topic (DLT). Messages here usually represent failed processing attempts and might have inconsistent schemas or malformed payloads.
+            </div>
 
             <div class="row row-cols-1 row-cols-md-4 g-4 mb-4">
                 <div class="col">

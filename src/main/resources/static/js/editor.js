@@ -622,20 +622,40 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     const hideEmptySwitch = document.getElementById('hideEmptyTopics');
-    if (hideEmptySwitch) {
-        hideEmptySwitch.addEventListener('change', () => {
-            const hideEmpty = hideEmptySwitch.checked;
-            const rows = document.querySelectorAll('.topic-row');
-            rows.forEach(row => {
-                const size = parseInt(row.getAttribute('data-size') || '0');
-                if (hideEmpty && size === 0) {
-                    row.classList.add('d-none');
-                } else {
-                    row.classList.remove('d-none');
-                }
-            });
+    const hideDltSwitch = document.getElementById('hideDltTopics');
+
+    const updateTopicFilters = () => {
+        const hideEmpty = hideEmptySwitch?.checked || false;
+        const hideDlt = hideDltSwitch?.checked || false;
+
+        // Handle dashboard table rows
+        document.querySelectorAll('.topic-row').forEach(row => {
+            const size = parseInt(row.getAttribute('data-size') || '0');
+            const isDlt = row.getAttribute('data-dlt') === 'true';
+
+            let visible = true;
+            if (hideEmpty && size === 0) visible = false;
+            if (hideDlt && isDlt) visible = false;
+
+            row.style.display = visible ? '' : 'none';
         });
-    }
+
+        // Handle sidebar/accordion topic items
+        document.querySelectorAll('.topic-item').forEach(item => {
+            const isDlt = item.getAttribute('data-dlt') === 'true';
+
+            let visible = true;
+            if (hideDlt && isDlt) visible = false;
+
+            item.style.display = visible ? '' : 'none';
+        });
+    };
+
+    if (hideEmptySwitch) hideEmptySwitch.addEventListener('change', updateTopicFilters);
+    if (hideDltSwitch) hideDltSwitch.addEventListener('change', updateTopicFilters);
+
+    // Initial call to apply default filters (like Hide DLT which is checked by default)
+    updateTopicFilters();
 });
 
 function saveToHistory(sql) {

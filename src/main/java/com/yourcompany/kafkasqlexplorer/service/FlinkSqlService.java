@@ -15,6 +15,8 @@ import jakarta.annotation.PreDestroy;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -106,9 +108,11 @@ public class FlinkSqlService {
         TableResult result = null;
         try {
             String sqlToExecute = request.sql();
+            String readMode = request.readMode();
+
             // Magic Read Mode: If the user selected 'latest-offset' and it's a simple SELECT,
             // we try to inject a Flink SQL hint to override the startup mode.
-            if ("latest-offset".equals(request.readMode()) && sql.startsWith("SELECT")) {
+            if ("latest-offset".equals(readMode) && sql.startsWith("SELECT")) {
                 if (!sql.contains("OPTIONS") && !sql.contains("/*+")) {
                     // Find the table name - this is a naive regex/string approach
                     // In a production app, use a proper SQL parser.
@@ -206,27 +210,14 @@ public class FlinkSqlService {
     }
 
     private String injectLatestOffsetHint(String sql) {
-        // Try to find the FROM clause and inject the hint after the table name
+        // Use regex to find the table name after FROM clause and inject the hint
         // Example: SELECT * FROM my_table -> SELECT * FROM my_table /*+ OPTIONS('scan.startup.mode'='latest-offset') */
-        // This is very basic and might fail for complex queries with joins/subqueries.
-        String upperSql = sql.toUpperCase();
-        int fromIdx = upperSql.indexOf(" FROM ");
-        if (fromIdx != -1) {
-            int tableEndIdx = -1;
-            String afterFrom = sql.substring(fromIdx + 6).trim();
-            // Find end of first "word" after FROM
-            for (int i = 0; i < afterFrom.length(); i++) {
-                char c = afterFrom.charAt(i);
-                if (Character.isWhitespace(c) || c == ';' || c == '(') {
-                    tableEndIdx = fromIdx + 6 + sql.substring(fromIdx + 6).indexOf(afterFrom.substring(0, i));
-                    tableEndIdx += i;
-                    break;
-                }
-            }
-            if (tableEndIdx == -1) tableEndIdx = sql.length();
-            if (sql.endsWith(";")) tableEndIdx--;
-
-            return sql.substring(0, tableEndIdx) + " /*+ OPTIONS('scan.startup.mode'='latest-offset') */" + sql.substring(tableEndIdx);
+        Pattern pattern = Pattern.compile("(?i)FROM\\s+([^\\s;\\(]+)");
+        Matcher matcher = pattern.matcher(sql);
+        if (matcher.find()) {
+            int tableEndIdx = matcher.end();
+            String hint = " /*+ OPTIONS('scan.startup.mode'='latest-offset') */";
+            return sql.substring(0, tableEndIdx) + hint + sql.substring(tableEndIdx);
         }
         return sql;
     }
