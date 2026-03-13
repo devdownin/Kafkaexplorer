@@ -4,29 +4,78 @@
     <title>Dashboard</title>
 </head>
 <body th:fragment="content">
-    <div class="row mb-4">
+    <div class="row mb-4 align-items-center">
         <div class="col">
-            <h1 class="h3 text-teal fw-bold"><i class="fas fa-tachometer-alt me-2"></i>Dashboard</h1>
-            <p class="text-muted small">Explore and query Kafka topics with Flink SQL</p>
+            <h1 class="h3 text-teal fw-bold mb-0"><i class="fas fa-tachometer-alt me-2"></i>Dashboard</h1>
+            <p class="text-muted small mb-0">Explore and query Kafka topics with Flink SQL</p>
         </div>
-        <div class="col-md-3">
-            <input type="text" id="prefixFilter" class="form-control bg-dark border-secondary text-light" placeholder="Prefix filter...">
+        <div class="col-auto">
+            <span class="badge rounded-pill me-3" th:classappend="${health ? 'bg-success' : 'bg-danger'}">
+                <i class="fas fa-circle me-1 small"></i>
+                <span th:text="${health ? 'Kafka Connected' : 'Kafka Disconnected'}">Status</span>
+            </span>
+            <button class="btn btn-outline-secondary btn-sm" onclick="location.reload()">
+                <i class="fas fa-sync-alt me-1"></i> Refresh
+            </button>
         </div>
-        <div class="col-md-3">
-            <input type="text" id="fullNameFilter" class="form-control bg-dark border-secondary text-light" placeholder="Full name match...">
+    </div>
+
+    <div th:if="${error}" class="alert alert-danger" th:text="${error}"></div>
+
+    <!-- Summary Statistics -->
+    <div class="row g-3 mb-5">
+        <div class="col-6 col-lg-3">
+            <div class="card bg-dark border-secondary shadow-sm h-100">
+                <div class="card-body text-center py-4">
+                    <h6 class="text-muted small text-uppercase mb-2">Total Topics</h6>
+                    <h2 class="text-teal fw-bold mb-0" th:text="${topics.size()}">0</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="card bg-dark border-secondary shadow-sm h-100">
+                <div class="card-body text-center py-4">
+                    <h6 class="text-muted small text-uppercase mb-2">Total Messages</h6>
+                    <h2 class="text-teal fw-bold mb-0" th:text="${#numbers.formatInteger(totalMessages, 0, 'WHITESPACE')}">0</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="card bg-dark border-secondary shadow-sm h-100">
+                <div class="card-body text-center py-4">
+                    <h6 class="text-muted small text-uppercase mb-2">Registered Tables</h6>
+                    <h2 class="text-teal fw-bold mb-0" th:text="${tables.size()}">0</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="card bg-dark border-secondary shadow-sm h-100">
+                <div class="card-body text-center py-4">
+                    <h6 class="text-muted small text-uppercase mb-2">Active Jobs</h6>
+                    <h2 class="text-teal fw-bold mb-0" th:text="${jobs.size()}">0</h2>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mb-3 align-items-end">
+        <div class="col">
+            <h5 class="text-teal fw-bold mb-0">Kafka Topics</h5>
+        </div>
+        <div class="col-md-2">
+            <input type="text" id="prefixFilter" class="form-control form-control-sm bg-dark border-secondary text-light" placeholder="Prefix filter...">
+        </div>
+        <div class="col-md-2">
+            <input type="text" id="fullNameFilter" class="form-control form-control-sm bg-dark border-secondary text-light" placeholder="Full name...">
         </div>
         <div class="col-md-4 d-flex align-items-center">
             <div class="form-check form-switch me-3">
                 <input class="form-check-input bg-dark border-secondary" type="checkbox" id="hideEmptyTopics">
                 <label class="form-check-label small text-muted text-nowrap" for="hideEmptyTopics">Hide Empty</label>
             </div>
-            <input type="text" id="topicSearch" class="form-control bg-dark border-secondary text-light" placeholder="Search topics...">
+            <input type="text" id="topicSearch" class="form-control form-control-sm bg-dark border-secondary text-light" placeholder="Search topics...">
         </div>
     </div>
-
-    <div th:if="${error}" class="alert alert-danger" th:text="${error}"></div>
-
-    <h5 class="text-teal fw-bold mb-3">Kafka Topics</h5>
     <div class="card bg-dark border-secondary shadow-sm mb-5">
         <div class="card-body p-0">
             <table class="table table-dark table-hover table-sm mb-0">
@@ -92,22 +141,26 @@
                 <thead>
                     <tr>
                         <th class="text-teal small py-3 px-4">JOB ID</th>
-                        <th class="text-teal small py-3">NAME</th>
+                        <th class="text-teal small py-3">SQL STATEMENT</th>
+                        <th class="text-teal small py-3 text-center">STATUS</th>
                         <th class="text-teal small py-3 text-end px-4">ACTION</th>
                     </tr>
                 </thead>
                 <tbody>
                     <tr th:each="job : ${jobs}">
-                        <td class="py-3 px-4 fw-bold text-light" th:text="${job.key}">job-id</td>
+                        <td class="py-3 px-4 fw-bold text-light small" th:text="${job.key.length() > 8 ? job.key.substring(0, 8) + '...' : job.key}">job-id</td>
                         <td class="py-3">
-                            <span class="badge rounded-pill bg-success" th:text="${job.value}">RUNNING</span>
+                            <code class="text-muted small" th:text="${job.value.sql.length() > 80 ? job.value.sql.substring(0, 80) + '...' : job.value.sql}">SELECT * FROM...</code>
+                        </td>
+                        <td class="py-3 text-center">
+                            <span class="badge rounded-pill bg-success">RUNNING</span>
                         </td>
                         <td class="py-3 text-end px-4">
-                            <!-- Basic display for now -->
+                            <button class="btn btn-outline-danger btn-sm" th:onclick="'cancelJob(\'' + ${job.key} + '\')'">Cancel</button>
                         </td>
                     </tr>
                     <tr th:if="${jobs == null or jobs.isEmpty()}">
-                        <td colspan="3" class="py-5 text-center text-muted">
+                        <td colspan="4" class="py-5 text-center text-muted">
                             <i class="fas fa-bolt fa-2x mb-3 opacity-25 d-block"></i>
                             No active background jobs.
                         </td>
