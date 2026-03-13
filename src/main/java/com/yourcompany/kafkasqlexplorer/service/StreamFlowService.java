@@ -128,9 +128,17 @@ public class StreamFlowService {
                 records = kafkaAdminService.getRecentRecords(topic, limit);
             }
 
+            if (records == null || records.isEmpty()) {
+                return topicOccurrences;
+            }
+
             for (ConsumerRecord<String, String> record : records) {
-                if (matches(record, request, pattern)) {
-                    topicOccurrences.add(new Occurrence(topic, record.timestamp()));
+                try {
+                    if (matches(record, request, pattern)) {
+                        topicOccurrences.add(new Occurrence(topic, record.timestamp()));
+                    }
+                } catch (Exception e) {
+                    log.debug("Skip record in topic {} due to match error: {}", topic, e.getMessage());
                 }
             }
         } catch (Exception e) {

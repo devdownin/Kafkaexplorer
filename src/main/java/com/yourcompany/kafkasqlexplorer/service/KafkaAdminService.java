@@ -4,6 +4,7 @@ import com.yourcompany.kafkasqlexplorer.config.KafkaConfig;
 import com.yourcompany.kafkasqlexplorer.domain.MessageFormat;
 import com.yourcompany.kafkasqlexplorer.domain.TopicDescriptor;
 import org.apache.kafka.clients.admin.AdminClient;
+import org.springframework.cache.annotation.Cacheable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.kafka.clients.admin.AdminClientConfig;
@@ -19,6 +20,8 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import java.util.*;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 
 /**
@@ -59,8 +62,14 @@ public class KafkaAdminService {
         }
     }
 
-    public List<String> listTopics() throws ExecutionException, InterruptedException {
-        return new ArrayList<>(adminClient.listTopics(new ListTopicsOptions().listInternal(false)).names().get());
+    @Cacheable(value = "kafkaTopics", key = "'all'")
+    public List<String> listTopics() throws ExecutionException, InterruptedException, TimeoutException {
+        try {
+            return new ArrayList<>(adminClient.listTopics(new ListTopicsOptions().listInternal(false)).names().get(5, TimeUnit.SECONDS));
+        } catch (TimeoutException e) {
+            log.warn("listTopics timed out after 5s");
+            throw e;
+        }
     }
 
     public Map<String, Long> getTopicsSize(List<String> topicNames) {
@@ -78,7 +87,7 @@ public class KafkaAdminService {
             Map<String, List<TopicPartition>> topicToPartitions = new HashMap<>();
 
             try {
-                Map<String, TopicDescription> descriptions = adminClient.describeTopics(topicNames).allTopicNames().get();
+                Map<String, TopicDescription> descriptions = adminClient.describeTopics(topicNames).allTopicNames().get(10, TimeUnit.SECONDS);
                 for (String name : topicNames) {
                     TopicDescription desc = descriptions.get(name);
                     if (desc != null) {
@@ -111,8 +120,9 @@ public class KafkaAdminService {
         return sizes;
     }
 
-    public TopicDescriptor getTopicDescriptor(String topicName) throws ExecutionException, InterruptedException {
-        Map<String, TopicDescription> descriptions = adminClient.describeTopics(Collections.singletonList(topicName)).allTopicNames().get();
+    @Cacheable(value = "topicDescriptor", key = "#topicName")
+    public TopicDescriptor getTopicDescriptor(String topicName) throws ExecutionException, InterruptedException, TimeoutException {
+        Map<String, TopicDescription> descriptions = adminClient.describeTopics(Collections.singletonList(topicName)).allTopicNames().get(5, TimeUnit.SECONDS);
         TopicDescription desc = descriptions.get(topicName);
 
         List<TopicPartition> partitions = desc.partitions().stream()
@@ -153,7 +163,7 @@ public class KafkaAdminService {
 
     public boolean ping() {
         try {
-            adminClient.listTopics().names().get();
+            adminClient.listTopics().names().get(2, TimeUnit.SECONDS);
             return true;
         } catch (Exception e) {
             return false;
@@ -195,7 +205,7 @@ public class KafkaAdminService {
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
 
         try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props)) {
-            Map<String, TopicDescription> descriptions = adminClient.describeTopics(Collections.singletonList(topicName)).allTopicNames().get();
+            Map<String, TopicDescription> descriptions = adminClient.describeTopics(Collections.singletonList(topicName)).allTopicNames().get(5, TimeUnit.SECONDS);
             TopicDescription desc = descriptions.get(topicName);
             if (desc == null) return records;
 

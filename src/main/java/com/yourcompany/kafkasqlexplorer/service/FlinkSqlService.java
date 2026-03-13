@@ -10,12 +10,11 @@ import org.apache.flink.table.api.TableResult;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 import org.apache.flink.types.Row;
 import org.springframework.stereotype.Service;
+import jakarta.annotation.PreDestroy;
 
 import java.time.Duration;
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 import java.util.stream.Collectors;
 
 /**
@@ -30,6 +29,17 @@ public class FlinkSqlService {
     private final StreamTableEnvironment tableEnv;
     private final ExplorerConfig explorerConfig;
     private final SqlQueryValidator sqlQueryValidator;
+
+    /**
+     * Dedicated executor for fetching results from Flink to avoid blocking Spring's main threads
+     * or polluting the common ForkJoinPool.
+     */
+    private final ExecutorService queryExecutor = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r);
+        t.setName("flink-query-fetcher-" + t.getId());
+        t.setDaemon(true);
+        return t;
+    });
 
     /**
      * Stores metadata about currently running Flink jobs.
@@ -121,9 +131,18 @@ public class FlinkSqlService {
                     count++;
                 }
                 return resultRows;
-            });
+            }, queryExecutor);
 
+            try {
                 rows = future.get(timeout, TimeUnit.MILLISECONDS);
+            } catch (TimeoutException te) {
+                log.warn("Query timed out after {}ms: {}", timeout, request.sql());
+                future.cancel(true);
+                throw te;
+            } catch (ExecutionException ee) {
+                log.error("Query execution failed: {}", request.sql(), ee.getCause());
+                throw (Exception) ee.getCause();
+            }
 
                 long duration = System.currentTimeMillis() - startTime;
                 return new QueryResult(columns, rows, duration, null);
@@ -158,6 +177,19 @@ public class FlinkSqlService {
 
     public Map<String, JobInfo> getActiveJobsDetails() {
         return activeJobs;
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        queryExecutor.shutdown();
+        try {
+            if (!queryExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                queryExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            queryExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 
     private void cancelJobInternal(TableResult result) {
