@@ -10,6 +10,7 @@ import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseBody;
 
 import java.util.Map;
@@ -31,16 +32,19 @@ public class TopicController {
     }
 
     @GetMapping("/topic/{name}")
-    public String detail(@PathVariable String name, Model model) throws Exception {
+    public String detail(@PathVariable String name,
+                         @RequestParam(defaultValue = "earliest-offset") String readMode,
+                         Model model) throws Exception {
         TopicDescriptor descriptor = kafkaAdminService.getTopicDescriptor(name);
         MessageFormat format = schemaInferenceService.detectFormat(name);
         Map<String, String> schema = schemaInferenceService.inferSchema(name, format);
-        String ddl = ddlGeneratorService.generateDdl(name, schema, format);
+        String ddl = ddlGeneratorService.generateDdl(name, schema, format, readMode);
 
         model.addAttribute("topic", descriptor);
         model.addAttribute("format", format);
         model.addAttribute("schema", schema);
         model.addAttribute("ddl", ddl);
+        model.addAttribute("readMode", readMode);
         model.addAttribute("samples", kafkaAdminService.getSampleMessages(name, 20).stream()
                 .map(messageFormatterService::format)
                 .toList());
@@ -50,9 +54,10 @@ public class TopicController {
 
     @GetMapping(value = "/api/topic/{name}/ddl", produces = "text/plain")
     @ResponseBody
-    public String getDdl(@PathVariable String name) throws Exception {
+    public String getDdl(@PathVariable String name,
+                         @RequestParam(defaultValue = "earliest-offset") String readMode) throws Exception {
         MessageFormat format = schemaInferenceService.detectFormat(name);
         Map<String, String> schema = schemaInferenceService.inferSchema(name, format);
-        return ddlGeneratorService.generateDdl(name, schema, format);
+        return ddlGeneratorService.generateDdl(name, schema, format, readMode);
     }
 }

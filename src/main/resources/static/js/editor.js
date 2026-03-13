@@ -71,10 +71,11 @@ document.addEventListener('DOMContentLoaded', () => {
             resultsCard.style.display = 'none';
 
             try {
+                const readMode = document.querySelector('input[name="readMode"]:checked')?.value || 'earliest-offset';
                 const response = await fetch('/query', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ sql, maxRows: 50, timeout: 10000 })
+                    body: JSON.stringify({ sql, maxRows: 50, timeout: 10000, readMode })
                 });
 
                 const data = await response.json();
@@ -174,6 +175,21 @@ document.addEventListener('DOMContentLoaded', () => {
         const cursor = doc.getCursor();
         doc.replaceRange(text, cursor);
         window.sqlEditor.focus();
+    };
+
+    window.insertDdl = async function(topicName) {
+        if (!window.sqlEditor) return;
+        const readMode = document.querySelector('input[name="readMode"]:checked')?.value || 'earliest-offset';
+        try {
+            const response = await fetch(`/api/topic/${topicName}/ddl?readMode=${readMode}`);
+            const ddl = await response.text();
+            const doc = window.sqlEditor.getDoc();
+            const cursor = doc.getCursor();
+            doc.replaceRange(ddl + '\n\n', {line: 0, ch: 0});
+            window.sqlEditor.focus();
+        } catch (e) {
+            console.error("Failed to fetch DDL", e);
+        }
     };
 
     window.insertTemplate = function(template) {

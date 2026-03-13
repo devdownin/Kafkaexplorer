@@ -33,7 +33,15 @@
             <div class="card bg-dark border-secondary mb-4 shadow-sm">
                 <div class="card-header bg-dark border-secondary">
                     <div class="d-flex justify-content-between align-items-center">
-                        <span class="text-teal small fw-bold">SQL QUERY</span>
+                        <div class="d-flex align-items-center">
+                            <span class="text-teal small fw-bold me-3">SQL QUERY</span>
+                            <div class="btn-group btn-group-sm" role="group">
+                                <input type="radio" class="btn-check" name="readMode" id="earliest" value="earliest-offset" checked>
+                                <label class="btn btn-outline-teal x-small" for="earliest" title="Start from the beginning of the topic">Earliest</label>
+                                <input type="radio" class="btn-check" name="readMode" id="latest" value="latest-offset">
+                                <label class="btn btn-outline-teal x-small" for="latest" title="Start from the end of the topic (new messages only)">Latest</label>
+                            </div>
+                        </div>
                         <div class="btn-group">
                             <button class="btn btn-outline-teal btn-sm" id="runQuery">Execute</button>
                             <button class="btn btn-outline-danger btn-sm d-none" id="stopQuery">Stop</button>
@@ -104,7 +112,12 @@
                                 <div class="accordion-body p-0">
                                     <ul class="list-group list-group-flush">
                                         <li th:each="topic : ${topics}" class="list-group-item bg-dark text-light border-secondary py-1 px-3 border-0">
-                                            <span class="small cursor-pointer hover-teal-text" th:text="${topic}" th:onclick="'insertAtCursor(\'' + ${topic} + '\')'"></span>
+                                            <div class="d-flex justify-content-between align-items-center">
+                                                <span class="small cursor-pointer hover-teal-text" th:text="${topic}" th:onclick="'insertAtCursor(\'' + ${topic} + '\')'"></span>
+                                                <button class="btn btn-link btn-sm p-0 text-muted" th:onclick="'insertDdl(\'' + ${topic} + '\')'" title="Insert CREATE TABLE DDL">
+                                                    <i class="fas fa-plus-circle x-small"></i>
+                                                </button>
+                                            </div>
                                         </li>
                                     </ul>
                                 </div>

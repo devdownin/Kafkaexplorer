@@ -88,7 +88,8 @@ public class FlinkSqlService {
     public QueryResult executeSql(QueryRequest request) {
         long startTime = System.currentTimeMillis();
         String queryId = UUID.randomUUID().toString();
-        String sql = request.sql().trim().toUpperCase();
+        String originalSql = request.sql().trim();
+        String sql = originalSql.toUpperCase();
 
         // Security: Prevent execution of dangerous or unsupported DDL/DML.
         // In a real-world scenario, you might want more granular control or a proper SQL parser.
@@ -104,8 +105,20 @@ public class FlinkSqlService {
 
         TableResult result = null;
         try {
-            result = tableEnv.executeSql(request.sql());
-            final String finalSql = request.sql();
+            String sqlToExecute = request.sql();
+            // Magic Read Mode: If the user selected 'latest-offset' and it's a simple SELECT,
+            // we try to inject a Flink SQL hint to override the startup mode.
+            if ("latest-offset".equals(request.readMode()) && sql.startsWith("SELECT")) {
+                if (!sql.contains("OPTIONS") && !sql.contains("/*+")) {
+                    // Find the table name - this is a naive regex/string approach
+                    // In a production app, use a proper SQL parser.
+                    sqlToExecute = injectLatestOffsetHint(request.sql());
+                    log.info("Magic Read Mode: Injected latest-offset hint. New SQL: {}", sqlToExecute);
+                }
+            }
+
+            result = tableEnv.executeSql(sqlToExecute);
+            final String finalSql = sqlToExecute;
             result.getJobClient().ifPresent(client -> activeJobs.put(queryId, new JobInfo(finalSql, client)));
 
             // result.collect() starts the Flink job and provides an iterator to fetch results.
@@ -190,6 +203,32 @@ public class FlinkSqlService {
             queryExecutor.shutdownNow();
             Thread.currentThread().interrupt();
         }
+    }
+
+    private String injectLatestOffsetHint(String sql) {
+        // Try to find the FROM clause and inject the hint after the table name
+        // Example: SELECT * FROM my_table -> SELECT * FROM my_table /*+ OPTIONS('scan.startup.mode'='latest-offset') */
+        // This is very basic and might fail for complex queries with joins/subqueries.
+        String upperSql = sql.toUpperCase();
+        int fromIdx = upperSql.indexOf(" FROM ");
+        if (fromIdx != -1) {
+            int tableEndIdx = -1;
+            String afterFrom = sql.substring(fromIdx + 6).trim();
+            // Find end of first "word" after FROM
+            for (int i = 0; i < afterFrom.length(); i++) {
+                char c = afterFrom.charAt(i);
+                if (Character.isWhitespace(c) || c == ';' || c == '(') {
+                    tableEndIdx = fromIdx + 6 + sql.substring(fromIdx + 6).indexOf(afterFrom.substring(0, i));
+                    tableEndIdx += i;
+                    break;
+                }
+            }
+            if (tableEndIdx == -1) tableEndIdx = sql.length();
+            if (sql.endsWith(";")) tableEndIdx--;
+
+            return sql.substring(0, tableEndIdx) + " /*+ OPTIONS('scan.startup.mode'='latest-offset') */" + sql.substring(tableEndIdx);
+        }
+        return sql;
     }
 
     private void cancelJobInternal(TableResult result) {
