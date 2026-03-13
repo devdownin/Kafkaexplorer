@@ -3,6 +3,8 @@ package com.yourcompany.kafkasqlexplorer.service;
 import org.apache.flink.table.api.TableResult;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 import org.apache.flink.types.Row;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
@@ -21,6 +23,7 @@ import java.util.stream.Collectors;
 @Service
 public class LineageService {
 
+    private static final Logger log = LoggerFactory.getLogger(LineageService.class);
     private final StreamTableEnvironment tableEnv;
     private final FlinkSqlService flinkSqlService;
 
@@ -109,7 +112,7 @@ public class LineageService {
                 }
             }
         } catch (Exception e) {
-            // Ignore
+            log.debug("Failed to get DDL for {} {}: {}", type, name, e.getMessage());
         }
         return null;
     }

@@ -1,6 +1,8 @@
 package com.yourcompany.kafkasqlexplorer.service;
 
 import org.apache.flink.table.functions.ScalarFunction;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.w3c.dom.Document;
 import org.w3c.dom.NodeList;
 
@@ -21,6 +23,7 @@ import java.nio.charset.StandardCharsets;
  */
 public class XmlExtractUDF extends ScalarFunction {
 
+    private static final Logger log = LoggerFactory.getLogger(XmlExtractUDF.class);
     private transient DocumentBuilderFactory factory;
     private transient XPathFactory xPathFactory;
 
@@ -38,7 +41,7 @@ public class XmlExtractUDF extends ScalarFunction {
                 this.factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
                 this.factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
             } catch (Exception e) {
-                // Log warning
+                log.warn("Could not configure XML factory with secure features", e);
             }
             this.factory.setXIncludeAware(false);
             this.factory.setExpandEntityReferences(false);
@@ -64,7 +67,7 @@ public class XmlExtractUDF extends ScalarFunction {
                 return nodeList.item(0).getTextContent();
             }
         } catch (Exception e) {
-            // Log error or return error indication
+            log.debug("XPath evaluation failed for expression: {}", xpathExpression, e);
             return "Error: " + e.getMessage();
         }
         return null;

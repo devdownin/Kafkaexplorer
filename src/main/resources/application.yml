@@ -26,6 +26,14 @@ kafka:
   # confluent-key: YOUR_API_KEY
   # confluent-secret: YOUR_API_SECRET
 
+explorer:
+  audit-history-topic: internal.audit.history
+  default-max-rows: 50
+  default-query-timeout-ms: 10000
+  audit-query-timeout-ms: 5000
+  inference-sample-size: 10
+  inference-poll-timeout-ms: 2000
+
 logging:
   level:
     com.yourcompany.kafkasqlexplorer: DEBUG

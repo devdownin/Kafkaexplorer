@@ -1,5 +1,7 @@
 package com.yourcompany.kafkasqlexplorer.parser;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
@@ -15,6 +17,8 @@ import java.util.Map;
 
 @Component
 public class XmlSchemaInferrer {
+
+    private static final Logger log = LoggerFactory.getLogger(XmlSchemaInferrer.class);
 
     public Map<String, String> infer(String xml) {
         Map<String, String> schema = new HashMap<>();
@@ -38,7 +42,7 @@ public class XmlSchemaInferrer {
                 }
             }
         } catch (Exception e) {
-            // Handle parsing error
+            log.debug("Failed to infer XML schema from sample: {}", xml, e);
         }
         return schema;
     }

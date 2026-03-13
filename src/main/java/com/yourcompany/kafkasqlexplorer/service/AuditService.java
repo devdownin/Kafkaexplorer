@@ -1,6 +1,8 @@
 package com.yourcompany.kafkasqlexplorer.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.yourcompany.kafkasqlexplorer.config.ExplorerConfig;
+import com.yourcompany.kafkasqlexplorer.config.KafkaConfig;
 import com.yourcompany.kafkasqlexplorer.domain.*;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
@@ -26,16 +28,13 @@ public class AuditService {
 
     private static final Logger log = LoggerFactory.getLogger(AuditService.class);
 
-    /**
-     * Audit reports are persisted to this internal Kafka topic for historical tracking.
-     */
-    private static final String AUDIT_HISTORY_TOPIC = "internal.audit.history";
-
     private final KafkaAdminService kafkaAdminService;
     private final FlinkSqlService flinkSqlService;
     private final SchemaInferenceService schemaInferenceService;
     private final DdlGeneratorService ddlGeneratorService;
-    private final com.yourcompany.kafkasqlexplorer.config.KafkaConfig kafkaConfig;
+    private final NamingConventionService namingConventionService;
+    private final KafkaConfig kafkaConfig;
+    private final ExplorerConfig explorerConfig;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private final Map<String, AuditReport> auditRuns = new ConcurrentHashMap<>();
@@ -45,18 +44,22 @@ public class AuditService {
                         FlinkSqlService flinkSqlService,
                         SchemaInferenceService schemaInferenceService,
                         DdlGeneratorService ddlGeneratorService,
-                        com.yourcompany.kafkasqlexplorer.config.KafkaConfig kafkaConfig) {
+                        NamingConventionService namingConventionService,
+                        KafkaConfig kafkaConfig,
+                        ExplorerConfig explorerConfig) {
         this.kafkaAdminService = kafkaAdminService;
         this.flinkSqlService = flinkSqlService;
         this.schemaInferenceService = schemaInferenceService;
         this.ddlGeneratorService = ddlGeneratorService;
+        this.namingConventionService = namingConventionService;
         this.kafkaConfig = kafkaConfig;
+        this.explorerConfig = explorerConfig;
     }
 
     public String startAudit() {
         String auditId = UUID.randomUUID().toString();
         lastAuditId = auditId;
-        AuditReport initialReport = new AuditReport(auditId, "RUNNING", 0, 0, 0, Collections.emptyList(), Collections.emptyList(), Collections.emptyMap());
+        AuditReport initialReport = new AuditReport(auditId, AuditStatus.RUNNING, 0, 0, 0, Collections.emptyList(), Collections.emptyList(), Collections.emptyMap());
         auditRuns.put(auditId, initialReport);
 
         runAuditAsync(auditId);
@@ -87,7 +90,7 @@ public class AuditService {
             for (String topic : topics) {
                 TopicAudit audit = auditTopic(topic, topicSizes.getOrDefault(topic, 0L));
                 topicAudits.add(audit);
-                if ("UNHEALTHY".equals(audit.healthStatus())) {
+                if (HealthStatus.UNHEALTHY.equals(audit.healthStatus())) {
                     unhealthyCount++;
                 }
             }
@@ -98,7 +101,7 @@ public class AuditService {
 
             AuditReport finalReport = new AuditReport(
                 auditId,
-                "COMPLETED",
+                AuditStatus.COMPLETED,
                 topics.size(),
                 totalMessages,
                 unhealthyCount,
@@ -112,7 +115,7 @@ public class AuditService {
 
         } catch (Exception e) {
             log.error("Audit failed for id {}", auditId, e);
-            auditRuns.put(auditId, new AuditReport(auditId, "FAILED", 0, 0, 0, Collections.emptyList(), Collections.emptyList(), Map.of("error", e.getMessage())));
+            auditRuns.put(auditId, new AuditReport(auditId, AuditStatus.FAILED, 0, 0, 0, Collections.emptyList(), Collections.emptyList(), Map.of("error", e.getMessage())));
         }
     }
 
@@ -144,7 +147,7 @@ public class AuditService {
         if (approximateCount > 0 && exactCount == 0) issues.add("Flink SQL returned 0 rows despite Kafka having messages.");
         if (duplicates > 0) issues.add("Detected " + duplicates + " potential duplicate records.");
 
-        String status = issues.isEmpty() ? "HEALTHY" : "UNHEALTHY";
+        HealthStatus status = issues.isEmpty() ? HealthStatus.HEALTHY : HealthStatus.UNHEALTHY;
 
         return new TopicAudit(topicName, exactCount, format, poisonCount, duplicates, status, issues);
     }
@@ -161,7 +164,7 @@ public class AuditService {
     }
 
     private long getExactCount(String topicName, long approximateCount) {
-        QueryResult countResult = flinkSqlService.executeSql(new QueryRequest("SELECT COUNT(*) FROM \"" + topicName + "\"", null, 1, 5000L, null));
+        QueryResult countResult = flinkSqlService.executeSql(new QueryRequest("SELECT COUNT(*) FROM \"" + topicName + "\"", null, 1, explorerConfig.getAuditQueryTimeoutMs(), null));
         if (countResult.error() == null && !countResult.rows().isEmpty()) {
             Object val = countResult.rows().get(0).get("EXPR$0");
             if (val instanceof Long) return (Long) val;
@@ -171,65 +174,44 @@ public class AuditService {
     }
 
     private long detectDuplicates(String topicName, Map<String, String> schema) {
-        String keyField = schema.keySet().stream()
-                .filter(k -> k.equalsIgnoreCase("id") || k.equalsIgnoreCase("order_id"))
-                .findFirst().orElse(null);
+        String keyField = namingConventionService.findKeyField(schema);
 
         if (keyField == null) return 0;
 
         String sql = "SELECT COUNT(*) FROM (SELECT \"" + keyField + "\" FROM \"" + topicName + "\" GROUP BY \"" + keyField + "\" HAVING COUNT(*) > 1)";
-        QueryResult dupResult = flinkSqlService.executeSql(new QueryRequest(sql, null, 1, 5000L, null));
+        QueryResult dupResult = flinkSqlService.executeSql(new QueryRequest(sql, null, 1, explorerConfig.getAuditQueryTimeoutMs(), null));
         if (dupResult.error() == null && !dupResult.rows().isEmpty()) {
             Object val = dupResult.rows().get(0).get("EXPR$0");
             if (val instanceof Long) return (Long) val;
             if (val instanceof Integer) return ((Integer) val).longValue();
+        } else if (dupResult.error() != null) {
+            log.warn("Failed to detect duplicates for topic {}: {}", topicName, dupResult.error());
         }
         return 0;
     }
 
     /**
      * Heuristically groups topics into logical business processes (Flows)
-     * based on their naming convention (e.g., 'prefix.domain.step').
+     * and calculates metrics like latency.
      */
     private List<FlowAudit> identifyAndAuditFlows(List<TopicAudit> topicAudits) {
-        List<FlowAudit> flows = new ArrayList<>();
+        List<FlowAudit> initialFlows = namingConventionService.identifyFlows(topicAudits);
+        List<FlowAudit> flowsWithLatency = new ArrayList<>();
 
-        // Group topics by their first two naming components (e.g., demo.orders)
-        Map<String, List<TopicAudit>> grouped = topicAudits.stream()
-            .filter(t -> t.name().contains("."))
-            .collect(Collectors.groupingBy(t -> {
-                String[] parts = t.name().split("\\.");
-                if (parts.length >= 2) return parts[0] + "." + parts[1];
-                return parts[0];
-            }));
-
-        for (Map.Entry<String, List<TopicAudit>> entry : grouped.entrySet()) {
-            if (entry.getValue().size() < 2) continue;
-
-            List<TopicAudit> sortedTopics = entry.getValue().stream()
-                .sorted(Comparator.comparing(TopicAudit::name))
-                .toList();
-
-            List<FlowAudit.StepInfo> steps = new ArrayList<>();
-            long firstStepCount = sortedTopics.get(0).messageCount();
-
-            for (int i = 0; i < sortedTopics.size(); i++) {
-                TopicAudit topic = sortedTopics.get(i);
-                double throughput = firstStepCount == 0 ? 100.0 : (double) topic.messageCount() / firstStepCount * 100.0;
-
+        for (FlowAudit flow : initialFlows) {
+            List<FlowAudit.StepInfo> stepsWithLatency = new ArrayList<>();
+            for (int i = 0; i < flow.steps().size(); i++) {
+                FlowAudit.StepInfo step = flow.steps().get(i);
                 Long latency = null;
                 if (i > 0) {
-                    latency = calculateLatency(sortedTopics.get(i-1).name(), topic.name());
+                    latency = calculateLatency(flow.steps().get(i - 1).topicName(), step.topicName());
                 }
-
-                steps.add(new FlowAudit.StepInfo(topic.name(), topic.messageCount(), throughput, latency));
+                stepsWithLatency.add(new FlowAudit.StepInfo(step.topicName(), step.count(), step.throughputPercentage(), latency));
             }
-
-            double healthScore = steps.get(steps.size() - 1).throughputPercentage();
-            flows.add(new FlowAudit(entry.getKey(), steps, healthScore));
+            flowsWithLatency.add(new FlowAudit(flow.flowName(), stepsWithLatency, flow.overallHealthScore()));
         }
 
-        return flows;
+        return flowsWithLatency;
     }
 
     private Long calculateLatency(String sourceTopic, String targetTopic) {
@@ -238,10 +220,12 @@ public class AuditService {
                      "FROM \"" + sourceTopic + "\" t1 JOIN \"" + targetTopic + "\" t2 ON t1.id = t2.id " +
                      "WHERE t2.event_time > t1.event_time";
 
-        QueryResult result = flinkSqlService.executeSql(new QueryRequest(sql, null, 1, 5000L, null));
+        QueryResult result = flinkSqlService.executeSql(new QueryRequest(sql, null, 1, explorerConfig.getAuditQueryTimeoutMs(), null));
         if (result.error() == null && !result.rows().isEmpty()) {
             Object val = result.rows().get(0).values().iterator().next();
             if (val instanceof Number) return ((Number) val).longValue();
+        } else if (result.error() != null) {
+            log.warn("Failed to calculate latency between {} and {}: {}", sourceTopic, targetTopic, result.error());
         }
         return null;
     }
@@ -255,7 +239,7 @@ public class AuditService {
 
         try (KafkaProducer<String, String> producer = new KafkaProducer<>(props)) {
             String value = objectMapper.writeValueAsString(report);
-            producer.send(new ProducerRecord<>(AUDIT_HISTORY_TOPIC, report.auditId(), value)).get();
+            producer.send(new ProducerRecord<>(explorerConfig.getAuditHistoryTopic(), report.auditId(), value)).get();
             log.info("Persisted audit {} to history topic", report.auditId());
         } catch (Exception e) {
             log.warn("Failed to persist audit history: {}", e.getMessage());

@@ -2,6 +2,8 @@ package com.yourcompany.kafkasqlexplorer.service;
 
 import com.yourcompany.kafkasqlexplorer.config.KafkaConfig;
 import com.yourcompany.kafkasqlexplorer.domain.MessageFormat;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.Map;
@@ -10,10 +12,13 @@ import java.util.stream.Collectors;
 @Service
 public class DdlGeneratorService {
 
+    private static final Logger log = LoggerFactory.getLogger(DdlGeneratorService.class);
     private final KafkaConfig kafkaConfig;
+    private final NamingConventionService namingConventionService;
 
-    public DdlGeneratorService(KafkaConfig kafkaConfig) {
+    public DdlGeneratorService(KafkaConfig kafkaConfig, NamingConventionService namingConventionService) {
         this.kafkaConfig = kafkaConfig;
+        this.namingConventionService = namingConventionService;
     }
 
     public String generateDdl(String topicName, Map<String, String> schema, MessageFormat format) {
@@ -35,11 +40,8 @@ public class DdlGeneratorService {
         sb.append(") WITH (\n");
         sb.append("    'topic' = '").append(topicName).append("',\n");
 
-        // Try to identify a key field (heuristic: "id" or first column)
-        String keyField = schema.keySet().stream()
-                .filter(k -> k.equalsIgnoreCase("id"))
-                .findFirst()
-                .orElse(schema.keySet().stream().findFirst().orElse(null));
+        // Try to identify a key field
+        String keyField = namingConventionService.findKeyField(schema);
         if (keyField != null && format != MessageFormat.XML) {
             sb.append("    'key.fields' = '").append(keyField).append("',\n");
         }

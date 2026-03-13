@@ -2,6 +2,8 @@ package com.yourcompany.kafkasqlexplorer.parser;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.HashMap;
@@ -10,6 +12,7 @@ import java.util.Map;
 @Component
 public class JsonSchemaInferrer {
 
+    private static final Logger log = LoggerFactory.getLogger(JsonSchemaInferrer.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public Map<String, String> infer(String json) {
@@ -20,7 +23,7 @@ public class JsonSchemaInferrer {
                 schema.put(entry.getKey(), getFlinkType(entry.getValue()));
             });
         } catch (Exception e) {
-            // Handle parsing error
+            log.debug("Failed to infer JSON schema from sample: {}", json, e);
         }
         return schema;
     }
