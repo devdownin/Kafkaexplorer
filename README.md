@@ -3,7 +3,7 @@
 
 Kafka SQL Explorer is a modern web application designed for Data Engineers and Architects, allowing them to explore Kafka clusters and query topics in real-time via Flink SQL.
 
-🚀 **[View the Documentation Website](https://compagnons-du-dev.github.io/kafka-sql-explorer/)**
+🚀 **[Explore the Documentation](docs/)**
 
 ---
 
