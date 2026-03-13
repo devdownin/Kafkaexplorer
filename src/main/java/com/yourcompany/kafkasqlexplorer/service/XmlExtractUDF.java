@@ -10,9 +10,12 @@ import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.xpath.XPath;
 import javax.xml.xpath.XPathConstants;
+import javax.xml.xpath.XPathExpression;
 import javax.xml.xpath.XPathFactory;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Custom Flink User Defined Function (UDF) to extract values from XML strings using XPath.
@@ -26,6 +29,7 @@ public class XmlExtractUDF extends ScalarFunction {
     private static final Logger log = LoggerFactory.getLogger(XmlExtractUDF.class);
     private transient DocumentBuilderFactory factory;
     private transient XPathFactory xPathFactory;
+    private transient Map<String, XPathExpression> expressionCache;
 
     /**
      * Initializes the XML parser with strict security settings to prevent
@@ -49,19 +53,29 @@ public class XmlExtractUDF extends ScalarFunction {
         if (this.xPathFactory == null) {
             this.xPathFactory = XPathFactory.newInstance();
         }
+        if (this.expressionCache == null) {
+            this.expressionCache = new ConcurrentHashMap<>();
+        }
     }
 
     public String eval(String xml, String xpathExpression) {
         init();
-        if (xml == null || xpathExpression == null) {
+        if (xml == null || xpathExpression == null || xml.isBlank()) {
             return null;
         }
         try {
             DocumentBuilder builder = factory.newDocumentBuilder();
             Document doc = builder.parse(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)));
 
-            XPath xPath = xPathFactory.newXPath();
-            NodeList nodeList = (NodeList) xPath.compile(xpathExpression).evaluate(doc, XPathConstants.NODESET);
+            XPathExpression expr = expressionCache.computeIfAbsent(xpathExpression, k -> {
+                try {
+                    return xPathFactory.newXPath().compile(k);
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            });
+
+            NodeList nodeList = (NodeList) expr.evaluate(doc, XPathConstants.NODESET);
 
             if (nodeList.getLength() > 0) {
                 return nodeList.item(0).getTextContent();
