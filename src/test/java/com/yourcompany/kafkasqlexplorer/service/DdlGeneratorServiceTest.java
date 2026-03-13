@@ -13,7 +13,8 @@ public class DdlGeneratorServiceTest {
     public void testGenerateJsonDdl() {
         KafkaConfig config = new KafkaConfig();
         config.setBootstrapServers("localhost:9092");
-        DdlGeneratorService service = new DdlGeneratorService(config);
+        NamingConventionService namingConventionService = new NamingConventionService();
+        DdlGeneratorService service = new DdlGeneratorService(config, namingConventionService);
 
         Map<String, String> schema = new HashMap<>();
         schema.put("id", "BIGINT");
@@ -34,7 +35,8 @@ public class DdlGeneratorServiceTest {
     public void testGenerateXmlDdl() {
         KafkaConfig config = new KafkaConfig();
         config.setBootstrapServers("localhost:9092");
-        DdlGeneratorService service = new DdlGeneratorService(config);
+        NamingConventionService namingConventionService = new NamingConventionService();
+        DdlGeneratorService service = new DdlGeneratorService(config, namingConventionService);
 
         Map<String, String> schema = new HashMap<>();
         schema.put("raw_payload", "STRING");
@@ -54,7 +56,8 @@ public class DdlGeneratorServiceTest {
         config.setTruststorePath("/tmp/truststore.jks");
         config.setTruststorePassword("password");
 
-        DdlGeneratorService service = new DdlGeneratorService(config);
+        NamingConventionService namingConventionService = new NamingConventionService();
+        DdlGeneratorService service = new DdlGeneratorService(config, namingConventionService);
         Map<String, String> schema = new HashMap<>();
         schema.put("id", "BIGINT");
 
@@ -74,7 +77,8 @@ public class DdlGeneratorServiceTest {
         config.setConfluentKey("MY_KEY");
         config.setConfluentSecret("MY_SECRET");
 
-        DdlGeneratorService service = new DdlGeneratorService(config);
+        NamingConventionService namingConventionService = new NamingConventionService();
+        DdlGeneratorService service = new DdlGeneratorService(config, namingConventionService);
         Map<String, String> schema = new HashMap<>();
         schema.put("id", "BIGINT");
 

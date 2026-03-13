@@ -5,7 +5,7 @@ import java.util.Map;
 
 public record AuditReport(
     String auditId,
-    String status,
+    AuditStatus status,
     long totalTopics,
     long totalMessages,
     int unhealthyTopicsCount,

@@ -20,6 +20,7 @@ class AuditServiceTest {
     private FlinkSqlService flinkSqlService;
     private SchemaInferenceService schemaInferenceService;
     private DdlGeneratorService ddlGeneratorService;
+    private NamingConventionService namingConventionService;
     private com.yourcompany.kafkasqlexplorer.config.KafkaConfig kafkaConfig;
     private ExplorerConfig explorerConfig;
     private AuditService auditService;
@@ -30,11 +31,12 @@ class AuditServiceTest {
         flinkSqlService = mock(FlinkSqlService.class);
         schemaInferenceService = mock(SchemaInferenceService.class);
         ddlGeneratorService = mock(DdlGeneratorService.class);
+        namingConventionService = new NamingConventionService();
         kafkaConfig = mock(com.yourcompany.kafkasqlexplorer.config.KafkaConfig.class);
         explorerConfig = new ExplorerConfig();
         when(kafkaConfig.getKafkaProperties()).thenReturn(Map.of("bootstrap.servers", "localhost:9092"));
 
-        auditService = new AuditService(kafkaAdminService, flinkSqlService, schemaInferenceService, ddlGeneratorService, kafkaConfig, explorerConfig) {
+        auditService = new AuditService(kafkaAdminService, flinkSqlService, schemaInferenceService, ddlGeneratorService, namingConventionService, kafkaConfig, explorerConfig) {
             @Override
             protected void persistAuditHistory(AuditReport report) {
                 // Skip Kafka persistence in unit tests
@@ -50,7 +52,7 @@ class AuditServiceTest {
         AuditReport report = auditService.getAuditReport(auditId);
         assertNotNull(report);
         // It might be COMPLETED already if it runs very fast even if async
-        assertTrue(List.of("RUNNING", "COMPLETED").contains(report.status()));
+        assertTrue(List.of(AuditStatus.RUNNING, AuditStatus.COMPLETED).contains(report.status()));
     }
 
     @Test
@@ -81,10 +83,10 @@ class AuditServiceTest {
         auditService.runAuditAsync(auditId);
 
         AuditReport report = auditService.getAuditReport(auditId);
-        if ("FAILED".equals(report.status())) {
+        if (AuditStatus.FAILED.equals(report.status())) {
             fail("Audit failed with: " + report.globalStats().get("error"));
         }
-        assertEquals("COMPLETED", report.status());
+        assertEquals(AuditStatus.COMPLETED, report.status());
         assertEquals(2, report.totalTopics());
         assertEquals(180, report.totalMessages());
 
