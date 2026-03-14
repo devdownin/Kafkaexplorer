@@ -4,129 +4,135 @@
     <title>Prometheus Metrics</title>
 </head>
 <body th:fragment="content">
-    <div class="row mb-4">
-        <div class="col">
-            <h1 class="h3 text-teal fw-bold"><i class="fas fa-chart-line me-2"></i>Prometheus Metrics</h1>
-            <p class="text-muted small">Manage Flink-based metrics for Prometheus export</p>
+<div class="p-6 space-y-6">
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-xl font-bold flex items-center gap-2">
+                <span class="material-symbols-outlined text-primary">analytics</span>
+                Prometheus Metrics
+            </h1>
+            <p class="text-xs text-slate-500 mt-1">Manage Flink-based metrics for Prometheus export</p>
         </div>
-        <div class="col-auto">
-            <button class="btn btn-teal" data-bs-toggle="modal" data-bs-target="#metricModal" onclick="prepareAddMetric()">
-                <i class="fas fa-plus"></i> Create Metric
-            </button>
-        </div>
+        <button class="flex items-center gap-2 px-4 py-2 bg-primary text-background-dark rounded-lg text-xs font-bold hover:brightness-110 transition-all" data-bs-toggle="modal" data-bs-target="#metricModal" onclick="prepareAddMetric()">
+            <span class="material-symbols-outlined text-sm">add</span> CREATE METRIC
+        </button>
     </div>
 
-    <div class="card bg-dark border-secondary shadow-sm">
-        <div class="card-body p-0">
-            <table class="table table-dark table-hover table-sm mb-0">
-                <thead>
-                    <tr>
-                        <th class="text-teal small py-3 px-4">NAME</th>
-                        <th class="text-teal small py-3">TYPE</th>
-                        <th class="text-teal small py-3">DESCRIPTION</th>
-                        <th class="text-teal small py-3 text-end px-4">ACTION</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr th:each="metric : ${metrics}" class="metric-row">
-                        <td class="py-3 px-4 fw-bold text-light" th:text="${metric.name}">Metric Name</td>
-                        <td class="py-3">
-                            <span class="badge rounded-pill bg-outline-teal border border-teal text-teal small" th:text="${metric.type}">TYPE</span>
-                        </td>
-                        <td class="py-3 text-muted small" th:text="${metric.description}">Description</td>
-                        <td class="py-3 text-end px-4">
-                            <button class="btn btn-outline-teal btn-sm me-2"
+    <div class="bg-white dark:bg-primary/5 border border-slate-200 dark:border-primary/10 rounded-xl overflow-hidden shadow-sm">
+        <table class="w-full text-left border-collapse">
+            <thead>
+                <tr class="bg-slate-50 dark:bg-primary/10 text-[10px] font-bold text-slate-500 dark:text-primary/70 uppercase tracking-wider border-b border-slate-200 dark:border-primary/10">
+                    <th class="px-6 py-4">Name</th>
+                    <th class="px-6 py-4">Type</th>
+                    <th class="px-6 py-4">Description</th>
+                    <th class="px-6 py-4 text-right">Action</th>
+                </tr>
+            </thead>
+            <tbody class="text-xs divide-y divide-slate-100 dark:divide-primary/5">
+                <tr th:each="metric : ${metrics}" class="hover:bg-slate-50 dark:hover:bg-primary/5 transition-colors">
+                    <td class="px-6 py-4 font-bold text-slate-200" th:text="${metric.name}">Metric Name</td>
+                    <td class="px-6 py-4">
+                        <span class="px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20 text-[10px] font-bold uppercase tracking-widest" th:text="${metric.type}">TYPE</span>
+                    </td>
+                    <td class="px-6 py-4 text-slate-400" th:text="${metric.description}">Description</td>
+                    <td class="px-6 py-4 text-right">
+                        <div class="flex justify-end gap-2">
+                            <button class="text-slate-400 hover:text-primary transition-colors"
                                     th:data-id="${metric.id}"
                                     th:data-name="${metric.name}"
                                     th:data-type="${metric.type}"
                                     th:data-sql="${metric.sql}"
                                     th:data-description="${metric.description}"
                                     onclick="editMetric(this)">
-                                <i class="fas fa-edit"></i>
+                                <span class="material-symbols-outlined text-lg">edit</span>
                             </button>
-                            <form th:action="@{'/metrics/delete/' + ${metric.id}}" method="post" class="d-inline" onsubmit="return confirm('Are you sure?')">
-                                <button type="submit" class="btn btn-outline-danger btn-sm">
-                                    <i class="fas fa-trash"></i>
+                            <form th:action="@{'/metrics/delete/' + ${metric.id}}" method="post" onsubmit="return confirm('Are you sure?')">
+                                <button type="submit" class="text-slate-400 hover:text-red-500 transition-colors">
+                                    <span class="material-symbols-outlined text-lg">delete</span>
                                 </button>
                             </form>
-                        </td>
-                    </tr>
-                    <tr th:if="${metrics == null or metrics.isEmpty()}">
-                        <td colspan="4" class="py-5 text-center text-muted">
-                            <i class="fas fa-chart-line fa-2x mb-3 opacity-25 d-block"></i>
-                            No metrics defined yet.
-                        </td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
+                        </div>
+                    </td>
+                </tr>
+                <tr th:if="${metrics == null or metrics.isEmpty()}">
+                    <td colspan="4" class="px-6 py-20 text-center">
+                        <span class="material-symbols-outlined text-4xl text-slate-600 mb-4">show_chart</span>
+                        <p class="text-sm text-slate-500 font-bold uppercase tracking-widest">No metrics defined yet</p>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
     </div>
+</div>
 
-    <!-- Metric Modal -->
-    <div class="modal fade" id="metricModal" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content bg-dark text-light border-secondary">
-                <div class="modal-header border-secondary">
-                    <h5 class="modal-title text-teal fw-bold" id="modalTitle">Create Metric</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
-                </div>
-                <form id="metricForm" th:action="@{/metrics/save}" method="post">
-                    <input type="hidden" id="metricId" name="id">
-                    <div class="modal-body">
-                        <div class="row">
-                            <div class="col-md-8">
-                                <div class="mb-3">
-                                    <label for="metricName" class="form-label small text-teal fw-bold">Metric Name</label>
-                                    <input type="text" class="form-control bg-dark border-secondary text-light" id="metricName" name="name" required placeholder="e.g. processed_events_total">
-                                </div>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="mb-3">
-                                    <label for="metricType" class="form-label small text-teal fw-bold">Metric Type</label>
-                                    <select class="form-select bg-dark border-secondary text-light" id="metricType" name="type" required onchange="onMetricTypeChange()">
-                                        <option value="COUNTER">Counter</option>
-                                        <option value="GAUGE">Gauge</option>
-                                        <option value="HISTOGRAM">Histogram</option>
-                                    </select>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="mb-3">
-                            <label for="metricDescription" class="form-label small text-teal fw-bold">Description</label>
-                            <input type="text" class="form-control bg-dark border-secondary text-light" id="metricDescription" name="description" placeholder="Description of the metric">
-                        </div>
-                        <div class="mb-3">
-                            <div class="d-flex justify-content-between mb-1 align-items-center">
-                                <label class="form-label small text-teal fw-bold mb-0">Flink SQL Query</label>
-                                <div>
-                                    <select id="tableSelector" class="form-select form-select-sm d-inline-block w-auto bg-dark border-secondary text-teal small py-0" onchange="applyTemplate()">
-                                        <option value="{table}">Select Table...</option>
-                                        <option th:each="table : ${tables}" th:value="${table}" th:text="${table}"></option>
-                                    </select>
-                                    <button type="button" class="btn btn-link btn-sm p-0 text-teal text-decoration-none fw-bold ms-2" onclick="applyTemplate()">Apply Template</button>
-                                </div>
-                            </div>
-                            <textarea id="metricSql" name="sql" style="display: none;"></textarea>
-                            <div id="metricSqlEditor" style="height: 200px; border: 1px solid var(--border-color); border-radius: 4px;"></div>
-                            <div class="form-text text-muted small mt-1">Query must return a column named <code>metric_value</code>.</div>
-                        </div>
-                        <div id="testResultArea" class="mt-3 d-none">
-                            <label class="form-label small text-teal fw-bold">Test Result</label>
-                            <div id="testResultContent" class="p-2 bg-darker border border-secondary rounded font-monospace small"></div>
-                        </div>
-                    </div>
-                    <div class="modal-footer border-secondary">
-                        <button type="button" class="btn btn-outline-info btn-sm me-auto" onclick="testMetric()">
-                            <i class="fas fa-vial"></i> Test
-                        </button>
-                        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
-                        <button type="submit" class="btn btn-teal btn-sm">Save Metric</button>
-                    </div>
-                </form>
+<!-- Metric Modal -->
+<div class="modal fade" id="metricModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content bg-background-dark border border-primary/20 shadow-2xl rounded-2xl overflow-hidden">
+            <div class="px-8 py-6 border-b border-primary/10 flex justify-between items-center bg-primary/5">
+                <h5 class="text-lg font-bold text-primary flex items-center gap-2" id="modalTitle">
+                    <span class="material-symbols-outlined">add_chart</span>
+                    Create Metric
+                </h5>
+                <button type="button" class="text-slate-500 hover:text-white transition-colors" data-bs-dismiss="modal">
+                    <span class="material-symbols-outlined">close</span>
+                </button>
             </div>
+            <form id="metricForm" th:action="@{/metrics/save}" method="post">
+                <input type="hidden" id="metricId" name="id">
+                <div class="px-8 py-6 space-y-6">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div class="md:col-span-2 space-y-2">
+                            <label for="metricName" class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Metric Name</label>
+                            <input type="text" class="w-full bg-background-dark/50 border border-primary/20 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-primary/50 outline-none text-slate-100" id="metricName" name="name" required placeholder="e.g. processed_events_total">
+                        </div>
+                        <div class="space-y-2">
+                            <label for="metricType" class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Metric Type</label>
+                            <select class="w-full bg-background-dark/50 border border-primary/20 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-primary/50 outline-none text-slate-100" id="metricType" name="type" required onchange="onMetricTypeChange()">
+                                <option value="COUNTER">Counter</option>
+                                <option value="GAUGE">Gauge</option>
+                                <option value="HISTOGRAM">Histogram</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="space-y-2">
+                        <label for="metricDescription" class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Description</label>
+                        <input type="text" class="w-full bg-background-dark/50 border border-primary/20 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-primary/50 outline-none text-slate-100" id="metricDescription" name="description" placeholder="Description of the metric">
+                    </div>
+                    <div class="space-y-3">
+                        <div class="flex justify-between items-center">
+                            <label class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Flink SQL Query</label>
+                            <div class="flex items-center gap-2">
+                                <select id="tableSelector" class="bg-background-dark border border-primary/20 rounded px-2 py-1 text-[10px] text-primary font-bold outline-none" onchange="applyTemplate()">
+                                    <option value="{table}">Select Table...</option>
+                                    <option th:each="table : ${tables}" th:value="${table}" th:text="${table}"></option>
+                                </select>
+                                <button type="button" class="text-[10px] font-bold text-primary hover:underline uppercase" onclick="applyTemplate()">Apply Template</button>
+                            </div>
+                        </div>
+                        <textarea id="metricSql" name="sql" style="display: none;"></textarea>
+                        <div id="metricSqlEditor" class="rounded-lg border border-primary/20 overflow-hidden h-[200px]"></div>
+                        <p class="text-[9px] text-slate-500 italic">Query must return a column named <code class="text-primary">metric_value</code>.</p>
+                    </div>
+                    <div id="testResultArea" class="hidden space-y-2">
+                        <label class="text-[10px] font-bold text-primary uppercase tracking-widest">Test Result</label>
+                        <div id="testResultContent" class="p-4 bg-background-dark/80 border border-primary/10 rounded-lg font-mono text-xs text-slate-300"></div>
+                    </div>
+                </div>
+                <div class="px-8 py-4 border-t border-primary/10 flex justify-between items-center bg-primary/5">
+                    <button type="button" class="flex items-center gap-2 px-4 py-2 border border-primary/30 text-primary rounded-lg text-xs font-bold hover:bg-primary/10 transition-all uppercase" onclick="testMetric()">
+                        <span class="material-symbols-outlined text-sm">vibration</span> Test
+                    </button>
+                    <div class="flex gap-3">
+                        <button type="button" class="px-4 py-2 text-slate-500 hover:text-white text-xs font-bold uppercase transition-all" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="px-6 py-2 bg-primary text-background-dark rounded-lg text-xs font-bold hover:brightness-110 transition-all uppercase">Save Metric</button>
+                    </div>
+                </div>
+            </form>
         </div>
     </div>
+</div>
 
-    <script th:src="@{/js/metrics.js}"></script>
+<script th:src="@{/js/metrics.js}"></script>
 </body>
 </html>

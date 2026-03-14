@@ -4,177 +4,140 @@
     <title>Dashboard</title>
 </head>
 <body th:fragment="content">
-    <div class="row mb-4 align-items-center">
-        <div class="col">
-            <h1 class="h3 text-teal fw-bold mb-0"><i class="fas fa-tachometer-alt me-2"></i>Dashboard</h1>
-            <p class="text-muted small mb-0">Explore and query Kafka topics with Flink SQL</p>
-        </div>
-        <div class="col-auto">
-            <span class="badge rounded-pill me-3" th:classappend="${health ? 'bg-success' : 'bg-danger'}">
-                <i class="fas fa-circle me-1 small"></i>
-                <span th:text="${health ? 'Kafka Connected' : 'Kafka Disconnected'}">Status</span>
-            </span>
-            <button class="btn btn-outline-secondary btn-sm" onclick="location.reload()">
-                <i class="fas fa-sync-alt me-1"></i> Refresh
-            </button>
-        </div>
-    </div>
-
-    <div th:if="${error}" class="alert alert-danger" th:text="${error}"></div>
-
-    <!-- Summary Statistics -->
-    <div class="row g-3 mb-5">
-        <div class="col-6 col-lg-3">
-            <div class="card bg-dark border-secondary shadow-sm h-100">
-                <div class="card-body text-center py-4">
-                    <h6 class="text-muted small text-uppercase mb-2">Total Topics</h6>
-                    <h2 class="text-teal fw-bold mb-0" th:text="${topics.size()}">0</h2>
-                </div>
+<div class="p-6 space-y-6">
+    <!-- KPI Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="bg-white dark:bg-primary/5 border border-slate-200 dark:border-primary/10 rounded-xl p-5">
+            <p class="text-slate-500 dark:text-slate-400 text-sm font-medium">Total Topics</p>
+            <h3 class="text-3xl font-bold mt-1" th:text="${topics.size()}">0</h3>
+            <div class="mt-2 flex items-center text-xs text-emerald-500 font-medium">
+                <span class="material-symbols-outlined text-xs mr-1">trending_up</span> Live Cluster
             </div>
         </div>
-        <div class="col-6 col-lg-3">
-            <div class="card bg-dark border-secondary shadow-sm h-100">
-                <div class="card-body text-center py-4">
-                    <h6 class="text-muted small text-uppercase mb-2">Total Messages</h6>
-                    <h2 class="text-teal fw-bold mb-0" th:text="${#numbers.formatInteger(totalMessages, 0, 'WHITESPACE')}">0</h2>
-                </div>
+        <div class="bg-white dark:bg-primary/5 border border-slate-200 dark:border-primary/10 rounded-xl p-5">
+            <p class="text-slate-500 dark:text-slate-400 text-sm font-medium">Message Count</p>
+            <h3 class="text-3xl font-bold mt-1 text-primary" th:text="${totalMessages > 1000000000 ? #numbers.formatDecimal(totalMessages/1000000000.0, 1, 1) + 'B' : (totalMessages > 1000000 ? #numbers.formatDecimal(totalMessages/1000000.0, 1, 1) + 'M' : #numbers.formatInteger(totalMessages, 0, 'WHITESPACE'))}">1.2B</h3>
+            <div class="mt-2 flex items-center text-xs text-emerald-500 font-medium">
+                <span class="material-symbols-outlined text-xs mr-1">bolt</span> Active Ingest
             </div>
         </div>
-        <div class="col-6 col-lg-3">
-            <div class="card bg-dark border-secondary shadow-sm h-100">
-                <div class="card-body text-center py-4">
-                    <h6 class="text-muted small text-uppercase mb-2">Registered Tables</h6>
-                    <h2 class="text-teal fw-bold mb-0" th:text="${tables.size()}">0</h2>
-                </div>
+        <div class="bg-white dark:bg-primary/5 border border-slate-200 dark:border-primary/10 rounded-xl p-5">
+            <p class="text-slate-500 dark:text-slate-400 text-sm font-medium">Flink Tables</p>
+            <h3 class="text-3xl font-bold mt-1" th:text="${tables.size()}">42</h3>
+            <div class="mt-2 flex items-center text-xs text-slate-400 font-medium">
+                <span class="material-symbols-outlined text-xs mr-1">database</span> Virtual Views
             </div>
         </div>
-        <div class="col-6 col-lg-3">
-            <div class="card bg-dark border-secondary shadow-sm h-100">
-                <div class="card-body text-center py-4">
-                    <h6 class="text-muted small text-uppercase mb-2">Active Jobs</h6>
-                    <h2 class="text-teal fw-bold mb-0" th:text="${jobs.size()}">0</h2>
-                </div>
+        <div class="bg-white dark:bg-primary/5 border border-slate-200 dark:border-primary/10 rounded-xl p-5">
+            <p class="text-slate-500 dark:text-slate-400 text-sm font-medium">Active Jobs</p>
+            <h3 class="text-3xl font-bold mt-1" th:text="${jobs.size()}">8</h3>
+            <div class="mt-2 flex items-center text-xs text-primary font-medium">
+                <span class="material-symbols-outlined text-xs mr-1">sync</span> 100% Health
             </div>
         </div>
     </div>
 
-    <div class="row mb-3 align-items-end">
-        <div class="col">
-            <h5 class="text-teal fw-bold mb-0">Kafka Topics</h5>
-        </div>
-        <div class="col-md-2">
-            <input type="text" id="prefixFilter" class="form-control form-control-sm bg-dark border-secondary text-light" placeholder="Prefix filter...">
-        </div>
-        <div class="col-md-2">
-            <input type="text" id="fullNameFilter" class="form-control form-control-sm bg-dark border-secondary text-light" placeholder="Full name...">
-        </div>
-        <div class="col-md-5 d-flex align-items-center">
-            <div class="form-check form-switch me-3">
-                <input class="form-check-input bg-dark border-secondary" type="checkbox" id="hideEmptyTopics">
-                <label class="form-check-label small text-muted text-nowrap" for="hideEmptyTopics">Hide Empty</label>
+    <!-- Main Layout Grid -->
+    <div class="grid grid-cols-12 gap-6">
+        <!-- Topics Explorer Section -->
+        <div class="col-span-12 lg:col-span-8 space-y-4">
+            <div class="flex items-center justify-between">
+                <h2 class="text-xl font-bold flex items-center gap-2">
+                    <span class="material-symbols-outlined text-primary">format_list_bulleted</span>
+                    Topics Explorer
+                </h2>
+                <div class="flex items-center gap-2">
+                    <div class="bg-white dark:bg-background-dark border border-slate-200 dark:border-primary/20 rounded-lg px-3 py-1 flex items-center">
+                        <span class="material-symbols-outlined text-sm text-slate-400 mr-2">filter_list</span>
+                        <input id="prefixFilter" class="bg-transparent border-none focus:ring-0 text-xs w-32 p-0" placeholder="Prefix search..." type="text"/>
+                    </div>
+                    <div class="bg-white dark:bg-background-dark border border-slate-200 dark:border-primary/20 rounded-lg px-3 py-1 flex items-center">
+                        <span class="material-symbols-outlined text-sm text-slate-400 mr-2">search</span>
+                        <input id="topicSearch" class="bg-transparent border-none focus:ring-0 text-xs w-32 p-0" placeholder="Search..." type="text"/>
+                    </div>
+                </div>
             </div>
-            <div class="form-check form-switch me-3">
-                <input class="form-check-input bg-dark border-secondary" type="checkbox" id="hideDltTopics" checked>
-                <label class="form-check-label small text-muted text-nowrap" for="hideDltTopics" title="Hide Dead Letter Topics (*.dlt)">Hide DLT</label>
+
+            <div class="flex gap-4 items-center mb-2">
+                <div class="flex items-center gap-2">
+                    <input type="checkbox" id="hideEmptyTopics" class="rounded border-primary/20 bg-background-dark text-primary focus:ring-primary/50">
+                    <label for="hideEmptyTopics" class="text-xs text-slate-400">Hide Empty</label>
+                </div>
+                <div class="flex items-center gap-2">
+                    <input type="checkbox" id="hideDltTopics" checked class="rounded border-primary/20 bg-background-dark text-primary focus:ring-primary/50">
+                    <label for="hideDltTopics" class="text-xs text-slate-400">Hide DLT</label>
+                </div>
             </div>
-            <input type="text" id="topicSearch" class="form-control form-control-sm bg-dark border-secondary text-light" placeholder="Search topics...">
-        </div>
-    </div>
-    <div class="card bg-dark border-secondary shadow-sm mb-5">
-        <div class="card-body p-0">
-            <table class="table table-dark table-hover table-sm mb-0">
-                <thead>
-                    <tr>
-                        <th class="text-teal small py-3 px-4">TOPIC NAME</th>
-                        <th class="text-teal small py-3 text-end">FORMAT</th>
-                        <th class="text-teal small py-3 text-end px-4">ACTION</th>
+
+            <div class="bg-white dark:bg-primary/5 border border-slate-200 dark:border-primary/10 rounded-xl overflow-hidden">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                    <tr class="bg-slate-50 dark:bg-primary/10 text-xs font-bold text-slate-500 dark:text-primary/70 uppercase tracking-wider border-b border-slate-200 dark:border-primary/10">
+                        <th class="px-4 py-3">Topic Name</th>
+                        <th class="px-4 py-3 text-right">Messages</th>
+                        <th class="px-4 py-3">State</th>
+                        <th class="px-4 py-3 text-right">Actions</th>
                     </tr>
-                </thead>
-                <tbody id="topicList">
-                    <tr th:each="topic : ${topics}" class="topic-row"
+                    </thead>
+                    <tbody id="topicList" class="text-sm divide-y divide-slate-100 dark:divide-primary/5">
+                    <tr th:each="topic : ${topics}" class="topic-row hover:bg-slate-50 dark:hover:bg-primary/5 transition-colors"
                         th:data-size="${topicSizes[topic]}"
                         th:data-dlt="${topic.toLowerCase().endsWith('.dlt')}">
-                        <td class="py-3 px-4 fw-bold text-light">
-                            <span th:text="${topic}">topic-name</span>
-                            <small th:if="${topicSizes[topic] == 0}" class="badge bg-secondary ms-2 opacity-50">EMPTY</small>
-                            <small th:if="${topic.toLowerCase().endsWith('.dlt')}" class="badge bg-warning text-dark ms-2 opacity-75">DLT</small>
+                        <td class="px-4 py-3 font-medium" th:text="${topic}">user_events_v2</td>
+                        <td class="px-4 py-3 text-right text-slate-500 dark:text-slate-400" th:text="${#numbers.formatInteger(topicSizes[topic], 0, 'WHITESPACE')}">45.2 GB</td>
+                        <td class="px-4 py-3">
+                            <span th:if="${topicSizes[topic] == 0}" class="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-500/20 text-slate-500 dark:text-slate-400 uppercase">Empty</span>
+                            <span th:if="${topic.toLowerCase().endsWith('.dlt')}" class="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-500 uppercase">DLT</span>
+                            <span th:if="${topicSizes[topic] > 0 && !topic.toLowerCase().endsWith('.dlt')}" class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-500 uppercase">Healthy</span>
                         </td>
-                        <td class="py-3 text-end">
-                            <span class="text-muted small me-2" th:text="${topicSizes[topic]} + ' msgs'"></span>
-                            <span class="badge rounded-pill bg-outline-teal border border-teal text-teal small">AUTO</span>
-                        </td>
-                        <td class="py-3 text-end px-4">
-                            <a th:href="@{'/topic/' + ${topic}}" class="btn btn-outline-teal btn-sm">Explore</a>
+                        <td class="px-4 py-3 text-right">
+                            <a th:href="@{'/topic/' + ${topic}}" class="text-slate-400 hover:text-primary"><span class="material-symbols-outlined text-lg">visibility</span></a>
                         </td>
                     </tr>
-                </tbody>
-            </table>
+                    </tbody>
+                </table>
+            </div>
         </div>
-    </div>
 
-    <h5 class="text-teal fw-bold mb-3">Flink Dynamic Tables</h5>
-    <div class="card bg-dark border-secondary shadow-sm">
-        <div class="card-body p-0">
-            <table class="table table-dark table-hover table-sm mb-0">
-                <thead>
-                    <tr>
-                        <th class="text-teal small py-3 px-4">TABLE NAME</th>
-                        <th class="text-teal small py-3 text-end px-4">ACTION</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr th:each="table : ${tables}">
-                        <td class="py-3 px-4 fw-bold text-light" th:text="${table}">table-name</td>
-                        <td class="py-3 text-end px-4">
-                            <a th:href="@{'/table/' + ${table}}" class="btn btn-outline-teal btn-sm">Explore</a>
-                            <a href="/query" class="btn btn-outline-secondary btn-sm">SQL</a>
-                        </td>
-                    </tr>
-                    <tr th:if="${tables.isEmpty()}">
-                        <td colspan="2" class="py-5 text-center text-muted">
-                            <i class="fas fa-table fa-2x mb-3 opacity-25 d-block"></i>
-                            No Flink tables registered yet.
-                        </td>
-                    </tr>
-                </tbody>
-            </table>
+        <!-- Active Streaming Jobs Section -->
+        <div class="col-span-12 lg:col-span-4 space-y-4">
+            <div class="flex items-center justify-between">
+                <h2 class="text-xl font-bold flex items-center gap-2">
+                    <span class="material-symbols-outlined text-primary">data_usage</span>
+                    Flink SQL Jobs
+                </h2>
+            </div>
+            <div class="space-y-3">
+                <div th:each="job : ${jobs}" class="bg-white dark:bg-primary/5 border border-slate-200 dark:border-primary/10 rounded-xl p-4 flex flex-col gap-3">
+                    <div class="flex items-start justify-between">
+                        <div class="min-w-0">
+                            <h4 class="text-sm font-bold truncate" th:text="${job.key.length() > 20 ? job.key.substring(0, 20) + '...' : job.key}">Job Name</h4>
+                            <p class="text-[10px] text-slate-500 dark:text-slate-400 font-mono mt-0.5" th:text="'ID: ' + ${job.key.substring(0, 8)}">ID: flink-982a</p>
+                        </div>
+                        <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-primary/20 text-primary uppercase">Running</span>
+                    </div>
+                    <div class="min-w-0">
+                        <code class="text-[10px] text-slate-400 line-clamp-2" th:text="${job.value.sql}">SELECT * FROM...</code>
+                    </div>
+                    <div class="flex items-center justify-between mt-1">
+                        <div class="flex gap-4">
+                            <div>
+                                <p class="text-[10px] text-slate-500 dark:text-slate-400 uppercase font-bold">Uptime</p>
+                                <p class="text-xs font-medium">Live</p>
+                            </div>
+                        </div>
+                        <button th:onclick="'cancelJob(\'' + ${job.key} + '\')'" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-500/30 text-red-500 hover:bg-red-500/10 transition-colors text-xs font-bold uppercase tracking-wider">
+                            <span class="material-symbols-outlined text-sm">cancel</span> Kill
+                        </button>
+                    </div>
+                </div>
+                <div th:if="${jobs == null or jobs.isEmpty()}" class="py-10 text-center border border-dashed border-slate-200 dark:border-primary/10 rounded-xl">
+                    <span class="material-symbols-outlined text-4xl text-slate-300 dark:text-primary/20">bolt</span>
+                    <p class="text-xs text-slate-500 mt-2">No active background jobs</p>
+                </div>
+            </div>
         </div>
     </div>
-
-    <h5 class="text-teal fw-bold mb-3 mt-5">Active Flink Jobs</h5>
-    <div class="card bg-dark border-secondary shadow-sm">
-        <div class="card-body p-0">
-            <table class="table table-dark table-hover table-sm mb-0">
-                <thead>
-                    <tr>
-                        <th class="text-teal small py-3 px-4">JOB ID</th>
-                        <th class="text-teal small py-3">SQL STATEMENT</th>
-                        <th class="text-teal small py-3 text-center">STATUS</th>
-                        <th class="text-teal small py-3 text-end px-4">ACTION</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr th:each="job : ${jobs}">
-                        <td class="py-3 px-4 fw-bold text-light small" th:text="${job.key.length() > 8 ? job.key.substring(0, 8) + '...' : job.key}">job-id</td>
-                        <td class="py-3">
-                            <code class="text-muted small" th:text="${job.value.sql.length() > 80 ? job.value.sql.substring(0, 80) + '...' : job.value.sql}">SELECT * FROM...</code>
-                        </td>
-                        <td class="py-3 text-center">
-                            <span class="badge rounded-pill bg-success">RUNNING</span>
-                        </td>
-                        <td class="py-3 text-end px-4">
-                            <button class="btn btn-outline-danger btn-sm" th:onclick="'cancelJob(\'' + ${job.key} + '\')'">Cancel</button>
-                        </td>
-                    </tr>
-                    <tr th:if="${jobs == null or jobs.isEmpty()}">
-                        <td colspan="4" class="py-5 text-center text-muted">
-                            <i class="fas fa-bolt fa-2x mb-3 opacity-25 d-block"></i>
-                            No active background jobs.
-                        </td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
-    </div>
+</div>
 </body>
 </html>

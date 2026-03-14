@@ -4,59 +4,64 @@
     <title>Cluster Configuration</title>
 </head>
 <body th:fragment="content">
-    <div class="row mb-4">
-        <div class="col-md-12">
-            <h1 class="h3 text-teal fw-bold"><i class="fas fa-cog me-2"></i>Cluster Configuration</h1>
-            <p class="text-muted small">Manage Kafka cluster connections and application settings</p>
-        </div>
+<div class="p-6 space-y-6 max-w-4xl mx-auto">
+    <div>
+        <h1 class="text-xl font-bold flex items-center gap-2">
+            <span class="material-symbols-outlined text-primary">settings</span>
+            Cluster Configuration
+        </h1>
+        <p class="text-xs text-slate-500 mt-1">Manage Kafka cluster connections and application settings</p>
     </div>
-    <div class="row">
-        <div class="col-md-6 offset-md-3">
 
-            <div class="card bg-dark border-secondary mb-4 shadow-sm">
-                <div class="card-body">
-                    <div class="mb-3 d-flex justify-content-between align-items-center">
-                        <label class="form-label text-muted small fw-bold">Cluster Status</label>
-                        <span class="badge rounded-pill bg-success" th:if="${isConnected}">Connected</span>
-                        <span class="badge rounded-pill bg-danger" th:unless="${isConnected}">Disconnected</span>
-                    </div>
-
-                    <form th:action="@{/config}" method="post">
-                        <div class="mb-3">
-                            <label class="form-label text-muted small fw-bold">Bootstrap Servers</label>
-                            <input type="text" class="form-control bg-dark border-secondary text-light" name="bootstrapServers" th:value="${bootstrapServers}" required>
-                        </div>
-                        <div class="d-grid">
-                            <button type="submit" class="btn btn-outline-teal">Update Connection</button>
-                        </div>
-                    </form>
-                </div>
-            </div>
-
-            <h5 class="text-teal fw-bold mb-3">Multi-Cluster Management</h5>
-            <div class="card bg-dark border-secondary shadow-sm">
-                <div class="card-body p-0">
-                    <table class="table table-dark table-hover table-sm mb-0">
-                        <thead>
-                            <tr>
-                                <th class="text-teal small">NAME</th>
-                                <th class="text-teal small text-end">BOOTSTRAP</th>
-                                <th class="text-teal small text-end">ACTION</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr th:each="cluster : ${clusters}">
-                                <td th:text="${cluster.key}">production</td>
-                                <td class="text-end text-muted small" th:text="${cluster.value}">localhost:9092</td>
-                                <td class="text-end text-muted small">
-                                    <button class="btn btn-outline-danger btn-sm py-0 px-2" disabled>X</button>
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
+    <div class="bg-white dark:bg-primary/5 border border-slate-200 dark:border-primary/10 rounded-xl p-8 shadow-sm">
+        <div class="flex items-center justify-between mb-8">
+            <h2 class="text-sm font-bold text-slate-300 uppercase tracking-widest">Active Connection</h2>
+            <div class="flex items-center gap-2 px-3 py-1 rounded-full border" th:classappend="${isConnected ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-red-500/10 border-red-500/20'}">
+                <span class="relative flex h-2 w-2">
+                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" th:classappend="${isConnected ? 'bg-emerald-400' : 'bg-red-400'}"></span>
+                    <span class="relative inline-flex rounded-full h-2 w-2" th:classappend="${isConnected ? 'bg-emerald-500' : 'bg-red-500'}"></span>
+                </span>
+                <span class="text-[10px] font-bold uppercase tracking-widest" th:classappend="${isConnected ? 'text-emerald-500' : 'text-red-500'}" th:text="${isConnected ? 'Connected' : 'Disconnected'}">Status</span>
             </div>
         </div>
+
+        <form th:action="@{/config}" method="post" class="space-y-6">
+            <div class="space-y-2">
+                <label class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Bootstrap Servers</label>
+                <input type="text" name="bootstrapServers" th:value="${bootstrapServers}" required class="w-full bg-background-dark border border-primary/20 rounded-lg px-4 py-3 text-sm focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none text-slate-200 transition-all"/>
+            </div>
+            <button type="submit" class="w-full flex items-center justify-center gap-2 px-6 py-3 bg-primary text-background-dark rounded-lg font-bold hover:brightness-110 transition-all text-sm">
+                <span class="material-symbols-outlined text-lg">sync_alt</span>
+                UPDATE CONNECTION
+            </button>
+        </form>
     </div>
+
+    <section class="space-y-4">
+        <h2 class="text-sm font-bold text-slate-500 uppercase tracking-widest px-2">Registered Clusters</h2>
+        <div class="bg-white dark:bg-primary/5 border border-slate-200 dark:border-primary/10 rounded-xl overflow-hidden">
+            <table class="w-full text-left border-collapse">
+                <thead>
+                    <tr class="bg-slate-50 dark:bg-primary/10 text-[10px] font-bold text-slate-500 dark:text-primary/70 uppercase tracking-wider border-b border-slate-200 dark:border-primary/10">
+                        <th class="px-6 py-4">Name</th>
+                        <th class="px-6 py-4">Bootstrap Servers</th>
+                        <th class="px-6 py-4 text-right">Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="text-xs divide-y divide-slate-100 dark:divide-primary/5">
+                    <tr th:each="cluster : ${clusters}" class="hover:bg-slate-50 dark:hover:bg-primary/5 transition-colors">
+                        <td class="px-6 py-4 font-bold text-slate-200" th:text="${cluster.key}">production</td>
+                        <td class="px-6 py-4 text-slate-400 font-mono" th:text="${cluster.value}">localhost:9092</td>
+                        <td class="px-6 py-4 text-right">
+                            <button class="text-slate-600 cursor-not-allowed" disabled>
+                                <span class="material-symbols-outlined text-lg">delete</span>
+                            </button>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
+</div>
 </body>
 </html>

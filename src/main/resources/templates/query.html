@@ -1,197 +1,202 @@
 <!DOCTYPE html>
 <html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: html(~{::body})}">
 <head>
-    <title>SQL Query</title>
+    <title>SQL Editor</title>
 </head>
-<body th:fragment="content">
-    <div class="row">
-        <div class="col-md-9">
-            <div class="d-flex justify-content-between align-items-center mb-4">
+<body th:fragment="content" class="h-full">
+<div class="flex h-[calc(100vh-3.5rem)] overflow-hidden">
+    <!-- Schema Browser -->
+    <aside class="w-72 flex-shrink-0 flex flex-col border-r border-primary/10 bg-background-dark/50">
+        <div class="flex-1 overflow-y-auto custom-scrollbar p-4" id="schemaAccordion">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-widest">Schema Browser</h2>
+                <span class="material-symbols-outlined text-sm cursor-pointer hover:text-primary" onclick="location.reload()">refresh</span>
+            </div>
+
+            <div class="space-y-4">
+                <!-- Flink Tables Section -->
                 <div>
-                    <h1 class="h3 text-teal fw-bold mb-0"><i class="fas fa-terminal me-2"></i>SQL Editor</h1>
-                    <p class="text-muted small mb-0">Execute continuous queries on Kafka topics using Flink SQL</p>
+                    <div class="flex items-center gap-2 mb-2 px-2">
+                        <span class="material-symbols-outlined text-sm text-primary">grid_view</span>
+                        <span class="text-xs font-bold text-slate-300 uppercase">Flink Tables</span>
+                    </div>
+                    <div class="space-y-1" id="collapseTables">
+                        <div th:each="table : ${tables}" class="group list-group-item">
+                            <div class="flex items-center justify-between py-1.5 px-2 rounded hover:bg-primary/10 cursor-pointer transition-colors">
+                                <div class="flex items-center gap-2 min-w-0" th:onclick="'insertAtCursor(\'' + ${table} + '\')'">
+                                    <span class="material-symbols-outlined text-base text-slate-400">table_chart</span>
+                                    <span class="text-sm font-medium truncate" th:text="${table}">table_name</span>
+                                </div>
+                                <button class="text-slate-500 hover:text-primary transition-colors" th:onclick="'toggleSchema(this, \'' + ${table} + '\')'">
+                                    <span class="material-symbols-outlined text-sm">chevron_right</span>
+                                </button>
+                            </div>
+                            <div class="schema-details hidden pl-8 pt-1 space-y-1 border-l border-primary/20 ml-4"></div>
+                        </div>
+                    </div>
                 </div>
-                <div class="d-flex align-items-center">
-                    <button class="btn btn-outline-teal btn-sm me-2" type="button" data-bs-toggle="modal" data-bs-target="#windowAssistantModal">
-                        Window Assistant
+
+                <!-- Kafka Topics Section -->
+                <div>
+                    <div class="flex items-center justify-between mb-2 px-2">
+                        <div class="flex items-center gap-2">
+                            <span class="material-symbols-outlined text-sm text-primary">waves</span>
+                            <span class="text-xs font-bold text-slate-300 uppercase">Kafka Topics</span>
+                        </div>
+                        <input type="checkbox" id="hideDltTopics" checked class="rounded size-3 border-primary/20 bg-background-dark text-primary focus:ring-primary/50">
+                    </div>
+                    <div class="space-y-1" id="topicList">
+                        <div th:each="topic : ${topics}" class="group topic-item" th:data-dlt="${topic.toLowerCase().endsWith('.dlt')}">
+                            <div class="flex items-center justify-between py-1.5 px-2 rounded hover:bg-primary/10 cursor-pointer transition-colors">
+                                <div class="flex items-center gap-2 min-w-0" th:onclick="'insertAtCursor(\'' + ${topic} + '\')'">
+                                    <span class="material-symbols-outlined text-base text-slate-400">topic</span>
+                                    <span class="text-sm font-medium truncate" th:text="${topic}">topic_name</span>
+                                    <span th:if="${topic.toLowerCase().endsWith('.dlt')}" class="text-[8px] bg-amber-500/20 text-amber-500 px-1 rounded">DLT</span>
+                                </div>
+                                <button class="text-slate-500 hover:text-primary transition-colors" th:onclick="'insertDdl(\'' + ${topic} + '\')'" title="Insert DDL">
+                                    <span class="material-symbols-outlined text-sm">add_circle</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <!-- Toolbar -->
+        <header class="h-14 border-b border-primary/10 flex items-center px-6 justify-between bg-background-dark/30 shrink-0">
+            <div class="flex items-center gap-4">
+                <div class="flex items-center gap-2">
+                    <span class="text-xs text-slate-400">Read Mode:</span>
+                    <div class="flex bg-background-dark border border-primary/20 rounded overflow-hidden">
+                        <input type="radio" class="hidden peer/earliest" name="readMode" id="earliest" value="earliest-offset" checked>
+                        <label for="earliest" class="px-3 py-1 text-[10px] font-bold cursor-pointer transition-colors peer-checked/earliest:bg-primary/20 peer-checked/earliest:text-primary text-slate-500 border-r border-primary/20">EARLIEST</label>
+
+                        <input type="radio" class="hidden peer/latest" name="readMode" id="latest" value="latest-offset">
+                        <label for="latest" class="px-3 py-1 text-[10px] font-bold cursor-pointer transition-colors peer-checked/latest:bg-primary/20 peer-checked/latest:text-primary text-slate-500">LATEST</label>
+                    </div>
+                </div>
+                <div class="h-6 w-[1px] bg-primary/20"></div>
+                <div class="dropdown relative group">
+                    <button class="flex items-center gap-2 px-3 py-1.5 bg-background-dark border border-primary/20 rounded-lg text-xs font-bold hover:bg-primary/5">
+                        TEMPLATES <span class="material-symbols-outlined text-sm">expand_more</span>
                     </button>
-                    <div class="dropdown">
-                        <button class="btn btn-outline-teal btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
-                            SQL Templates
-                        </button>
-                        <ul class="dropdown-menu dropdown-menu-dark border-secondary">
-                            <li><a class="dropdown-item small" href="#" onclick="insertTemplate('SELECT * FROM {table} LIMIT 10')">Basic Select</a></li>
-                            <li><a class="dropdown-item small" href="#" onclick="insertTemplate('SELECT window_start, window_end, COUNT(*) \nFROM TABLE(TUMBLE(TABLE {table}, DESCRIPTOR(proc_time), INTERVAL \'1\' MINUTE)) \nGROUP BY window_start, window_end')">Tumbling Window</a></li>
-                            <li><a class="dropdown-item small" href="#" onclick="insertTemplate('SELECT * FROM {table} \nWHERE proc_time > PROCTIME() - INTERVAL \'5\' MINUTE')">Recent Data (5m)</a></li>
-                            <li><hr class="dropdown-divider border-secondary"></li>
-                            <li><a class="dropdown-item small" href="#" onclick="insertTemplate('SELECT ML_PREDICT(\'my-model\', {col1}, {col2}) \nFROM {table}')">AI Prediction (Flink 2.1+)</a></li>
-                        </ul>
+                    <div class="absolute top-full left-0 mt-1 w-64 bg-background-dark border border-primary/10 rounded-xl shadow-2xl z-50 hidden group-hover:block py-2">
+                        <a href="#" onclick="insertTemplate('SELECT * FROM {table} LIMIT 10')" class="block px-4 py-2 text-xs text-slate-300 hover:bg-primary/10 hover:text-primary">Basic Select</a>
+                        <a href="#" onclick="insertTemplate('SELECT window_start, window_end, COUNT(*) \nFROM TABLE(TUMBLE(TABLE {table}, DESCRIPTOR(proc_time), INTERVAL \'1\' MINUTE)) \nGROUP BY window_start, window_end')" class="block px-4 py-2 text-xs text-slate-300 hover:bg-primary/10 hover:text-primary">Tumbling Window</a>
+                        <a href="#" onclick="insertTemplate('SELECT * FROM {table} \nWHERE proc_time > PROCTIME() - INTERVAL \'5\' MINUTE')" class="block px-4 py-2 text-xs text-slate-300 hover:bg-primary/10 hover:text-primary">Recent Data (5m)</a>
+                        <div class="border-t border-primary/5 my-1"></div>
+                        <a href="#" onclick="insertTemplate('SELECT ML_PREDICT(\'my-model\', {col1}, {col2}) \nFROM {table}')" class="block px-4 py-2 text-xs text-slate-300 hover:bg-primary/10 hover:text-primary">AI Prediction</a>
                     </div>
                 </div>
             </div>
+            <div class="flex items-center gap-3">
+                <button id="runQuery" class="flex items-center gap-2 px-4 py-2 bg-primary text-background-dark rounded-lg text-xs font-bold hover:brightness-110 transition-all">
+                    <span class="material-symbols-outlined text-sm">play_arrow</span> RUN QUERY
+                </button>
+                <button id="stopQuery" class="hidden flex items-center gap-2 px-4 py-2 bg-red-500 text-white rounded-lg text-xs font-bold hover:bg-red-600 transition-all">
+                    <span class="material-symbols-outlined text-sm">stop</span> STOP
+                </button>
+                <button id="clearEditor" class="flex items-center gap-2 px-3 py-2 bg-background-dark border border-primary/20 rounded-lg text-xs font-bold hover:bg-primary/5 transition-all">
+                    <span class="material-symbols-outlined text-sm">delete</span>
+                </button>
+            </div>
+        </header>
 
-            <div class="card bg-dark border-secondary mb-4 shadow-sm">
-                <div class="card-header bg-dark border-secondary">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <div class="d-flex align-items-center">
-                            <span class="text-teal small fw-bold me-3">SQL QUERY</span>
-                            <div class="btn-group btn-group-sm" role="group">
-                                <input type="radio" class="btn-check" name="readMode" id="earliest" value="earliest-offset" checked>
-                                <label class="btn btn-outline-teal x-small" for="earliest" title="Start from the beginning of the topic">Earliest</label>
-                                <input type="radio" class="btn-check" name="readMode" id="latest" value="latest-offset">
-                                <label class="btn btn-outline-teal x-small" for="latest" title="Start from the end of the topic (new messages only)">Latest</label>
-                            </div>
-                        </div>
-                        <div class="btn-group">
-                            <button class="btn btn-outline-teal btn-sm" id="runQuery">Execute</button>
-                            <button class="btn btn-outline-danger btn-sm d-none" id="stopQuery">Stop</button>
-                            <button class="btn btn-outline-secondary btn-sm" id="clearEditor">Clear</button>
-                        </div>
-                    </div>
+        <!-- Editor & Assistant -->
+        <div class="flex-1 flex min-h-0 relative">
+            <div class="flex-1 flex flex-col bg-background-dark/20 overflow-hidden">
+                <div class="flex items-center px-4 py-2 border-b border-primary/5 bg-background-dark/40">
+                    <span class="text-[10px] font-bold text-primary tracking-widest uppercase">SQL EDITOR</span>
                 </div>
-                <div class="card-body p-0">
-                    <textarea id="sqlEditor" class="form-control bg-dark text-light border-0" rows="10"></textarea>
+                <div class="flex-1 overflow-auto custom-scrollbar bg-[#011627]">
+                    <textarea id="sqlEditor" class="w-full h-full opacity-0"></textarea>
                 </div>
+                <div id="queryStatus" class="p-4 hidden text-sm font-medium"></div>
             </div>
 
-            <div id="queryStatus" class="alert d-none mb-4"></div>
+            <!-- Window Assistant Sidebar -->
+            <div class="w-80 border-l border-primary/10 bg-background-dark/40 p-4 flex flex-col gap-4 overflow-y-auto custom-scrollbar">
+                <div class="flex items-center gap-2">
+                    <span class="material-symbols-outlined text-primary">magic_button</span>
+                    <h3 class="text-sm font-bold">Window Assistant</h3>
+                </div>
+                <p class="text-xs text-slate-400 leading-relaxed">Generate windowing logic for your streaming queries.</p>
 
-            <div class="card bg-dark border-secondary shadow-sm" id="resultsCard" style="display: none;">
-                <div class="card-header bg-dark border-secondary d-flex justify-content-between align-items-center sticky-top">
-                    <span class="text-teal small fw-bold"><i class="fas fa-list me-2"></i> RESULTS</span>
-                    <span class="text-muted small" id="queryStats"></span>
-                    <div class="btn-group">
-                        <button class="btn btn-outline-teal btn-sm" id="exportCSV" title="Export to CSV"><i class="fas fa-file-csv"></i></button>
-                        <button class="btn btn-outline-teal btn-sm" id="exportJSON" title="Export to JSON"><i class="fas fa-file-code"></i></button>
-                    </div>
-                </div>
-                <div class="card-body p-0 overflow-auto" style="max-height: 500px;">
-                    <table class="table table-dark table-hover table-sm mb-0" id="resultsTable">
-                        <thead class="sticky-top bg-dark">
-                            <tr id="resultsHeader" class="border-bottom border-secondary"></tr>
-                        </thead>
-                        <tbody id="resultsBody"></tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <h5 class="text-teal fw-bold mb-3">Schema Browser <i class="fas fa-info-circle x-small text-muted" title="Click on table/column names to insert them into the editor"></i></h5>
-            <div class="card bg-dark border-secondary shadow-sm mb-4" style="max-height: 400px; overflow-y: auto;">
-                <div class="card-body p-0">
-                    <div class="accordion accordion-flush" id="schemaAccordion">
-                        <div class="accordion-item bg-dark border-secondary">
-                            <h2 class="accordion-header">
-                                <button class="accordion-button collapsed bg-dark text-teal small py-2" type="button" data-bs-toggle="collapse" data-bs-target="#collapseTables">
-                                    <i class="fas fa-table me-2"></i> Flink Tables
-                                </button>
-                            </h2>
-                            <div id="collapseTables" class="accordion-collapse collapse" data-bs-parent="#schemaAccordion">
-                                <div class="accordion-body p-0">
-                                    <ul class="list-group list-group-flush">
-                                        <li th:each="table : ${tables}" class="list-group-item bg-dark text-light border-secondary py-1 px-3 border-0">
-                                            <div class="d-flex justify-content-between align-items-center">
-                                                <span class="small cursor-pointer hover-teal-text" th:text="${table}" th:onclick="'insertAtCursor(\'' + ${table} + '\')'"></span>
-                                                <button class="btn btn-link btn-sm p-0 text-muted" th:onclick="'toggleSchema(this, \'' + ${table} + '\')'">
-                                                    <i class="fas fa-chevron-right x-small"></i>
-                                                </button>
-                                            </div>
-                                            <div class="schema-details d-none mt-1 ms-2 border-start border-secondary ps-2"></div>
-                                        </li>
-                                    </ul>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="accordion-item bg-dark border-secondary">
-                            <h2 class="accordion-header d-flex align-items-center bg-dark">
-                                <button class="accordion-button collapsed bg-dark text-teal small py-2 flex-grow-1" type="button" data-bs-toggle="collapse" data-bs-target="#collapseTopics">
-                                    <i class="fab fa-buffer me-2"></i> Kafka Topics
-                                </button>
-                                <div class="form-check form-switch me-3 mb-0" title="Hide Dead Letter Topics (*.dlt)">
-                                    <input class="form-check-input bg-dark border-secondary cursor-pointer" type="checkbox" id="hideDltTopics" checked>
-                                </div>
-                            </h2>
-                            <div id="collapseTopics" class="accordion-collapse collapse" data-bs-parent="#schemaAccordion">
-                                <div class="accordion-body p-0">
-                                    <ul class="list-group list-group-flush" id="topicList">
-                                        <li th:each="topic : ${topics}" class="list-group-item bg-dark text-light border-secondary py-1 px-3 border-0 topic-item"
-                                            th:data-dlt="${topic.toLowerCase().endsWith('.dlt')}">
-                                            <div class="d-flex justify-content-between align-items-center">
-                                                <span class="small cursor-pointer hover-teal-text d-flex align-items-center" th:onclick="'insertAtCursor(\'' + ${topic} + '\')'">
-                                                    <span th:text="${topic}"></span>
-                                                    <small th:if="${topic.toLowerCase().endsWith('.dlt')}" class="badge bg-warning text-dark x-small ms-1 py-0 px-1 opacity-75">DLT</small>
-                                                </span>
-                                                <button class="btn btn-link btn-sm p-0 text-muted" th:onclick="'insertDdl(\'' + ${topic} + '\')'" title="Insert CREATE TABLE DDL">
-                                                    <i class="fas fa-plus-circle x-small"></i>
-                                                </button>
-                                            </div>
-                                        </li>
-                                    </ul>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <h5 class="text-teal fw-bold mb-3">Query History</h5>
-            <div class="card bg-dark border-secondary shadow-sm">
-                <div class="card-body p-0">
-                    <ul class="list-group list-group-flush" id="historyList">
-                        <!-- History items will be injected here -->
-                    </ul>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Window Assistant Modal -->
-    <div class="modal fade" id="windowAssistantModal" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content bg-dark border-teal">
-                <div class="modal-header border-secondary">
-                    <h5 class="modal-title text-teal">Window Assistant</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
-                </div>
-                <div class="modal-body">
-                    <div class="mb-3">
-                        <label class="form-label text-teal small">Table <i class="fas fa-question-circle x-small text-muted" title="Select the table to apply windowing on"></i></label>
-                        <select id="winTable" class="form-control form-control-sm bg-dark text-light border-secondary">
+                <div class="space-y-4 pt-2">
+                    <div class="space-y-2">
+                        <label class="text-[10px] font-bold text-slate-500 uppercase">Target Table</label>
+                        <select id="winTable" class="w-full bg-background-dark border border-primary/20 rounded px-3 py-2 text-xs focus:ring-1 focus:ring-primary focus:border-primary outline-none text-slate-200">
                             <option th:each="table : ${tables}" th:value="${table}" th:text="${table}"></option>
                         </select>
                     </div>
-                    <div class="mb-3">
-                        <label class="form-label text-teal small">Window Type <i class="fas fa-question-circle x-small text-muted" title="Tumble: non-overlapping. Hop: overlapping windows."></i></label>
-                        <select id="winType" class="form-control form-control-sm bg-dark text-light border-secondary" onchange="toggleHopFields()">
-                            <option value="TUMBLE">Tumble (Fixed Interval)</option>
-                            <option value="HOP">Hop (Sliding Interval)</option>
+                    <div class="space-y-2">
+                        <label class="text-[10px] font-bold text-slate-500 uppercase">Window Type</label>
+                        <select id="winType" onchange="toggleHopFields()" class="w-full bg-background-dark border border-primary/20 rounded px-3 py-2 text-xs focus:ring-1 focus:ring-primary focus:border-primary outline-none text-slate-200">
+                            <option value="TUMBLE">Tumble (Fixed)</option>
+                            <option value="HOP">Hop (Sliding)</option>
                         </select>
                     </div>
-                    <div class="mb-3">
-                        <label class="form-label text-teal small">Window Size</label>
-                        <div class="input-group input-group-sm">
-                            <input type="number" id="winSize" class="form-control" value="5">
-                            <select id="winUnit" class="form-control">
-                                <option value="MINUTE">Minute(s)</option>
-                                <option value="HOUR">Hour(s)</option>
-                                <option value="SECOND">Second(s)</option>
+                    <div class="space-y-2">
+                        <label class="text-[10px] font-bold text-slate-500 uppercase">Window Size</label>
+                        <div class="flex gap-2">
+                            <input id="winSize" type="number" value="5" class="w-full bg-background-dark border border-primary/20 rounded px-3 py-2 text-xs focus:ring-1 focus:ring-primary focus:border-primary outline-none text-slate-200"/>
+                            <select id="winUnit" class="w-24 bg-background-dark border border-primary/20 rounded px-3 py-2 text-xs text-slate-200">
+                                <option value="MINUTE">MIN</option>
+                                <option value="SECOND">SEC</option>
+                                <option value="HOUR">HOUR</option>
                             </select>
                         </div>
                     </div>
-                    <div id="hopFields" class="mb-3 d-none">
-                        <label class="form-label text-teal small">Slide Interval</label>
-                        <div class="input-group input-group-sm">
-                            <input type="number" id="winSlide" class="form-control" value="1">
-                            <span class="input-group-text bg-dark border-secondary text-teal small">same unit</span>
-                        </div>
+                    <div id="hopFields" class="space-y-2 hidden">
+                        <label class="text-[10px] font-bold text-slate-500 uppercase">Slide Interval</label>
+                        <input id="winSlide" type="number" value="1" class="w-full bg-background-dark border border-primary/20 rounded px-3 py-2 text-xs focus:ring-1 focus:ring-primary focus:border-primary outline-none text-slate-200"/>
                     </div>
+
+                    <div class="p-3 bg-primary/5 border border-dashed border-primary/30 rounded-lg">
+                        <p class="text-[11px] text-primary leading-snug">
+                            <span class="font-bold">Pro Tip:</span> Tumbling windows are useful for reporting periodic metrics like "Sales per 5 minutes".
+                        </p>
+                    </div>
+                    <button onclick="applyWindowAssistant()" class="w-full py-2.5 bg-primary/10 border border-primary text-primary rounded-lg text-xs font-bold hover:bg-primary/20 transition-colors">
+                        APPLY TO EDITOR
+                    </button>
                 </div>
-                <div class="modal-footer border-secondary">
-                    <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Close</button>
-                    <button type="button" class="btn btn-teal btn-sm" onclick="applyWindowAssistant()" data-bs-dismiss="modal">Generate SQL</button>
+
+                <div class="mt-auto pt-6 border-t border-primary/10">
+                    <h4 class="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3">Query History</h4>
+                    <ul id="historyList" class="space-y-1"></ul>
                 </div>
             </div>
         </div>
-    </div>
+
+        <!-- Results Section (Bottom) -->
+        <div id="resultsCard" class="h-1/2 border-t border-primary/20 flex flex-col bg-background-dark/60" style="display: none;">
+            <div class="h-10 border-b border-primary/10 flex items-center px-4 justify-between bg-background-dark/80 shrink-0">
+                <div class="flex items-center gap-6">
+                    <div class="flex items-center gap-2">
+                        <span class="material-symbols-outlined text-sm text-primary">analytics</span>
+                        <span class="text-[11px] font-medium text-slate-400" id="queryStats"></span>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
+                    <span class="text-[10px] font-bold text-primary">STREAMING LIVE</span>
+                </div>
+            </div>
+            <div class="flex-1 overflow-auto custom-scrollbar">
+                <table id="resultsTable" class="w-full text-left border-collapse min-w-[800px]">
+                    <thead class="sticky top-0 bg-background-dark/95 backdrop-blur-sm z-10">
+                        <tr id="resultsHeader"></tr>
+                    </thead>
+                    <tbody id="resultsBody" class="divide-y divide-primary/5"></tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+</div>
 </body>
 </html>
