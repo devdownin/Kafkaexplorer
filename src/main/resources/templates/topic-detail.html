@@ -78,7 +78,7 @@
                 <span class="material-symbols-outlined text-primary text-base">mail</span>
                 Recent Messages (Sample)
             </h2>
-            <button id="assistantToggleBtn" th:onclick="'toggleAssistant(\'' + ${topic.name} + '\')'" class="flex items-center gap-2 px-3 py-1.5 border border-primary text-primary rounded-lg text-[10px] font-bold hover:bg-primary/10 transition-all uppercase tracking-widest">
+            <button id="assistantToggleBtn" th:attr="data-name=${topic.name}" onclick="toggleAssistant(this.getAttribute('data-name'))" class="flex items-center gap-2 px-3 py-1.5 border border-primary text-primary rounded-lg text-[10px] font-bold hover:bg-primary/10 transition-all uppercase tracking-widest">
                 <span class="material-symbols-outlined text-sm">magic_button</span> Query Assistant
             </button>
         </div>

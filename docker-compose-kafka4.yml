@@ -49,4 +49,4 @@ services:
         condition: service_healthy
     volumes:
       - ./setup-demo.sh:/data/setup-demo.sh
-    entrypoint: [ "sh", "-c", "chmod +x /data/setup-demo.sh && echo 'Waiting for Kafka...' && until /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka:29092 > /dev/null 2>&1; do sleep 2; done && /data/setup-demo.sh kafka:29092" ]
+    entrypoint: [ "sh", "-c", "cp /data/setup-demo.sh /tmp/setup-demo.sh && sed -i 's/\\r$//' /tmp/setup-demo.sh && echo 'Waiting for Kafka...' && until /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka:29092 > /dev/null 2>&1; do sleep 2; done && bash /tmp/setup-demo.sh kafka:29092" ]

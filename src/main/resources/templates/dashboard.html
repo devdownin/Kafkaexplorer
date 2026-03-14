@@ -128,7 +128,8 @@
                                 <span class="material-symbols-outlined text-sm">list</span> Logs
                             </button>
                         </div>
-                        <button th:onclick="'cancelJob(\'' + ${job.key} + '\')'" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-500/30 text-red-500 hover:bg-red-500/10 transition-colors text-xs font-bold uppercase tracking-wider">
+                        <button th:attr="data-id=${job.key}" onclick="cancelJob(this.getAttribute('data-id'))" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-500/30 text-red-500 hover:bg-red-500/10 transition-colors text-xs font-bold uppercase tracking-wider">
+
                             <span class="material-symbols-outlined text-sm">cancel</span> Kill
                         </button>
                     </div>

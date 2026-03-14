@@ -26,20 +26,28 @@ public class QueryController {
 
     @GetMapping("/query")
     public String query(Model model) {
+        boolean isConnected = false;
+        List<String> topics = Collections.emptyList();
+        List<String> tables = Collections.emptyList();
+
         try {
-            // Non-blocking topic listing for environment where Kafka might be down
-            List<String> topics = Collections.emptyList();
-            try {
+            isConnected = kafkaAdminService.ping();
+            if (isConnected) {
                 topics = kafkaAdminService.listTopics();
-            } catch (Exception ke) {
-                // Ignore and show empty list
             }
-            model.addAttribute("topics", topics);
-            model.addAttribute("tables", flinkSqlService.listTables());
         } catch (Exception e) {
-            model.addAttribute("topics", Collections.emptyList());
-            model.addAttribute("tables", Collections.emptyList());
+            // Log as warning and continue with empty list
         }
+
+        try {
+            tables = flinkSqlService.listTables();
+        } catch (Exception e) {
+            // Flink might be starting up
+        }
+
+        model.addAttribute("health", isConnected);
+        model.addAttribute("topics", topics);
+        model.addAttribute("tables", tables);
         return "query";
     }
 

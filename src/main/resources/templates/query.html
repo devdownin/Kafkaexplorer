@@ -23,11 +23,11 @@
                     <div class="space-y-1" id="collapseTables">
                         <div th:each="table : ${tables}" class="group list-group-item">
                             <div class="flex items-center justify-between py-1.5 px-2 rounded hover:bg-primary/10 cursor-pointer transition-colors">
-                                <div class="flex items-center gap-2 min-w-0" th:onclick="'insertAtCursor(\'' + ${table} + '\')'">
+                                <div class="flex items-center gap-2 min-w-0" th:attr="data-name=${table}" onclick="insertAtCursor(this.getAttribute('data-name'))">
                                     <span class="material-symbols-outlined text-base text-slate-400">table_chart</span>
                                     <span class="text-sm font-medium truncate" th:text="${table}">table_name</span>
                                 </div>
-                                <button class="text-slate-500 hover:text-primary transition-colors" th:onclick="'toggleSchema(this, \'' + ${table} + '\')'">
+                                <button class="text-slate-500 hover:text-primary transition-colors" th:attr="data-name=${table}" onclick="toggleSchema(this, this.getAttribute('data-name'))">
                                     <span class="material-symbols-outlined text-sm">chevron_right</span>
                                 </button>
                             </div>
@@ -48,12 +48,12 @@
                     <div class="space-y-1" id="topicList">
                         <div th:each="topic : ${topics}" class="group topic-item" th:data-dlt="${topic.toLowerCase().endsWith('.dlt')}">
                             <div class="flex items-center justify-between py-1.5 px-2 rounded hover:bg-primary/10 cursor-pointer transition-colors">
-                                <div class="flex items-center gap-2 min-w-0" th:onclick="'insertAtCursor(\'' + ${topic} + '\')'">
+                                <div class="flex items-center gap-2 min-w-0" th:attr="data-name=${topic}" onclick="insertAtCursor(this.getAttribute('data-name'))">
                                     <span class="material-symbols-outlined text-base text-slate-400">topic</span>
                                     <span class="text-sm font-medium truncate" th:text="${topic}">topic_name</span>
                                     <span th:if="${topic.toLowerCase().endsWith('.dlt')}" class="text-[8px] bg-amber-500/20 text-amber-500 px-1 rounded">DLT</span>
                                 </div>
-                                <button class="text-slate-500 hover:text-primary transition-colors" th:onclick="'insertDdl(\'' + ${topic} + '\')'" title="Insert DDL">
+                                <button class="text-slate-500 hover:text-primary transition-colors" th:attr="data-name=${topic}" onclick="insertDdl(this.getAttribute('data-name'))" title="Insert DDL">
                                     <span class="material-symbols-outlined text-sm">add_circle</span>
                                 </button>
                             </div>
