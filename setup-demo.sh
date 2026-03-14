@@ -2,8 +2,23 @@
 
 # Configuration
 BOOTSTRAP_SERVER=${1:-"localhost:9092"}
-KAFKA_TOPICS_CMD=${KAFKA_TOPICS_CMD:-"kafka-topics"}
-KAFKA_PRODUCER_CMD=${KAFKA_PRODUCER_CMD:-"kafka-console-producer"}
+
+# Robust command detection (Apache Kafka uses .sh suffix and /opt/kafka/bin path)
+if command -v kafka-topics >/dev/null 2>&1; then
+  KAFKA_TOPICS_CMD="kafka-topics"
+elif [ -f "/opt/kafka/bin/kafka-topics.sh" ]; then
+  KAFKA_TOPICS_CMD="/opt/kafka/bin/kafka-topics.sh"
+else
+  KAFKA_TOPICS_CMD="kafka-topics.sh"
+fi
+
+if command -v kafka-console-producer >/dev/null 2>&1; then
+  KAFKA_PRODUCER_CMD="kafka-console-producer"
+elif [ -f "/opt/kafka/bin/kafka-console-producer.sh" ]; then
+  KAFKA_PRODUCER_CMD="/opt/kafka/bin/kafka-console-producer.sh"
+else
+  KAFKA_PRODUCER_CMD="kafka-console-producer.sh"
+fi
 
 echo "--- Starting Kafka Demo Setup ---"
 echo "Bootstrap Server: $BOOTSTRAP_SERVER"
