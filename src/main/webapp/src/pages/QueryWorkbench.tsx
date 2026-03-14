@@ -3,7 +3,6 @@ import Editor from '@monaco-editor/react';
 import {
   Play,
   StopCircle,
-  Database,
   Table as TableIcon,
   Waves,
   Trash2,
@@ -197,8 +196,7 @@ const QueryWorkbench: React.FC = () => {
               minimap: { enabled: false },
               padding: { top: 20 },
               scrollBeyondLastLine: false,
-              automaticLayout: true,
-              backgroundColor: '#060B15'
+              automaticLayout: true
             }}
           />
         </div>

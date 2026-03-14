@@ -28,7 +28,7 @@ const Dashboard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [hideEmpty, setHideEmpty] = useState(false);
+  const [hideEmpty] = useState(false);
   const [hideDlt, setHideDlt] = useState(true);
 
   useEffect(() => {

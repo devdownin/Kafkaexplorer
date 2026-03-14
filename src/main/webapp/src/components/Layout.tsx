@@ -1,16 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { NavLink, Link, useLocation } from 'react-router-dom';
-import { 
-  LayoutDashboard, 
-  Database, 
-  Terminal, 
-  Settings, 
-  Activity, 
-  Wifi, 
+import { NavLink } from 'react-router-dom';
+import {
+  LayoutDashboard,
+  Terminal,
+  Settings,
+  Activity,
+  Wifi,
   WifiOff,
   Menu,
   X,
-  Search
+  Search,
+  Database
 } from 'lucide-react';
 import axios from 'axios';
 import { clsx, type ClassValue } from 'clsx';
@@ -23,7 +23,6 @@ function cn(...inputs: ClassValue[]) {
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [isSidebarOpen, setSidebarOpen] = useState(true);
   const [isHealthy, setHealthy] = useState(true);
-  const location = useLocation();
 
   useEffect(() => {
     const checkHealth = async () => {

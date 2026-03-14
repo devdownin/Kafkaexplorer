@@ -1,12 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { 
-  ChevronLeft, 
-  Database, 
-  Code, 
-  Mail, 
-  ListTree, 
-  Info,
+import {
+  ChevronLeft,
+  Code,
+  Mail,
+  ListTree,
   Copy,
   AlertCircle
 } from 'lucide-react';
@@ -133,8 +131,7 @@ const TopicExplorer: React.FC = () => {
                 fontSize: 12,
                 fontFamily: 'JetBrains Mono',
                 minimap: { enabled: false },
-                padding: { top: 20 },
-                backgroundColor: '#0B1120'
+                padding: { top: 20 }
               }}
             />
           </div>
