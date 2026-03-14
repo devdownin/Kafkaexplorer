@@ -51,6 +51,8 @@
                                     th:data-type="${metric.type}"
                                     th:data-sql="${metric.sql}"
                                     th:data-description="${metric.description}"
+                                    th:data-warning="${metric.warningThreshold}"
+                                    th:data-critical="${metric.criticalThreshold}"
                                     onclick="editMetric(this)">
                                 <span class="material-symbols-outlined text-lg">edit</span>
                             </button>
@@ -76,8 +78,8 @@
 <!-- Metric Modal -->
 <div class="modal fade" id="metricModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-centered">
-        <div class="modal-content bg-background-dark border border-primary/20 shadow-2xl rounded-2xl overflow-hidden">
-            <div class="px-8 py-6 border-b border-primary/10 flex justify-between items-center bg-primary/5">
+        <div class="modal-content bg-white dark:bg-background-dark border border-slate-200 dark:border-primary/20 shadow-2xl rounded-2xl overflow-hidden">
+            <div class="px-8 py-6 border-b border-slate-200 dark:border-primary/10 flex justify-between items-center bg-slate-50 dark:bg-primary/5">
                 <h5 class="text-lg font-bold text-primary flex items-center gap-2" id="modalTitle">
                     <span class="material-symbols-outlined">add_chart</span>
                     Create Metric
@@ -92,11 +94,11 @@
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                         <div class="md:col-span-2 space-y-2">
                             <label for="metricName" class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Metric Name</label>
-                            <input type="text" class="w-full bg-background-dark/50 border border-primary/20 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-primary/50 outline-none text-slate-100" id="metricName" name="name" required placeholder="e.g. processed_events_total">
+                            <input type="text" class="w-full bg-white dark:bg-background-dark/50 border border-slate-200 dark:border-primary/20 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-primary/50 outline-none text-slate-900 dark:text-slate-100" id="metricName" name="name" required placeholder="e.g. processed_events_total">
                         </div>
                         <div class="space-y-2">
                             <label for="metricType" class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Metric Type</label>
-                            <select class="w-full bg-background-dark/50 border border-primary/20 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-primary/50 outline-none text-slate-100" id="metricType" name="type" required onchange="onMetricTypeChange()">
+                            <select class="w-full bg-white dark:bg-background-dark/50 border border-slate-200 dark:border-primary/20 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-primary/50 outline-none text-slate-900 dark:text-slate-100" id="metricType" name="type" required onchange="onMetricTypeChange()">
                                 <option value="COUNTER">Counter</option>
                                 <option value="GAUGE">Gauge</option>
                                 <option value="HISTOGRAM">Histogram</option>
@@ -105,26 +107,23 @@
                     </div>
                     <div class="space-y-2">
                         <label for="metricDescription" class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Description</label>
-                        <input type="text" class="w-full bg-background-dark/50 border border-primary/20 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-primary/50 outline-none text-slate-100" id="metricDescription" name="description" placeholder="Description of the metric">
+                        <input type="text" class="w-full bg-white dark:bg-background-dark/50 border border-slate-200 dark:border-primary/20 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-primary/50 outline-none text-slate-900 dark:text-slate-100" id="metricDescription" name="description" placeholder="Description of the metric">
                     </div>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div class="space-y-2">
                             <label for="warningThreshold" class="text-[10px] font-bold text-amber-500 uppercase tracking-widest">Warning Threshold</label>
-                            <input type="number" step="any" class="w-full bg-background-dark/50 border border-amber-500/20 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-amber-500/50 outline-none text-slate-100" id="warningThreshold" name="warningThreshold" placeholder="Value > Warning">
+                            <input type="number" step="any" class="w-full bg-white dark:bg-background-dark/50 border border-slate-200 dark:border-amber-500/20 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-amber-500/50 outline-none text-slate-900 dark:text-slate-100" id="warningThreshold" name="warningThreshold" placeholder="Value > Warning">
                         </div>
                         <div class="space-y-2">
                             <label for="criticalThreshold" class="text-[10px] font-bold text-red-500 uppercase tracking-widest">Critical Threshold</label>
-                            <input type="number" step="any" class="w-full bg-background-dark/50 border border-red-500/20 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-red-500/50 outline-none text-slate-100" id="criticalThreshold" name="criticalThreshold" placeholder="Value > Critical">
+                            <input type="number" step="any" class="w-full bg-white dark:bg-background-dark/50 border border-slate-200 dark:border-red-500/20 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-red-500/50 outline-none text-slate-900 dark:text-slate-100" id="criticalThreshold" name="criticalThreshold" placeholder="Value > Critical">
                         </div>
-                        <textarea id="metricSql" name="sql" style="display: none;"></textarea>
-                        <div id="metricSqlEditor" class="rounded-lg border border-primary/20 overflow-hidden h-[200px]"></div>
-                        <p class="text-[9px] text-slate-500 italic">Query must return a column named <code class="text-primary">metric_value</code>.</p>
                     </div>
                     <div class="space-y-3">
                         <div class="flex justify-between items-center">
                             <label class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Flink SQL Query</label>
                             <div class="flex items-center gap-2">
-                                <select id="tableSelector" class="bg-background-dark border border-primary/20 rounded px-2 py-1 text-[10px] text-primary font-bold outline-none" onchange="applyTemplate()">
+                                <select id="tableSelector" class="bg-white dark:bg-background-dark border border-slate-200 dark:border-primary/20 rounded px-2 py-1 text-[10px] text-primary font-bold outline-none" onchange="applyTemplate()">
                                     <option value="{table}">Select Table...</option>
                                     <option th:each="table : ${tables}" th:value="${table}" th:text="${table}"></option>
                                 </select>
@@ -137,10 +136,10 @@
                     </div>
                     <div id="testResultArea" class="hidden space-y-2">
                         <label class="text-[10px] font-bold text-primary uppercase tracking-widest">Test Result</label>
-                        <div id="testResultContent" class="p-4 bg-background-dark/80 border border-primary/10 rounded-lg font-mono text-xs text-slate-300"></div>
+                        <div id="testResultContent" class="p-4 bg-white dark:bg-background-dark/80 border border-slate-200 dark:border-primary/10 rounded-lg font-mono text-xs text-slate-600 dark:text-slate-300"></div>
                     </div>
                 </div>
-                <div class="px-8 py-4 border-t border-primary/10 flex justify-between items-center bg-primary/5">
+                <div class="px-8 py-4 border-t border-slate-200 dark:border-primary/10 flex justify-between items-center bg-slate-50 dark:bg-primary/5">
                     <button type="button" class="flex items-center gap-2 px-4 py-2 border border-primary/30 text-primary rounded-lg text-xs font-bold hover:bg-primary/10 transition-all uppercase" onclick="testMetric()">
                         <span class="material-symbols-outlined text-sm">vibration</span> Test
                     </button>

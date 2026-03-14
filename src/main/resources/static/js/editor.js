@@ -97,9 +97,30 @@ document.addEventListener('DOMContentLoaded', () => {
         renderTabs();
         saveTabs();
 
-        // Hide results when switching if they don't belong to this tab
-        document.getElementById('resultsCard').style.display = 'none';
-        document.getElementById('queryStatus').classList.add('hidden');
+        // Restore results and status for this tab
+        const savedData = sessionStorage.getItem('results-' + id);
+        const savedStatus = sessionStorage.getItem('status-' + id);
+        const resultsCard = document.getElementById('resultsCard');
+        const statusDiv = document.getElementById('queryStatus');
+
+        if (savedData) {
+            const data = JSON.parse(savedData);
+            renderResults(data);
+            resultsCard.style.display = 'block';
+            document.getElementById('queryStats').textContent =
+                `Found ${data.rows.length} rows in ${data.durationMs}ms`;
+        } else {
+            resultsCard.style.display = 'none';
+        }
+
+        if (savedStatus) {
+            const status = JSON.parse(savedStatus);
+            statusDiv.textContent = status.text;
+            statusDiv.className = status.className;
+            statusDiv.classList.remove('hidden');
+        } else {
+            statusDiv.classList.add('hidden');
+        }
     }
 
     function closeTab(id) {
@@ -154,6 +175,7 @@ document.addEventListener('DOMContentLoaded', () => {
         clearBtn.addEventListener('click', () => {
             if (confirm('Clear editor?')) {
                 editor.setValue('');
+                showToast('Editor cleared', 'info');
             }
         });
     }
@@ -186,15 +208,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 const data = await response.json();
 
                 if (data.error) {
-                    statusDiv.textContent = 'Error: ' + data.error;
-                    statusDiv.classList.remove('hidden', 'bg-emerald-500/10', 'text-emerald-500');
-                    statusDiv.classList.add('bg-red-500/10', 'text-red-500');
+                    const statusText = 'Error: ' + data.error;
+                    const statusClass = 'p-4 bg-red-500/10 text-red-500 text-sm font-medium';
+                    statusDiv.textContent = statusText;
+                    statusDiv.className = statusClass;
                     statusDiv.classList.remove('hidden');
+                    sessionStorage.setItem('status-' + activeTabId, JSON.stringify({ text: statusText, className: statusClass }));
+                    sessionStorage.removeItem('results-' + activeTabId);
                 } else {
                     renderResults(data);
                     resultsCard.style.display = 'block';
-                    document.getElementById('queryStats').textContent =
-                        `Found ${data.rows.length} rows in ${data.durationMs}ms`;
+                    const stats = `Found ${data.rows.length} rows in ${data.durationMs}ms`;
+                    document.getElementById('queryStats').textContent = stats;
+                    sessionStorage.setItem('results-' + activeTabId, JSON.stringify(data));
+                    sessionStorage.removeItem('status-' + activeTabId);
                 }
             } catch (err) {
                 if (err.name === 'AbortError') {
@@ -249,6 +276,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     if (viewChartBtn) {
         viewChartBtn.onclick = () => switchViewMode('CHART');
+    }
+
+    const colFilterInput = document.getElementById('columnFilter');
+    if (colFilterInput) {
+        colFilterInput.addEventListener('input', () => {
+            if (lastData) renderResults(lastData);
+        });
     }
 
     function switchViewMode(mode) {
@@ -326,8 +360,11 @@ document.addEventListener('DOMContentLoaded', () => {
         lastData = data;
         if (isPaused) return;
 
+        const filterTerm = colFilterInput?.value.toLowerCase() || '';
+        const filteredColumns = data.columns.filter(col => col.toLowerCase().includes(filterTerm));
+
         if (viewMode === 'CHART') {
-            renderChart(data);
+            renderChart({ ...data, columns: filteredColumns });
         }
         const header = document.getElementById('resultsHeader');
         const body = document.getElementById('resultsBody');
@@ -335,7 +372,7 @@ document.addEventListener('DOMContentLoaded', () => {
         header.innerHTML = '';
         body.innerHTML = '';
 
-        data.columns.forEach(col => {
+        filteredColumns.forEach(col => {
             const th = document.createElement('th');
             th.textContent = col;
             th.className = 'px-4 py-3 border-b border-primary/10 text-[10px] font-bold text-slate-500 uppercase tracking-widest';
@@ -345,7 +382,7 @@ document.addEventListener('DOMContentLoaded', () => {
         data.rows.forEach(row => {
             const tr = document.createElement('tr');
             tr.className = 'hover:bg-primary/5 transition-colors group';
-            data.columns.forEach(col => {
+            filteredColumns.forEach(col => {
                 const td = document.createElement('td');
                 td.className = 'px-4 py-3 text-xs font-mono text-slate-300';
                 let value = row[col] !== null ? row[col] : 'NULL';
@@ -769,12 +806,12 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             const data = await response.json();
             if (data.error) {
-                alert('Error registering table: ' + data.error);
+                showToast('Error registering table: ' + data.error, 'error');
             } else {
-                alert('Table registered successfully in Flink!');
+                showToast('Table registered successfully in Flink!');
             }
         } catch (e) {
-            alert('Failed to register table: ' + e.message);
+            showToast('Failed to register table: ' + e.message, 'error');
         }
     };
 
@@ -935,14 +972,6 @@ function copyToClipboard(button) {
     const pre = button.previousElementSibling;
     const text = pre.textContent;
     navigator.clipboard.writeText(text).then(() => {
-        const originalText = button.textContent;
-        button.textContent = 'Copied!';
-        button.classList.add('btn-teal');
-        button.classList.remove('btn-outline-teal');
-        setTimeout(() => {
-            button.textContent = originalText;
-            button.classList.remove('btn-teal');
-            button.classList.add('btn-outline-teal');
-        }, 2000);
+        showToast('Copied to clipboard');
     });
 }

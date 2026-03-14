@@ -13,8 +13,8 @@
                 <span class="text-xs font-mono uppercase tracking-widest text-slate-400">Shared Query Context</span>
             </div>
         </div>
-        <div class="flex flex-col border border-primary/20 rounded-xl overflow-hidden bg-background-light dark:bg-[#0d1a1a]">
-            <div class="flex bg-primary/5 px-4 py-2 border-b border-primary/10 items-center justify-between">
+        <div class="flex flex-col border border-slate-200 dark:border-primary/20 rounded-xl overflow-hidden bg-white dark:bg-[#0d1a1a]">
+            <div class="flex bg-slate-50 dark:bg-primary/5 px-4 py-2 border-b border-slate-200 dark:border-primary/10 items-center justify-between">
                 <div class="flex items-center gap-4">
                     <div class="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
                         <span class="material-symbols-outlined text-xs">database</span> Active Comparison
@@ -22,13 +22,13 @@
                 </div>
                 <div class="flex items-center gap-4">
                     <div class="flex items-center gap-2">
-                        <input type="checkbox" id="syncTime" class="rounded size-3 border-primary/20 bg-background-dark text-primary focus:ring-primary/50">
+                        <input type="checkbox" id="syncTime" class="rounded size-3 border-slate-300 dark:border-primary/20 bg-white dark:bg-background-dark text-primary focus:ring-primary/50">
                         <label for="syncTime" class="text-[10px] font-bold text-slate-500 uppercase">Sync Time</label>
                     </div>
-                    <div class="h-4 w-px bg-primary/20"></div>
+                    <div class="h-4 w-px bg-slate-200 dark:bg-primary/20"></div>
                     <div class="flex items-center gap-2">
                         <span class="text-[10px] uppercase text-slate-500 font-bold">Diff Key:</span>
-                        <input type="text" id="diffIdCol" class="bg-background-dark border border-primary/20 rounded px-2 py-0.5 text-[10px] focus:ring-1 focus:ring-primary outline-none text-primary w-24" placeholder="e.g. id"/>
+                        <input type="text" id="diffIdCol" class="bg-white dark:bg-background-dark border border-slate-300 dark:border-primary/20 rounded px-2 py-0.5 text-[10px] focus:ring-1 focus:ring-primary outline-none text-primary dark:text-primary w-24" placeholder="e.g. id"/>
                     </div>
                 </div>
             </div>
@@ -49,8 +49,8 @@
     <!-- Side-by-Side Message Views -->
     <section class="flex-1 flex gap-4 overflow-hidden min-h-0">
         <!-- Topic 1 View -->
-        <div class="flex-1 flex flex-col border border-primary/20 rounded-xl bg-background-light dark:bg-[#0d1a1a] overflow-hidden">
-            <div class="p-3 border-b border-primary/10 flex flex-col gap-2 bg-primary/5">
+        <div class="flex-1 flex flex-col border border-slate-200 dark:border-primary/20 rounded-xl bg-white dark:bg-[#0d1a1a] overflow-hidden">
+            <div class="p-3 border-b border-slate-200 dark:border-primary/10 flex flex-col gap-2 bg-slate-50 dark:bg-primary/5">
                 <div class="flex items-center justify-between">
                     <span class="text-[10px] font-bold text-primary uppercase">Topic 1 (Source)</span>
                     <div id="stats1" class="text-[10px] text-slate-500 hidden">
@@ -58,30 +58,30 @@
                     </div>
                 </div>
                 <div class="flex gap-2">
-                    <input type="text" id="topic1Filter" class="flex-1 bg-background-dark border border-primary/10 rounded px-2 py-1 text-[10px] focus:ring-1 focus:ring-primary outline-none" placeholder="Filter topics..."/>
-                    <select id="topic1Select" class="flex-1 bg-background-dark border border-primary/20 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-primary outline-none text-slate-200">
+                    <input type="text" id="topic1Filter" class="flex-1 bg-white dark:bg-background-dark border border-slate-300 dark:border-primary/10 rounded px-2 py-1 text-[10px] focus:ring-1 focus:ring-primary outline-none" placeholder="Filter topics..."/>
+                    <select id="topic1Select" class="flex-1 bg-white dark:bg-background-dark border border-slate-300 dark:border-primary/20 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-primary outline-none text-slate-900 dark:text-slate-200">
                         <option value="">-- Select Topic --</option>
                         <option th:each="topic : ${topics}" th:value="${topic}" th:text="${topic}"></option>
                     </select>
                 </div>
                 <div class="flex gap-2">
-                    <input type="datetime-local" id="start1" class="flex-1 bg-background-dark border border-primary/10 rounded px-2 py-1 text-[10px] text-slate-400"/>
-                    <input type="datetime-local" id="end1" class="flex-1 bg-background-dark border border-primary/10 rounded px-2 py-1 text-[10px] text-slate-400"/>
+                    <input type="datetime-local" id="start1" class="flex-1 bg-white dark:bg-background-dark border border-slate-300 dark:border-primary/10 rounded px-2 py-1 text-[10px] text-slate-600 dark:text-slate-400"/>
+                    <input type="datetime-local" id="end1" class="flex-1 bg-white dark:bg-background-dark border border-slate-300 dark:border-primary/10 rounded px-2 py-1 text-[10px] text-slate-600 dark:text-slate-400"/>
                 </div>
             </div>
             <div id="results1" class="flex-1 overflow-y-auto custom-scrollbar p-0" style="display: none;">
                 <table class="w-full text-left border-collapse">
-                    <thead class="sticky top-0 bg-background-dark/95 backdrop-blur-sm z-10">
-                        <tr id="header1" class="border-bottom border-primary/10"></tr>
+                    <thead class="sticky top-0 bg-white dark:bg-background-dark/95 backdrop-blur-sm z-10">
+                        <tr id="header1" class="border-bottom border-slate-200 dark:border-primary/10"></tr>
                     </thead>
-                    <tbody id="body1" class="divide-y divide-primary/5"></tbody>
+                    <tbody id="body1" class="divide-y divide-slate-100 dark:divide-primary/5"></tbody>
                 </table>
             </div>
         </div>
 
         <!-- Topic 2 View -->
-        <div class="flex-1 flex flex-col border border-primary/20 rounded-xl bg-background-light dark:bg-[#0d1a1a] overflow-hidden">
-            <div class="p-3 border-b border-primary/10 flex flex-col gap-2 bg-primary/5">
+        <div class="flex-1 flex flex-col border border-slate-200 dark:border-primary/20 rounded-xl bg-white dark:bg-[#0d1a1a] overflow-hidden">
+            <div class="p-3 border-b border-slate-200 dark:border-primary/10 flex flex-col gap-2 bg-slate-50 dark:bg-primary/5">
                 <div class="flex items-center justify-between">
                     <span class="text-[10px] font-bold text-primary uppercase">Topic 2 (Target)</span>
                     <div id="stats2" class="text-[10px] text-slate-500 hidden">
@@ -89,30 +89,30 @@
                     </div>
                 </div>
                 <div class="flex gap-2">
-                    <input type="text" id="topic2Filter" class="flex-1 bg-background-dark border border-primary/10 rounded px-2 py-1 text-[10px] focus:ring-1 focus:ring-primary outline-none" placeholder="Filter topics..."/>
-                    <select id="topic2Select" class="flex-1 bg-background-dark border border-primary/20 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-primary outline-none text-slate-200">
+                    <input type="text" id="topic2Filter" class="flex-1 bg-white dark:bg-background-dark border border-slate-300 dark:border-primary/10 rounded px-2 py-1 text-[10px] focus:ring-1 focus:ring-primary outline-none" placeholder="Filter topics..."/>
+                    <select id="topic2Select" class="flex-1 bg-white dark:bg-background-dark border border-slate-300 dark:border-primary/20 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-primary outline-none text-slate-900 dark:text-slate-200">
                         <option value="">-- Select Topic --</option>
                         <option th:each="topic : ${topics}" th:value="${topic}" th:text="${topic}"></option>
                     </select>
                 </div>
                 <div class="flex gap-2">
-                    <input type="datetime-local" id="start2" class="flex-1 bg-background-dark border border-primary/10 rounded px-2 py-1 text-[10px] text-slate-400"/>
-                    <input type="datetime-local" id="end2" class="flex-1 bg-background-dark border border-primary/10 rounded px-2 py-1 text-[10px] text-slate-400"/>
+                    <input type="datetime-local" id="start2" class="flex-1 bg-white dark:bg-background-dark border border-slate-300 dark:border-primary/10 rounded px-2 py-1 text-[10px] text-slate-600 dark:text-slate-400"/>
+                    <input type="datetime-local" id="end2" class="flex-1 bg-white dark:bg-background-dark border border-slate-300 dark:border-primary/10 rounded px-2 py-1 text-[10px] text-slate-600 dark:text-slate-400"/>
                 </div>
             </div>
             <div id="results2" class="flex-1 overflow-y-auto custom-scrollbar p-0" style="display: none;">
                 <table class="w-full text-left border-collapse">
-                    <thead class="sticky top-0 bg-background-dark/95 backdrop-blur-sm z-10">
-                        <tr id="header2" class="border-bottom border-primary/10"></tr>
+                    <thead class="sticky top-0 bg-white dark:bg-background-dark/95 backdrop-blur-sm z-10">
+                        <tr id="header2" class="border-bottom border-slate-200 dark:border-primary/10"></tr>
                     </thead>
-                    <tbody id="body2" class="divide-y divide-primary/5"></tbody>
+                    <tbody id="body2" class="divide-y divide-slate-100 dark:divide-primary/5"></tbody>
                 </table>
             </div>
         </div>
     </section>
 
     <!-- Footer Summary -->
-    <footer class="h-10 border border-primary/20 rounded-lg flex items-center px-4 bg-primary/5 shrink-0 justify-between text-[10px] font-bold uppercase tracking-widest text-slate-400">
+    <footer class="h-10 border border-slate-200 dark:border-primary/20 rounded-lg flex items-center px-4 bg-slate-50 dark:bg-primary/5 shrink-0 justify-between text-[10px] font-bold uppercase tracking-widest text-slate-400">
         <div class="flex gap-6">
             <div class="flex items-center gap-2">
                 <div class="w-2 h-2 rounded-full bg-amber-500"></div>
