@@ -116,6 +116,9 @@
                             <label for="criticalThreshold" class="text-[10px] font-bold text-red-500 uppercase tracking-widest">Critical Threshold</label>
                             <input type="number" step="any" class="w-full bg-background-dark/50 border border-red-500/20 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-red-500/50 outline-none text-slate-100" id="criticalThreshold" name="criticalThreshold" placeholder="Value > Critical">
                         </div>
+                        <textarea id="metricSql" name="sql" style="display: none;"></textarea>
+                        <div id="metricSqlEditor" class="rounded-lg border border-primary/20 overflow-hidden h-[200px]"></div>
+                        <p class="text-[9px] text-slate-500 italic">Query must return a column named <code class="text-primary">metric_value</code>.</p>
                     </div>
                     <div class="space-y-3">
                         <div class="flex justify-between items-center">
