@@ -13,6 +13,11 @@ services:
       - zookeeper
     ports:
       - "9092:9092"
+    healthcheck:
+      test: ["CMD-SHELL", "cub kafka-ready -b localhost:9092 1 5"]
+      interval: 5s
+      timeout: 10s
+      retries: 5
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
@@ -27,7 +32,10 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
+      demo-setup:
+        condition: service_completed_successfully
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
     restart: always
@@ -35,7 +43,8 @@ services:
   demo-setup:
     image: confluentinc/cp-kafka:7.5.0
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
     volumes:
       - ./setup-demo.sh:/data/setup-demo.sh
     entrypoint: [ "sh", "-c", "chmod +x /data/setup-demo.sh && echo 'Waiting for Kafka...' && cub kafka-ready -b kafka:29092 1 60 && /data/setup-demo.sh kafka:29092" ]
