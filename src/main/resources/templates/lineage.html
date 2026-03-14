@@ -1,228 +1,322 @@
 <!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: html(~{::section})}">
-<body>
-<section>
-    <div class="row mb-4">
-        <div class="col">
-            <h1 class="h3 text-teal fw-bold"><i class="fas fa-project-diagram me-2"></i>Query Lineage</h1>
-            <p class="text-muted small">Visualize relationships between Kafka topics, Flink tables, and active queries</p>
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: html(~{::body})}">
+<head>
+    <title>Lineage Graph</title>
+</head>
+<body th:fragment="content" class="h-full">
+<div class="flex h-[calc(100vh-3.5rem)] overflow-hidden">
+    <!-- Sidebar Navigation -->
+    <aside class="w-64 border-r border-slate-200 dark:border-primary/10 bg-background-dark/50 p-4 flex flex-col gap-6 shrink-0">
+        <div>
+            <h3 class="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Cluster Context</h3>
+            <div class="flex items-center gap-3 p-3 rounded-lg bg-primary/10 border border-primary/20">
+                <span class="material-symbols-outlined text-primary">database</span>
+                <div>
+                    <p class="text-sm font-semibold text-slate-100">Prod Cluster</p>
+                    <p class="text-[10px] text-slate-400">Status: Operational</p>
+                </div>
+            </div>
         </div>
-        <div class="col-auto">
-            <button class="btn btn-outline-teal" onclick="loadLineage()">
-                <i class="fas fa-sync-alt me-2"></i>Refresh
+        <div class="flex flex-col gap-1">
+            <h3 class="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 px-3">Graph Controls</h3>
+            <button onclick="loadLineage()" class="flex items-center gap-3 px-3 py-2 rounded-lg bg-background-dark border border-primary/20 text-primary text-sm hover:bg-primary/5 transition-all">
+                <span class="material-symbols-outlined text-xl">refresh</span>
+                Refresh Graph
+            </button>
+            <button onclick="exportGraph()" class="flex items-center gap-3 px-3 py-2 rounded-lg bg-background-dark border border-primary/20 text-slate-400 text-sm hover:text-primary hover:bg-primary/5 transition-all">
+                <span class="material-symbols-outlined text-xl">download</span>
+                Export PNG
             </button>
         </div>
-    </div>
-
-    <div class="row">
-        <div class="col-md-9">
-            <div class="card bg-dark border-secondary">
-                <div class="card-body p-0" style="height: 700px; position: relative; overflow: hidden;">
-                    <div id="lineage-container" style="width: 100%; height: 100%; background-color: #1a1a1a;"></div>
-                    <div id="loading-overlay" class="position-absolute top-0 start-0 w-100 h-100 d-flex justify-content-center align-items-center bg-dark opacity-75">
-                        <div class="spinner-border text-teal" role="status">
-                            <span class="visually-hidden">Loading...</span>
-                        </div>
+        <div class="mt-auto">
+            <div class="bg-primary/5 rounded-xl p-4 border border-primary/10">
+                <h4 class="text-[10px] font-bold text-primary uppercase tracking-widest mb-2">Legend</h4>
+                <div class="space-y-2">
+                    <div class="flex items-center gap-2 text-[10px] text-slate-400">
+                        <div class="size-2 rounded-full bg-[#007bff]"></div> Topic
+                    </div>
+                    <div class="flex items-center gap-2 text-[10px] text-slate-400">
+                        <div class="size-2 rounded-full bg-[#198754]"></div> Flink Table
+                    </div>
+                    <div class="flex items-center gap-2 text-[10px] text-slate-400">
+                        <div class="size-2 rounded-full bg-[#0dcaf0]"></div> Flink View
+                    </div>
+                    <div class="flex items-center gap-2 text-[10px] text-slate-400">
+                        <div class="size-2 rounded-full bg-[#ffc107]"></div> Active Query
                     </div>
                 </div>
             </div>
         </div>
-        <div class="col-md-3">
-            <div id="details-panel" class="card bg-dark border-secondary h-100 d-none">
-                <div class="card-header border-secondary bg-dark d-flex justify-content-between align-items-center">
-                    <h5 class="text-teal mb-0" id="details-title">Details</h5>
-                    <button type="button" class="btn-close btn-close-white btn-sm" onclick="hideDetails()"></button>
+    </aside>
+
+    <!-- Main Content Area: Lineage Graph -->
+    <main class="flex-1 relative flex flex-col bg-background-dark overflow-hidden">
+        <div id="lineage-container" class="w-full h-full bg-[#010409]"></div>
+
+        <div id="loading-overlay" class="absolute inset-0 z-50 flex items-center justify-center bg-background-dark/80 backdrop-blur-sm">
+            <div class="animate-spin rounded-full h-12 w-12 border-4 border-primary border-t-transparent"></div>
+        </div>
+
+        <div class="absolute top-4 left-4 z-10 flex items-center gap-2 bg-background-dark/80 backdrop-blur-md border border-primary/20 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest">
+            <span class="text-slate-400">Lineage</span>
+            <span class="text-slate-600">/</span>
+            <span class="text-primary">Dependency Graph</span>
+        </div>
+    </main>
+
+    <!-- Node Inspector (Side Panel Right) -->
+    <aside class="w-96 border-l border-primary/10 bg-background-dark flex flex-col shrink-0">
+        <div id="no-selection-msg" class="flex-1 flex flex-col items-center justify-center p-8 text-center text-slate-500">
+            <span class="material-symbols-outlined text-4xl opacity-20 mb-4">mouse_pointer</span>
+            <p class="text-xs uppercase font-bold tracking-widest">Select a node to view details</p>
+        </div>
+
+        <div id="details-panel" class="hidden flex-1 flex flex-col min-h-0">
+            <div class="p-6 border-b border-primary/10">
+                <div class="flex items-center justify-between mb-4">
+                    <span class="px-2 py-0.5 rounded bg-primary/20 text-primary text-[10px] font-bold uppercase tracking-wider" id="details-type">Node Type</span>
+                    <button onclick="hideDetails()" class="text-slate-500 hover:text-slate-300 transition-colors">
+                        <span class="material-symbols-outlined">close</span>
+                    </button>
                 </div>
-                <div class="card-body overflow-auto" id="details-content">
-                    <!-- Dynamic content -->
+                <h2 class="text-xl font-bold text-slate-100 mb-1" id="details-title">Node Name</h2>
+                <p class="text-[10px] text-slate-500 flex items-center gap-1 uppercase tracking-widest font-bold">
+                    <span class="material-symbols-outlined text-sm">schedule</span>
+                    Live Data
+                </p>
+            </div>
+
+            <div class="flex-1 overflow-y-auto custom-scrollbar">
+                <div class="p-6 space-y-8" id="details-content">
+                    <!-- Dynamic content will be injected here -->
                 </div>
             </div>
-            <div id="no-selection-msg" class="card bg-dark border-secondary h-100 d-flex justify-content-center align-items-center text-muted small p-4">
-                <div class="text-center">
-                    <i class="fas fa-mouse-pointer fa-2x mb-3 opacity-25"></i>
-                    <p>Select a node in the graph to view details</p>
-                </div>
+
+            <div id="topic-navigation" class="hidden p-6 border-t border-primary/10 bg-primary/5">
+                <a id="nav-topic-link" href="#" class="w-full flex items-center justify-center gap-2 rounded-lg h-10 bg-primary text-background-dark font-bold text-sm hover:brightness-110 transition-all">
+                    <span class="material-symbols-outlined text-lg">visibility</span>
+                    Explore Topic
+                </a>
+            </div>
+            <div class="p-6 border-t border-primary/10">
+                <a href="/query" class="w-full flex items-center justify-center gap-2 rounded-lg h-10 border border-primary text-primary font-bold text-sm hover:bg-primary/10 transition-all">
+                    <span class="material-symbols-outlined text-lg">edit_note</span>
+                    Open in SQL Editor
+                </a>
             </div>
         </div>
-    </div>
+    </aside>
+</div>
 
-    <div class="mt-3">
-        <h5>Legend:</h5>
-        <span class="badge bg-primary me-2"><i class="fas fa-database"></i> Kafka Topic</span>
-        <span class="badge bg-success me-2"><i class="fas fa-table"></i> Flink Table</span>
-        <span class="badge bg-info me-2"><i class="fas fa-eye"></i> Flink View</span>
-        <span class="badge bg-warning text-dark me-2"><i class="fas fa-bolt"></i> Active Query</span>
-    </div>
-
-    <!-- cytoscape.js for graph rendering -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.26.0/cytoscape.min.js"></script>
-    <script>
-        function loadLineage() {
-            document.getElementById('loading-overlay').classList.remove('d-none');
-            fetch('/api/lineage')
-                .then(response => response.json())
-                .then(data => {
-                    renderGraph(data);
-                    document.getElementById('loading-overlay').classList.add('d-none');
-                })
-                .catch(error => {
-                    console.error('Error loading lineage:', error);
-                    document.getElementById('loading-overlay').classList.add('d-none');
-                });
-        }
-
-        function renderGraph(data) {
-            const elements = [];
-
-            // Add nodes
-            data.nodes.forEach(node => {
-                let color = '#007bff'; // Default topic
-                let icon = '\uf1c0'; // database icon
-
-                if (node.type === 'table') {
-                    color = '#198754';
-                    icon = '\uf0ce'; // table icon
-                } else if (node.type === 'view') {
-                    color = '#0dcaf0';
-                    icon = '\uf06e'; // eye icon
-                } else if (node.type === 'query') {
-                    color = '#ffc107';
-                    icon = '\uf0e7'; // bolt icon
-                }
-
-                elements.push({
-                    data: {
-                        id: node.id,
-                        label: node.label,
-                        color: color,
-                        icon: icon,
-                        type: node.type
-                    }
-                });
+<!-- cytoscape.js for graph rendering -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.26.0/cytoscape.min.js"></script>
+<script>
+    function loadLineage() {
+        document.getElementById('loading-overlay').classList.remove('hidden');
+        fetch('/api/lineage')
+            .then(response => response.json())
+            .then(data => {
+                renderGraph(data);
+                document.getElementById('loading-overlay').classList.add('hidden');
+            })
+            .catch(error => {
+                console.error('Error loading lineage:', error);
+                document.getElementById('loading-overlay').classList.add('hidden');
             });
+    }
 
-            // Add edges
-            data.edges.forEach(edge => {
-                elements.push({
-                    data: {
-                        source: edge.from,
-                        target: edge.to,
-                        label: edge.label
-                    }
-                });
-            });
+    function renderGraph(data) {
+        const elements = [];
 
-            const cy = cytoscape({
-                container: document.getElementById('lineage-container'),
-                elements: elements,
-                style: [
-                    {
-                        selector: 'node',
-                        style: {
-                            'label': 'data(label)',
-                            'background-color': 'data(color)',
-                            'color': '#fff',
-                            'text-valign': 'bottom',
-                            'text-margin-y': '5px',
-                            'font-size': '12px',
-                            'width': '40px',
-                            'height': '40px',
-                            'content': 'data(label)'
-                        }
-                    },
-                    {
-                        selector: 'node[type="query"]',
-                        style: {
-                            'shape': 'diamond'
-                        }
-                    },
-                    {
-                        selector: 'edge',
-                        style: {
-                            'width': 2,
-                            'line-color': '#6c757d',
-                            'target-arrow-color': '#6c757d',
-                            'target-arrow-shape': 'triangle',
-                            'curve-style': 'bezier',
-                            'label': 'data(label)',
-                            'font-size': '10px',
-                            'color': '#adb5bd',
-                            'text-rotation': 'autorotate',
-                            'text-margin-y': '-10px'
-                        }
-                    }
-                ],
-                layout: {
-                    name: 'breadthfirst',
-                    directed: true,
-                    padding: 50,
-                    spacingFactor: 1.5
-                }
-            });
+        data.nodes.forEach(node => {
+            let color = '#007bff';
+            let shape = 'ellipse';
 
-            cy.on('tap', 'node', function(evt){
-                const node = evt.target;
-                showDetails(node.data());
-            });
-
-            cy.on('tap', function(evt){
-                if (evt.target === cy) {
-                    hideDetails();
-                }
-            });
-        }
-
-        function showDetails(data) {
-            document.getElementById('no-selection-msg').classList.add('d-none');
-            const panel = document.getElementById('details-panel');
-            panel.classList.remove('d-none');
-
-            document.getElementById('details-title').textContent = data.label;
-
-            let html = `<div class="mb-3"><span class="badge bg-secondary">${data.type.toUpperCase()}</span></div>`;
-
-            if (data.type === 'table' || data.type === 'view') {
-                html += `<h6>Schema</h6>
-                         <div id="schema-loader" class="text-center py-2"><div class="spinner-border spinner-border-sm text-teal"></div></div>
-                         <table class="table table-dark table-sm small d-none" id="details-schema-table">
-                            <thead><tr><th>Field</th><th>Type</th></tr></thead>
-                            <tbody id="details-schema-body"></tbody>
-                         </table>`;
-                fetchSchema(data.label);
-            } else if (data.type === 'topic') {
-                html += `<p class="small text-muted">Kafka topic acting as source or sink.</p>`;
-            } else if (data.type === 'query') {
-                html += `<p class="small text-muted">Active Flink streaming query.</p>`;
+            if (node.type === 'table') {
+                color = '#198754';
+                shape = 'rectangle';
+            } else if (node.type === 'view') {
+                color = '#0dcaf0';
+                shape = 'round-rectangle';
+            } else if (node.type === 'query') {
+                color = '#ffc107';
+                shape = 'diamond';
             }
 
-            document.getElementById('details-content').innerHTML = html;
-        }
+            elements.push({
+                data: {
+                    id: node.id,
+                    label: node.label,
+                    color: color,
+                    type: node.type
+                },
+                style: {
+                    'shape': shape
+                }
+            });
+        });
 
-        function hideDetails() {
-            document.getElementById('details-panel').classList.add('d-none');
-            document.getElementById('no-selection-msg').classList.remove('d-none');
-        }
+        data.edges.forEach(edge => {
+            elements.push({
+                data: {
+                    source: edge.from,
+                    target: edge.to,
+                    label: edge.label
+                }
+            });
+        });
 
-        function fetchSchema(tableName) {
-            fetch('/api/schema/' + tableName)
-                .then(response => response.json())
-                .then(schema => {
-                    const loader = document.getElementById('schema-loader');
-                    if (loader) loader.remove();
-
-                    const table = document.getElementById('details-schema-table');
-                    const body = document.getElementById('details-schema-body');
-                    if (table && body) {
-                        body.innerHTML = '';
-                        Object.entries(schema).forEach(([field, type]) => {
-                            body.innerHTML += `<tr><td>${field}</td><td class="text-teal">${type}</td></tr>`;
-                        });
-                        table.classList.remove('d-none');
+        const cy = cytoscape({
+            container: document.getElementById('lineage-container'),
+            elements: elements,
+            style: [
+                {
+                    selector: 'node',
+                    style: {
+                        'label': 'data(label)',
+                        'background-color': 'data(color)',
+                        'color': '#fff',
+                        'text-valign': 'bottom',
+                        'text-margin-y': '8px',
+                        'font-size': '10px',
+                        'font-weight': 'bold',
+                        'text-transform': 'uppercase',
+                        'width': '30px',
+                        'height': '30px',
+                        'border-width': 2,
+                        'border-color': '#fff',
+                        'border-opacity': 0.2
                     }
-                });
+                },
+                {
+                    selector: 'edge',
+                    style: {
+                        'width': 2,
+                        'line-color': '#25f4f4',
+                        'line-opacity': 0.4,
+                        'target-arrow-color': '#25f4f4',
+                        'target-arrow-shape': 'triangle',
+                        'curve-style': 'bezier',
+                        'label': 'data(label)',
+                        'font-size': '8px',
+                        'color': '#25f4f4',
+                        'text-background-opacity': 1,
+                        'text-background-color': '#010409',
+                        'text-background-padding': '2px',
+                        'text-rotation': 'autorotate'
+                    }
+                },
+                {
+                    selector: 'node:selected',
+                    style: {
+                        'border-width': 4,
+                        'border-color': '#25f4f4',
+                        'border-opacity': 1
+                    }
+                }
+            ],
+            layout: {
+                name: 'breadthfirst',
+                directed: true,
+                padding: 50,
+                spacingFactor: 1.5
+            }
+        });
+
+        cy.on('tap', 'node', function(evt){
+            showDetails(evt.target.data());
+        });
+
+        cy.on('tap', function(evt){
+            if (evt.target === cy) hideDetails();
+        });
+    }
+
+    let cyInstance = null;
+
+    function exportGraph() {
+        if (!cyInstance) return;
+        const pngContent = cyInstance.png({ full: true, bg: '#010409' });
+        const link = document.createElement('a');
+        link.href = pngContent;
+        link.download = `lineage-graph-${Date.now()}.png`;
+        link.click();
+    }
+
+    function showDetails(data) {
+        document.getElementById('no-selection-msg').classList.add('hidden');
+        const panel = document.getElementById('details-panel');
+        panel.classList.remove('hidden');
+
+        // Navigation visibility
+        const nav = document.getElementById('topic-navigation');
+        const navLink = document.getElementById('nav-topic-link');
+        if (data.type === 'topic') {
+            nav.classList.remove('hidden');
+            navLink.href = `/topic/${data.label}`;
+        } else {
+            nav.classList.add('hidden');
         }
 
-        document.addEventListener('DOMContentLoaded', loadLineage);
-    </script>
+        document.getElementById('details-title').textContent = data.label;
+        document.getElementById('details-type').textContent = data.type;
+
+        let contentHtml = '';
+        if (data.type === 'table' || data.type === 'view') {
+            contentHtml = `
+                <section>
+                    <div class="flex items-center gap-2 mb-3">
+                        <span class="material-symbols-outlined text-primary text-xl">list_alt</span>
+                        <h3 class="text-sm font-bold text-slate-300">Schema Details</h3>
+                    </div>
+                    <div id="schema-loader" class="flex justify-center py-4"><div class="animate-spin rounded-full h-6 w-6 border-2 border-primary border-t-transparent"></div></div>
+                    <div id="details-schema-container" class="bg-primary/5 rounded-lg border border-primary/10 divide-y divide-primary/5 hidden">
+                    </div>
+                </section>`;
+            fetchSchema(data.label);
+        } else {
+            contentHtml = `
+                <section>
+                    <div class="flex items-center gap-2 mb-3">
+                        <span class="material-symbols-outlined text-primary text-xl">info</span>
+                        <h3 class="text-sm font-bold text-slate-300">Information</h3>
+                    </div>
+                    <p class="text-xs text-slate-400 leading-relaxed">
+                        This ${data.type} is part of the streaming lineage.
+                    </p>
+                </section>`;
+        }
+        document.getElementById('details-content').innerHTML = contentHtml;
+    }
+
+    function hideDetails() {
+        document.getElementById('details-panel').classList.add('hidden');
+        document.getElementById('no-selection-msg').classList.remove('hidden');
+    }
+
+    function fetchSchema(tableName) {
+        fetch('/api/schema/' + tableName)
+            .then(response => response.json())
+            .then(schema => {
+                const loader = document.getElementById('schema-loader');
+                if (loader) loader.remove();
+
+                const container = document.getElementById('details-schema-container');
+                if (container) {
+                    container.innerHTML = '';
+                    Object.entries(schema).forEach(([field, type]) => {
+                        container.innerHTML += `
+                            <div class="flex items-center justify-between px-4 py-3">
+                                <span class="text-xs text-slate-100 font-medium">${field}</span>
+                                <span class="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-mono font-bold">${type}</span>
+                            </div>`;
+                    });
+                    container.classList.remove('hidden');
+                }
+            });
+    }
+
+    document.addEventListener('DOMContentLoaded', loadLineage);
+</script>
 </body>
 </html>

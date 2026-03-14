@@ -1,230 +1,238 @@
 <!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: html(~{::section})}">
-<body>
-<section>
-    <div class="row mb-4">
-        <div class="col-md-12">
-            <h1 class="h3 text-teal fw-bold"><i class="fas fa-route me-2"></i>Stream Flow</h1>
-            <p class="text-muted small">Trace the propagation of specific messages across Kafka topics</p>
-        </div>
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: html(~{::body})}">
+<head>
+    <title>Stream Flow</title>
+</head>
+<body th:fragment="content" class="h-full">
+<div class="p-6 space-y-6 flex flex-col h-[calc(100vh-3.5rem)] overflow-hidden">
+    <div>
+        <h1 class="text-xl font-bold flex items-center gap-2">
+            <span class="material-symbols-outlined text-primary">waves</span>
+            Stream Flow
+        </h1>
+        <p class="text-xs text-slate-500 mt-1">Trace the propagation of specific messages across Kafka topics</p>
     </div>
 
-    <div class="row mb-4">
-        <div class="col-md-12">
-            <div class="card bg-dark border-secondary">
-                <div class="card-body">
-                    <form id="flow-form" class="row g-3">
-                        <div class="col-md-4">
-                            <label for="messageKey" class="form-label">Search Value / Regex</label>
-                            <div class="input-group">
-                                <input type="text" class="form-control bg-dark text-light border-secondary" id="messageKey" placeholder="e.g. order-.*" required>
-                                <div class="input-group-text bg-dark border-secondary">
-                                    <input class="form-check-input mt-0" type="checkbox" id="useRegex" title="Use Regular Expression">
-                                    <label class="form-check-label ms-2 text-muted small" for="useRegex">Regex</label>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-4">
-                            <label for="searchPath" class="form-label">Search Path (JSONPath or XPath)</label>
-                            <input type="text" class="form-control bg-dark text-light border-secondary" id="searchPath" placeholder="e.g. $.id or /order/id">
-                        </div>
-                        <div class="col-md-4">
-                            <label for="targetTopics" class="form-label">Scan Specific Topics (Optional)</label>
-                            <select class="form-select bg-dark text-light border-secondary" id="targetTopics" multiple size="3">
-                                <!-- Populated via JS -->
-                            </select>
-                            <div class="form-text text-muted small">Hold Ctrl/Cmd to select multiple</div>
-                        </div>
-                        <div class="col-md-3">
-                            <label for="timeLimit" class="form-label">Time Limit (minutes)</label>
-                            <input type="number" class="form-control bg-dark text-light border-secondary" id="timeLimit" placeholder="e.g. 60">
-                        </div>
-                        <div class="col-md-3">
-                            <label for="maxMessages" class="form-label">Scan Limit (msgs/topic)</label>
-                            <input type="number" class="form-control bg-dark text-light border-secondary" id="maxMessages" value="100" min="1" max="1000">
-                        </div>
-                        <div class="col-md-6 text-end d-flex align-items-end justify-content-end">
-                            <button type="submit" class="btn btn-teal">
-                                <i class="fas fa-search"></i> Trace Flow
-                            </button>
-                        </div>
-                    </form>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div class="row">
-        <div class="col-md-12">
-            <div class="card bg-dark border-secondary">
-                <div class="card-body p-0" style="height: 600px; position: relative; overflow: hidden;">
-                    <div id="flow-container" style="width: 100%; height: 100%; background-color: #1a1a1a;"></div>
-                    <div id="loading-overlay" class="position-absolute top-0 start-0 w-100 h-100 d-flex justify-content-center align-items-center bg-dark opacity-75 d-none">
-                        <div class="text-center">
-                            <div class="spinner-border text-teal mb-2" role="status"></div>
-                            <p class="text-teal" id="loading-text">Scanning topics and tracing messages...</p>
-                        </div>
-                    </div>
-                    <div id="empty-state" class="position-absolute top-0 start-0 w-100 h-100 d-flex justify-content-center align-items-center">
-                        <div class="text-center text-muted">
-                            <i class="fas fa-route fa-3x mb-3 opacity-25"></i>
-                            <p>Enter search criteria and click "Trace Flow" to visualize message propagation</p>
-                        </div>
+    <div class="bg-white dark:bg-primary/5 border border-slate-200 dark:border-primary/10 rounded-xl p-6 shadow-sm">
+        <form id="flow-form" class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div class="space-y-2">
+                <label for="messageKey" class="text-[10px] font-bold text-slate-500 uppercase">Search Value / Regex</label>
+                <div class="flex gap-2">
+                    <input type="text" class="flex-1 bg-background-dark border border-primary/20 rounded px-3 py-2 text-xs focus:ring-1 focus:ring-primary focus:border-primary outline-none text-slate-200" id="messageKey" placeholder="e.g. order-.*" required>
+                    <div class="flex items-center gap-2 px-3 py-2 bg-background-dark border border-primary/20 rounded">
+                        <input type="checkbox" id="useRegex" class="rounded size-3 border-primary/20 bg-background-dark text-primary focus:ring-primary/50">
+                        <label for="useRegex" class="text-[10px] font-bold text-slate-500 uppercase">Regex</label>
                     </div>
                 </div>
             </div>
-        </div>
+            <div class="space-y-2">
+                <label for="searchPath" class="text-[10px] font-bold text-slate-500 uppercase">Search Path (JSONPath or XPath)</label>
+                <input type="text" class="w-full bg-background-dark border border-primary/20 rounded px-3 py-2 text-xs focus:ring-1 focus:ring-primary focus:border-primary outline-none text-slate-200" id="searchPath" placeholder="e.g. $.id or /order/id">
+            </div>
+            <div class="space-y-2">
+                <label for="targetTopics" class="text-[10px] font-bold text-slate-500 uppercase">Scan Specific Topics</label>
+                <select class="w-full bg-background-dark border border-primary/20 rounded px-3 py-2 text-xs focus:ring-1 focus:ring-primary focus:border-primary outline-none text-slate-200" id="targetTopics" multiple size="1">
+                </select>
+                <p class="text-[8px] text-slate-500 uppercase">Hold Ctrl/Cmd to select multiple</p>
+            </div>
+            <div class="space-y-2">
+                <label for="timeLimit" class="text-[10px] font-bold text-slate-500 uppercase">Time Limit (minutes)</label>
+                <input type="number" class="w-full bg-background-dark border border-primary/20 rounded px-3 py-2 text-xs focus:ring-1 focus:ring-primary focus:border-primary outline-none text-slate-200" id="timeLimit" placeholder="e.g. 60">
+            </div>
+            <div class="space-y-2">
+                <label for="maxMessages" class="text-[10px] font-bold text-slate-500 uppercase">Scan Limit (msgs/topic)</label>
+                <input type="number" class="w-full bg-background-dark border border-primary/20 rounded px-3 py-2 text-xs focus:ring-1 focus:ring-primary focus:border-primary outline-none text-slate-200" id="maxMessages" value="100" min="1" max="1000">
+            </div>
+            <div class="flex items-end gap-2">
+                <button type="submit" class="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-primary text-background-dark rounded-lg text-xs font-bold hover:brightness-110 transition-all">
+                    <span class="material-symbols-outlined text-sm">search</span> TRACE FLOW
+                </button>
+                <button type="button" onclick="exportGraph()" class="px-3 py-2 bg-background-dark border border-primary/20 text-slate-400 rounded-lg hover:text-primary transition-all">
+                    <span class="material-symbols-outlined text-sm">download</span>
+                </button>
+            </div>
+        </form>
     </div>
 
-    <!-- cytoscape.js for graph rendering -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.26.0/cytoscape.min.js"></script>
-    <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            // Populate topics
-            fetch('/api/topics')
-                .then(response => response.json())
-                .then(topics => {
-                    const select = document.getElementById('targetTopics');
-                    topics.sort().forEach(topic => {
-                        const opt = document.createElement('option');
-                        opt.value = topic;
-                        opt.textContent = topic;
-                        select.appendChild(opt);
-                    });
-                });
-        });
+    <div class="flex-1 bg-background-dark border border-primary/10 rounded-xl relative overflow-hidden">
+        <div id="flow-container" class="w-full h-full bg-[#010409]"></div>
 
-        document.getElementById('flow-form').addEventListener('submit', function(e) {
-            e.preventDefault();
-            const messageKey = document.getElementById('messageKey').value;
-            const searchPath = document.getElementById('searchPath').value;
-            const timeLimit = document.getElementById('timeLimit').value;
-            const maxMessages = document.getElementById('maxMessages').value;
-            const useRegex = document.getElementById('useRegex').checked;
-            const targetTopics = Array.from(document.getElementById('targetTopics').selectedOptions).map(o => o.value);
+        <div id="loading-overlay" class="hidden absolute inset-0 z-50 flex items-center justify-center bg-background-dark/80 backdrop-blur-sm">
+            <div class="text-center">
+                <div class="animate-spin rounded-full h-12 w-12 border-4 border-primary border-t-transparent mb-4 mx-auto"></div>
+                <p class="text-xs font-bold text-primary uppercase tracking-widest" id="loading-text">Scanning topics and tracing messages...</p>
+            </div>
+        </div>
 
-            traceFlow(messageKey, searchPath, timeLimit, maxMessages, useRegex, targetTopics);
-        });
+        <div id="empty-state" class="absolute inset-0 flex flex-col items-center justify-center p-8 text-center text-slate-500">
+            <span class="material-symbols-outlined text-4xl opacity-20 mb-4">route</span>
+            <p class="text-xs uppercase font-bold tracking-widest">Enter criteria and click "Trace Flow"</p>
+        </div>
+    </div>
+</div>
 
-        function traceFlow(key, path, time, max, regex, topics) {
-            document.getElementById('loading-overlay').classList.remove('d-none');
-            document.getElementById('empty-state').classList.add('d-none');
-
-            fetch('/api/stream-flow', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    messageKey: key,
-                    searchPath: path,
-                    timeLimitMinutes: time ? parseInt(time) : null,
-                    maxMessagesPerTopic: parseInt(max),
-                    useRegex: regex,
-                    targetTopics: topics
-                })
-            })
+<!-- cytoscape.js for graph rendering -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.26.0/cytoscape.min.js"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Populate topics
+        fetch('/api/topics')
             .then(response => response.json())
-            .then(data => {
-                document.getElementById('loading-overlay').classList.add('d-none');
-                if (data.nodes.length === 0) {
-                    document.getElementById('empty-state').classList.remove('d-none');
-                    document.getElementById('empty-state').innerHTML = `
-                        <div class="text-center text-warning">
-                            <i class="fas fa-exclamation-triangle fa-3x mb-3 opacity-25"></i>
-                            <p>No messages found matching your criteria.</p>
-                            <button class="btn btn-sm btn-outline-secondary" onclick="resetState()">Try again</button>
-                        </div>`;
-                } else {
-                    renderGraph(data);
-                }
+            .then(topics => {
+                const select = document.getElementById('targetTopics');
+                topics.sort().forEach(topic => {
+                    const opt = document.createElement('option');
+                    opt.value = topic;
+                    opt.textContent = topic;
+                    select.appendChild(opt);
+                });
+            });
+    });
+
+    document.getElementById('flow-form').addEventListener('submit', function(e) {
+        e.preventDefault();
+        const messageKey = document.getElementById('messageKey').value;
+        const searchPath = document.getElementById('searchPath').value;
+        const timeLimit = document.getElementById('timeLimit').value;
+        const maxMessages = document.getElementById('maxMessages').value;
+        const useRegex = document.getElementById('useRegex').checked;
+        const targetTopics = Array.from(document.getElementById('targetTopics').selectedOptions).map(o => o.value);
+
+        traceFlow(messageKey, searchPath, timeLimit, maxMessages, useRegex, targetTopics);
+    });
+
+    function traceFlow(key, path, time, max, regex, topics) {
+        document.getElementById('loading-overlay').classList.remove('hidden');
+        document.getElementById('empty-state').classList.add('hidden');
+
+        fetch('/api/stream-flow', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                messageKey: key,
+                searchPath: path,
+                timeLimitMinutes: time ? parseInt(time) : null,
+                maxMessagesPerTopic: parseInt(max),
+                useRegex: regex,
+                targetTopics: topics
             })
-            .catch(error => {
-                console.error('Error tracing flow:', error);
-                document.getElementById('loading-overlay').classList.add('d-none');
-            });
-        }
+        })
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('loading-overlay').classList.add('hidden');
+            if (data.nodes.length === 0) {
+                document.getElementById('empty-state').classList.remove('hidden');
+                document.getElementById('empty-state').innerHTML = `
+                    <div class="text-center">
+                        <span class="material-symbols-outlined text-4xl text-amber-500/20 mb-4">warning</span>
+                        <p class="text-xs uppercase font-bold tracking-widest text-slate-400">No messages found matching criteria</p>
+                        <button class="mt-4 px-4 py-2 border border-primary/20 text-primary text-[10px] font-bold rounded-lg hover:bg-primary/5 uppercase" onclick="resetState()">Try again</button>
+                    </div>`;
+            } else {
+                renderGraph(data);
+            }
+        })
+        .catch(error => {
+            console.error('Error tracing flow:', error);
+            document.getElementById('loading-overlay').classList.add('hidden');
+        });
+    }
 
-        function resetState() {
-            document.getElementById('empty-state').innerHTML = `
-                <div class="text-center text-muted">
-                    <i class="fas fa-route fa-3x mb-3 opacity-25"></i>
-                    <p>Enter search criteria and click "Trace Flow" to visualize message propagation</p>
-                </div>`;
-        }
+    function resetState() {
+        document.getElementById('empty-state').innerHTML = `
+            <span class="material-symbols-outlined text-4xl opacity-20 mb-4">route</span>
+            <p class="text-xs uppercase font-bold tracking-widest">Enter criteria and click "Trace Flow"</p>`;
+    }
 
-        function renderGraph(data) {
-            const elements = [];
+    let cyInstance = null;
 
-            // Add nodes
-            data.nodes.forEach(node => {
-                elements.push({
-                    data: {
-                        id: node.id,
-                        label: node.label,
-                        color: '#007bff',
-                        icon: '\uf1c0'
-                    }
-                });
-            });
+    function exportGraph() {
+        if (!cyInstance) return;
+        const pngContent = cyInstance.png({ full: true, bg: '#010409' });
+        const link = document.createElement('a');
+        link.href = pngContent;
+        link.download = `stream-flow-${Date.now()}.png`;
+        link.click();
+    }
 
-            // Add edges
-            data.edges.forEach((edge, index) => {
-                elements.push({
-                    data: {
-                        id: 'edge_' + index,
-                        source: edge.from,
-                        target: edge.to,
-                        label: (index + 1).toString()
-                    }
-                });
-            });
+    function renderGraph(data) {
+        const elements = [];
 
-            const cy = cytoscape({
-                container: document.getElementById('flow-container'),
-                elements: elements,
-                style: [
-                    {
-                        selector: 'node',
-                        style: {
-                            'label': 'data(label)',
-                            'background-color': 'data(color)',
-                            'color': '#fff',
-                            'text-valign': 'bottom',
-                            'text-margin-y': '5px',
-                            'font-size': '12px',
-                            'width': '40px',
-                            'height': '40px',
-                            'content': 'data(label)'
-                        }
-                    },
-                    {
-                        selector: 'edge',
-                        style: {
-                            'width': 3,
-                            'line-color': '#0dcaf0',
-                            'target-arrow-color': '#0dcaf0',
-                            'target-arrow-shape': 'triangle',
-                            'curve-style': 'bezier',
-                            'label': 'data(label)',
-                            'font-size': '14px',
-                            'font-weight': 'bold',
-                            'color': '#fff',
-                            'text-background-color': '#0dcaf0',
-                            'text-background-opacity': 1,
-                            'text-background-padding': '3px',
-                            'text-background-shape': 'roundrectangle'
-                        }
-                    }
-                ],
-                layout: {
-                    name: 'breadthfirst',
-                    directed: true,
-                    padding: 50,
-                    spacingFactor: 1.5
+        data.nodes.forEach(node => {
+            elements.push({
+                data: {
+                    id: node.id,
+                    label: node.label,
+                    color: '#007bff'
                 }
             });
-        }
-    </script>
+        });
+
+        data.edges.forEach((edge, index) => {
+            elements.push({
+                data: {
+                    id: 'edge_' + index,
+                    source: edge.from,
+                    target: edge.to,
+                    label: (index + 1).toString()
+                }
+            });
+        });
+
+        const cy = cytoscape({
+            container: document.getElementById('flow-container'),
+            elements: elements,
+            style: [
+                {
+                    selector: 'node',
+                    style: {
+                        'label': 'data(label)',
+                        'background-color': '#25f4f4',
+                        'background-opacity': 0.1,
+                        'border-width': 2,
+                        'border-color': '#25f4f4',
+                        'color': '#fff',
+                        'text-valign': 'bottom',
+                        'text-margin-y': '8px',
+                        'font-size': '10px',
+                        'font-weight': 'bold',
+                        'width': '30px',
+                        'height': '30px',
+                        'text-transform': 'uppercase'
+                    }
+                },
+                {
+                    selector: 'edge',
+                    style: {
+                        'width': 2,
+                        'line-color': '#25f4f4',
+                        'line-opacity': 0.4,
+                        'target-arrow-color': '#25f4f4',
+                        'target-arrow-shape': 'triangle',
+                        'curve-style': 'bezier',
+                        'label': 'data(label)',
+                        'font-size': '10px',
+                        'font-weight': 'bold',
+                        'color': '#25f4f4',
+                        'text-background-color': '#010409',
+                        'text-background-opacity': 1,
+                        'text-background-padding': '2px',
+                        'text-rotation': 'autorotate'
+                    }
+                }
+            ],
+            layout: {
+                name: 'breadthfirst',
+                directed: true,
+                padding: 50,
+                spacingFactor: 1.5
+            }
+        });
+
+        cyInstance = cy;
+    }
+</script>
 </body>
 </html>

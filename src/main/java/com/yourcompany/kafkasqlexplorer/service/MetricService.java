@@ -22,7 +22,7 @@ public class MetricService {
 
     private void addMetric(String name, String type, String sql, String description) {
         String id = UUID.randomUUID().toString();
-        metrics.put(id, new MetricConfig(id, name, type, sql, description));
+        metrics.put(id, new MetricConfig(id, name, type, sql, description, null, null));
     }
 
     public List<MetricConfig> getAllMetrics() {
@@ -38,7 +38,8 @@ public class MetricService {
         if (id == null || id.isEmpty()) {
             id = UUID.randomUUID().toString();
         }
-        metrics.put(id, new MetricConfig(id, metric.name(), metric.type(), metric.sql(), metric.description()));
+        metrics.put(id, new MetricConfig(id, metric.name(), metric.type(), metric.sql(), metric.description(),
+            metric.warningThreshold(), metric.criticalThreshold()));
     }
 
     public void delete(String id) {

@@ -49,10 +49,10 @@ async function fetchTablesForSelector() {
 }
 
 function prepareAddMetric() {
-    document.getElementById('modalTitle').textContent = 'Create Metric';
+    document.getElementById('modalTitle').innerHTML = '<span class="material-symbols-outlined">add_chart</span> Create Metric';
     document.getElementById('metricForm').reset();
     document.getElementById('metricId').value = '';
-    document.getElementById('testResultArea').classList.add('d-none');
+    document.getElementById('testResultArea').classList.add('hidden');
     if (metricEditor) {
         metricEditor.setValue('');
     }
@@ -60,18 +60,22 @@ function prepareAddMetric() {
 }
 
 function editMetric(button) {
-    document.getElementById('modalTitle').textContent = 'Edit Metric';
+    document.getElementById('modalTitle').innerHTML = '<span class="material-symbols-outlined">edit_note</span> Edit Metric';
     const id = button.getAttribute('data-id');
     const name = button.getAttribute('data-name');
     const type = button.getAttribute('data-type');
     const sql = button.getAttribute('data-sql');
     const description = button.getAttribute('data-description');
+    const warning = button.getAttribute('data-warning');
+    const critical = button.getAttribute('data-critical');
 
     document.getElementById('metricId').value = id;
     document.getElementById('metricName').value = name;
     document.getElementById('metricType').value = type;
     document.getElementById('metricDescription').value = description;
-    document.getElementById('testResultArea').classList.add('d-none');
+    document.getElementById('warningThreshold').value = warning || '';
+    document.getElementById('criticalThreshold').value = critical || '';
+    document.getElementById('testResultArea').classList.add('hidden');
 
     if (metricEditor) {
         metricEditor.setValue(sql);
@@ -114,9 +118,9 @@ async function testMetric() {
     const resultArea = document.getElementById('testResultArea');
     const resultContent = document.getElementById('testResultContent');
 
-    resultArea.classList.remove('d-none');
-    resultContent.innerHTML = '<div class="spinner-border spinner-border-sm text-teal" role="status"></div> Testing...';
-    resultContent.className = 'p-2 bg-darker border border-secondary rounded font-monospace small text-light';
+    resultArea.classList.remove('hidden');
+    resultContent.innerHTML = '<div class="flex items-center gap-2"><div class="animate-spin rounded-full h-3 w-3 border-2 border-primary border-t-transparent"></div> <span>Testing...</span></div>';
+    resultContent.className = 'p-4 bg-background-dark/80 border border-primary/10 rounded-lg font-mono text-xs text-slate-300';
 
     try {
         const response = await fetch('/query', {
@@ -137,10 +141,31 @@ async function testMetric() {
             const val = data.rows[0]['metric_value'];
             if (val === undefined) {
                 resultContent.textContent = 'Warning: Query succeeded but did not return a "metric_value" column.';
-                resultContent.classList.add('text-warning');
+                resultContent.className = 'p-4 bg-background-dark/80 border border-amber-500/20 rounded-lg font-mono text-xs text-amber-500';
             } else {
-                resultContent.textContent = 'Success! metric_value = ' + val;
-                resultContent.classList.add('text-success');
+                const numericVal = parseFloat(val);
+                const warning = parseFloat(document.getElementById('warningThreshold').value);
+                const critical = parseFloat(document.getElementById('criticalThreshold').value);
+
+                let statusClass = 'text-emerald-500 border-emerald-500/20';
+                let statusText = 'HEALTHY';
+
+                if (!isNaN(critical) && numericVal >= critical) {
+                    statusClass = 'text-red-500 border-red-500/20';
+                    statusText = 'CRITICAL';
+                } else if (!isNaN(warning) && numericVal >= warning) {
+                    statusClass = 'text-amber-500 border-amber-500/20';
+                    statusText = 'WARNING';
+                }
+
+                resultContent.innerHTML = `<div class="flex flex-col gap-1">
+                    <div class="flex items-center justify-between">
+                        <span class="text-[10px] font-bold uppercase opacity-50">Value</span>
+                        <span class="px-1.5 py-0.5 rounded bg-white/5 text-[10px] font-bold uppercase tracking-widest ${statusClass.split(' ')[0]}">${statusText}</span>
+                    </div>
+                    <div class="text-xl font-bold ${statusClass.split(' ')[0]}">${val}</div>
+                </div>`;
+                resultContent.className = `p-4 bg-background-dark/80 border rounded-lg font-mono text-xs ${statusClass}`;
             }
         }
     } catch (err) {

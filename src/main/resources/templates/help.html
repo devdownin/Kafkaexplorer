@@ -1,45 +1,46 @@
 <!DOCTYPE html>
 <html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: html(~{::body})}">
 <head>
-    <title>Help - Flink SQL Guide</title>
+    <title>Help & Guide</title>
 </head>
 <body th:fragment="content">
-    <div class="row mb-4">
-        <div class="col-md-12">
-            <h1 class="h3 text-teal fw-bold"><i class="fas fa-question-circle me-2"></i>Help & Guide</h1>
-            <p class="text-muted small">Learn how to use Flink SQL to explore and analyze your Kafka streams</p>
-        </div>
+<div class="p-6 space-y-6">
+    <div>
+        <h1 class="text-xl font-bold flex items-center gap-2">
+            <span class="material-symbols-outlined text-primary">help</span>
+            Help & Guide
+        </h1>
+        <p class="text-xs text-slate-500 mt-1">Learn how to use Flink SQL to explore and analyze your Kafka streams</p>
     </div>
-    <div class="row">
-        <div class="col-md-12">
-            <div class="alert alert-info bg-dark border-teal text-light mb-4">
-                <h6 class="text-teal"><i class="fas fa-info-circle"></i> Comment ça marche ?</h6>
-                <p class="small mb-0">
-                    Contrairement au SQL classique, les requêtes sur Kafka sont <strong>continues</strong>.
-                    L'application échantillonne les résultats et arrête automatiquement le job après 10 secondes ou 50 lignes.
-                    Vous pouvez arrêter manuellement une requête en cours avec le bouton <span class="badge bg-danger">Stop</span>.
-                </p>
-            </div>
 
-            <p class="text-muted mb-4">Refer to these common streaming SQL patterns to get started quickly with Kafka and Flink.</p>
+    <div class="bg-primary/5 border border-primary/20 rounded-xl p-6 shadow-sm">
+        <h6 class="text-primary font-bold flex items-center gap-2 mb-2">
+            <span class="material-symbols-outlined text-sm">info</span>
+            Comment ça marche ?
+        </h6>
+        <p class="text-xs text-slate-400 leading-relaxed">
+            Contrairement au SQL classique, les requêtes sur Kafka sont <strong>continues</strong>.
+            L'application échantillonne les résultats et arrête automatiquement le job après 10 secondes ou 50 lignes.
+            Vous pouvez arrêter manuellement une requête en cours avec le bouton <span class="bg-red-500/20 text-red-500 px-1 rounded font-bold uppercase text-[10px]">Stop</span>.
+        </p>
+    </div>
 
-            <div class="card bg-dark border-secondary shadow-sm">
-                <div class="card-body p-0">
-                    <table class="table table-dark table-hover mb-0">
-                        <thead class="bg-dark">
-                            <tr>
-                                <th class="text-teal small py-3 px-4" style="width: 200px;">TYPE DE REQUÊTE</th>
-                                <th class="text-teal small py-3 px-4" style="width: 300px;">OBJECTIF</th>
-                                <th class="text-teal small py-3 px-4">EXEMPLE</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr>
-                                <td class="py-3 px-4 fw-bold">DDL source Kafka</td>
-                                <td class="py-3 px-4 text-muted small">Déclarer un flux Kafka JSON avec event time + watermark</td>
-                                <td class="py-3 px-4">
-                                    <div class="position-relative">
-                                        <pre class="mb-0 bg-darker p-3 rounded border border-secondary small text-light help-sql">CREATE TABLE user_events (
+    <div class="bg-white dark:bg-primary/5 border border-slate-200 dark:border-primary/10 rounded-xl overflow-hidden shadow-sm">
+        <table class="w-full text-left border-collapse">
+            <thead>
+                <tr class="bg-slate-50 dark:bg-primary/10 text-[10px] font-bold text-slate-500 dark:text-primary/70 uppercase tracking-wider border-b border-slate-200 dark:border-primary/10">
+                    <th class="px-6 py-4" style="width: 200px;">TYPE DE REQUÊTE</th>
+                    <th class="px-6 py-4" style="width: 300px;">OBJECTIF</th>
+                    <th class="px-6 py-4">EXEMPLE</th>
+                </tr>
+            </thead>
+            <tbody class="text-xs divide-y divide-slate-100 dark:divide-primary/5">
+                <tr class="hover:bg-slate-50 dark:hover:bg-primary/5 transition-colors">
+                    <td class="px-6 py-4 font-bold text-slate-200 align-top">DDL source Kafka</td>
+                    <td class="px-6 py-4 text-slate-500 align-top leading-relaxed">Déclarer un flux Kafka JSON avec event time + watermark</td>
+                    <td class="px-6 py-4">
+                        <div class="relative group">
+                            <pre class="bg-background-dark p-4 rounded-lg border border-primary/10 text-[11px] font-mono text-slate-300 overflow-x-auto">CREATE TABLE user_events (
   user_id    STRING,
   event_type STRING,
   payload    STRING,
@@ -54,45 +55,45 @@ WITH (
   'scan.startup.mode' = 'earliest-offset',
   'format' = 'json'
 );</pre>
-                                        <button class="btn btn-sm btn-outline-teal position-absolute top-0 end-0 m-2" onclick="copyToClipboard(this)">Copy</button>
-                                    </div>
-                                </td>
-                            </tr>
-                            <tr>
-                                <td class="py-3 px-4 fw-bold">SELECT / WHERE</td>
-                                <td class="py-3 px-4 text-muted small">Lecture filtrée du flux</td>
-                                <td class="py-3 px-4">
-                                    <div class="position-relative">
-                                        <pre class="mb-0 bg-darker p-3 rounded border border-secondary small text-light help-sql">SELECT
+                            <button class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity px-2 py-1 bg-primary text-background-dark rounded text-[10px] font-bold uppercase" onclick="copyToClipboard(this)">Copy</button>
+                        </div>
+                    </td>
+                </tr>
+                <tr class="hover:bg-slate-50 dark:hover:bg-primary/5 transition-colors">
+                    <td class="px-6 py-4 font-bold text-slate-200 align-top">SELECT / WHERE</td>
+                    <td class="px-6 py-4 text-slate-500 align-top leading-relaxed">Lecture filtrée du flux</td>
+                    <td class="px-6 py-4">
+                        <div class="relative group">
+                            <pre class="bg-background-dark p-4 rounded-lg border border-primary/10 text-[11px] font-mono text-slate-300 overflow-x-auto">SELECT
   user_id,
   event_time,
   payload
 FROM user_events
 WHERE event_type = 'CLICK';</pre>
-                                        <button class="btn btn-sm btn-outline-teal position-absolute top-0 end-0 m-2" onclick="copyToClipboard(this)">Copy</button>
-                                    </div>
-                                </td>
-                            </tr>
-                            <tr>
-                                <td class="py-3 px-4 fw-bold">Agrégat simple</td>
-                                <td class="py-3 px-4 text-muted small">Compter par type d’événement</td>
-                                <td class="py-3 px-4">
-                                    <div class="position-relative">
-                                        <pre class="mb-0 bg-darker p-3 rounded border border-secondary small text-light help-sql">SELECT
+                            <button class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity px-2 py-1 bg-primary text-background-dark rounded text-[10px] font-bold uppercase" onclick="copyToClipboard(this)">Copy</button>
+                        </div>
+                    </td>
+                </tr>
+                <tr class="hover:bg-slate-50 dark:hover:bg-primary/5 transition-colors">
+                    <td class="px-6 py-4 font-bold text-slate-200 align-top">Agrégat simple</td>
+                    <td class="px-6 py-4 text-slate-500 align-top leading-relaxed">Compter par type d’événement</td>
+                    <td class="px-6 py-4">
+                        <div class="relative group">
+                            <pre class="bg-background-dark p-4 rounded-lg border border-primary/10 text-[11px] font-mono text-slate-300 overflow-x-auto">SELECT
   event_type,
   COUNT(*) AS nb_events
 FROM user_events
 GROUP BY event_type;</pre>
-                                        <button class="btn btn-sm btn-outline-teal position-absolute top-0 end-0 m-2" onclick="copyToClipboard(this)">Copy</button>
-                                    </div>
-                                </td>
-                            </tr>
-                            <tr>
-                                <td class="py-3 px-4 fw-bold">Fenêtre TUMBLE</td>
-                                <td class="py-3 px-4 text-muted small">Agrégat par fenêtres fixes de 5 min</td>
-                                <td class="py-3 px-4">
-                                    <div class="position-relative">
-                                        <pre class="mb-0 bg-darker p-3 rounded border border-secondary small text-light help-sql">SELECT
+                            <button class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity px-2 py-1 bg-primary text-background-dark rounded text-[10px] font-bold uppercase" onclick="copyToClipboard(this)">Copy</button>
+                        </div>
+                    </td>
+                </tr>
+                <tr class="hover:bg-slate-50 dark:hover:bg-primary/5 transition-colors">
+                    <td class="px-6 py-4 font-bold text-slate-200 align-top">Fenêtre TUMBLE</td>
+                    <td class="px-6 py-4 text-slate-500 align-top leading-relaxed">Agrégat par fenêtres fixes de 5 min</td>
+                    <td class="px-6 py-4">
+                        <div class="relative group">
+                            <pre class="bg-background-dark p-4 rounded-lg border border-primary/10 text-[11px] font-mono text-slate-300 overflow-x-auto">SELECT
   window_start,
   window_end,
   event_type,
@@ -105,57 +106,13 @@ FROM TABLE(
   )
 )
 GROUP BY window_start, window_end, event_type;</pre>
-                                        <button class="btn btn-sm btn-outline-teal position-absolute top-0 end-0 m-2" onclick="copyToClipboard(this)">Copy</button>
-                                    </div>
-                                </td>
-                            </tr>
-                            <tr>
-                                <td class="py-3 px-4 fw-bold">Fenêtre HOP</td>
-                                <td class="py-3 px-4 text-muted small">Fenêtre de 10 min glissant toutes les 5 min</td>
-                                <td class="py-3 px-4">
-                                    <div class="position-relative">
-                                        <pre class="mb-0 bg-darker p-3 rounded border border-secondary small text-light help-sql">SELECT
-  window_start,
-  window_end,
-  user_id,
-  COUNT(*) AS nb_events
-FROM TABLE(
-  HOP(
-    TABLE user_events,
-    DESCRIPTOR(event_time),
-    INTERVAL '5' MINUTE,
-    INTERVAL '10' MINUTE
-  )
-)
-GROUP BY window_start, window_end, user_id;</pre>
-                                        <button class="btn btn-sm btn-outline-teal position-absolute top-0 end-0 m-2" onclick="copyToClipboard(this)">Copy</button>
-                                    </div>
-                                </td>
-                            </tr>
-                            <tr>
-                                <td class="py-3 px-4 fw-bold">Fenêtre OVER</td>
-                                <td class="py-3 px-4 text-muted small">Cumul sur les 30 dernières minutes par user</td>
-                                <td class="py-3 px-4">
-                                    <div class="position-relative">
-                                        <pre class="mb-0 bg-darker p-3 rounded border border-secondary small text-light help-sql">SELECT
-  user_id,
-  event_time,
-  event_type,
-  COUNT(*) OVER (
-    PARTITION BY user_id
-    ORDER BY event_time
-    RANGE BETWEEN INTERVAL '30' MINUTE PRECEDING AND CURRENT ROW
-  ) AS cnt
-FROM user_events;</pre>
-                                        <button class="btn btn-sm btn-outline-teal position-absolute top-0 end-0 m-2" onclick="copyToClipboard(this)">Copy</button>
-                                    </div>
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
+                            <button class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity px-2 py-1 bg-primary text-background-dark rounded text-[10px] font-bold uppercase" onclick="copyToClipboard(this)">Copy</button>
+                        </div>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
     </div>
+</div>
 </body>
 </html>

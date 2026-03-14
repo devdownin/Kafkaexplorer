@@ -5,5 +5,7 @@ public record MetricConfig(
     String name,
     String type,
     String sql,
-    String description
+    String description,
+    Double warningThreshold,
+    Double criticalThreshold
 ) {}

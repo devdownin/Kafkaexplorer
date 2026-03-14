@@ -1,8 +1,20 @@
 document.addEventListener('DOMContentLoaded', () => {
-    // SQL Editor
+    // Multi-Tab Management
+    const tabContainer = document.getElementById('tabContainer');
+    const addTabBtn = document.getElementById('addTabBtn');
     const editorElement = document.getElementById('sqlEditor');
     let editor;
-    if (editorElement) {
+
+    let tabs = JSON.parse(localStorage.getItem('sqlTabs') || '[]');
+    let activeTabId = localStorage.getItem('activeTabId');
+
+    if (tabs.length === 0) {
+        tabs = [{ id: 'tab-' + Date.now(), name: 'Query 1', sql: 'SELECT * FROM {table} LIMIT 10' }];
+        activeTabId = tabs[0].id;
+    }
+
+    function initEditor() {
+        if (!editorElement) return;
         editor = CodeMirror.fromTextArea(editorElement, {
             mode: 'text/x-sql',
             theme: 'material-darker',
@@ -12,21 +24,105 @@ document.addEventListener('DOMContentLoaded', () => {
             autofocus: true,
             matchBrackets: true,
             viewportMargin: Infinity,
-            extraKeys: { "Ctrl-Space": "autocomplete" },
+            extraKeys: {
+                "Ctrl-Space": "autocomplete",
+                "Ctrl-Enter": () => { document.getElementById('runQuery')?.click(); },
+                "Cmd-Enter": () => { document.getElementById('runQuery')?.click(); },
+                "Esc": () => { document.getElementById('stopQuery')?.click(); }
+            },
             hintOptions: {
                 completeSingle: false,
                 tables: {} // Will be populated
             }
         });
 
-        // Populate tables for auto-completion
         fetchTopicsForAutocomplete(editor);
+
+        editor.on("change", (cm) => {
+            const activeTab = tabs.find(t => t.id === activeTabId);
+            if (activeTab) {
+                activeTab.sql = cm.getValue();
+                saveTabs();
+            }
+        });
 
         editor.on("inputRead", function(cm, change) {
             if (change.text[0] === " " || change.text[0] === "." || change.text[0] === "(") return;
             cm.showHint({ completeSingle: false });
         });
+
+        renderTabs();
+        switchTab(activeTabId);
     }
+
+    function saveTabs() {
+        localStorage.setItem('sqlTabs', JSON.stringify(tabs));
+        localStorage.setItem('activeTabId', activeTabId);
+    }
+
+    function renderTabs() {
+        if (!tabContainer) return;
+        tabContainer.innerHTML = '';
+        tabs.forEach(tab => {
+            const tabEl = document.createElement('div');
+            tabEl.className = `group flex items-center gap-2 px-4 py-2 text-[10px] font-bold uppercase tracking-widest border-t-2 transition-all cursor-pointer rounded-t-lg mb-0 ${tab.id === activeTabId ? 'bg-[#011627] text-primary border-primary' : 'bg-background-dark/40 text-slate-500 border-transparent hover:text-slate-300'}`;
+
+            const nameSpan = document.createElement('span');
+            nameSpan.textContent = tab.name;
+            nameSpan.onclick = () => switchTab(tab.id);
+            tabEl.appendChild(nameSpan);
+
+            if (tabs.length > 1) {
+                const closeBtn = document.createElement('span');
+                closeBtn.className = 'material-symbols-outlined text-[12px] opacity-0 group-hover:opacity-100 hover:text-red-400 transition-all';
+                closeBtn.textContent = 'close';
+                closeBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    closeTab(tab.id);
+                };
+                tabEl.appendChild(closeBtn);
+            }
+
+            tabContainer.appendChild(tabEl);
+        });
+    }
+
+    function switchTab(id) {
+        const tab = tabs.find(t => t.id === id);
+        if (!tab) return;
+        activeTabId = id;
+        if (editor) {
+            editor.setValue(tab.sql || '');
+        }
+        renderTabs();
+        saveTabs();
+
+        // Hide results when switching if they don't belong to this tab
+        document.getElementById('resultsCard').style.display = 'none';
+        document.getElementById('queryStatus').classList.add('hidden');
+    }
+
+    function closeTab(id) {
+        const index = tabs.findIndex(t => t.id === id);
+        if (index === -1) return;
+
+        tabs.splice(index, 1);
+        if (activeTabId === id) {
+            activeTabId = tabs[Math.max(0, index - 1)].id;
+        }
+        renderTabs();
+        switchTab(activeTabId);
+    }
+
+    if (addTabBtn) {
+        addTabBtn.onclick = () => {
+            const newId = 'tab-' + Date.now();
+            tabs.push({ id: newId, name: `Query ${tabs.length + 1}`, sql: '' });
+            switchTab(newId);
+        };
+    }
+
+    initEditor();
 
     // DDL Viewer
     const ddlElement = document.getElementById('ddlEditor');
@@ -44,8 +140,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const runBtn = document.getElementById('runQuery');
     const stopBtn = document.getElementById('stopQuery');
     const clearBtn = document.getElementById('clearEditor');
+    const pauseBtn = document.getElementById('pauseStream');
+    const viewTableBtn = document.getElementById('viewTable');
+    const viewChartBtn = document.getElementById('viewChart');
 
     let currentQueryId = null;
+    let isPaused = false;
+    let viewMode = 'TABLE'; // TABLE or CHART
+    let resultsChart = null;
+    let lastData = null;
 
     if (clearBtn) {
         clearBtn.addEventListener('click', () => {
@@ -65,10 +168,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const resultsCard = document.getElementById('resultsCard');
 
             currentQueryId = Math.random().toString(36).substring(7);
-            runBtn.classList.add('d-none');
-            stopBtn.classList.remove('d-none');
-            statusDiv.classList.add('d-none');
+            runBtn.classList.add('hidden');
+            stopBtn.classList.remove('hidden');
+            statusDiv.classList.add('hidden');
             resultsCard.style.display = 'none';
+            isPaused = false;
+            updatePauseButton();
 
             try {
                 const readMode = document.querySelector('input[name="readMode"]:checked')?.value || 'earliest-offset';
@@ -82,8 +187,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 if (data.error) {
                     statusDiv.textContent = 'Error: ' + data.error;
-                    statusDiv.classList.remove('d-none', 'alert-success');
-                    statusDiv.classList.add('alert-danger');
+                    statusDiv.classList.remove('hidden', 'bg-emerald-500/10', 'text-emerald-500');
+                    statusDiv.classList.add('bg-red-500/10', 'text-red-500');
+                    statusDiv.classList.remove('hidden');
                 } else {
                     renderResults(data);
                     resultsCard.style.display = 'block';
@@ -96,11 +202,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 } else {
                     statusDiv.textContent = 'Network Error: ' + err.message;
                 }
-                statusDiv.classList.remove('d-none');
-                statusDiv.classList.add('alert-danger');
+                statusDiv.classList.remove('hidden', 'bg-emerald-500/10', 'text-emerald-500');
+                statusDiv.classList.add('bg-red-500/10', 'text-red-500');
             } finally {
-                runBtn.classList.remove('d-none');
-                stopBtn.classList.add('d-none');
+                runBtn.classList.remove('hidden');
+                stopBtn.classList.add('hidden');
                 currentQueryId = null;
             }
         });
@@ -111,7 +217,6 @@ document.addEventListener('DOMContentLoaded', () => {
             if (currentQueryId) {
                 try {
                     await fetch(`/query/cancel/${currentQueryId}`, { method: 'POST' });
-                    // The main fetch will probably timeout or error out
                 } catch (e) {
                     console.error('Failed to cancel query', e);
                 }
@@ -119,7 +224,111 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    if (pauseBtn) {
+        pauseBtn.onclick = () => {
+            isPaused = !isPaused;
+            updatePauseButton();
+        };
+    }
+
+    function updatePauseButton() {
+        if (!pauseBtn) return;
+        if (isPaused) {
+            pauseBtn.innerHTML = '<span class="material-symbols-outlined text-[14px]">play_arrow</span> <span>Resume</span>';
+            pauseBtn.classList.replace('bg-primary/10', 'bg-amber-500/10');
+            pauseBtn.classList.replace('text-primary', 'text-amber-500');
+        } else {
+            pauseBtn.innerHTML = '<span class="material-symbols-outlined text-[14px]">pause</span> <span>Pause</span>';
+            pauseBtn.classList.replace('bg-amber-500/10', 'bg-primary/10');
+            pauseBtn.classList.replace('text-amber-500', 'text-primary');
+        }
+    }
+
+    if (viewTableBtn) {
+        viewTableBtn.onclick = () => switchViewMode('TABLE');
+    }
+    if (viewChartBtn) {
+        viewChartBtn.onclick = () => switchViewMode('CHART');
+    }
+
+    function switchViewMode(mode) {
+        viewMode = mode;
+        if (mode === 'TABLE') {
+            document.getElementById('resultsTable').classList.remove('hidden');
+            document.getElementById('chartContainer').classList.add('hidden');
+            viewTableBtn.classList.add('bg-primary/20', 'text-primary');
+            viewChartBtn.classList.remove('bg-primary/20', 'text-primary');
+            viewChartBtn.classList.add('text-slate-500');
+        } else {
+            document.getElementById('resultsTable').classList.add('hidden');
+            document.getElementById('chartContainer').classList.remove('hidden');
+            viewChartBtn.classList.add('bg-primary/20', 'text-primary');
+            viewTableBtn.classList.remove('bg-primary/20', 'text-primary');
+            viewTableBtn.classList.add('text-slate-500');
+            if (lastData) renderChart(lastData);
+        }
+    }
+
+    function renderChart(data) {
+        const ctx = document.getElementById('resultsChart').getContext('2d');
+
+        // Identify numeric columns for Y axis
+        const numericCols = data.columns.filter(col => {
+            if (col.includes('window_')) return false;
+            return data.rows.some(row => typeof row[col] === 'number');
+        });
+
+        // Identify X axis (prefer window_start, else first col)
+        const xCol = data.columns.find(col => col === 'window_start') || data.columns[0];
+
+        const labels = data.rows.map(row => row[xCol]);
+        const datasets = numericCols.map((col, i) => ({
+            label: col,
+            data: data.rows.map(row => row[col]),
+            borderColor: i === 0 ? '#25f4f4' : '#6ee7b7',
+            backgroundColor: i === 0 ? 'rgba(37, 244, 244, 0.1)' : 'rgba(110, 231, 183, 0.1)',
+            borderWidth: 2,
+            fill: true,
+            tension: 0.4
+        }));
+
+        if (resultsChart) {
+            resultsChart.data.labels = labels;
+            resultsChart.data.datasets = datasets;
+            resultsChart.update('none');
+        } else {
+            resultsChart = new Chart(ctx, {
+                type: 'line',
+                data: { labels, datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            grid: { color: 'rgba(37, 244, 244, 0.05)' },
+                            ticks: { color: '#94a3b8', font: { size: 10 } }
+                        },
+                        x: {
+                            grid: { display: false },
+                            ticks: { color: '#94a3b8', font: { size: 10 } }
+                        }
+                    },
+                    plugins: {
+                        legend: { labels: { color: '#f1f5f9', font: { size: 10, weight: 'bold' } } }
+                    }
+                }
+            });
+        }
+    }
+
     function renderResults(data) {
+        lastData = data;
+        if (isPaused) return;
+
+        if (viewMode === 'CHART') {
+            renderChart(data);
+        }
         const header = document.getElementById('resultsHeader');
         const body = document.getElementById('resultsBody');
 
@@ -129,14 +338,16 @@ document.addEventListener('DOMContentLoaded', () => {
         data.columns.forEach(col => {
             const th = document.createElement('th');
             th.textContent = col;
-            th.className = 'text-teal small';
+            th.className = 'px-4 py-3 border-b border-primary/10 text-[10px] font-bold text-slate-500 uppercase tracking-widest';
             header.appendChild(th);
         });
 
         data.rows.forEach(row => {
             const tr = document.createElement('tr');
+            tr.className = 'hover:bg-primary/5 transition-colors group';
             data.columns.forEach(col => {
                 const td = document.createElement('td');
+                td.className = 'px-4 py-3 text-xs font-mono text-slate-300';
                 let value = row[col] !== null ? row[col] : 'NULL';
 
                 if (typeof value === 'string') {
@@ -150,13 +361,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (typeof value === 'string' && value.includes('\n')) {
                     const pre = document.createElement('pre');
                     pre.textContent = value;
-                    pre.className = 'mb-0 small text-muted';
+                    pre.className = 'bg-background-dark border border-primary/10 rounded px-2 py-1 text-[10px] font-mono text-slate-400 group-hover:text-primary transition-colors';
                     td.appendChild(pre);
                 } else {
                     td.textContent = value;
                 }
-
-                td.className = 'text-muted small';
                 tr.appendChild(td);
             });
             body.appendChild(tr);
@@ -196,12 +405,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!window.sqlEditor) return;
 
         // Try to replace {table} with the first available table name
-        const tableItem = document.querySelector('#collapseTables .list-group-item span');
+        const tableItem = document.querySelector('#collapseTables .list-group-item .truncate');
         const tableName = tableItem ? tableItem.textContent : 'my_table';
         template = template.replace(/{table}/g, tableName);
 
         // Try to replace {col1}, {col2} with columns if available
-        const detailsDiv = document.querySelector('#collapseTables .schema-details:not(.d-none)');
+        const detailsDiv = document.querySelector('#collapseTables .schema-details:not(.hidden)');
         if (detailsDiv) {
             const cols = Array.from(detailsDiv.querySelectorAll('.cursor-pointer span:first-child')).map(s => s.textContent);
             if (cols.length > 0) {
@@ -218,9 +427,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const type = document.getElementById('winType').value;
         const hopFields = document.getElementById('hopFields');
         if (type === 'HOP') {
-            hopFields.classList.remove('d-none');
+            hopFields.classList.remove('hidden');
         } else {
-            hopFields.classList.add('d-none');
+            hopFields.classList.add('hidden');
         }
     };
 
@@ -245,21 +454,21 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     window.toggleSchema = async function(btn, tableName) {
-        const detailsDiv = btn.closest('li').querySelector('.schema-details');
-        const icon = btn.querySelector('i');
-        if (detailsDiv.classList.contains('d-none')) {
-            icon.classList.replace('fa-chevron-right', 'fa-chevron-down');
-            detailsDiv.classList.remove('d-none');
+        const detailsDiv = btn.closest('.list-group-item').querySelector('.schema-details');
+        const icon = btn.querySelector('span');
+        if (detailsDiv.classList.contains('hidden')) {
+            icon.textContent = 'expand_more';
+            detailsDiv.classList.remove('hidden');
             if (detailsDiv.innerHTML === '') {
-                detailsDiv.innerHTML = '<div class="spinner-border spinner-border-sm text-teal" role="status"></div>';
+                detailsDiv.innerHTML = '<div class="flex justify-center py-2"><div class="animate-spin rounded-full h-4 w-4 border-2 border-primary border-t-transparent"></div></div>';
                 try {
                     const response = await fetch(`/api/schema/${tableName}`);
                     const schema = await response.json();
                     detailsDiv.innerHTML = '';
                     Object.entries(schema).forEach(([col, type]) => {
                         const div = document.createElement('div');
-                        div.className = 'small text-muted d-flex justify-content-between cursor-pointer hover-teal';
-                        div.innerHTML = `<span>${col}</span><span class="x-small opacity-50">${type}</span>`;
+                        div.className = 'flex items-center justify-between py-1 px-2 text-xs text-slate-400 hover:text-primary cursor-pointer transition-colors';
+                        div.innerHTML = `<span>${col}</span><span class="text-[10px] opacity-50 font-mono">${type}</span>`;
                         div.onclick = (e) => {
                             e.stopPropagation();
                             insertAtCursor(col);
@@ -267,12 +476,12 @@ document.addEventListener('DOMContentLoaded', () => {
                         detailsDiv.appendChild(div);
                     });
                 } catch (e) {
-                    detailsDiv.innerHTML = '<small class="text-danger">Error loading schema</small>';
+                    detailsDiv.innerHTML = '<small class="text-red-400 text-[10px]">Error loading schema</small>';
                 }
             }
         } else {
-            icon.classList.replace('fa-chevron-down', 'fa-chevron-right');
-            detailsDiv.classList.add('d-none');
+            icon.textContent = 'chevron_right';
+            detailsDiv.classList.add('hidden');
         }
     };
 
@@ -287,17 +496,16 @@ document.addEventListener('DOMContentLoaded', () => {
         const assistantMode = document.body.classList.toggle('assistant-active');
         const btn = document.getElementById('assistantToggleBtn');
         if (assistantMode) {
-            btn.textContent = 'Exit Assistant';
-            btn.classList.add('btn-teal');
-            btn.classList.remove('btn-outline-teal');
+            btn.innerHTML = '<span class="material-symbols-outlined text-sm">close</span> Exit Assistant';
+            btn.classList.add('bg-primary', 'text-background-dark');
             initializeAssistant(topicName);
         } else {
-            btn.textContent = 'Query Assistant';
-            btn.classList.remove('btn-teal');
-            btn.classList.add('btn-outline-teal');
+            btn.innerHTML = '<span class="material-symbols-outlined text-sm">magic_button</span> Query Assistant';
+            btn.classList.remove('bg-primary', 'text-background-dark');
             exitAssistant();
         }
     };
+
 
     function initializeAssistant(topicName) {
         const samples = document.querySelectorAll('.sample-msg-pre');
@@ -601,7 +809,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (prefixInput || fullNameInput) {
         const filterTopics = () => {
-            const prefix = prefixInput.value.toLowerCase();
+            const prefix = prefixInput?.value.toLowerCase();
             const fullName = fullNameInput.value.toLowerCase();
             const rows = document.querySelectorAll('.topic-row');
 
@@ -610,10 +818,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 let matchesPrefix = true;
                 let matchesFull = true;
 
-                if (prefix) matchesPrefix = name.startsWith(prefix);
-                if (fullName) matchesFull = (name === fullName);
+                if (prefix) matchesPrefix = name.trim().startsWith(prefix);
+                if (fullName) matchesFull = (name.trim() === fullName);
 
-                row.style.display = (matchesPrefix && matchesFull) ? '' : 'none';
+                if (matchesPrefix && matchesFull) {
+                    row.classList.remove('hidden');
+                } else {
+                    row.classList.add('hidden');
+                }
             });
         };
 
@@ -637,7 +849,12 @@ document.addEventListener('DOMContentLoaded', () => {
             if (hideEmpty && size === 0) visible = false;
             if (hideDlt && isDlt) visible = false;
 
-            row.style.display = visible ? '' : 'none';
+            // Use tailwind display classes
+            if (visible) {
+                row.classList.remove('hidden');
+            } else {
+                row.classList.add('hidden');
+            }
         });
 
         // Handle sidebar/accordion topic items
@@ -647,7 +864,11 @@ document.addEventListener('DOMContentLoaded', () => {
             let visible = true;
             if (hideDlt && isDlt) visible = false;
 
-            item.style.display = visible ? '' : 'none';
+            if (visible) {
+                item.classList.remove('hidden');
+            } else {
+                item.classList.add('hidden');
+            }
         });
     };
 
@@ -659,12 +880,12 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function saveToHistory(sql) {
-    let history = JSON.parse(sessionStorage.getItem('sqlHistory') || '[]');
+    let history = JSON.parse(localStorage.getItem('sqlHistory') || '[]');
     // Remove if already exists to move it to the top
     history = history.filter(item => item !== sql);
     history.unshift(sql);
     if (history.length > 20) history.pop();
-    sessionStorage.setItem('sqlHistory', JSON.stringify(history));
+    localStorage.setItem('sqlHistory', JSON.stringify(history));
     renderHistory();
 }
 
@@ -689,7 +910,7 @@ function renderHistory() {
     const historyList = document.getElementById('historyList');
     if (!historyList) return;
 
-    const history = JSON.parse(sessionStorage.getItem('sqlHistory') || '[]');
+    const history = JSON.parse(localStorage.getItem('sqlHistory') || '[]');
     historyList.innerHTML = '';
 
     if (history.length === 0) {
@@ -699,8 +920,7 @@ function renderHistory() {
 
     history.forEach((sql, index) => {
         const li = document.createElement('li');
-        li.className = 'list-group-item bg-dark text-light small border-secondary history-item';
-        li.style.cursor = 'pointer';
+            li.className = 'text-[10px] text-slate-400 hover:text-primary cursor-pointer truncate font-mono bg-background-dark/50 px-2 py-1 rounded border border-primary/5 transition-colors';
         li.textContent = sql.substring(0, 50) + (sql.length > 50 ? '...' : '');
         li.title = sql;
         li.onclick = () => {
