@@ -20,9 +20,11 @@ Liste des Topics : Vue d'ensemble de tous les topics disponibles sur le cluster 
 Filtrage Avancé :
 Filtre par Préfixe : Permet de trouver rapidement des topics appartenant à un domaine (ex: order.*).
 Match Nom Complet : Recherche exacte pour isoler un topic spécifique.
+Filtrage DLT : Toggle pour masquer les Dead Letter Topics (`*.dlt`) et se concentrer sur les flux fonctionnels.
 Tables Dynamiques Flink : Section dédiée pour gérer les tables et vues temporaires enregistrées dans le moteur Flink local.
 2. Exploration de Topic
 Métadonnées Temps Réel : Visualisation du nombre de partitions, des offsets min/max et de la taille estimée des données.
+Identification DLT : Badges et avertissements spécifiques pour les Dead Letter Topics, prévenant d'éventuels messages malformés.
 Échantillonnage (Sampling) : Lecture automatique des derniers messages du topic (partition 0) pour analyse.
 Formatage Avancé : Pretty-print natif pour les messages au format JSON et XML.
 Copie Rapide : Bouton de copie en un clic pour chaque message prévisualisé.
@@ -48,6 +50,8 @@ Scan Parallèle : Balayage concurrent des topics à haute performance avec gesti
 Visualisation Chronologique : Graphe interactif illustrant le flux séquentiel des messages entre les topics.
 6. Éditeur SQL Professionnel
 Moteur CodeMirror : Coloration syntaxique SQL et thème Cyberpunk.
+Sélecteur de Mode de Lecture : Toggle entre offsets **Earliest** (début du topic) et **Latest** (nouveaux messages uniquement) directement dans l'UI.
+Hints SQL Dynamiques : Injection automatique de hints Flink SQL (`/*+ OPTIONS(...) */`) pour un contrôle précis des offsets par requête sans modifier le DDL.
 Auto-complétion : Suggestion intelligente des noms de topics et tables enregistrées (Ctrl+Space).
 Historique des Requêtes : Accès rapide aux 20 dernières requêtes exécutées via une sidebar persistante (sessionStorage).
 Gestion des Ressources : Annulation automatique des jobs Flink en cas de timeout ou d'erreur, évitant toute fuite de ressources dans le minicluster.
