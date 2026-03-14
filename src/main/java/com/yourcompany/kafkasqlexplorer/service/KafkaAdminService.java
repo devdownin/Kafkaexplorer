@@ -76,6 +76,9 @@ public class KafkaAdminService {
         Map<String, Long> sizes = new HashMap<>();
         if (topicNames.isEmpty()) return sizes;
 
+        // Initialize with 0 to prevent null pointers or missing keys in UI
+        topicNames.forEach(name -> sizes.put(name, 0L));
+
         Properties props = new Properties();
         props.putAll(kafkaConfig.getKafkaProperties());
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
@@ -99,6 +102,8 @@ public class KafkaAdminService {
                     }
                 }
 
+                if (allPartitions.isEmpty()) return sizes;
+
                 Map<TopicPartition, Long> beginningOffsets = consumer.beginningOffsets(allPartitions);
                 Map<TopicPartition, Long> endOffsets = consumer.endOffsets(allPartitions);
 
@@ -106,11 +111,13 @@ public class KafkaAdminService {
                     List<TopicPartition> tps = topicToPartitions.get(name);
                     if (tps != null) {
                         long size = tps.stream()
-                                .mapToLong(tp -> endOffsets.get(tp) - beginningOffsets.get(tp))
+                                .mapToLong(tp -> {
+                                    Long end = endOffsets.get(tp);
+                                    Long start = beginningOffsets.get(tp);
+                                    return (end != null && start != null) ? (end - start) : 0L;
+                                })
                                 .sum();
                         sizes.put(name, size);
-                    } else {
-                        sizes.put(name, 0L);
                     }
                 }
             } catch (Exception e) {

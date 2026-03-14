@@ -2,21 +2,17 @@ package com.yourcompany.kafkasqlexplorer.web;
 
 import com.yourcompany.kafkasqlexplorer.domain.MessageFormat;
 import com.yourcompany.kafkasqlexplorer.domain.TopicDescriptor;
+import com.yourcompany.kafkasqlexplorer.domain.TopicDetailResponse;
 import com.yourcompany.kafkasqlexplorer.service.MessageFormatterService;
 import com.yourcompany.kafkasqlexplorer.service.DdlGeneratorService;
 import com.yourcompany.kafkasqlexplorer.service.KafkaAdminService;
 import com.yourcompany.kafkasqlexplorer.service.SchemaInferenceService;
-import org.springframework.stereotype.Controller;
-import org.springframework.ui.Model;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.ResponseBody;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
-import java.util.concurrent.ExecutionException;
 
-@Controller
+@RestController
+@RequestMapping("/api/topic")
 public class TopicController {
 
     private final KafkaAdminService kafkaAdminService;
@@ -31,29 +27,26 @@ public class TopicController {
         this.messageFormatterService = messageFormatterService;
     }
 
-    @GetMapping("/topic/{name}")
-    public String detail(@PathVariable String name,
-                         @RequestParam(defaultValue = "earliest-offset") String readMode,
-                         Model model) throws Exception {
+    @GetMapping("/{name}")
+    public TopicDetailResponse getTopicDetail(@PathVariable String name,
+                                              @RequestParam(defaultValue = "earliest-offset") String readMode) throws Exception {
         TopicDescriptor descriptor = kafkaAdminService.getTopicDescriptor(name);
         MessageFormat format = schemaInferenceService.detectFormat(name);
         Map<String, String> schema = schemaInferenceService.inferSchema(name, format);
         String ddl = ddlGeneratorService.generateDdl(name, schema, format, readMode);
 
-        model.addAttribute("topic", descriptor);
-        model.addAttribute("format", format);
-        model.addAttribute("schema", schema);
-        model.addAttribute("ddl", ddl);
-        model.addAttribute("readMode", readMode);
-        model.addAttribute("samples", kafkaAdminService.getSampleMessages(name, 20).stream()
-                .map(messageFormatterService::format)
-                .toList());
-
-        return "topic-detail";
+        return new TopicDetailResponse(
+                descriptor,
+                format,
+                schema,
+                ddl,
+                kafkaAdminService.getSampleMessages(name, 20).stream()
+                        .map(messageFormatterService::format)
+                        .toList()
+        );
     }
 
-    @GetMapping(value = "/api/topic/{name}/ddl", produces = "text/plain")
-    @ResponseBody
+    @GetMapping(value = "/{name}/ddl", produces = "text/plain")
     public String getDdl(@PathVariable String name,
                          @RequestParam(defaultValue = "earliest-offset") String readMode) throws Exception {
         MessageFormat format = schemaInferenceService.detectFormat(name);

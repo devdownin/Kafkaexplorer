@@ -1,14 +1,18 @@
 package com.yourcompany.kafkasqlexplorer.web;
 
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.yourcompany.kafkasqlexplorer.domain.DashboardResponse;
 import com.yourcompany.kafkasqlexplorer.service.FlinkSqlService;
 import com.yourcompany.kafkasqlexplorer.service.KafkaAdminService;
-import org.springframework.stereotype.Controller;
-import org.springframework.ui.Model;
-import org.springframework.web.bind.annotation.GetMapping;
 
-import java.util.concurrent.ExecutionException;
-
-@Controller
+@RestController
+@RequestMapping("/api/dashboard")
 public class DashboardController {
 
     private final KafkaAdminService kafkaAdminService;
@@ -19,35 +23,19 @@ public class DashboardController {
         this.flinkSqlService = flinkSqlService;
     }
 
-    @GetMapping("/")
-    public String index(Model model) {
-        try {
-            java.util.List<String> topics = kafkaAdminService.listTopics();
-            java.util.Map<String, Long> topicSizes = kafkaAdminService.getTopicsSize(topics);
-            long totalMessages = topicSizes.values().stream().mapToLong(Long::longValue).sum();
-            boolean health = kafkaAdminService.ping();
+    @GetMapping
+    public DashboardResponse getDashboardData() throws Exception {
+        List<String> topics = kafkaAdminService.listTopics();
+        Map<String, Long> topicSizes = kafkaAdminService.getTopicsSize(topics);
+        long totalMessages = topicSizes.values().stream().mapToLong(Long::longValue).sum();
 
-            model.addAttribute("topics", topics);
-            model.addAttribute("topicSizes", topicSizes);
-            model.addAttribute("totalMessages", totalMessages);
-            model.addAttribute("health", health);
-            model.addAttribute("tables", flinkSqlService.listTables());
-            model.addAttribute("jobs", flinkSqlService.getActiveJobsDetails());
-        } catch (Exception e) {
-            model.addAttribute("topics", java.util.Collections.emptyList());
-            model.addAttribute("topicSizes", java.util.Collections.emptyMap());
-            model.addAttribute("totalMessages", 0L);
-            model.addAttribute("health", false);
-            model.addAttribute("tables", java.util.Collections.emptyList());
-            model.addAttribute("jobs", java.util.Collections.emptyMap());
-            model.addAttribute("error", "Could not connect to Kafka: " + e.getMessage());
-        }
-        return "dashboard";
-    }
-
-    @GetMapping("/api/topics")
-    @org.springframework.web.bind.annotation.ResponseBody
-    public java.util.List<String> getTopics() throws Exception {
-        return kafkaAdminService.listTopics();
+        return new DashboardResponse(
+                topics,
+                topicSizes,
+                totalMessages,
+                flinkSqlService.listTables(),
+                flinkSqlService.getActiveJobs(),
+                kafkaAdminService.ping()
+        );
     }
 }

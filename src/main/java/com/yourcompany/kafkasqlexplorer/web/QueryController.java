@@ -1,19 +1,18 @@
 package com.yourcompany.kafkasqlexplorer.web;
 
+import com.yourcompany.kafkasqlexplorer.domain.QueryInitResponse;
 import com.yourcompany.kafkasqlexplorer.domain.QueryRequest;
 import com.yourcompany.kafkasqlexplorer.domain.QueryResult;
 import com.yourcompany.kafkasqlexplorer.service.FlinkSqlService;
 import com.yourcompany.kafkasqlexplorer.service.KafkaAdminService;
-import org.springframework.stereotype.Controller;
-import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-@Controller
+@RestController
+@RequestMapping("/api/query")
 public class QueryController {
 
     private final FlinkSqlService flinkSqlService;
@@ -24,8 +23,8 @@ public class QueryController {
         this.kafkaAdminService = kafkaAdminService;
     }
 
-    @GetMapping("/query")
-    public String query(Model model) {
+    @GetMapping("/init")
+    public QueryInitResponse init() {
         boolean isConnected = false;
         List<String> topics = Collections.emptyList();
         List<String> tables = Collections.emptyList();
@@ -36,7 +35,7 @@ public class QueryController {
                 topics = kafkaAdminService.listTopics();
             }
         } catch (Exception e) {
-            // Log as warning and continue with empty list
+            // Ignore and show empty list
         }
 
         try {
@@ -45,26 +44,20 @@ public class QueryController {
             // Flink might be starting up
         }
 
-        model.addAttribute("health", isConnected);
-        model.addAttribute("topics", topics);
-        model.addAttribute("tables", tables);
-        return "query";
+        return new QueryInitResponse(topics, tables, isConnected);
     }
 
-    @PostMapping(value = "/query", produces = "application/json")
-    @ResponseBody
+    @PostMapping(produces = "application/json")
     public QueryResult execute(@RequestBody QueryRequest request) {
         return flinkSqlService.executeSql(request);
     }
 
-    @GetMapping(value = "/api/schema/{tableName}", produces = "application/json")
-    @ResponseBody
+    @GetMapping(value = "/schema/{tableName}", produces = "application/json")
     public Map<String, String> getSchema(@PathVariable String tableName) {
         return flinkSqlService.getTableSchema(tableName);
     }
 
-    @PostMapping("/query/cancel/{queryId}")
-    @ResponseBody
+    @PostMapping("/cancel/{queryId}")
     public void cancel(@PathVariable String queryId) {
         flinkSqlService.cancelQuery(queryId);
     }

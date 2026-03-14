@@ -158,7 +158,9 @@ public class FlinkSqlService {
                 throw te;
             } catch (ExecutionException ee) {
                 log.error("Query execution failed: {}", request.sql(), ee.getCause());
-                throw (Exception) ee.getCause();
+                Throwable cause = ee.getCause();
+                if (cause instanceof Exception ex) throw ex;
+                throw new RuntimeException(cause);
             }
 
                 long duration = System.currentTimeMillis() - startTime;

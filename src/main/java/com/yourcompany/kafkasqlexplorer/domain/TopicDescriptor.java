@@ -1,6 +1,5 @@
 package com.yourcompany.kafkasqlexplorer.domain;
 
-import java.util.List;
 import java.util.Map;
 
 public record TopicDescriptor(
