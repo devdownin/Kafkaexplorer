@@ -101,6 +101,7 @@
                                 <div>
                                     <select id="tableSelector" class="form-select form-select-sm d-inline-block w-auto bg-dark border-secondary text-teal small py-0" onchange="applyTemplate()">
                                         <option value="{table}">Select Table...</option>
+                                        <option th:each="table : ${tables}" th:value="${table}" th:text="${table}"></option>
                                     </select>
                                     <button type="button" class="btn btn-link btn-sm p-0 text-teal text-decoration-none fw-bold ms-2" onclick="applyTemplate()">Apply Template</button>
                                 </div>
