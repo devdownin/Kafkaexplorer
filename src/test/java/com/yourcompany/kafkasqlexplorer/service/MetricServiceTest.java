@@ -24,7 +24,7 @@ class MetricServiceTest {
     @Test
     void testSaveAndDeleteMetric() {
         MetricService service = new MetricService();
-        MetricConfig newMetric = new MetricConfig(null, "Test Metric", "COUNTER", "SELECT 1 as metric_value", "Test Description");
+        MetricConfig newMetric = new MetricConfig(null, "Test Metric", "COUNTER", "SELECT 1 as metric_value", "Test Description", null, null);
 
         service.save(newMetric);
         List<MetricConfig> metrics = service.getAllMetrics();
@@ -43,7 +43,7 @@ class MetricServiceTest {
         MetricService service = new MetricService();
         MetricConfig original = service.getAllMetrics().get(0);
 
-        MetricConfig updated = new MetricConfig(original.id(), "Updated Name", "GAUGE", "SELECT 2 as metric_value", "Updated Desc");
+        MetricConfig updated = new MetricConfig(original.id(), "Updated Name", "GAUGE", "SELECT 2 as metric_value", "Updated Desc", 10.0, 50.0);
         service.save(updated);
 
         Optional<MetricConfig> found = service.getById(original.id());

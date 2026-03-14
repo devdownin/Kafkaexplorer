@@ -23,6 +23,10 @@
                 <span class="material-symbols-outlined text-xl">refresh</span>
                 Refresh Graph
             </button>
+            <button onclick="exportGraph()" class="flex items-center gap-3 px-3 py-2 rounded-lg bg-background-dark border border-primary/20 text-slate-400 text-sm hover:text-primary hover:bg-primary/5 transition-all">
+                <span class="material-symbols-outlined text-xl">download</span>
+                Export PNG
+            </button>
         </div>
         <div class="mt-auto">
             <div class="bg-primary/5 rounded-xl p-4 border border-primary/10">
@@ -88,6 +92,12 @@
                 </div>
             </div>
 
+            <div id="topic-navigation" class="hidden p-6 border-t border-primary/10 bg-primary/5">
+                <a id="nav-topic-link" href="#" class="w-full flex items-center justify-center gap-2 rounded-lg h-10 bg-primary text-background-dark font-bold text-sm hover:brightness-110 transition-all">
+                    <span class="material-symbols-outlined text-lg">visibility</span>
+                    Explore Topic
+                </a>
+            </div>
             <div class="p-6 border-t border-primary/10">
                 <a href="/query" class="w-full flex items-center justify-center gap-2 rounded-lg h-10 border border-primary text-primary font-bold text-sm hover:bg-primary/10 transition-all">
                     <span class="material-symbols-outlined text-lg">edit_note</span>
@@ -220,12 +230,35 @@
         cy.on('tap', function(evt){
             if (evt.target === cy) hideDetails();
         });
+
+        cyInstance = cy;
+    }
+
+    let cyInstance = null;
+
+    function exportGraph() {
+        if (!cyInstance) return;
+        const pngContent = cyInstance.png({ full: true, bg: '#010409' });
+        const link = document.createElement('a');
+        link.href = pngContent;
+        link.download = `lineage-graph-${Date.now()}.png`;
+        link.click();
     }
 
     function showDetails(data) {
         document.getElementById('no-selection-msg').classList.add('hidden');
         const panel = document.getElementById('details-panel');
         panel.classList.remove('hidden');
+
+        // Navigation visibility
+        const nav = document.getElementById('topic-navigation');
+        const navLink = document.getElementById('nav-topic-link');
+        if (data.type === 'topic') {
+            nav.classList.remove('hidden');
+            navLink.href = `/topic/${data.label}`;
+        } else {
+            nav.classList.add('hidden');
+        }
 
         document.getElementById('details-title').textContent = data.label;
         document.getElementById('details-type').textContent = data.type;

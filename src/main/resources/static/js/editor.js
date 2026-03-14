@@ -1,8 +1,20 @@
 document.addEventListener('DOMContentLoaded', () => {
-    // SQL Editor
+    // Multi-Tab Management
+    const tabContainer = document.getElementById('tabContainer');
+    const addTabBtn = document.getElementById('addTabBtn');
     const editorElement = document.getElementById('sqlEditor');
     let editor;
-    if (editorElement) {
+
+    let tabs = JSON.parse(localStorage.getItem('sqlTabs') || '[]');
+    let activeTabId = localStorage.getItem('activeTabId');
+
+    if (tabs.length === 0) {
+        tabs = [{ id: 'tab-' + Date.now(), name: 'Query 1', sql: 'SELECT * FROM {table} LIMIT 10' }];
+        activeTabId = tabs[0].id;
+    }
+
+    function initEditor() {
+        if (!editorElement) return;
         editor = CodeMirror.fromTextArea(editorElement, {
             mode: 'text/x-sql',
             theme: 'material-darker',
@@ -12,21 +24,126 @@ document.addEventListener('DOMContentLoaded', () => {
             autofocus: true,
             matchBrackets: true,
             viewportMargin: Infinity,
-            extraKeys: { "Ctrl-Space": "autocomplete" },
+            extraKeys: {
+                "Ctrl-Space": "autocomplete",
+                "Ctrl-Enter": () => { document.getElementById('runQuery')?.click(); },
+                "Cmd-Enter": () => { document.getElementById('runQuery')?.click(); },
+                "Esc": () => { document.getElementById('stopQuery')?.click(); }
+            },
             hintOptions: {
                 completeSingle: false,
                 tables: {} // Will be populated
             }
         });
 
-        // Populate tables for auto-completion
         fetchTopicsForAutocomplete(editor);
+
+        editor.on("change", (cm) => {
+            const activeTab = tabs.find(t => t.id === activeTabId);
+            if (activeTab) {
+                activeTab.sql = cm.getValue();
+                saveTabs();
+            }
+        });
 
         editor.on("inputRead", function(cm, change) {
             if (change.text[0] === " " || change.text[0] === "." || change.text[0] === "(") return;
             cm.showHint({ completeSingle: false });
         });
+
+        renderTabs();
+        switchTab(activeTabId);
     }
+
+    function saveTabs() {
+        localStorage.setItem('sqlTabs', JSON.stringify(tabs));
+        localStorage.setItem('activeTabId', activeTabId);
+    }
+
+    function renderTabs() {
+        if (!tabContainer) return;
+        tabContainer.innerHTML = '';
+        tabs.forEach(tab => {
+            const tabEl = document.createElement('div');
+            tabEl.className = `group flex items-center gap-2 px-4 py-2 text-[10px] font-bold uppercase tracking-widest border-t-2 transition-all cursor-pointer rounded-t-lg mb-0 ${tab.id === activeTabId ? 'bg-[#011627] text-primary border-primary' : 'bg-background-dark/40 text-slate-500 border-transparent hover:text-slate-300'}`;
+
+            const nameSpan = document.createElement('span');
+            nameSpan.textContent = tab.name;
+            nameSpan.onclick = () => switchTab(tab.id);
+            tabEl.appendChild(nameSpan);
+
+            if (tabs.length > 1) {
+                const closeBtn = document.createElement('span');
+                closeBtn.className = 'material-symbols-outlined text-[12px] opacity-0 group-hover:opacity-100 hover:text-red-400 transition-all';
+                closeBtn.textContent = 'close';
+                closeBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    closeTab(tab.id);
+                };
+                tabEl.appendChild(closeBtn);
+            }
+
+            tabContainer.appendChild(tabEl);
+        });
+    }
+
+    function switchTab(id) {
+        const tab = tabs.find(t => t.id === id);
+        if (!tab) return;
+        activeTabId = id;
+        if (editor) {
+            editor.setValue(tab.sql || '');
+        }
+        renderTabs();
+        saveTabs();
+
+        // Restore results and status for this tab
+        const savedData = sessionStorage.getItem('results-' + id);
+        const savedStatus = sessionStorage.getItem('status-' + id);
+        const resultsCard = document.getElementById('resultsCard');
+        const statusDiv = document.getElementById('queryStatus');
+
+        if (savedData) {
+            const data = JSON.parse(savedData);
+            renderResults(data);
+            resultsCard.style.display = 'block';
+            document.getElementById('queryStats').textContent =
+                `Found ${data.rows.length} rows in ${data.durationMs}ms`;
+        } else {
+            resultsCard.style.display = 'none';
+        }
+
+        if (savedStatus) {
+            const status = JSON.parse(savedStatus);
+            statusDiv.textContent = status.text;
+            statusDiv.className = status.className;
+            statusDiv.classList.remove('hidden');
+        } else {
+            statusDiv.classList.add('hidden');
+        }
+    }
+
+    function closeTab(id) {
+        const index = tabs.findIndex(t => t.id === id);
+        if (index === -1) return;
+
+        tabs.splice(index, 1);
+        if (activeTabId === id) {
+            activeTabId = tabs[Math.max(0, index - 1)].id;
+        }
+        renderTabs();
+        switchTab(activeTabId);
+    }
+
+    if (addTabBtn) {
+        addTabBtn.onclick = () => {
+            const newId = 'tab-' + Date.now();
+            tabs.push({ id: newId, name: `Query ${tabs.length + 1}`, sql: '' });
+            switchTab(newId);
+        };
+    }
+
+    initEditor();
 
     // DDL Viewer
     const ddlElement = document.getElementById('ddlEditor');
@@ -44,13 +161,21 @@ document.addEventListener('DOMContentLoaded', () => {
     const runBtn = document.getElementById('runQuery');
     const stopBtn = document.getElementById('stopQuery');
     const clearBtn = document.getElementById('clearEditor');
+    const pauseBtn = document.getElementById('pauseStream');
+    const viewTableBtn = document.getElementById('viewTable');
+    const viewChartBtn = document.getElementById('viewChart');
 
     let currentQueryId = null;
+    let isPaused = false;
+    let viewMode = 'TABLE'; // TABLE or CHART
+    let resultsChart = null;
+    let lastData = null;
 
     if (clearBtn) {
         clearBtn.addEventListener('click', () => {
             if (confirm('Clear editor?')) {
                 editor.setValue('');
+                showToast('Editor cleared', 'info');
             }
         });
     }
@@ -69,6 +194,8 @@ document.addEventListener('DOMContentLoaded', () => {
             stopBtn.classList.remove('hidden');
             statusDiv.classList.add('hidden');
             resultsCard.style.display = 'none';
+            isPaused = false;
+            updatePauseButton();
 
             try {
                 const readMode = document.querySelector('input[name="readMode"]:checked')?.value || 'earliest-offset';
@@ -81,15 +208,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 const data = await response.json();
 
                 if (data.error) {
-                    statusDiv.textContent = 'Error: ' + data.error;
-                    statusDiv.classList.remove('hidden', 'bg-emerald-500/10', 'text-emerald-500');
-                    statusDiv.classList.add('bg-red-500/10', 'text-red-500');
+                    const statusText = 'Error: ' + data.error;
+                    const statusClass = 'p-4 bg-red-500/10 text-red-500 text-sm font-medium';
+                    statusDiv.textContent = statusText;
+                    statusDiv.className = statusClass;
                     statusDiv.classList.remove('hidden');
+                    sessionStorage.setItem('status-' + activeTabId, JSON.stringify({ text: statusText, className: statusClass }));
+                    sessionStorage.removeItem('results-' + activeTabId);
                 } else {
                     renderResults(data);
                     resultsCard.style.display = 'block';
-                    document.getElementById('queryStats').textContent =
-                        `Found ${data.rows.length} rows in ${data.durationMs}ms`;
+                    const stats = `Found ${data.rows.length} rows in ${data.durationMs}ms`;
+                    document.getElementById('queryStats').textContent = stats;
+                    sessionStorage.setItem('results-' + activeTabId, JSON.stringify(data));
+                    sessionStorage.removeItem('status-' + activeTabId);
                 }
             } catch (err) {
                 if (err.name === 'AbortError') {
@@ -112,7 +244,6 @@ document.addEventListener('DOMContentLoaded', () => {
             if (currentQueryId) {
                 try {
                     await fetch(`/query/cancel/${currentQueryId}`, { method: 'POST' });
-                    // The main fetch will probably timeout or error out
                 } catch (e) {
                     console.error('Failed to cancel query', e);
                 }
@@ -120,14 +251,128 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    if (pauseBtn) {
+        pauseBtn.onclick = () => {
+            isPaused = !isPaused;
+            updatePauseButton();
+        };
+    }
+
+    function updatePauseButton() {
+        if (!pauseBtn) return;
+        if (isPaused) {
+            pauseBtn.innerHTML = '<span class="material-symbols-outlined text-[14px]">play_arrow</span> <span>Resume</span>';
+            pauseBtn.classList.replace('bg-primary/10', 'bg-amber-500/10');
+            pauseBtn.classList.replace('text-primary', 'text-amber-500');
+        } else {
+            pauseBtn.innerHTML = '<span class="material-symbols-outlined text-[14px]">pause</span> <span>Pause</span>';
+            pauseBtn.classList.replace('bg-amber-500/10', 'bg-primary/10');
+            pauseBtn.classList.replace('text-amber-500', 'text-primary');
+        }
+    }
+
+    if (viewTableBtn) {
+        viewTableBtn.onclick = () => switchViewMode('TABLE');
+    }
+    if (viewChartBtn) {
+        viewChartBtn.onclick = () => switchViewMode('CHART');
+    }
+
+    const colFilterInput = document.getElementById('columnFilter');
+    if (colFilterInput) {
+        colFilterInput.addEventListener('input', () => {
+            if (lastData) renderResults(lastData);
+        });
+    }
+
+    function switchViewMode(mode) {
+        viewMode = mode;
+        if (mode === 'TABLE') {
+            document.getElementById('resultsTable').classList.remove('hidden');
+            document.getElementById('chartContainer').classList.add('hidden');
+            viewTableBtn.classList.add('bg-primary/20', 'text-primary');
+            viewChartBtn.classList.remove('bg-primary/20', 'text-primary');
+            viewChartBtn.classList.add('text-slate-500');
+        } else {
+            document.getElementById('resultsTable').classList.add('hidden');
+            document.getElementById('chartContainer').classList.remove('hidden');
+            viewChartBtn.classList.add('bg-primary/20', 'text-primary');
+            viewTableBtn.classList.remove('bg-primary/20', 'text-primary');
+            viewTableBtn.classList.add('text-slate-500');
+            if (lastData) renderChart(lastData);
+        }
+    }
+
+    function renderChart(data) {
+        const ctx = document.getElementById('resultsChart').getContext('2d');
+
+        // Identify numeric columns for Y axis
+        const numericCols = data.columns.filter(col => {
+            if (col.includes('window_')) return false;
+            return data.rows.some(row => typeof row[col] === 'number');
+        });
+
+        // Identify X axis (prefer window_start, else first col)
+        const xCol = data.columns.find(col => col === 'window_start') || data.columns[0];
+
+        const labels = data.rows.map(row => row[xCol]);
+        const datasets = numericCols.map((col, i) => ({
+            label: col,
+            data: data.rows.map(row => row[col]),
+            borderColor: i === 0 ? '#25f4f4' : '#6ee7b7',
+            backgroundColor: i === 0 ? 'rgba(37, 244, 244, 0.1)' : 'rgba(110, 231, 183, 0.1)',
+            borderWidth: 2,
+            fill: true,
+            tension: 0.4
+        }));
+
+        if (resultsChart) {
+            resultsChart.data.labels = labels;
+            resultsChart.data.datasets = datasets;
+            resultsChart.update('none');
+        } else {
+            resultsChart = new Chart(ctx, {
+                type: 'line',
+                data: { labels, datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            grid: { color: 'rgba(37, 244, 244, 0.05)' },
+                            ticks: { color: '#94a3b8', font: { size: 10 } }
+                        },
+                        x: {
+                            grid: { display: false },
+                            ticks: { color: '#94a3b8', font: { size: 10 } }
+                        }
+                    },
+                    plugins: {
+                        legend: { labels: { color: '#f1f5f9', font: { size: 10, weight: 'bold' } } }
+                    }
+                }
+            });
+        }
+    }
+
     function renderResults(data) {
+        lastData = data;
+        if (isPaused) return;
+
+        const filterTerm = colFilterInput?.value.toLowerCase() || '';
+        const filteredColumns = data.columns.filter(col => col.toLowerCase().includes(filterTerm));
+
+        if (viewMode === 'CHART') {
+            renderChart({ ...data, columns: filteredColumns });
+        }
         const header = document.getElementById('resultsHeader');
         const body = document.getElementById('resultsBody');
 
         header.innerHTML = '';
         body.innerHTML = '';
 
-        data.columns.forEach(col => {
+        filteredColumns.forEach(col => {
             const th = document.createElement('th');
             th.textContent = col;
             th.className = 'px-4 py-3 border-b border-primary/10 text-[10px] font-bold text-slate-500 uppercase tracking-widest';
@@ -137,7 +382,7 @@ document.addEventListener('DOMContentLoaded', () => {
         data.rows.forEach(row => {
             const tr = document.createElement('tr');
             tr.className = 'hover:bg-primary/5 transition-colors group';
-            data.columns.forEach(col => {
+            filteredColumns.forEach(col => {
                 const td = document.createElement('td');
                 td.className = 'px-4 py-3 text-xs font-mono text-slate-300';
                 let value = row[col] !== null ? row[col] : 'NULL';
@@ -561,12 +806,12 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             const data = await response.json();
             if (data.error) {
-                alert('Error registering table: ' + data.error);
+                showToast('Error registering table: ' + data.error, 'error');
             } else {
-                alert('Table registered successfully in Flink!');
+                showToast('Table registered successfully in Flink!');
             }
         } catch (e) {
-            alert('Failed to register table: ' + e.message);
+            showToast('Failed to register table: ' + e.message, 'error');
         }
     };
 
@@ -672,12 +917,12 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function saveToHistory(sql) {
-    let history = JSON.parse(sessionStorage.getItem('sqlHistory') || '[]');
+    let history = JSON.parse(localStorage.getItem('sqlHistory') || '[]');
     // Remove if already exists to move it to the top
     history = history.filter(item => item !== sql);
     history.unshift(sql);
     if (history.length > 20) history.pop();
-    sessionStorage.setItem('sqlHistory', JSON.stringify(history));
+    localStorage.setItem('sqlHistory', JSON.stringify(history));
     renderHistory();
 }
 
@@ -702,7 +947,7 @@ function renderHistory() {
     const historyList = document.getElementById('historyList');
     if (!historyList) return;
 
-    const history = JSON.parse(sessionStorage.getItem('sqlHistory') || '[]');
+    const history = JSON.parse(localStorage.getItem('sqlHistory') || '[]');
     historyList.innerHTML = '';
 
     if (history.length === 0) {
@@ -727,14 +972,6 @@ function copyToClipboard(button) {
     const pre = button.previousElementSibling;
     const text = pre.textContent;
     navigator.clipboard.writeText(text).then(() => {
-        const originalText = button.textContent;
-        button.textContent = 'Copied!';
-        button.classList.add('btn-teal');
-        button.classList.remove('btn-outline-teal');
-        setTimeout(() => {
-            button.textContent = originalText;
-            button.classList.remove('btn-teal');
-            button.classList.add('btn-outline-teal');
-        }, 2000);
+        showToast('Copied to clipboard');
     });
 }

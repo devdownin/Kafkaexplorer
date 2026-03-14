@@ -184,14 +184,7 @@
     document.getElementById('copyDdl')?.addEventListener('click', () => {
         const ddl = document.getElementById('ddlEditor').value;
         navigator.clipboard.writeText(ddl).then(() => {
-            const btn = document.getElementById('copyDdl');
-            const originalHtml = btn.innerHTML;
-            btn.innerHTML = '<span class="material-symbols-outlined text-sm">check</span> Copied!';
-            btn.classList.add('text-primary');
-            setTimeout(() => {
-                btn.innerHTML = originalHtml;
-                btn.classList.remove('text-primary');
-            }, 2000);
+            showToast('DDL copied to clipboard');
         });
     });
 </script>

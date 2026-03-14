@@ -43,9 +43,12 @@
                 <label for="maxMessages" class="text-[10px] font-bold text-slate-500 uppercase">Scan Limit (msgs/topic)</label>
                 <input type="number" class="w-full bg-background-dark border border-primary/20 rounded px-3 py-2 text-xs focus:ring-1 focus:ring-primary focus:border-primary outline-none text-slate-200" id="maxMessages" value="100" min="1" max="1000">
             </div>
-            <div class="flex items-end">
-                <button type="submit" class="w-full flex items-center justify-center gap-2 px-4 py-2 bg-primary text-background-dark rounded-lg text-xs font-bold hover:brightness-110 transition-all">
+            <div class="flex items-end gap-2">
+                <button type="submit" class="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-primary text-background-dark rounded-lg text-xs font-bold hover:brightness-110 transition-all">
                     <span class="material-symbols-outlined text-sm">search</span> TRACE FLOW
+                </button>
+                <button type="button" onclick="exportGraph()" class="px-3 py-2 bg-background-dark border border-primary/20 text-slate-400 rounded-lg hover:text-primary transition-all">
+                    <span class="material-symbols-outlined text-sm">download</span>
                 </button>
             </div>
         </form>
@@ -143,6 +146,17 @@
             <p class="text-xs uppercase font-bold tracking-widest">Enter criteria and click "Trace Flow"</p>`;
     }
 
+    let cyInstance = null;
+
+    function exportGraph() {
+        if (!cyInstance) return;
+        const pngContent = cyInstance.png({ full: true, bg: '#010409' });
+        const link = document.createElement('a');
+        link.href = pngContent;
+        link.download = `stream-flow-${Date.now()}.png`;
+        link.click();
+    }
+
     function renderGraph(data) {
         const elements = [];
 
@@ -216,6 +230,8 @@
                 spacingFactor: 1.5
             }
         });
+
+        cyInstance = cy;
     }
 </script>
 </body>
