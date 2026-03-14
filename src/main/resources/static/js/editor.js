@@ -65,9 +65,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const resultsCard = document.getElementById('resultsCard');
 
             currentQueryId = Math.random().toString(36).substring(7);
-            runBtn.classList.add('d-none');
-            stopBtn.classList.remove('d-none');
-            statusDiv.classList.add('d-none');
+            runBtn.classList.add('hidden');
+            stopBtn.classList.remove('hidden');
+            statusDiv.classList.add('hidden');
             resultsCard.style.display = 'none';
 
             try {
@@ -82,8 +82,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 if (data.error) {
                     statusDiv.textContent = 'Error: ' + data.error;
-                    statusDiv.classList.remove('d-none', 'alert-success');
-                    statusDiv.classList.add('alert-danger');
+                    statusDiv.classList.remove('hidden', 'bg-emerald-500/10', 'text-emerald-500');
+                    statusDiv.classList.add('bg-red-500/10', 'text-red-500');
+                    statusDiv.classList.remove('hidden');
                 } else {
                     renderResults(data);
                     resultsCard.style.display = 'block';
@@ -96,11 +97,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 } else {
                     statusDiv.textContent = 'Network Error: ' + err.message;
                 }
-                statusDiv.classList.remove('d-none');
-                statusDiv.classList.add('alert-danger');
+                statusDiv.classList.remove('hidden', 'bg-emerald-500/10', 'text-emerald-500');
+                statusDiv.classList.add('bg-red-500/10', 'text-red-500');
             } finally {
-                runBtn.classList.remove('d-none');
-                stopBtn.classList.add('d-none');
+                runBtn.classList.remove('hidden');
+                stopBtn.classList.add('hidden');
                 currentQueryId = null;
             }
         });
@@ -129,14 +130,16 @@ document.addEventListener('DOMContentLoaded', () => {
         data.columns.forEach(col => {
             const th = document.createElement('th');
             th.textContent = col;
-            th.className = 'text-teal small';
+            th.className = 'px-4 py-3 border-b border-primary/10 text-[10px] font-bold text-slate-500 uppercase tracking-widest';
             header.appendChild(th);
         });
 
         data.rows.forEach(row => {
             const tr = document.createElement('tr');
+            tr.className = 'hover:bg-primary/5 transition-colors group';
             data.columns.forEach(col => {
                 const td = document.createElement('td');
+                td.className = 'px-4 py-3 text-xs font-mono text-slate-300';
                 let value = row[col] !== null ? row[col] : 'NULL';
 
                 if (typeof value === 'string') {
@@ -150,13 +153,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (typeof value === 'string' && value.includes('\n')) {
                     const pre = document.createElement('pre');
                     pre.textContent = value;
-                    pre.className = 'mb-0 small text-muted';
+                    pre.className = 'bg-background-dark border border-primary/10 rounded px-2 py-1 text-[10px] font-mono text-slate-400 group-hover:text-primary transition-colors';
                     td.appendChild(pre);
                 } else {
                     td.textContent = value;
                 }
-
-                td.className = 'text-muted small';
                 tr.appendChild(td);
             });
             body.appendChild(tr);
@@ -196,12 +197,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!window.sqlEditor) return;
 
         // Try to replace {table} with the first available table name
-        const tableItem = document.querySelector('#collapseTables .list-group-item span');
+        const tableItem = document.querySelector('#collapseTables .list-group-item .truncate');
         const tableName = tableItem ? tableItem.textContent : 'my_table';
         template = template.replace(/{table}/g, tableName);
 
         // Try to replace {col1}, {col2} with columns if available
-        const detailsDiv = document.querySelector('#collapseTables .schema-details:not(.d-none)');
+        const detailsDiv = document.querySelector('#collapseTables .schema-details:not(.hidden)');
         if (detailsDiv) {
             const cols = Array.from(detailsDiv.querySelectorAll('.cursor-pointer span:first-child')).map(s => s.textContent);
             if (cols.length > 0) {
@@ -218,9 +219,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const type = document.getElementById('winType').value;
         const hopFields = document.getElementById('hopFields');
         if (type === 'HOP') {
-            hopFields.classList.remove('d-none');
+            hopFields.classList.remove('hidden');
         } else {
-            hopFields.classList.add('d-none');
+            hopFields.classList.add('hidden');
         }
     };
 
@@ -245,21 +246,21 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     window.toggleSchema = async function(btn, tableName) {
-        const detailsDiv = btn.closest('li').querySelector('.schema-details');
-        const icon = btn.querySelector('i');
-        if (detailsDiv.classList.contains('d-none')) {
-            icon.classList.replace('fa-chevron-right', 'fa-chevron-down');
-            detailsDiv.classList.remove('d-none');
+        const detailsDiv = btn.closest('.list-group-item').querySelector('.schema-details');
+        const icon = btn.querySelector('span');
+        if (detailsDiv.classList.contains('hidden')) {
+            icon.textContent = 'expand_more';
+            detailsDiv.classList.remove('hidden');
             if (detailsDiv.innerHTML === '') {
-                detailsDiv.innerHTML = '<div class="spinner-border spinner-border-sm text-teal" role="status"></div>';
+                detailsDiv.innerHTML = '<div class="flex justify-center py-2"><div class="animate-spin rounded-full h-4 w-4 border-2 border-primary border-t-transparent"></div></div>';
                 try {
                     const response = await fetch(`/api/schema/${tableName}`);
                     const schema = await response.json();
                     detailsDiv.innerHTML = '';
                     Object.entries(schema).forEach(([col, type]) => {
                         const div = document.createElement('div');
-                        div.className = 'small text-muted d-flex justify-content-between cursor-pointer hover-teal';
-                        div.innerHTML = `<span>${col}</span><span class="x-small opacity-50">${type}</span>`;
+                        div.className = 'flex items-center justify-between py-1 px-2 text-xs text-slate-400 hover:text-primary cursor-pointer transition-colors';
+                        div.innerHTML = `<span>${col}</span><span class="text-[10px] opacity-50 font-mono">${type}</span>`;
                         div.onclick = (e) => {
                             e.stopPropagation();
                             insertAtCursor(col);
@@ -267,12 +268,12 @@ document.addEventListener('DOMContentLoaded', () => {
                         detailsDiv.appendChild(div);
                     });
                 } catch (e) {
-                    detailsDiv.innerHTML = '<small class="text-danger">Error loading schema</small>';
+                    detailsDiv.innerHTML = '<small class="text-red-400 text-[10px]">Error loading schema</small>';
                 }
             }
         } else {
-            icon.classList.replace('fa-chevron-down', 'fa-chevron-right');
-            detailsDiv.classList.add('d-none');
+            icon.textContent = 'chevron_right';
+            detailsDiv.classList.add('hidden');
         }
     };
 
@@ -287,17 +288,16 @@ document.addEventListener('DOMContentLoaded', () => {
         const assistantMode = document.body.classList.toggle('assistant-active');
         const btn = document.getElementById('assistantToggleBtn');
         if (assistantMode) {
-            btn.textContent = 'Exit Assistant';
-            btn.classList.add('btn-teal');
-            btn.classList.remove('btn-outline-teal');
+            btn.innerHTML = '<span class="material-symbols-outlined text-sm">close</span> Exit Assistant';
+            btn.classList.add('bg-primary', 'text-background-dark');
             initializeAssistant(topicName);
         } else {
-            btn.textContent = 'Query Assistant';
-            btn.classList.remove('btn-teal');
-            btn.classList.add('btn-outline-teal');
+            btn.innerHTML = '<span class="material-symbols-outlined text-sm">magic_button</span> Query Assistant';
+            btn.classList.remove('bg-primary', 'text-background-dark');
             exitAssistant();
         }
     };
+
 
     function initializeAssistant(topicName) {
         const samples = document.querySelectorAll('.sample-msg-pre');
@@ -601,7 +601,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (prefixInput || fullNameInput) {
         const filterTopics = () => {
-            const prefix = prefixInput.value.toLowerCase();
+            const prefix = prefixInput?.value.toLowerCase();
             const fullName = fullNameInput.value.toLowerCase();
             const rows = document.querySelectorAll('.topic-row');
 
@@ -610,10 +610,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 let matchesPrefix = true;
                 let matchesFull = true;
 
-                if (prefix) matchesPrefix = name.startsWith(prefix);
-                if (fullName) matchesFull = (name === fullName);
+                if (prefix) matchesPrefix = name.trim().startsWith(prefix);
+                if (fullName) matchesFull = (name.trim() === fullName);
 
-                row.style.display = (matchesPrefix && matchesFull) ? '' : 'none';
+                if (matchesPrefix && matchesFull) {
+                    row.classList.remove('hidden');
+                } else {
+                    row.classList.add('hidden');
+                }
             });
         };
 
@@ -637,7 +641,12 @@ document.addEventListener('DOMContentLoaded', () => {
             if (hideEmpty && size === 0) visible = false;
             if (hideDlt && isDlt) visible = false;
 
-            row.style.display = visible ? '' : 'none';
+            // Use tailwind display classes
+            if (visible) {
+                row.classList.remove('hidden');
+            } else {
+                row.classList.add('hidden');
+            }
         });
 
         // Handle sidebar/accordion topic items
@@ -647,7 +656,11 @@ document.addEventListener('DOMContentLoaded', () => {
             let visible = true;
             if (hideDlt && isDlt) visible = false;
 
-            item.style.display = visible ? '' : 'none';
+            if (visible) {
+                item.classList.remove('hidden');
+            } else {
+                item.classList.add('hidden');
+            }
         });
     };
 
@@ -699,8 +712,7 @@ function renderHistory() {
 
     history.forEach((sql, index) => {
         const li = document.createElement('li');
-        li.className = 'list-group-item bg-dark text-light small border-secondary history-item';
-        li.style.cursor = 'pointer';
+            li.className = 'text-[10px] text-slate-400 hover:text-primary cursor-pointer truncate font-mono bg-background-dark/50 px-2 py-1 rounded border border-primary/5 transition-colors';
         li.textContent = sql.substring(0, 50) + (sql.length > 50 ? '...' : '');
         li.title = sql;
         li.onclick = () => {

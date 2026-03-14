@@ -49,10 +49,10 @@ async function fetchTablesForSelector() {
 }
 
 function prepareAddMetric() {
-    document.getElementById('modalTitle').textContent = 'Create Metric';
+    document.getElementById('modalTitle').innerHTML = '<span class="material-symbols-outlined">add_chart</span> Create Metric';
     document.getElementById('metricForm').reset();
     document.getElementById('metricId').value = '';
-    document.getElementById('testResultArea').classList.add('d-none');
+    document.getElementById('testResultArea').classList.add('hidden');
     if (metricEditor) {
         metricEditor.setValue('');
     }
@@ -60,7 +60,7 @@ function prepareAddMetric() {
 }
 
 function editMetric(button) {
-    document.getElementById('modalTitle').textContent = 'Edit Metric';
+    document.getElementById('modalTitle').innerHTML = '<span class="material-symbols-outlined">edit_note</span> Edit Metric';
     const id = button.getAttribute('data-id');
     const name = button.getAttribute('data-name');
     const type = button.getAttribute('data-type');
@@ -71,7 +71,7 @@ function editMetric(button) {
     document.getElementById('metricName').value = name;
     document.getElementById('metricType').value = type;
     document.getElementById('metricDescription').value = description;
-    document.getElementById('testResultArea').classList.add('d-none');
+    document.getElementById('testResultArea').classList.add('hidden');
 
     if (metricEditor) {
         metricEditor.setValue(sql);
@@ -114,9 +114,9 @@ async function testMetric() {
     const resultArea = document.getElementById('testResultArea');
     const resultContent = document.getElementById('testResultContent');
 
-    resultArea.classList.remove('d-none');
-    resultContent.innerHTML = '<div class="spinner-border spinner-border-sm text-teal" role="status"></div> Testing...';
-    resultContent.className = 'p-2 bg-darker border border-secondary rounded font-monospace small text-light';
+    resultArea.classList.remove('hidden');
+    resultContent.innerHTML = '<div class="flex items-center gap-2"><div class="animate-spin rounded-full h-3 w-3 border-2 border-primary border-t-transparent"></div> <span>Testing...</span></div>';
+    resultContent.className = 'p-4 bg-background-dark/80 border border-primary/10 rounded-lg font-mono text-xs text-slate-300';
 
     try {
         const response = await fetch('/query', {
