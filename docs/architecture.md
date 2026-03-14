@@ -71,4 +71,5 @@ C4Component
 - **Asynchronous SQL Fetching**: `FlinkSqlService` uses a dedicated `ExecutorService` to fetch streaming results, ensuring that Spring's worker threads are never blocked by infinite Flink iterators.
 - **Metadata Caching**: `KafkaAdminService` utilizes Caffeine to cache topic lists and descriptors, improving UI responsiveness and reducing pressure on Kafka brokers.
 - **Safe XML Processing**: `XmlExtractUDF` caches compiled `XPathExpression` instances while maintaining strict XXE protection.
+- **Dynamic SQL Hint Injection**: `FlinkSqlService` uses regex-based SQL manipulation to inject Flink SQL hints (`/*+ OPTIONS(...) */`) for per-query offset control, allowing users to switch between Earliest and Latest modes without altering table definitions.
 - **Strict Timeouts**: All interactions with the Kafka cluster and Flink engine have explicit timeouts to prevent the application from hanging.

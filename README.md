@@ -31,10 +31,12 @@ Writing Flink SQL for Kafka topics can be tedious and error-prone, especially wh
 - **Advanced Filtering**:
   - **Prefix Filter**: Allows quickly finding topics belonging to a domain (e.g., `order.*`).
   - **Full Name Match**: Exact search to isolate a specific topic.
+  - **DLT Filtering**: Toggle to hide Dead Letter Topics (`*.dlt`) and focus on functional streams.
 - **Flink Dynamic Tables**: Dedicated section to manage temporary tables and views registered in the local Flink engine.
 
 ### 2. Topic Exploration
 - **Real-Time Metadata**: Visualization of the number of partitions, min/max offsets, and estimated data size.
+- **DLT Identification**: Specific badges and warnings for Dead Letter Topics, alerting about potentially malformed data.
 - **Sampling**: Automatic reading of the latest messages from the topic (partition 0) for analysis.
 - **Advanced Formatting**: Native pretty-print for messages in **JSON** and **XML** formats.
 - **Quick Copy**: One-click copy button for each previewed message.
@@ -50,6 +52,8 @@ The assistant transforms the message preview into a query design tool:
 
 ### 4. Professional SQL Editor
 - **CodeMirror Engine**: SQL syntax highlighting and Cyberpunk theme.
+- **Read Mode Switch**: Toggle between **Earliest** (start from beginning) and **Latest** (new messages only) offsets directly in the UI.
+- **Dynamic SQL Hints**: Automatic injection of Flink SQL hints (`/*+ OPTIONS(...) */`) for per-query offset control without DDL changes.
 - **Auto-completion**: Intelligent suggestion of topic names and registered tables (`Ctrl+Space`).
 - **Query History**: Quick access to the last 20 queries executed via a persistent sidebar (sessionStorage).
 - **Resource Management**: Automatic cancellation of Flink jobs in case of timeout or error, preventing any resource leak in the minicluster.
