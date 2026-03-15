@@ -4,6 +4,8 @@ import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import QueryWorkbench from './pages/QueryWorkbench';
 import TopicExplorer from './pages/TopicExplorer';
+import Compare from './pages/Compare';
+import Lineage from './pages/Lineage';
 
 const App: React.FC = () => {
   return (
@@ -13,8 +15,11 @@ const App: React.FC = () => {
           <Route path="/" element={<Dashboard />} />
           <Route path="/query" element={<QueryWorkbench />} />
           <Route path="/topic/:name" element={<TopicExplorer />} />
+          <Route path="/compare" element={<Compare />} />
+          <Route path="/lineage" element={<Lineage />} />
+          <Route path="/audit" element={<div className="p-8 text-slate-500 font-bold uppercase tracking-widest">Audit logs coming soon</div>} />
+          <Route path="/stream-flow" element={<div className="p-8 text-slate-500 font-bold uppercase tracking-widest">Stream Flow coming soon</div>} />
           <Route path="/config" element={<div className="p-8 text-slate-500 font-bold uppercase tracking-widest">Configuration coming soon</div>} />
-          <Route path="/lineage" element={<div className="p-8 text-slate-500 font-bold uppercase tracking-widest">Lineage visualization coming soon</div>} />
           <Route path="*" element={<div className="p-8">404 - Page Not Found</div>} />
         </Routes>
       </Layout>
