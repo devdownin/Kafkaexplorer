@@ -8,6 +8,7 @@ import org.springframework.context.annotation.Configuration;
 public class ExplorerConfig {
 
     private String auditHistoryTopic = "internal.audit.history";
+    private String metricsConfigTopic = "internal.metrics.config";
     private int defaultMaxRows = 50;
     private long defaultQueryTimeoutMs = 10000;
     private long auditQueryTimeoutMs = 5000;
@@ -23,6 +24,14 @@ public class ExplorerConfig {
 
     public void setAuditHistoryTopic(String auditHistoryTopic) {
         this.auditHistoryTopic = auditHistoryTopic;
+    }
+
+    public String getMetricsConfigTopic() {
+        return metricsConfigTopic;
+    }
+
+    public void setMetricsConfigTopic(String metricsConfigTopic) {
+        this.metricsConfigTopic = metricsConfigTopic;
     }
 
     public int getDefaultMaxRows() {
