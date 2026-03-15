@@ -7,5 +7,8 @@ public record MetricConfig(
     String sql,
     String description,
     Double warningThreshold,
-    Double criticalThreshold
+    Double criticalThreshold,
+    Double lastValue,
+    Long lastUpdateTime,
+    String errorMessage
 ) {}

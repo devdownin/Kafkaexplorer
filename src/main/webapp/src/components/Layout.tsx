@@ -29,6 +29,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     { name: 'Dashboard', path: '/', icon: 'dashboard' },
     { name: 'SQL Editor', path: '/query', icon: 'code' },
     { name: 'Compare', path: '/compare', icon: 'compare_arrows' },
+    { name: 'Metrics', path: '/metrics', icon: 'monitoring' },
     { name: 'Audit', path: '/audit', icon: 'assignment' },
     { name: 'Lineage', path: '/lineage', icon: 'account_tree' },
     { name: 'Stream Flow', path: '/stream-flow', icon: 'waves' },
