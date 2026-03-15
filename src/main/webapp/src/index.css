@@ -7,7 +7,7 @@
 }
 
 body {
-  @apply bg-background-darker text-slate-300 antialiased;
+  @apply bg-background-dark text-slate-300 antialiased;
 }
 
 .custom-scrollbar::-webkit-scrollbar {
@@ -23,7 +23,24 @@ body {
   @apply bg-slate-800 rounded-full hover:bg-slate-700 transition-colors;
 }
 
-/* Glassmorphism utility */
+/* Redesign Utilities */
 .glass {
   @apply bg-background-dark/60 backdrop-blur-md border border-white/5 shadow-2xl;
+}
+
+.diamond {
+  clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+}
+
+.graph-bg {
+  background-image: radial-gradient(circle, #2d4444 1px, transparent 1px);
+  background-size: 30px 30px;
+}
+
+.diff-added {
+  @apply bg-green-500/10 text-green-400;
+}
+
+.diff-removed {
+  @apply bg-red-500/10 text-red-400;
 }
