@@ -1,8 +1,6 @@
 spring:
   application:
     name: kafka-sql-explorer
-  thymeleaf:
-    cache: false
   cache:
     type: caffeine
     caffeine:
@@ -11,20 +9,6 @@ spring:
 kafka:
   bootstrap-servers: localhost:9092
   mode: PLAIN # Possible values: PLAIN, SSL, CONFLUENT_CLOUD
-
-  # --- SSL Configuration Example ---
-  # mode: SSL
-  # truststore-path: /path/to/truststore.jks
-  # truststore-password: password
-  # keystore-path: /path/to/keystore.jks
-  # keystore-password: password
-  # key-password: password
-
-  # --- Confluent Cloud Configuration Example ---
-  # mode: CONFLUENT_CLOUD
-  # bootstrap-servers: your-confluent-cloud-bootstrap:9092
-  # confluent-key: YOUR_API_KEY
-  # confluent-secret: YOUR_API_SECRET
 
 explorer:
   audit-history-topic: internal.audit.history

@@ -7,22 +7,24 @@ export default {
   theme: {
     extend: {
       colors: {
-        primary: {
-          DEFAULT: '#00D1FF',
-          dark: '#00A3C7',
-          light: '#33DAFF',
-        },
-        background: {
-          dark: '#0B1120',
-          darker: '#060B15',
-        }
+        "primary": "#25f4f4",
+        "background-light": "#f5f8f8",
+        "background-dark": "#102222",
+        "neutral-dark": "#1b2d2d",
+        "border-dark": "#2d4444",
       },
       fontFamily: {
-        sans: ['Inter', 'sans-serif'],
-        mono: ['JetBrains Mono', 'monospace'],
-      }
+        "display": ["Inter", "sans-serif"],
+        "mono": ["JetBrains Mono", "monospace"]
+      },
+      borderRadius: {
+        "DEFAULT": "0.25rem",
+        "lg": "0.5rem",
+        "xl": "0.75rem",
+        "full": "9999px"
+      },
     },
   },
   plugins: [],
-  darkMode: 'class',
+  darkMode: "class",
 }

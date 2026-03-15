@@ -2,14 +2,10 @@ package com.yourcompany.kafkasqlexplorer.web;
 
 import com.yourcompany.kafkasqlexplorer.domain.AuditReport;
 import com.yourcompany.kafkasqlexplorer.service.AuditService;
-import org.springframework.stereotype.Controller;
-import org.springframework.ui.Model;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.ResponseBody;
+import org.springframework.web.bind.annotation.*;
 
-@Controller
+@RestController
+@RequestMapping("/api/audit")
 public class AuditController {
 
     private final AuditService auditService;
@@ -18,26 +14,17 @@ public class AuditController {
         this.auditService = auditService;
     }
 
-    @GetMapping("/audit")
-    public String audit(Model model) {
-        AuditReport latest = auditService.getLastAuditReport();
-        if (latest == null) {
-            String id = auditService.startAudit();
-            model.addAttribute("auditId", id);
-        } else {
-            model.addAttribute("report", latest);
-        }
-        return "audit";
+    @GetMapping("/latest")
+    public AuditReport getLatestAudit() {
+        return auditService.getLastAuditReport();
     }
 
-    @PostMapping("/api/audit/start")
-    @ResponseBody
+    @PostMapping("/start")
     public String startAudit() {
         return auditService.startAudit();
     }
 
-    @GetMapping("/api/audit/status/{id}")
-    @ResponseBody
+    @GetMapping("/status/{id}")
     public AuditReport getAuditStatus(@PathVariable String id) {
         return auditService.getAuditReport(id);
     }

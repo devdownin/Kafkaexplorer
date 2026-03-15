@@ -1,5 +1,5 @@
 KAFKA SQL EXPLORER
-Spring Boot 3.x | Apache Flink 2.2.x (Embedded) | Java 21
+Spring Boot 3.x | Apache Flink 2.2.x (Embedded) | Java 21 | React 19
 
 Kafka SQL Explorer est une application web moderne conçue pour les Data Engineers et Architectes, permettant d'explorer des clusters Kafka et d'interroger les topics en temps réel via SQL Flink.
 
@@ -8,6 +8,7 @@ Kafka SQL Explorer est une application web moderne conçue pour les Data Enginee
 ---
 
 ## 🛠️ Ressources pour les Développeurs
+- **Frontend** : Application moderne en React 19 avec Tailwind CSS et Material Symbols.
 - **Tests Unitaires** : Couverture pour tous les services de base (Exécution SQL, Lineage, Audit, Extraction XML). Lancer via `mvn test`.
 - **Code Didactique** : Le code source est abondamment commenté pour servir de ressource d'apprentissage sur l'intégration de Flink SQL dans Spring Boot.
 - **Sécurité XXE** : Protection intégrée contre les attaques par injection d'entités externes XML dans toutes les couches de parsing.
@@ -15,116 +16,60 @@ Kafka SQL Explorer est une application web moderne conçue pour les Data Enginee
 ---
 
 Fonctionnalités Détaillées
-1. Dashboard & Navigation
-Liste des Topics : Vue d'ensemble de tous les topics disponibles sur le cluster Kafka.
-Filtrage Avancé :
-Filtre par Préfixe : Permet de trouver rapidement des topics appartenant à un domaine (ex: order.*).
-Match Nom Complet : Recherche exacte pour isoler un topic spécifique.
-Filtrage DLT : Toggle pour masquer les Dead Letter Topics (`*.dlt`) et se concentrer sur les flux fonctionnels.
-Tables Dynamiques Flink : Section dédiée pour gérer les tables et vues temporaires enregistrées dans le moteur Flink local.
-2. Exploration de Topic
-Métadonnées Temps Réel : Visualisation du nombre de partitions, des offsets min/max et de la taille estimée des données.
-Identification DLT : Badges et avertissements spécifiques pour les Dead Letter Topics, prévenant d'éventuels messages malformés.
-Échantillonnage (Sampling) : Lecture automatique des derniers messages du topic (partition 0) pour analyse.
-Formatage Avancé : Pretty-print natif pour les messages au format JSON et XML.
-Copie Rapide : Bouton de copie en un clic pour chaque message prévisualisé.
-3. Query Assistant (Intelligence Intégrée)
-L'assistant transforme la prévisualisation de message en un outil de conception de requête :
-
-Sélection Interactive : Cliquez sur une clé JSON ou un tag XML pour l'ajouter automatiquement à la clause SELECT.
-Filtres Dynamiques : Cliquez sur une valeur pour l'ajouter à la clause WHERE.
-Opérateurs de Comparaison : Choisissez dynamiquement l'opérateur (=, !=, LIKE, >, <) pour vos filtres.
-Support des Chemins Imbriqués : Génération automatique de JSON_VALUE pour les structures JSON complexes.
-Extraction XML : Utilisation de la fonction personnalisée XmlExtract (basée sur XPath) pour interroger les payloads XML.
-Enregistrement en un clic : Bouton "Register Table" pour exécuter instantanément le DDL généré.
+1. Dashboard Moderne
+KPI Grid : Vue d'ensemble en temps réel des topics, décomptes de messages, tables Flink et jobs actifs.
+Topics Explorer : Recherche avancée par préfixe et monitoring de l'état de santé de tous les topics.
+Flink SQL Jobs : Monitoring en direct des jobs de streaming actifs avec parallélisme et uptime.
+2. Éditeur SQL Pro
+Moteur Monaco Editor : Expérience d'édition professionnelle avec coloration syntaxique SQL.
+Window Assistant : Outil visuel pour générer des logiques de fenêtrage complexes (Tumbling, Hopping, Session) sans écrire de SQL brut.
+Schema Browser : Explorateur en arborescence pour les topics Kafka et tables Flink, incluant les schémas détaillés des colonnes.
+Sélecteur de Mode de Lecture : Toggle entre offsets **Earliest** et **Latest** directement dans l'UI.
+Statistiques en Direct : Débit en temps réel (msg/s) et temps d'exécution pour les requêtes de streaming.
+3. Comparaison de Topics Avancée
+Analyse Side-by-Side : Comparez les messages de deux topics Kafka dans des colonnes indépendantes avec coloration des différences (diff highlighting).
+Contexte SQL Partagé : Appliquez une logique de filtrage identique aux deux topics via un éditeur SQL partagé.
+Détection de Différences : Identification automatique des champs ajoutés, modifiés ou supprimés.
 4. Lineage de Requête Visuel
-Graphe Interactif : Propulsé par Cytoscape.js, visualisant les relations entre topics, tables et vues.
-Suivi des Jobs Actifs : Visualisation en temps réel des requêtes INSERT INTO en cours sous forme de nœuds reliant les tables sources et cibles.
-Inspecteur de Nœuds : Cliquez sur n'importe quel nœud pour voir des informations détaillées, comme le schéma de la table ou le type de topic.
+Graphe de Dépendances : Visualisation SVG responsive des relations entre topics, tables et jobs SQL.
+Inspecteur de Nœuds : Vue détaillée pour chaque nœud incluant les définitions DDL, les schémas complets et les métriques de débit.
+Visualisation de Flux : Représentation interactive de la propagation des données.
 5. Propagation de Message (Stream Flow)
-Traçage de Message : Suivez le parcours d'un message spécifique à travers différents topics Kafka en recherchant une clé ou un pattern.
-Ciblage Avancé : Utilisez JSONPath ou XPath pour localiser précisément la clé de recherche dans des payloads complexes.
-Support des Expressions Régulières : Recherche flexible utilisant la syntaxe regex standard.
-Filtrage Temporel : Limitez la recherche à une fenêtre de temps spécifique (ex: messages des 60 dernières minutes).
-Scan Parallèle : Balayage concurrent des topics à haute performance avec gestion des limites de ressources.
+Traçage de Message : Suivez le parcours d'un message spécifique à travers différents topics Kafka.
 Visualisation Chronologique : Graphe interactif illustrant le flux séquentiel des messages entre les topics.
-6. Éditeur SQL Professionnel
-Moteur CodeMirror : Coloration syntaxique SQL et thème Cyberpunk.
-Sélecteur de Mode de Lecture : Toggle entre offsets **Earliest** (début du topic) et **Latest** (nouveaux messages uniquement) directement dans l'UI.
-Hints SQL Dynamiques : Injection automatique de hints Flink SQL (`/*+ OPTIONS(...) */`) pour un contrôle précis des offsets par requête sans modifier le DDL.
-Auto-complétion : Suggestion intelligente des noms de topics et tables enregistrées (Ctrl+Space).
-Historique des Requêtes : Accès rapide aux 20 dernières requêtes exécutées via une sidebar persistante (sessionStorage).
-Gestion des Ressources : Annulation automatique des jobs Flink en cas de timeout ou d'erreur, évitant toute fuite de ressources dans le minicluster.
-7. Audit Fonctionnel Automatisé
-Audit Asynchrone : Lancez des audits complets du cluster en arrière-plan sans bloquer l'interface.
-Contrôle de Santé Technique : Détection automatique des "poison messages" (JSON/XML malformés) et comptage précis via SQL Flink.
-Détection de Doublons : Identification intelligente des messages dupliqués basée sur des champs ID communs (ex: id, order_id).
-Analyse de Flux Métier : Groupement automatique des topics en processus logiques (via conventions de nommage) pour visualiser les débits et les taux d'abandon entre les étapes.
-Mesure de Latence : Calcul du temps de traitement moyen entre topics successifs d'un flux via des jointures SQL Flink.
-Historique d'Audit : Persistance des rapports dans un topic Kafka dédié (internal.audit.history) pour un suivi long terme.
+6. Audit Fonctionnel Automatisé
+Audit Asynchrone : Lancez des audits complets du cluster en arrière-plan.
+Contrôle de Santé Technique : Détection automatique des "poison messages" et comptage précis via SQL Flink.
+Historique d'Audit : Persistance des rapports dans un topic Kafka dédié (internal.audit.history).
+7. Sécurité & Robustesse
+Protection XXE : Désactivation stricte des entités externes DTD.
+Failover Gracieux : Les contrôleurs backend gèrent les timeouts de connexion Kafka pour maintenir l'UI responsive même en cas d'indisponibilité du cluster.
 
-8. Sécurité & Robustesse
-Protection XXE : Désactivation stricte des entités externes DTD pour tous les parsers XML (Schema Inferrer, UDF, Formatter).
-Validation SQL : Whitelist de commandes autorisées (SELECT, EXPLAIN, CREATE TABLE) pour empêcher les opérations DML destructrices.
-Gestion des Connexions : Lifecycle propre de l'AdminClient Kafka et des consommateurs.
-9. Environnement de Démo & Sandbox
-L'application inclut une configuration de démonstration automatisée pour explorer les fonctionnalités immédiatement :
-Pipeline de Commande en 6 étapes : Topics séquentiels (demo.orders.1.received à 6.delivered) pour tester la traçabilité Stream Flow.
-JOINs & Données de Référence : Un topic demo.customers pour pratiquer les jointures SQL avec les commandes.
-Traitement XML : Un topic demo.orders.xml pour tester l'UDF XmlExtract.
-JSON Complexe : Un topic demo.orders.complex avec des structures imbriquées pour tester l'inférence de schéma.
-Messages Corrompus : Un topic demo.errors.poison contenant des données malformées pour observer la résilience aux erreurs.
-Supply Chain 2.0 (Processus Complexe) : Un pipeline massif en 20 étapes (`demo.sc.01.order.placed.out` à `20.delivered.out`) impliquant 60 topics. Il propose des payloads JSON imbriqués évolutifs (ajout de données de paiement, de préparation, de contrôle qualité et logistiques au fil de l'eau) pour démontrer l'**Inférence de Schéma** avancée et le **Stream Flow** sur des architectures complexes.
 Stack Technique
 Backend : Spring Boot 3.5.x, Java 21 (Records).
 Streaming : Apache Flink 2.2.x (Embedded LocalEnvironment).
-Parsing : Jackson (JSON), JAXB/StAX (XML).
-Frontend : Thymeleaf, CodeMirror 5.65, Bootstrap 5 (Theme Dark).
+Frontend : React 19, Tailwind CSS, Material Symbols, Monaco Editor.
 Cache : Caffeine (Métadonnées Kafka).
+
 Démarrage Rapide
 Prérequis
 Docker & Docker Compose
-JDK 21+
+JDK 21+, Node.js 20+
+
 Installation
 Lancer Kafka :
-- Pour Kafka 3.x (mode Zookeeper) :
-  ```bash
-  docker-compose up -d
-  ```
-- Pour Kafka 4.2 (mode KRaft) :
-  ```bash
-  # Ceci lance Kafka ET l'application sur le port 8080
-  docker compose -f docker-compose-kafka4.yml up -d
-  ```
+- Pour Kafka 3.x (mode Zookeeper) : `docker-compose up -d`
+- Pour Kafka 4.2 (mode KRaft) : `docker compose -f docker-compose-kafka4.yml up -d`
 
-Lancer l'application (si vous n'utilisez pas la version Dockerisée) :
+Lancer l'application :
 ```bash
-# Si vous avez lancé UNIQUEMENT Kafka via : docker compose -f docker-compose-kafka4.yml up -d kafka
+# Build du frontend
+cd src/main/webapp && npm install && npm run build
+
+# Start du backend
+cd ../../../
 ./mvnw spring-boot:run
 ```
 Accéder à l'interface : http://localhost:8080
-Exemple de Requête XML
-```sql
-SELECT XmlExtract(raw_value, '/Order/Customer') as client,
-       XmlExtract(raw_value, '/Order/Amount') as montant
-FROM "demo.orders.xml"
-WHERE montant > 100;
-```
 
-Exemple de Requête JOIN
-```sql
-SELECT c.name, c.segment, o.amount, o.state
-FROM "demo.orders.1.received" o
-JOIN "demo.customers" c ON o.customer_id = c.customer_id;
-```
-
-Exemple de Requête JSON Complexe (Supply Chain 2.0)
-```sql
-SELECT order_id,
-       step,
-       JSON_VALUE(raw_value, '$.quality_control.score') as qc_score,
-       JSON_VALUE(raw_value, '$.logistics.tracking') as tracking
-FROM "demo.sc.13.carrier.assigned.out"
-WHERE JSON_VALUE(raw_value, '$.quality_control.score') > 95;
-```
 © 2026 Kafka SQL Explorer - Compagnons du dev. Terminal UI
