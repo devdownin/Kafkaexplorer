@@ -1,5 +1,7 @@
 package com.yourcompany.kafkasqlexplorer.service;
 
+import com.yourcompany.kafkasqlexplorer.config.ExplorerConfig;
+import com.yourcompany.kafkasqlexplorer.config.KafkaConfig;
 import com.yourcompany.kafkasqlexplorer.domain.MetricConfig;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -17,27 +19,36 @@ class MetricServiceTest {
     private MetricService service;
     private FlinkSqlService flinkSqlService;
     private MeterRegistry meterRegistry;
+    private KafkaConfig kafkaConfig;
+    private ExplorerConfig explorerConfig;
 
     @BeforeEach
     void setUp() {
         flinkSqlService = Mockito.mock(FlinkSqlService.class);
         meterRegistry = new SimpleMeterRegistry();
-        service = new MetricService(flinkSqlService, meterRegistry);
+        kafkaConfig = Mockito.mock(KafkaConfig.class);
+        explorerConfig = Mockito.mock(ExplorerConfig.class);
+
+        Mockito.when(explorerConfig.getMetricsConfigTopic()).thenReturn("internal.metrics.config");
+
+        service = new MetricService(flinkSqlService, meterRegistry, kafkaConfig, explorerConfig);
     }
 
     @Test
     void testPreconfiguredMetrics() {
+        service.init();
         List<MetricConfig> metrics = service.getAllMetrics();
 
-        assertEquals(3, metrics.size());
+        assertEquals(2, metrics.size());
         assertTrue(metrics.stream().anyMatch(m -> m.name().equals("business_events_total")));
-        assertTrue(metrics.stream().anyMatch(m -> m.name().equals("business_avg_latency")));
+        assertTrue(metrics.stream().anyMatch(m -> m.name().equals("business_events_by_type")));
     }
 
     @Test
     void testSaveAndDeleteMetric() {
+        service.init();
         int initialSize = service.getAllMetrics().size();
-        MetricConfig newMetric = new MetricConfig(null, "Test Metric", "COUNTER", "SELECT 1 as metric_value", "Test Description", null, null, null, null, null);
+        MetricConfig newMetric = new MetricConfig(null, "Test Metric", "COUNTER", "SELECT 1 as metric_value", "Test Description", null, null, null, null, null, null);
 
         service.save(newMetric);
         List<MetricConfig> metrics = service.getAllMetrics();
@@ -53,9 +64,10 @@ class MetricServiceTest {
 
     @Test
     void testUpdateMetric() {
+        service.init();
         MetricConfig original = service.getAllMetrics().get(0);
 
-        MetricConfig updated = new MetricConfig(original.id(), "Updated Name", "GAUGE", "SELECT 2 as metric_value", "Updated Desc", 10.0, 50.0, null, null, null);
+        MetricConfig updated = new MetricConfig(original.id(), "Updated Name", "GAUGE", "SELECT 2 as metric_value", "Updated Desc", 10.0, 50.0, null, null, null, null);
         service.save(updated);
 
         Optional<MetricConfig> found = service.getById(original.id());

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import Editor from '@monaco-editor/react';
+import Editor, { useMonaco } from '@monaco-editor/react';
 import { Plus, Trash2, Edit2, Play, AlertCircle, CheckCircle2, RefreshCw } from 'lucide-react';
+import { LineChart, Line, ResponsiveContainer } from 'recharts';
 
 interface MetricConfig {
   id: string;
@@ -14,18 +15,20 @@ interface MetricConfig {
   lastValue: number | null;
   lastUpdateTime: number | null;
   errorMessage: string | null;
+  history: number[];
 }
 
 const Metrics: React.FC = () => {
   const [metrics, setMetrics] = useState<MetricConfig[]>([]);
+  const [metadata, setMetadata] = useState<Record<string, string[]>>({});
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingMetric, setEditingMetric] = useState<Partial<MetricConfig>>({
-    name: '',
-    type: 'GAUGE',
-    sql: 'SELECT COUNT(*) as metric_value FROM my_table',
-    description: ''
+    name: '', type: 'GAUGE', sql: 'SELECT COUNT(*) as metric_value FROM my_table', description: '',
+    warningThreshold: null, criticalThreshold: null
   });
+
+  const monaco = useMonaco();
 
   const fetchMetrics = async () => {
     try {
@@ -38,11 +41,62 @@ const Metrics: React.FC = () => {
     }
   };
 
+  const fetchMetadata = async () => {
+    try {
+      const response = await axios.get('/api/metrics/metadata');
+      setMetadata(response.data);
+    } catch (err) {
+      console.error('Failed to fetch metadata', err);
+    }
+  };
+
   useEffect(() => {
     fetchMetrics();
+    fetchMetadata();
     const interval = setInterval(fetchMetrics, 10000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (monaco) {
+      const completionProvider = monaco.languages.registerCompletionItemProvider('sql', {
+        provideCompletionItems: (_model, _position) => {
+          const suggestions: any[] = [];
+
+          // Add Tables
+          Object.keys(metadata).forEach(table => {
+            suggestions.push({
+              label: table,
+              kind: monaco.languages.CompletionItemKind.Class,
+              insertText: table,
+              detail: 'Table'
+            });
+            // Add Columns
+            metadata[table].forEach(col => {
+              suggestions.push({
+                label: col,
+                kind: monaco.languages.CompletionItemKind.Field,
+                insertText: col,
+                detail: `Column (${table})`
+              });
+            });
+          });
+
+          // Standard SQL Keywords
+          ['SELECT', 'FROM', 'WHERE', 'GROUP BY', 'HAVING', 'ORDER BY', 'LIMIT', 'JOIN', 'ON', 'AS', 'COUNT', 'AVG', 'SUM', 'MAX', 'MIN', 'TUMBLE', 'DESCRIPTOR', 'INTERVAL'].forEach(kw => {
+            suggestions.push({
+              label: kw,
+              kind: monaco.languages.CompletionItemKind.Keyword,
+              insertText: kw
+            });
+          });
+
+          return { suggestions };
+        }
+      });
+      return () => completionProvider.dispose();
+    }
+  }, [monaco, metadata]);
 
   const handleSave = async () => {
     try {
@@ -66,24 +120,25 @@ const Metrics: React.FC = () => {
   };
 
   const openEditModal = (metric?: MetricConfig) => {
-    if (metric) {
-      setEditingMetric(metric);
-    } else {
-      setEditingMetric({
-        name: '',
-        type: 'GAUGE',
-        sql: 'SELECT COUNT(*) as metric_value FROM my_table',
-        description: ''
-      });
-    }
+    if (metric) setEditingMetric(metric);
+    else setEditingMetric({
+      name: '', type: 'GAUGE', sql: 'SELECT COUNT(*) as metric_value FROM my_table', description: '',
+      warningThreshold: null, criticalThreshold: null
+    });
     setIsModalOpen(true);
   };
 
-  const metricTypes = ['GAUGE', 'COUNTER', 'HISTOGRAM'];
+  const getStatusColor = (metric: MetricConfig) => {
+    if (metric.errorMessage) return 'text-red-500';
+    if (metric.lastValue === null) return 'text-slate-400';
+    if (metric.criticalThreshold !== null && metric.lastValue >= metric.criticalThreshold) return 'text-red-500';
+    if (metric.warningThreshold !== null && metric.lastValue >= metric.warningThreshold) return 'text-amber-500';
+    return 'text-emerald-500';
+  };
 
   const examples = [
     { name: 'Simple Count', sql: 'SELECT COUNT(*) as metric_value FROM my_table' },
-    { name: 'Average Value', sql: 'SELECT AVG(price) as metric_value FROM orders' },
+    { name: 'Grouped Count', sql: "SELECT COUNT(*) as metric_value, status FROM orders GROUP BY status" },
     { name: 'Error Rate', sql: "SELECT COUNT(*) * 100.0 / (SELECT COUNT(*) FROM logs) as metric_value FROM logs WHERE level = 'ERROR'" },
     { name: 'Histogram Window', sql: "SELECT COUNT(*) as metric_value FROM TABLE(TUMBLE(TABLE events, DESCRIPTOR(event_time), INTERVAL '1' HOUR)) GROUP BY window_start, window_end" }
   ];
@@ -94,20 +149,17 @@ const Metrics: React.FC = () => {
         <div>
           <h1 className="text-2xl font-bold">Business Metrics</h1>
           <p className="text-slate-500 dark:text-slate-400 text-sm mt-1">
-            Define Prometheus metrics using Flink SQL queries.
+            Real-time business KPIs using Flink SQL. Persisted in Kafka, exported to Prometheus.
           </p>
         </div>
-        <button
-          onClick={() => openEditModal()}
-          className="flex items-center gap-2 bg-primary hover:bg-primary/80 text-background-dark px-4 py-2 rounded-lg font-bold transition-colors"
-        >
+        <button onClick={() => openEditModal()} className="flex items-center gap-2 bg-primary hover:bg-primary/80 text-background-dark px-4 py-2 rounded-lg font-bold transition-colors">
           <Plus size={18} /> Add Metric
         </button>
       </div>
 
       <div className="grid grid-cols-1 gap-4">
         {metrics.map((metric) => (
-          <div key={metric.id} className="bg-white dark:bg-primary/5 border border-slate-200 dark:border-primary/10 rounded-xl p-5 flex flex-col md:flex-row gap-6">
+          <div key={metric.id} className="bg-white dark:bg-primary/5 border border-slate-200 dark:border-primary/10 rounded-xl p-5 flex flex-col lg:flex-row gap-6">
             <div className="flex-1 space-y-2">
               <div className="flex items-center gap-3">
                 <h3 className="text-lg font-bold">{metric.name}</h3>
@@ -119,11 +171,21 @@ const Metrics: React.FC = () => {
               </div>
             </div>
 
-            <div className="w-full md:w-64 flex flex-col justify-between border-l border-slate-100 dark:border-primary/5 md:pl-6">
+            <div className="w-full lg:w-48 h-20 lg:h-auto">
+              {metric.history && metric.history.length > 1 && (
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={metric.history.map((v, i) => ({ v, i }))}>
+                    <Line type="monotone" dataKey="v" stroke="#00f2fe" strokeWidth={2} dot={false} isAnimationActive={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+
+            <div className="w-full lg:w-56 flex flex-col justify-between border-l border-slate-100 dark:border-primary/5 lg:pl-6">
               <div>
-                <p className="text-[10px] text-slate-500 dark:text-slate-400 uppercase font-bold tracking-wider mb-1">Last Value</p>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 uppercase font-bold tracking-wider mb-1">Current Value</p>
                 <div className="flex items-baseline gap-2">
-                  <span className="text-3xl font-bold">
+                  <span className={`text-3xl font-bold ${getStatusColor(metric)}`}>
                     {metric.lastValue !== null ? metric.lastValue.toLocaleString() : 'N/A'}
                   </span>
                   {metric.errorMessage ? (
@@ -133,9 +195,7 @@ const Metrics: React.FC = () => {
                         {metric.errorMessage}
                       </div>
                     </div>
-                  ) : (
-                    <CheckCircle2 className="text-emerald-500" size={16} />
-                  )}
+                  ) : <CheckCircle2 className="text-emerald-500" size={16} />}
                 </div>
                 <p className="text-[10px] text-slate-400 mt-1 flex items-center gap-1">
                   <RefreshCw size={10} className={loading ? 'animate-spin' : ''} />
@@ -144,30 +204,16 @@ const Metrics: React.FC = () => {
               </div>
 
               <div className="flex gap-2 mt-4">
-                <button
-                  onClick={() => openEditModal(metric)}
-                  className="p-2 text-slate-400 hover:text-primary hover:bg-primary/10 rounded-lg transition-colors"
-                >
+                <button onClick={() => openEditModal(metric)} className="p-2 text-slate-400 hover:text-primary hover:bg-primary/10 rounded-lg transition-colors">
                   <Edit2 size={18} />
                 </button>
-                <button
-                  onClick={() => handleDelete(metric.id)}
-                  className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-colors"
-                >
+                <button onClick={() => handleDelete(metric.id)} className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-colors">
                   <Trash2 size={18} />
                 </button>
               </div>
             </div>
           </div>
         ))}
-
-        {metrics.length === 0 && !loading && (
-          <div className="p-12 border-2 border-dashed border-slate-200 dark:border-primary/10 rounded-xl flex flex-col items-center text-center text-slate-500">
-            <Plus size={48} className="mb-4 opacity-20" />
-            <p className="font-bold uppercase tracking-widest text-sm">No metrics defined</p>
-            <p className="text-xs mt-2">Add your first business metric to start monitoring.</p>
-          </div>
-        )}
       </div>
 
       {isModalOpen && (
@@ -184,35 +230,32 @@ const Metrics: React.FC = () => {
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase font-bold text-slate-500">Metric Name</label>
-                  <input
-                    type="text"
-                    value={editingMetric.name}
-                    onChange={(e) => setEditingMetric({ ...editingMetric, name: e.target.value })}
-                    className="w-full bg-slate-50 dark:bg-primary/5 border border-slate-200 dark:border-primary/10 rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-primary outline-none"
-                    placeholder="e.g. orders_total"
-                  />
+                  <input type="text" value={editingMetric.name} onChange={(e) => setEditingMetric({ ...editingMetric, name: e.target.value })} className="w-full bg-slate-50 dark:bg-primary/5 border border-slate-200 dark:border-primary/10 rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-primary outline-none" placeholder="e.g. orders_total" />
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase font-bold text-slate-500">Type</label>
-                  <select
-                    value={editingMetric.type}
-                    onChange={(e) => setEditingMetric({ ...editingMetric, type: e.target.value })}
-                    className="w-full bg-slate-50 dark:bg-primary/5 border border-slate-200 dark:border-primary/10 rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-primary outline-none"
-                  >
-                    {metricTypes.map(t => <option key={t} value={t}>{t}</option>)}
+                  <select value={editingMetric.type} onChange={(e) => setEditingMetric({ ...editingMetric, type: e.target.value })} className="w-full bg-slate-50 dark:bg-primary/5 border border-slate-200 dark:border-primary/10 rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-primary outline-none">
+                    <option value="GAUGE">GAUGE</option>
+                    <option value="COUNTER">COUNTER</option>
+                    <option value="HISTOGRAM">HISTOGRAM</option>
                   </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold text-slate-500">Warning Threshold</label>
+                  <input type="number" value={editingMetric.warningThreshold || ''} onChange={(e) => setEditingMetric({ ...editingMetric, warningThreshold: e.target.value ? parseFloat(e.target.value) : null })} className="w-full bg-slate-50 dark:bg-primary/5 border border-slate-200 dark:border-primary/10 rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-primary outline-none" />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold text-slate-500">Critical Threshold</label>
+                  <input type="number" value={editingMetric.criticalThreshold || ''} onChange={(e) => setEditingMetric({ ...editingMetric, criticalThreshold: e.target.value ? parseFloat(e.target.value) : null })} className="w-full bg-slate-50 dark:bg-primary/5 border border-slate-200 dark:border-primary/10 rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-primary outline-none" />
                 </div>
               </div>
 
               <div className="space-y-1">
                 <label className="text-[10px] uppercase font-bold text-slate-500">Description</label>
-                <input
-                  type="text"
-                  value={editingMetric.description}
-                  onChange={(e) => setEditingMetric({ ...editingMetric, description: e.target.value })}
-                  className="w-full bg-slate-50 dark:bg-primary/5 border border-slate-200 dark:border-primary/10 rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-primary outline-none"
-                  placeholder="What does this metric represent?"
-                />
+                <input type="text" value={editingMetric.description} onChange={(e) => setEditingMetric({ ...editingMetric, description: e.target.value })} className="w-full bg-slate-50 dark:bg-primary/5 border border-slate-200 dark:border-primary/10 rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-primary outline-none" placeholder="What does this metric represent?" />
               </div>
 
               <div className="space-y-1">
@@ -220,44 +263,19 @@ const Metrics: React.FC = () => {
                   <label className="text-[10px] uppercase font-bold text-slate-500">Flink SQL Query</label>
                   <div className="flex gap-2">
                     {examples.map(ex => (
-                      <button
-                        key={ex.name}
-                        onClick={() => setEditingMetric({ ...editingMetric, sql: ex.sql })}
-                        className="text-[10px] text-primary hover:underline"
-                      >
-                        {ex.name}
-                      </button>
+                      <button key={ex.name} onClick={() => setEditingMetric({ ...editingMetric, sql: ex.sql })} className="text-[10px] text-primary hover:underline">{ex.name}</button>
                     ))}
                   </div>
                 </div>
-                <div className="h-48 border border-slate-200 dark:border-primary/10 rounded-lg overflow-hidden">
-                  <Editor
-                    height="100%"
-                    defaultLanguage="sql"
-                    theme="vs-dark"
-                    value={editingMetric.sql}
-                    onChange={(val) => setEditingMetric({ ...editingMetric, sql: val || '' })}
-                    options={{
-                      minimap: { enabled: false },
-                      fontSize: 12,
-                      scrollBeyondLastLine: false,
-                    }}
-                  />
+                <div className="h-40 border border-slate-200 dark:border-primary/10 rounded-lg overflow-hidden">
+                  <Editor height="100%" defaultLanguage="sql" theme="vs-dark" value={editingMetric.sql} onChange={(val) => setEditingMetric({ ...editingMetric, sql: val || '' })} options={{ minimap: { enabled: false }, fontSize: 12, scrollBeyondLastLine: false }} />
                 </div>
               </div>
             </div>
 
             <div className="p-6 border-t border-slate-200 dark:border-primary/10 flex justify-end gap-3">
-              <button
-                onClick={() => setIsModalOpen(false)}
-                className="px-4 py-2 text-sm font-bold text-slate-500 hover:text-slate-700 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSave}
-                className="bg-primary hover:bg-primary/80 text-background-dark px-6 py-2 rounded-lg font-bold transition-colors flex items-center gap-2"
-              >
+              <button onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-sm font-bold text-slate-500 hover:text-slate-700 transition-colors">Cancel</button>
+              <button onClick={handleSave} className="bg-primary hover:bg-primary/80 text-background-dark px-6 py-2 rounded-lg font-bold transition-colors flex items-center gap-2">
                 <Play size={16} /> Save & Activate
               </button>
             </div>
