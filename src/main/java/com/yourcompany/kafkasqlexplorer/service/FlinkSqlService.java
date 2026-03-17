@@ -1,5 +1,6 @@
 package com.yourcompany.kafkasqlexplorer.service;
 
+import com.yourcompany.kafkasqlexplorer.domain.MessageFormat;
 import com.yourcompany.kafkasqlexplorer.domain.QueryRequest;
 import com.yourcompany.kafkasqlexplorer.domain.QueryResult;
 import com.yourcompany.kafkasqlexplorer.config.ExplorerConfig;
@@ -31,6 +32,9 @@ public class FlinkSqlService {
     private final StreamTableEnvironment tableEnv;
     private final ExplorerConfig explorerConfig;
     private final SqlQueryValidator sqlQueryValidator;
+    private final KafkaAdminService kafkaAdminService;
+    private final SchemaInferenceService schemaInferenceService;
+    private final DdlGeneratorService ddlGeneratorService;
 
     /**
      * Dedicated executor for fetching results from Flink to avoid blocking Spring's main threads
@@ -51,10 +55,14 @@ public class FlinkSqlService {
 
     public record JobInfo(String sql, JobClient client) {}
 
-    public FlinkSqlService(StreamTableEnvironment tableEnv, ExplorerConfig explorerConfig, SqlQueryValidator sqlQueryValidator) {
+    public FlinkSqlService(StreamTableEnvironment tableEnv, ExplorerConfig explorerConfig, SqlQueryValidator sqlQueryValidator,
+                           KafkaAdminService kafkaAdminService, SchemaInferenceService schemaInferenceService, DdlGeneratorService ddlGeneratorService) {
         this.tableEnv = tableEnv;
         this.explorerConfig = explorerConfig;
         this.sqlQueryValidator = sqlQueryValidator;
+        this.kafkaAdminService = kafkaAdminService;
+        this.schemaInferenceService = schemaInferenceService;
+        this.ddlGeneratorService = ddlGeneratorService;
         // Register our custom XML extraction function globally in the Flink environment.
         // This allows users to use 'XmlExtract(raw_value, '/path/to/tag')' in their queries.
         this.tableEnv.createTemporarySystemFunction("XmlExtract", XmlExtractUDF.class);
@@ -87,10 +95,90 @@ public class FlinkSqlService {
      * combination of LIMIT and TIMEOUT to ensure the web request returns in a
      * reasonable timeframe.
      */
+    /**
+     * Flink SQL uses backtick-quoted identifiers (e.g. `demo.customers`).
+     * Standard SQL and many editors produce double-quoted identifiers ("demo.customers").
+     * This method converts double-quoted identifiers to backtick-quoted ones while
+     * leaving single-quoted string literals untouched.
+     */
+    private String normalizeIdentifierQuotes(String sql) {
+        if (sql == null || !sql.contains("\"")) return sql;
+        StringBuilder sb = new StringBuilder(sql.length());
+        boolean inSingleQuote = false;
+        for (int i = 0; i < sql.length(); i++) {
+            char c = sql.charAt(i);
+            if (c == '\'' ) {
+                if (inSingleQuote && i + 1 < sql.length() && sql.charAt(i + 1) == '\'') {
+                    sb.append("''");  // escaped single quote inside string
+                    i++;
+                } else {
+                    inSingleQuote = !inSingleQuote;
+                    sb.append(c);
+                }
+            } else if (c == '"' && !inSingleQuote) {
+                sb.append('`');  // double-quote identifier → backtick
+            } else {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Before executing a SELECT, checks if the referenced table is already registered in Flink.
+     * If not, looks for a Kafka topic whose sanitized name (dots/hyphens → underscores) matches,
+     * infers its schema, generates the DDL and registers it automatically.
+     *
+     * @return null on success (or when no registration is needed), or an error message if
+     *         a matching Kafka topic was found but table registration failed.
+     */
+    private String autoRegisterTableIfNeeded(String sql) {
+        if (!sql.trim().toUpperCase().startsWith("SELECT")) return null;
+        // Extract first table name after FROM (handles backtick and unquoted identifiers)
+        Pattern pattern = Pattern.compile("(?i)\\bFROM\\s+[`\"]?([\\w.\\-]+)[`\"]?");
+        Matcher matcher = pattern.matcher(sql);
+        if (!matcher.find()) return null;
+
+        String rawTableRef = matcher.group(1);
+        String flinkTableName = DdlGeneratorService.toTableName(rawTableRef);
+
+        if (listTables().contains(flinkTableName)) return null;
+
+        List<String> topics;
+        try {
+            topics = kafkaAdminService.listTopics();
+        } catch (Exception e) {
+            log.warn("Could not list Kafka topics during auto-registration: {}", e.getMessage());
+            return "Cannot reach Kafka broker: " + e.getMessage();
+        }
+
+        String matchingTopic = topics.stream()
+                .filter(t -> DdlGeneratorService.toTableName(t).equals(flinkTableName))
+                .findFirst().orElse(null);
+
+        // No matching topic — the user may have typed a wrong name; let Flink report the error.
+        if (matchingTopic == null) return null;
+
+        try {
+            MessageFormat format = schemaInferenceService.detectFormat(matchingTopic);
+            Map<String, String> schema = schemaInferenceService.inferSchema(matchingTopic, format);
+            String ddl = ddlGeneratorService.generateDdl(matchingTopic, schema, format);
+            tableEnv.executeSql(ddl);
+            log.info("Auto-registered table '{}' for Kafka topic '{}'", flinkTableName, matchingTopic);
+            return null;
+        } catch (Exception e) {
+            log.warn("Auto-registration failed for '{}': {}", flinkTableName, e.getMessage());
+            return String.format(
+                "Failed to auto-register Flink table '%s' from Kafka topic '%s': %s",
+                flinkTableName, matchingTopic, e.getMessage());
+        }
+    }
+
     public QueryResult executeSql(QueryRequest request) {
         long startTime = System.currentTimeMillis();
         String queryId = UUID.randomUUID().toString();
-        String originalSql = request.sql().trim();
+        // Normalize double-quoted identifiers to backticks before any parsing/validation
+        String originalSql = normalizeIdentifierQuotes(request.sql().trim());
         String sql = originalSql.toUpperCase();
 
         // Security: Prevent execution of dangerous or unsupported DDL/DML.
@@ -100,14 +188,19 @@ public class FlinkSqlService {
         }
 
         try {
-            sqlQueryValidator.validate(request.sql());
+            sqlQueryValidator.validate(originalSql);
         } catch (IllegalArgumentException e) {
             return new QueryResult(Collections.emptyList(), Collections.emptyList(), 0, "SQL Validation Error: " + e.getMessage());
         }
 
         TableResult result = null;
         try {
-            String sqlToExecute = request.sql();
+            String registrationError = autoRegisterTableIfNeeded(originalSql);
+            if (registrationError != null) {
+                return new QueryResult(Collections.emptyList(), Collections.emptyList(),
+                        System.currentTimeMillis() - startTime, registrationError);
+            }
+            String sqlToExecute = originalSql;
             String readMode = request.readMode();
 
             // Magic Read Mode: If the user selected 'latest-offset' and it's a simple SELECT,

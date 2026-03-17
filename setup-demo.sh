@@ -88,22 +88,22 @@ produce() {
 DATE_NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 # --- Scenario 1: Nominal Flow (Order #101) ---
-produce "demo.orders.1.received" "{\"id\":\"ORD-101\",\"state\":\"RECEIVED\",\"description\":\"Smartphone purchase\",\"type\":\"ELECTRONICS\",\"date\":\"$DATE_NOW\",\"amount\":599.99,\"customer_id\":\"C-001\"}"
-produce "demo.orders.2.validated" "{\"id\":\"ORD-101\",\"state\":\"VALIDATED\",\"description\":\"Smartphone purchase\",\"type\":\"ELECTRONICS\",\"date\":\"$DATE_NOW\",\"amount\":599.99,\"customer_id\":\"C-001\",\"validation_code\":\"VAL-A1\"}"
-produce "demo.orders.3.enriched" "{\"id\":\"ORD-101\",\"state\":\"ENRICHED\",\"description\":\"Smartphone purchase\",\"type\":\"ELECTRONICS\",\"date\":\"$DATE_NOW\",\"amount\":599.99,\"customer_id\":\"C-001\",\"metadata\":{\"warehouse\":\"WH-NORTH\",\"priority\":\"HIGH\"}}"
-produce "demo.orders.4.transformed" "{\"id\":\"ORD-101\",\"state\":\"TRANSFORMED\",\"description\":\"Smartphone purchase\",\"type\":\"ELECTRONICS\",\"date\":\"$DATE_NOW\",\"total_with_tax\":719.99,\"currency\":\"EUR\"}"
-produce "demo.orders.5.shipped" "{\"id\":\"ORD-101\",\"state\":\"SHIPPED\",\"description\":\"Smartphone purchase\",\"type\":\"ELECTRONICS\",\"date\":\"$DATE_NOW\",\"tracking_number\":\"TRK-123456\"}"
-produce "demo.orders.6.delivered" "{\"id\":\"ORD-101\",\"state\":\"DELIVERED\",\"description\":\"Smartphone purchase\",\"type\":\"ELECTRONICS\",\"date\":\"$DATE_NOW\",\"delivery_status\":\"SUCCESS\"}"
+produce "demo.orders.1.received" "{\"id\":\"ORD-101\",\"state\":\"RECEIVED\",\"description\":\"Smartphone purchase\",\"type\":\"ELECTRONICS\",\"odate\":\"$DATE_NOW\",\"amount\":599.99,\"customer_id\":\"C-001\"}"
+produce "demo.orders.2.validated" "{\"id\":\"ORD-101\",\"state\":\"VALIDATED\",\"description\":\"Smartphone purchase\",\"type\":\"ELECTRONICS\",\"odate\":\"$DATE_NOW\",\"amount\":599.99,\"customer_id\":\"C-001\",\"validation_code\":\"VAL-A1\"}"
+produce "demo.orders.3.enriched" "{\"id\":\"ORD-101\",\"state\":\"ENRICHED\",\"description\":\"Smartphone purchase\",\"type\":\"ELECTRONICS\",\"odate\":\"$DATE_NOW\",\"amount\":599.99,\"customer_id\":\"C-001\",\"metadata\":{\"warehouse\":\"WH-NORTH\",\"priority\":\"HIGH\"}}"
+produce "demo.orders.4.transformed" "{\"id\":\"ORD-101\",\"state\":\"TRANSFORMED\",\"description\":\"Smartphone purchase\",\"type\":\"ELECTRONICS\",\"odate\":\"$DATE_NOW\",\"total_with_tax\":719.99,\"currency\":\"EUR\"}"
+produce "demo.orders.5.shipped" "{\"id\":\"ORD-101\",\"state\":\"SHIPPED\",\"description\":\"Smartphone purchase\",\"type\":\"ELECTRONICS\",\"odate\":\"$DATE_NOW\",\"tracking_number\":\"TRK-123456\"}"
+produce "demo.orders.6.delivered" "{\"id\":\"ORD-101\",\"state\":\"DELIVERED\",\"description\":\"Smartphone purchase\",\"type\":\"ELECTRONICS\",\"odate\":\"$DATE_NOW\",\"delivery_status\":\"SUCCESS\"}"
 
 # --- Scenario 2: Rejected Order (Order #102) ---
-produce "demo.orders.1.received" "{\"id\":\"ORD-102\",\"state\":\"RECEIVED\",\"description\":\"Broken laptop return\",\"type\":\"ELECTRONICS\",\"date\":\"$DATE_NOW\",\"amount\":0.00,\"customer_id\":\"C-002\"}"
-produce "demo.orders.2.validated" "{\"id\":\"ORD-102\",\"state\":\"REJECTED\",\"description\":\"Broken laptop return\",\"type\":\"ELECTRONICS\",\"date\":\"$DATE_NOW\",\"reason\":\"Warranty expired\"}"
+produce "demo.orders.1.received" "{\"id\":\"ORD-102\",\"state\":\"RECEIVED\",\"description\":\"Broken laptop return\",\"type\":\"ELECTRONICS\",\"odate\":\"$DATE_NOW\",\"amount\":0.00,\"customer_id\":\"C-002\"}"
+produce "demo.orders.2.validated" "{\"id\":\"ORD-102\",\"state\":\"REJECTED\",\"description\":\"Broken laptop return\",\"type\":\"ELECTRONICS\",\"odate\":\"$DATE_NOW\",\"reason\":\"Warranty expired\"}"
 
 # --- Scenario 3: Aggregation Data ---
-produce "demo.orders.1.received" "{\"id\":\"ORD-103\",\"state\":\"RECEIVED\",\"description\":\"Sofa\",\"type\":\"FURNITURE\",\"date\":\"$DATE_NOW\",\"amount\":1200.00,\"customer_id\":\"C-003\"}"
-produce "demo.orders.1.received" "{\"id\":\"ORD-104\",\"state\":\"RECEIVED\",\"description\":\"Table\",\"type\":\"FURNITURE\",\"date\":\"$DATE_NOW\",\"amount\":450.00,\"customer_id\":\"C-003\"}"
-produce "demo.orders.1.received" "{\"id\":\"ORD-105\",\"state\":\"RECEIVED\",\"description\":\"Apple\",\"type\":\"FOOD\",\"date\":\"$DATE_NOW\",\"amount\":2.50,\"customer_id\":\"C-001\"}"
-produce "demo.orders.1.received" "{\"id\":\"ORD-106\",\"state\":\"RECEIVED\",\"description\":\"Banana\",\"type\":\"FOOD\",\"date\":\"$DATE_NOW\",\"amount\":1.80,\"customer_id\":\"C-001\"}"
+produce "demo.orders.1.received" "{\"id\":\"ORD-103\",\"state\":\"RECEIVED\",\"description\":\"Sofa\",\"type\":\"FURNITURE\",\"odate\":\"$DATE_NOW\",\"amount\":1200.00,\"customer_id\":\"C-003\"}"
+produce "demo.orders.1.received" "{\"id\":\"ORD-104\",\"state\":\"RECEIVED\",\"description\":\"Table\",\"type\":\"FURNITURE\",\"odate\":\"$DATE_NOW\",\"amount\":450.00,\"customer_id\":\"C-003\"}"
+produce "demo.orders.1.received" "{\"id\":\"ORD-105\",\"state\":\"RECEIVED\",\"description\":\"Apple\",\"type\":\"FOOD\",\"odate\":\"$DATE_NOW\",\"amount\":2.50,\"customer_id\":\"C-001\"}"
+produce "demo.orders.1.received" "{\"id\":\"ORD-106\",\"state\":\"RECEIVED\",\"description\":\"Banana\",\"type\":\"FOOD\",\"odate\":\"$DATE_NOW\",\"amount\":1.80,\"customer_id\":\"C-001\"}"
 
 # --- Scenario 4: XML Support (demo.orders.xml) ---
 XML_MSG="<Order id=\"ORD-XML-01\"><Customer>Alice</Customer><Amount>150.00</Amount><Items><Item><Name>SSD</Name><Price>100.00</Price></Item><Item><Name>Cable</Name><Price>50.00</Price></Item></Items></Order>"

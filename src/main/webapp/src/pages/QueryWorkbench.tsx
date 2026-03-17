@@ -1,103 +1,398 @@
-import React, { useState, useEffect } from 'react';
-import Editor from '@monaco-editor/react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import Editor, { useMonaco } from '@monaco-editor/react';
+import type { editor, languages } from 'monaco-editor';
 import axios from 'axios';
+import { useToast } from '../components/Toast';
 
-interface SchemaInfo {
-  topics: string[];
-  tables: string[];
-  health: boolean;
-}
+interface SchemaInfo { topics: string[]; tables: string[]; health: boolean; }
+interface QueryResult { queryId: string; columns: string[]; rows: Record<string, unknown>[]; error: string | null; }
+interface Tab { id: string; name: string; sql: string; }
+interface SavedQuery { id: string; name: string; sql: string; savedAt: number; }
 
-interface QueryResult {
-  queryId: string;
-  columns: string[];
-  rows: Record<string, any>[];
-  error: string | null;
-}
+const DEFAULT_LIMIT = 50;
+let tabCounter = 1;
+const newTab = (sql = ''): Tab => ({ id: String(++tabCounter), name: `Query ${tabCounter}`, sql });
 
 const QueryWorkbench: React.FC = () => {
-  const [schema, setSchema] = useState<SchemaInfo | null>(null);
-  const [sql, setSql] = useState("SELECT\n  window_start, window_end, product_id,\n  SUM(quantity) AS total_sales\nFROM orders_stream\nWINDOW TUMBLING (SIZE 5 MINUTES)\nGROUP BY\n  window_start, window_end, product_id\nEMIT CHANGES;");
-  const [results, setResults] = useState<QueryResult | null>(null);
-  const [executing, setExecuting] = useState(false);
-  const [offsetMode, setOffsetMode] = useState<'EARLIEST' | 'LATEST'>('EARLIEST');
+  const { toast } = useToast();
+  const location = useLocation();
+  const navigate = useNavigate();
 
-  // Schema details state
+  // ── Schema state ──────────────────────────────────────────────────────────────
+  const [schema, setSchema] = useState<SchemaInfo | null>(null);
+  const [schemaLoading, setSchemaLoading] = useState(false);
   const [expandedTables, setExpandedTables] = useState<Record<string, boolean>>({});
   const [tableSchemas, setTableSchemas] = useState<Record<string, Record<string, string>>>({});
+  const schemaRef = useRef<SchemaInfo | null>(null);
+  const tableSchemasRef = useRef<Record<string, Record<string, string>>>({});
+  useEffect(() => { schemaRef.current = schema; }, [schema]);
+  useEffect(() => { tableSchemasRef.current = tableSchemas; }, [tableSchemas]);
 
-  // Window Assistant state
+  // ── Tabs ──────────────────────────────────────────────────────────────────────
+  const defaultSql = "SELECT\n  window_start, window_end, product_id,\n  SUM(quantity) AS total_sales\nFROM orders_stream\nWINDOW TUMBLING (SIZE 5 MINUTES)\nGROUP BY\n  window_start, window_end, product_id\nEMIT CHANGES;";
+  const urlSql = new URLSearchParams(location.search).get('sql');
+  const [tabs, setTabs] = useState<Tab[]>([{ id: '1', name: 'Query 1', sql: urlSql ? decodeURIComponent(urlSql) : defaultSql }]);
+  const [activeTabId, setActiveTabId] = useState('1');
+  const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
+  const [renamingName, setRenamingName] = useState('');
+
+  const activeTab = tabs.find(t => t.id === activeTabId) ?? tabs[0];
+  const sql = activeTab.sql;
+  const setSql = useCallback((newSql: string) => {
+    setTabs(prev => prev.map(t => t.id === activeTabId ? { ...t, sql: newSql } : t));
+  }, [activeTabId]);
+
+  const addTab = () => {
+    const t = newTab();
+    setTabs(prev => [...prev, t]);
+    setActiveTabId(t.id);
+  };
+
+  const closeTab = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setTabs(prev => {
+      if (prev.length === 1) return prev;
+      const next = prev.filter(t => t.id !== id);
+      if (activeTabId === id) setActiveTabId(next[Math.max(0, prev.findIndex(t => t.id === id) - 1)].id);
+      return next;
+    });
+  };
+
+  const startRename = (tab: Tab, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setRenamingTabId(tab.id);
+    setRenamingName(tab.name);
+  };
+
+  const commitRename = () => {
+    if (renamingTabId && renamingName.trim()) {
+      setTabs(prev => prev.map(t => t.id === renamingTabId ? { ...t, name: renamingName.trim() } : t));
+    }
+    setRenamingTabId(null);
+  };
+
+  // ── Named saved queries ───────────────────────────────────────────────────────
+  const [savedQueries, setSavedQueries] = useState<SavedQuery[]>(() => {
+    try { return JSON.parse(localStorage.getItem('kse:saved-queries') || '[]'); } catch { return []; }
+  });
+  const [saveInputVisible, setSaveInputVisible] = useState(false);
+  const [saveInputName, setSaveInputName] = useState('');
+
+  const persistSaved = (next: SavedQuery[]) => {
+    setSavedQueries(next);
+    localStorage.setItem('kse:saved-queries', JSON.stringify(next));
+  };
+
+  const saveQuery = () => {
+    const name = saveInputName.trim() || activeTab.name;
+    const entry: SavedQuery = { id: crypto.randomUUID(), name, sql, savedAt: Date.now() };
+    persistSaved([entry, ...savedQueries]);
+    setSaveInputVisible(false);
+    setSaveInputName('');
+    toast(`Saved "${name}"`, 'success');
+  };
+
+  const deleteSavedQuery = (id: string) => persistSaved(savedQueries.filter(q => q.id !== id));
+
+  const loadSavedQuery = (q: SavedQuery) => {
+    const t = newTab(q.sql);
+    t.name = q.name;
+    setTabs(prev => [...prev, t]);
+    setActiveTabId(t.id);
+    toast(`Loaded "${q.name}" in new tab`, 'success');
+  };
+
+  // ── Monaco: editor ref + keybindings + providers ──────────────────────────────
+  const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+  const monaco = useMonaco();
+  const runQueryRef = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    if (!editorRef.current || !monaco) return;
+    editorRef.current.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => runQueryRef.current());
+  }, [monaco]);
+
+  // Auto-completion provider
+  useEffect(() => {
+    if (!monaco) return;
+    const disp = monaco.languages.registerCompletionItemProvider('sql', {
+      triggerCharacters: [' ', '\n', '.'],
+      provideCompletionItems: (_model, position) => {
+        const word = _model.getWordUntilPosition(position);
+        const range = { startLineNumber: position.lineNumber, endLineNumber: position.lineNumber, startColumn: word.startColumn, endColumn: word.endColumn };
+        const suggestions: languages.CompletionItem[] = [];
+        schemaRef.current?.tables.forEach(table => suggestions.push({
+          label: table, kind: monaco.languages.CompletionItemKind.Class, insertText: table, range, detail: 'Flink Table',
+        }));
+        Object.entries(tableSchemasRef.current).forEach(([tableName, cols]) =>
+          Object.entries(cols).forEach(([col, type]) => suggestions.push({
+            label: col, kind: monaco.languages.CompletionItemKind.Field, insertText: col, range, detail: type, documentation: `${tableName}.${col}`,
+          }))
+        );
+        ['TUMBLE', 'HOP', 'SESSION', 'CUMULATE', 'DESCRIPTOR', 'PROCTIME', 'ROWTIME',
+          'WATERMARK', 'EMIT CHANGES', 'INTERVAL', 'OVER', 'PARTITION BY',
+          'JSON_VALUE', 'JSON_QUERY', 'JSON_EXISTS'].forEach(kw =>
+          suggestions.push({ label: kw, kind: monaco.languages.CompletionItemKind.Keyword, insertText: kw, range })
+        );
+        return { suggestions };
+      },
+    });
+    return () => disp.dispose();
+  }, [monaco]);
+
+  // Hover provider: schema tooltip on table names
+  useEffect(() => {
+    if (!monaco) return;
+    const disp = monaco.languages.registerHoverProvider('sql', {
+      provideHover: (_model, position) => {
+        const word = _model.getWordAtPosition(position);
+        if (!word) return null;
+        const tables = schemaRef.current?.tables ?? [];
+        if (!tables.includes(word.word)) return null;
+        const cols = tableSchemasRef.current[word.word];
+        const body = cols
+          ? `**Flink Table** \`${word.word}\`\n\n| Column | Type |\n|--------|------|\n${Object.entries(cols).map(([c, t]) => `| \`${c}\` | \`${t}\` |`).join('\n')}`
+          : `**Flink Table** \`${word.word}\`\n\n_Expand in sidebar to load schema_`;
+        return {
+          range: new monaco.Range(position.lineNumber, word.startColumn, position.lineNumber, word.endColumn),
+          contents: [{ value: body }],
+        };
+      },
+    });
+    return () => disp.dispose();
+  }, [monaco]);
+
+  // ── Query state ───────────────────────────────────────────────────────────────
+  const [results, setResults] = useState<QueryResult | null>(null);
+  const [executing, setExecuting] = useState(false);
+  const [executionMs, setExecutionMs] = useState<number | null>(null);
+  const [offsetMode, setOffsetMode] = useState<'EARLIEST' | 'LATEST'>('EARLIEST');
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [sortCol, setSortCol] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const [showErrorDetails, setShowErrorDetails] = useState(false);
+  useEffect(() => { setShowErrorDetails(false); }, [results]);
+
+  const sortedRows = useMemo(() => {
+    if (!results?.rows || !sortCol) return results?.rows ?? [];
+    return [...results.rows].sort((a, b) => {
+      const va = String(a[sortCol] ?? ''), vb = String(b[sortCol] ?? '');
+      const cmp = va.localeCompare(vb, undefined, { numeric: true });
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+  }, [results?.rows, sortCol, sortDir]);
+
+  const [errorSummary, errorDetails] = useMemo(() => {
+    if (!results?.error) return [null, null];
+    const idx = results.error.indexOf('\n');
+    return idx === -1 ? [results.error, null] : [results.error.substring(0, idx), results.error.substring(idx + 1)];
+  }, [results?.error]);
+
+  // ── DDL preview ───────────────────────────────────────────────────────────────
+  const [ddlPreviewTopic, setDdlPreviewTopic] = useState<string | null>(null);
+  const [ddlPreview, setDdlPreview] = useState<string | null>(null);
+  const [ddlPreviewLoading, setDdlPreviewLoading] = useState(false);
+
+  const fetchDdlPreview = async (topicName: string) => {
+    setDdlPreviewTopic(topicName);
+    setDdlPreview(null);
+    setDdlPreviewLoading(true);
+    try {
+      const res = await axios.get<{ ddl?: string; error?: string }>(`/api/query/ddl-preview?topic=${encodeURIComponent(topicName)}`);
+      setDdlPreview(res.data.ddl ?? null);
+      if (res.data.error) toast(`DDL preview failed: ${res.data.error}`, 'error');
+    } catch { toast('Failed to generate DDL preview', 'error'); }
+    finally { setDdlPreviewLoading(false); }
+  };
+
+  // ── History ───────────────────────────────────────────────────────────────────
+  const [showHistory, setShowHistory] = useState(false);
+  const [history, setHistory] = useState<{ sql: string; ts: number }[]>(() => {
+    try { return JSON.parse(localStorage.getItem('kse:query-history') || '[]'); } catch { return []; }
+  });
+  const saveToHistory = (sqlStr: string) => {
+    const entry = { sql: sqlStr.trim(), ts: Date.now() };
+    const next = [entry, ...history.filter(h => h.sql !== entry.sql)].slice(0, 20);
+    setHistory(next);
+    localStorage.setItem('kse:query-history', JSON.stringify(next));
+  };
+
+  // ── Window assistant ──────────────────────────────────────────────────────────
   const [windowType, setWindowType] = useState('Tumbling (Non-overlapping)');
   const [windowSize, setWindowSize] = useState(5);
   const [windowUnit, setWindowUnit] = useState('MIN');
 
+  // ── Resize: split pane (vertical) + sidebar (horizontal) ─────────────────────
+  const containerRef = useRef<HTMLDivElement>(null);
+  const isDragging = useRef(false);
+  const isSidebarDragging = useRef(false);
+  const [splitPercent, setSplitPercent] = useState(55);
+  const [sidebarWidth, setSidebarWidth] = useState(288);
+
   useEffect(() => {
-    fetchSchema();
+    const onMouseMove = (e: MouseEvent) => {
+      if (isDragging.current && containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        setSplitPercent(Math.max(20, Math.min(80, ((e.clientY - rect.top) / rect.height) * 100)));
+      }
+      if (isSidebarDragging.current) {
+        setSidebarWidth(Math.max(200, Math.min(480, e.clientX)));
+      }
+    };
+    const onMouseUp = () => {
+      isDragging.current = false;
+      isSidebarDragging.current = false;
+      document.body.style.cursor = '';
+    };
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    return () => { document.removeEventListener('mousemove', onMouseMove); document.removeEventListener('mouseup', onMouseUp); };
   }, []);
 
+  // ── Actions ───────────────────────────────────────────────────────────────────
+  useEffect(() => { fetchSchema(); }, []);
+
   const fetchSchema = async () => {
-    try {
-      const response = await axios.get('/api/query/init');
-      setSchema(response.data);
-    } catch (err) {
-      console.error('Failed to fetch schema', err);
-    }
+    setSchemaLoading(true);
+    try { const r = await axios.get('/api/query/init'); setSchema(r.data); }
+    catch { toast('Failed to load schema', 'error'); }
+    finally { setSchemaLoading(false); }
   };
 
   const toggleTable = async (tableName: string) => {
     const isExpanded = !!expandedTables[tableName];
     setExpandedTables(prev => ({ ...prev, [tableName]: !isExpanded }));
-
     if (!isExpanded && !tableSchemas[tableName]) {
-      try {
-        const response = await axios.get(`/api/query/schema/${tableName}`);
-        setTableSchemas(prev => ({ ...prev, [tableName]: response.data }));
-      } catch (err) {
-        console.error('Failed to fetch table schema', err);
-      }
+      try { const r = await axios.get(`/api/query/schema/${tableName}`); setTableSchemas(prev => ({ ...prev, [tableName]: r.data })); }
+      catch { /* ignore */ }
     }
   };
 
   const runQuery = async () => {
-    setExecuting(true);
-    setResults(null);
+    setValidationError(null);
     try {
-      const response = await axios.post('/api/query', { sql });
+      const vRes = await axios.post<{ valid: boolean; error?: string }>('/api/query/validate', { sql });
+      if (!vRes.data.valid) { setValidationError(vRes.data.error ?? 'SQL validation failed'); return; }
+    } catch { /* let execution handle it */ }
+
+    setExecuting(true); setResults(null); setSortCol(null);
+    const start = Date.now();
+    try {
+      const readMode = offsetMode === 'LATEST' ? 'latest-offset' : 'earliest-offset';
+      const response = await axios.post('/api/query', { sql, readMode });
+      setExecutionMs(Date.now() - start);
       setResults(response.data);
-    } catch (err) {
+      if (!response.data.error) saveToHistory(sql);
+    } catch {
+      setExecutionMs(Date.now() - start);
       setResults({ queryId: '', columns: [], rows: [], error: 'Query execution failed' });
-    } finally {
-      setExecuting(false);
+      toast('Query execution failed', 'error');
+    } finally { setExecuting(false); }
+  };
+  runQueryRef.current = runQuery;
+
+  const handleSortColumn = (col: string) => {
+    if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortCol(col); setSortDir('asc'); }
+  };
+
+  const copyCell = (value: unknown) => {
+    const text = typeof value === 'object' ? JSON.stringify(value) : String(value ?? '');
+    navigator.clipboard.writeText(text).then(() => toast('Copied', 'success'));
+  };
+
+  const exportResults = (format: 'csv' | 'json') => {
+    if (!results?.rows.length) return;
+    let content: string, mime: string, ext: string;
+    if (format === 'json') { content = JSON.stringify(results.rows, null, 2); mime = 'application/json'; ext = 'json'; }
+    else {
+      const header = results.columns.join(',');
+      const rows = results.rows.map(r => results.columns.map(c => JSON.stringify(r[c] ?? '')).join(','));
+      content = [header, ...rows].join('\n'); mime = 'text/csv'; ext = 'csv';
     }
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `query-results.${ext}`; a.click();
+    URL.revokeObjectURL(url);
+    toast(`Exported as ${ext.toUpperCase()}`, 'success');
   };
 
   const applyWindowLogic = () => {
-    const unitMap: Record<string, string> = { 'MIN': 'MINUTES', 'SEC': 'SECONDS', 'HOUR': 'HOURS' };
+    const unitMap: Record<string, string> = { MIN: 'MINUTES', SEC: 'SECONDS', HOUR: 'HOURS' };
     const unit = unitMap[windowUnit] || 'MINUTES';
-    const newSql = `-- Window logic applied: ${windowType}\nSELECT * FROM source\nWINDOW TUMBLING (SIZE ${windowSize} ${unit})\nGROUP BY ...`;
+    const tableName = schema?.tables[0] || 'source_table';
+    const newSql = `-- Window: ${windowType}, Size: ${windowSize} ${unit}\nSELECT\n  window_start,\n  window_end,\n  COUNT(*) AS event_count\nFROM TABLE(\n  TUMBLE(TABLE ${tableName}, DESCRIPTOR(event_time), INTERVAL '${windowSize}' ${unit})\n)\nGROUP BY window_start, window_end;`;
     setSql(newSql);
+    toast('Window logic applied to editor', 'success');
   };
 
+  const formatMs = (ms: number) => ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
+
+  // ── Render ────────────────────────────────────────────────────────────────────
   return (
     <div className="flex h-full overflow-hidden">
-      {/* Sidebar Navigation & Schema Browser */}
-      <aside className="w-72 flex-shrink-0 flex flex-col border-r border-primary/10 bg-background-dark/50">
-        <div className="p-4 flex items-center gap-3 border-b border-primary/10">
-          <div className="size-8 bg-primary rounded flex items-center justify-center text-background-dark">
-            <span className="material-symbols-outlined font-bold">database</span>
-          </div>
-          <div>
-            <h1 className="text-sm font-bold tracking-tight">KAFKA EXPLORER</h1>
-            <p className="text-[10px] text-primary uppercase font-semibold">Prod-West-1</p>
+
+      {/* ── DDL Preview Modal ────────────────────────────────────────────────── */}
+      {ddlPreviewTopic && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-8">
+          <div className="bg-background-dark border border-primary/20 rounded-xl w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl">
+            <div className="flex items-center justify-between p-4 border-b border-primary/10">
+              <div>
+                <h2 className="text-sm font-bold">DDL Preview</h2>
+                <p className="text-[10px] text-slate-500 font-mono mt-0.5">{ddlPreviewTopic}</p>
+              </div>
+              <button onClick={() => setDdlPreviewTopic(null)} className="text-slate-500 hover:text-white transition-colors">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto p-4">
+              {ddlPreviewLoading
+                ? <div className="flex items-center gap-2 text-slate-500 py-4"><span className="material-symbols-outlined animate-spin text-sm">refresh</span><span className="text-xs">Inferring schema…</span></div>
+                : ddlPreview
+                  ? <pre className="text-xs font-mono text-slate-300 whitespace-pre-wrap leading-relaxed">{ddlPreview}</pre>
+                  : <p className="text-xs text-slate-500">Failed to generate DDL</p>
+              }
+            </div>
+            <div className="p-4 border-t border-primary/10 flex items-center justify-between">
+              <button onClick={() => { if (ddlPreview) { setSql(ddlPreview); setDdlPreviewTopic(null); toast('DDL inserted in editor', 'success'); } }} disabled={!ddlPreview}
+                className="text-xs font-bold text-primary border border-primary/30 px-3 py-1.5 rounded-lg hover:bg-primary/10 disabled:opacity-40 transition-colors">INSERT IN EDITOR</button>
+              <button onClick={() => { if (ddlPreview) { navigator.clipboard.writeText(ddlPreview); toast('DDL copied', 'success'); } }} disabled={!ddlPreview}
+                className="flex items-center gap-1.5 text-xs text-slate-400 border border-primary/20 px-3 py-1.5 rounded-lg hover:bg-primary/5 disabled:opacity-40 transition-colors">
+                <span className="material-symbols-outlined text-sm">content_copy</span>COPY
+              </button>
+            </div>
           </div>
         </div>
-        
-        {/* Schema Browser */}
+      )}
+
+      {/* ── Schema Browser Sidebar (resizable) ──────────────────────────────── */}
+      <aside className="relative flex-shrink-0 flex flex-col border-r border-primary/10 bg-background-dark/50" style={{ width: sidebarWidth }}>
+        {/* Sidebar drag handle */}
+        <div
+          onMouseDown={e => { isSidebarDragging.current = true; document.body.style.cursor = 'col-resize'; e.preventDefault(); }}
+          className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/40 transition-colors z-10"
+        />
+
+        <div className="p-4 flex items-center gap-3 border-b border-primary/10">
+          <div className="size-8 bg-primary rounded flex items-center justify-center text-background-dark shrink-0">
+            <span className="material-symbols-outlined font-bold text-lg">database</span>
+          </div>
+          <div className="min-w-0">
+            <h1 className="text-sm font-bold tracking-tight">SQL Workbench</h1>
+            <p className="text-[10px] text-primary uppercase font-semibold">Flink SQL Engine</p>
+          </div>
+        </div>
+
         <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">Schema Browser</h2>
-            <span className="material-symbols-outlined text-sm cursor-pointer hover:text-primary" onClick={fetchSchema}>refresh</span>
+            <button onClick={fetchSchema} disabled={schemaLoading} className="text-slate-500 hover:text-primary transition-colors disabled:opacity-50" title="Refresh">
+              <span className={`material-symbols-outlined text-base ${schemaLoading ? 'animate-spin' : ''}`}>refresh</span>
+            </button>
           </div>
+
           <div className="space-y-1">
             {/* Flink Tables */}
             <details className="group" open>
@@ -105,25 +400,27 @@ const QueryWorkbench: React.FC = () => {
                 <span className="material-symbols-outlined text-sm text-primary group-open:rotate-90 transition-transform">chevron_right</span>
                 <span className="material-symbols-outlined text-base text-slate-400">grid_view</span>
                 <span className="text-sm font-medium">Flink Tables</span>
+                <span className="ml-auto text-[10px] bg-slate-800 px-1.5 py-0.5 rounded text-slate-400">{schema?.tables.length ?? 0}</span>
               </summary>
-              <div className="pl-6 pt-1 space-y-1">
+              <div className="pl-4 pt-1 space-y-0.5">
                 {schema?.tables.map(table => (
-                  <div key={table} className="group">
-                    <div
-                      onClick={() => toggleTable(table)}
-                      className="flex items-center justify-between py-1 px-2 rounded hover:bg-primary/5 cursor-pointer transition-colors"
-                    >
-                      <span className="text-xs text-slate-300 truncate font-medium">{table}</span>
-                      <span className="material-symbols-outlined text-xs text-slate-500 group-hover:text-primary transition-transform duration-200" style={{ transform: expandedTables[table] ? 'rotate(90deg)' : 'none' }}>
-                        chevron_right
-                      </span>
+                  <div key={table}>
+                    <div className="flex items-center py-1 px-2 rounded hover:bg-primary/5 transition-colors group/tbl">
+                      <div onClick={() => toggleTable(table)} className="flex-1 flex items-center gap-1 min-w-0 cursor-pointer">
+                        <span className={`material-symbols-outlined text-xs text-slate-500 transition-transform duration-200 shrink-0 ${expandedTables[table] ? 'rotate-90' : ''}`}>chevron_right</span>
+                        <span className="text-xs text-slate-300 truncate font-mono">{table}</span>
+                      </div>
+                      <button onClick={() => setSql(`SELECT * FROM ${table} LIMIT 50`)}
+                        className="opacity-0 group-hover/tbl:opacity-100 text-slate-600 hover:text-primary transition-all shrink-0 ml-1" title="SELECT from this table">
+                        <span className="material-symbols-outlined text-sm">play_arrow</span>
+                      </button>
                     </div>
                     {expandedTables[table] && tableSchemas[table] && (
-                      <div className="ml-4 pl-3 border-l border-primary/20 mt-1 space-y-1">
+                      <div className="ml-6 pl-3 border-l border-primary/20 py-1 space-y-1">
                         {Object.entries(tableSchemas[table]).map(([col, type]) => (
                           <div key={col} className="flex justify-between items-center text-[10px] py-0.5">
-                            <span className="text-slate-400 truncate pr-2">{col}</span>
-                            <span className="text-slate-600 font-mono uppercase shrink-0">{type}</span>
+                            <span className="text-slate-400 truncate pr-2 font-mono">{col}</span>
+                            <span className="text-primary/60 font-mono uppercase shrink-0">{type}</span>
                           </div>
                         ))}
                       </div>
@@ -139,11 +436,77 @@ const QueryWorkbench: React.FC = () => {
                 <span className="material-symbols-outlined text-sm text-primary group-open:rotate-90 transition-transform">chevron_right</span>
                 <span className="material-symbols-outlined text-base text-slate-400">topic</span>
                 <span className="text-sm font-medium">Kafka Topics</span>
+                <span className="ml-auto text-[10px] bg-slate-800 px-1.5 py-0.5 rounded text-slate-400">{schema?.topics.length ?? 0}</span>
               </summary>
-              <div className="pl-8 pt-1 space-y-1">
-                {schema?.topics.map(topic => (
-                  <div key={topic} className="flex items-center gap-2 py-1 text-xs text-slate-400 border-l border-primary/20 pl-3 hover:text-primary cursor-pointer font-mono truncate" onClick={() => setSql(`SELECT * FROM "${topic}" LIMIT 10`)}>
-                    <span>{topic}</span>
+              <div className="pl-4 pt-1 space-y-0.5">
+                {schemaLoading ? (
+                  <div className="flex items-center gap-2 py-3 px-2 text-slate-500">
+                    <span className="material-symbols-outlined text-sm animate-spin">refresh</span>
+                    <span className="text-xs">Loading…</span>
+                  </div>
+                ) : schema?.topics.length === 0 ? (
+                  <p className="text-[10px] text-slate-600 px-2 py-2">No topics with messages</p>
+                ) : schema?.topics.map(topic => (
+                  <div key={topic} className="flex items-center py-1 px-2 rounded hover:bg-primary/5 transition-colors group/topic">
+                    <div onClick={() => setSql(`SELECT * FROM ${topic.replace(/[.\-]/g, '_')} LIMIT 50`)} className="flex-1 min-w-0 cursor-pointer">
+                      <span className="text-xs text-slate-400 hover:text-primary font-mono truncate block">{topic}</span>
+                    </div>
+                    <button onClick={e => { e.stopPropagation(); fetchDdlPreview(topic); }}
+                      className="opacity-0 group-hover/topic:opacity-100 text-slate-600 hover:text-primary transition-all shrink-0 ml-1" title="Preview DDL">
+                      <span className="material-symbols-outlined text-sm">code</span>
+                    </button>
+                  </div>
+                ))}
+                <p className="text-[10px] text-slate-600 px-2 pt-1">Only topics with messages shown</p>
+              </div>
+            </details>
+
+            {/* ── Saved Queries ── */}
+            <details className="group">
+              <summary className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-primary/10 cursor-pointer list-none">
+                <span className="material-symbols-outlined text-sm text-primary group-open:rotate-90 transition-transform">chevron_right</span>
+                <span className="material-symbols-outlined text-base text-slate-400">bookmark</span>
+                <span className="text-sm font-medium">Saved Queries</span>
+                <span className="ml-auto text-[10px] bg-slate-800 px-1.5 py-0.5 rounded text-slate-400">{savedQueries.length}</span>
+              </summary>
+              <div className="pl-4 pt-2 space-y-1">
+                {/* Save current query */}
+                {saveInputVisible ? (
+                  <div className="flex items-center gap-1 px-2 pb-2">
+                    <input
+                      autoFocus
+                      value={saveInputName}
+                      onChange={e => setSaveInputName(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') saveQuery(); if (e.key === 'Escape') setSaveInputVisible(false); }}
+                      placeholder={activeTab.name}
+                      className="flex-1 bg-background-dark border border-primary/30 rounded px-2 py-1 text-xs text-slate-200 focus:ring-1 focus:ring-primary outline-none"
+                    />
+                    <button onClick={saveQuery} className="text-primary hover:brightness-110">
+                      <span className="material-symbols-outlined text-sm">check</span>
+                    </button>
+                    <button onClick={() => setSaveInputVisible(false)} className="text-slate-600 hover:text-slate-300">
+                      <span className="material-symbols-outlined text-sm">close</span>
+                    </button>
+                  </div>
+                ) : (
+                  <button onClick={() => { setSaveInputVisible(true); setSaveInputName(activeTab.name); }}
+                    className="flex items-center gap-1.5 w-full px-2 py-1.5 text-[10px] font-bold text-primary/70 hover:text-primary border border-dashed border-primary/20 hover:border-primary/40 rounded transition-colors">
+                    <span className="material-symbols-outlined text-sm">add</span>SAVE CURRENT QUERY
+                  </button>
+                )}
+                {savedQueries.length === 0 && !saveInputVisible && (
+                  <p className="text-[10px] text-slate-600 px-2 py-1">No saved queries yet</p>
+                )}
+                {savedQueries.map(q => (
+                  <div key={q.id} className="flex items-center gap-1 py-1 px-2 rounded hover:bg-primary/5 transition-colors group/saved">
+                    <div onClick={() => loadSavedQuery(q)} className="flex-1 min-w-0 cursor-pointer">
+                      <p className="text-xs text-slate-300 truncate font-medium">{q.name}</p>
+                      <p className="text-[10px] text-slate-600">{new Date(q.savedAt).toLocaleDateString()}</p>
+                    </div>
+                    <button onClick={() => deleteSavedQuery(q.id)}
+                      className="opacity-0 group-hover/saved:opacity-100 text-slate-600 hover:text-red-400 transition-all shrink-0" title="Delete">
+                      <span className="material-symbols-outlined text-sm">delete</span>
+                    </button>
                   </div>
                 ))}
               </div>
@@ -151,193 +514,272 @@ const QueryWorkbench: React.FC = () => {
           </div>
         </div>
 
-        {/* User Status */}
         <div className="p-4 border-t border-primary/10 flex items-center gap-3">
-          <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center">
+          <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center shrink-0">
             <span className="material-symbols-outlined text-primary text-sm">person</span>
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-xs font-semibold truncate">dev_user_01</p>
             <div className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
               <span className="text-[10px] text-slate-400 uppercase">Connected</span>
             </div>
           </div>
-          <span className="material-symbols-outlined text-slate-500 cursor-pointer hover:text-white">settings</span>
         </div>
       </aside>
 
-      {/* Main Content Area */}
+      {/* ── Main Content ─────────────────────────────────────────────────────── */}
       <main className="flex-1 flex flex-col min-w-0">
         {/* Toolbar */}
-        <header className="h-14 border-b border-primary/10 flex items-center px-6 justify-between bg-background-dark/30">
+        <header className="h-14 border-b border-primary/10 flex items-center px-6 justify-between bg-background-dark/30 shrink-0">
           <div className="flex items-center gap-4">
-            <nav className="flex items-center bg-background-dark border border-primary/20 rounded-lg p-0.5">
+            <div className="flex items-center bg-background-dark border border-primary/20 rounded-lg p-0.5">
               <button className="px-4 py-1.5 text-xs font-bold rounded-md bg-primary text-background-dark">SQL EDITOR</button>
-              <button className="px-4 py-1.5 text-xs font-bold rounded-md text-slate-400 hover:text-white">STREAMS</button>
-              <button className="px-4 py-1.5 text-xs font-bold rounded-md text-slate-400 hover:text-white">DASHBOARDS</button>
-            </nav>
-            <div className="h-6 w-[1px] bg-primary/20"></div>
+              <button onClick={() => navigate('/stream-flow')} className="px-4 py-1.5 text-xs font-bold rounded-md text-slate-400 hover:text-white transition-colors">STREAMS</button>
+            </div>
+            <div className="h-6 w-px bg-primary/20" />
             <div className="flex items-center gap-2">
               <span className="text-xs text-slate-400">Offset:</span>
               <div className="flex bg-background-dark border border-primary/20 rounded overflow-hidden">
-                <button
-                  onClick={() => setOffsetMode('EARLIEST')}
-                  className={`px-2 py-1 text-[10px] font-bold border-r border-primary/20 transition-colors ${offsetMode === 'EARLIEST' ? 'bg-primary/20 text-primary' : 'text-slate-500'}`}
-                >
-                  EARLIEST
-                </button>
-                <button
-                  onClick={() => setOffsetMode('LATEST')}
-                  className={`px-2 py-1 text-[10px] font-bold transition-colors ${offsetMode === 'LATEST' ? 'bg-primary/20 text-primary' : 'text-slate-500'}`}
-                >
-                  LATEST
-                </button>
+                {(['EARLIEST', 'LATEST'] as const).map(mode => (
+                  <button key={mode} onClick={() => setOffsetMode(mode)}
+                    className={`px-2 py-1 text-[10px] font-bold border-r last:border-r-0 border-primary/20 transition-colors ${offsetMode === mode ? 'bg-primary/20 text-primary' : 'text-slate-500 hover:text-slate-300'}`}>
+                    {mode}
+                  </button>
+                ))}
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <button 
-              onClick={runQuery}
-              disabled={executing}
-              className="flex items-center gap-2 px-4 py-2 bg-primary text-background-dark rounded-lg text-xs font-bold hover:brightness-110 disabled:opacity-50"
-            >
-              <span className="material-symbols-outlined text-sm">play_arrow</span>
-              RUN QUERY
-            </button>
-            <button className="flex items-center gap-2 px-3 py-2 bg-background-dark border border-primary/20 rounded-lg text-xs font-bold hover:bg-primary/5">
-              <span className="material-symbols-outlined text-sm">save</span>
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <button onClick={() => setShowHistory(h => !h)}
+                className="flex items-center gap-1.5 p-2 text-slate-500 hover:text-primary border border-primary/20 rounded-lg transition-colors" title="Query history">
+                <span className="material-symbols-outlined text-base">history</span>
+                {history.length > 0 && <span className="text-[9px] bg-primary text-background-dark font-bold px-1 rounded">{history.length}</span>}
+              </button>
+              {showHistory && (
+                <div className="absolute right-0 top-full mt-1 w-96 max-h-64 overflow-y-auto bg-background-dark border border-primary/20 rounded-xl shadow-2xl z-30">
+                  <div className="px-3 py-2 border-b border-primary/10 flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Recent Queries</span>
+                    <button onClick={() => { setHistory([]); localStorage.removeItem('kse:query-history'); }} className="text-[10px] text-slate-600 hover:text-red-400">Clear</button>
+                  </div>
+                  {history.length === 0 ? <p className="p-4 text-xs text-slate-600">No history yet</p>
+                    : history.map((h, i) => (
+                      <button key={i} onClick={() => { setSql(h.sql); setShowHistory(false); }}
+                        className="w-full text-left px-3 py-2 hover:bg-primary/10 border-b border-primary/5 last:border-0 transition-colors">
+                        <p className="font-mono text-xs text-slate-300 truncate">{h.sql.replace(/\s+/g, ' ')}</p>
+                        <p className="text-[10px] text-slate-600 mt-0.5">{new Date(h.ts).toLocaleString()}</p>
+                      </button>
+                    ))
+                  }
+                </div>
+              )}
+            </div>
+            <span className="text-[10px] text-slate-600 hidden lg:block">Ctrl+Enter</span>
+            <button onClick={runQuery} disabled={executing}
+              className="flex items-center gap-2 px-4 py-2 bg-primary text-background-dark rounded-lg text-xs font-bold hover:brightness-110 disabled:opacity-50 transition-all">
+              {executing ? <span className="material-symbols-outlined text-sm animate-spin">refresh</span> : <span className="material-symbols-outlined text-sm">play_arrow</span>}
+              {executing ? 'RUNNING...' : 'RUN QUERY'}
             </button>
           </div>
         </header>
 
-        {/* Editor Section (Top) */}
-        <div className="flex-1 flex flex-col min-h-0 relative">
-          <div className="flex-1 flex overflow-hidden">
-            {/* Code Editor View */}
-            <div className="flex-1 flex flex-col bg-background-dark/20 overflow-hidden">
-              <div className="flex items-center px-4 py-2 border-b border-primary/5 bg-background-dark/40">
-                <span className="text-[10px] font-bold text-primary tracking-widest uppercase">main_query.sql</span>
+        {/* Split pane */}
+        <div ref={containerRef} className="flex-1 flex flex-col min-h-0 overflow-hidden">
+
+          {/* Editor + Window Assistant */}
+          <div className="flex overflow-hidden" style={{ height: `${splitPercent}%` }}>
+            <div className="flex-1 flex flex-col min-w-0 bg-background-dark/20">
+
+              {/* ── Tab bar ── */}
+              <div className="flex items-center border-b border-primary/5 bg-background-dark/60 shrink-0 overflow-x-auto">
+                {tabs.map(tab => (
+                  <div
+                    key={tab.id}
+                    onClick={() => setActiveTabId(tab.id)}
+                    className={`group/tab flex items-center gap-1.5 px-3 py-1.5 border-r border-primary/10 cursor-pointer shrink-0 transition-colors ${tab.id === activeTabId ? 'bg-background-dark/40 text-primary border-b-2 border-b-primary' : 'text-slate-500 hover:text-slate-300 hover:bg-primary/5'}`}
+                  >
+                    {renamingTabId === tab.id ? (
+                      <input
+                        autoFocus
+                        value={renamingName}
+                        onChange={e => setRenamingName(e.target.value)}
+                        onBlur={commitRename}
+                        onKeyDown={e => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setRenamingTabId(null); }}
+                        onClick={e => e.stopPropagation()}
+                        className="bg-transparent border-none outline-none text-[10px] font-bold w-24 text-primary"
+                      />
+                    ) : (
+                      <span
+                        className="text-[10px] font-bold tracking-wide uppercase"
+                        onDoubleClick={e => startRename(tab, e)}
+                        title="Double-click to rename"
+                      >{tab.name}</span>
+                    )}
+                    {tabs.length > 1 && (
+                      <button onClick={e => closeTab(tab.id, e)}
+                        className="opacity-0 group-hover/tab:opacity-100 text-slate-600 hover:text-slate-300 transition-all">
+                        <span className="material-symbols-outlined text-xs">close</span>
+                      </button>
+                    )}
+                  </div>
+                ))}
+                <button onClick={addTab} className="px-2 py-1.5 text-slate-600 hover:text-primary transition-colors shrink-0" title="New tab">
+                  <span className="material-symbols-outlined text-sm">add</span>
+                </button>
+                {/* Format button pushed to the right */}
+                <div className="ml-auto px-3 flex items-center">
+                  <button onClick={() => editorRef.current?.getAction('editor.action.formatDocument')?.run()}
+                    className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-primary transition-colors" title="Format SQL (Shift+Alt+F)">
+                    <span className="material-symbols-outlined text-sm">auto_fix_high</span>
+                    Format
+                  </button>
+                </div>
               </div>
+
               <div className="flex-1 overflow-hidden">
                 <Editor
                   height="100%"
                   defaultLanguage="sql"
                   theme="vs-dark"
                   value={sql}
-                  onChange={(val) => setSql(val || '')}
+                  onChange={val => setSql(val || '')}
+                  onMount={editor => { editorRef.current = editor; }}
                   options={{
-                    fontSize: 14,
-                    fontFamily: 'JetBrains Mono',
-                    minimap: { enabled: false },
-                    padding: { top: 20 },
-                    scrollBeyondLastLine: false,
-                    automaticLayout: true
+                    fontSize: 14, fontFamily: 'JetBrains Mono', minimap: { enabled: false },
+                    padding: { top: 16 }, scrollBeyondLastLine: false, automaticLayout: true,
+                    suggestOnTriggerCharacters: true,
+                    quickSuggestions: { other: true, comments: false, strings: false },
                   }}
                 />
               </div>
             </div>
 
-            {/* Window Assistant Sidebar (Right) */}
-            <div className="w-80 border-l border-primary/10 bg-background-dark/40 p-4 flex flex-col gap-4">
+            {/* Window Assistant */}
+            <div className="w-72 border-l border-primary/10 bg-background-dark/40 p-4 flex flex-col gap-4 overflow-y-auto shrink-0">
               <div className="flex items-center gap-2">
                 <span className="material-symbols-outlined text-primary">magic_button</span>
                 <h3 className="text-sm font-bold">Window Assistant</h3>
               </div>
-              <p className="text-xs text-slate-400 leading-relaxed">Generate windowing logic for your streaming queries.</p>
-              <div className="space-y-4 pt-2">
-                <div className="space-y-2">
+              <p className="text-xs text-slate-400 leading-relaxed">Generate windowing SQL for your streaming queries.</p>
+              <div className="space-y-3">
+                <div className="space-y-1.5">
                   <label className="text-[10px] font-bold text-slate-500 uppercase">Window Type</label>
-                  <select
-                    value={windowType}
-                    onChange={(e) => setWindowType(e.target.value)}
-                    className="w-full bg-background-dark border border-primary/20 rounded px-3 py-2 text-xs focus:ring-1 focus:ring-primary focus:border-primary outline-none text-slate-200"
-                  >
+                  <select value={windowType} onChange={e => setWindowType(e.target.value)} className="w-full bg-background-dark border border-primary/20 rounded px-3 py-2 text-xs text-slate-200 focus:ring-1 focus:ring-primary outline-none">
                     <option>Tumbling (Non-overlapping)</option>
                     <option>Hopping (Overlapping)</option>
                     <option>Session (Inactivity based)</option>
                   </select>
                 </div>
-                <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase">Window Size</label>
-                  <div className="flex gap-2">
-                    <input
-                      type="number"
-                      value={windowSize}
-                      onChange={(e) => setWindowSize(parseInt(e.target.value))}
-                      className="w-full bg-background-dark border border-primary/20 rounded px-3 py-2 text-xs focus:ring-1 focus:ring-primary focus:border-primary outline-none text-slate-200"
-                    />
-                    <select
-                      value={windowUnit}
-                      onChange={(e) => setWindowUnit(e.target.value)}
-                      className="w-24 bg-background-dark border border-primary/20 rounded px-3 py-2 text-xs text-slate-200"
-                    >
-                      <option>MIN</option>
-                      <option>SEC</option>
-                      <option>HOUR</option>
+                <div className="flex gap-2">
+                  <div className="flex-1 space-y-1.5">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase">Size</label>
+                    <input type="number" value={windowSize} onChange={e => setWindowSize(parseInt(e.target.value))} className="w-full bg-background-dark border border-primary/20 rounded px-3 py-2 text-xs text-slate-200 focus:ring-1 focus:ring-primary outline-none" />
+                  </div>
+                  <div className="w-20 space-y-1.5">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase">Unit</label>
+                    <select value={windowUnit} onChange={e => setWindowUnit(e.target.value)} className="w-full bg-background-dark border border-primary/20 rounded px-3 py-2 text-xs text-slate-200 outline-none">
+                      <option>MIN</option><option>SEC</option><option>HOUR</option>
                     </select>
                   </div>
                 </div>
                 <div className="p-3 bg-primary/5 border border-dashed border-primary/30 rounded-lg">
-                  <p className="text-[11px] text-primary leading-snug">
-                    <span className="font-bold">Pro Tip:</span> Tumbling windows are useful for reporting periodic metrics like "Sales per 5 minutes".
-                  </p>
+                  <p className="text-[11px] text-primary leading-snug"><span className="font-bold">Tip:</span> Tumbling windows are ideal for periodic metrics like "Orders per 5 min".</p>
                 </div>
-                <button
-                  onClick={applyWindowLogic}
-                  className="w-full py-2.5 bg-primary/10 border border-primary text-primary rounded-lg text-xs font-bold hover:bg-primary/20 transition-colors"
-                >
-                  APPLY TO EDITOR
-                </button>
+                <button onClick={applyWindowLogic} className="w-full py-2 bg-primary/10 border border-primary text-primary rounded-lg text-xs font-bold hover:bg-primary/20 transition-colors">APPLY TO EDITOR</button>
               </div>
             </div>
           </div>
 
-          {/* Results Section (Bottom) */}
-          <div className="h-1/2 border-t border-primary/20 flex flex-col bg-background-dark/60">
-            {/* Statistics Bar */}
-            <div className="h-10 border-b border-primary/10 flex items-center px-4 justify-between bg-background-dark/80 shrink-0">
-              <div className="flex items-center gap-6">
-                <div className="flex items-center gap-2">
+          {/* Drag handle */}
+          <div onMouseDown={e => { isDragging.current = true; document.body.style.cursor = 'row-resize'; e.preventDefault(); }}
+            className="h-2 border-y border-primary/10 bg-background-dark/60 hover:bg-primary/10 cursor-row-resize flex items-center justify-center transition-colors shrink-0 group">
+            <div className="w-16 h-0.5 bg-primary/20 group-hover:bg-primary/50 rounded-full transition-colors" />
+          </div>
+
+          {/* Results panel */}
+          <div className="flex flex-col bg-background-dark/60 overflow-hidden" style={{ height: `calc(${100 - splitPercent}% - 0.5rem)` }}>
+            <div className="h-9 border-b border-primary/10 flex items-center px-4 justify-between bg-background-dark/80 shrink-0">
+              <div className="flex items-center gap-5">
+                <div className="flex items-center gap-1.5">
                   <span className="material-symbols-outlined text-sm text-primary">timer</span>
-                  <span className="text-[11px] font-medium text-slate-400">Execution: <span className="text-slate-100">{executing ? '...' : '142ms'}</span></span>
+                  <span className="text-[11px] text-slate-400">Execution: <span className="text-slate-100">{executing ? '...' : executionMs !== null ? formatMs(executionMs) : '—'}</span></span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="material-symbols-outlined text-sm text-primary">speed</span>
-                  <span className="text-[11px] font-medium text-slate-400">Throughput: <span className="text-slate-100">1.2k msg/s</span></span>
-                </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
                   <span className="material-symbols-outlined text-sm text-primary">list_alt</span>
-                  <span className="text-[11px] font-medium text-slate-400">Total Rows: <span className="text-slate-100">{results?.rows.length || 0}</span></span>
+                  <span className="text-[11px] text-slate-400">
+                    Rows: <span className={results?.rows.length === DEFAULT_LIMIT ? 'text-amber-400' : 'text-slate-100'}>{results?.rows.length ?? 0}</span>
+                    {results?.rows.length === DEFAULT_LIMIT && <span className="ml-1.5 text-[10px] text-amber-500 font-semibold" title="Result set may be truncated">⚠ limit reached</span>}
+                  </span>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <span className={`w-2 h-2 rounded-full bg-primary ${executing ? 'animate-pulse' : ''}`}></span>
-                <span className="text-[10px] font-bold text-primary">STREAMING LIVE</span>
+              <div className="flex items-center gap-3">
+                {results && !results.error && results.rows.length > 0 && (
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => exportResults('csv')} className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-primary transition-colors"><span className="material-symbols-outlined text-sm">download</span>CSV</button>
+                    <span className="text-slate-700">·</span>
+                    <button onClick={() => exportResults('json')} className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-primary transition-colors"><span className="material-symbols-outlined text-sm">download</span>JSON</button>
+                  </div>
+                )}
+                <span className={`w-1.5 h-1.5 rounded-full ${executing ? 'bg-primary animate-pulse' : results ? 'bg-emerald-500' : 'bg-slate-600'}`} />
+                <span className="text-[10px] font-bold text-slate-400 uppercase">{executing ? 'RUNNING' : results ? 'COMPLETE' : 'IDLE'}</span>
               </div>
             </div>
 
-            {/* Data Grid */}
+            {validationError && (
+              <div className="mx-4 mt-3 flex items-center gap-2 px-3 py-2 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-400 text-xs shrink-0">
+                <span className="material-symbols-outlined text-base">warning</span>
+                <span>{validationError}</span>
+                <button onClick={() => setValidationError(null)} className="ml-auto"><span className="material-symbols-outlined text-base">close</span></button>
+              </div>
+            )}
+
             <div className="flex-1 overflow-auto custom-scrollbar">
               {results?.error ? (
-                <div className="p-8 text-red-500 font-mono text-sm whitespace-pre-wrap">
-                  {results.error}
+                <div className="p-4">
+                  <div className="flex items-start gap-3 p-3 rounded-lg border border-red-500/30 bg-red-500/10">
+                    <span className="material-symbols-outlined text-red-400 text-base mt-0.5 shrink-0">error</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-red-400 font-mono text-sm break-words">{errorSummary}</p>
+                      {errorDetails && (
+                        <button onClick={() => setShowErrorDetails(s => !s)} className="text-[10px] text-slate-500 hover:text-slate-300 mt-1.5 transition-colors">
+                          {showErrorDetails ? '▲ Hide details' : '▼ Show details'}
+                        </button>
+                      )}
+                      {showErrorDetails && errorDetails && (
+                        <pre className="mt-2 text-[10px] text-slate-500 font-mono whitespace-pre-wrap overflow-x-auto leading-relaxed border-t border-red-500/20 pt-2">{errorDetails}</pre>
+                      )}
+                    </div>
+                    <button onClick={() => navigator.clipboard.writeText(results.error!).then(() => toast('Error copied', 'success'))}
+                      className="text-slate-600 hover:text-slate-300 shrink-0 transition-colors" title="Copy error">
+                      <span className="material-symbols-outlined text-sm">content_copy</span>
+                    </button>
+                  </div>
                 </div>
               ) : results?.columns.length ? (
-                <table className="w-full text-left border-collapse min-w-[800px]">
+                <table className="w-full text-left border-collapse">
                   <thead className="sticky top-0 bg-background-dark/95 backdrop-blur-sm z-10">
                     <tr>
                       {results.columns.map(col => (
-                        <th key={col} className="px-4 py-3 border-b border-primary/10 text-[10px] font-bold text-slate-500 uppercase tracking-widest">{col}</th>
+                        <th key={col} onClick={() => handleSortColumn(col)}
+                          className="px-4 py-2.5 border-b border-primary/10 text-[10px] font-bold text-slate-500 uppercase tracking-widest cursor-pointer hover:text-primary select-none transition-colors">
+                          <span className="flex items-center gap-1">
+                            {col}
+                            {sortCol === col
+                              ? <span className="material-symbols-outlined text-[10px] text-primary">{sortDir === 'asc' ? 'arrow_upward' : 'arrow_downward'}</span>
+                              : <span className="material-symbols-outlined text-[10px] text-slate-700">unfold_more</span>}
+                          </span>
+                        </th>
                       ))}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-primary/5">
-                    {results.rows.map((row, i) => (
-                      <tr key={i} className="hover:bg-primary/5 transition-colors group">
+                    {sortedRows.map((row, i) => (
+                      <tr key={i} className="hover:bg-primary/5 transition-colors">
                         {results.columns.map(col => (
-                          <td key={col} className="px-4 py-3 text-xs font-mono text-slate-300">
-                            {typeof row[col] === 'object' ? JSON.stringify(row[col]) : String(row[col])}
+                          <td key={col} onClick={() => copyCell(row[col])}
+                            className="px-4 py-2.5 text-xs font-mono text-slate-300 cursor-pointer hover:text-white transition-colors" title="Click to copy">
+                            {typeof row[col] === 'object' ? JSON.stringify(row[col]) : String(row[col] ?? '')}
                           </td>
                         ))}
                       </tr>
@@ -347,7 +789,7 @@ const QueryWorkbench: React.FC = () => {
               ) : (
                 <div className="h-full flex flex-col items-center justify-center text-slate-600 space-y-2">
                   <span className="material-symbols-outlined text-3xl opacity-20">terminal</span>
-                  <p className="text-xs font-medium uppercase tracking-widest">No results to display</p>
+                  <p className="text-xs font-medium uppercase tracking-widest">Run a query to see results</p>
                 </div>
               )}
             </div>

@@ -1,38 +1,30 @@
 package com.yourcompany.kafkasqlexplorer.service;
 
 import com.yourcompany.kafkasqlexplorer.config.ExplorerConfig;
-import com.yourcompany.kafkasqlexplorer.config.KafkaConfig;
 import com.yourcompany.kafkasqlexplorer.domain.MessageFormat;
 import com.yourcompany.kafkasqlexplorer.parser.JsonSchemaInferrer;
 import com.yourcompany.kafkasqlexplorer.parser.XmlSchemaInferrer;
-import org.apache.kafka.clients.consumer.ConsumerConfig;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.clients.consumer.ConsumerRecords;
-import org.apache.kafka.clients.consumer.KafkaConsumer;
-import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.common.serialization.StringDeserializer;
 import org.springframework.stereotype.Service;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.time.Duration;
 import java.util.*;
 
 @Service
 public class SchemaInferenceService {
 
     private static final Logger log = LoggerFactory.getLogger(SchemaInferenceService.class);
-    private final KafkaConfig kafkaConfig;
     private final ExplorerConfig explorerConfig;
     private final JsonSchemaInferrer jsonInferrer;
     private final XmlSchemaInferrer xmlInferrer;
+    private final KafkaAdminService kafkaAdminService;
 
-    public SchemaInferenceService(KafkaConfig kafkaConfig, ExplorerConfig explorerConfig, JsonSchemaInferrer jsonInferrer, XmlSchemaInferrer xmlInferrer) {
-        this.kafkaConfig = kafkaConfig;
+    public SchemaInferenceService(ExplorerConfig explorerConfig, JsonSchemaInferrer jsonInferrer, XmlSchemaInferrer xmlInferrer, KafkaAdminService kafkaAdminService) {
         this.explorerConfig = explorerConfig;
         this.jsonInferrer = jsonInferrer;
         this.xmlInferrer = xmlInferrer;
+        this.kafkaAdminService = kafkaAdminService;
     }
 
     public Map<String, String> inferSchema(String topicName, MessageFormat format) {
@@ -93,36 +85,8 @@ public class SchemaInferenceService {
     }
 
     private List<String> getSampleMessages(String topicName) {
-        List<String> samples = new ArrayList<>();
-        Properties props = new Properties();
-        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaConfig.getBootstrapServers());
-        props.put(ConsumerConfig.GROUP_ID_CONFIG, "schema-inference-" + UUID.randomUUID());
-        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
-        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
-        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
-
-        try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props)) {
-            TopicPartition tp = new TopicPartition(topicName, 0);
-            consumer.assign(Collections.singletonList(tp));
-            consumer.seekToBeginning(Collections.singletonList(tp));
-
-            int targetSize = explorerConfig.getInferenceSampleSize();
-            long timeoutMs = explorerConfig.getInferencePollTimeoutMs();
-            long startTime = System.currentTimeMillis();
-
-            while (samples.size() < targetSize && (System.currentTimeMillis() - startTime) < timeoutMs) {
-                ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(200));
-                if (records.isEmpty()) break;
-                for (ConsumerRecord<String, String> record : records) {
-                    if (record.value() != null) {
-                        samples.add(record.value());
-                    }
-                    if (samples.size() >= targetSize) break;
-                }
-            }
-        } catch (Exception e) {
-            log.error("Failed to sample messages for schema inference on topic: {}", topicName, e);
-        }
-        return samples;
+        // Delegate to KafkaAdminService which reads from ALL partitions, not just partition 0.
+        // This prevents empty schema inference when messages are distributed across partitions.
+        return kafkaAdminService.getSampleMessages(topicName, explorerConfig.getInferenceSampleSize());
     }
 }
