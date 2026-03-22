@@ -30,6 +30,8 @@ class MetricServiceTest {
         explorerConfig = Mockito.mock(ExplorerConfig.class);
 
         Mockito.when(explorerConfig.getMetricsConfigTopic()).thenReturn("internal.metrics.config");
+        // listTables() must return non-empty so seedDefaultMetrics() actually seeds metrics
+        Mockito.when(flinkSqlService.listTables()).thenReturn(List.of("demo_orders_in"));
 
         service = new MetricService(flinkSqlService, meterRegistry, kafkaConfig, explorerConfig);
     }
@@ -39,9 +41,12 @@ class MetricServiceTest {
         service.init();
         List<MetricConfig> metrics = service.getAllMetrics();
 
-        assertEquals(2, metrics.size());
-        assertTrue(metrics.stream().anyMatch(m -> m.name().equals("business_events_total")));
-        assertTrue(metrics.stream().anyMatch(m -> m.name().equals("business_events_by_type")));
+        // seedDefaultMetrics() seeds GAUGE + COUNTER + HISTOGRAM + SUMMARY = 4 metrics
+        assertEquals(4, metrics.size());
+        assertTrue(metrics.stream().anyMatch(m -> m.type().equals("GAUGE")));
+        assertTrue(metrics.stream().anyMatch(m -> m.type().equals("COUNTER")));
+        assertTrue(metrics.stream().anyMatch(m -> m.type().equals("HISTOGRAM")));
+        assertTrue(metrics.stream().anyMatch(m -> m.type().equals("SUMMARY")));
     }
 
     @Test

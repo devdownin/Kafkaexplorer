@@ -1,8 +1,8 @@
 package com.yourcompany.kafkasqlexplorer.service;
 
 import com.yourcompany.kafkasqlexplorer.config.ExplorerConfig;
+import org.apache.flink.table.api.TableEnvironment;
 import org.apache.flink.table.api.TableResult;
-import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -12,11 +12,14 @@ public class SqlQueryValidator {
 
     private static final Logger log = LoggerFactory.getLogger(SqlQueryValidator.class);
     private final ExplorerConfig explorerConfig;
-    private final StreamTableEnvironment tableEnv;
+    private final TableEnvironment tableEnv;
 
-    public SqlQueryValidator(ExplorerConfig explorerConfig, StreamTableEnvironment tableEnv) {
+    private final ClassLoader flinkClassLoader;
+
+    public SqlQueryValidator(ExplorerConfig explorerConfig, TableEnvironment tableEnv) {
         this.explorerConfig = explorerConfig;
         this.tableEnv = tableEnv;
+        this.flinkClassLoader = tableEnv.getClass().getClassLoader();
     }
 
     public void validate(String sql) {
@@ -35,7 +38,14 @@ public class SqlQueryValidator {
 
         try {
             // We use EXPLAIN to get the execution plan and check for forbidden patterns
-            String plan = tableEnv.explainSql(sql).toUpperCase();
+            ClassLoader saved = Thread.currentThread().getContextClassLoader();
+            Thread.currentThread().setContextClassLoader(flinkClassLoader != null ? flinkClassLoader : saved);
+            String plan;
+            try {
+                plan = tableEnv.explainSql(sql).toUpperCase();
+            } finally {
+                Thread.currentThread().setContextClassLoader(saved);
+            }
 
             if (!explorerConfig.isAllowCrossJoin() && isCrossJoinInPlan(plan)) {
                 throw new IllegalArgumentException("Cross joins are not allowed in this environment.");

@@ -1,8 +1,7 @@
 spring:
   application:
     name: kafka-sql-explorer
-  thymeleaf:
-    cache: false
+
   cache:
     type: caffeine
     caffeine:
@@ -10,6 +9,7 @@ spring:
 
 kafka:
   bootstrap-servers: localhost:9092
+  schema-registry-url: http://localhost:8081
   mode: PLAIN # Possible values: PLAIN, SSL, CONFLUENT_CLOUD
 
   # --- SSL Configuration Example ---
@@ -27,6 +27,7 @@ kafka:
   # confluent-secret: YOUR_API_SECRET
 
 explorer:
+  cluster-name: KRAFT 4.2
   audit-history-topic: internal.audit.history
   default-max-rows: 50
   default-query-timeout-ms: 10000
@@ -34,6 +35,21 @@ explorer:
   inference-sample-size: 10
   inference-poll-timeout-ms: 2000
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    prometheus:
+      enabled: true
+  metrics:
+    tags:
+      application: kafka-sql-explorer
+
 logging:
+  file:
+    name: logs/kafkaexplorer.log
   level:
     com.yourcompany.kafkasqlexplorer: DEBUG
+    org.apache.flink: WARN

@@ -156,18 +156,19 @@ public class AuditService {
     }
 
     private void registerTableIfNeeded(String topicName, Map<String, String> schema, MessageFormat format) {
-        if (!flinkSqlService.listTables().contains(topicName)) {
+        String tableName = DdlGeneratorService.toTableName(topicName);
+        if (!flinkSqlService.listTables().contains(tableName)) {
             String ddl = ddlGeneratorService.generateDdl(topicName, schema, format);
-            try {
-                flinkSqlService.executeSql(new QueryRequest(ddl, null, null, null, null));
-            } catch (Exception e) {
-                log.warn("Could not register table for audit: {}", topicName);
+            QueryResult ddlResult = flinkSqlService.executeSql(new QueryRequest(ddl, null, null, null, null));
+            if (ddlResult.error() != null) {
+                log.warn("Could not register table '{}' for audit: {}", tableName, ddlResult.error());
             }
         }
     }
 
     private long getExactCount(String topicName, long approximateCount) {
-        QueryResult countResult = flinkSqlService.executeSql(new QueryRequest("SELECT COUNT(*) FROM \"" + topicName + "\"", null, 1, explorerConfig.getAuditQueryTimeoutMs(), null));
+        String tableName = DdlGeneratorService.toTableName(topicName);
+        QueryResult countResult = flinkSqlService.executeSql(new QueryRequest("SELECT COUNT(*) FROM " + tableName, null, 1, explorerConfig.getAuditQueryTimeoutMs(), null));
         if (countResult.error() == null && !countResult.rows().isEmpty()) {
             Object val = countResult.rows().get(0).get("EXPR$0");
             if (val instanceof Long) return (Long) val;
@@ -181,9 +182,8 @@ public class AuditService {
 
         if (keyField == null) return 0;
 
-        // Optimization: use a more efficient subquery or just check if any duplicates exist without full scan if possible
-        // Here we use a query that Flink can optimize well.
-        String sql = "SELECT COUNT(*) FROM (SELECT 1 FROM \"" + topicName + "\" GROUP BY \"" + keyField + "\" HAVING COUNT(*) > 1)";
+        String tableName = DdlGeneratorService.toTableName(topicName);
+        String sql = "SELECT COUNT(*) FROM (SELECT 1 FROM " + tableName + " GROUP BY " + keyField + " HAVING COUNT(*) > 1)";
         QueryResult dupResult = flinkSqlService.executeSql(new QueryRequest(sql, null, 1, explorerConfig.getAuditQueryTimeoutMs(), null));
         if (dupResult.error() == null && !dupResult.rows().isEmpty()) {
             Object val = dupResult.rows().get(0).get("EXPR$0");
@@ -222,7 +222,7 @@ public class AuditService {
     private Long calculateLatency(String sourceTopic, String targetTopic) {
         // Simple heuristic for latency: average of (target.event_time - source.event_time) joined by ID
         String sql = "SELECT AVG(CAST(t2.event_time AS LONG) - CAST(t1.event_time AS LONG)) " +
-                     "FROM \"" + sourceTopic + "\" t1 JOIN \"" + targetTopic + "\" t2 ON t1.id = t2.id " +
+                     "FROM " + DdlGeneratorService.toTableName(sourceTopic) + " t1 JOIN " + DdlGeneratorService.toTableName(targetTopic) + " t2 ON t1.id = t2.id " +
                      "WHERE t2.event_time > t1.event_time";
 
         QueryResult result = flinkSqlService.executeSql(new QueryRequest(sql, null, 1, explorerConfig.getAuditQueryTimeoutMs(), null));

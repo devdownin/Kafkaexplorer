@@ -7,6 +7,7 @@ import org.springframework.context.annotation.Configuration;
 @ConfigurationProperties(prefix = "explorer")
 public class ExplorerConfig {
 
+    private String clusterName = "DOCKER CLUSTER";
     private String auditHistoryTopic = "internal.audit.history";
     private String metricsConfigTopic = "internal.metrics.config";
     private int defaultMaxRows = 50;
@@ -17,6 +18,14 @@ public class ExplorerConfig {
     private boolean allowCrossJoin = false;
     private boolean allowSystemTableAccess = false;
     private int cacheExpireMinutes = 10;
+
+    public String getClusterName() {
+        return clusterName;
+    }
+
+    public void setClusterName(String clusterName) {
+        this.clusterName = clusterName;
+    }
 
     public String getAuditHistoryTopic() {
         return auditHistoryTopic;

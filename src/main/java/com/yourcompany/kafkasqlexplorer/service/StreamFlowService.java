@@ -89,25 +89,30 @@ public class StreamFlowService {
         List<Map<String, String>> nodes = new ArrayList<>();
         List<Map<String, String>> edges = new ArrayList<>();
         Set<String> seenTopics = new HashSet<>();
+        Set<String> seenEdges  = new HashSet<>();
 
         for (int i = 0; i < allOccurrences.size(); i++) {
             Occurrence current = allOccurrences.get(i);
             if (seenTopics.add(current.topic())) {
                 nodes.add(Map.of(
-                        "id", current.topic(),
-                        "label", current.topic(),
-                        "type", "topic"
+                        "id",        current.topic(),
+                        "label",     current.topic(),
+                        "type",      "topic",
+                        "timestamp", String.valueOf(current.timestamp())
                 ));
             }
 
             if (i > 0) {
                 Occurrence previous = allOccurrences.get(i - 1);
                 if (!previous.topic().equals(current.topic())) {
-                    edges.add(Map.of(
-                            "from", previous.topic(),
-                            "to", current.topic(),
-                            "label", "flow"
-                    ));
+                    String edgeKey = previous.topic() + "->" + current.topic();
+                    if (seenEdges.add(edgeKey)) {
+                        edges.add(Map.of(
+                                "from",  previous.topic(),
+                                "to",    current.topic(),
+                                "label", "flow"
+                        ));
+                    }
                 }
             }
         }

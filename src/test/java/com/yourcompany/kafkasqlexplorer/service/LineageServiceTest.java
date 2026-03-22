@@ -21,13 +21,16 @@ class LineageServiceTest {
 
     private StreamTableEnvironment tableEnv;
     private FlinkSqlService flinkSqlService;
+    private KafkaAdminService kafkaAdminService;
     private LineageService lineageService;
 
     @BeforeEach
-    void setUp() {
+    void setUp() throws Exception {
         tableEnv = mock(StreamTableEnvironment.class);
         flinkSqlService = mock(FlinkSqlService.class);
-        lineageService = new LineageService(tableEnv, flinkSqlService);
+        kafkaAdminService = mock(KafkaAdminService.class);
+        when(kafkaAdminService.listTopics()).thenReturn(Collections.emptyList());
+        lineageService = new LineageService(tableEnv, flinkSqlService, kafkaAdminService);
     }
 
     @Test
