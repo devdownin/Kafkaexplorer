@@ -1,7 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
+import { clsx, type ClassValue } from 'clsx';
+import { twMerge } from 'tailwind-merge';
 import { useToast } from '../components/Toast';
+
+function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
 
 const PAGE_SIZES = [10, 25, 50, 100];
 type SortKey = 'name' | 'size' | 'state' | 'lastMessage';
@@ -139,10 +145,10 @@ const Dashboard: React.FC = () => {
 
   const activeJobCount = Object.keys(data.jobs).length;
   const kpis = [
-    { label: 'Total Topics', value: data.topics.length.toString(), icon: 'format_list_bulleted', color: topicDiff !== 0 ? 'text-primary' : 'text-slate-500', trend: topicTrend },
-    { label: 'Message Count', value: formatCount(data.totalMessages), icon: 'bolt', color: 'text-primary', trend: data.totalMessages > 0 ? 'Active Ingest' : 'No Activity' },
-    { label: 'Flink Tables', value: data.tables.length.toString(), icon: 'database', color: 'text-slate-400', trend: data.tables.length > 0 ? `${data.tables.length} registered` : 'None registered' },
-    { label: 'Active Jobs', value: activeJobCount.toString(), icon: 'sync', color: data.health ? 'text-emerald-500' : 'text-red-500', trend: data.health ? '100% Health' : 'Degraded' },
+    { label: 'Total Topics', value: data.topics.length.toString(), icon: 'format_list_bulleted', color: topicDiff !== 0 ? 'text-primary' : 'text-slate-500', trend: topicTrend, bg: 'bg-primary/5' },
+    { label: 'Message Count', value: formatCount(data.totalMessages), icon: 'bolt', color: 'text-primary', trend: data.totalMessages > 0 ? 'Active Ingest' : 'No Activity', bg: 'bg-primary/5' },
+    { label: 'Flink Tables', value: data.tables.length.toString(), icon: 'database', color: 'text-slate-400', trend: data.tables.length > 0 ? `${data.tables.length} registered` : 'None registered', bg: 'bg-slate-500/5' },
+    { label: 'Active Jobs', value: activeJobCount.toString(), icon: 'sync', color: data.health ? 'text-emerald-500' : 'text-red-500', trend: data.health ? '100% Health' : 'Degraded', bg: data.health ? 'bg-emerald-500/5' : 'bg-red-500/5' },
   ];
 
   function formatLastMessage(ts: number | null | undefined): string {
@@ -163,15 +169,22 @@ const Dashboard: React.FC = () => {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto p-6 space-y-6">
+    <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
       {/* KPI Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {kpis.map((kpi) => (
-          <div key={kpi.label} className="bg-white dark:bg-primary/5 border border-slate-200 dark:border-primary/10 rounded-xl p-5">
-            <p className="text-slate-500 dark:text-slate-400 text-sm font-medium">{kpi.label}</p>
-            <h3 className="text-3xl font-bold mt-1">{kpi.value}</h3>
-            <div className={`mt-2 flex items-center text-xs font-medium ${kpi.color}`}>
-              <span className="material-symbols-outlined text-xs mr-1">{kpi.icon}</span> {kpi.trend}
+          <div key={kpi.label} className={cn(
+            "border border-slate-200 dark:border-primary/10 rounded-xl p-5 transition-all hover:shadow-lg hover:scale-[1.02] duration-300",
+            kpi.bg || "bg-white dark:bg-primary/5"
+          )}>
+            <div className="flex justify-between items-start">
+              <p className="text-slate-500 dark:text-slate-400 text-xs font-bold uppercase tracking-wider">{kpi.label}</p>
+              <span className={cn("material-symbols-outlined text-xl opacity-50", kpi.color)}>{kpi.icon}</span>
+            </div>
+            <h3 className="text-3xl font-bold mt-1 tracking-tight">{kpi.value}</h3>
+            <div className={`mt-3 flex items-center text-[10px] font-bold uppercase tracking-widest ${kpi.color}`}>
+              <span className="w-1.5 h-1.5 rounded-full bg-current mr-2 animate-pulse" />
+              {kpi.trend}
             </div>
           </div>
         ))}
@@ -280,13 +293,22 @@ const Dashboard: React.FC = () => {
                   </td>
                   <td className="px-4 py-3">
                     {getState(topic) === 'empty' && (
-                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-500/20 text-slate-400 uppercase">Empty</span>
+                      <span className="flex items-center gap-1.5 w-fit px-2 py-0.5 rounded text-[10px] font-bold bg-slate-500/10 text-slate-500 border border-slate-500/20 uppercase tracking-wider">
+                        <span className="w-1 h-1 rounded-full bg-slate-500" />
+                        Empty
+                      </span>
                     )}
                     {getState(topic) === 'dlt' && (
-                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-400 uppercase">DLT</span>
+                      <span className="flex items-center gap-1.5 w-fit px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-500 border border-amber-500/20 uppercase tracking-wider animate-pulse">
+                        <span className="w-1 h-1 rounded-full bg-amber-500" />
+                        DLT
+                      </span>
                     )}
                     {getState(topic) === 'healthy' && (
-                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 uppercase">Healthy</span>
+                      <span className="flex items-center gap-1.5 w-fit px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 uppercase tracking-wider">
+                        <span className="w-1 h-1 rounded-full bg-emerald-500" />
+                        Healthy
+                      </span>
                     )}
                   </td>
                   <td className="px-4 py-3 text-slate-400 text-xs tabular-nums" title={data.topicLastMessages?.[topic] ? new Date(data.topicLastMessages[topic]!).toLocaleString() : undefined}>

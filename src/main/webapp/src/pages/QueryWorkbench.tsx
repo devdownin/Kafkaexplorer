@@ -3,7 +3,13 @@ import { useLocation } from 'react-router-dom';
 import Editor, { useMonaco } from '@monaco-editor/react';
 import type { editor, languages } from 'monaco-editor';
 import axios from 'axios';
+import { clsx, type ClassValue } from 'clsx';
+import { twMerge } from 'tailwind-merge';
 import { useToast } from '../components/Toast';
+
+function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
 
 interface SchemaInfo { topics: string[]; tables: string[]; health: boolean; }
 interface QueryResult { queryId: string; columns: string[]; rows: Record<string, unknown>[]; error: string | null; tableRegistered?: boolean; }
@@ -228,12 +234,17 @@ const QueryWorkbench: React.FC = () => {
   const isSidebarDragging = useRef(false);
   const [splitPercent, setSplitPercent] = useState(55);
   const [sidebarWidth, setSidebarWidth] = useState(288);
+  const [resultLayout, setResultLayout] = useState<'horizontal' | 'vertical'>('vertical');
 
   useEffect(() => {
     const onMouseMove = (e: MouseEvent) => {
       if (isDragging.current && containerRef.current) {
         const rect = containerRef.current.getBoundingClientRect();
-        setSplitPercent(Math.max(20, Math.min(80, ((e.clientY - rect.top) / rect.height) * 100)));
+        if (resultLayout === 'vertical') {
+          setSplitPercent(Math.max(20, Math.min(80, ((e.clientY - rect.top) / rect.height) * 100)));
+        } else {
+          setSplitPercent(Math.max(20, Math.min(80, ((e.clientX - rect.left) / rect.width) * 100)));
+        }
       }
       if (isSidebarDragging.current) {
         setSidebarWidth(Math.max(200, Math.min(480, e.clientX)));
@@ -247,7 +258,7 @@ const QueryWorkbench: React.FC = () => {
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup', onMouseUp);
     return () => { document.removeEventListener('mousemove', onMouseMove); document.removeEventListener('mouseup', onMouseUp); };
-  }, []);
+  }, [resultLayout]);
 
   // ── Actions ───────────────────────────────────────────────────────────────────
   useEffect(() => { fetchSchema(); }, []);
@@ -594,10 +605,15 @@ const QueryWorkbench: React.FC = () => {
         </header>
 
         {/* Split pane */}
-        <div ref={containerRef} className="flex-1 flex flex-col min-h-0 overflow-hidden">
+        <div ref={containerRef} className={cn(
+          "flex-1 flex min-h-0 overflow-hidden",
+          resultLayout === 'vertical' ? "flex-col" : "flex-row"
+        )}>
 
           {/* Editor + Window Assistant */}
-          <div className="flex overflow-hidden" style={{ height: `${splitPercent}%` }}>
+          <div className="flex overflow-hidden shrink-0" style={
+            resultLayout === 'vertical' ? { height: `${splitPercent}%` } : { width: `${splitPercent}%` }
+          }>
             <div className="flex-1 flex flex-col min-w-0 bg-background-dark/20">
 
               {/* ── Tab bar ── */}
@@ -701,13 +717,24 @@ const QueryWorkbench: React.FC = () => {
           </div>
 
           {/* Drag handle */}
-          <div onMouseDown={e => { isDragging.current = true; document.body.style.cursor = 'row-resize'; e.preventDefault(); }}
-            className="h-2 border-y border-primary/10 bg-background-dark/60 hover:bg-primary/10 cursor-row-resize flex items-center justify-center transition-colors shrink-0 group">
-            <div className="w-16 h-0.5 bg-primary/20 group-hover:bg-primary/50 rounded-full transition-colors" />
+          <div
+            onMouseDown={e => {
+              isDragging.current = true;
+              document.body.style.cursor = resultLayout === 'vertical' ? 'row-resize' : 'col-resize';
+              e.preventDefault();
+            }}
+            className={cn(
+              "border-primary/10 bg-background-dark/60 hover:bg-primary/10 flex items-center justify-center transition-colors shrink-0 group",
+              resultLayout === 'vertical' ? "h-2 w-full border-y cursor-row-resize" : "w-2 h-full border-x cursor-col-resize"
+            )}>
+            <div className={cn(
+              "bg-primary/20 group-hover:bg-primary/50 rounded-full transition-colors",
+              resultLayout === 'vertical' ? "w-16 h-0.5" : "h-16 w-0.5"
+            )} />
           </div>
 
           {/* Results panel */}
-          <div className="flex flex-col bg-background-dark/60 overflow-hidden" style={{ height: `calc(${100 - splitPercent}% - 0.5rem)` }}>
+          <div className="flex-1 flex flex-col bg-background-dark/60 overflow-hidden">
             <div className="h-9 border-b border-primary/10 flex items-center px-4 justify-between bg-background-dark/80 shrink-0">
               <div className="flex items-center gap-5">
                 <div className="flex items-center gap-1.5">
@@ -723,6 +750,28 @@ const QueryWorkbench: React.FC = () => {
                 </div>
               </div>
               <div className="flex items-center gap-3">
+                <div className="flex bg-background-dark border border-primary/20 rounded overflow-hidden mr-2">
+                  <button
+                    onClick={() => setResultLayout('vertical')}
+                    className={cn(
+                      "p-1 flex items-center transition-colors",
+                      resultLayout === 'vertical' ? "bg-primary/20 text-primary" : "text-slate-600 hover:text-slate-400"
+                    )}
+                    title="Vertical Split"
+                  >
+                    <span className="material-symbols-outlined text-sm">view_agenda</span>
+                  </button>
+                  <button
+                    onClick={() => setResultLayout('horizontal')}
+                    className={cn(
+                      "p-1 flex items-center transition-colors border-l border-primary/20",
+                      resultLayout === 'horizontal' ? "bg-primary/20 text-primary" : "text-slate-600 hover:text-slate-400"
+                    )}
+                    title="Horizontal Split"
+                  >
+                    <span className="material-symbols-outlined text-sm rotate-90">view_agenda</span>
+                  </button>
+                </div>
                 {results && !results.error && results.rows.length > 0 && (
                   <div className="flex items-center gap-1">
                     <button onClick={() => exportResults('csv')} className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-primary transition-colors"><span className="material-symbols-outlined text-sm">download</span>CSV</button>

@@ -11,12 +11,19 @@ function cn(...inputs: ClassValue[]) {
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [isHealthy, setHealthy] = useState(true);
   const [clusterName, setClusterName] = useState('DOCKER CLUSTER');
+  const [isCollapsed, setIsCollapsed] = useState(() => {
+    return localStorage.getItem('kse:sidebar-collapsed') === 'true';
+  });
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState('');
   const [searchTopics, setSearchTopics] = useState<string[]>([]);
   const [searchTables, setSearchTables] = useState<string[]>([]);
   const [showSearch, setShowSearch] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    localStorage.setItem('kse:sidebar-collapsed', String(isCollapsed));
+  }, [isCollapsed]);
 
   useEffect(() => {
     const checkHealth = async () => {
@@ -60,12 +67,33 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   return (
     <div className="flex h-screen overflow-hidden bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-slate-100 antialiased">
       {/* Sidebar Navigation */}
-      <aside className="w-64 border-r border-slate-200 dark:border-primary/10 bg-white dark:bg-background-dark flex flex-col shrink-0">
-        <div className="p-6 flex flex-col gap-1">
-          <Link to="/" className="text-primary text-lg font-bold tracking-tight">Kafka SQL Explorer</Link>
-          <p className="text-slate-500 dark:text-primary/60 text-xs uppercase font-bold tracking-widest">Data Infrastructure</p>
+      <aside className={cn(
+        "border-r border-slate-200 dark:border-primary/10 bg-white dark:bg-background-dark flex flex-col shrink-0 transition-all duration-300 ease-in-out",
+        isCollapsed ? "w-20" : "w-64"
+      )}>
+        <div className={cn("p-6 flex items-center justify-between", isCollapsed && "flex-col gap-4 px-2")}>
+          {!isCollapsed ? (
+            <div className="flex flex-col gap-1 overflow-hidden">
+              <Link to="/" className="text-primary text-lg font-bold tracking-tight truncate">Kafka SQL Explorer</Link>
+              <p className="text-slate-500 dark:text-primary/60 text-[10px] uppercase font-bold tracking-widest truncate">Data Infrastructure</p>
+            </div>
+          ) : (
+            <Link to="/" className="text-primary text-2xl font-black">K</Link>
+          )}
+          <button
+            onClick={() => setIsCollapsed(!isCollapsed)}
+            className={cn(
+              "p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-primary/10 text-slate-500 transition-colors",
+              !isCollapsed && "ml-2"
+            )}
+            title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          >
+            <span className="material-symbols-outlined text-xl">
+              {isCollapsed ? 'menu_open' : 'menu'}
+            </span>
+          </button>
         </div>
-        <nav className="flex-1 px-4 space-y-1">
+        <nav className={cn("flex-1 px-4 space-y-1", isCollapsed && "px-2")}>
           {navItems.map((item) => (
             <NavLink
               key={item.path}
@@ -74,23 +102,27 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                 "flex items-center gap-3 px-3 py-2 rounded-lg transition-colors group",
                 isActive 
                   ? "bg-primary/10 text-primary"
-                  : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-primary/5 hover:text-primary"
+                  : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-primary/5 hover:text-primary",
+                isCollapsed && "justify-center px-0"
               )}
+              title={isCollapsed ? item.name : ""}
             >
               <span className="material-symbols-outlined text-[22px]">{item.icon}</span>
-              <span className="text-sm font-medium">{item.name}</span>
+              {!isCollapsed && <span className="text-sm font-medium">{item.name}</span>}
             </NavLink>
           ))}
         </nav>
-        <div className="p-4 border-t border-slate-200 dark:border-primary/10">
-          <div className="flex items-center gap-3 px-2 py-2">
-            <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary">
+        <div className={cn("p-4 border-t border-slate-200 dark:border-primary/10", isCollapsed && "px-2")}>
+          <div className={cn("flex items-center gap-3 px-2 py-2", isCollapsed && "justify-center px-0")}>
+            <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary shrink-0">
               <span className="material-symbols-outlined text-sm">person</span>
             </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-bold truncate">Admin User</p>
-              <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">admin@prod-cluster.io</p>
-            </div>
+            {!isCollapsed && (
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-bold truncate">Admin User</p>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">admin@prod-cluster.io</p>
+              </div>
+            )}
           </div>
         </div>
       </aside>
