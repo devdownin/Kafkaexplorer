@@ -2,6 +2,7 @@ package com.yourcompany.kafkasqlexplorer.service;
 
 import com.yourcompany.kafkasqlexplorer.config.ExplorerConfig;
 import com.yourcompany.kafkasqlexplorer.domain.MessageFormat;
+import com.yourcompany.kafkasqlexplorer.parser.AvroSchemaInferrer;
 import com.yourcompany.kafkasqlexplorer.parser.JsonSchemaInferrer;
 import com.yourcompany.kafkasqlexplorer.parser.XmlSchemaInferrer;
 import org.springframework.stereotype.Service;
@@ -18,16 +19,22 @@ public class SchemaInferenceService {
     private final ExplorerConfig explorerConfig;
     private final JsonSchemaInferrer jsonInferrer;
     private final XmlSchemaInferrer xmlInferrer;
+    private final AvroSchemaInferrer avroInferrer;
     private final KafkaAdminService kafkaAdminService;
 
-    public SchemaInferenceService(ExplorerConfig explorerConfig, JsonSchemaInferrer jsonInferrer, XmlSchemaInferrer xmlInferrer, KafkaAdminService kafkaAdminService) {
+    public SchemaInferenceService(ExplorerConfig explorerConfig, JsonSchemaInferrer jsonInferrer, XmlSchemaInferrer xmlInferrer, AvroSchemaInferrer avroInferrer, KafkaAdminService kafkaAdminService) {
         this.explorerConfig = explorerConfig;
         this.jsonInferrer = jsonInferrer;
         this.xmlInferrer = xmlInferrer;
+        this.avroInferrer = avroInferrer;
         this.kafkaAdminService = kafkaAdminService;
     }
 
     public Map<String, String> inferSchema(String topicName, MessageFormat format) {
+        if (format == MessageFormat.AVRO) {
+            return avroInferrer.infer(topicName);
+        }
+
         List<String> samples = getSampleMessages(topicName);
         if (samples.isEmpty()) return Collections.emptyMap();
 
@@ -73,6 +80,10 @@ public class SchemaInferenceService {
     }
 
     public MessageFormat detectFormat(String topicName) {
+        // Special check for Avro: if it has a schema in the registry, it's probably Avro
+        Map<String, String> avroSchema = avroInferrer.infer(topicName);
+        if (!avroSchema.isEmpty()) return MessageFormat.AVRO;
+
         List<String> samples = getSampleMessages(topicName);
         if (samples.isEmpty()) return MessageFormat.AUTO;
 

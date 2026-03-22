@@ -44,3 +44,11 @@ body {
 .diff-removed {
   @apply bg-red-500/10 text-red-400;
 }
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(2rem); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.toast-in {
+  animation: toast-in 0.2s ease-out forwards;
+}

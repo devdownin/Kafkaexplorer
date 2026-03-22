@@ -4,25 +4,40 @@ import com.yourcompany.kafkasqlexplorer.config.KafkaConfig;
 import com.yourcompany.kafkasqlexplorer.domain.MessageFormat;
 import com.yourcompany.kafkasqlexplorer.domain.TopicDescriptor;
 import org.apache.kafka.clients.admin.AdminClient;
+import org.apache.kafka.clients.admin.DescribeClusterOptions;
+import org.apache.kafka.clients.admin.DescribeClusterResult;
 import org.springframework.cache.annotation.Cacheable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.ListTopicsOptions;
 import org.apache.kafka.clients.admin.TopicDescription;
+import org.apache.kafka.common.Node;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.apache.kafka.common.serialization.StringDeserializer;
+import org.apache.kafka.clients.admin.Config;
+import org.apache.kafka.clients.admin.ConfigEntry;
+import org.apache.kafka.clients.admin.DescribeConfigsResult;
+import org.apache.kafka.common.config.ConfigResource;
+import org.apache.kafka.clients.admin.AdminClient;
 import org.springframework.stereotype.Service;
+import io.confluent.kafka.schemaregistry.client.CachedSchemaRegistryClient;
+import io.confluent.kafka.schemaregistry.client.SchemaRegistryClient;
+import io.confluent.kafka.serializers.KafkaAvroDeserializer;
+import org.apache.avro.generic.GenericRecord;
 
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
+import java.util.Collection;
 
 /**
  * Service for interacting with Kafka at the administrative and consumer level.
@@ -40,6 +55,8 @@ public class KafkaAdminService {
      * We initialize it once and reuse it across multiple requests.
      */
     private AdminClient adminClient;
+    private SchemaRegistryClient schemaRegistryClient;
+    private KafkaAvroDeserializer avroDeserializer;
 
     public KafkaAdminService(KafkaConfig kafkaConfig) {
         this.kafkaConfig = kafkaConfig;
@@ -53,6 +70,13 @@ public class KafkaAdminService {
         Properties props = new Properties();
         props.putAll(kafkaConfig.getKafkaProperties());
         this.adminClient = AdminClient.create(props);
+
+        if (kafkaConfig.getSchemaRegistryUrl() != null) {
+            this.schemaRegistryClient = new CachedSchemaRegistryClient(kafkaConfig.getSchemaRegistryUrl(), 100);
+            Map<String, Object> avroProps = new HashMap<>();
+            avroProps.put("schema.registry.url", kafkaConfig.getSchemaRegistryUrl());
+            this.avroDeserializer = new KafkaAvroDeserializer(schemaRegistryClient, avroProps);
+        }
     }
 
     @PreDestroy
@@ -60,6 +84,56 @@ public class KafkaAdminService {
         if (adminClient != null) {
             adminClient.close();
         }
+    }
+
+    public Map<String, String> getBrokerConfigs() {
+        Map<String, String> configs = new HashMap<>();
+        try {
+            DescribeClusterResult clusterResult = adminClient.describeCluster();
+            Collection<Node> nodes = clusterResult.nodes().get(5, TimeUnit.SECONDS);
+            if (nodes.isEmpty()) return configs;
+
+            Node firstNode = nodes.iterator().next();
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.BROKER, String.valueOf(firstNode.id()));
+            DescribeConfigsResult result = adminClient.describeConfigs(Collections.singletonList(resource));
+            Config config = result.all().get(5, TimeUnit.SECONDS).get(resource);
+
+            for (ConfigEntry entry : config.entries()) {
+                configs.put(entry.name(), entry.value());
+            }
+        } catch (Exception e) {
+            log.error("Failed to get broker configs", e);
+        }
+        return configs;
+    }
+
+    private String deserializeValue(String topic, byte[] value) {
+        if (value == null) return null;
+        // Check for Confluent Avro magic byte (0x00)
+        if (value.length > 5 && value[0] == 0) {
+            try {
+                if (avroDeserializer != null) {
+                    Object record = avroDeserializer.deserialize(topic, value);
+                    if (record instanceof GenericRecord genericRecord) {
+                        try {
+                            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+                            org.apache.avro.io.DatumWriter<GenericRecord> writer = new org.apache.avro.generic.GenericDatumWriter<>(genericRecord.getSchema());
+                            org.apache.avro.io.Encoder encoder = org.apache.avro.io.EncoderFactory.get().jsonEncoder(genericRecord.getSchema(), out);
+                            writer.write(genericRecord, encoder);
+                            encoder.flush();
+                            return new String(out.toByteArray(), StandardCharsets.UTF_8);
+                        } catch (Exception e) {
+                            return genericRecord.toString();
+                        }
+                    }
+                    return String.valueOf(record);
+                }
+            } catch (Exception e) {
+                log.debug("Failed to deserialize Avro for topic {}: {}", topic, e.getMessage());
+            }
+        }
+        // Fallback to UTF-8 String
+        return new String(value, StandardCharsets.UTF_8);
     }
 
     @Cacheable(value = "kafkaTopics", key = "'all'")
@@ -81,11 +155,11 @@ public class KafkaAdminService {
 
         Properties props = new Properties();
         props.putAll(kafkaConfig.getKafkaProperties());
-        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
-        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
         props.put(ConsumerConfig.GROUP_ID_CONFIG, "kafka-sql-explorer-bulk-metadata-" + UUID.randomUUID());
 
-        try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props)) {
+        try (KafkaConsumer<byte[], byte[]> consumer = new KafkaConsumer<>(props)) {
             List<TopicPartition> allPartitions = new ArrayList<>();
             Map<String, List<TopicPartition>> topicToPartitions = new HashMap<>();
 
@@ -141,11 +215,11 @@ public class KafkaAdminService {
 
         Properties props = new Properties();
         props.putAll(kafkaConfig.getKafkaProperties());
-        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
-        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
         props.put(ConsumerConfig.GROUP_ID_CONFIG, "kafka-sql-explorer-metadata-" + UUID.randomUUID());
 
-        try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props)) {
+        try (KafkaConsumer<byte[], byte[]> consumer = new KafkaConsumer<>(props)) {
             Map<TopicPartition, Long> beginningOffsets = consumer.beginningOffsets(partitions);
             Map<TopicPartition, Long> endOffsets = consumer.endOffsets(partitions);
 
@@ -168,6 +242,162 @@ public class KafkaAdminService {
         );
     }
 
+    public Map<String, Object> getClusterDetails() {
+        Map<String, Object> details = new LinkedHashMap<>();
+        try {
+            DescribeClusterResult result = adminClient.describeCluster(new DescribeClusterOptions().timeoutMs(5000));
+            String clusterId = result.clusterId().get(5, TimeUnit.SECONDS);
+            Node controller = result.controller().get(5, TimeUnit.SECONDS);
+            Collection<Node> nodes = result.nodes().get(5, TimeUnit.SECONDS);
+
+            details.put("clusterId", clusterId);
+            details.put("controllerId", controller != null ? controller.id() : null);
+            details.put("brokerCount", nodes.size());
+
+            List<Map<String, Object>> brokers = new ArrayList<>();
+            for (Node node : nodes) {
+                Map<String, Object> broker = new LinkedHashMap<>();
+                broker.put("id", node.id());
+                broker.put("host", node.host());
+                broker.put("port", node.port());
+                broker.put("rack", node.rack());
+                broker.put("isController", controller != null && node.id() == controller.id());
+                brokers.add(broker);
+            }
+            brokers.sort(Comparator.comparingInt(b -> (Integer) b.get("id")));
+            details.put("brokers", brokers);
+
+            // Topic stats
+            List<String> topicNames = new ArrayList<>(
+                adminClient.listTopics(new ListTopicsOptions().listInternal(false)).names().get(5, TimeUnit.SECONDS)
+            );
+            details.put("topicCount", topicNames.size());
+
+            // Partition count via describeTopics
+            if (!topicNames.isEmpty()) {
+                Map<String, TopicDescription> descriptions = adminClient.describeTopics(topicNames).allTopicNames().get(10, TimeUnit.SECONDS);
+                int totalPartitions = descriptions.values().stream().mapToInt(d -> d.partitions().size()).sum();
+                details.put("partitionCount", totalPartitions);
+
+                // Empty and single-partition topics
+                long emptyTopics = descriptions.values().stream().filter(d -> d.partitions().isEmpty()).count();
+                long singlePartitionTopics = descriptions.values().stream().filter(d -> d.partitions().size() == 1).count();
+                details.put("emptyTopicCount", emptyTopics);
+                details.put("singlePartitionTopicCount", singlePartitionTopics);
+
+                // Topic sizes for top 10
+                Map<String, Long> sizes = getTopicsSize(topicNames);
+                long totalMessages = sizes.values().stream().mapToLong(Long::longValue).sum();
+                details.put("totalMessages", totalMessages);
+
+                List<Map<String, Object>> topTopics = sizes.entrySet().stream()
+                    .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
+                    .limit(10)
+                    .map(e -> {
+                        Map<String, Object> t = new LinkedHashMap<>();
+                        t.put("name", e.getKey());
+                        t.put("messages", e.getValue());
+                        int partitions = descriptions.containsKey(e.getKey()) ? descriptions.get(e.getKey()).partitions().size() : 0;
+                        t.put("partitions", partitions);
+                        return t;
+                    })
+                    .collect(Collectors.toList());
+                details.put("topTopics", topTopics);
+            } else {
+                details.put("partitionCount", 0);
+                details.put("emptyTopicCount", 0);
+                details.put("singlePartitionTopicCount", 0);
+                details.put("totalMessages", 0L);
+                details.put("topTopics", List.of());
+            }
+
+            details.put("bootstrapServers", kafkaConfig.getBootstrapServers());
+        } catch (Exception e) {
+            log.error("Failed to get cluster details", e);
+            details.put("error", e.getMessage());
+        }
+        return details;
+    }
+
+    public Map<String, Long> getTopicsLastMessageTimestamps(List<String> topicNames) {
+        Map<String, Long> timestamps = new HashMap<>();
+        if (topicNames.isEmpty()) return timestamps;
+
+        Properties props = new Properties();
+        props.putAll(kafkaConfig.getKafkaProperties());
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
+        props.put(ConsumerConfig.GROUP_ID_CONFIG, "kafka-sql-explorer-timestamps-" + UUID.randomUUID());
+
+        try (KafkaConsumer<byte[], byte[]> consumer = new KafkaConsumer<>(props)) {
+            List<TopicPartition> allPartitions = new ArrayList<>();
+            Map<String, List<TopicPartition>> topicToPartitions = new HashMap<>();
+
+            Map<String, TopicDescription> descriptions = adminClient.describeTopics(topicNames)
+                    .allTopicNames().get(10, TimeUnit.SECONDS);
+
+            for (String name : topicNames) {
+                TopicDescription desc = descriptions.get(name);
+                if (desc != null) {
+                    List<TopicPartition> tps = desc.partitions().stream()
+                            .map(p -> new TopicPartition(name, p.partition()))
+                            .toList();
+                    allPartitions.addAll(tps);
+                    topicToPartitions.put(name, tps);
+                }
+            }
+
+            if (allPartitions.isEmpty()) return timestamps;
+
+            Map<TopicPartition, Long> beginningOffsets = consumer.beginningOffsets(allPartitions);
+            Map<TopicPartition, Long> endOffsets = consumer.endOffsets(allPartitions);
+
+            // Only seek to last record on non-empty partitions
+            List<TopicPartition> nonEmpty = allPartitions.stream()
+                    .filter(tp -> {
+                        Long begin = beginningOffsets.get(tp);
+                        Long end = endOffsets.get(tp);
+                        return begin != null && end != null && end > begin;
+                    })
+                    .toList();
+
+            if (nonEmpty.isEmpty()) return timestamps;
+
+            consumer.assign(nonEmpty);
+            for (TopicPartition tp : nonEmpty) {
+                consumer.seek(tp, endOffsets.get(tp) - 1);
+            }
+
+            Map<TopicPartition, Long> partitionTimestamps = new HashMap<>();
+            Set<TopicPartition> pending = new HashSet<>(nonEmpty);
+            int retries = 3;
+            while (retries-- > 0 && !pending.isEmpty()) {
+                var polled = consumer.poll(java.time.Duration.ofMillis(500));
+                for (var record : polled) {
+                    TopicPartition tp = new TopicPartition(record.topic(), record.partition());
+                    partitionTimestamps.put(tp, record.timestamp());
+                    pending.remove(tp);
+                }
+            }
+
+            // Aggregate per topic: keep the most recent partition timestamp
+            for (String name : topicNames) {
+                List<TopicPartition> tps = topicToPartitions.get(name);
+                if (tps == null) continue;
+                OptionalLong maxTs = tps.stream()
+                        .filter(partitionTimestamps::containsKey)
+                        .mapToLong(partitionTimestamps::get)
+                        .max();
+                if (maxTs.isPresent()) {
+                    timestamps.put(name, maxTs.getAsLong());
+                }
+            }
+        } catch (Exception e) {
+            log.error("Failed to get topic last-message timestamps", e);
+        }
+        return timestamps;
+    }
+
     public boolean ping() {
         try {
             adminClient.listTopics().names().get(2, TimeUnit.SECONDS);
@@ -186,6 +416,42 @@ public class KafkaAdminService {
 
     public List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> getRecentRecords(String topicName, int maxMessages) {
         return getRecordsWithPredicate(topicName, maxMessages, null);
+    }
+
+    public List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> getEarliestRecords(String topicName, int maxMessages) {
+        List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records = new ArrayList<>();
+        Properties props = new Properties();
+        props.putAll(kafkaConfig.getKafkaProperties());
+        props.put(ConsumerConfig.GROUP_ID_CONFIG, "explorer-earliest-" + UUID.randomUUID());
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
+        try (KafkaConsumer<byte[], byte[]> consumer = new KafkaConsumer<>(props)) {
+            Map<String, TopicDescription> descriptions = adminClient.describeTopics(Collections.singletonList(topicName)).allTopicNames().get(5, TimeUnit.SECONDS);
+            TopicDescription desc = descriptions.get(topicName);
+            if (desc == null) return records;
+            List<TopicPartition> partitions = desc.partitions().stream()
+                    .map(p -> new TopicPartition(topicName, p.partition())).toList();
+            consumer.assign(partitions);
+            consumer.seekToBeginning(partitions);
+            int count = 0;
+            boolean moreRecords = true;
+            while (count < maxMessages && moreRecords) {
+                org.apache.kafka.clients.consumer.ConsumerRecords<byte[], byte[]> polled = consumer.poll(java.time.Duration.ofMillis(500));
+                if (polled.isEmpty()) moreRecords = false;
+                for (org.apache.kafka.clients.consumer.ConsumerRecord<byte[], byte[]> record : polled) {
+                    String value = deserializeValue(record.topic(), record.value());
+                    String key = record.key() != null ? new String(record.key(), StandardCharsets.UTF_8) : null;
+                    records.add(new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                        record.topic(), record.partition(), record.offset(), record.timestamp(), record.timestampType(),
+                        -1L, -1, -1, key, value, record.headers(), record.leaderEpoch()));
+                    count++;
+                    if (count >= maxMessages) break;
+                }
+            }
+        } catch (Exception e) {
+            log.error("Error fetching earliest records for topic {}", topicName, e);
+        }
+        return records;
     }
 
     public List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> getRecordsSince(String topicName, int minutes, int maxMessages) {
@@ -208,10 +474,10 @@ public class KafkaAdminService {
         props.putAll(kafkaConfig.getKafkaProperties());
         // Use a unique group ID to avoid triggering unnecessary rebalances and to ignore existing offsets.
         props.put(ConsumerConfig.GROUP_ID_CONFIG, "flow-records-" + UUID.randomUUID());
-        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
-        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
 
-        try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props)) {
+        try (KafkaConsumer<byte[], byte[]> consumer = new KafkaConsumer<>(props)) {
             Map<String, TopicDescription> descriptions = adminClient.describeTopics(Collections.singletonList(topicName)).allTopicNames().get(5, TimeUnit.SECONDS);
             TopicDescription desc = descriptions.get(topicName);
             if (desc == null) return records;
@@ -246,10 +512,14 @@ public class KafkaAdminService {
             int count = 0;
             boolean moreRecords = true;
             while (count < maxMessages && moreRecords) {
-                org.apache.kafka.clients.consumer.ConsumerRecords<String, String> polled = consumer.poll(java.time.Duration.ofMillis(500));
+                org.apache.kafka.clients.consumer.ConsumerRecords<byte[], byte[]> polled = consumer.poll(java.time.Duration.ofMillis(500));
                 if (polled.isEmpty()) moreRecords = false;
-                for (org.apache.kafka.clients.consumer.ConsumerRecord<String, String> record : polled) {
-                    records.add(record);
+                for (org.apache.kafka.clients.consumer.ConsumerRecord<byte[], byte[]> record : polled) {
+                    String value = deserializeValue(record.topic(), record.value());
+                    String key = record.key() != null ? new String(record.key(), StandardCharsets.UTF_8) : null;
+                    records.add(new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                        record.topic(), record.partition(), record.offset(), record.timestamp(), record.timestampType(),
+                        -1L, -1, -1, key, value, record.headers(), record.leaderEpoch()));
                     count++;
                     if (count >= maxMessages) break;
                 }

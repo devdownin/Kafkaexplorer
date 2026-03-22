@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.yourcompany.kafkasqlexplorer.config.ExplorerConfig;
 import com.yourcompany.kafkasqlexplorer.domain.DashboardResponse;
 import com.yourcompany.kafkasqlexplorer.service.FlinkSqlService;
 import com.yourcompany.kafkasqlexplorer.service.KafkaAdminService;
@@ -22,26 +23,32 @@ public class DashboardController {
 
     private final KafkaAdminService kafkaAdminService;
     private final FlinkSqlService flinkSqlService;
+    private final ExplorerConfig explorerConfig;
 
-    public DashboardController(KafkaAdminService kafkaAdminService, FlinkSqlService flinkSqlService) {
+    public DashboardController(KafkaAdminService kafkaAdminService, FlinkSqlService flinkSqlService,
+                               ExplorerConfig explorerConfig) {
         this.kafkaAdminService = kafkaAdminService;
         this.flinkSqlService = flinkSqlService;
+        this.explorerConfig = explorerConfig;
     }
 
     @GetMapping
     public DashboardResponse getDashboardData() {
         List<String> topics;
         Map<String, Long> topicSizes;
+        Map<String, Long> topicLastMessages;
         boolean health;
 
         try {
             topics = kafkaAdminService.listTopics();
             topicSizes = kafkaAdminService.getTopicsSize(topics);
+            topicLastMessages = kafkaAdminService.getTopicsLastMessageTimestamps(topics);
             health = kafkaAdminService.ping();
         } catch (Exception e) {
             logger.warn("Failed to fetch Kafka metadata, returning empty defaults: {}", e.getMessage());
             topics = Collections.emptyList();
             topicSizes = Collections.emptyMap();
+            topicLastMessages = Collections.emptyMap();
             health = false;
         }
 
@@ -53,7 +60,9 @@ public class DashboardController {
                 totalMessages,
                 flinkSqlService.listTables(),
                 flinkSqlService.getActiveJobs(),
-                health
+                health,
+                explorerConfig.getClusterName(),
+                topicLastMessages
         );
     }
 }

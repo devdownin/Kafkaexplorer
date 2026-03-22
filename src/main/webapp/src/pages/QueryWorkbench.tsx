@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import Editor, { useMonaco } from '@monaco-editor/react';
 import type { editor, languages } from 'monaco-editor';
 import axios from 'axios';
 import { useToast } from '../components/Toast';
 
 interface SchemaInfo { topics: string[]; tables: string[]; health: boolean; }
-interface QueryResult { queryId: string; columns: string[]; rows: Record<string, unknown>[]; error: string | null; }
+interface QueryResult { queryId: string; columns: string[]; rows: Record<string, unknown>[]; error: string | null; tableRegistered?: boolean; }
 interface Tab { id: string; name: string; sql: string; }
 interface SavedQuery { id: string; name: string; sql: string; savedAt: number; }
 
@@ -17,7 +17,6 @@ const newTab = (sql = ''): Tab => ({ id: String(++tabCounter), name: `Query ${ta
 const QueryWorkbench: React.FC = () => {
   const { toast } = useToast();
   const location = useLocation();
-  const navigate = useNavigate();
 
   // ── Schema state ──────────────────────────────────────────────────────────────
   const [schema, setSchema] = useState<SchemaInfo | null>(null);
@@ -283,7 +282,16 @@ const QueryWorkbench: React.FC = () => {
       const response = await axios.post('/api/query', { sql, readMode });
       setExecutionMs(Date.now() - start);
       setResults(response.data);
-      if (!response.data.error) saveToHistory(sql);
+      if (!response.data.error) {
+        saveToHistory(sql);
+        // Refresh the schema browser when:
+        // 1. The user explicitly ran a CREATE TABLE statement.
+        // 2. The backend auto-registered a Flink table during query execution.
+        const strippedForCheck = sql.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, '').trim();
+        if (strippedForCheck.toUpperCase().startsWith('CREATE TABLE') || response.data.tableRegistered) {
+          fetchSchema();
+        }
+      }
     } catch {
       setExecutionMs(Date.now() - start);
       setResults({ queryId: '', columns: [], rows: [], error: 'Query execution failed' });
@@ -322,7 +330,9 @@ const QueryWorkbench: React.FC = () => {
   const applyWindowLogic = () => {
     const unitMap: Record<string, string> = { MIN: 'MINUTES', SEC: 'SECONDS', HOUR: 'HOURS' };
     const unit = unitMap[windowUnit] || 'MINUTES';
-    const tableName = schema?.tables[0] || 'source_table';
+    const fromMatch = sql.match(/\bFROM\s+`?([\w.\\-]+)`?/i);
+    const tableInEditor = fromMatch?.[1];
+    const tableName = tableInEditor || schema?.tables[0] || 'source_table';
     const newSql = `-- Window: ${windowType}, Size: ${windowSize} ${unit}\nSELECT\n  window_start,\n  window_end,\n  COUNT(*) AS event_count\nFROM TABLE(\n  TUMBLE(TABLE ${tableName}, DESCRIPTOR(event_time), INTERVAL '${windowSize}' ${unit})\n)\nGROUP BY window_start, window_end;`;
     setSql(newSql);
     toast('Window logic applied to editor', 'success');
@@ -535,7 +545,6 @@ const QueryWorkbench: React.FC = () => {
           <div className="flex items-center gap-4">
             <div className="flex items-center bg-background-dark border border-primary/20 rounded-lg p-0.5">
               <button className="px-4 py-1.5 text-xs font-bold rounded-md bg-primary text-background-dark">SQL EDITOR</button>
-              <button onClick={() => navigate('/stream-flow')} className="px-4 py-1.5 text-xs font-bold rounded-md text-slate-400 hover:text-white transition-colors">STREAMS</button>
             </div>
             <div className="h-6 w-px bg-primary/20" />
             <div className="flex items-center gap-2">

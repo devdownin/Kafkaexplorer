@@ -1,200 +1,650 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import axios from 'axios';
+import { useToast } from '../components/Toast';
 
-const Lineage: React.FC = () => {
-  const [selectedNode, setSelectedNode] = useState<string | null>('processed_events');
+interface LineageNode {
+  id: string;
+  label: string;
+  type: 'topic' | 'table' | 'view' | 'query' | string;
+  messageCount?: number;
+}
+
+interface LineageEdge {
+  from: string;
+  to: string;
+  label?: string;
+}
+
+interface LineageData {
+  nodes: LineageNode[];
+  edges: LineageEdge[];
+}
+
+const nodeConfig: Record<string, { shape: 'circle' | 'rect' | 'diamond' | 'hex'; color: string; bg: string }> = {
+  topic:  { shape: 'circle',  color: '#25f4f4', bg: '#1b2d2d' },
+  table:  { shape: 'rect',    color: '#25f4f4', bg: '#0f2d1a' },
+  view:   { shape: 'diamond', color: '#a78bfa', bg: '#2d1b3d' },
+  query:  { shape: 'hex',     color: '#f59e0b', bg: '#2d2008' },
+};
+
+const NODE_W = 140;
+const NODE_H = 48;
+const COL_GAP = 240;
+const ROW_GAP = 90;
+
+function formatMsgCount(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+  return String(n);
+}
+
+function computeLayout(nodes: LineageNode[], edges: LineageEdge[]): Record<string, { x: number; y: number }> {
+  if (nodes.length === 0) return {};
+
+  const inDegree: Record<string, number> = {};
+  nodes.forEach(n => { inDegree[n.id] = 0; });
+  edges.forEach(e => { inDegree[e.to] = (inDegree[e.to] ?? 0) + 1; });
+
+  const layers: string[][] = [];
+  const visited = new Set<string>();
+  let queue = nodes.filter(n => inDegree[n.id] === 0).map(n => n.id);
+  if (queue.length === 0) queue = [nodes[0].id];
+
+  while (queue.length > 0) {
+    const layer: string[] = [];
+    const next: string[] = [];
+    for (const id of queue) {
+      if (!visited.has(id)) {
+        visited.add(id);
+        layer.push(id);
+        edges.filter(e => e.from === id).forEach(e => { if (!visited.has(e.to)) next.push(e.to); });
+      }
+    }
+    if (layer.length) layers.push(layer);
+    queue = next;
+  }
+  nodes.forEach(n => { if (!visited.has(n.id)) layers.push([n.id]); });
+
+  const maxRows = Math.max(1, ...layers.map(l => l.length));
+  const positions: Record<string, { x: number; y: number }> = {};
+  layers.forEach((layer, col) => {
+    const totalH = layer.length * NODE_H + (layer.length - 1) * ROW_GAP;
+    const startY = (maxRows * (NODE_H + ROW_GAP) - totalH) / 2 + 40;
+    layer.forEach((id, row) => {
+      positions[id] = { x: col * (NODE_W + COL_GAP) + 60, y: startY + row * (NODE_H + ROW_GAP) };
+    });
+  });
+  return positions;
+}
+
+// ── NodeShape ─────────────────────────────────────────────────────────────────
+
+const NodeShape: React.FC<{
+  node: LineageNode;
+  x: number; y: number;
+  selected: boolean;
+  onClick: () => void;
+  onHoverEnter: (clientX: number, clientY: number) => void;
+  onHoverLeave: () => void;
+}> = ({ node, x, y, selected, onClick, onHoverEnter, onHoverLeave }) => {
+  const cfg = nodeConfig[node.type] ?? nodeConfig.table;
+  const cx = x + NODE_W / 2;
+  const cy = y + NODE_H / 2;
+  const label = node.label.length > 16 ? node.label.slice(0, 15) + '…' : node.label;
+  const stroke = selected ? '#ffffff' : cfg.color;
+  const sw = selected ? 2.5 : 1.5;
+
+  const renderShape = () => {
+    if (cfg.shape === 'circle') {
+      return <ellipse cx={cx} cy={cy} rx={NODE_W / 2} ry={NODE_H / 2} fill={cfg.bg} stroke={stroke} strokeWidth={sw} />;
+    }
+    if (cfg.shape === 'diamond') {
+      return <polygon points={`${cx},${y} ${x + NODE_W},${cy} ${cx},${y + NODE_H} ${x},${cy}`} fill={cfg.bg} stroke={stroke} strokeWidth={sw} />;
+    }
+    if (cfg.shape === 'hex') {
+      const qw = NODE_W / 4;
+      return <polygon
+        points={`${x + qw},${y} ${x + NODE_W - qw},${y} ${x + NODE_W},${cy} ${x + NODE_W - qw},${y + NODE_H} ${x + qw},${y + NODE_H} ${x},${cy}`}
+        fill={cfg.bg} stroke={stroke} strokeWidth={sw}
+      />;
+    }
+    return <rect x={x} y={y} width={NODE_W} height={NODE_H} rx={8} fill={cfg.bg} stroke={stroke} strokeWidth={sw} />;
+  };
+
+  const subLabel = node.type === 'topic' && node.messageCount !== undefined
+    ? `${node.type.toUpperCase()} · ${formatMsgCount(node.messageCount)}`
+    : node.type.toUpperCase();
 
   return (
-    <div className="flex h-full w-full overflow-hidden">
-      {/* Sidebar Navigation */}
-      <aside className="w-64 border-r border-border-dark bg-background-dark/50 p-4 flex flex-col gap-6 shrink-0">
-        <div>
-          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Cluster Context</h3>
-          <div className="flex items-center gap-3 p-3 rounded-lg bg-primary/10 border border-primary/20">
-            <span className="material-symbols-outlined text-primary">database</span>
-            <div>
-              <p className="text-sm font-semibold text-slate-100">Prod-US-East-01</p>
-              <p className="text-xs text-slate-400">Status: Operational</p>
+    <g
+      className="cursor-pointer"
+      onClick={onClick}
+      onMouseEnter={e => onHoverEnter(e.clientX, e.clientY)}
+      onMouseLeave={onHoverLeave}
+    >
+      {selected && (
+        <rect x={x - 5} y={y - 5} width={NODE_W + 10} height={NODE_H + 10} rx={12}
+          fill={cfg.color} fillOpacity={0.1} stroke={cfg.color} strokeWidth={1} strokeOpacity={0.3} />
+      )}
+      {renderShape()}
+      <text x={cx} y={cy + 4} textAnchor="middle" fill="white" fontSize={11}
+        fontFamily="JetBrains Mono, monospace" fontWeight={selected ? 'bold' : 'normal'}>
+        {label}
+      </text>
+      <text x={cx} y={y + NODE_H + 15} textAnchor="middle" fill={cfg.color}
+        fontSize={9} fontFamily="Inter, sans-serif" opacity={0.65}>
+        {subLabel}
+      </text>
+    </g>
+  );
+};
+
+// ── Lineage page ──────────────────────────────────────────────────────────────
+
+const Lineage: React.FC = () => {
+  const { toast } = useToast();
+  const [data, setData]                   = useState<LineageData>({ nodes: [], edges: [] });
+  const [loading, setLoading]             = useState(true);
+  const [connectedOnly, setConnectedOnly] = useState(false);
+  const [selectedNode, setSelectedNode]   = useState<LineageNode | null>(null);
+  const [ddl, setDdl]                     = useState<string | null>(null);
+  const [loadingDdl, setLoadingDdl]       = useState(false);
+  const [searchTerm, setSearchTerm]       = useState('');
+  const [tooltip, setTooltip]             = useState<{ node: LineageNode; x: number; y: number } | null>(null);
+  const [transform, setTransform]         = useState({ x: 40, y: 20, scale: 1 });
+
+  const svgRef    = useRef<SVGSVGElement>(null);
+  const isPanning = useRef(false);
+  const lastPos   = useRef({ x: 0, y: 0 });
+
+  // ── Data fetching ───────────────────────────────────────────────────────────
+
+  const fetchLineage = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await axios.get<LineageData>(`/api/lineage?connectedOnly=${connectedOnly}`);
+      const d = res.data;
+      setData({ nodes: d.nodes ?? [], edges: d.edges ?? [] });
+      // Clear selection if node no longer exists
+      setSelectedNode(prev =>
+        prev && (d.nodes ?? []).some(n => n.id === prev.id) ? prev : null
+      );
+    } catch {
+      toast('Failed to load lineage graph', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [connectedOnly]);
+
+  useEffect(() => { fetchLineage(); }, [fetchLineage]);
+
+  // ── Wheel zoom ──────────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    const handler = (e: WheelEvent) => {
+      e.preventDefault();
+      const factor = e.deltaY > 0 ? 0.9 : 1.1;
+      setTransform(t => ({ ...t, scale: Math.max(0.15, Math.min(4, t.scale * factor)) }));
+    };
+    el.addEventListener('wheel', handler, { passive: false });
+    return () => el.removeEventListener('wheel', handler);
+  }, []);
+
+  // ── Derived state ───────────────────────────────────────────────────────────
+
+  const positions = useMemo(() => computeLayout(data.nodes, data.edges), [data]);
+
+  /** IDs of selected node + its direct neighbors — used for focus dimming. */
+  const neighborIds = useMemo<Set<string> | null>(() => {
+    if (!selectedNode) return null;
+    const ids = new Set<string>([selectedNode.id]);
+    data.edges.forEach(e => {
+      if (e.from === selectedNode.id || e.to === selectedNode.id) {
+        ids.add(e.from); ids.add(e.to);
+      }
+    });
+    return ids;
+  }, [selectedNode, data.edges]);
+
+  /** Fast node lookup by id — used in inspector to show labels instead of raw IDs. */
+  const nodeById = useMemo(
+    () => Object.fromEntries(data.nodes.map(n => [n.id, n])),
+    [data.nodes]
+  );
+
+  const searchResults = useMemo(() => {
+    if (!searchTerm.trim()) return [];
+    const lower = searchTerm.toLowerCase();
+    return data.nodes.filter(n => n.label.toLowerCase().includes(lower)).slice(0, 8);
+  }, [searchTerm, data.nodes]);
+
+  const selectedEdges = selectedNode
+    ? data.edges.filter(e => e.from === selectedNode.id || e.to === selectedNode.id)
+    : [];
+
+  // ── Center canvas on a node ─────────────────────────────────────────────────
+
+  const centerOnNode = useCallback((nodeId: string) => {
+    const pos = positions[nodeId];
+    if (!pos || !svgRef.current) return;
+    const rect = svgRef.current.getBoundingClientRect();
+    setTransform(prev => ({
+      ...prev,
+      x: rect.width  / 2 - (pos.x + NODE_W / 2) * prev.scale,
+      y: rect.height / 2 - (pos.y + NODE_H / 2) * prev.scale,
+    }));
+  }, [positions]);
+
+  // ── Pan handlers ────────────────────────────────────────────────────────────
+
+  const onMouseDown = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+    if ((e.target as Element).closest('[data-node]')) return;
+    isPanning.current = true;
+    lastPos.current = { x: e.clientX, y: e.clientY };
+    e.currentTarget.style.cursor = 'grabbing';
+  }, []);
+
+  const onMouseMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+    if (!isPanning.current) return;
+    const dx = e.clientX - lastPos.current.x;
+    const dy = e.clientY - lastPos.current.y;
+    lastPos.current = { x: e.clientX, y: e.clientY };
+    setTransform(t => ({ ...t, x: t.x + dx, y: t.y + dy }));
+    setTooltip(null);
+  }, []);
+
+  const onMouseUp = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+    isPanning.current = false;
+    e.currentTarget.style.cursor = 'grab';
+  }, []);
+
+  const resetView = () => setTransform({ x: 40, y: 20, scale: 1 });
+  const isEmpty   = !loading && data.nodes.length === 0;
+
+  // ── Render ──────────────────────────────────────────────────────────────────
+
+  return (
+    <div style={{ position: 'absolute', inset: 0, display: 'flex', overflow: 'hidden' }}>
+
+      {/* ── Floating tooltip ── */}
+      {tooltip && (
+        <div
+          style={{ position: 'fixed', left: tooltip.x + 14, top: tooltip.y - 64, zIndex: 100, pointerEvents: 'none' }}
+          className="bg-background-dark/95 border border-primary/30 rounded-lg px-3 py-2 shadow-2xl text-xs max-w-[220px]"
+        >
+          <p className="font-mono font-bold text-slate-100 break-all leading-snug">{tooltip.node.label}</p>
+          <p className="text-slate-500 uppercase text-[10px] mt-0.5">{tooltip.node.type}</p>
+          {tooltip.node.type === 'topic' && tooltip.node.messageCount !== undefined && (
+            <p className="text-primary font-mono text-[10px] mt-0.5">
+              {tooltip.node.messageCount.toLocaleString()} messages
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* ── Sidebar ── */}
+      <aside className="w-56 border-r border-primary/10 bg-background-dark flex flex-col gap-4 shrink-0 p-4 overflow-y-auto">
+
+        {/* Search */}
+        <div className="relative">
+          <div className="flex items-center gap-2 bg-primary/5 border border-primary/20 rounded-lg px-2.5 py-1.5 focus-within:border-primary/40 transition-colors">
+            <span className="material-symbols-outlined text-slate-500 text-base shrink-0">search</span>
+            <input
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              placeholder="Search nodes…"
+              className="bg-transparent outline-none text-xs text-slate-200 w-full placeholder:text-slate-600"
+            />
+            {searchTerm && (
+              <button onClick={() => setSearchTerm('')} className="text-slate-600 hover:text-slate-300">
+                <span className="material-symbols-outlined text-sm">close</span>
+              </button>
+            )}
+          </div>
+          {searchResults.length > 0 && (
+            <div className="absolute top-full mt-1 left-0 right-0 bg-background-dark border border-primary/20 rounded-lg shadow-xl z-20 overflow-hidden">
+              {searchResults.map(n => {
+                const cfg = nodeConfig[n.type] ?? nodeConfig.table;
+                return (
+                  <button
+                    key={n.id}
+                    onClick={() => {
+                      setSelectedNode(n);
+                      setDdl(null);
+                      centerOnNode(n.id);
+                      setSearchTerm('');
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-2 hover:bg-primary/10 transition-colors text-left"
+                  >
+                    <span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: cfg.color }} />
+                    <span className="text-xs font-mono text-slate-300 truncate">{n.label}</span>
+                    <span className="text-[9px] text-slate-600 shrink-0 ml-auto uppercase">{n.type}</span>
+                  </button>
+                );
+              })}
             </div>
+          )}
+        </div>
+
+        {/* Node type legend */}
+        <div>
+          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Node Types</h3>
+          <div className="space-y-1">
+            {(['topic', 'table', 'view', 'query'] as const).map(type => {
+              const count = data.nodes.filter(n => n.type === type).length;
+              const cfg = nodeConfig[type];
+              return (
+                <div key={type} className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg bg-primary/5">
+                  <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: cfg.color, opacity: 0.8 }} />
+                  <span className="capitalize text-slate-300 text-xs">{type}s</span>
+                  <span className="ml-auto text-[10px] bg-primary/10 px-1.5 py-0.5 rounded text-primary font-mono">{count}</span>
+                </div>
+              );
+            })}
           </div>
         </div>
-        <div className="flex flex-col gap-1">
-          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 px-3">Graph Layers</h3>
-          <button className="flex items-center gap-3 px-3 py-2 rounded-lg bg-neutral-dark text-slate-100 text-sm">
-            <span className="material-symbols-outlined text-xl text-primary">radio_button_checked</span>
-            Topics
-            <span className="ml-auto text-xs bg-slate-700 px-1.5 py-0.5 rounded">12</span>
-          </button>
-          <button className="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-400 hover:bg-neutral-dark hover:text-slate-100 text-sm transition-all">
-            <span className="material-symbols-outlined text-xl">view_kanban</span>
-            Flink Tables
-            <span className="ml-auto text-xs bg-slate-800 px-1.5 py-0.5 rounded">8</span>
-          </button>
-          <button className="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-400 hover:bg-neutral-dark hover:text-slate-100 text-sm transition-all">
-            <span className="material-symbols-outlined text-xl">terminal</span>
-            SQL Jobs
-            <span className="ml-auto text-xs bg-slate-800 px-1.5 py-0.5 rounded">4</span>
-          </button>
-          <button className="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-400 hover:bg-neutral-dark hover:text-slate-100 text-sm transition-all">
-            <span className="material-symbols-outlined text-xl">warning</span>
-            Alerts
+
+        {/* Options */}
+        <div className="border-t border-primary/10 pt-3 space-y-2.5">
+          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Options</h3>
+
+          <label className="flex items-center justify-between cursor-pointer select-none group">
+            <span className="text-xs text-slate-400 group-hover:text-slate-200 transition-colors leading-none">
+              Connected only
+            </span>
+            <button
+              role="switch"
+              aria-checked={connectedOnly}
+              onClick={() => setConnectedOnly(v => !v)}
+              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors shrink-0 ${connectedOnly ? 'bg-primary' : 'bg-slate-700'}`}
+            >
+              <span className={`inline-block h-3 w-3 transform rounded-full bg-background-dark transition-transform ${connectedOnly ? 'translate-x-5' : 'translate-x-1'}`} />
+            </button>
+          </label>
+
+          <button
+            onClick={fetchLineage}
+            disabled={loading}
+            className="flex items-center gap-1.5 w-full px-2.5 py-1.5 rounded-lg text-xs text-slate-400 hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-40"
+          >
+            <span className={`material-symbols-outlined text-sm ${loading ? 'animate-spin' : ''}`}>refresh</span>
+            {loading ? 'Loading…' : 'Refresh graph'}
           </button>
         </div>
-        <div className="mt-auto">
-          <button className="w-full flex items-center justify-center gap-2 rounded-lg h-10 bg-primary text-background-dark font-bold text-sm shadow-lg shadow-primary/20 hover:brightness-110 transition-all">
-            <span className="material-symbols-outlined text-lg">add_box</span>
-            New SQL Job
-          </button>
+
+        {/* Stats */}
+        <div className="border-t border-primary/10 pt-3 text-xs text-slate-500 space-y-1">
+          <p className="font-bold text-slate-400 uppercase tracking-wider text-[10px]">Stats</p>
+          <p>{data.nodes.length} nodes · {data.edges.length} edges</p>
+          {selectedNode && (
+            <p className="text-primary truncate">
+              <span className="text-slate-600">Focus: </span>{selectedNode.label}
+            </p>
+          )}
+        </div>
+
+        {/* Controls hint */}
+        <div className="mt-auto text-[10px] text-slate-600 space-y-0.5 border-t border-primary/10 pt-3">
+          <p>Scroll to zoom</p>
+          <p>Drag to pan</p>
+          <p>Click node for details</p>
+          {selectedNode && <p className="text-primary/60">Neighbors highlighted</p>}
         </div>
       </aside>
 
-      {/* Main Content Area: Lineage Graph */}
-      <main className="flex-1 relative flex flex-col bg-background-dark graph-bg overflow-hidden">
-        {/* Breadcrumbs / Controls */}
-        <div className="absolute top-4 left-4 z-10 flex items-center gap-4">
-          <div className="flex items-center gap-2 bg-neutral-dark/80 backdrop-blur-md border border-border-dark px-3 py-1.5 rounded-full text-xs font-medium">
+      {/* ── Canvas ── */}
+      <main className="flex-1 relative overflow-hidden graph-bg bg-background-dark">
+
+        {/* Top badge */}
+        <div className="absolute top-4 left-4 z-10 flex items-center gap-2 pointer-events-none">
+          <div className="flex items-center gap-2 bg-background-dark/90 border border-primary/20 px-3 py-1.5 rounded-full text-xs">
             <span className="text-slate-400">Lineage</span>
-            <span className="text-slate-600">/</span>
-            <span className="text-primary">Dependency Graph</span>
+            <span className="text-primary/40">/</span>
+            <span className="text-primary font-semibold">Dependency Graph</span>
+            {connectedOnly && (
+              <span className="px-1.5 py-0.5 rounded bg-primary/20 text-primary text-[9px] font-bold uppercase">
+                connected only
+              </span>
+            )}
           </div>
         </div>
 
-        {/* Viewport Controls */}
-        <div className="absolute bottom-6 left-6 z-10 flex flex-col gap-2">
-          <div className="flex flex-col bg-neutral-dark/90 backdrop-blur-md border border-border-dark rounded-lg overflow-hidden shadow-2xl">
-            <button className="p-2 hover:bg-primary/20 text-slate-300 border-b border-border-dark transition-colors"><span className="material-symbols-outlined">add</span></button>
-            <button className="p-2 hover:bg-primary/20 text-slate-300 border-b border-border-dark transition-colors"><span className="material-symbols-outlined">remove</span></button>
-            <button className="p-2 hover:bg-primary/20 text-slate-300 transition-colors"><span className="material-symbols-outlined">center_focus_weak</span></button>
-          </div>
+        {/* Zoom controls */}
+        <div className="absolute bottom-6 left-4 z-10 flex flex-col bg-background-dark border border-primary/20 rounded-xl overflow-hidden shadow-xl">
+          <button onClick={() => setTransform(t => ({ ...t, scale: Math.min(4, t.scale * 1.25) }))}
+            className="p-2 hover:bg-primary/10 text-slate-400 hover:text-primary border-b border-primary/10 transition-colors">
+            <span className="material-symbols-outlined text-lg">add</span>
+          </button>
+          <button onClick={() => setTransform(t => ({ ...t, scale: Math.max(0.15, t.scale * 0.8) }))}
+            className="p-2 hover:bg-primary/10 text-slate-400 hover:text-primary border-b border-primary/10 transition-colors">
+            <span className="material-symbols-outlined text-lg">remove</span>
+          </button>
+          <button onClick={resetView} title="Reset view"
+            className="p-2 hover:bg-primary/10 text-slate-400 hover:text-primary transition-colors">
+            <span className="material-symbols-outlined text-lg">center_focus_weak</span>
+          </button>
         </div>
 
-        {/* SVG Graph */}
-        <div className="flex-1 flex items-center justify-center relative">
-          <svg className="w-full h-full max-w-4xl max-h-[80%]" fill="none" viewBox="0 0 800 500" xmlns="http://www.w3.org/2000/svg">
-            {/* Connections */}
-            <path d="M150 250 L280 150" opacity="0.4" stroke="#25f4f4" strokeDasharray="4 4" strokeWidth="2"></path>
-            <path d="M150 250 L280 350" opacity="0.6" stroke="#25f4f4" strokeWidth="2"></path>
-            <path d="M320 150 L480 250" opacity="0.6" stroke="#25f4f4" strokeWidth="2"></path>
-            <path d="M320 350 L480 250" opacity="0.6" stroke="#25f4f4" strokeWidth="2"></path>
-            <path d="M520 250 L680 250" opacity="0.8" stroke="#25f4f4" strokeWidth="2"></path>
+        {/* Empty state */}
+        {isEmpty && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 text-center z-10">
+            <span className="material-symbols-outlined text-6xl text-slate-700">account_tree</span>
+            <div>
+              <p className="text-slate-400 font-bold">No lineage data available</p>
+              <p className="text-slate-600 text-sm mt-1 max-w-xs">
+                {connectedOnly
+                  ? 'No connected topics found. Disable "Connected only" to see all topics.'
+                  : 'Create Flink SQL tables and run INSERT INTO jobs to visualize the pipeline.'}
+              </p>
+            </div>
+            {!connectedOnly && (
+              <div className="bg-primary/5 border border-primary/20 rounded-xl px-5 py-3 text-xs font-mono text-slate-400 text-left space-y-1 max-w-sm">
+                <p className="text-primary text-[10px] uppercase tracking-wider mb-2">Example</p>
+                <p>CREATE TABLE orders_raw (...);</p>
+                <p>INSERT INTO orders_out</p>
+                <p className="pl-4">SELECT * FROM orders_raw;</p>
+              </div>
+            )}
+          </div>
+        )}
 
-            {/* Nodes */}
-            <g transform="translate(110, 230)" className="cursor-pointer" onClick={() => setSelectedNode('raw_orders')}>
-              <circle cx="20" cy="20" fill="#1b2d2d" r="24" stroke="#25f4f4" strokeWidth="2"></circle>
-              <text fill="white" fontFamily="Inter" fontSize="12" textAnchor="middle" x="20" y="60">raw_orders</text>
-              <circle cx="20" cy="20" fill="#25f4f4" opacity="0.2" r="8"></circle>
-            </g>
+        {/* SVG graph */}
+        {!isEmpty && (
+          <svg
+            ref={svgRef}
+            className="w-full h-full select-none"
+            style={{ cursor: 'grab' }}
+            onMouseDown={onMouseDown}
+            onMouseMove={onMouseMove}
+            onMouseUp={onMouseUp}
+            onMouseLeave={onMouseUp}
+          >
+            <defs>
+              <marker id="arrow-lin" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+                <polygon points="0 0, 8 3, 0 6" fill="#25f4f4" opacity="0.6" />
+              </marker>
+              <marker id="arrow-lin-hi" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+                <polygon points="0 0, 8 3, 0 6" fill="#ffffff" opacity="0.9" />
+              </marker>
+            </defs>
 
-            <g transform="translate(280, 130)" className="cursor-pointer" onClick={() => setSelectedNode('Filter_EU')}>
-              <rect fill="#1b2d2d" height="40" stroke="#25f4f4" strokeWidth="2" transform="rotate(45 20 20)" width="40" x="0" y="0"></rect>
-              <text fill="white" fontFamily="Inter" fontSize="12" textAnchor="middle" x="20" y="65">Filter_EU</text>
-            </g>
+            <g transform={`translate(${transform.x}, ${transform.y}) scale(${transform.scale})`}>
 
-            <g transform="translate(280, 330)" className="cursor-pointer" onClick={() => setSelectedNode('Filter_US')}>
-              <rect fill="#1b2d2d" height="40" stroke="#25f4f4" strokeWidth="2" transform="rotate(45 20 20)" width="40" x="0" y="0"></rect>
-              <text fill="white" fontFamily="Inter" fontSize="12" textAnchor="middle" x="20" y="65">Filter_US</text>
-            </g>
+              {/* Edges */}
+              {data.edges.map((edge, i) => {
+                const s = positions[edge.from];
+                const t = positions[edge.to];
+                if (!s || !t) return null;
 
-            <g transform="translate(480, 225)" className="cursor-pointer" onClick={() => setSelectedNode('unified_orders')}>
-              <rect fill="#25f4f4" fillOpacity="0.1" height="40" rx="4" stroke="#25f4f4" strokeWidth="2" width="60" x="0" y="0"></rect>
-              <text fill="white" fontFamily="Inter" fontSize="12" textAnchor="middle" x="30" y="60">unified_orders</text>
-            </g>
+                const hi = selectedEdges.includes(edge);
+                // Dim edge when a node is selected but this edge is not connected to it
+                const dim = neighborIds !== null && !hi;
 
-            <g transform="translate(680, 230)" className="cursor-pointer" onClick={() => setSelectedNode('processed_events')}>
-              <circle cx="20" cy="20" fill="#1b2d2d" r="24" stroke="#25f4f4" strokeWidth="2"></circle>
-              <text fill="#25f4f4" fontFamily="Inter" fontSize="12" fontWeight="bold" textAnchor="middle" x="20" y="60">processed_events</text>
-              <circle cx="20" cy="20" opacity="0.3" r="30" stroke="#25f4f4" strokeWidth="1"></circle>
+                const x1 = s.x + NODE_W, y1 = s.y + NODE_H / 2;
+                const x2 = t.x,          y2 = t.y + NODE_H / 2;
+                const mx = (x1 + x2) / 2;
+
+                return (
+                  <g key={i}>
+                    <path
+                      d={`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`}
+                      fill="none"
+                      stroke={hi ? '#ffffff' : '#25f4f4'}
+                      strokeWidth={hi ? 2 : 1.5}
+                      opacity={dim ? 0.05 : (hi ? 0.9 : 0.3)}
+                      // Remove marker on dimmed edges (markers ignore parent opacity)
+                      markerEnd={dim ? undefined : (hi ? 'url(#arrow-lin-hi)' : 'url(#arrow-lin)')}
+                    />
+                    {edge.label && !dim && (
+                      <text x={mx} y={Math.min(y1, y2) - 7} textAnchor="middle"
+                        fill="#475569" fontSize={9}>{edge.label}</text>
+                    )}
+                  </g>
+                );
+              })}
+
+              {/* Nodes */}
+              {data.nodes.map(node => {
+                const pos = positions[node.id];
+                if (!pos) return null;
+                const dimNode = neighborIds !== null && !neighborIds.has(node.id);
+
+                return (
+                  <g
+                    key={node.id}
+                    data-node="true"
+                    style={{ opacity: dimNode ? 0.1 : 1, transition: 'opacity 0.15s' }}
+                  >
+                    <NodeShape
+                      node={node}
+                      x={pos.x} y={pos.y}
+                      selected={selectedNode?.id === node.id}
+                      onClick={() => { setSelectedNode(prev => prev?.id === node.id ? null : node); setDdl(null); }}
+                      onHoverEnter={(cx, cy) => {
+                        if (!isPanning.current) setTooltip({ node, x: cx, y: cy });
+                      }}
+                      onHoverLeave={() => setTooltip(null)}
+                    />
+                  </g>
+                );
+              })}
             </g>
           </svg>
-        </div>
+        )}
       </main>
 
-      {/* Node Inspector (Side Panel Right) */}
+      {/* ── Inspector panel ── */}
       {selectedNode && (
-        <aside className="w-96 border-l border-border-dark bg-background-dark flex flex-col shrink-0 overflow-hidden">
-          <div className="p-6 border-b border-border-dark">
-            <div className="flex items-center justify-between mb-4">
-              <span className="px-2 py-0.5 rounded bg-primary/20 text-primary text-[10px] font-bold uppercase tracking-wider">Selected Node</span>
-              <button className="text-slate-500 hover:text-slate-300 transition-colors" onClick={() => setSelectedNode(null)}>
-                <span className="material-symbols-outlined">close</span>
+        <aside className="border-l border-primary/10 bg-background-dark flex flex-col shrink-0 overflow-hidden" style={{ width: 300 }}>
+          <div className="p-4 border-b border-primary/10">
+            <div className="flex items-center justify-between mb-2">
+              <span
+                className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider"
+                style={{
+                  backgroundColor: `${(nodeConfig[selectedNode.type] ?? nodeConfig.table).color}20`,
+                  color: (nodeConfig[selectedNode.type] ?? nodeConfig.table).color,
+                }}
+              >
+                {selectedNode.type}
+              </span>
+              <button onClick={() => { setSelectedNode(null); setDdl(null); }}
+                className="text-slate-500 hover:text-slate-300 transition-colors">
+                <span className="material-symbols-outlined text-lg">close</span>
               </button>
             </div>
-            <h2 className="text-xl font-bold text-slate-100 mb-1">{selectedNode}</h2>
-            <p className="text-xs text-slate-500 flex items-center gap-1">
-              <span className="material-symbols-outlined text-sm">schedule</span>
-              Last updated 2 mins ago
-            </p>
+            <h2 className="text-base font-bold font-mono text-slate-100 break-all">{selectedNode.label}</h2>
+            {selectedNode.type === 'topic' && selectedNode.messageCount !== undefined && (
+              <p className="text-[11px] text-primary font-mono mt-1">
+                {selectedNode.messageCount.toLocaleString()} messages
+              </p>
+            )}
+            <p className="text-[10px] text-slate-600 font-mono mt-0.5">ID: {selectedNode.id}</p>
           </div>
-          <div className="flex-1 overflow-y-auto custom-scrollbar">
-            <div className="p-6 space-y-8">
-              {/* DDL Definition */}
+
+          <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
+
+            {/* Writes to (outgoing) */}
+            {data.edges.filter(e => e.from === selectedNode.id).length > 0 && (
               <section>
-                <div className="flex items-center gap-2 mb-3">
-                  <span className="material-symbols-outlined text-primary text-xl">code</span>
-                  <h3 className="text-sm font-bold text-slate-300">DDL Definition</h3>
-                </div>
-                <div className="bg-neutral-dark rounded-lg p-4 font-mono text-xs text-slate-300 leading-relaxed border border-border-dark">
-                  <span className="text-primary">CREATE TABLE</span> {selectedNode} (<br/>
-                  &nbsp;&nbsp;order_id STRING,<br/>
-                  &nbsp;&nbsp;user_id BIGINT,<br/>
-                  &nbsp;&nbsp;amount DECIMAL(10, 2),<br/>
-                  &nbsp;&nbsp;ts TIMESTAMP(3),<br/>
-                  &nbsp;&nbsp;WATERMARK FOR ts AS ts - INTERVAL '5' SECOND<br/>
-                  ) <span className="text-primary">WITH</span> (<br/>
-                  &nbsp;&nbsp;'connector' = 'kafka',<br/>
-                  &nbsp;&nbsp;'topic' = 'processed.events.v1',<br/>
-                  &nbsp;&nbsp;'format' = 'json'<br/>
-                  );
+                <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Writes to</h3>
+                <div className="space-y-1.5">
+                  {data.edges.filter(e => e.from === selectedNode.id).map((e, i) => (
+                    <button
+                      key={i}
+                      onClick={() => {
+                        const n = nodeById[e.to];
+                        if (n) { setSelectedNode(n); setDdl(null); centerOnNode(n.id); }
+                      }}
+                      className="w-full flex items-center gap-2 text-xs bg-primary/5 rounded-lg px-3 py-2 hover:bg-primary/10 transition-colors text-left"
+                    >
+                      <span className="material-symbols-outlined text-primary text-sm">arrow_forward</span>
+                      <span className="font-mono text-slate-300 truncate">
+                        {nodeById[e.to]?.label ?? e.to}
+                      </span>
+                      {e.label && <span className="text-[9px] text-slate-600 shrink-0">({e.label})</span>}
+                    </button>
+                  ))}
                 </div>
               </section>
-              {/* Schema */}
+            )}
+
+            {/* Reads from (incoming) */}
+            {data.edges.filter(e => e.to === selectedNode.id).length > 0 && (
               <section>
-                <div className="flex items-center gap-2 mb-3">
-                  <span className="material-symbols-outlined text-primary text-xl">list_alt</span>
-                  <h3 className="text-sm font-bold text-slate-300">Schema Details</h3>
-                </div>
-                <div className="bg-neutral-dark rounded-lg border border-border-dark divide-y divide-border-dark">
-                  <div className="flex items-center justify-between px-4 py-3">
-                    <span className="text-xs text-slate-100 font-medium">order_id</span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">STRING</span>
-                  </div>
-                  <div className="flex items-center justify-between px-4 py-3">
-                    <span className="text-xs text-slate-100 font-medium">user_id</span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">BIGINT</span>
-                  </div>
-                  <div className="flex items-center justify-between px-4 py-3">
-                    <span className="text-xs text-slate-100 font-medium">amount</span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">DECIMAL</span>
-                  </div>
-                  <div className="flex items-center justify-between px-4 py-3">
-                    <span className="text-xs text-slate-100 font-medium">ts</span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">TIMESTAMP</span>
-                  </div>
+                <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Reads from</h3>
+                <div className="space-y-1.5">
+                  {data.edges.filter(e => e.to === selectedNode.id).map((e, i) => (
+                    <button
+                      key={i}
+                      onClick={() => {
+                        const n = nodeById[e.from];
+                        if (n) { setSelectedNode(n); setDdl(null); centerOnNode(n.id); }
+                      }}
+                      className="w-full flex items-center gap-2 text-xs bg-primary/5 rounded-lg px-3 py-2 hover:bg-primary/10 transition-colors text-left"
+                    >
+                      <span className="material-symbols-outlined text-slate-500 text-sm">arrow_back</span>
+                      <span className="font-mono text-slate-400 truncate">
+                        {nodeById[e.from]?.label ?? e.from}
+                      </span>
+                      {e.label && <span className="text-[9px] text-slate-600 shrink-0">({e.label})</span>}
+                    </button>
+                  ))}
                 </div>
               </section>
-              {/* Metrics */}
-              <section>
-                <div className="flex items-center gap-2 mb-3">
-                  <span className="material-symbols-outlined text-primary text-xl">insights</span>
-                  <h3 className="text-sm font-bold text-slate-300">Real-time Metrics</h3>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="bg-neutral-dark p-3 rounded-lg border border-border-dark">
-                    <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">Throughput</p>
-                    <p className="text-lg font-bold text-primary">1.2k <span className="text-xs font-normal text-slate-400">msg/s</span></p>
-                  </div>
-                  <div className="bg-neutral-dark p-3 rounded-lg border border-border-dark">
-                    <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">Lag</p>
-                    <p className="text-lg font-bold text-orange-400">42 <span className="text-xs font-normal text-slate-400">ms</span></p>
-                  </div>
-                </div>
-              </section>
-            </div>
+            )}
+
+            {selectedEdges.length === 0 && (
+              <p className="text-xs text-slate-600">No connections</p>
+            )}
           </div>
-          <div className="p-6 border-t border-border-dark">
-            <button className="w-full flex items-center justify-center gap-2 rounded-lg h-10 border border-primary text-primary font-bold text-sm hover:bg-primary/10 transition-all">
-              <span className="material-symbols-outlined text-lg">edit_note</span>
-              Edit SQL Statement
+
+          <div className="p-4 border-t border-primary/10 space-y-3">
+            <button
+              onClick={async () => {
+                setLoadingDdl(true); setDdl(null);
+                try {
+                  const res = await axios.get<string>(`/api/lineage/ddl/${selectedNode.id}`, { responseType: 'text' });
+                  setDdl(res.data);
+                } catch {
+                  setDdl('-- Failed to load DDL');
+                } finally {
+                  setLoadingDdl(false);
+                }
+              }}
+              className="w-full flex items-center justify-center gap-2 h-9 rounded-lg border border-primary/30 text-primary font-bold text-sm hover:bg-primary/10 transition-all"
+            >
+              {loadingDdl
+                ? <span className="material-symbols-outlined text-base animate-spin">refresh</span>
+                : <span className="material-symbols-outlined text-base">edit_note</span>}
+              {loadingDdl ? 'Loading...' : 'View DDL'}
             </button>
+            {ddl && (
+              <div className="rounded-lg border border-primary/10 bg-primary/5 p-3 font-mono text-[11px] text-slate-300 leading-relaxed max-h-48 overflow-y-auto custom-scrollbar whitespace-pre-wrap">
+                {ddl}
+              </div>
+            )}
           </div>
         </aside>
       )}

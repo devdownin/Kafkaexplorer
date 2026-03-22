@@ -9,5 +9,7 @@ public record DashboardResponse(
     long totalMessages,
     List<String> tables,
     Map<String, String> jobs,
-    boolean health
+    boolean health,
+    String clusterName,
+    Map<String, Long> topicLastMessages
 ) {}

@@ -63,6 +63,9 @@ class AuditServiceTest {
         when(schemaInferenceService.detectFormat(anyString())).thenReturn(MessageFormat.JSON);
         when(schemaInferenceService.inferSchema(anyString(), any())).thenReturn(Map.of("id", "STRING"));
         when(flinkSqlService.listTables()).thenReturn(Collections.emptyList());
+        // Without this stub, generateDdl() returns null → QueryRequest.sql() = null → NPE in mock answer
+        when(ddlGeneratorService.generateDdl(anyString(), any(), any()))
+                .thenReturn("CREATE TABLE demo_test_1 (id STRING) WITH ('connector'='blackhole')");
 
         // Mock Flink count results
         QueryResult count1 = new QueryResult(List.of("EXPR$0"), List.of(Map.of("EXPR$0", 100L)), 10, null);

@@ -4,6 +4,8 @@ import com.yourcompany.kafkasqlexplorer.service.LineageService;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseBody;
 
 import java.util.Map;
@@ -24,7 +26,14 @@ public class LineageController {
 
     @GetMapping(value = "/api/lineage", produces = "application/json")
     @ResponseBody
-    public Map<String, Object> getLineage() {
-        return lineageService.getLineage();
+    public Map<String, Object> getLineage(
+            @RequestParam(defaultValue = "false") boolean connectedOnly) {
+        return lineageService.getLineage(connectedOnly);
+    }
+
+    @GetMapping(value = "/api/lineage/ddl/{name}", produces = "text/plain")
+    @ResponseBody
+    public String getDdl(@PathVariable String name) {
+        return lineageService.getDdlForNode(name);
     }
 }

@@ -33,6 +33,7 @@ TOPICS=(
   "demo.orders.6.delivered"
   "demo.orders.xml"
   "demo.orders.complex"
+  "demo.orders.nested"
   "demo.customers"
   "demo.errors.poison"
 )
@@ -86,6 +87,7 @@ produce() {
 }
 
 DATE_NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+TS=$(date +%s)
 
 # --- Scenario 1: Nominal Flow (Order #101) ---
 produce "demo.orders.1.received" "{\"id\":\"ORD-101\",\"state\":\"RECEIVED\",\"description\":\"Smartphone purchase\",\"type\":\"ELECTRONICS\",\"odate\":\"$DATE_NOW\",\"amount\":599.99,\"customer_id\":\"C-001\"}"
@@ -114,14 +116,174 @@ produce "demo.customers" "{\"customer_id\":\"C-001\",\"name\":\"Alice\",\"segmen
 produce "demo.customers" "{\"customer_id\":\"C-002\",\"name\":\"Bob\",\"segment\":\"REGULAR\",\"country\":\"UK\"}"
 produce "demo.customers" "{\"customer_id\":\"C-003\",\"name\":\"Charlie\",\"segment\":\"REGULAR\",\"country\":\"DE\"}"
 
-# --- Scenario 6: Complex/Nested JSON (demo.orders.complex) ---
-produce "demo.orders.complex" "{\"id\":\"ORD-NEST-01\",\"header\":{\"timestamp\":$(date +%s),\"source\":\"WEB\"},\"payload\":{\"items\":[{\"sku\":\"SKU-1\",\"qty\":2},{\"sku\":\"SKU-2\",\"qty\":1}],\"shipping\":{\"address\":{\"city\":\"Paris\",\"zip\":\"75001\"}}}}"
+# --- Scenario 6: Complex/Nested JSON (demo.orders.complex) — 2-level nesting ---
+produce "demo.orders.complex" "{\"id\":\"ORD-NEST-01\",\"header\":{\"timestamp\":$TS,\"source\":\"WEB\"},\"payload\":{\"items\":[{\"sku\":\"SKU-1\",\"qty\":2},{\"sku\":\"SKU-2\",\"qty\":1}],\"shipping\":{\"address\":{\"city\":\"Paris\",\"zip\":\"75001\"}}}}"
 
 # --- Scenario 7: Malformed/Poison Messages (demo.errors.poison) ---
 produce "demo.errors.poison" "{\"id\":\"ERR-01\", \"status\": \"CORRUPT\" ... missing quote"
 produce "demo.errors.poison" "I am not a JSON at all"
 
-# --- Scenario 8: Supply Chain 2.0 (10 orders, 20 steps, 200 messages) ---
+# ---------------------------------------------------------------------------
+# --- Scenario 8: Deep Nested JSON — 3 levels (demo.orders.nested) ---------
+# ---------------------------------------------------------------------------
+# Structure:
+#   Level 1 — id, timestamp, status, channel
+#   Level 2 — customer{}, order{}, logistics{}, audit{}
+#   Level 3 — customer.profile.segment, customer.address.billing.city,
+#              order.payment.details.provider, order.items[].pricing.discount.rate,
+#              logistics.carrier.tracking.last_event.location,
+#              audit.source.system.version
+# ---------------------------------------------------------------------------
+echo "Generating 3-level nested JSON messages (demo.orders.nested)..."
+
+CHANNELS=("WEB" "MOBILE" "POS" "API" "PARTNER")
+SEGMENTS=("VIP" "PREMIUM" "REGULAR" "NEW")
+CARRIERS=("DHL" "FEDEX" "UPS" "COLISSIMO" "TNT")
+CITIES=("Paris" "Lyon" "Marseille" "Berlin" "Madrid" "London" "Amsterdam" "Rome")
+ZIPS=("75001" "69001" "13001" "10115" "28001" "EC1A" "1012" "00184")
+SYSTEMS=("OMS-v3.2" "ERP-v2.1" "CRM-v4.0" "B2B-v1.5" "POS-v6.0")
+STATUSES=("RECEIVED" "PROCESSING" "CONFIRMED" "PENDING_PAYMENT" "SHIPPED")
+CATEGORIES=("ELECTRONICS" "FURNITURE" "CLOTHING" "FOOD" "SPORTS" "HOME")
+PROMO_CODES=("SAVE10" "FLASH20" "VIP15" "WELCOME5" "NONE")
+
+for i in $(seq 1 20); do
+  ORDER_ID="ORD-DEEP-$(printf "%03d" $i)"
+  CUSTOMER_ID="C-$(printf "%03d" $((i % 5 + 1)))"
+  CUSTOMER_NAME_ARR=("Alice" "Bob" "Charlie" "Diana" "Ethan")
+  CUSTOMER_NAME="${CUSTOMER_NAME_ARR[$((i % 5))]}"
+  CHANNEL="${CHANNELS[$((i % 5))]}"
+  SEGMENT="${SEGMENTS[$((i % 4))]}"
+  CARRIER="${CARRIERS[$((i % 5))]}"
+  CITY="${CITIES[$((i % 8))]}"
+  ZIP="${ZIPS[$((i % 8))]}"
+  SYSTEM="${SYSTEMS[$((i % 5))]}"
+  STATUS="${STATUSES[$((i % 5))]}"
+  CATEGORY="${CATEGORIES[$((i % 6))]}"
+  PROMO="${PROMO_CODES[$((i % 5))]}"
+  AMOUNT=$(echo "scale=2; $i * 47 + 12.50" | bc)
+  UNIT_PRICE=$(echo "scale=2; $i * 23 + 9.99" | bc)
+  DISCOUNT_RATE=$(echo "scale=2; ($i % 4) * 0.05" | bc)
+  SCORE=$((88 + (i % 12)))
+  TRACKING="TRK-$CARRIER-$(printf "%08d" $((i * 13579)))"
+  TXN_ID="TXN-$(printf "%010d" $((TS + i)))"
+  PHONE="+336$(printf "%08d" $((i * 12345678 % 100000000)))"
+  EMAIL="${CUSTOMER_NAME,,}$(printf "%02d" $i)@example.com"
+  STREET="$((i * 3)) Rue de la République"
+  SKU_A="SKU-$(printf "%04d" $((i * 7 % 9999)))"
+  SKU_B="SKU-$(printf "%04d" $((i * 13 % 9999)))"
+
+  MSG=$(cat <<EOF
+{
+  "id": "$ORDER_ID",
+  "timestamp": "$DATE_NOW",
+  "status": "$STATUS",
+  "channel": "$CHANNEL",
+  "customer": {
+    "id": "$CUSTOMER_ID",
+    "profile": {
+      "name": "$CUSTOMER_NAME",
+      "segment": "$SEGMENT",
+      "contact": {
+        "email": "$EMAIL",
+        "phone": "$PHONE"
+      }
+    },
+    "address": {
+      "billing": {
+        "street": "$STREET",
+        "city": "$CITY",
+        "zip": "$ZIP",
+        "country": "FR"
+      },
+      "shipping": {
+        "street": "$((i+1)) Avenue des Champs",
+        "city": "$CITY",
+        "zip": "$ZIP",
+        "country": "FR"
+      }
+    }
+  },
+  "order": {
+    "category": "$CATEGORY",
+    "items": [
+      {
+        "sku": "$SKU_A",
+        "description": "Product A - $CATEGORY",
+        "quantity": $((i % 5 + 1)),
+        "pricing": {
+          "unit_price": $UNIT_PRICE,
+          "discount": {
+            "type": "PROMO",
+            "code": "$PROMO",
+            "rate": $DISCOUNT_RATE
+          }
+        }
+      },
+      {
+        "sku": "$SKU_B",
+        "description": "Product B - $CATEGORY",
+        "quantity": 1,
+        "pricing": {
+          "unit_price": $(echo "scale=2; $UNIT_PRICE / 2" | bc),
+          "discount": {
+            "type": "NONE",
+            "code": null,
+            "rate": 0.0
+          }
+        }
+      }
+    ],
+    "payment": {
+      "method": "CARD",
+      "amount": $AMOUNT,
+      "details": {
+        "provider": "STRIPE",
+        "transaction": {
+          "id": "$TXN_ID",
+          "status": "CONFIRMED",
+          "captured_at": "$DATE_NOW"
+        }
+      }
+    }
+  },
+  "logistics": {
+    "priority": "$( [ $((i % 4)) -eq 0 ] && echo "EXPRESS" || echo "STANDARD" )",
+    "carrier": {
+      "name": "$CARRIER",
+      "service": "STANDARD",
+      "tracking": {
+        "number": "$TRACKING",
+        "last_event": {
+          "code": "IN_TRANSIT",
+          "location": "$CITY Hub",
+          "timestamp": "$DATE_NOW"
+        }
+      }
+    }
+  },
+  "audit": {
+    "created_by": "system",
+    "quality_score": $SCORE,
+    "source": {
+      "system": "$SYSTEM",
+      "version": {
+        "major": $((i % 3 + 1)),
+        "minor": $((i % 10)),
+        "patch": $((i % 5))
+      }
+    }
+  }
+}
+EOF
+)
+  # Compact to single line for kafka-console-producer
+  COMPACT_MSG=$(echo "$MSG" | tr -d '\n' | sed 's/  */ /g')
+  produce "demo.orders.nested" "$COMPACT_MSG"
+done
+
+echo "Generated 20 messages with 3-level nested JSON in demo.orders.nested"
+
+# --- Scenario 9: Supply Chain 2.0 (10 orders, 20 steps, 200 messages) ---
 echo "Generating Supply Chain 2.0 messages..."
 for i in $(seq 0 9); do
   ORDER_ID="SC-10$i"
@@ -134,39 +296,39 @@ for i in $(seq 0 9); do
     # Base JSON
     MSG="{\"order_id\":\"$ORDER_ID\",\"step\":\"$STEP_NAME\",\"timestamp\":\"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\",\"status\":\"COMPLETED\""
 
-    # Step 1+: Initial details
+    # Step 1+: Initial details (level 2: initial_details.customer, level 3: initial_details.customer.contact)
     if [ $STEP_NUM -ge 1 ]; then
-      MSG="$MSG,\"initial_details\":{\"customer_id\":\"$CUSTOMER_ID\",\"origin\":\"E-COMMERCE-WEB\"}"
+      MSG="$MSG,\"initial_details\":{\"customer_id\":\"$CUSTOMER_ID\",\"origin\":\"E-COMMERCE-WEB\",\"customer\":{\"segment\":\"VIP\",\"contact\":{\"channel\":\"EMAIL\",\"preference\":\"MORNING\"}}}"
     fi
 
-    # Step 3+: Payment info
+    # Step 3+: Payment info (level 2: payment.details, level 3: payment.details.card)
     if [ $STEP_NUM -ge 3 ]; then
-      MSG="$MSG,\"payment\":{\"provider\":\"STRIPE\",\"transaction_id\":\"TXN-$(date +%s)-$i\",\"amount\":$(( (i + 1) * 42 )).99}"
+      MSG="$MSG,\"payment\":{\"provider\":\"STRIPE\",\"transaction_id\":\"TXN-$(date +%s)-$i\",\"amount\":$(( (i + 1) * 42 )).99,\"details\":{\"method\":\"CARD\",\"card\":{\"brand\":\"VISA\",\"last4\":\"$(printf "%04d" $((i * 1111 % 10000)))\",\"exp\":\"12/27\"}}}"
     fi
 
-    # Step 6+: Fulfillment info
+    # Step 6+: Fulfillment info (level 2: fulfillment.location, level 3: fulfillment.location.coordinates)
     if [ $STEP_NUM -ge 6 ]; then
-      MSG="$MSG,\"fulfillment\":{\"warehouse\":\"WH-MAIN\",\"aisle\":\"A-$i\",\"bin\":\"B-$(printf "%03d" $j)\"}"
+      MSG="$MSG,\"fulfillment\":{\"warehouse\":\"WH-MAIN\",\"aisle\":\"A-$i\",\"bin\":\"B-$(printf "%03d" $j)\",\"location\":{\"zone\":\"ZONE-$((i % 4 + 1))\",\"coordinates\":{\"x\":$((i * 12 + 5)),\"y\":$((j * 8 + 3)),\"level\":$((i % 3 + 1))}}}"
     fi
 
-    # Step 11+: Quality control
+    # Step 11+: Quality control (level 2: quality_control.result, level 3: quality_control.result.breakdown)
     if [ $STEP_NUM -ge 11 ]; then
-      MSG="$MSG,\"quality_control\":{\"inspector\":\"QA-$(($i + 1))\",\"score\":$((90 + (i % 10))),\"checks\":[\"VISUAL\",\"WEIGHT\",\"DIMENSIONS\"]}"
+      MSG="$MSG,\"quality_control\":{\"inspector\":\"QA-$(($i + 1))\",\"score\":$((90 + (i % 10))),\"checks\":[\"VISUAL\",\"WEIGHT\",\"DIMENSIONS\"],\"result\":{\"passed\":true,\"breakdown\":{\"visual\":$((95 + i % 5)),\"weight\":$((92 + i % 7)),\"dimensions\":$((98 + i % 2))}}}"
     fi
 
-    # Step 13+: Logistics
+    # Step 13+: Logistics (level 2: logistics.carrier, level 3: logistics.carrier.tracking)
     if [ $STEP_NUM -ge 13 ]; then
-      MSG="$MSG,\"logistics\":{\"carrier\":\"FAST-SHIP\",\"tracking\":\"FS-$ORDER_ID-$(date +%s)\",\"priority\":\"NORMAL\"}"
+      MSG="$MSG,\"logistics\":{\"priority\":\"NORMAL\",\"carrier\":{\"name\":\"FAST-SHIP\",\"tracking\":{\"number\":\"FS-$ORDER_ID-$(date +%s)\",\"last_scan\":{\"location\":\"CDG Hub\",\"timestamp\":\"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\"}}},\"sla\":{\"promised\":\"$DATE_NOW\",\"met\":true}}"
     fi
 
-    # Step 16+: International
+    # Step 16+: International (level 2: international.customs, level 3: international.customs.declaration)
     if [ $STEP_NUM -ge 16 ]; then
-      MSG="$MSG,\"international\":{\"customs_code\":\"HS-84713000\",\"destination\":\"REGION-$((i % 5))\"}"
+      MSG="$MSG,\"international\":{\"customs_code\":\"HS-84713000\",\"destination\":\"REGION-$((i % 5))\",\"customs\":{\"status\":\"CLEARED\",\"declaration\":{\"ref\":\"DECL-$(date +%s)-$i\",\"officer\":\"OFF-$((i % 10 + 1))\",\"cleared_at\":\"$DATE_NOW\"}}}"
     fi
 
-    # Step 19+: Last mile
+    # Step 19+: Last mile (level 2: last_mile.delivery, level 3: last_mile.delivery.geo)
     if [ $STEP_NUM -ge 19 ]; then
-      MSG="$MSG,\"last_mile\":{\"driver\":\"DRV-$(($i * 7 % 20))\",\"vehicle\":\"VAN-$i\",\"geo\":{\"lat\":48.$((85+i)),\"lon\":2.$((35+i))}}"
+      MSG="$MSG,\"last_mile\":{\"driver\":\"DRV-$(($i * 7 % 20))\",\"vehicle\":\"VAN-$i\",\"delivery\":{\"attempt\":1,\"confirmed_by\":\"SIGNATURE\",\"geo\":{\"lat\":48.$((85+i)),\"lon\":2.$((35+i)),\"accuracy_m\":5}}}"
     fi
 
     MSG="$MSG}"
@@ -176,9 +338,15 @@ for i in $(seq 0 9); do
 done
 
 echo "--- Demo Setup Complete ---"
+echo ""
 echo "Suggestions for exploration:"
-echo "1. Query XML: SELECT XmlExtract(raw_value, '/Order/Customer') FROM \"demo.orders.xml\""
-echo "2. Join: SELECT c.name, o.amount FROM \"demo.orders.1.received\" o JOIN \"demo.customers\" c ON o.customer_id = c.customer_id"
-echo "3. Nested JSON: Use the 'Register Table' feature on \"demo.orders.complex\" to test automatic JSON_VALUE generation"
-echo "4. Traceability: Trace 'ORD-101' across all demo topics"
-echo "5. Supply Chain 2.0: Trace 'SC-100' through 'demo.sc.*' topics to see evolving schema"
+echo "1. 3-level nested JSON: SELECT id, status, channel FROM \"demo.orders.nested\""
+echo "   → Try accessing deep fields: customer.profile.contact.email, order.payment.details.transaction.id"
+echo "2. Nested aggregation: SELECT channel, COUNT(*) AS metric_value FROM \"demo.orders.nested\" GROUP BY channel"
+echo "3. Filter on nested path: SELECT id FROM \"demo.orders.nested\" WHERE customer.profile.segment = 'VIP'"
+echo "4. XML: SELECT XmlExtract(raw_value, '/Order/Customer') FROM \"demo.orders.xml\""
+echo "5. Join: SELECT c.name, o.amount FROM \"demo.orders.1.received\" o JOIN \"demo.customers\" c ON o.customer_id = c.customer_id"
+echo "6. Traceability: Trace 'ORD-101' across all demo topics"
+echo "7. Supply Chain deep nesting: Inspect 'SC-100' in demo.sc.*.out — 3-level nesting from step 6 onwards"
+echo "8. Metrics SQL: SELECT COUNT(*) AS metric_value FROM \"demo.orders.nested\""
+echo "   → SELECT COUNT(*) AS metric_value, channel FROM \"demo.orders.nested\" GROUP BY channel"

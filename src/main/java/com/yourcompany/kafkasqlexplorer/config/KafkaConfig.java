@@ -13,7 +13,16 @@ import java.util.Map;
 @ConfigurationProperties(prefix = "kafka")
 public class KafkaConfig {
     private String bootstrapServers = "localhost:9092";
+    private String schemaRegistryUrl = "http://localhost:8081";
     private String mode = "PLAIN"; // PLAIN, SSL, CONFLUENT_CLOUD
+
+    public String getSchemaRegistryUrl() {
+        return schemaRegistryUrl;
+    }
+
+    public void setSchemaRegistryUrl(String schemaRegistryUrl) {
+        this.schemaRegistryUrl = schemaRegistryUrl;
+    }
     private Map<String, String> clusters = new HashMap<>();
 
     // SSL properties

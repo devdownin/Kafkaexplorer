@@ -1,5 +1,5 @@
 package com.yourcompany.kafkasqlexplorer.domain;
 
 public enum MessageFormat {
-    JSON, XML, AUTO
+    JSON, XML, AVRO, AUTO
 }

@@ -1,186 +1,240 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+import { useToast } from '../components/Toast';
+
+// Parse JSON safely, return null on failure
+function tryParse(s: string): Record<string, unknown> | null {
+  try { return JSON.parse(s); } catch { return null; }
+}
+
+// Compare two parsed JSON objects field by field
+function diffFields(a: Record<string, unknown> | null, b: Record<string, unknown> | null): Record<string, 'added' | 'removed' | 'changed' | 'same'> {
+  const result: Record<string, 'added' | 'removed' | 'changed' | 'same'> = {};
+  const keys = new Set([...Object.keys(a ?? {}), ...Object.keys(b ?? {})]);
+  keys.forEach(k => {
+    if (!(k in (a ?? {}))) result[k] = 'added';
+    else if (!(k in (b ?? {}))) result[k] = 'removed';
+    else if (JSON.stringify((a ?? {})[k]) !== JSON.stringify((b ?? {})[k])) result[k] = 'changed';
+    else result[k] = 'same';
+  });
+  return result;
+}
+
+const MessageCard: React.FC<{
+  sample: string;
+  paired?: string;
+  side: 'A' | 'B';
+}> = ({ sample, paired, side }) => {
+  const parsed = tryParse(sample);
+  const pairedParsed = paired ? tryParse(paired) : null;
+  const diff = parsed && pairedParsed ? diffFields(
+    side === 'A' ? parsed : pairedParsed,
+    side === 'A' ? pairedParsed : parsed
+  ) : null;
+
+  if (!parsed) {
+    return (
+      <div className="rounded-lg border border-primary/10 bg-background-dark/50 p-3 font-mono text-xs text-slate-300">
+        {sample}
+      </div>
+    );
+  }
+
+  const fieldColors: Record<string, string> = {
+    added: 'bg-green-500/10 text-green-400',
+    removed: 'bg-red-500/10 text-red-400',
+    changed: side === 'A' ? 'bg-red-500/10 text-red-400' : 'bg-green-500/10 text-green-400',
+    same: '',
+  };
+
+  const entries = Object.entries(parsed);
+
+  return (
+    <div className="rounded-lg border border-primary/10 bg-background-dark/50 p-3 hover:border-primary/30 transition-all">
+      <div className="font-mono text-xs space-y-1">
+        {entries.map(([k, v]) => {
+          const status = diff?.[k] ?? 'same';
+          return (
+            <div key={k} className={`flex justify-between px-1 rounded gap-3 ${fieldColors[status]}`}>
+              <span className="text-slate-500 shrink-0">{k}:</span>
+              <span className="truncate text-right">{JSON.stringify(v)}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
 
 const Compare: React.FC = () => {
+  const { toast } = useToast();
+  const [topics, setTopics] = useState<string[]>([]);
+  const [topicA, setTopicA] = useState('');
+  const [topicB, setTopicB] = useState('');
   const [syncCursors, setSyncCursors] = useState(true);
   const [showDiffOnly, setShowDiffOnly] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [samplesA, setSamplesA] = useState<string[]>([]);
+  const [samplesB, setSamplesB] = useState<string[]>([]);
+  const [hasResult, setHasResult] = useState(false);
+
+  useEffect(() => {
+    axios.get<string[]>('/api/compare/topics')
+      .then(res => {
+        setTopics(res.data);
+        if (res.data.length >= 2) {
+          setTopicA(res.data[0]);
+          setTopicB(res.data[1]);
+        }
+      })
+      .catch(() => toast('Failed to load topics', 'error'));
+  }, []);
+
+  const runCompare = async () => {
+    if (!topicA || !topicB) { toast('Select two topics to compare', 'info'); return; }
+    setLoading(true);
+    setHasResult(false);
+    try {
+      const [resA, resB] = await Promise.all([
+        axios.get<{ samples: string[] }>(`/api/topic/${topicA}`),
+        axios.get<{ samples: string[] }>(`/api/topic/${topicB}`),
+      ]);
+      setSamplesA(resA.data.samples ?? []);
+      setSamplesB(resB.data.samples ?? []);
+      setHasResult(true);
+      toast(`Loaded ${resA.data.samples.length} + ${resB.data.samples.length} messages`, 'success');
+    } catch {
+      toast('Failed to fetch topic samples', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Compute diff summary
+  const diffCount = hasResult
+    ? Math.min(samplesA.length, samplesB.length) === 0 ? 0
+    : Array.from({ length: Math.min(samplesA.length, samplesB.length) }).filter((_, i) => {
+        const a = tryParse(samplesA[i]);
+        const b = tryParse(samplesB[i]);
+        return JSON.stringify(a) !== JSON.stringify(b);
+      }).length
+    : 0;
+
+  const displayA = showDiffOnly
+    ? samplesA.filter((s, i) => {
+        const b = samplesB[i];
+        return b == null || JSON.stringify(tryParse(s)) !== JSON.stringify(tryParse(b));
+      })
+    : samplesA;
+
+  const displayB = showDiffOnly
+    ? samplesB.filter((_, i) => {
+        const a = samplesA[i];
+        return a == null || JSON.stringify(tryParse(samplesA[i])) !== JSON.stringify(tryParse(samplesB[i]));
+      })
+    : samplesB;
 
   return (
     <div className="flex-1 flex flex-col p-4 gap-4 overflow-hidden h-full">
-      {/* SQL Editor Section */}
+      {/* Query bar */}
       <section className="flex flex-col">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-primary text-sm">terminal</span>
-            <span className="text-xs font-mono uppercase tracking-widest text-slate-400">Shared Query Context</span>
-          </div>
-          <div className="flex gap-2">
-            <button className="flex items-center gap-1 px-3 py-1 rounded bg-primary/10 text-primary text-xs font-bold hover:bg-primary/20">
-              <span className="material-symbols-outlined text-sm">history</span> History
-            </button>
-          </div>
-        </div>
-        <div className="flex flex-col border border-primary/20 rounded-xl overflow-hidden bg-background-light dark:bg-[#0d1a1a]">
-          <div className="flex bg-primary/5 px-4 py-2 border-b border-primary/10 items-center justify-between">
-            <div className="flex gap-4">
-              <div className="flex items-center gap-2 text-xs text-slate-400">
-                <span className="material-symbols-outlined text-xs">database</span> Prod-US-East
-              </div>
-            </div>
-            <div className="flex items-center gap-4">
-              <button className="text-slate-400 hover:text-primary transition-all"><span className="material-symbols-outlined text-lg">format_align_left</span></button>
-              <button className="text-slate-400 hover:text-primary transition-all"><span className="material-symbols-outlined text-lg">save</span></button>
+        <div className="flex flex-col border border-primary/20 rounded-xl overflow-hidden bg-background-dark/30">
+          <div className="flex bg-primary/5 px-4 py-2.5 border-b border-primary/10 items-center justify-between">
+            <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400">Shared Filter Context (optional)</span>
+            <div className="flex items-center gap-2">
+              <span className="text-slate-400 hover:text-primary cursor-pointer transition-all">
+                <span className="material-symbols-outlined text-lg">format_align_left</span>
+              </span>
             </div>
           </div>
-          <div className="flex flex-1 relative">
-            <div className="w-12 bg-primary/5 border-r border-primary/10 flex flex-col items-center pt-4 text-[10px] font-mono text-slate-500 select-none">
-              <span>1</span><span>2</span><span>3</span>
-            </div>
-            <textarea
-              className="w-full bg-transparent border-none focus:ring-0 font-mono text-sm p-4 h-24 text-primary resize-none placeholder:text-slate-600"
-              placeholder="-- Write your SQL to filter both topics&#10;SELECT * FROM TABLE WHERE event_type = 'ORDER_CREATED' AND status != 'COMPLETED'"
-            ></textarea>
-          </div>
+          <textarea
+            className="w-full bg-transparent border-none focus:ring-0 font-mono text-sm p-4 h-16 text-primary resize-none placeholder:text-slate-600"
+            placeholder="-- Optional: filter applied to both topics&#10;SELECT * FROM TABLE WHERE event_type = 'ORDER_CREATED'"
+          />
           <div className="flex justify-between items-center p-3 bg-primary/5 border-t border-primary/10">
             <div className="flex items-center gap-6">
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] uppercase text-slate-500 font-bold">Sync Cursors</span>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <span className="text-[10px] uppercase text-slate-500 font-bold">Sync Scroll</span>
                 <button
                   onClick={() => setSyncCursors(!syncCursors)}
                   className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${syncCursors ? 'bg-primary' : 'bg-slate-700'}`}
                 >
-                  <span className={`inline-block h-3 w-3 transform rounded-full bg-background-dark transition-transform ${syncCursors ? 'translate-x-5' : 'translate-x-1'}`}></span>
+                  <span className={`inline-block h-3 w-3 transform rounded-full bg-background-dark transition-transform ${syncCursors ? 'translate-x-5' : 'translate-x-1'}`} />
                 </button>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] uppercase text-slate-500 font-bold">Show Diff Only</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <span className="text-[10px] uppercase text-slate-500 font-bold">Diff Only</span>
                 <button
-                   onClick={() => setShowDiffOnly(!showDiffOnly)}
-                   className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${showDiffOnly ? 'bg-primary' : 'bg-slate-700'}`}
+                  onClick={() => setShowDiffOnly(!showDiffOnly)}
+                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${showDiffOnly ? 'bg-primary' : 'bg-slate-700'}`}
                 >
-                  <span className={`inline-block h-3 w-3 transform rounded-full transition-transform ${showDiffOnly ? 'translate-x-5' : 'translate-x-1'} ${showDiffOnly ? 'bg-background-dark' : 'bg-slate-300'}`}></span>
+                  <span className={`inline-block h-3 w-3 transform rounded-full bg-background-dark transition-transform ${showDiffOnly ? 'translate-x-5' : 'translate-x-1'}`} />
                 </button>
-              </div>
+              </label>
             </div>
-            <button className="flex items-center gap-2 px-6 py-2 bg-primary text-background-dark font-bold rounded-lg hover:brightness-110 transition-all text-sm">
-              <span className="material-symbols-outlined text-lg">play_arrow</span> RUN COMPARE
+            <button
+              onClick={runCompare}
+              disabled={loading}
+              className="flex items-center gap-2 px-5 py-2 bg-primary text-background-dark font-bold rounded-lg hover:brightness-110 disabled:opacity-50 transition-all text-sm"
+            >
+              {loading
+                ? <span className="material-symbols-outlined text-lg animate-spin">refresh</span>
+                : <span className="material-symbols-outlined text-lg">compare_arrows</span>}
+              {loading ? 'LOADING...' : 'RUN COMPARE'}
             </button>
           </div>
         </div>
       </section>
 
-      {/* side-by-side message views */}
+      {/* Side-by-side */}
       <section className="flex-1 flex gap-4 overflow-hidden">
-        {/* Topic A View */}
-        <div className="flex-1 flex flex-col border border-primary/20 rounded-xl bg-background-light dark:bg-[#0d1a1a] overflow-hidden">
+        {/* Topic A */}
+        <div className="flex-1 flex flex-col border border-primary/20 rounded-xl bg-background-dark/30 overflow-hidden">
           <div className="p-3 border-b border-primary/10 flex items-center justify-between bg-primary/5">
-            <div className="flex flex-col">
+            <div className="flex flex-col gap-0.5">
               <span className="text-[10px] font-bold text-primary uppercase">Topic A (Source)</span>
-              <select className="bg-transparent border-none text-slate-100 font-bold p-0 focus:ring-0 text-sm cursor-pointer">
-                <option>orders_primary</option>
-                <option>orders_raw</option>
+              <select
+                value={topicA}
+                onChange={e => setTopicA(e.target.value)}
+                className="bg-slate-900 border-none text-slate-100 font-bold p-0 focus:ring-0 text-sm cursor-pointer outline-none"
+              >
+                {topics.map(t => <option key={t} value={t} className="bg-slate-900 text-slate-100">{t}</option>)}
               </select>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-500">2,451 messages</span>
-              <span className="material-symbols-outlined text-slate-500 cursor-pointer hover:text-primary">filter_list</span>
-            </div>
+            <span className="text-xs text-slate-500">{samplesA.length} msgs</span>
           </div>
           <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-2">
-            {/* Message Card */}
-            <div className="rounded-lg border border-primary/10 bg-background-dark/50 p-3 hover:border-primary/40 transition-all cursor-pointer border-l-4 border-l-primary/60">
-              <div className="flex justify-between items-center mb-2">
-                <span className="font-mono text-[10px] text-slate-400">ID: order_88219</span>
-                <span className="text-[10px] text-slate-500 italic">2s ago</span>
-              </div>
-              <div className="font-mono text-xs space-y-1">
-                <div className="flex justify-between">
-                  <span className="text-slate-500">status:</span>
-                  <span className="text-primary">"PENDING"</span>
-                </div>
-                <div className="flex justify-between bg-red-500/10 text-red-400 px-1 rounded">
-                  <span className="text-slate-400">amount:</span>
-                  <span>124.50</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">currency:</span>
-                  <span className="text-slate-300">"USD"</span>
-                </div>
-              </div>
-            </div>
-            {/* Message Card 2 */}
-            <div className="rounded-lg border border-primary/10 bg-background-dark/50 p-3 hover:border-primary/40 transition-all cursor-pointer">
-              <div className="flex justify-between items-center mb-2">
-                <span className="font-mono text-[10px] text-slate-400">ID: order_88218</span>
-                <span className="text-[10px] text-slate-500 italic">15s ago</span>
-              </div>
-              <div className="font-mono text-xs space-y-1">
-                <div className="flex justify-between">
-                  <span className="text-slate-500">status:</span>
-                  <span className="text-primary">"COMPLETED"</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">amount:</span>
-                  <span className="text-slate-300">89.00</span>
-                </div>
-              </div>
-            </div>
+            {!hasResult && (
+              <div className="p-8 text-center text-slate-600 text-xs uppercase tracking-widest">Select topics and run compare</div>
+            )}
+            {displayA.map((s, i) => (
+              <MessageCard key={i} sample={s} paired={samplesB[i]} side="A" />
+            ))}
           </div>
         </div>
 
-        {/* Topic B View */}
-        <div className="flex-1 flex flex-col border border-primary/20 rounded-xl bg-background-light dark:bg-[#0d1a1a] overflow-hidden">
+        {/* Topic B */}
+        <div className="flex-1 flex flex-col border border-primary/20 rounded-xl bg-background-dark/30 overflow-hidden">
           <div className="p-3 border-b border-primary/10 flex items-center justify-between bg-primary/5">
-            <div className="flex flex-col">
+            <div className="flex flex-col gap-0.5">
               <span className="text-[10px] font-bold text-primary uppercase">Topic B (Target)</span>
-              <select className="bg-transparent border-none text-slate-100 font-bold p-0 focus:ring-0 text-sm cursor-pointer">
-                <option>orders_backup</option>
-                <option>orders_archive</option>
+              <select
+                value={topicB}
+                onChange={e => setTopicB(e.target.value)}
+                className="bg-slate-900 border-none text-slate-100 font-bold p-0 focus:ring-0 text-sm cursor-pointer outline-none"
+              >
+                {topics.map(t => <option key={t} value={t} className="bg-slate-900 text-slate-100">{t}</option>)}
               </select>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-500">2,451 messages</span>
-              <span className="material-symbols-outlined text-slate-500 cursor-pointer hover:text-primary">sync</span>
-            </div>
+            <span className="text-xs text-slate-500">{samplesB.length} msgs</span>
           </div>
           <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-2">
-            {/* Message Card (Diff with ID match) */}
-            <div className="rounded-lg border border-primary/10 bg-background-dark/50 p-3 hover:border-primary/40 transition-all cursor-pointer border-l-4 border-l-primary/60">
-              <div className="flex justify-between items-center mb-2">
-                <span className="font-mono text-[10px] text-slate-400">ID: order_88219</span>
-                <span className="text-[10px] text-slate-500 italic">2s ago</span>
-              </div>
-              <div className="font-mono text-xs space-y-1">
-                <div className="flex justify-between">
-                  <span className="text-slate-500">status:</span>
-                  <span className="text-primary">"PENDING"</span>
-                </div>
-                <div className="flex justify-between bg-green-500/10 text-green-400 px-1 rounded">
-                  <span className="text-slate-400">amount:</span>
-                  <span>124.55</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">currency:</span>
-                  <span className="text-slate-300">"USD"</span>
-                </div>
-              </div>
-            </div>
-            {/* Message Card 2 */}
-            <div className="rounded-lg border border-primary/10 bg-background-dark/50 p-3 hover:border-primary/40 transition-all cursor-pointer">
-              <div className="flex justify-between items-center mb-2">
-                <span className="font-mono text-[10px] text-slate-400">ID: order_88218</span>
-                <span className="text-[10px] text-slate-500 italic">15s ago</span>
-              </div>
-              <div className="font-mono text-xs space-y-1">
-                <div className="flex justify-between">
-                  <span className="text-slate-500">status:</span>
-                  <span className="text-primary">"COMPLETED"</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">amount:</span>
-                  <span className="text-slate-300">89.00</span>
-                </div>
-              </div>
-            </div>
+            {!hasResult && (
+              <div className="p-8 text-center text-slate-600 text-xs uppercase tracking-widest">Select topics and run compare</div>
+            )}
+            {displayB.map((s, i) => (
+              <MessageCard key={i} sample={s} paired={samplesA[i]} side="B" />
+            ))}
           </div>
         </div>
       </section>
@@ -188,22 +242,40 @@ const Compare: React.FC = () => {
       {/* Diff Summary Bar */}
       <footer className="h-10 border-t border-primary/20 flex items-center px-4 bg-primary/5 rounded-lg justify-between text-xs">
         <div className="flex gap-4">
-          <span className="text-slate-400">Differences detected: <b className="text-primary">2 messages</b></span>
-          <span className="text-slate-400">Schema mismatch: <b className="text-red-400">None</b></span>
+          {hasResult ? (
+            <>
+              <span className="text-slate-400">Messages compared: <b className="text-primary">{Math.min(samplesA.length, samplesB.length)}</b></span>
+              <span className="text-slate-400">Differences: <b className={diffCount > 0 ? 'text-amber-400' : 'text-emerald-400'}>{diffCount}</b></span>
+            </>
+          ) : (
+            <span className="text-slate-600">No comparison run yet</span>
+          )}
         </div>
         <div className="flex gap-4 items-center">
-          <div className="flex items-center gap-1">
-            <div className="w-2 h-2 rounded-full bg-green-500"></div>
-            <span className="text-slate-400 text-[10px]">Value Added</span>
+          <div className="flex items-center gap-1.5">
+            <div className="w-2 h-2 rounded-full bg-green-500" />
+            <span className="text-slate-400 text-[10px]">Added / Higher</span>
           </div>
-          <div className="flex items-center gap-1">
-            <div className="w-2 h-2 rounded-full bg-red-500"></div>
-            <span className="text-slate-400 text-[10px]">Value Modified/Removed</span>
+          <div className="flex items-center gap-1.5">
+            <div className="w-2 h-2 rounded-full bg-red-500" />
+            <span className="text-slate-400 text-[10px]">Removed / Lower</span>
           </div>
-          <div className="flex items-center gap-1 ml-4 border-l border-primary/20 pl-4">
-            <span className="material-symbols-outlined text-sm text-primary">download</span>
-            <span className="text-slate-400">Export Diff Report</span>
-          </div>
+          {hasResult && (
+            <button
+              onClick={() => {
+                const report = { topicA, topicB, diffCount, samplesA, samplesB, exportedAt: new Date().toISOString() };
+                const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = `diff-${topicA}-vs-${topicB}.json`; a.click();
+                URL.revokeObjectURL(url);
+              }}
+              className="flex items-center gap-1 border-l border-primary/20 pl-4 hover:text-primary text-slate-400 transition-colors"
+            >
+              <span className="material-symbols-outlined text-sm">download</span>
+              <span>Export</span>
+            </button>
+          )}
         </div>
       </footer>
     </div>

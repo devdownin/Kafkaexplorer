@@ -28,6 +28,19 @@ services:
       # Best practice for KRaft: provide a Cluster ID
       KAFKA_CLUSTER_ID: "MkU2OhlMTT69sPFvS1n16g"
 
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.6.0
+    container_name: schema-registry
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'kafka:29092'
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+
   app:
     build: .
     container_name: kafka-sql-explorer
@@ -36,10 +49,13 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+      schema-registry:
+        condition: service_started
       demo-setup:
         condition: service_completed_successfully
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - KAFKA_SCHEMA_REGISTRY_URL=http://schema-registry:8081
     restart: always
 
   demo-setup:
