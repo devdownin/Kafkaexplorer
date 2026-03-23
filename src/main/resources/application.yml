@@ -48,8 +48,10 @@ management:
       application: kafka-sql-explorer
 
 claude:
+  provider: ANTHROPIC # or OPENAI_COMPATIBLE
   api-key: ${ANTHROPIC_API_KEY:}
-  model: claude-opus-4-6
+  base-url: https://api.anthropic.com
+  model: claude-3-5-sonnet-20241022
   max-tokens: 4096
   snapshot-window-size: 100
   snapshot-window-timeout-seconds: 30

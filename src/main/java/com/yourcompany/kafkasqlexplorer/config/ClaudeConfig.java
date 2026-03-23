@@ -9,11 +9,23 @@ import org.springframework.context.annotation.Configuration;
 @ConfigurationProperties(prefix = "claude")
 public class ClaudeConfig {
 
+    public enum Provider { ANTHROPIC, OPENAI_COMPATIBLE }
+
+    private Provider provider = Provider.ANTHROPIC;
     private String apiKey = "";
-    private String model = "claude-opus-4-6";
+    private String baseUrl = "https://api.anthropic.com";
+    private String model = "claude-3-5-sonnet-20241022";
     private int maxTokens = 4096;
     private int snapshotWindowSize = 100;
     private int snapshotWindowTimeoutSeconds = 30;
+
+    public Provider getProvider() {
+        return provider;
+    }
+
+    public void setProvider(Provider provider) {
+        this.provider = provider;
+    }
 
     public String getApiKey() {
         return apiKey;
@@ -21,6 +33,14 @@ public class ClaudeConfig {
 
     public void setApiKey(String apiKey) {
         this.apiKey = apiKey;
+    }
+
+    public String getBaseUrl() {
+        return baseUrl;
+    }
+
+    public void setBaseUrl(String baseUrl) {
+        this.baseUrl = baseUrl;
     }
 
     public String getModel() {
