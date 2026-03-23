@@ -421,7 +421,7 @@ const Metrics: React.FC = () => {
 
   useEffect(() => {
     fetchMetrics();
-    axios.get<Record<string, string[]>>('/api/metrics/metadata').then(r => setMetadata(r.data)).catch(() => {});
+    axios.get<Record<string, string[]>>('/api/metrics/metadata').then(r => setMetadata(r.data)).catch(() => { toast('Failed to load table metadata', 'error'); });
     axios.get<{ topics: string[] }>('/api/dashboard').then(r => setTopics(r.data.topics ?? [])).catch(() => {});
     axios.get<{ bootstrapServers: string }>('/api/config').then(r => {
       if (r.data.bootstrapServers) setBootstrapServers(r.data.bootstrapServers);
@@ -482,11 +482,14 @@ const Metrics: React.FC = () => {
     setIsModalOpen(true);
   };
 
-  // When selected topic changes, update DDL template (if not already customised)
+  // When selected topic changes, update DDL template and replace old table name in metric SQL
   const onTopicChange = (topic: string) => {
+    const oldTable = selectedTopic ? topicToTable(selectedTopic) : 'my_table';
+    const newTable = topic ? topicToTable(topic) : 'my_table';
     setSelectedTopic(topic);
     setEditingMetric(m => ({
       ...m,
+      sql: m.sql ? m.sql.replace(new RegExp(`\\b${oldTable}\\b`, 'g'), newTable) : m.sql,
       createTableSql: topic ? buildDdlTemplate(topic, bootstrapServers) : (m.createTableSql ?? ''),
     }));
   };

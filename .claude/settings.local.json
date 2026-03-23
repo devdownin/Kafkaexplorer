@@ -24,11 +24,7 @@
       "Bash(cmd //c \"mvn compile -q 2>&1\" 2>&1 | grep -i \"error\\\\|FAIL\" | head -10)",
       "Bash(git pull:*)",
       "Bash(git stash:*)",
-      "Bash(git checkout:*)",
-      "Bash(mvn clean:*)",
-      "Bash(mvn test:*)",
-      "Skill(claude-md-management:revise-claude-md)",
-      "Bash(npx tsc:*)"
+      "Bash(git checkout:*)"
     ]
   }
 }

@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import Editor from '@monaco-editor/react';
 import { useToast } from '../components/Toast';
+import LoadingSpinner from '../components/LoadingSpinner';
+import ErrorBanner from '../components/ErrorBanner';
 
 interface TopicDetail {
   topic: {
@@ -18,31 +20,227 @@ interface TopicDetail {
   samples: string[];
 }
 
-// Try to pretty-print JSON, return original string on failure
-function tryFormatJson(raw: string): { formatted: string; isJson: boolean } {
-  try {
-    const parsed = JSON.parse(raw);
-    return { formatted: JSON.stringify(parsed, null, 2), isJson: true };
-  } catch {
-    return { formatted: raw, isJson: false };
-  }
-}
+// ── Interactive JSON renderer ─────────────────────────────────────────────
+const JsonNode: React.FC<{
+  value: unknown;
+  depth: number;
+  keyName?: string;
+  fieldPath?: string;  // full dot-notation path to this node (e.g. "customer.name")
+  onFieldClick?: (field: string) => void;
+  selectedFields?: string[];
+}> = ({ value, depth, keyName, fieldPath, onFieldClick, selectedFields }) => {
+  const indent = '  '.repeat(depth);
+  // Use fieldPath for selection/click if available, otherwise fall back to keyName
+  const clickPath = fieldPath ?? keyName;
+  const isSelected = clickPath !== undefined && selectedFields?.includes(clickPath);
 
-const SampleCard: React.FC<{ sample: string; index: number; onCopy: (s: string) => void }> = ({ sample, index, onCopy }) => {
+  const keyEl = keyName !== undefined && onFieldClick && clickPath !== undefined ? (
+    <button
+      onClick={() => onFieldClick(clickPath)}
+      title={isSelected ? 'Remove from SELECT' : 'Add to SELECT'}
+      className={`font-mono text-[11px] font-semibold transition-colors rounded px-0.5 -mx-0.5 ${
+        isSelected
+          ? 'text-primary bg-primary/20 line-through'
+          : 'text-amber-300 hover:text-primary hover:bg-primary/10 cursor-pointer'
+      }`}
+    >
+      "{keyName}"
+    </button>
+  ) : keyName !== undefined ? (
+    <span className="text-amber-300 font-mono text-[11px]">"{keyName}"</span>
+  ) : null;
+
+  if (value === null) {
+    return <span>{keyEl && <>{keyEl}<span className="text-slate-500">: </span></>}<span className="text-slate-500 font-mono text-[11px]">null</span></span>;
+  }
+  if (typeof value === 'boolean') {
+    return <span>{keyEl && <>{keyEl}<span className="text-slate-500">: </span></>}<span className="text-violet-400 font-mono text-[11px]">{String(value)}</span></span>;
+  }
+  if (typeof value === 'number') {
+    return <span>{keyEl && <>{keyEl}<span className="text-slate-500">: </span></>}<span className="text-emerald-400 font-mono text-[11px]">{value}</span></span>;
+  }
+  if (typeof value === 'string') {
+    return <span>{keyEl && <>{keyEl}<span className="text-slate-500">: </span></>}<span className="text-sky-300 font-mono text-[11px]">"{value}"</span></span>;
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) return <span>{keyEl && <>{keyEl}<span className="text-slate-500">: </span></>}<span className="text-slate-400 font-mono text-[11px]">[]</span></span>;
+    return (
+      <span>
+        {keyEl && <>{keyEl}<span className="text-slate-500">: </span></>}
+        <span className="text-slate-400 font-mono text-[11px]">{'['}</span>
+        <div>
+          {value.slice(0, 3).map((item, i) => (
+            <div key={i} className="font-mono text-[11px]">
+              {indent + '  '}
+              <JsonNode value={item} depth={depth + 1} />
+              {i < Math.min(value.length, 3) - 1 && <span className="text-slate-500">,</span>}
+            </div>
+          ))}
+          {value.length > 3 && <div className="text-slate-500 font-mono text-[11px]">{indent}  ... ({value.length} items)</div>}
+        </div>
+        <span className="text-slate-400 font-mono text-[11px]">{indent}{']'}</span>
+      </span>
+    );
+  }
+  if (typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>);
+    if (entries.length === 0) return <span>{keyEl && <>{keyEl}<span className="text-slate-500">: </span></>}<span className="text-slate-400 font-mono text-[11px]">{'{}'}</span></span>;
+    return (
+      <span>
+        {keyEl && <>{keyEl}<span className="text-slate-500">: </span></>}
+        <span className="text-slate-400 font-mono text-[11px]">{'{'}</span>
+        <div>
+          {entries.map(([k, v], i) => {
+            const childPath = fieldPath ? `${fieldPath}.${k}` : k;
+            return (
+              <div key={k} className="font-mono text-[11px]">
+                {indent + '  '}
+                <JsonNode
+                  value={v}
+                  depth={depth + 1}
+                  keyName={k}
+                  fieldPath={childPath}
+                  onFieldClick={onFieldClick}
+                  selectedFields={selectedFields}
+                />
+                {i < entries.length - 1 && <span className="text-slate-500">,</span>}
+              </div>
+            );
+          })}
+        </div>
+        <span className="text-slate-400 font-mono text-[11px]">{indent}{'}'}</span>
+      </span>
+    );
+  }
+  return <span className="text-slate-400 font-mono text-[11px]">{String(value)}</span>;
+};
+
+// ── Interactive XML renderer — recursive DOM-based, tracks full paths ─────
+const XmlViewer: React.FC<{
+  xml: string;
+  onFieldClick?: (field: string) => void;
+  selectedFields?: string[];
+}> = ({ xml, onFieldClick, selectedFields }) => {
+  const doc = useMemo(() => {
+    try {
+      const parser = new DOMParser();
+      const parsed = parser.parseFromString(xml, 'text/xml');
+      if (parsed.querySelector('parsererror')) return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  }, [xml]);
+
+  if (!doc) {
+    return <span className="font-mono text-[11px] text-slate-300 whitespace-pre-wrap break-all leading-relaxed">{xml}</span>;
+  }
+
+  const renderElement = (el: Element, parentPath: string, depth: number): React.ReactNode => {
+    const tag = el.localName;
+    const path = parentPath ? `${parentPath}.${tag}` : tag;
+    const childEls = Array.from(el.childNodes).filter(n => n.nodeType === Node.ELEMENT_NODE) as Element[];
+    const isLeaf = childEls.length === 0;
+    const isSelected = selectedFields?.includes(path);
+    const indentPx = depth * 12;
+
+    const tagBtn = onFieldClick ? (
+      <button
+        onClick={() => onFieldClick(path)}
+        title={isSelected ? 'Remove from SELECT' : 'Add to SELECT'}
+        className={`transition-colors rounded px-0.5 -mx-0.5 ${
+          isSelected
+            ? 'text-primary bg-primary/20 line-through'
+            : 'text-emerald-400 hover:text-primary hover:bg-primary/10 cursor-pointer'
+        }`}
+      >
+        {tag}
+      </button>
+    ) : <span className="text-emerald-400">{tag}</span>;
+
+    if (isLeaf) {
+      return (
+        <div key={path} style={{ paddingLeft: `${indentPx}px` }} className="font-mono text-[11px]">
+          <span className="text-slate-500">{'<'}</span>{tagBtn}<span className="text-slate-500">{'>'}</span>
+          <span className="text-slate-300">{el.textContent?.trim()}</span>
+          <span className="text-slate-500">{`</${tag}>`}</span>
+        </div>
+      );
+    }
+
+    return (
+      <div key={path} style={{ paddingLeft: `${indentPx}px` }} className="font-mono text-[11px]">
+        <span className="text-slate-500">{'<'}</span>{tagBtn}<span className="text-slate-500">{'>'}</span>
+        {childEls.map((child, i) => (
+          <React.Fragment key={i}>{renderElement(child, path, depth + 1)}</React.Fragment>
+        ))}
+        <div style={{ paddingLeft: 0 }}><span className="text-slate-500">{`</${tag}>`}</span></div>
+      </div>
+    );
+  };
+
+  const root = doc.documentElement;
+  const rootChildren = Array.from(root.childNodes).filter(n => n.nodeType === Node.ELEMENT_NODE) as Element[];
+
+  return (
+    <div className="font-mono text-[11px] leading-relaxed">
+      <div><span className="text-slate-500">{'<'}</span><span className="text-emerald-400/50">{root.localName}</span><span className="text-slate-500">{'>'}</span></div>
+      {rootChildren.map((child, i) => (
+        <React.Fragment key={i}>{renderElement(child as Element, '', 0)}</React.Fragment>
+      ))}
+      <div><span className="text-slate-500">{`</${root.localName}>`}</span></div>
+    </div>
+  );
+};
+
+// ── SampleCard ─────────────────────────────────────────────────────────────
+const SampleCard: React.FC<{
+  sample: string;
+  index: number;
+  onCopy: (s: string) => void;
+  onFieldClick?: (field: string) => void;
+  selectedFields?: string[];
+}> = ({ sample, index, onCopy, onFieldClick, selectedFields }) => {
   const [expanded, setExpanded] = useState(index < 3);
-  const { formatted, isJson } = tryFormatJson(sample);
+
+  let parsed: unknown = null;
+  let isJson = false;
+  let isXml = false;
+  try {
+    parsed = JSON.parse(sample);
+    isJson = true;
+  } catch {
+    isXml = sample.trimStart().startsWith('<');
+  }
+
+  const formatted = isJson ? JSON.stringify(parsed, null, 2) : sample;
   const lines = formatted.split('\n');
-  const preview = lines.slice(0, 4).join('\n') + (lines.length > 4 ? '\n  ...' : '');
+  const needsCollapse = lines.length > 8;
 
   return (
     <div className="border-b border-primary/5 last:border-b-0 group">
       <div className="flex items-start gap-3 p-4 hover:bg-primary/5 transition-colors">
         <span className="text-[10px] font-mono text-slate-600 mt-0.5 w-6 shrink-0">{index + 1}</span>
-        <div className="flex-1 min-w-0">
-          <pre className="font-mono text-[11px] text-slate-300 overflow-x-auto whitespace-pre-wrap break-all leading-relaxed">
-            {expanded ? formatted : preview}
-          </pre>
-          {lines.length > 4 && (
+        <div className="flex-1 min-w-0 overflow-x-auto">
+          {isJson && parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? (
+            <div className={`leading-relaxed ${!expanded && needsCollapse ? 'max-h-24 overflow-hidden' : ''}`}>
+              <JsonNode
+                value={parsed}
+                depth={0}
+                onFieldClick={onFieldClick}
+                selectedFields={selectedFields}
+              />
+            </div>
+          ) : isXml ? (
+            <div className={!expanded && needsCollapse ? 'max-h-24 overflow-hidden' : ''}>
+              <XmlViewer xml={sample} onFieldClick={onFieldClick} selectedFields={selectedFields} />
+            </div>
+          ) : (
+            <pre className={`font-mono text-[11px] text-slate-300 whitespace-pre-wrap break-all leading-relaxed ${!expanded && needsCollapse ? 'max-h-24 overflow-hidden' : ''}`}>
+              {formatted}
+            </pre>
+          )}
+          {needsCollapse && (
             <button
               onClick={() => setExpanded(!expanded)}
               className="mt-2 text-[10px] font-bold text-primary hover:underline"
@@ -52,9 +250,8 @@ const SampleCard: React.FC<{ sample: string; index: number; onCopy: (s: string) 
           )}
         </div>
         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-          {isJson && (
-            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-primary/10 text-primary">JSON</span>
-          )}
+          {isJson && <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-primary/10 text-primary">JSON</span>}
+          {isXml && <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-500/10 text-emerald-400">XML</span>}
           <button
             onClick={() => onCopy(formatted)}
             className="p-1.5 text-slate-500 hover:text-primary hover:bg-primary/10 rounded transition-colors"
@@ -77,6 +274,13 @@ const TopicExplorer: React.FC = () => {
   const [readMode, setReadMode] = useState('earliest-offset');
   const [sampleFilter, setSampleFilter] = useState('');
   const [activeTab, setActiveTab] = useState<'samples' | 'ddl' | 'schema' | 'partitions'>('samples');
+  const [selectedFields, setSelectedFields] = useState<string[]>([]);
+
+  const toggleField = (field: string) => {
+    setSelectedFields(prev =>
+      prev.includes(field) ? prev.filter(f => f !== field) : [...prev, field]
+    );
+  };
 
   useEffect(() => {
     fetchTopicDetails();
@@ -100,21 +304,12 @@ const TopicExplorer: React.FC = () => {
   };
 
   const openInEditor = () => {
-    // Navigate to query editor with pre-filled SQL
-    navigate(`/query?sql=${encodeURIComponent(`SELECT * FROM "${name}" LIMIT 50`)}`);
+    const cols = selectedFields.length > 0 ? selectedFields.join(', ') : '*';
+    navigate(`/query?sql=${encodeURIComponent(`SELECT ${cols} FROM "${name}" LIMIT 50`)}`);
   };
 
-  if (loading && !data) return (
-    <div className="flex-1 flex items-center justify-center p-12">
-      <div className="animate-spin rounded-full h-8 w-8 border-2 border-primary border-t-transparent" />
-    </div>
-  );
-
-  if (!data) return (
-    <div className="p-8 text-red-400 flex items-center gap-2">
-      <span className="material-symbols-outlined">warning</span> Topic not found
-    </div>
-  );
+  if (loading && !data) return <LoadingSpinner />;
+  if (!data) return <ErrorBanner message="Failed to load topic" onRetry={fetchTopicDetails} />;
 
   const filteredSamples = data.samples.filter(s =>
     !sampleFilter || s.toLowerCase().includes(sampleFilter.toLowerCase())
@@ -144,7 +339,7 @@ const TopicExplorer: React.FC = () => {
             className="flex items-center gap-2 px-4 py-2 bg-primary text-background-dark font-bold text-sm rounded-lg hover:brightness-110 transition-all"
           >
             <span className="material-symbols-outlined text-lg">terminal</span>
-            Query this topic
+            {selectedFields.length > 0 ? `SELECT ${selectedFields.length} field${selectedFields.length > 1 ? 's' : ''}` : 'Query this topic'}
           </button>
         </div>
       </div>
@@ -220,9 +415,42 @@ const TopicExplorer: React.FC = () => {
             <span className="text-xs text-slate-500 shrink-0">{filteredSamples.length} of {data.samples.length}</span>
           </div>
 
+          {/* Field selection bar */}
+          {selectedFields.length > 0 && (
+            <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl border border-primary/30 bg-primary/10">
+              <span className="material-symbols-outlined text-primary text-base shrink-0">touch_app</span>
+              <div className="flex flex-wrap gap-1.5 flex-1 min-w-0">
+                {selectedFields.map(f => (
+                  <button
+                    key={f}
+                    onClick={() => toggleField(f)}
+                    className="flex items-center gap-1 px-2 py-0.5 rounded bg-primary/20 text-primary text-[11px] font-mono font-bold hover:bg-red-500/20 hover:text-red-400 transition-colors"
+                    title="Remove"
+                  >
+                    {f}
+                    <span className="material-symbols-outlined text-xs">close</span>
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => setSelectedFields([])}
+                className="text-[10px] text-slate-500 hover:text-slate-300 shrink-0"
+              >
+                Clear all
+              </button>
+            </div>
+          )}
+
           <div className="rounded-xl border border-primary/10 overflow-hidden">
             {filteredSamples.map((sample, i) => (
-              <SampleCard key={i} sample={sample} index={i} onCopy={copyToClipboard} />
+              <SampleCard
+                key={i}
+                sample={sample}
+                index={i}
+                onCopy={copyToClipboard}
+                onFieldClick={toggleField}
+                selectedFields={selectedFields}
+              />
             ))}
             {filteredSamples.length === 0 && (
               <div className="p-16 text-center text-slate-600 space-y-2">

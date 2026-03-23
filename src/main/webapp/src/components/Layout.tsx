@@ -51,6 +51,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     { name: 'Lineage', path: '/lineage', icon: 'account_tree' },
     { name: 'Stream Flow', path: '/stream-flow', icon: 'waves' },
     { name: 'Cluster', path: '/cluster', icon: 'hub' },
+    { name: 'Process Mining', path: '/process-mining', icon: 'query_stats' },
   ];
 
   const q = searchQuery.toLowerCase().trim();
@@ -137,7 +138,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                   onFocus={() => setShowSearch(true)}
                 />
                 {searchQuery && (
-                  <button onClick={() => { setSearchQuery(''); setShowSearch(false); }} className="text-slate-400 hover:text-slate-200 ml-1">
+                  <button onClick={() => { setSearchQuery(''); setShowSearch(false); }} className="text-slate-400 hover:text-slate-200 ml-1" aria-label="Clear search" title="Clear search">
                     <span className="material-symbols-outlined text-base">close</span>
                   </button>
                 )}
@@ -183,7 +184,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                 </div>
               )}
             </div>
-            <button className="p-2 text-slate-500 hover:text-primary transition-colors">
+            <button className="p-2 text-slate-500 hover:text-primary transition-colors" aria-label="Notifications" title="Notifications">
               <span className="material-symbols-outlined">notifications</span>
             </button>
             <button onClick={() => navigate('/help')} className="p-2 text-slate-500 hover:text-primary transition-colors" title="Help">

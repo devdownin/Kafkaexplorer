@@ -249,6 +249,16 @@ const QueryWorkbench: React.FC = () => {
     return () => { document.removeEventListener('mousemove', onMouseMove); document.removeEventListener('mouseup', onMouseUp); };
   }, []);
 
+  // ── Unsaved changes warning on page unload ────────────────────────────────────
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      const hasUnsaved = tabs.some(t => t.sql.trim() !== '' && t.sql !== defaultSql);
+      if (hasUnsaved) { e.preventDefault(); }
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [tabs]);
+
   // ── Actions ───────────────────────────────────────────────────────────────────
   useEffect(() => { fetchSchema(); }, []);
 
@@ -264,7 +274,7 @@ const QueryWorkbench: React.FC = () => {
     setExpandedTables(prev => ({ ...prev, [tableName]: !isExpanded }));
     if (!isExpanded && !tableSchemas[tableName]) {
       try { const r = await axios.get(`/api/query/schema/${tableName}`); setTableSchemas(prev => ({ ...prev, [tableName]: r.data })); }
-      catch { /* ignore */ }
+      catch { toast(`Failed to load schema for ${tableName}`, 'error'); }
     }
   };
 

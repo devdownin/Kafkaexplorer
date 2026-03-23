@@ -13,6 +13,7 @@ import StreamFlow from './pages/StreamFlow';
 import Config from './pages/Config';
 import Help from './pages/Help';
 import Cluster from './pages/Cluster';
+import ProcessMining from './pages/ProcessMining';
 
 const App: React.FC = () => {
   return (
@@ -31,6 +32,7 @@ const App: React.FC = () => {
           <Route path="/config" element={<Config />} />
           <Route path="/help" element={<Help />} />
           <Route path="/cluster" element={<Cluster />} />
+          <Route path="/process-mining" element={<ProcessMining />} />
           <Route path="*" element={<div className="p-8">404 - Page Not Found</div>} />
         </Routes>
       </Layout>

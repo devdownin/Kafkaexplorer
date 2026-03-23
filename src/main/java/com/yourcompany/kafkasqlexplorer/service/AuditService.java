@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Kafka Explorer Contributors
 package com.yourcompany.kafkasqlexplorer.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -57,13 +59,13 @@ public class AuditService {
         this.explorerConfig = explorerConfig;
     }
 
-    public String startAudit() {
+    public String startAudit(AuditOptions options) {
         String auditId = UUID.randomUUID().toString();
         lastAuditId = auditId;
         AuditReport initialReport = new AuditReport(auditId, AuditStatus.RUNNING, 0, 0, 0, Collections.emptyList(), Collections.emptyList(), Collections.emptyMap());
         auditRuns.put(auditId, initialReport);
 
-        runAuditAsync(auditId);
+        runAuditAsync(auditId, options);
         return auditId;
     }
 
@@ -80,14 +82,14 @@ public class AuditService {
      * The results are stored in an in-memory map and also persisted to Kafka.
      */
     @Async
-    protected void runAuditAsync(String auditId) {
+    protected void runAuditAsync(String auditId, AuditOptions options) {
         try {
             List<String> topics = kafkaAdminService.listTopics();
             Map<String, Long> topicSizes = kafkaAdminService.getTopicsSize(topics);
 
             // Parallelize topic auditing
             List<CompletableFuture<TopicAudit>> futures = topics.stream()
-                .map(topic -> CompletableFuture.supplyAsync(() -> auditTopic(topic, topicSizes.getOrDefault(topic, 0L))))
+                .map(topic -> CompletableFuture.supplyAsync(() -> auditTopic(topic, topicSizes.getOrDefault(topic, 0L), options)))
                 .toList();
 
             List<TopicAudit> topicAudits = futures.stream()
@@ -98,7 +100,9 @@ public class AuditService {
                 .filter(a -> HealthStatus.UNHEALTHY.equals(a.healthStatus()))
                 .count();
 
-            List<FlowAudit> flowAudits = identifyAndAuditFlows(topicAudits);
+            List<FlowAudit> flowAudits = options.checkFlows()
+                ? identifyAndAuditFlows(topicAudits)
+                : Collections.emptyList();
 
             long totalMessages = topicSizes.values().stream().mapToLong(Long::longValue).sum();
 
@@ -122,32 +126,40 @@ public class AuditService {
         }
     }
 
-    private TopicAudit auditTopic(String topicName, long approximateCount) {
-        MessageFormat format = schemaInferenceService.detectFormat(topicName);
-        Map<String, String> schema = schemaInferenceService.inferSchema(topicName, format);
+    private TopicAudit auditTopic(String topicName, long approximateCount, AuditOptions options) {
+        MessageFormat format = MessageFormat.AUTO;
+        Map<String, String> schema = Collections.emptyMap();
 
-        registerTableIfNeeded(topicName, schema, format);
+        if (options.checkSchema()) {
+            format = schemaInferenceService.detectFormat(topicName);
+            schema = schemaInferenceService.inferSchema(topicName, format);
+            registerTableIfNeeded(topicName, schema, format);
+        }
 
-        // Exact count
-        long exactCount = getExactCount(topicName, approximateCount);
+        long exactCount = options.checkExactCount()
+            ? getExactCount(topicName, approximateCount)
+            : approximateCount;
 
-        // Duplicate detection
-        long duplicates = detectDuplicates(topicName, schema);
+        long duplicates = options.checkDuplicates()
+            ? detectDuplicates(topicName, schema)
+            : 0;
 
-        // Poison message detection (simple heuristic)
         int poisonCount = 0;
         List<String> issues = new ArrayList<>();
-        List<String> samples = kafkaAdminService.getSampleMessages(topicName, 10);
-        for (String sample : samples) {
-            if (format == MessageFormat.JSON && !(sample.trim().startsWith("{") || sample.trim().startsWith("["))) {
-                poisonCount++;
-            } else if (format == MessageFormat.XML && !sample.trim().startsWith("<")) {
-                poisonCount++;
+
+        if (options.checkPoisonMessages()) {
+            List<String> samples = kafkaAdminService.getSampleMessages(topicName, 10);
+            for (String sample : samples) {
+                if (format == MessageFormat.JSON && !(sample.trim().startsWith("{") || sample.trim().startsWith("["))) {
+                    poisonCount++;
+                } else if (format == MessageFormat.XML && !sample.trim().startsWith("<")) {
+                    poisonCount++;
+                }
             }
         }
 
         if (poisonCount > 0) issues.add("Detected " + poisonCount + " malformed messages in sample.");
-        if (approximateCount > 0 && exactCount == 0) issues.add("Flink SQL returned 0 rows despite Kafka having messages.");
+        if (options.checkExactCount() && approximateCount > 0 && exactCount == 0) issues.add("Flink SQL returned 0 rows despite Kafka having messages.");
         if (duplicates > 0) issues.add("Detected " + duplicates + " potential duplicate records.");
 
         HealthStatus status = issues.isEmpty() ? HealthStatus.HEALTHY : HealthStatus.UNHEALTHY;

@@ -47,7 +47,7 @@ class AuditServiceTest {
     @Test
     void testStartAudit() throws Exception {
         when(kafkaAdminService.listTopics()).thenReturn(Collections.emptyList());
-        String auditId = auditService.startAudit();
+        String auditId = auditService.startAudit(AuditOptions.all());
         assertNotNull(auditId);
         AuditReport report = auditService.getAuditReport(auditId);
         assertNotNull(report);
@@ -83,7 +83,7 @@ class AuditServiceTest {
         });
 
         // Run audit synchronously for testing
-        auditService.runAuditAsync(auditId);
+        auditService.runAuditAsync(auditId, AuditOptions.all());
 
         AuditReport report = auditService.getAuditReport(auditId);
         if (AuditStatus.FAILED.equals(report.status())) {

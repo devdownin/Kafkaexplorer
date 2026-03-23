@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Kafka Explorer Contributors
 package com.yourcompany.kafkasqlexplorer.service;
 
 import com.yourcompany.kafkasqlexplorer.domain.MessageFormat;
@@ -15,6 +17,14 @@ import org.apache.flink.types.Row;
 import org.springframework.stereotype.Service;
 import jakarta.annotation.PreDestroy;
 
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.*;
@@ -349,6 +359,112 @@ public class FlinkSqlService {
      * This method bypasses the Flink optimizer entirely and reads from Kafka directly.
      * Aggregate functions (COUNT, SUM, AVG, MAX, MIN) are computed in-process over the fetched rows.
      */
+    /**
+     * Parses a raw Kafka message value into a field map.
+     * Tries JSON first; falls back to XML (direct child elements of root → text content).
+     * Returns a map with a single "raw_value" entry only as a last resort.
+     */
+    private Map<String, Object> parseMessageToRow(String value) {
+        if (value == null || value.isBlank()) return Map.of();
+        String trimmed = value.trim();
+
+        // ── JSON ────────────────────────────────────────────────────────────
+        if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+            try {
+                return objectMapper.readValue(trimmed, new TypeReference<LinkedHashMap<String, Object>>() {});
+            } catch (Exception ignored) {}
+        }
+
+        // ── XML ─────────────────────────────────────────────────────────────
+        if (trimmed.startsWith("<")) {
+            try {
+                DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+                factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+                factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+                factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+                factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+                factory.setXIncludeAware(false);
+                factory.setExpandEntityReferences(false);
+                DocumentBuilder builder = factory.newDocumentBuilder();
+                Document doc = builder.parse(new ByteArrayInputStream(trimmed.getBytes(StandardCharsets.UTF_8)));
+                Map<String, Object> row = new LinkedHashMap<>();
+                flattenXmlElement(doc.getDocumentElement(), "", row);
+                if (!row.isEmpty()) return row;
+            } catch (Exception ignored) {}
+        }
+
+        // ── Fallback ─────────────────────────────────────────────────────────
+        Map<String, Object> raw = new LinkedHashMap<>();
+        raw.put("raw_value", value);
+        return raw;
+    }
+
+    /**
+     * Recursively flattens an XML element tree into a dot-notation flat map.
+     * Root element is skipped (prefix = "" on first call); each nested level
+     * appends ".<tagName>" to the key. Leaf nodes store their text content.
+     *
+     * Example: &lt;order&gt;&lt;customer&gt;&lt;name&gt;John&lt;/name&gt;&lt;/customer&gt;&lt;/order&gt;
+     *   → {"customer.name": "John"}
+     */
+    private void flattenXmlElement(Element element, String prefix, Map<String, Object> row) {
+        NodeList children = element.getChildNodes();
+        boolean hasElementChildren = false;
+        for (int i = 0; i < children.getLength(); i++) {
+            if (children.item(i).getNodeType() == Node.ELEMENT_NODE) {
+                hasElementChildren = true;
+                break;
+            }
+        }
+
+        if (prefix.isEmpty()) {
+            // Root element — iterate directly into its children without including root tag in path
+            for (int i = 0; i < children.getLength(); i++) {
+                if (children.item(i).getNodeType() == Node.ELEMENT_NODE) {
+                    Element child = (Element) children.item(i);
+                    flattenXmlElement(child, child.getTagName(), row);
+                }
+            }
+        } else if (!hasElementChildren) {
+            // Leaf node — store trimmed text content
+            String text = element.getTextContent().trim();
+            if (!text.isEmpty()) {
+                row.put(prefix, text);
+            }
+        } else {
+            // Container node — recurse into child elements, extending path
+            for (int i = 0; i < children.getLength(); i++) {
+                if (children.item(i).getNodeType() == Node.ELEMENT_NODE) {
+                    Element child = (Element) children.item(i);
+                    flattenXmlElement(child, prefix + "." + child.getTagName(), row);
+                }
+            }
+        }
+    }
+
+    /**
+     * Retrieves a value from a row map using a dot-notation path.
+     * Supports both flat maps (XML: key "customer.name" stored directly) and
+     * nested maps (JSON: {"customer": {"name": "John"}} traversed via path segments).
+     */
+    @SuppressWarnings("unchecked")
+    private Object getNestedValue(Map<String, Object> row, String path) {
+        // Direct key lookup first — covers XML flat maps and top-level JSON keys
+        if (row.containsKey(path)) return row.get(path);
+        // Dot-notation traversal for nested JSON objects
+        String[] parts = path.split("\\.", -1);
+        Object current = row;
+        for (String part : parts) {
+            if (current instanceof Map) {
+                current = ((Map<String, Object>) current).get(part);
+                if (current == null) return null;
+            } else {
+                return null;
+            }
+        }
+        return current;
+    }
+
     private QueryResult kafkaDirectSelect(String sql, String readMode, int limit, long startTime) {
         // Extract table name from FROM clause
         Pattern fromPattern = Pattern.compile("(?i)\\bFROM\\s+`?([\\w.\\-]+)`?");
@@ -413,13 +529,8 @@ public class FlinkSqlService {
             if (!isAggregate && rows.size() >= limit) break;
             String value = record.value();
             if (value == null || value.isBlank()) continue;
-            Map<String, Object> row;
-            try {
-                row = objectMapper.readValue(value, new TypeReference<LinkedHashMap<String, Object>>() {});
-            } catch (Exception e) {
-                row = new LinkedHashMap<>();
-                row.put("raw_value", value);
-            }
+            Map<String, Object> row = parseMessageToRow(value);
+            if (row.isEmpty()) continue;
             if (!matchesWhereConditions(row, whereConds)) continue;
             if (isAggregate) {
                 rows.add(row);
@@ -428,7 +539,7 @@ public class FlinkSqlService {
             if (!requestedCols.isEmpty()) {
                 Map<String, Object> projected = new LinkedHashMap<>();
                 for (String col : requestedCols) {
-                    projected.put(col, toSerializable(row.get(col)));
+                    projected.put(col, toSerializable(getNestedValue(row, col)));
                 }
                 row = projected;
             } else {
@@ -615,10 +726,8 @@ public class FlinkSqlService {
         for (var record : records) {
             String value = record.value();
             if (value == null || value.isBlank()) continue;
-            Map<String, Object> row;
-            try {
-                row = objectMapper.readValue(value, new com.fasterxml.jackson.core.type.TypeReference<LinkedHashMap<String, Object>>() {});
-            } catch (Exception e) { continue; }
+            Map<String, Object> row = parseMessageToRow(value);
+            if (row.isEmpty()) continue;
             if (!matchesWhereConditions(row, whereConds)) continue;
 
             // Resolve timestamp: message field → epoch detection → Kafka record ts

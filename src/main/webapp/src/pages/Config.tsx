@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import LoadingSpinner from '../components/LoadingSpinner';
 
 interface ClusterConfig {
   bootstrapServers: string;
@@ -47,6 +48,8 @@ const Config: React.FC = () => {
   }, []);
 
   const handleSave = async () => {
+    const validationErr = validateConfig();
+    if (validationErr) { setError(validationErr); return; }
     setSaving(true);
     setError(null);
     setSaveSuccess(false);
@@ -62,6 +65,8 @@ const Config: React.FC = () => {
   };
 
   const handleTestConnection = async () => {
+    const validationErr = validateConfig();
+    if (validationErr) { setError(validationErr); return; }
     setTesting(true);
     setTestResult(null);
     try {
@@ -74,16 +79,32 @@ const Config: React.FC = () => {
     }
   };
 
+  const validateConfig = (): string | null => {
+    const servers = config.bootstrapServers?.trim() ?? '';
+    if (!servers) return 'Bootstrap servers are required.';
+    const parts = servers.split(',').map(s => s.trim()).filter(Boolean);
+    for (const part of parts) {
+      if (!/^[^\s:]+:\d{1,5}$/.test(part)) {
+        return `Invalid format: "${part}". Expected host:port (e.g. localhost:9092).`;
+      }
+    }
+    if (config.mode === 'CONFLUENT_CLOUD') {
+      if (!config.confluentKey?.trim()) return 'API Key is required for Confluent Cloud.';
+      if (!config.confluentSecret?.trim()) return 'API Secret is required for Confluent Cloud.';
+    }
+    if (config.mode === 'SSL') {
+      if (!config.truststorePath?.trim()) return 'Truststore path is required for SSL.';
+      if (!config.keystorePath?.trim()) return 'Keystore path is required for SSL.';
+    }
+    return null;
+  };
+
   const set = (key: keyof ClusterConfig, value: string) => setConfig(prev => ({ ...prev, [key]: value }));
 
   const inputClass = "w-full bg-primary/5 border border-primary/20 rounded-lg px-3 py-2.5 text-sm text-slate-100 font-mono placeholder:text-slate-600 focus:ring-1 focus:ring-primary outline-none";
   const labelClass = "block text-[10px] uppercase font-bold tracking-wider text-slate-500 mb-1.5";
 
-  if (loading) return (
-    <div className="flex-1 flex items-center justify-center p-12">
-      <div className="animate-spin rounded-full h-8 w-8 border-2 border-primary border-t-transparent" />
-    </div>
-  );
+  if (loading) return <LoadingSpinner />;
 
   return (
     <div className="p-6 max-w-3xl space-y-6">

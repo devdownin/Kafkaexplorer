@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { useToast } from '../components/Toast';
+import LoadingSpinner from '../components/LoadingSpinner';
+import ErrorBanner from '../components/ErrorBanner';
 
 const PAGE_SIZES = [10, 25, 50, 100];
 type SortKey = 'name' | 'size' | 'state' | 'lastMessage';
@@ -32,31 +34,23 @@ const Dashboard: React.FC = () => {
   const [hideEmpty, setHideEmpty] = useState(false);
   const [hideDlt, setHideDlt] = useState(false);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const response = await axios.get('/api/dashboard');
-        setData(response.data);
-        setLoading(false);
-      } catch (err) {
-        setError('Failed to fetch dashboard data');
-        setLoading(false);
-      }
-    };
-    fetchData();
-  }, []);
+  const fetchData = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await axios.get('/api/dashboard');
+      setData(response.data);
+    } catch (err) {
+      setError('Failed to fetch dashboard data');
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  if (loading) return (
-    <div className="flex-1 flex items-center justify-center p-12">
-      <div className="animate-spin rounded-full h-8 w-8 border-2 border-primary border-t-transparent" />
-    </div>
-  );
+  useEffect(() => { fetchData(); }, []);
 
-  if (error || !data) return (
-    <div className="p-8 text-red-500 flex items-center gap-2">
-      <span className="material-symbols-outlined">warning</span> {error}
-    </div>
-  );
+  if (loading) return <LoadingSpinner />;
+  if (error || !data) return <ErrorBanner message={error ?? 'Failed to load dashboard'} onRetry={fetchData} />;
 
   const getState = (topic: string) =>
     data.topicSizes[topic] === 0 ? 'empty'

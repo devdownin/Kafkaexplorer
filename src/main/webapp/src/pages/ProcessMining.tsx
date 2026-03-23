@@ -1,0 +1,548 @@
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import axios from 'axios';
+import TopicSelectorPanel, { SnapshotConfig } from '../components/processmining/TopicSelectorPanel';
+import SchemaValidationPanel, {
+  FieldProfileResult,
+} from '../components/processmining/SchemaValidationPanel';
+import MermaidRenderer from '../components/processmining/MermaidRenderer';
+import AnomalyTable, { AnomalyReport } from '../components/processmining/AnomalyTable';
+import LiveStatusBar from '../components/processmining/LiveStatusBar';
+import AnomalyFeed, { LiveAnomaly } from '../components/processmining/AnomalyFeed';
+
+// ---- Types ----
+
+interface ProcessMiningResult {
+  flowchart: string | null;
+  comments: string | null;
+  hypotheses: string[];
+  blindSpots: string[];
+  anomalies: AnomalyReport[];
+}
+
+type Step = 'SELECT' | 'PROFILING' | 'VALIDATE' | 'ANALYZE' | 'RESULTS';
+type AnalysisMode = 'SNAPSHOT' | 'LIVE';
+
+// ---- Step indicator ----
+
+const STEPS: { key: Step; label: string; icon: string }[] = [
+  { key: 'SELECT', label: 'Select Topics', icon: 'topic' },
+  { key: 'PROFILING', label: 'Profiling', icon: 'search' },
+  { key: 'VALIDATE', label: 'Validate Schema', icon: 'verified' },
+  { key: 'ANALYZE', label: 'Choose Mode', icon: 'settings' },
+  { key: 'RESULTS', label: 'Results', icon: 'analytics' },
+];
+
+const stepIndex = (s: Step) => STEPS.findIndex(x => x.key === s);
+
+const StepIndicator: React.FC<{ current: Step }> = ({ current }) => (
+  <div className="flex items-center gap-0 mb-8">
+    {STEPS.map((step, i) => {
+      const ci = stepIndex(current);
+      const isPast = i < ci;
+      const isActive = i === ci;
+      return (
+        <React.Fragment key={step.key}>
+          <div className="flex items-center gap-2">
+            <div className={`flex items-center justify-center w-8 h-8 rounded-full border-2 transition-colors ${
+              isActive
+                ? 'border-primary bg-primary text-white'
+                : isPast
+                ? 'border-primary/60 bg-primary/20 text-primary'
+                : 'border-slate-700 bg-transparent text-slate-600'
+            }`}>
+              {isPast ? (
+                <span className="material-symbols-outlined text-sm">check</span>
+              ) : (
+                <span className="material-symbols-outlined text-sm">{step.icon}</span>
+              )}
+            </div>
+            <span className={`text-xs font-medium hidden sm:block ${
+              isActive ? 'text-primary' : isPast ? 'text-slate-400' : 'text-slate-600'
+            }`}>
+              {step.label}
+            </span>
+          </div>
+          {i < STEPS.length - 1 && (
+            <div className={`flex-1 h-0.5 mx-2 ${i < ci ? 'bg-primary/60' : 'bg-slate-700'}`} />
+          )}
+        </React.Fragment>
+      );
+    })}
+  </div>
+);
+
+// ---- Main component ----
+
+const ProcessMining: React.FC = () => {
+  const [step, setStep] = useState<Step>('SELECT');
+  const [selectedTopics, setSelectedTopics] = useState<string[]>([]);
+  const [depth, setDepth] = useState<SnapshotConfig>({ mode: 'LATEST_N', maxMessages: 500 });
+  const [profileResult, setProfileResult] = useState<FieldProfileResult | null>(null);
+  const [fieldMappingId, setFieldMappingId] = useState<string | null>(null);
+  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('SNAPSHOT');
+  const [snapshotResult, setSnapshotResult] = useState<ProcessMiningResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Live mode state
+  const [liveConnected, setLiveConnected] = useState(false);
+  const [liveFlowchart, setLiveFlowchart] = useState<string | null>(null);
+  const [liveAnomalies, setLiveAnomalies] = useState<LiveAnomaly[]>([]);
+  const [liveWindowSize, setLiveWindowSize] = useState(0);
+  const [liveLastUpdate, setLiveLastUpdate] = useState<number | null>(null);
+  const [liveComments, setLiveComments] = useState<string | null>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+      }
+    };
+  }, []);
+
+  // ---- Handlers ----
+
+  const handleStartProfiling = async (topics: string[], snapshotDepth: SnapshotConfig) => {
+    setSelectedTopics(topics);
+    setDepth(snapshotDepth);
+    setStep('PROFILING');
+    setLoading(true);
+    setError(null);
+
+    try {
+      const res = await axios.post<FieldProfileResult>('/api/process-mining/profiling/start', {
+        topics,
+        depth: snapshotDepth,
+      });
+      setProfileResult(res.data);
+      setStep('VALIDATE');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Profiling failed';
+      setError(msg);
+      setStep('SELECT');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleValidateSchema = async (corrections: Record<string, Record<string, string>>) => {
+    if (!profileResult) return;
+    setLoading(true);
+    setError(null);
+
+    try {
+      const res = await axios.post<{ fieldMappingId: string }>('/api/process-mining/profiling/validate', {
+        proposal: profileResult.unificationProposal,
+        userCorrections: corrections,
+      });
+      setFieldMappingId(res.data.fieldMappingId);
+      setStep('ANALYZE');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Validation failed';
+      setError(msg);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLaunchAnalysis = async () => {
+    if (!fieldMappingId) return;
+
+    if (analysisMode === 'SNAPSHOT') {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await axios.post<ProcessMiningResult>('/api/process-mining/snapshot', {
+          topics: selectedTopics,
+          depth,
+          fieldMappingId,
+        });
+        setSnapshotResult(res.data);
+        setStep('RESULTS');
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : 'Analysis failed';
+        setError(msg);
+      } finally {
+        setLoading(false);
+      }
+    } else {
+      // Live mode
+      startLiveSession();
+      setStep('RESULTS');
+    }
+  };
+
+  const startLiveSession = useCallback(() => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+    }
+
+    const topicsParam = selectedTopics.map(t => `topics=${encodeURIComponent(t)}`).join('&');
+    const url = `/api/process-mining/live?${topicsParam}&fieldMappingId=${fieldMappingId}`;
+
+    const es = new EventSource(url);
+    eventSourceRef.current = es;
+
+    es.onopen = () => {
+      setLiveConnected(true);
+    };
+
+    es.addEventListener('CONNECTED', () => {
+      setLiveConnected(true);
+    });
+
+    es.addEventListener('HEARTBEAT', () => {
+      // Keep alive — no action needed
+    });
+
+    es.addEventListener('FLOWCHART_UPDATE', (e) => {
+      try {
+        const chart = JSON.parse(e.data);
+        setLiveFlowchart(typeof chart === 'string' ? chart : JSON.stringify(chart));
+      } catch {
+        setLiveFlowchart(e.data);
+      }
+    });
+
+    es.addEventListener('ANALYSIS_COMMENTS', (e) => {
+      try {
+        const comments = JSON.parse(e.data);
+        setLiveComments(typeof comments === 'string' ? comments : JSON.stringify(comments));
+      } catch {
+        setLiveComments(e.data);
+      }
+    });
+
+    es.addEventListener('ANOMALY_DETECTED', (e) => {
+      try {
+        const anomaly: AnomalyReport = JSON.parse(e.data);
+        setLiveAnomalies(prev => {
+          const existing = prev.find(a => a.id === anomaly.id);
+          if (existing) {
+            return prev.map(a => a.id === anomaly.id
+              ? { ...anomaly, status: 'RECURRENT' as const, detectedAt: Date.now() }
+              : a
+            );
+          }
+          return [{ ...anomaly, status: 'NEW' as const, detectedAt: Date.now() }, ...prev].slice(0, 100);
+        });
+      } catch {
+        // ignore parse errors
+      }
+    });
+
+    es.addEventListener('WINDOW_STATS', (e) => {
+      try {
+        const stats = JSON.parse(e.data);
+        setLiveWindowSize(stats.windowSize ?? 0);
+        setLiveLastUpdate(Date.now());
+      } catch {
+        // ignore
+      }
+    });
+
+    es.onerror = () => {
+      setLiveConnected(false);
+    };
+  }, [selectedTopics, fieldMappingId]);
+
+  const stopLiveSession = () => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+    setLiveConnected(false);
+  };
+
+  const resetAll = () => {
+    stopLiveSession();
+    setStep('SELECT');
+    setSelectedTopics([]);
+    setProfileResult(null);
+    setFieldMappingId(null);
+    setSnapshotResult(null);
+    setLiveFlowchart(null);
+    setLiveAnomalies([]);
+    setLiveWindowSize(0);
+    setLiveLastUpdate(null);
+    setLiveComments(null);
+    setError(null);
+  };
+
+  // ---- Render ----
+
+  return (
+    <div className="p-6 max-w-5xl mx-auto space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-100">Process Mining</h1>
+          <p className="text-sm text-slate-400 mt-1">
+            Discover business process flows and detect anomalies across Kafka topics using AI.
+          </p>
+        </div>
+        {step !== 'SELECT' && (
+          <button
+            onClick={resetAll}
+            className="flex items-center gap-2 px-3 py-1.5 text-xs text-slate-400 hover:text-slate-100 border border-slate-700 hover:border-slate-500 rounded-lg transition-colors"
+          >
+            <span className="material-symbols-outlined text-sm">restart_alt</span>
+            Start over
+          </button>
+        )}
+      </div>
+
+      {/* Step indicator */}
+      <StepIndicator current={step} />
+
+      {/* Error banner */}
+      {error && (
+        <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 flex items-start gap-3">
+          <span className="material-symbols-outlined text-red-400 text-lg flex-shrink-0">error</span>
+          <div>
+            <p className="text-sm font-semibold text-red-400">Error</p>
+            <p className="text-xs text-red-300 mt-0.5">{error}</p>
+          </div>
+          <button onClick={() => setError(null)} className="ml-auto text-red-400 hover:text-red-300">
+            <span className="material-symbols-outlined text-base">close</span>
+          </button>
+        </div>
+      )}
+
+      {/* Step content */}
+      <div className="bg-white/3 dark:bg-slate-800/30 border border-primary/10 rounded-2xl p-6">
+
+        {/* STEP 1: SELECT */}
+        {step === 'SELECT' && (
+          <TopicSelectorPanel onStart={handleStartProfiling} loading={loading} />
+        )}
+
+        {/* STEP 2: PROFILING IN PROGRESS */}
+        {step === 'PROFILING' && (
+          <div className="flex flex-col items-center justify-center py-16 gap-4">
+            <div className="relative w-16 h-16">
+              <span className="material-symbols-outlined text-6xl text-primary animate-pulse">
+                psychology
+              </span>
+            </div>
+            <p className="text-lg font-semibold text-slate-200">Profiling topics with Claude AI...</p>
+            <p className="text-sm text-slate-400 text-center max-w-md">
+              Sampling messages from {selectedTopics.length} topic{selectedTopics.length > 1 ? 's' : ''},
+              detecting field semantics and proposing schema unification.
+            </p>
+            <div className="flex flex-wrap gap-2 mt-2">
+              {selectedTopics.map(t => (
+                <span key={t} className="text-xs font-mono px-2.5 py-1 bg-primary/10 text-primary/80 rounded-lg">
+                  {t}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* STEP 3: VALIDATE */}
+        {step === 'VALIDATE' && profileResult && (
+          <SchemaValidationPanel
+            result={profileResult}
+            onValidate={handleValidateSchema}
+            loading={loading}
+          />
+        )}
+
+        {/* STEP 4: CHOOSE ANALYSIS MODE */}
+        {step === 'ANALYZE' && (
+          <div className="space-y-6">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-100 mb-1">Choose Analysis Mode</h2>
+              <p className="text-sm text-slate-400">
+                Select how you want to analyse the Kafka message flows.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <button
+                onClick={() => setAnalysisMode('SNAPSHOT')}
+                className={`p-5 rounded-xl border-2 text-left transition-all ${
+                  analysisMode === 'SNAPSHOT'
+                    ? 'border-primary bg-primary/10'
+                    : 'border-primary/20 hover:border-primary/40 hover:bg-primary/5'
+                }`}
+              >
+                <span className="material-symbols-outlined text-3xl text-primary mb-3 block">
+                  camera
+                </span>
+                <p className="font-semibold text-slate-100">Snapshot Analysis</p>
+                <p className="text-xs text-slate-400 mt-1">
+                  Analyse a fixed sample of historical messages. Produces a complete flowchart
+                  and anomaly report in one shot.
+                </p>
+              </button>
+
+              <button
+                onClick={() => setAnalysisMode('LIVE')}
+                className={`p-5 rounded-xl border-2 text-left transition-all ${
+                  analysisMode === 'LIVE'
+                    ? 'border-primary bg-primary/10'
+                    : 'border-primary/20 hover:border-primary/40 hover:bg-primary/5'
+                }`}
+              >
+                <span className="material-symbols-outlined text-3xl text-emerald-400 mb-3 block">
+                  stream
+                </span>
+                <p className="font-semibold text-slate-100">Live Monitoring</p>
+                <p className="text-xs text-slate-400 mt-1">
+                  Continuously consume new messages and re-analyse each window.
+                  Detects evolving anomalies in real time.
+                </p>
+              </button>
+            </div>
+
+            <button
+              onClick={handleLaunchAnalysis}
+              disabled={loading}
+              className="w-full flex items-center justify-center gap-2 py-3 px-6 bg-primary text-white rounded-xl font-semibold text-sm hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {loading ? (
+                <>
+                  <span className="material-symbols-outlined text-base animate-spin">progress_activity</span>
+                  Analysing...
+                </>
+              ) : (
+                <>
+                  <span className="material-symbols-outlined text-base">
+                    {analysisMode === 'LIVE' ? 'stream' : 'analytics'}
+                  </span>
+                  {analysisMode === 'LIVE' ? 'Start Live Monitoring' : 'Run Snapshot Analysis'}
+                </>
+              )}
+            </button>
+          </div>
+        )}
+
+        {/* STEP 5: RESULTS */}
+        {step === 'RESULTS' && (
+          <div className="space-y-6">
+            {/* Live status bar (only in live mode) */}
+            {analysisMode === 'LIVE' && (
+              <div className="flex items-center gap-3">
+                <div className="flex-1">
+                  <LiveStatusBar
+                    connected={liveConnected}
+                    windowSize={liveWindowSize}
+                    lastUpdate={liveLastUpdate}
+                  />
+                </div>
+                <button
+                  onClick={stopLiveSession}
+                  disabled={!liveConnected}
+                  className="flex items-center gap-1.5 px-3 py-2 text-xs text-red-400 border border-red-500/30 hover:bg-red-500/10 rounded-lg transition-colors disabled:opacity-40"
+                >
+                  <span className="material-symbols-outlined text-sm">stop_circle</span>
+                  Stop
+                </button>
+              </div>
+            )}
+
+            {/* Flowchart */}
+            <div className="border border-primary/20 rounded-xl overflow-hidden">
+              <div className="px-4 py-2.5 border-b border-primary/10 bg-primary/5 flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-slate-200">Process Flowchart</h3>
+                <span className="text-xs text-slate-500">Mermaid diagram</span>
+              </div>
+              <div className="p-4">
+                <MermaidRenderer
+                  chart={
+                    analysisMode === 'LIVE'
+                      ? liveFlowchart ?? ''
+                      : snapshotResult?.flowchart ?? ''
+                  }
+                />
+              </div>
+            </div>
+
+            {/* Comments / Analysis narrative */}
+            {(analysisMode === 'LIVE' ? liveComments : snapshotResult?.comments) && (
+              <div className="border border-primary/20 rounded-xl p-4 bg-primary/5">
+                <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                  Analysis Commentary
+                </h3>
+                <p className="text-sm text-slate-300 leading-relaxed">
+                  {analysisMode === 'LIVE' ? liveComments : snapshotResult?.comments}
+                </p>
+              </div>
+            )}
+
+            {/* Snapshot extra sections */}
+            {analysisMode === 'SNAPSHOT' && snapshotResult && (
+              <>
+                {snapshotResult.hypotheses && snapshotResult.hypotheses.length > 0 && (
+                  <div className="border border-primary/20 rounded-xl p-4">
+                    <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">
+                      Hypotheses
+                    </h3>
+                    <ul className="space-y-1.5">
+                      {snapshotResult.hypotheses.map((h, i) => (
+                        <li key={i} className="flex items-start gap-2 text-sm text-slate-300">
+                          <span className="material-symbols-outlined text-primary text-sm mt-0.5 flex-shrink-0">
+                            lightbulb
+                          </span>
+                          {h}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {snapshotResult.blindSpots && snapshotResult.blindSpots.length > 0 && (
+                  <div className="border border-amber-500/20 rounded-xl p-4 bg-amber-500/5">
+                    <h3 className="text-xs font-bold text-amber-500 uppercase tracking-wider mb-3">
+                      Blind Spots
+                    </h3>
+                    <ul className="space-y-1.5">
+                      {snapshotResult.blindSpots.map((bs, i) => (
+                        <li key={i} className="flex items-start gap-2 text-sm text-slate-300">
+                          <span className="material-symbols-outlined text-amber-400 text-sm mt-0.5 flex-shrink-0">
+                            visibility_off
+                          </span>
+                          {bs}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Anomalies */}
+            <div className="border border-primary/20 rounded-xl overflow-hidden">
+              <div className="px-4 py-2.5 border-b border-primary/10 bg-primary/5 flex items-center gap-2">
+                <h3 className="text-sm font-semibold text-slate-200">Anomalies</h3>
+                {analysisMode === 'SNAPSHOT' && snapshotResult?.anomalies && (
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary">
+                    {snapshotResult.anomalies.length}
+                  </span>
+                )}
+                {analysisMode === 'LIVE' && (
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary">
+                    {liveAnomalies.length}
+                  </span>
+                )}
+              </div>
+              <div className="p-4">
+                {analysisMode === 'LIVE' ? (
+                  <AnomalyFeed anomalies={liveAnomalies} />
+                ) : (
+                  <AnomalyTable anomalies={snapshotResult?.anomalies ?? []} />
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default ProcessMining;

@@ -47,6 +47,13 @@ management:
     tags:
       application: kafka-sql-explorer
 
+claude:
+  api-key: ${ANTHROPIC_API_KEY:}
+  model: claude-opus-4-6
+  max-tokens: 4096
+  snapshot-window-size: 100
+  snapshot-window-timeout-seconds: 30
+
 logging:
   file:
     name: logs/kafkaexplorer.log

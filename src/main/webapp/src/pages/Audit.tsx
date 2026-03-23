@@ -49,11 +49,33 @@ const healthDot: Record<string, string> = {
   UNKNOWN: 'bg-slate-500',
 };
 
+interface AuditOptions {
+  checkSchema: boolean;
+  checkPoisonMessages: boolean;
+  checkDuplicates: boolean;
+  checkFlows: boolean;
+  checkExactCount: boolean;
+}
+
+const CHECK_LABELS: { key: keyof AuditOptions; label: string; description: string; icon: string }[] = [
+  { key: 'checkSchema',         label: 'Schema inference',    description: 'Detect message format (JSON/XML/Avro) and infer field types', icon: 'schema' },
+  { key: 'checkExactCount',     label: 'Exact message count', description: 'Run COUNT(*) via Flink SQL (slower than Kafka offset diff)',    icon: 'tag' },
+  { key: 'checkPoisonMessages', label: 'Poison messages',     description: 'Sample 10 messages per topic and flag malformed payloads',     icon: 'bug_report' },
+  { key: 'checkDuplicates',     label: 'Duplicate detection', description: 'GROUP BY key field and count rows appearing more than once',   icon: 'content_copy' },
+  { key: 'checkFlows',          label: 'Flow analysis',       description: 'Group topics by naming convention and compute inter-step latency', icon: 'account_tree' },
+];
+
+const ALL_CHECKED: AuditOptions = {
+  checkSchema: true, checkPoisonMessages: true,
+  checkDuplicates: true, checkFlows: true, checkExactCount: true,
+};
+
 const Audit: React.FC = () => {
   const [report, setReport] = useState<AuditReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'topics' | 'flows'>('topics');
+  const [options, setOptions] = useState<AuditOptions>(ALL_CHECKED);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const stopPolling = () => {
@@ -83,7 +105,7 @@ const Audit: React.FC = () => {
     setError(null);
     setReport(null);
     try {
-      const res = await axios.post<string>('/api/audit/start');
+      const res = await axios.post<string>('/api/audit/start', options);
       const auditId = res.data;
       pollRef.current = setInterval(() => pollStatus(auditId), 2000);
     } catch {
@@ -116,7 +138,7 @@ const Audit: React.FC = () => {
         </div>
         <button
           onClick={startAudit}
-          disabled={loading}
+          disabled={loading || Object.values(options).every(v => !v)}
           className="flex items-center gap-2 bg-primary hover:brightness-110 disabled:opacity-50 text-background-dark px-5 py-2.5 rounded-lg font-bold transition-all text-sm"
         >
           {loading ? (
@@ -126,6 +148,46 @@ const Audit: React.FC = () => {
           )}
           {loading ? 'Running...' : 'Run New Audit'}
         </button>
+      </div>
+
+      {/* Check selection */}
+      <div className="rounded-xl border border-primary/10 bg-primary/5 p-4">
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-[10px] uppercase font-bold tracking-widest text-slate-500">Checks to run</span>
+          <div className="flex gap-3 text-xs">
+            <button onClick={() => setOptions(ALL_CHECKED)} className="text-primary hover:underline">All</button>
+            <button
+              onClick={() => setOptions({ checkSchema: false, checkPoisonMessages: false, checkDuplicates: false, checkFlows: false, checkExactCount: false })}
+              className="text-slate-500 hover:underline"
+            >None</button>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+          {CHECK_LABELS.map(({ key, label, description, icon }) => (
+            <label
+              key={key}
+              className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                options[key]
+                  ? 'border-primary/30 bg-primary/10'
+                  : 'border-primary/10 bg-transparent hover:border-primary/20'
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={options[key]}
+                onChange={e => setOptions(o => ({ ...o, [key]: e.target.checked }))}
+                className="mt-0.5 accent-[var(--color-primary)] shrink-0"
+              />
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className={`material-symbols-outlined text-sm ${options[key] ? 'text-primary' : 'text-slate-500'}`}>{icon}</span>
+                  <span className={`text-xs font-bold ${options[key] ? 'text-slate-100' : 'text-slate-400'}`}>{label}</span>
+                </div>
+                <p className="text-[10px] text-slate-500 mt-0.5 leading-snug">{description}</p>
+              </div>
+            </label>
+          ))}
+        </div>
       </div>
 
       {/* Running State */}
