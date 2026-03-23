@@ -184,3 +184,16 @@ Test classes are in `src/test/java/com/yourcompany/kafkasqlexplorer/`.
 - **SQL injection**: `SqlQueryValidator` whitelists only `SELECT`, `EXPLAIN`, `CREATE TABLE`
 - **XXE**: All XML parsers have external DTD loading disabled
 - **No authentication** out of the box — intended for internal/controlled environments
+
+## Secrets & CI
+
+- **Ne jamais mettre de vraie clé en fallback Spring** : `${ANTHROPIC_API_KEY:sk-ant-...}` expose la clé dans git. Utiliser `${ANTHROPIC_API_KEY:}` (fallback vide).
+- Si une clé est commitée : `git reset --soft HEAD~N` pour réécrire le commit, puis recommiter proprement.
+- **Rebase conflicts** : dans un `git rebase`, `--theirs` = le commit local rejoué, `--ours` = la branche upstream. Pour accepter tous les fichiers conflictuels en faveur du commit local : `git checkout --theirs <fichiers> && git add -u && git rebase --continue`.
+
+## Docker & GHCR
+
+- Image publiée sur `ghcr.io/devdownin/kafkaexplorer` via `.github/workflows/release.yml` au push d'un tag `v*`.
+- Le job `docker` dépend du job `build` et récupère le JAR via `actions/upload-artifact` / `actions/download-artifact`.
+- Tags générés : `{{version}}` (ex: `0.0.3`), `{{major}}.{{minor}}`, `latest`.
+- Lancement local : `docker run -p 8080:8080 -e SPRING_KAFKA_BOOTSTRAP_SERVERS=localhost:9092 -e ANTHROPIC_API_KEY=sk-ant-... ghcr.io/devdownin/kafkaexplorer:latest`
