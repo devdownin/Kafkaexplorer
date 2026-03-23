@@ -283,7 +283,7 @@ AnomalyFeed.jsx              flux temps réel anomalies (badges NEW/RECURRENT/RE
 
 - Java 21 : utiliser les records, switch expressions, text blocks (`"""`)
 - Spring Boot : `@ConfigurationProperties` pour les paramètres Kafka et Claude API
-- Claude API : modèle `claude-sonnet-4-20250514`, `max_tokens: 4096`
+- LLM Provider : Anthropic (`claude-3-5-sonnet-20241022`) or OpenAI Compatible (Ollama/vLLM)
 - Consumer Kafka profilage : group id temporaire avec `enable.auto.commit=false`
 - Live consumer : WindowBuffer déclenché par taille (défaut 100 msg) OU timeout (défaut 30s)
 - SSE : `SseEmitter` avec timeout 5 minutes, heartbeat toutes les 15s

@@ -29,20 +29,28 @@ public class FieldProfilingService {
 
     private final KafkaSnapshotReader snapshotReader;
     private final ClaudeConfig claudeConfig;
+    private final LlmClient llmClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public FieldProfilingService(KafkaSnapshotReader snapshotReader, ClaudeConfig claudeConfig) {
+        this(snapshotReader, claudeConfig, claudeConfig.getProvider() == ClaudeConfig.Provider.ANTHROPIC
+            ? new AnthropicLlmClient(claudeConfig)
+            : new OpenAiCompatibleLlmClient(claudeConfig));
+    }
+
+    public FieldProfilingService(KafkaSnapshotReader snapshotReader, ClaudeConfig claudeConfig, LlmClient llmClient) {
         this.snapshotReader = snapshotReader;
         this.claudeConfig = claudeConfig;
+        this.llmClient = llmClient;
     }
 
     public FieldProfileResult profile(List<String> topics, SnapshotConfig config) {
-        if (claudeConfig.getApiKey() == null || claudeConfig.getApiKey().isBlank()) {
-            log.warn("Claude API key not configured — returning empty profile");
+        if (isApiKeyMissing()) {
+            log.warn("LLM API key not configured — returning empty profile");
             return new FieldProfileResult(
                 List.of(),
                 null,
-                List.of("Claude API key not configured. Set ANTHROPIC_API_KEY environment variable.")
+                List.of("LLM API key not configured.")
             );
         }
 
@@ -62,16 +70,20 @@ public class FieldProfilingService {
         // 3. Build user prompt
         String userPrompt = buildProfilingPrompt(topics, byTopic);
 
-        // 4. Call Claude API
+        // 4. Call LLM API
         String rawResponse;
         try {
-            rawResponse = callClaude(userPrompt);
+            String systemPrompt = """
+                Expert Kafka & Data Mining. Analyze Kafka message samples.
+                Return ONLY valid JSON. NO markdown, NO prose outside JSON.
+                """;
+            rawResponse = llmClient.generate(systemPrompt, userPrompt);
         } catch (Exception e) {
-            log.error("Claude API call failed during profiling: {}", e.getMessage(), e);
+            log.error("LLM API call failed during profiling: {}", e.getMessage(), e);
             return new FieldProfileResult(
                 List.of(),
                 null,
-                List.of("Claude API error: " + e.getMessage())
+                List.of("LLM API error: " + e.getMessage())
             );
         }
 
@@ -168,6 +180,15 @@ Réponds avec ce JSON exact (camelCase, sans markdown) :
         return sb.toString();
     }
 
+    private boolean isApiKeyMissing() {
+        // API key is mandatory for Anthropic
+        if (claudeConfig.getProvider() == ClaudeConfig.Provider.ANTHROPIC) {
+            return claudeConfig.getApiKey() == null || claudeConfig.getApiKey().isBlank();
+        }
+        // For OpenAI-compatible providers, the API key is optional
+        return false;
+    }
+
     private void appendJsonString(StringBuilder sb, String value) {
         if (value == null) {
             sb.append("null");
@@ -177,45 +198,6 @@ Réponds avec ce JSON exact (camelCase, sans markdown) :
         }
     }
 
-    private String callClaude(String userPrompt) throws Exception {
-        AnthropicClient client = AnthropicOkHttpClient.builder()
-            .apiKey(claudeConfig.getApiKey())
-            .build();
-
-        String systemPrompt = """
-            Tu es un expert Apache Kafka et data mining.
-            Analyse des échantillons de messages Kafka.
-            Réponds UNIQUEMENT avec un JSON valide, sans markdown.
-            """;
-
-        MessageCreateParams params = MessageCreateParams.builder()
-            .model(claudeConfig.getModel())
-            .maxTokens((long) claudeConfig.getMaxTokens())
-            .system(systemPrompt)
-            .addMessage(MessageParam.builder()
-                .role(MessageParam.Role.USER)
-                .content(userPrompt)
-                .build())
-            .build();
-
-        String fullText;
-        try (var stream = client.messages().createStreaming(params)) {
-            fullText = stream.stream()
-                .flatMap(e -> e.contentBlockDelta().stream())
-                .flatMap(d -> d.delta().text().stream())
-                .map(TextDelta::text)
-                .collect(Collectors.joining());
-        }
-
-        log.debug("Claude profiling raw response (first 500 chars): {}",
-            fullText.length() > 500 ? fullText.substring(0, 500) : fullText);
-
-        if (fullText.isBlank()) {
-            log.warn("Claude returned a blank response for model={} maxTokens={}",
-                claudeConfig.getModel(), claudeConfig.getMaxTokens());
-        }
-        return fullText;
-    }
 
     private FieldProfileResult parseProfileResult(String rawResponse) {
         if (rawResponse == null || rawResponse.isBlank()) {

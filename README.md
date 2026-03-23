@@ -91,7 +91,14 @@ The assistant transforms the message preview into a query design tool:
 - **SQL Validation**: Whitelist of authorized commands (`SELECT`, `EXPLAIN`, `CREATE TABLE`) to prevent destructive DML operations.
 - **Connection Management**: Clean lifecycle of the Kafka AdminClient and consumers.
 
-### 10. Demo & Sandbox Environment
+### 10. Process Mining & AI Analysis (LLM)
+Kafka Explorer integrates AI to analyze message flows and detect anomalies:
+- **Automatic Field Profiling**: Detects `CORRELATION_ID`, `TIMESTAMP`, and `STATUS` fields across topics.
+- **Flow Reconstruction**: Generates Mermaid flowcharts of your business processes.
+- **Anomaly Detection**: Identifies sequence breaks, temporal delays, and structural inconsistencies.
+- **Multi-Provider Support**: Compatible with **Claude (Anthropic)** and **Open Source models** (via OpenAI-compatible APIs like Ollama).
+
+### 11. Demo & Sandbox Environment
 The application includes an automated demonstration setup to help you explore features immediately:
 - **6-Step Order Pipeline**: Sequential topics (`demo.orders.1.received` to `6.delivered`) to test **Stream Flow** traceability.
 - **JOINs & Reference Data**: A `demo.customers` topic to practice SQL JOINs with orders.
@@ -135,6 +142,35 @@ The application includes an automated demonstration setup to help you explore fe
    ./mvnw spring-boot:run
    ```
 3. **Access the interface**: `http://localhost:8080`
+
+---
+
+## 🤖 LLM Configuration (Process Mining)
+
+Kafka Explorer supports both cloud and local LLMs for process mining.
+
+### Option A: Anthropic Claude (Default)
+Set your API key as an environment variable:
+```bash
+export ANTHROPIC_API_KEY='your-api-key'
+```
+
+### Option B: Open Source / Local (Ollama, vLLM, LM Studio)
+1. Run your model (e.g., `ollama run qwen2.5-coder:7b`).
+2. Update `src/main/resources/application.yml`:
+```yaml
+claude:
+  provider: OPENAI_COMPATIBLE
+  base-url: http://localhost:11434/v1 # For Ollama
+  model: qwen2.5-coder:7b
+```
+
+### Recommended Lightweight Models
+- **Qwen 2.5-Coder 7B**: Best for JSON extraction and logic.
+- **Llama 3.2 3B**: Fast for real-time (LIVE) analysis.
+- **DeepSeek-R1-Distill-Qwen-7B**: Superior for complex anomaly reasoning.
+
+---
 
 ### XML Query Example
 ```sql

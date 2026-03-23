@@ -32,23 +32,24 @@ public class LlmAnalysisService {
 
     private final KafkaSnapshotReader snapshotReader;
     private final ClaudeConfig claudeConfig;
+    private final LlmClient llmClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private static final String SYSTEM_PROMPT = """
-        Tu es un expert Apache Kafka, process mining et conception logicielle.
-        Tu analyses des messages Kafka pour produire un flowchart Mermaid et un rapport d'anomalies.
-        Réponds UNIQUEMENT avec un objet JSON valide, sans markdown, sans texte libre.
+        Expert Apache Kafka & Process Mining.
+        Analyze Kafka messages to produce a Mermaid flowchart and anomaly report.
+        Return ONLY valid JSON (camelCase). NO markdown, NO prose outside JSON.
 
-        Structure de sortie obligatoire (camelCase) :
+        JSON structure:
         {
           "flowchart": "flowchart TD\\n...",
-          "comments": "description prose",
-          "hypotheses": ["hypothèse 1"],
-          "blindSpots": ["donnée manquante"],
+          "comments": "Short description",
+          "hypotheses": ["..."],
+          "blindSpots": ["..."],
           "anomalies": [
             {
               "id": "ANO-001",
-              "topic": "nom-topic",
+              "topic": "topic-name",
               "type": "SEQUENCE|TEMPORAL|STRUCTURAL|CARDINALITY|BUSINESS",
               "severity": "CRITICAL|MAJOR|MINOR",
               "fields": ["$.field"],
@@ -59,23 +60,30 @@ public class LlmAnalysisService {
           ]
         }
 
-        Règles Mermaid :
-        - Topics Kafka → [NomTopic]
-        - Services → (NomService)
-        - Décisions → {condition}
-        - Flux nominal --> avec label
-        - Flux anormal -.-> avec label anomalie
+        Mermaid Rules:
+        - Topics: [TopicName]
+        - Services: (ServiceName)
+        - Decisions: {condition}
+        - Normal flow: -->
+        - Anomaly flow: -.->
         """;
 
     public LlmAnalysisService(KafkaSnapshotReader snapshotReader, ClaudeConfig claudeConfig) {
+        this(snapshotReader, claudeConfig, claudeConfig.getProvider() == ClaudeConfig.Provider.ANTHROPIC
+            ? new AnthropicLlmClient(claudeConfig)
+            : new OpenAiCompatibleLlmClient(claudeConfig));
+    }
+
+    public LlmAnalysisService(KafkaSnapshotReader snapshotReader, ClaudeConfig claudeConfig, LlmClient llmClient) {
         this.snapshotReader = snapshotReader;
         this.claudeConfig = claudeConfig;
+        this.llmClient = llmClient;
     }
 
     public ProcessMiningResult analyzeSnapshot(List<String> topics, SnapshotConfig depth,
                                                 FieldMapping fieldMapping) {
-        if (claudeConfig.getApiKey() == null || claudeConfig.getApiKey().isBlank()) {
-            return errorResult("Claude API key not configured. Set ANTHROPIC_API_KEY environment variable.");
+        if (isApiKeyMissing()) {
+            return errorResult("LLM API key not configured.");
         }
 
         // 1. Read messages
@@ -94,8 +102,8 @@ public class LlmAnalysisService {
     public ProcessMiningResult analyzeLive(List<KafkaMessage> windowMessages,
                                             FieldMapping fieldMapping,
                                             String referenceFlowchart) {
-        if (claudeConfig.getApiKey() == null || claudeConfig.getApiKey().isBlank()) {
-            return errorResult("Claude API key not configured.");
+        if (isApiKeyMissing()) {
+            return errorResult("LLM API key not configured.");
         }
 
         // Group by topic
@@ -203,47 +211,32 @@ public class LlmAnalysisService {
         }
     }
 
-    private String callClaude(String userPrompt) {
+    private boolean isApiKeyMissing() {
+        // API key is mandatory for Anthropic
+        if (claudeConfig.getProvider() == ClaudeConfig.Provider.ANTHROPIC) {
+            return claudeConfig.getApiKey() == null || claudeConfig.getApiKey().isBlank();
+        }
+        // For OpenAI-compatible providers, the API key is optional
+        return false;
+    }
+
+    private String callLlm(String userPrompt) {
         try {
-            AnthropicClient client = AnthropicOkHttpClient.builder()
-                .apiKey(claudeConfig.getApiKey())
-                .build();
-
-            MessageCreateParams params = MessageCreateParams.builder()
-                .model(claudeConfig.getModel())
-                .maxTokens(claudeConfig.getMaxTokens())
-                .system(SYSTEM_PROMPT)
-                .addMessage(MessageParam.builder()
-                    .role(MessageParam.Role.USER)
-                    .content(userPrompt)
-                    .build())
-                .build();
-
-            String fullText;
-            try (var stream = client.messages().createStreaming(params)) {
-                fullText = stream.stream()
-                    .flatMap(e -> e.contentBlockDelta().stream())
-                    .map(d -> d.delta().text())
-                    .flatMap(java.util.Optional::stream)
-                    .map(TextDelta::text)
-                    .collect(Collectors.joining());
-            }
-
-            log.debug("Claude analysis response (first 500 chars): {}",
+            String fullText = llmClient.generate(SYSTEM_PROMPT, userPrompt);
+            log.debug("LLM analysis response (first 500 chars): {}",
                 fullText.length() > 500 ? fullText.substring(0, 500) : fullText);
             return fullText;
-
         } catch (Exception e) {
-            log.error("Error calling Claude API for analysis: {}", e.getMessage(), e);
+            log.error("Error calling LLM API for analysis: {}", e.getMessage(), e);
             return null;
         }
     }
 
     private ProcessMiningResult callClaudeAndParse(String userPrompt) {
-        String rawResponse = callClaude(userPrompt);
+        String rawResponse = callLlm(userPrompt);
 
         if (rawResponse == null || rawResponse.isBlank()) {
-            return errorResult("Claude returned an empty response.");
+            return errorResult("LLM returned an empty response.");
         }
 
         String json = stripMarkdownFences(rawResponse);
