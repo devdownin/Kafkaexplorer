@@ -116,7 +116,7 @@ The application includes an automated demonstration setup to help you explore fe
 - **Backend**: Spring Boot 3.5.x, Java 21 (Records).
 - **Streaming**: Apache Flink 2.2.x (Embedded LocalEnvironment).
 - **Parsing**: Jackson (JSON), JAXB/StAX (XML).
-- **Frontend**: Thymeleaf, CodeMirror 5.65, Bootstrap 5 (Dark Theme).
+- **Frontend**: React, CodeMirror 5.65, Bootstrap 5 (Dark Theme).
 - **Cache**: Caffeine (Kafka Metadata).
 
 ---
