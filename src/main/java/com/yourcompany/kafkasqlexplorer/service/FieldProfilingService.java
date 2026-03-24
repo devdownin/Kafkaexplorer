@@ -181,8 +181,12 @@ Réponds avec ce JSON exact (camelCase, sans markdown) :
     }
 
     private boolean isApiKeyMissing() {
-        return (claudeConfig.getProvider() == ClaudeConfig.Provider.ANTHROPIC || claudeConfig.getApiKey() != null)
-            && (claudeConfig.getApiKey() == null || claudeConfig.getApiKey().isBlank());
+        // API key is mandatory for Anthropic
+        if (claudeConfig.getProvider() == ClaudeConfig.Provider.ANTHROPIC) {
+            return claudeConfig.getApiKey() == null || claudeConfig.getApiKey().isBlank();
+        }
+        // For OpenAI-compatible providers, the API key is optional
+        return false;
     }
 
     private void appendJsonString(StringBuilder sb, String value) {

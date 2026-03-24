@@ -32,13 +32,32 @@ class FieldProfilingServiceTest {
     }
 
     @Test
-    void testProfileWithMissingApiKey() {
+    void testProfileWithMissingApiKeyAnthropic() {
+        claudeConfig.setProvider(ClaudeConfig.Provider.ANTHROPIC);
         claudeConfig.setApiKey("");
         fieldProfilingService = new FieldProfilingService(snapshotReader, claudeConfig);
 
         FieldProfileResult result = fieldProfilingService.profile(List.of("topic1"), SnapshotConfig.latestN(10));
 
         assertTrue(result.warnings().contains("LLM API key not configured."));
+    }
+
+    @Test
+    void testProfileWithMissingApiKeyOpenAiCompatible() {
+        claudeConfig.setProvider(ClaudeConfig.Provider.OPENAI_COMPATIBLE);
+        claudeConfig.setApiKey("");
+        LlmClient llmClient = mock(LlmClient.class);
+        fieldProfilingService = new FieldProfilingService(snapshotReader, claudeConfig, llmClient);
+
+        when(snapshotReader.read(anyList(), any())).thenReturn(List.of(
+            new KafkaMessage("topic1", 0, 1L, 1000L, "key1", "{\"id\":1}")
+        ));
+        when(llmClient.generate(anyString(), anyString())).thenReturn("{\"topics\": [], \"warnings\": []}");
+
+        FieldProfileResult result = fieldProfilingService.profile(List.of("topic1"), SnapshotConfig.latestN(10));
+
+        assertNotNull(result);
+        assertTrue(result.warnings().isEmpty());
     }
 
     @Test

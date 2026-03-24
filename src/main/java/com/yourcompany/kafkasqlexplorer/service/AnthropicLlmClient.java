@@ -16,17 +16,23 @@ import java.util.stream.Collectors;
 public class AnthropicLlmClient implements LlmClient {
     private static final Logger log = LoggerFactory.getLogger(AnthropicLlmClient.class);
     private final ClaudeConfig config;
+    private final AnthropicClient client;
 
     public AnthropicLlmClient(ClaudeConfig config) {
         this.config = config;
+        var builder = AnthropicOkHttpClient.builder()
+            .apiKey(config.getApiKey());
+
+        if (config.getBaseUrl() != null && !config.getBaseUrl().isBlank()) {
+            builder.baseUrl(config.getBaseUrl());
+        }
+
+        this.client = builder.build();
     }
 
     @Override
     public String generate(String systemPrompt, String userPrompt) {
         try {
-            AnthropicClient client = AnthropicOkHttpClient.builder()
-                .apiKey(config.getApiKey())
-                .build();
 
             MessageCreateParams params = MessageCreateParams.builder()
                 .model(config.getModel())

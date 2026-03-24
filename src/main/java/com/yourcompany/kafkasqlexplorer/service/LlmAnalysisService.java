@@ -212,8 +212,12 @@ public class LlmAnalysisService {
     }
 
     private boolean isApiKeyMissing() {
-        return (claudeConfig.getProvider() == ClaudeConfig.Provider.ANTHROPIC || claudeConfig.getApiKey() != null)
-            && (claudeConfig.getApiKey() == null || claudeConfig.getApiKey().isBlank());
+        // API key is mandatory for Anthropic
+        if (claudeConfig.getProvider() == ClaudeConfig.Provider.ANTHROPIC) {
+            return claudeConfig.getApiKey() == null || claudeConfig.getApiKey().isBlank();
+        }
+        // For OpenAI-compatible providers, the API key is optional
+        return false;
     }
 
     private String callLlm(String userPrompt) {
