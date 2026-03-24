@@ -1,0 +1,169 @@
+[INFO] Scanning for projects...
+[INFO]
+[INFO] -----------------< com.yourcompany:kafka-sql-explorer >-----------------
+[INFO] Building kafka-sql-explorer 0.0.1-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO]
+[INFO] --- frontend:2.0.0:install-node-and-npm (install node and npm) @ kafka-sql-explorer ---
+[INFO] Node v20.11.1 is already installed.
+[INFO]
+[INFO] --- frontend:2.0.0:npm (npm install) @ kafka-sql-explorer ---
+[INFO] Running 'npm install' in /app/src/main/webapp
+[INFO]
+[INFO] up to date, audited 396 packages in 1s
+[INFO]
+[INFO] 56 packages are looking for funding
+[INFO]   run `npm fund` for details
+[INFO]
+[INFO] 5 vulnerabilities (4 moderate, 1 high)
+[INFO]
+[INFO] To address issues that do not require attention, run:
+[INFO]   npm audit fix
+[INFO]
+[INFO] To address all issues (including breaking changes), run:
+[INFO]   npm audit fix --force
+[INFO]
+[INFO] Run `npm audit` for details.
+[INFO]
+[INFO] --- frontend:2.0.0:npm (npm run build) @ kafka-sql-explorer ---
+[INFO] Running 'npm run build' in /app/src/main/webapp
+[INFO]
+[INFO] > kafka-sql-explorer-ui@1.0.0 build
+[INFO] > tsc && vite build
+[INFO]
+[INFO] vite v5.4.21 building for production...
+[INFO] transforming...
+[INFO] ✓ 2577 modules transformed.
+[INFO] rendering chunks...
+[INFO] computing gzip size...
+[INFO] ../resources/static/index.html                                           1.19 kB │ gzip:   0.55 kB
+[INFO] ../resources/static/assets/index-DdsiBU2F.css                           35.81 kB │ gzip:   6.86 kB
+[INFO] ../resources/static/assets/clone-BPcZ47to.js                             0.10 kB │ gzip:   0.11 kB
+[INFO] ../resources/static/assets/channel-rOoM0g8z.js                           0.11 kB │ gzip:   0.12 kB
+[INFO] ../resources/static/assets/chunk-QZHKN3VN-D62D_PmF.js                    0.19 kB │ gzip:   0.16 kB
+[INFO] ../resources/static/assets/chunk-55IACEB6-nrKH2U-h.js                    0.23 kB │ gzip:   0.21 kB
+[INFO] ../resources/static/assets/chunk-4BX2VUAB-eUF3ejcM.js                    0.29 kB │ gzip:   0.20 kB
+[INFO] ../resources/static/assets/stateDiagram-v2-FVOUBMTO-IqM-SnCB.js          0.36 kB │ gzip:   0.27 kB
+[INFO] ../resources/static/assets/chunk-FMBD7UC4-0rJCH-oN.js                    0.36 kB │ gzip:   0.27 kB
+[INFO] ../resources/static/assets/classDiagram-VBA2DB6C-zm4dsuuo.js             0.43 kB │ gzip:   0.30 kB
+[INFO] ../resources/static/assets/classDiagram-v2-RAHNMMFH-zm4dsuuo.js          0.43 kB │ gzip:   0.30 kB
+[INFO] ../resources/static/assets/chunk-KX2RTZJC-Co3RF0eG.js                    0.53 kB │ gzip:   0.37 kB
+[INFO] ../resources/static/assets/infoDiagram-LFFYTUFH-OfFGnp4I.js              0.64 kB │ gzip:   0.43 kB
+[INFO] ../resources/static/assets/chunk-JSJVCQXG-IH1onHrW.js                    1.85 kB │ gzip:   0.82 kB
+[INFO] ../resources/static/assets/_basePickBy-BNjXlZKe.js                       2.57 kB │ gzip:   1.28 kB
+[INFO] ../resources/static/assets/arc-jFQKx2gT.js                               3.43 kB │ gzip:   1.48 kB
+[INFO] ../resources/static/assets/diagram-P4PSJMXO-CMG8x-ZW.js                  4.30 kB │ gzip:   1.89 kB
+[INFO] ../resources/static/assets/pieDiagram-SKSYHLDU-CMNpVmMy.js               5.17 kB │ gzip:   2.29 kB
+[INFO] ../resources/static/assets/diagram-P4PSJMXO-CMG8x-ZW.js                  4.30 kB │ gzip:   1.89 kB
+[INFO] (!) Some chunks are larger than 500 kB after minification. Consider:
+[INFO] - Using dynamic import() to code-split the application
+[INFO] - Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+[INFO] - Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+[INFO] ../resources/static/assets/graph-CzEB35Th.js                             5.91 kB │ gzip:   1.87 kB
+[INFO] ../resources/static/assets/diagram-IFDJBPK2-DRYo5zz6.js                  6.02 kB │ gzip:   2.54 kB
+[INFO] ../resources/static/assets/stateDiagram-RAJIS63D-COLYfmw2.js            10.35 kB │ gzip:   3.62 kB
+[INFO] ../resources/static/assets/dagre-KLK3FWXG-xF6kwHs1.js                   11.23 kB │ gzip:   4.18 kB
+[INFO] ../resources/static/assets/_baseUniq-DtTPKgQr.js                        11.90 kB │ gzip:   4.65 kB
+[INFO] ../resources/static/assets/diagram-E7M64L7V-CXI1mLzk.js                 15.84 kB │ gzip:   5.64 kB
+[INFO] ../resources/static/assets/ishikawaDiagram-PHBUUO56-Q42NRdah.js         17.51 kB │ gzip:   6.65 kB
+[INFO] ../resources/static/assets/kanban-definition-K7BYSVSG-CaxOBe8Q.js       20.61 kB │ gzip:   7.24 kB
+[INFO] ../resources/static/assets/mindmap-definition-YRQLILUH-ChxvXo8r.js      21.04 kB │ gzip:   7.35 kB
+[INFO] ../resources/static/assets/sankeyDiagram-WA2Y5GQK-3EJfsRRr.js           22.14 kB │ gzip:   8.10 kB
+[INFO] ../resources/static/assets/journeyDiagram-4ABVD52K-Bhci-WBj.js          23.52 kB │ gzip:   8.31 kB
+[INFO] ../resources/static/assets/timeline-definition-YZTLITO2-Swtsvt1Q.js     23.69 kB │ gzip:   8.27 kB
+[INFO] ../resources/static/assets/gitGraphDiagram-K3NZZRJ6-vvm9quGq.js         24.59 kB │ gzip:   7.60 kB
+[INFO] ../resources/static/assets/erDiagram-INFDFZHY-Bi0yaAec.js               26.00 kB │ gzip:   9.03 kB
+[INFO] ../resources/static/assets/layout-Dndq3t1M.js                           27.38 kB │ gzip:   9.72 kB
+[INFO] ../resources/static/assets/requirementDiagram-Z7DCOOCP-Bj-bPKR0.js      30.44 kB │ gzip:   9.51 kB
+[INFO] ../resources/static/assets/quadrantDiagram-337W2JSQ-BQrv9gRN.js         34.18 kB │ gzip:  10.04 kB
+[INFO] ../resources/static/assets/chunk-NQ4KR5QH-C21mHeUG.js                   36.83 kB │ gzip:  11.99 kB
+[INFO] ../resources/static/assets/xychartDiagram-JWTSCODW-CkgKZ8Y2.js          38.78 kB │ gzip:  10.88 kB
+[INFO] ../resources/static/assets/vennDiagram-LZ73GAT5-CQ8H0NIm.js             41.80 kB │ gzip:  15.55 kB
+[INFO] ../resources/static/assets/chunk-WL4C6EOR-ORF__QpP.js                   46.37 kB │ gzip:  14.95 kB
+[INFO] ../resources/static/assets/ganttDiagram-A5KZAMGK-Zbyi-GEk.js            54.00 kB │ gzip:  18.66 kB
+[INFO] ../resources/static/assets/flowDiagram-PKNHOUZH-DcYk1dgw.js             61.51 kB │ gzip:  19.64 kB
+[INFO] ../resources/static/assets/c4Diagram-IC4MRINW-BfMb5nsP.js               70.12 kB │ gzip:  19.67 kB
+[INFO] ../resources/static/assets/blockDiagram-WCTKOSBZ-B1DxNtwj.js            72.06 kB │ gzip:  20.50 kB
+[INFO] ../resources/static/assets/cose-bilkent-S5V4N54A-BKySlT6m.js            81.51 kB │ gzip:  22.42 kB
+[INFO] ../resources/static/assets/sequenceDiagram-2WXFIKYE-CpuzNXcT.js        111.59 kB │ gzip:  29.38 kB
+[INFO] ../resources/static/assets/architectureDiagram-2XIMDMQ5-DCXWtK9h.js    149.19 kB │ gzip:  42.20 kB
+[INFO] ../resources/static/assets/katex-B1X10hvy.js                           255.85 kB │ gzip:  76.90 kB
+[INFO] ../resources/static/assets/cytoscape.esm-CyJtwmzi.js                   442.41 kB │ gzip: 141.90 kB
+[INFO] ../resources/static/assets/treemap-KZPCXAKY-B11i7iXJ.js                453.30 kB │ gzip: 107.47 kB
+[INFO] ../resources/static/assets/index-C7-3LM_a.js                         1,352.27 kB │ gzip: 380.71 kB
+[INFO] ✓ built in 16.66s
+[INFO]
+[INFO] --- resources:3.3.1:resources (default-resources) @ kafka-sql-explorer ---
+[INFO] Copying 1 resource from src/main/resources to target/classes
+[INFO] Copying 50 resources from src/main/resources to target/classes
+[INFO]
+[INFO] --- compiler:3.14.1:compile (default-compile) @ kafka-sql-explorer ---
+[INFO] Nothing to compile - all classes are up to date.
+[INFO]
+[INFO] --- resources:3.3.1:testResources (default-testResources) @ kafka-sql-explorer ---
+[INFO] skip non existing resourceDirectory /app/src/test/resources
+[INFO]
+[INFO] --- compiler:3.14.1:testCompile (default-testCompile) @ kafka-sql-explorer ---
+[INFO] Nothing to compile - all classes are up to date.
+[INFO]
+[INFO] --- surefire:3.5.4:test (default-test) @ kafka-sql-explorer ---
+[INFO] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider
+[INFO]
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+[INFO] Running com.yourcompany.kafkasqlexplorer.service.DdlGeneratorServiceTest
+[ERROR] Tests run: 4, Failures: 2, Errors: 0, Skipped: 0, Time elapsed: 0.159 s <<< FAILURE! -- in com.yourcompany.kafkasqlexplorer.service.DdlGeneratorServiceTest
+[ERROR] com.yourcompany.kafkasqlexplorer.service.DdlGeneratorServiceTest.testGenerateJsonDdl -- Time elapsed: 0.111 s <<< FAILURE!
+org.opentest4j.AssertionFailedError: expected: <true> but was: <false>
+	at org.junit.jupiter.api.AssertionFailureBuilder.build(AssertionFailureBuilder.java:151)
+	at org.junit.jupiter.api.AssertionFailureBuilder.buildAndThrow(AssertionFailureBuilder.java:132)
+	at org.junit.jupiter.api.AssertTrue.failNotTrue(AssertTrue.java:63)
+	at org.junit.jupiter.api.AssertTrue.assertTrue(AssertTrue.java:36)
+	at org.junit.jupiter.api.AssertTrue.assertTrue(AssertTrue.java:31)
+	at org.junit.jupiter.api.Assertions.assertTrue(Assertions.java:183)
+	at com.yourcompany.kafkasqlexplorer.service.DdlGeneratorServiceTest.testGenerateJsonDdl(DdlGeneratorServiceTest.java:25)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+
+[ERROR] com.yourcompany.kafkasqlexplorer.service.DdlGeneratorServiceTest.testGenerateXmlDdl -- Time elapsed: 0.005 s <<< FAILURE!
+org.opentest4j.AssertionFailedError: expected: <true> but was: <false>
+	at org.junit.jupiter.api.AssertionFailureBuilder.build(AssertionFailureBuilder.java:151)
+	at org.junit.jupiter.api.AssertionFailureBuilder.buildAndThrow(AssertionFailureBuilder.java:132)
+	at org.junit.jupiter.api.AssertTrue.failNotTrue(AssertTrue.java:63)
+	at org.junit.jupiter.api.AssertTrue.assertTrue(AssertTrue.java:36)
+	at org.junit.jupiter.api.AssertTrue.assertTrue(AssertTrue.java:31)
+	at org.junit.jupiter.api.Assertions.assertTrue(Assertions.java:183)
+	at com.yourcompany.kafkasqlexplorer.service.DdlGeneratorServiceTest.testGenerateXmlDdl(DdlGeneratorServiceTest.java:46)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+
+[INFO]
+[INFO] Results:
+[INFO]
+[ERROR] Failures:
+[ERROR]   DdlGeneratorServiceTest.testGenerateJsonDdl:25 expected: <true> but was: <false>
+[ERROR]   DdlGeneratorServiceTest.testGenerateXmlDdl:46 expected: <true> but was: <false>
+[INFO]
+[ERROR] Tests run: 4, Failures: 2, Errors: 0, Skipped: 0
+[INFO]
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD FAILURE
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  27.261 s
+[INFO] Finished at: 2026-03-24T21:48:34Z
+[INFO] ------------------------------------------------------------------------
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.5.4:test (default-test) on project kafka-sql-explorer: There are test failures.
+[ERROR]
+[ERROR] See /app/target/surefire-reports for the individual test results.
+[ERROR] See dump files (if any exist) [date].dump, [date]-jvmRun[N].dump and [date].dumpstream.
+[ERROR] -> [Help 1]
+[ERROR]
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR]
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException

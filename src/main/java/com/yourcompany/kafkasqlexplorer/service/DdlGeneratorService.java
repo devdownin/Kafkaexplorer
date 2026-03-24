@@ -47,27 +47,22 @@ public class DdlGeneratorService {
         StringBuilder sb = new StringBuilder();
         sb.append("CREATE TABLE IF NOT EXISTS ").append(tableName).append(" (\n");
 
+        List<String> columns = new ArrayList<>();
         if (format == MessageFormat.XML) {
             // No Flink native XML format: read message as raw string, parse via XmlExtract UDF.
-            sb.append("    raw_value STRING\n");
-        } else if (format == MessageFormat.AVRO) {
-            // Avro-confluent format: Flink will fetch the schema automatically from the registry.
-            // We still provide the column names for convenience in the editor.
-            List<String> cols = new ArrayList<>(schema.keySet());
-            for (int i = 0; i < cols.size(); i++) {
-                sb.append("    `").append(cols.get(i)).append("` ").append(schema.get(cols.get(i)));
-                if (i < cols.size() - 1) sb.append(",");
-                sb.append("\n");
-            }
+            columns.add("    raw_value STRING");
         } else {
-            // JSON and AUTO (unknown/empty topic): use format='json' with ignore-parse-errors.
-            List<String> cols = new ArrayList<>(schema.keySet());
-            for (int i = 0; i < cols.size(); i++) {
-                sb.append("    `").append(cols.get(i)).append("` ").append(schema.get(cols.get(i)));
-                if (i < cols.size() - 1) sb.append(",");
-                sb.append("\n");
+            // JSON, AVRO and AUTO (unknown/empty topic): provide column names for convenience.
+            for (Map.Entry<String, String> entry : schema.entrySet()) {
+                columns.add("    `" + entry.getKey() + "` " + entry.getValue());
             }
         }
+
+        // Common columns
+        columns.add("    event_time TIMESTAMP(3) METADATA FROM 'timestamp' VIRTUAL");
+        columns.add("    proc_time AS PROCTIME()");
+
+        sb.append(String.join(",\n", columns)).append("\n");
         sb.append(") WITH (\n");
         sb.append("    'topic' = '").append(topicName).append("',\n");
         sb.append("    'properties.group.id' = 'flink_table_").append(tableName).append("',\n");

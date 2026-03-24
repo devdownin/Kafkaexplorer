@@ -269,16 +269,19 @@ public class FlinkSqlService {
             int limit = request.maxRows() != null ? request.maxRows() : explorerConfig.getDefaultMaxRows();
             long timeout = request.timeout() != null ? request.timeout() : explorerConfig.getDefaultQueryTimeoutMs();
 
-            // SELECT queries: Flink's embedded SQL planner NPEs on all SELECT statements due to a
-            // FlinkRelMetadataQuery bug (metadataHandlerProvider=null in all tested Flink versions).
-            // Bypass Flink entirely for SELECT and read directly from Kafka instead.
+            // SELECT queries: Flink's embedded SQL planner NPEs on SELECT statements for Kafka tables
+            // due to a FlinkRelMetadataQuery bug (metadataHandlerProvider=null).
+            // Bypass Flink for Kafka topics and read directly via KafkaConsumer instead.
             if (sqlToExecute.trim().toUpperCase().startsWith("SELECT")) {
                 QueryResult qr = kafkaDirectSelect(sqlToExecute, readMode, limit, startTime);
-                // Propagate auto-registration flag so the frontend can refresh its schema browser.
-                if (autoReg.registered()) {
-                    return new QueryResult(qr.columns(), qr.rows(), qr.durationMs(), qr.error(), true);
+                if (qr != null) {
+                    // Propagate auto-registration flag so the frontend can refresh its schema browser.
+                    if (autoReg.registered()) {
+                        return new QueryResult(qr.columns(), qr.rows(), qr.durationMs(), qr.error(), true);
+                    }
+                    return qr;
                 }
-                return qr;
+                // If kafkaDirectSelect returned null, it means it's not a Kafka table; fall through to Flink.
             }
 
             final String finalSql = sqlToExecute;
@@ -465,16 +468,37 @@ public class FlinkSqlService {
         return current;
     }
 
+    private boolean isKafkaTable(String tableName) {
+        if (tableName == null) return false;
+        try {
+            // Views never use the Kafka bypass
+            if (Arrays.asList(tableEnv.listViews()).contains(tableName)) return false;
+            // Check if the table is registered in Flink with a Kafka connector
+            TableResult res = tableEnv.executeSql("SHOW CREATE TABLE `" + tableName + "`");
+            try (org.apache.flink.util.CloseableIterator<Row> it = res.collect()) {
+                if (it.hasNext()) {
+                    String ddl = it.next().getField(0).toString();
+                    return ddl.toLowerCase().contains("'connector' = 'kafka'");
+                }
+            }
+        } catch (Exception ignored) {}
+        return false;
+    }
+
     private QueryResult kafkaDirectSelect(String sql, String readMode, int limit, long startTime) {
         // Extract table name from FROM clause
         Pattern fromPattern = Pattern.compile("(?i)\\bFROM\\s+`?([\\w.\\-]+)`?");
         Matcher fromMatcher = fromPattern.matcher(sql);
         if (!fromMatcher.find()) {
-            return new QueryResult(Collections.emptyList(), Collections.emptyList(),
-                System.currentTimeMillis() - startTime, "Cannot parse table name from SQL");
+            return null;
         }
         String rawTableRef = fromMatcher.group(1);
         String flinkTableName = DdlGeneratorService.toTableName(rawTableRef);
+
+        // Bypass check: if table is known to Flink but not Kafka-backed, return null to fall back to Flink
+        if (listTables().contains(flinkTableName) && !isKafkaTable(flinkTableName)) {
+            return null;
+        }
 
         // Detect TUMBLE / HOP / SESSION window functions — route to dedicated handler
         if (Pattern.compile("(?i)\\bTABLE\\s*\\(\\s*(TUMBLE|HOP|SESSION)\\s*\\(").matcher(sql).find()) {
@@ -499,16 +523,13 @@ public class FlinkSqlService {
         try {
             topics = kafkaAdminService.listTopics();
         } catch (Exception e) {
-            return new QueryResult(Collections.emptyList(), Collections.emptyList(),
-                System.currentTimeMillis() - startTime, "Cannot reach Kafka broker: " + e.getMessage());
+            return null; // Fallback to Flink (which will fail with broker error)
         }
         String topic = topics.stream()
             .filter(t -> DdlGeneratorService.toTableName(t).equals(flinkTableName))
             .findFirst().orElse(null);
         if (topic == null) {
-            return new QueryResult(Collections.emptyList(), Collections.emptyList(),
-                System.currentTimeMillis() - startTime,
-                "Table '" + rawTableRef + "' not found. No matching Kafka topic exists.");
+            return null; // Not a Kafka topic, let Flink handle it (e.g. datagen or in-memory view)
         }
 
         // For aggregates, read all available messages; for projections, cap at limit
