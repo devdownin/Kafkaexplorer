@@ -188,7 +188,9 @@ public class FlinkSqlService {
         String rawTableRef = matcher.group(1);
         String flinkTableName = DdlGeneratorService.toTableName(rawTableRef);
 
-        if (listTables().contains(flinkTableName)) return AutoRegResult.skip();
+        if (listTables().contains(flinkTableName) || Arrays.asList(tableEnv.listViews()).contains(flinkTableName)) {
+            return AutoRegResult.skip();
+        }
 
         List<String> topics;
         try {
@@ -471,16 +473,23 @@ public class FlinkSqlService {
     private boolean isKafkaTable(String tableName) {
         if (tableName == null) return false;
         try {
-            // Views never use the Kafka bypass
-            if (Arrays.asList(tableEnv.listViews()).contains(tableName)) return false;
-            // Check if the table is registered in Flink with a Kafka connector
-            TableResult res = tableEnv.executeSql("SHOW CREATE TABLE `" + tableName + "`");
-            try (org.apache.flink.util.CloseableIterator<Row> it = res.collect()) {
-                if (it.hasNext()) {
-                    String ddl = it.next().getField(0).toString();
-                    return ddl.toLowerCase().contains("'connector' = 'kafka'");
+            return withFlinkCL(() -> {
+                // Views never use the Kafka bypass
+                if (Arrays.asList(tableEnv.listViews()).contains(tableName)) return false;
+                // Check if the table is registered in Flink with a Kafka connector
+                TableResult res = tableEnv.executeSql("SHOW CREATE TABLE `" + tableName + "`");
+                try (org.apache.flink.util.CloseableIterator<Row> it = res.collect()) {
+                    if (it.hasNext()) {
+                        String ddl = it.next().getField(0).toString();
+                        return ddl.toLowerCase().contains("'connector' = 'kafka'") ||
+                               ddl.toLowerCase().contains("\"connector\" = \"kafka\"") ||
+                               ddl.toLowerCase().contains("'connector'='kafka'");
+                    }
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
                 }
-            }
+                return false;
+            });
         } catch (Exception ignored) {}
         return false;
     }
@@ -502,7 +511,8 @@ public class FlinkSqlService {
 
         // Detect TUMBLE / HOP / SESSION window functions — route to dedicated handler
         if (Pattern.compile("(?i)\\bTABLE\\s*\\(\\s*(TUMBLE|HOP|SESSION)\\s*\\(").matcher(sql).find()) {
-            return kafkaWindowSelect(sql, readMode, limit, startTime);
+            QueryResult qr = kafkaWindowSelect(sql, readMode, limit, startTime);
+            if (qr != null) return qr;
         }
 
         // Detect aggregate functions in the SELECT portion only (before FROM)
@@ -710,9 +720,7 @@ public class FlinkSqlService {
             .filter(t -> DdlGeneratorService.toTableName(t).equals(flinkTableName))
             .findFirst().orElse(null);
         if (topic == null) {
-            return new QueryResult(Collections.emptyList(), Collections.emptyList(),
-                System.currentTimeMillis() - startTime,
-                "Table '" + tableName + "' not found. No matching Kafka topic exists.");
+            return null; // Not a Kafka topic, let Flink handle it
         }
 
         // Fetch all messages (windows aggregate over the full dataset)
