@@ -32,6 +32,7 @@ public class FieldProfilingService {
     private final LlmClient llmClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    @org.springframework.beans.factory.annotation.Autowired
     public FieldProfilingService(KafkaSnapshotReader snapshotReader, ClaudeConfig claudeConfig) {
         this(snapshotReader, claudeConfig, claudeConfig.getProvider() == ClaudeConfig.Provider.ANTHROPIC
             ? new AnthropicLlmClient(claudeConfig)
