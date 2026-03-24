@@ -25,7 +25,7 @@ C4Container
     Person(user, "Data Engineer / Architect", "Uses the explorer")
 
     System_Boundary(c1, "Kafka SQL Explorer") {
-        Container(web_ui, "Web UI", "Thymeleaf, Bootstrap, CodeMirror", "Visualizes topics, query results, and lineage graphs.")
+        Container(web_ui, "Web UI", "React 19, Tailwind CSS, Monaco Editor", "Visualizes topics, query results, and lineage graphs.")
         Container(spring_app, "Spring Boot Application", "Java 21, Spring Boot 3.5", "Handles business logic, security, and integration.")
         Container(flink_engine, "Embedded Flink Engine", "Apache Flink 2.2", "Executes SQL queries against Kafka topics.")
     }

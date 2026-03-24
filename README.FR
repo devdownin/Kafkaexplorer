@@ -1,8 +1,8 @@
 # KAFKA SQL EXPLORER
 [![Java CI with Maven](https://github.com/yourusername/kafka-sql-explorer/actions/workflows/ci.yml/badge.svg)](https://github.com/yourusername/kafka-sql-explorer/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![License](https://img.shields.io/badge/License-AGPL%20v3-red.svg)](LICENSE)
 
-**Spring Boot 3.x | Apache Flink 2.2.x (Embedded) | Java 21**
+**Spring Boot 3.5.x | Apache Flink 2.2.x (Embedded) | Java 21 | React 19**
 
 Kafka SQL Explorer est une application web moderne conçue pour les Data Engineers et Architectes, permettant d'explorer des clusters Kafka et d'interroger les topics en temps réel via SQL Flink.
 
@@ -52,7 +52,7 @@ Filtrage Temporel : Limitez la recherche à une fenêtre de temps spécifique (e
 Scan Parallèle : Balayage concurrent des topics à haute performance avec gestion des limites de ressources.
 Visualisation Chronologique : Graphe interactif illustrant le flux séquentiel des messages entre les topics.
 6. Éditeur SQL Professionnel
-Moteur CodeMirror : Coloration syntaxique SQL et thème Cyberpunk.
+Monaco Editor : Éditeur SQL haute performance (moteur VS Code) avec coloration syntaxique et thème Cyberpunk.
 Sélecteur de Mode de Lecture : Toggle entre offsets **Earliest** (début du topic) et **Latest** (nouveaux messages uniquement) directement dans l'UI.
 Hints SQL Dynamiques : Injection automatique de hints Flink SQL (`/*+ OPTIONS(...) */`) pour un contrôle précis des offsets par requête sans modifier le DDL.
 Auto-complétion : Suggestion intelligente des noms de topics et tables enregistrées (Ctrl+Space).
@@ -82,7 +82,7 @@ Stack Technique
 Backend : Spring Boot 3.5.x, Java 21 (Records).
 Streaming : Apache Flink 2.2.x (Embedded LocalEnvironment).
 Parsing : Jackson (JSON), JAXB/StAX (XML).
-Frontend : Thymeleaf, CodeMirror 5.65, Bootstrap 5 (Theme Dark).
+Frontend : React 19, Tailwind CSS, Monaco Editor, Vite.
 Cache : Caffeine (Métadonnées Kafka).
 Démarrage Rapide
 Prérequis
@@ -138,4 +138,4 @@ WHERE JSON_VALUE(raw_value, '$.quality_control.score') > 95;
 - **Contribution** : Consultez notre [Guide de Contribution](CONTRIBUTING.md) pour commencer.
 
 ---
-© 2026 Kafka SQL Explorer - Compagnons du dev. Terminal UI
+© 2026 Kafka SQL Explorer - Compagnons du dev. Sous licence AGPL v3.
