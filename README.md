@@ -159,13 +159,27 @@ export ANTHROPIC_API_KEY='your-api-key'
 ```
 
 ### Option B: Open Source / Local (Ollama, vLLM, LM Studio)
+
+#### Manual Setup
 1. Run your model (e.g., `ollama run qwen2.5-coder:7b`).
-2. Update `src/main/resources/application.yml`:
-```yaml
-claude:
-  provider: OPENAI_COMPATIBLE
-  base-url: http://localhost:11434/v1 # For Ollama
-  model: qwen2.5-coder:7b
+2. The application is pre-configured to look for environment variables. You can set them before running:
+```bash
+export CLAUDE_PROVIDER=OPENAI_COMPATIBLE
+export CLAUDE_BASE_URL=http://localhost:11434/v1
+export CLAUDE_MODEL=qwen2.5-coder:7b
+```
+
+#### Automated Script (Linux)
+You can use the provided script to install Ollama and pull the recommended model automatically:
+```bash
+chmod +x setup-llm.sh
+./setup-llm.sh
+```
+
+#### Docker Compose (Full Stack)
+To launch Kafka, the Explorer, and Ollama with the model pre-loaded:
+```bash
+docker compose -f docker-compose-llm.yml up -d
 ```
 
 ### Recommended Lightweight Models

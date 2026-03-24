@@ -70,7 +70,14 @@ Historique d'Audit : Persistance des rapports dans un topic Kafka dédié (inter
 Protection XXE : Désactivation stricte des entités externes DTD pour tous les parsers XML (Schema Inferrer, UDF, Formatter).
 Validation SQL : Whitelist de commandes autorisées (SELECT, EXPLAIN, CREATE TABLE) pour empêcher les opérations DML destructrices.
 Gestion des Connexions : Lifecycle propre de l'AdminClient Kafka et des consommateurs.
-9. Environnement de Démo & Sandbox
+9. Process Mining & Analyse IA (LLM)
+Kafka Explorer intègre l'IA pour analyser les flux de messages et détecter les anomalies :
+- **Profilage automatique des champs** : Détecte les champs `CORRELATION_ID`, `TIMESTAMP` et `STATUS` à travers les topics.
+- **Reconstruction de flux** : Génère des diagrammes Mermaid de vos processus métier.
+- **Détection d'anomalies** : Identifie les ruptures de séquence, les délais temporels et les incohérences structurelles.
+- **Support Multi-Provider** : Compatible avec **Claude (Anthropic)** et les **modèles Open Source** (via les API compatibles OpenAI comme Ollama).
+
+10. Environnement de Démo & Sandbox
 L'application inclut une configuration de démonstration automatisée pour explorer les fonctionnalités immédiatement :
 Pipeline de Commande en 6 étapes : Topics séquentiels (demo.orders.1.received à 6.delivered) pour tester la traçabilité Stream Flow.
 JOINs & Données de Référence : Un topic demo.customers pour pratiquer les jointures SQL avec les commandes.
@@ -130,6 +137,48 @@ SELECT order_id,
 FROM "demo.sc.13.carrier.assigned.out"
 WHERE JSON_VALUE(raw_value, '$.quality_control.score') > 95;
 ```
+
+---
+
+## 🤖 Configuration LLM (Process Mining)
+
+Kafka Explorer supporte à la fois les LLM cloud et locaux pour le process mining.
+
+### Option A : Anthropic Claude (Par défaut)
+Définissez votre clé API comme variable d'environnement :
+```bash
+export ANTHROPIC_API_KEY='votre-cle-api'
+```
+
+### Option B : Open Source / Local (Ollama, vLLM, LM Studio)
+
+#### Configuration Manuelle
+1. Lancez votre modèle (ex: `ollama run qwen2.5-coder:7b`).
+2. L'application est pré-configurée pour lire des variables d'environnement. Vous pouvez les définir avant le lancement :
+```bash
+export CLAUDE_PROVIDER=OPENAI_COMPATIBLE
+export CLAUDE_BASE_URL=http://localhost:11434/v1
+export CLAUDE_MODEL=qwen2.5-coder:7b
+```
+
+#### Script Automatisé (Linux)
+Vous pouvez utiliser le script fourni pour installer Ollama et télécharger le modèle recommandé automatiquement :
+```bash
+chmod +x setup-llm.sh
+./setup-llm.sh
+```
+
+#### Docker Compose (Stack Complète)
+Pour lancer Kafka, l'Explorer et Ollama avec le modèle pré-chargé :
+```bash
+docker compose -f docker-compose-llm.yml up -d
+```
+
+### Modèles Légers Recommandés
+- **Qwen 2.5-Coder 7B** : Le meilleur pour l'extraction JSON et la logique.
+- **Llama 3.2 3B** : Rapide pour l'analyse en temps réel (LIVE).
+- **DeepSeek-R1-Distill-Qwen-7B** : Supérieur pour le raisonnement complexe sur les anomalies.
+
 ---
 
 ## 🤝 Communauté & Support
