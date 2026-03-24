@@ -2,7 +2,7 @@
 
 Ce document détaille l'ensemble des modules du **Kafka SQL Explorer**. L'objectif est de transformer une interface technique basique en une plateforme moderne, ergonomique et hautement productive pour les ingénieurs de données.
 
-## 1. Structure Globale & Navigation (`layout.html`)
+## 1. Structure Globale & Navigation (`Layout.tsx`)
 *   **Concept :** Interface "Dark Mode" professionnelle avec des accents colorés (Teal/Cyan) pour la lisibilité technique.
 *   **Navigation :** Une barre latérale ou supérieure persistante permettant de basculer entre :
     *   **Dashboard** (Vue d'ensemble)
@@ -21,8 +21,8 @@ Ce document détaille l'ensemble des modules du **Kafka SQL Explorer**. L'object
     *   Actions : Bouton d'exploration rapide.
 *   **Surveillance des Jobs :** Liste des requêtes SQL de streaming tournant en tâche de fond avec possibilité de les arrêter (Kill process).
 
-## 3. Éditeur SQL & Assistant (`query.html`)
-*   **Zone d'Édition :** Éditeur de code (type CodeMirror) avec coloration syntaxique SQL, numérotation des lignes et auto-complétion.
+## 3. Éditeur SQL & Assistant (`Query.tsx`)
+*   **Zone d'Édition :** Éditeur de code (type Monaco Editor) avec coloration syntaxique SQL, numérotation des lignes et auto-complétion.
 *   **Contrôles de lecture :** Toggle pour choisir entre lire depuis le début du topic (*Earliest*) ou uniquement les nouveaux messages (*Latest*).
 *   **Assistant de Fenêtrage (Window Assistant) :** Interface par étapes pour générer des requêtes de fenêtres de temps (Tumble/Hop) sans avoir à connaître la syntaxe complexe de Flink SQL.
 *   **Schema Browser (Sidebar) :** Panneau latéral affichant l'arborescence des tables et topics. Un clic sur une colonne doit l'insérer dans l'éditeur.

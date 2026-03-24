@@ -1,8 +1,8 @@
 # KAFKA SQL EXPLORER
 [![Java CI with Maven](https://github.com/yourusername/kafka-sql-explorer/actions/workflows/ci.yml/badge.svg)](https://github.com/yourusername/kafka-sql-explorer/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![License](https://img.shields.io/badge/License-AGPL%20v3-red.svg)](LICENSE)
 
-**Spring Boot 3.x | Apache Flink 2.2.x (Embedded) | Java 21**
+**Spring Boot 3.5.x | Apache Flink 2.2.x (Embedded) | Java 21 | React 19**
 
 Kafka SQL Explorer is a modern web application designed for Data Engineers and Architects, allowing them to explore Kafka clusters and query topics in real-time via Flink SQL.
 
@@ -54,7 +54,7 @@ The assistant transforms the message preview into a query design tool:
 - **One-Click Registration**: "Register Table" button to instantly execute the generated DDL.
 
 ### 4. Professional SQL Editor
-- **CodeMirror Engine**: SQL syntax highlighting and Cyberpunk theme.
+- **Monaco Editor**: High-performance SQL editor (VS Code engine) with SQL syntax highlighting and Cyberpunk theme.
 - **Read Mode Switch**: Toggle between **Earliest** (start from beginning) and **Latest** (new messages only) offsets directly in the UI.
 - **Dynamic SQL Hints**: Automatic injection of Flink SQL hints (`/*+ OPTIONS(...) */`) for per-query offset control without DDL changes.
 - **Auto-completion**: Intelligent suggestion of topic names and registered tables (`Ctrl+Space`).
@@ -116,7 +116,7 @@ The application includes an automated demonstration setup to help you explore fe
 - **Backend**: Spring Boot 3.5.x, Java 21 (Records).
 - **Streaming**: Apache Flink 2.2.x (Embedded LocalEnvironment).
 - **Parsing**: Jackson (JSON), JAXB/StAX (XML).
-- **Frontend**: React, CodeMirror 5.65, Bootstrap 5 (Dark Theme).
+- **Frontend**: React 19, Tailwind CSS, Monaco Editor, Vite.
 - **Cache**: Caffeine (Kafka Metadata).
 
 ---
@@ -208,4 +208,4 @@ WHERE JSON_VALUE(raw_value, '$.quality_control.score') > 95;
 - **Contributing**: Check our [Contributing Guide](CONTRIBUTING.md) to get started.
 
 ---
-*© 2026 Kafka SQL Explorer - Compagnons du dev. Terminal UI*
+*© 2026 Kafka SQL Explorer - Compagnons du dev. Licensed under AGPL v3.*
