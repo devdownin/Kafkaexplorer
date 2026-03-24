@@ -15,8 +15,8 @@
     <description>Kafka SQL Explorer with Flink Embedded</description>
     <licenses>
         <license>
-            <name>GNU Affero General Public License v3.0</name>
-            <url>https://www.gnu.org/licenses/agpl-3.0.txt</url>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
             <distribution>repo</distribution>
         </license>
     </licenses>
@@ -248,14 +248,21 @@
             </plugin>
         </plugins>
     </build>
-	<url/>
-	<developers>
-		<developer/>
-	</developers>
-	<scm>
-		<connection/>
-		<developerConnection/>
-		<tag/>
-		<url/>
-	</scm>
+    <url>https://github.com/yourusername/kafka-sql-explorer</url>
+
+    <developers>
+        <developer>
+            <id>owner</id>
+            <name>Compagnons du dev</name>
+            <email>contact@compagnonsdudev.com</email>
+            <organization>Compagnons du dev</organization>
+            <organizationUrl>https://compagnonsdudev.com</organizationUrl>
+        </developer>
+    </developers>
+
+    <scm>
+        <connection>scm:git:git://github.com/yourusername/kafka-sql-explorer.git</connection>
+        <developerConnection>scm:git:ssh://github.com:yourusername/kafka-sql-explorer.git</developerConnection>
+        <url>https://github.com/yourusername/kafka-sql-explorer/tree/main</url>
+    </scm>
 </project>

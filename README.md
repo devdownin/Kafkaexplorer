@@ -1,4 +1,7 @@
 # KAFKA SQL EXPLORER
+[![Java CI with Maven](https://github.com/yourusername/kafka-sql-explorer/actions/workflows/ci.yml/badge.svg)](https://github.com/yourusername/kafka-sql-explorer/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+
 **Spring Boot 3.x | Apache Flink 2.2.x (Embedded) | Java 21**
 
 Kafka SQL Explorer is a modern web application designed for Data Engineers and Architects, allowing them to explore Kafka clusters and query topics in real-time via Flink SQL.
@@ -196,6 +199,13 @@ SELECT order_id,
 FROM "demo.sc.13.carrier.assigned.out"
 WHERE JSON_VALUE(raw_value, '$.quality_control.score') > 95;
 ```
+
+---
+
+## 🤝 Community & Support
+- **Code of Conduct**: We expect all contributors to follow our [Code of Conduct](CODE_OF_CONDUCT.md).
+- **Security**: Please report security vulnerabilities to [security@example.com](mailto:security@example.com) as per our [Security Policy](SECURITY.md).
+- **Contributing**: Check our [Contributing Guide](CONTRIBUTING.md) to get started.
 
 ---
 *© 2026 Kafka SQL Explorer - Compagnons du dev. Terminal UI*
