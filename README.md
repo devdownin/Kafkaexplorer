@@ -169,11 +169,18 @@ export CLAUDE_BASE_URL=http://localhost:11434/v1
 export CLAUDE_MODEL=qwen2.5-coder:7b
 ```
 
-#### Automated Script (Linux)
-You can use the provided script to install Ollama and pull the recommended model automatically:
+#### Automated Scripts
+You can use the provided scripts to install Ollama and pull the recommended model automatically:
+
+**Linux / macOS:**
 ```bash
 chmod +x setup-llm.sh
-./setup-llm.sh
+source ./setup-llm.sh
+```
+
+**Windows (PowerShell):**
+```powershell
+./setup-llm.ps1
 ```
 
 #### Docker Compose (Full Stack)

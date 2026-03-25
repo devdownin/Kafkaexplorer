@@ -37,19 +37,22 @@ fi
 echo "Pulling model: $MODEL_NAME (this may take a while)..."
 ollama pull "$MODEL_NAME"
 
+# 5. Export environment variables
+export CLAUDE_PROVIDER=OPENAI_COMPATIBLE
+export CLAUDE_BASE_URL=http://localhost:11434/v1
+export CLAUDE_MODEL=$MODEL_NAME
+
 echo ""
 echo "--- Setup Complete ---"
-echo "To use this model with Kafka SQL Explorer, update your application.yml or set environment variables:"
+echo "Environment variables have been set for this script session."
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  echo ""
+  echo "IMPORTANT: To use these variables in your current terminal, please run:"
+  echo "source ./setup-llm.sh"
+else
+  echo "Variables have been automatically exported to your current shell session."
+fi
+
 echo ""
-echo "YAML Configuration (src/main/resources/application.yml):"
-echo "claude:"
-echo "  provider: OPENAI_COMPATIBLE"
-echo "  base-url: http://localhost:11434/v1"
-echo "  model: $MODEL_NAME"
-echo ""
-echo "Environment Variables:"
-echo "export CLAUDE_PROVIDER=OPENAI_COMPATIBLE"
-echo "export CLAUDE_BASE_URL=http://localhost:11434/v1"
-echo "export CLAUDE_MODEL=$MODEL_NAME"
-echo ""
-echo "You can now restart the application to use the local LLM."
+echo "You can now start the application with: ./mvnw spring-boot:run"
