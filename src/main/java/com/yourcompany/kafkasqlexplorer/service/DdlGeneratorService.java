@@ -45,37 +45,31 @@ public class DdlGeneratorService {
 
         String tableName = toTableName(topicName);
         StringBuilder sb = new StringBuilder();
-        sb.append("CREATE TABLE IF NOT EXISTS ").append(tableName).append(" (\n");
+        sb.append("CREATE TABLE IF NOT EXISTS `").append(tableName.replace("`", "``")).append("` (\n");
 
         if (format == MessageFormat.XML) {
             // No Flink native XML format: read message as raw string, parse via XmlExtract UDF.
-            sb.append("    raw_value STRING\n");
-        } else if (format == MessageFormat.AVRO) {
-            // Avro-confluent format: Flink will fetch the schema automatically from the registry.
-            // We still provide the column names for convenience in the editor.
+            sb.append("    raw_value STRING,\n");
+        } else if (format == MessageFormat.AVRO || format == MessageFormat.JSON || format == MessageFormat.AUTO) {
             List<String> cols = new ArrayList<>(schema.keySet());
             for (int i = 0; i < cols.size(); i++) {
-                sb.append("    `").append(cols.get(i)).append("` ").append(schema.get(cols.get(i)));
-                if (i < cols.size() - 1) sb.append(",");
-                sb.append("\n");
-            }
-        } else {
-            // JSON and AUTO (unknown/empty topic): use format='json' with ignore-parse-errors.
-            List<String> cols = new ArrayList<>(schema.keySet());
-            for (int i = 0; i < cols.size(); i++) {
-                sb.append("    `").append(cols.get(i)).append("` ").append(schema.get(cols.get(i)));
-                if (i < cols.size() - 1) sb.append(",");
-                sb.append("\n");
+                String colName = cols.get(i);
+                String colType = schema.get(colName);
+                // Sanitize column name and type (type should be a valid Flink SQL type)
+                sb.append("    `").append(colName.replace("`", "``")).append("` ").append(colType).append(",\n");
             }
         }
+
+        sb.append("    event_time TIMESTAMP(3) METADATA FROM 'timestamp' VIRTUAL,\n");
+        sb.append("    proc_time AS PROCTIME()\n");
         sb.append(") WITH (\n");
-        sb.append("    'topic' = '").append(topicName).append("',\n");
-        sb.append("    'properties.group.id' = 'flink_table_").append(tableName).append("',\n");
+        sb.append("    'topic' = '").append(topicName.replace("'", "''")).append("',\n");
+        sb.append("    'properties.group.id' = 'flink_table_").append(tableName.replace("'", "''")).append("',\n");
         sb.append("    'connector' = 'kafka',\n");
 
         // Add Kafka connection properties
         kafkaConfig.getKafkaProperties().forEach((key, value) -> {
-            sb.append("    'properties.").append(key).append("' = '").append(value).append("',\n");
+            sb.append("    'properties.").append(key.replace("'", "''")).append("' = '").append(value.replace("'", "''")).append("',\n");
         });
 
         if (format == MessageFormat.XML) {
