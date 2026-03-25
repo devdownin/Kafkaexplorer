@@ -14,7 +14,7 @@ We take the security of Kafka SQL Explorer seriously. If you believe you have fo
 
 **Please do not report security vulnerabilities through public GitHub issues.**
 
-Instead, please report them via email to [security@example.com].
+Instead, please report them via email to [contact@compagnonsdudev.com].
 
 ### What to include in your report
 
