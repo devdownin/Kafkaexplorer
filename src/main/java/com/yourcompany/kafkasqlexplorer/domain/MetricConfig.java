@@ -4,6 +4,7 @@ package com.yourcompany.kafkasqlexplorer.domain;
 
 import lombok.Builder;
 import java.util.List;
+import java.util.Map;
 
 @Builder
 public record MetricConfig(
@@ -18,15 +19,23 @@ public record MetricConfig(
     Long lastUpdateTime,
     String errorMessage,
     List<Double> history,
+    /** Optional persisted summary for template-driven metrics and rich UI details. */
+    Map<String, Object> lastSummary,
     /** Optional Flink DDL (CREATE TABLE IF NOT EXISTS …) executed before the metric SQL. */
-    String createTableSql
+    String createTableSql,
+    /** Optional metric template identifier. When absent, the metric is treated as raw SQL. */
+    String templateType,
+    /** Free-form template parameters, typically SQL snippets, window sizes or matching keys. */
+    Map<String, Object> templateParams,
+    /** Execution mode for the metric runtime. */
+    String executionMode
 ) {
     /** Backwards-compatible 11-arg constructor (no DDL). */
     public MetricConfig(String id, String name, String type, String sql, String description,
                         Double warningThreshold, Double criticalThreshold, Double lastValue,
                         Long lastUpdateTime, String errorMessage) {
         this(id, name, type, sql, description, warningThreshold, criticalThreshold,
-             lastValue, lastUpdateTime, errorMessage, List.of(), null);
+             lastValue, lastUpdateTime, errorMessage, List.of(), Map.of(), null, null, null, null);
     }
 
     /** Backwards-compatible 12-arg constructor (history, no DDL). */
@@ -34,6 +43,6 @@ public record MetricConfig(
                         Double warningThreshold, Double criticalThreshold, Double lastValue,
                         Long lastUpdateTime, String errorMessage, List<Double> history) {
         this(id, name, type, sql, description, warningThreshold, criticalThreshold,
-             lastValue, lastUpdateTime, errorMessage, history, null);
+             lastValue, lastUpdateTime, errorMessage, history, Map.of(), null, null, null, null);
     }
 }

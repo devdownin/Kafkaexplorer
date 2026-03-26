@@ -6,6 +6,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorBanner from '../components/ErrorBanner';
 
 const PAGE_SIZES = [10, 25, 50, 100];
+const DASHBOARD_REFRESH_MS = 5000;
 type SortKey = 'name' | 'size' | 'state' | 'lastMessage';
 type SortDir = 'asc' | 'desc';
 
@@ -14,7 +15,16 @@ interface DashboardData {
   topicSizes: Record<string, number>;
   totalMessages: number;
   tables: string[];
-  jobs: Record<string, any>;
+  jobs: Array<{
+    queryId: string;
+    flinkJobId: string;
+    statementType: string;
+    status: string;
+    sql: string;
+    startedAt: number;
+    endedAt: number | null;
+    cancelRequested: boolean;
+  }>;
   health: boolean;
   topicLastMessages: Record<string, number | null>;
 }
@@ -34,20 +44,63 @@ const Dashboard: React.FC = () => {
   const [hideEmpty, setHideEmpty] = useState(false);
   const [hideDlt, setHideDlt] = useState(false);
 
-  const fetchData = async () => {
-    setLoading(true);
-    setError(null);
+  const formatJobTime = (ms: number | null | undefined) =>
+    ms ? new Date(ms).toLocaleString() : '—';
+
+  const isTerminalStatus = (status: string) =>
+    ['FINISHED', 'FAILED', 'CANCELED', 'CANCELLED'].includes(status.toUpperCase());
+
+  const getJobBadgeClass = (status: string) => {
+    const upper = status.toUpperCase();
+    if (['RUNNING'].includes(upper)) return 'bg-primary/20 text-primary';
+    if (['CANCELLING', 'CANCEL_REQUESTED'].includes(upper)) return 'bg-amber-500/15 text-amber-300';
+    if (['FINISHED'].includes(upper)) return 'bg-emerald-500/15 text-emerald-300';
+    if (['FAILED'].includes(upper)) return 'bg-red-500/15 text-red-300';
+    if (['CANCELED', 'CANCELLED'].includes(upper)) return 'bg-slate-600/40 text-slate-300';
+    return 'bg-slate-600/40 text-slate-300';
+  };
+
+  const fetchData = async (silent = false) => {
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const response = await axios.get('/api/dashboard');
       setData(response.data);
-    } catch (err) {
-      setError('Failed to fetch dashboard data');
+      if (!silent) {
+        setError(null);
+      }
+    } catch {
+      if (!silent) {
+        setError('Failed to fetch dashboard data');
+      }
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => {
+    fetchData();
+
+    const refresh = () => {
+      if (document.visibilityState === 'visible') {
+        fetchData(true);
+      }
+    };
+
+    const intervalId = window.setInterval(refresh, DASHBOARD_REFRESH_MS);
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, []);
 
   if (loading) return <LoadingSpinner />;
   if (error || !data) return <ErrorBanner message={error ?? 'Failed to load dashboard'} onRetry={fetchData} />;
@@ -90,10 +143,9 @@ const Dashboard: React.FC = () => {
   const killJob = async (jobId: string) => {
     setKillingJob(jobId);
     try {
-      await axios.post(`/api/query/cancel/${jobId}`);
+      await axios.post(`/api/query/jobs/${jobId}/cancel`);
       toast('Job cancelled', 'success');
-      const response = await axios.get('/api/dashboard');
-      setData(response.data);
+      fetchData(true);
     } catch {
       toast('Failed to cancel job', 'error');
     } finally {
@@ -131,7 +183,7 @@ const Dashboard: React.FC = () => {
                    : topicDiff < 0 ? `${topicDiff} since last visit`
                    : 'No change since last visit';
 
-  const activeJobCount = Object.keys(data.jobs).length;
+  const activeJobCount = data.jobs.length;
   const kpis = [
     { label: 'Total Topics', value: data.topics.length.toString(), icon: 'format_list_bulleted', color: topicDiff !== 0 ? 'text-primary' : 'text-slate-500', trend: topicTrend },
     { label: 'Message Count', value: formatCount(data.totalMessages), icon: 'bolt', color: 'text-primary', trend: data.totalMessages > 0 ? 'Active Ingest' : 'No Activity' },
@@ -378,33 +430,50 @@ const Dashboard: React.FC = () => {
         <h2 className="text-xl font-bold flex items-center gap-2">
           <span className="material-symbols-outlined text-primary">data_usage</span>
           Flink SQL Jobs
-          <span className="text-sm font-normal text-slate-500">({Object.keys(data.jobs).length})</span>
+          <span className="text-sm font-normal text-slate-500">({data.jobs.length})</span>
         </h2>
-        {Object.keys(data.jobs).length === 0 ? (
+        {data.jobs.length === 0 ? (
           <div className="p-10 border border-dashed border-primary/10 rounded-xl flex flex-col items-center text-center text-slate-600">
             <span className="material-symbols-outlined text-3xl mb-2 opacity-30">cloud_off</span>
             <p className="text-xs font-medium uppercase tracking-widest">No active jobs</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {Object.entries(data.jobs).map(([id, sql]: [string, any]) => (
-              <div key={id} className="bg-primary/5 border border-primary/10 rounded-xl p-4 flex flex-col gap-3">
+            {data.jobs.map(job => (
+              <div key={job.queryId} className="bg-primary/5 border border-primary/10 rounded-xl p-4 flex flex-col gap-3">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
-                    <p className="text-xs font-mono text-slate-300 truncate">{typeof sql === 'string' ? sql : id}</p>
-                    <p className="text-[10px] text-slate-600 font-mono mt-0.5">ID: {id.substring(0, 16)}</p>
+                    <p className="text-[10px] uppercase tracking-wider text-slate-500">{job.statementType.replace('_', ' ')}</p>
+                    <p className="text-xs font-mono text-slate-300 line-clamp-2">{job.sql}</p>
+                    <p className="text-[10px] text-slate-600 font-mono mt-0.5">Query: {job.queryId.substring(0, 16)}</p>
+                    <p className="text-[10px] text-slate-600 font-mono">Flink: {job.flinkJobId.substring(0, 16)}</p>
                   </div>
-                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-primary/20 text-primary uppercase shrink-0">Running</span>
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase shrink-0 ${getJobBadgeClass(job.status)}`}>
+                    {job.status}
+                  </span>
                 </div>
+                <div className="grid grid-cols-2 gap-2 text-[10px] text-slate-500 font-mono">
+                  <div>
+                    <p className="uppercase tracking-wider text-slate-600">Started</p>
+                    <p>{formatJobTime(job.startedAt)}</p>
+                  </div>
+                  <div>
+                    <p className="uppercase tracking-wider text-slate-600">Ended</p>
+                    <p>{formatJobTime(job.endedAt)}</p>
+                  </div>
+                </div>
+                {job.cancelRequested && (
+                  <p className="text-[10px] text-amber-300 font-mono">Cancellation requested</p>
+                )}
                 <button
-                  onClick={() => killJob(id)}
-                  disabled={killingJob === id}
+                  onClick={() => killJob(job.queryId)}
+                  disabled={killingJob === job.queryId || isTerminalStatus(job.status)}
                   className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 disabled:opacity-50 transition-colors text-xs font-bold uppercase tracking-wider w-full"
                 >
-                  {killingJob === id
+                  {killingJob === job.queryId
                     ? <span className="material-symbols-outlined text-sm animate-spin">refresh</span>
                     : <span className="material-symbols-outlined text-sm">cancel</span>}
-                  {killingJob === id ? 'Killing...' : 'Kill Job'}
+                  {killingJob === job.queryId ? 'Killing...' : 'Kill Job'}
                 </button>
               </div>
             ))}

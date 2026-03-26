@@ -2,18 +2,22 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.yourcompany.kafkasqlexplorer.service;
 
+import com.yourcompany.kafkasqlexplorer.domain.FlinkManagedJobDetails;
+import com.yourcompany.kafkasqlexplorer.domain.FlinkJobSummary;
 import com.yourcompany.kafkasqlexplorer.domain.MessageFormat;
 import com.yourcompany.kafkasqlexplorer.domain.QueryRequest;
 import com.yourcompany.kafkasqlexplorer.domain.QueryResult;
 import com.yourcompany.kafkasqlexplorer.config.ExplorerConfig;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.api.common.JobStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.flink.core.execution.JobClient;
 import org.apache.flink.table.api.TableEnvironment;
 import org.apache.flink.table.api.TableResult;
 import org.apache.flink.types.Row;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import jakarta.annotation.PreDestroy;
 
@@ -25,7 +29,6 @@ import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.regex.Matcher;
@@ -42,11 +45,13 @@ public class FlinkSqlService {
 
     private static final Logger log = LoggerFactory.getLogger(FlinkSqlService.class);
     private final TableEnvironment tableEnv;
+    private final FlinkRuntimeCoordinator runtimeCoordinator;
     private final ExplorerConfig explorerConfig;
     private final SqlQueryValidator sqlQueryValidator;
     private final KafkaAdminService kafkaAdminService;
     private final SchemaInferenceService schemaInferenceService;
     private final DdlGeneratorService ddlGeneratorService;
+    private final FlinkJobStore flinkJobStore;
 
     /**
      * Dedicated executor for fetching results from Flink to avoid blocking Spring's main threads
@@ -65,67 +70,98 @@ public class FlinkSqlService {
      */
     private final Map<String, JobInfo> activeJobs = new ConcurrentHashMap<>();
 
-    public record JobInfo(String sql, JobClient client) {}
+    public static final class JobInfo {
+        private final String queryId;
+        private final String sql;
+        private final String statementType;
+        private final String executionMode;
+        private final JobClient client;
+        private final String flinkJobId;
+        private final long startedAt;
+        private volatile Long endedAt;
+        private volatile boolean cancelRequested;
+        private volatile Long cancelRequestedAt;
+
+        public JobInfo(String queryId, String sql, String statementType, String executionMode, JobClient client, long startedAt) {
+            this.queryId = queryId;
+            this.sql = sql;
+            this.statementType = statementType;
+            this.executionMode = executionMode;
+            this.client = client;
+            this.flinkJobId = client.getJobID().toString();
+            this.startedAt = startedAt;
+        }
+
+        public String queryId() { return queryId; }
+        public String sql() { return sql; }
+        public String statementType() { return statementType; }
+        public String executionMode() { return executionMode; }
+        public JobClient client() { return client; }
+        public String flinkJobId() { return flinkJobId; }
+        public long startedAt() { return startedAt; }
+        public Long endedAt() { return endedAt; }
+        public boolean cancelRequested() { return cancelRequested; }
+        public Long cancelRequestedAt() { return cancelRequestedAt; }
+        public void markCancelRequested() {
+            this.cancelRequested = true;
+            this.cancelRequestedAt = System.currentTimeMillis();
+        }
+        public void markEnded(long endedAt) { this.endedAt = endedAt; }
+    }
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    /**
-     * The classloader that owns the Flink planner classes (flink-table-planner-loader).
-     * In a Spring Boot fat-jar, Tomcat sets the Thread context classloader to its own
-     * web-app classloader, which cannot see Flink/Calcite internals loaded in the planner
-     * isolating classloader. Janino (Calcite's code generator) uses the Thread context
-     * classloader to compile RelMetadataHandlerProvider — if it can't resolve Flink classes,
-     * it leaves metadataHandlerProvider=null → NPE on every SELECT.
-     * We capture the planner classloader once and restore it around every executeSql call.
-     */
-    private final ClassLoader flinkClassLoader;
-
-    public FlinkSqlService(TableEnvironment tableEnv, ExplorerConfig explorerConfig, SqlQueryValidator sqlQueryValidator,
-                           KafkaAdminService kafkaAdminService, SchemaInferenceService schemaInferenceService, DdlGeneratorService ddlGeneratorService) {
+    @Autowired
+    public FlinkSqlService(TableEnvironment tableEnv, FlinkRuntimeCoordinator runtimeCoordinator,
+                           ExplorerConfig explorerConfig, SqlQueryValidator sqlQueryValidator,
+                           KafkaAdminService kafkaAdminService, SchemaInferenceService schemaInferenceService,
+                           DdlGeneratorService ddlGeneratorService, FlinkJobStore flinkJobStore) {
         this.tableEnv = tableEnv;
+        this.runtimeCoordinator = runtimeCoordinator;
         this.explorerConfig = explorerConfig;
         this.sqlQueryValidator = sqlQueryValidator;
         this.kafkaAdminService = kafkaAdminService;
         this.schemaInferenceService = schemaInferenceService;
         this.ddlGeneratorService = ddlGeneratorService;
-        this.flinkClassLoader = tableEnv.getClass().getClassLoader();
-        log.info("Flink planner classloader: {}", flinkClassLoader);
+        this.flinkJobStore = flinkJobStore;
         // Register our custom XML extraction function globally in the Flink environment.
-        this.tableEnv.createTemporarySystemFunction("XmlExtract", XmlExtractUDF.class);
-    }
-
-    /**
-     * Executes a Flink operation with the planner classloader set as Thread context classloader.
-     * This allows Janino to resolve Flink/Calcite internal classes during code generation.
-     */
-    private <T> T withFlinkCL(java.util.function.Supplier<T> action) {
-        ClassLoader saved = Thread.currentThread().getContextClassLoader();
-        Thread.currentThread().setContextClassLoader(flinkClassLoader != null ? flinkClassLoader : saved);
-        try {
-            return action.get();
-        } finally {
-            Thread.currentThread().setContextClassLoader(saved);
-        }
+        runtimeCoordinator.runMutation("register-xml-extract-udf", () ->
+            this.tableEnv.createTemporarySystemFunction("XmlExtract", XmlExtractUDF.class)
+        );
     }
 
     public List<String> listTables() {
-        return Arrays.asList(tableEnv.listTables());
+        return runtimeCoordinator.runRead("list-tables", () -> Arrays.asList(tableEnv.listTables()));
     }
 
     public List<String> listViews() {
-        return Arrays.asList(tableEnv.listViews());
+        return runtimeCoordinator.runRead("list-views", () -> Arrays.asList(tableEnv.listViews()));
     }
 
     public Map<String, String> getTableSchema(String tableName) {
-        Map<String, String> schema = new LinkedHashMap<>();
         try {
-            tableEnv.from(tableName).getResolvedSchema().getColumns().forEach(col -> {
-                schema.put(col.getName(), col.getDataType().toString());
+            return runtimeCoordinator.runRead("get-table-schema", () -> {
+                Map<String, String> schema = new LinkedHashMap<>();
+                tableEnv.from(tableName).getResolvedSchema().getColumns().forEach(col -> {
+                    schema.put(col.getName(), col.getDataType().toString());
+                });
+                return schema;
             });
-        } catch (Exception e) {
+        } catch (RuntimeException e) {
             log.debug("Table not found: {}", tableName);
+            return new LinkedHashMap<>();
         }
-        return schema;
+    }
+
+    private TableResult executeManagedSql(String operationName, String statementType, String sql) {
+        if ("EXPLAIN".equals(statementType)) {
+            return runtimeCoordinator.runRead(operationName, () -> tableEnv.executeSql(sql));
+        }
+        return runtimeCoordinator.runMutation(operationName, () -> tableEnv.executeSql(sql));
+    }
+
+    private TableResult executeMutationSql(String operationName, String sql) {
+        return runtimeCoordinator.runMutation(operationName, () -> tableEnv.executeSql(sql));
     }
 
     /**
@@ -208,9 +244,15 @@ public class FlinkSqlService {
         try {
             MessageFormat format = schemaInferenceService.detectFormat(matchingTopic);
             Map<String, String> schema = schemaInferenceService.inferSchema(matchingTopic, format);
+            if (schema.isEmpty() && format != MessageFormat.XML) {
+                // No schema could be inferred (empty topic or unreadable messages).
+                // Skip Flink registration — KAFKA_DIRECT will read the topic directly.
+                log.info("Skipping auto-registration for '{}': schema inference returned empty (topic may be empty)", matchingTopic);
+                return AutoRegResult.skip();
+            }
             String ddl = ddlGeneratorService.generateDdl(matchingTopic, schema, format);
             log.debug("Auto-registering table '{}' with DDL:\n{}", flinkTableName, ddl);
-            withFlinkCL(() -> tableEnv.executeSql(ddl));
+            executeMutationSql("auto-register-table", ddl);
             log.info("Auto-registered table '{}' for Kafka topic '{}'", flinkTableName, matchingTopic);
             return AutoRegResult.tableCreated();
         } catch (Exception e) {
@@ -233,6 +275,157 @@ public class FlinkSqlService {
         // Remove line comments -- ... to end of line
         sql = sql.replaceAll("--[^\n]*", "");
         return sql.trim();
+    }
+
+    private String extractStatementType(String sql) {
+        if (sql == null || sql.isBlank()) return "UNKNOWN";
+        String upper = stripSqlComments(sql).toUpperCase(Locale.ROOT);
+        if (upper.startsWith("INSERT INTO")) return "INSERT";
+        if (upper.startsWith("CREATE TABLE")) return "CREATE_TABLE";
+        if (upper.startsWith("SELECT")) return "SELECT";
+        if (upper.startsWith("EXPLAIN")) return "EXPLAIN";
+        return upper.split("\\s+", 2)[0];
+    }
+
+    private FlinkJobSummary buildJobSummary(JobInfo info) {
+        String status = "UNKNOWN";
+        try {
+            JobStatus flinkStatus = info.client().getJobStatus().get(150, TimeUnit.MILLISECONDS);
+            status = flinkStatus.name();
+            if (flinkStatus.isGloballyTerminalState() && info.endedAt() == null) {
+                info.markEnded(System.currentTimeMillis());
+            }
+        } catch (Exception e) {
+            status = info.cancelRequested() ? "CANCEL_REQUESTED" : "UNKNOWN";
+        }
+
+        if (info.cancelRequested() && "RUNNING".equals(status)) {
+            status = "CANCELLING";
+        }
+
+        return new FlinkJobSummary(
+            info.queryId(),
+            info.flinkJobId(),
+            info.statementType(),
+            status,
+            info.sql(),
+            info.startedAt(),
+            info.endedAt(),
+            info.cancelRequested()
+        );
+    }
+
+    private void persistJobSnapshot(JobInfo info, FlinkJobSummary summary, String statusDetail, String errorMessage) {
+        FlinkManagedJobDetails updated = flinkJobStore.update(
+            info.queryId(),
+            summary.status(),
+            statusDetail,
+            errorMessage,
+            summary.cancelRequested(),
+            info.cancelRequestedAt(),
+            summary.endedAt(),
+            info.flinkJobId()
+        );
+        if (updated == null) {
+            flinkJobStore.create(
+                info.queryId(),
+                info.flinkJobId(),
+                info.statementType(),
+                info.executionMode(),
+                summary.status(),
+                statusDetail,
+                info.sql(),
+                info.startedAt(),
+                errorMessage
+            );
+        }
+    }
+
+    private void syncPersistedJobs() {
+        activeJobs.entrySet().removeIf(entry -> {
+            JobInfo info = entry.getValue();
+            FlinkJobSummary summary = buildJobSummary(info);
+            String statusDetail = summary.cancelRequested() ? "Cancellation requested by user" : null;
+            persistJobSnapshot(info, summary, statusDetail, null);
+            return summary.endedAt() != null;
+        });
+    }
+
+    private String prepareSql(String sql) {
+        return stripSqlComments(normalizeIdentifierQuotes(sql.trim()));
+    }
+
+    public QueryResult executeSync(QueryRequest request) {
+        String strippedSql = prepareSql(request.sql());
+        if ("INSERT".equals(extractStatementType(strippedSql))) {
+            return new QueryResult(
+                Collections.emptyList(),
+                Collections.emptyList(),
+                0,
+                "INSERT INTO statements must be submitted via /api/query/jobs in Flink Job mode."
+            );
+        }
+        return executeSql(request);
+    }
+
+    public FlinkJobSummary submitJob(QueryRequest request) {
+        long startedAt = System.currentTimeMillis();
+        String queryId = UUID.randomUUID().toString();
+        String strippedSql = prepareSql(request.sql());
+        String statementType = extractStatementType(strippedSql);
+
+        if (!"INSERT".equals(statementType)) {
+            flinkJobStore.create(
+                queryId,
+                null,
+                statementType,
+                "ASYNC_JOB",
+                "FAILED",
+                "Rejected before execution",
+                strippedSql,
+                startedAt,
+                "Only INSERT INTO statements are allowed in Flink Job mode."
+            );
+            throw new IllegalArgumentException("Only INSERT INTO statements are allowed in Flink Job mode.");
+        }
+
+        try {
+            sqlQueryValidator.validate(strippedSql);
+
+            TableResult result = executeMutationSql("submit-job", strippedSql);
+            JobClient client = result.getJobClient()
+                .orElseThrow(() -> new IllegalStateException("Flink did not return a JobClient for the submitted job."));
+
+            JobInfo info = new JobInfo(queryId, strippedSql, statementType, "ASYNC_JOB", client, startedAt);
+            activeJobs.put(queryId, info);
+            FlinkJobSummary summary = buildJobSummary(info);
+            flinkJobStore.create(
+                queryId,
+                info.flinkJobId(),
+                statementType,
+                info.executionMode(),
+                summary.status(),
+                "Submitted via Flink Job mode",
+                strippedSql,
+                startedAt,
+                null
+            );
+            persistJobSnapshot(info, summary, "Submitted via Flink Job mode", null);
+            return summary;
+        } catch (RuntimeException e) {
+            flinkJobStore.create(
+                queryId,
+                null,
+                statementType,
+                "ASYNC_JOB",
+                "FAILED",
+                "Submission failed before a Flink JobClient was available",
+                strippedSql,
+                startedAt,
+                e.getMessage()
+            );
+            throw e;
+        }
     }
 
     public QueryResult executeSql(QueryRequest request) {
@@ -276,14 +469,31 @@ public class FlinkSqlService {
                 QueryResult qr = kafkaDirectSelect(sqlToExecute, readMode, limit, startTime);
                 // Propagate auto-registration flag so the frontend can refresh its schema browser.
                 if (autoReg.registered()) {
-                    return new QueryResult(qr.columns(), qr.rows(), qr.durationMs(), qr.error(), true);
+                    return new QueryResult(qr.columns(), qr.rows(), qr.durationMs(), qr.error(), true, qr.engine());
                 }
                 return qr;
             }
 
             final String finalSql = sqlToExecute;
-            result = withFlinkCL(() -> tableEnv.executeSql(finalSql));
-            result.getJobClient().ifPresent(client -> activeJobs.put(queryId, new JobInfo(finalSql, client)));
+            String statementType = extractStatementType(finalSql);
+            result = executeManagedSql("execute-sql-" + statementType.toLowerCase(Locale.ROOT), statementType, finalSql);
+            result.getJobClient().ifPresent(client -> {
+                JobInfo info = new JobInfo(queryId, finalSql, statementType, "SYNC_READ", client, System.currentTimeMillis());
+                activeJobs.put(queryId, info);
+                FlinkJobSummary summary = buildJobSummary(info);
+                flinkJobStore.create(
+                    queryId,
+                    info.flinkJobId(),
+                    statementType,
+                    info.executionMode(),
+                    summary.status(),
+                    "Executed through synchronous exploration mode",
+                    finalSql,
+                    info.startedAt(),
+                    null
+                );
+                persistJobSnapshot(info, summary, "Executed through synchronous exploration mode", null);
+            });
 
             // result.collect() starts the Flink job and provides an iterator to fetch results.
             try (org.apache.flink.util.CloseableIterator<Row> it = result.collect()) {
@@ -340,15 +550,13 @@ public class FlinkSqlService {
             }
 
                 long duration = System.currentTimeMillis() - startTime;
-                return new QueryResult(columns, rows, duration, null);
+                return new QueryResult(columns, rows, duration, null, false, "FLINK");
             }
         } catch (Exception e) {
             log.error("Flink SQL execution error — query='{}' error='{}'", request.sql(), e.getMessage(), e);
             cancelJobInternal(result);
             long duration = System.currentTimeMillis() - startTime;
             return new QueryResult(Collections.emptyList(), Collections.emptyList(), duration, e.getMessage());
-        } finally {
-            activeJobs.remove(queryId);
         }
     }
 
@@ -538,8 +746,12 @@ public class FlinkSqlService {
             }
             if (!requestedCols.isEmpty()) {
                 Map<String, Object> projected = new LinkedHashMap<>();
-                for (String col : requestedCols) {
-                    projected.put(col, toSerializable(getNestedValue(row, col)));
+                for (String colExpr : requestedCols) {
+                    // Handle "source_col AS alias" — fetch by source name, output under alias
+                    String[] aliasParts = colExpr.split("(?i)\\s+AS\\s+", 2);
+                    String sourceCol = aliasParts[0].trim();
+                    String outputCol = aliasParts.length > 1 ? aliasParts[1].trim() : sourceCol;
+                    projected.put(outputCol, toSerializable(getNestedValue(row, sourceCol)));
                 }
                 row = projected;
             } else {
@@ -555,9 +767,14 @@ public class FlinkSqlService {
             return kafkaAggregateSelect(sql, rows, startTime);
         }
 
-        List<String> columns = requestedCols.isEmpty() ? new ArrayList<>(colSet) : requestedCols;
+        List<String> columns = requestedCols.isEmpty()
+            ? new ArrayList<>(colSet)
+            : requestedCols.stream().map(c -> {
+                String[] p = c.split("(?i)\\s+AS\\s+", 2);
+                return p.length > 1 ? p[1].trim() : p[0].trim();
+            }).collect(Collectors.toList());
         log.info("[KafkaDirect] topic='{}' rows={} readMode={}", topic, rows.size(), readMode);
-        return new QueryResult(columns, rows, System.currentTimeMillis() - startTime, null);
+        return new QueryResult(columns, rows, System.currentTimeMillis() - startTime, null, false, "KAFKA_DIRECT");
     }
 
     /**
@@ -639,7 +856,7 @@ public class FlinkSqlService {
                              : new ArrayList<>(resultRows.get(0).keySet());
         log.info("[KafkaDirect/Agg] inputRows={} groups={} cols={}",
                  inputRows.size(), resultRows.size(), columns);
-        return new QueryResult(columns, resultRows, System.currentTimeMillis() - startTime, null);
+        return new QueryResult(columns, resultRows, System.currentTimeMillis() - startTime, null, false, "KAFKA_DIRECT");
     }
 
     /**
@@ -770,7 +987,7 @@ public class FlinkSqlService {
             : new ArrayList<>(resultRows.get(0).keySet());
         log.info("[KafkaDirect/Window] topic='{}' timeCol='{}' intervalMs={} windows={} rows={}",
                  topic, timeCol, intervalMs, windows.size(), resultRows.size());
-        return new QueryResult(columns, resultRows, System.currentTimeMillis() - startTime, null);
+        return new QueryResult(columns, resultRows, System.currentTimeMillis() - startTime, null, false, "KAFKA_DIRECT");
     }
 
     /** Evaluates a single aggregate function over a list of rows. */
@@ -836,22 +1053,46 @@ public class FlinkSqlService {
     }
 
     public void cancelQuery(String queryId) {
-        JobInfo info = activeJobs.remove(queryId);
+        JobInfo info = activeJobs.get(queryId);
         if (info != null) {
+            info.markCancelRequested();
+            persistJobSnapshot(info, buildJobSummary(info), "Cancellation requested by user", null);
             info.client().cancel();
+        } else {
+            flinkJobStore.update(
+                queryId,
+                "UNKNOWN",
+                "Cancellation requested but no live Flink JobClient was available",
+                null,
+                true,
+                System.currentTimeMillis(),
+                null,
+                null
+            );
         }
     }
 
-    public Map<String, String> getActiveJobs() {
-        Map<String, String> jobs = new HashMap<>();
-        activeJobs.forEach((id, info) -> {
-            try {
-                jobs.put(id, info.client().getJobStatus().get(100, TimeUnit.MILLISECONDS).isGloballyTerminalState() ? "TERMINATED" : "RUNNING");
-            } catch (Exception e) {
-                jobs.put(id, "RUNNING");
-            }
-        });
-        return jobs;
+    public void cancelJob(String queryId) {
+        cancelQuery(queryId);
+    }
+
+    public List<FlinkJobSummary> getActiveJobs() {
+        syncPersistedJobs();
+        return flinkJobStore.listActive().stream()
+            .map(FlinkManagedJobDetails::toSummary)
+            .toList();
+    }
+
+    public List<FlinkJobSummary> listRecentJobs() {
+        syncPersistedJobs();
+        return flinkJobStore.listAll().stream()
+            .map(FlinkManagedJobDetails::toSummary)
+            .toList();
+    }
+
+    public Optional<FlinkManagedJobDetails> getJob(String queryId) {
+        syncPersistedJobs();
+        return flinkJobStore.findById(queryId);
     }
 
     public Map<String, JobInfo> getActiveJobsDetails() {

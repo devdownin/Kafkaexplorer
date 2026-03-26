@@ -74,6 +74,9 @@ const TopicSelectorPanel: React.FC<TopicSelectorPanelProps> = ({ onStart, loadin
       <div>
         <h2 className="text-lg font-semibold text-slate-100 mb-1">Select Topics</h2>
         <p className="text-sm text-slate-400">Choose the Kafka topics to analyse for process patterns.</p>
+        <p className="text-xs text-slate-500 mt-1">
+          Snapshot limits are applied per topic to keep multi-topic analysis balanced.
+        </p>
       </div>
 
       {/* Topic filter + list */}
@@ -142,7 +145,7 @@ const TopicSelectorPanel: React.FC<TopicSelectorPanelProps> = ({ onStart, loadin
         </div>
         <div>
           <label className="block text-xs font-medium text-slate-400 mb-1.5">
-            {mode === 'TIMESTAMP' ? 'From timestamp' : 'Max messages'}
+            {mode === 'TIMESTAMP' ? 'From timestamp' : 'Max messages per topic'}
           </label>
           {mode === 'TIMESTAMP' ? (
             <input

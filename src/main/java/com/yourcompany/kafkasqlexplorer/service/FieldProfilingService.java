@@ -2,11 +2,6 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.yourcompany.kafkasqlexplorer.service;
 
-import com.anthropic.client.AnthropicClient;
-import com.anthropic.client.okhttp.AnthropicOkHttpClient;
-import com.anthropic.models.messages.MessageCreateParams;
-import com.anthropic.models.messages.MessageParam;
-import com.anthropic.models.messages.TextDelta;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yourcompany.kafkasqlexplorer.config.ClaudeConfig;
 import com.yourcompany.kafkasqlexplorer.domain.FieldProfileResult;
@@ -20,7 +15,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 @Service
 public class FieldProfilingService {
@@ -56,7 +50,7 @@ public class FieldProfilingService {
         }
 
         // 1. Read samples — 50 messages per topic
-        SnapshotConfig samplingConfig = SnapshotConfig.latestN(50 * topics.size());
+        SnapshotConfig samplingConfig = SnapshotConfig.latestN(50);
         List<KafkaMessage> messages = snapshotReader.read(topics, samplingConfig);
 
         // 2. Group messages by topic
@@ -77,6 +71,7 @@ public class FieldProfilingService {
             String systemPrompt = """
                 Expert Kafka & Data Mining. Analyze Kafka message samples.
                 Return ONLY valid JSON. NO markdown, NO prose outside JSON.
+                If confidence is low, prefer empty arrays and warnings instead of free-form explanations.
                 """;
             rawResponse = llmClient.generate(systemPrompt, userPrompt);
         } catch (Exception e) {
@@ -182,12 +177,7 @@ Réponds avec ce JSON exact (camelCase, sans markdown) :
     }
 
     private boolean isApiKeyMissing() {
-        // API key is mandatory for Anthropic
-        if (claudeConfig.getProvider() == ClaudeConfig.Provider.ANTHROPIC) {
-            return claudeConfig.getApiKey() == null || claudeConfig.getApiKey().isBlank();
-        }
-        // For OpenAI-compatible providers, the API key is optional
-        return false;
+        return claudeConfig.isApiKeyRequired() && !claudeConfig.isApiKeyConfigured();
     }
 
     private void appendJsonString(StringBuilder sb, String value) {
@@ -205,37 +195,22 @@ Réponds avec ce JSON exact (camelCase, sans markdown) :
             return new FieldProfileResult(
                 List.of(),
                 null,
-                List.of("Claude returned an empty response.")
+                List.of("LLM returned an empty response.")
             );
         }
 
-        // Strip potential markdown fences
-        String json = stripMarkdownFences(rawResponse);
+        String json = LlmJsonSupport.extractJsonPayload(rawResponse);
 
         try {
             return objectMapper.readValue(json, FieldProfileResult.class);
         } catch (Exception e) {
-            log.error("Failed to parse Claude profiling response as FieldProfileResult: {}", e.getMessage());
+            log.error("Failed to parse LLM profiling response as FieldProfileResult: {}", e.getMessage());
             log.debug("Raw response was: {}", rawResponse);
             return new FieldProfileResult(
                 List.of(),
                 null,
-                List.of("Failed to parse Claude response: " + e.getMessage())
+                List.of("Failed to parse LLM response: " + e.getMessage())
             );
         }
-    }
-
-    private String stripMarkdownFences(String text) {
-        String trimmed = text.trim();
-        if (trimmed.startsWith("```")) {
-            int firstNewline = trimmed.indexOf('\n');
-            if (firstNewline >= 0) {
-                trimmed = trimmed.substring(firstNewline + 1);
-            }
-            if (trimmed.endsWith("```")) {
-                trimmed = trimmed.substring(0, trimmed.lastIndexOf("```")).trim();
-            }
-        }
-        return trimmed;
     }
 }

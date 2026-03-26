@@ -10,7 +10,7 @@ public record DashboardResponse(
     Map<String, Long> topicSizes,
     long totalMessages,
     List<String> tables,
-    Map<String, String> jobs,
+    List<FlinkJobSummary> jobs,
     boolean health,
     String clusterName,
     Map<String, Long> topicLastMessages

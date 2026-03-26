@@ -2,11 +2,12 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.yourcompany.kafkasqlexplorer.service;
 
-import org.apache.flink.table.api.TableResult;
 import org.apache.flink.table.api.TableEnvironment;
+import org.apache.flink.table.api.TableResult;
 import org.apache.flink.types.Row;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
@@ -25,6 +26,7 @@ public class LineageService {
     private static final Logger log = LoggerFactory.getLogger(LineageService.class);
 
     private final TableEnvironment   tableEnv;
+    private final FlinkRuntimeCoordinator runtimeCoordinator;
     private final FlinkSqlService    flinkSqlService;
     private final KafkaAdminService  kafkaAdminService;
 
@@ -41,9 +43,11 @@ public class LineageService {
         "NULL", "TRUE", "FALSE", "SELECT", "WHERE", "WITH"
     );
 
-    public LineageService(TableEnvironment tableEnv, FlinkSqlService flinkSqlService,
+    @Autowired
+    public LineageService(TableEnvironment tableEnv, FlinkRuntimeCoordinator runtimeCoordinator, FlinkSqlService flinkSqlService,
                           KafkaAdminService kafkaAdminService) {
         this.tableEnv         = tableEnv;
+        this.runtimeCoordinator = runtimeCoordinator;
         this.flinkSqlService  = flinkSqlService;
         this.kafkaAdminService = kafkaAdminService;
     }
@@ -72,7 +76,7 @@ public class LineageService {
         });
 
         // 2. Flink tables — find backing Kafka topic via DDL 'topic' property
-        for (String tableName : tableEnv.listTables()) {
+        for (String tableName : runtimeCoordinator.runRead("lineage-list-tables", () -> tableEnv.listTables())) {
             nodes.add(mkNode(tableName, tableName, "table"));
             processedTables.add(tableName);
             String ddl = getDdl(tableName, "TABLE");
@@ -88,7 +92,7 @@ public class LineageService {
         }
 
         // 3. Flink views
-        for (String viewName : tableEnv.listViews()) {
+        for (String viewName : runtimeCoordinator.runRead("lineage-list-views", () -> tableEnv.listViews())) {
             if (!processedTables.contains(viewName)) {
                 nodes.add(mkNode(viewName, viewName, "view"));
                 processedTables.add(viewName);
@@ -200,10 +204,25 @@ public class LineageService {
 
     private String getDdl(String name, String type) {
         try {
-            TableResult result = tableEnv.executeSql("SHOW CREATE " + type + " " + name);
-            try (org.apache.flink.util.CloseableIterator<Row> it = result.collect()) {
-                if (it.hasNext()) return it.next().getField(0).toString();
-            }
+            return runtimeCoordinator.runRead(
+                "lineage-show-create-" + type.toLowerCase(Locale.ROOT),
+                () -> {
+                    TableResult result = tableEnv.executeSql("SHOW CREATE " + type + " " + name);
+                    org.apache.flink.util.CloseableIterator<Row> it = result.collect();
+                    try {
+                        if (it.hasNext()) return it.next().getField(0).toString();
+                    } catch (Exception e) {
+                        throw new IllegalStateException("Failed to read Flink DDL for " + type + " " + name, e);
+                    } finally {
+                        try {
+                            it.close();
+                        } catch (Exception e) {
+                            throw new IllegalStateException("Failed to close Flink DDL iterator for " + type + " " + name, e);
+                        }
+                    }
+                    return null;
+                }
+            );
         } catch (Exception e) {
             log.debug("Failed to get DDL for {} {}: {}", type, name, e.getMessage());
         }

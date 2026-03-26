@@ -12,6 +12,7 @@ import Audit from './pages/Audit';
 import StreamFlow from './pages/StreamFlow';
 import Config from './pages/Config';
 import Help from './pages/Help';
+import MetricsHelp from './pages/MetricsHelp';
 import Cluster from './pages/Cluster';
 import ProcessMining from './pages/ProcessMining';
 
@@ -27,6 +28,7 @@ const App: React.FC = () => {
           <Route path="/compare" element={<Compare />} />
           <Route path="/lineage" element={<Lineage />} />
           <Route path="/metrics" element={<Metrics />} />
+          <Route path="/metrics/help" element={<MetricsHelp />} />
           <Route path="/audit" element={<Audit />} />
           <Route path="/stream-flow" element={<StreamFlow />} />
           <Route path="/config" element={<Config />} />

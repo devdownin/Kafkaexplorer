@@ -3,9 +3,12 @@
 package com.yourcompany.kafkasqlexplorer.web;
 
 import com.yourcompany.kafkasqlexplorer.domain.MetricConfig;
+import com.yourcompany.kafkasqlexplorer.domain.MetricPreviewResult;
+import com.yourcompany.kafkasqlexplorer.domain.MetricTemplateDescriptor;
 import com.yourcompany.kafkasqlexplorer.domain.QueryRequest;
 import com.yourcompany.kafkasqlexplorer.service.FlinkSqlService;
 import com.yourcompany.kafkasqlexplorer.service.MetricService;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
@@ -40,13 +43,23 @@ public class MetricController {
     }
 
     @PostMapping
-    public void save(@RequestBody MetricConfig metric) {
-        metricService.save(metric);
+    public ResponseEntity<?> save(@RequestBody MetricConfig metric) {
+        try {
+            metricService.save(metric);
+            return ResponseEntity.ok().build();
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
     }
 
     @DeleteMapping("/{id}")
     public void delete(@PathVariable String id) {
         metricService.delete(id);
+    }
+
+    @GetMapping("/templates")
+    public List<MetricTemplateDescriptor> templates() {
+        return metricService.listTemplates();
     }
 
     /** Run SQL immediately and return the first metric_value for preview purposes. */
@@ -57,7 +70,7 @@ public class MetricController {
             return Map.of("error", "SQL is required");
         }
         try {
-            var result = flinkSqlService.executeSql(new QueryRequest(sql, "latest-offset", 10, 5000L, null));
+            var result = flinkSqlService.executeSql(QueryRequest.sql(sql, 10, 5000L, "latest-offset"));
             if (result.error() != null) return Map.of("error", result.error());
             if (result.rows().isEmpty()) return Map.of("error", "No rows returned");
             Object val = result.rows().get(0).entrySet().stream()
@@ -69,5 +82,10 @@ public class MetricController {
         } catch (Exception e) {
             return Map.of("error", e.getMessage());
         }
+    }
+
+    @PostMapping("/preview-template")
+    public MetricPreviewResult previewTemplate(@RequestBody MetricConfig metric) {
+        return metricService.previewMetric(metric);
     }
 }

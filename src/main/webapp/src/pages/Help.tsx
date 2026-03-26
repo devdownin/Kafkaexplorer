@@ -142,6 +142,42 @@ const Help: React.FC = () => {
         </div>
       </section>
 
+      {/* Execution Engines */}
+      <section>
+        <h2 className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-4 flex items-center gap-2">
+          <span className="material-symbols-outlined text-primary">settings_ethernet</span>
+          Execution Engines
+        </h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4 space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="px-2 py-0.5 rounded border text-[10px] font-bold uppercase text-cyan-400 bg-cyan-500/10 border-cyan-500/20">Kafka Direct</span>
+              <span className="text-[10px] text-slate-500">SELECT · Exploration</span>
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              All <code className="text-cyan-300 bg-cyan-900/30 px-1 rounded">SELECT</code> queries run through a bounded Kafka scan — no Flink SQL planner involved.
+              Supported: projections, <code className="text-cyan-300 bg-cyan-900/30 px-1 rounded">WHERE</code>, aggregates (<code className="text-cyan-300 bg-cyan-900/30 px-1 rounded">COUNT / SUM / AVG / MAX / MIN</code>), <code className="text-cyan-300 bg-cyan-900/30 px-1 rounded">GROUP BY</code>, and <code className="text-cyan-300 bg-cyan-900/30 px-1 rounded">TUMBLE</code> windows.
+            </p>
+            <p className="text-xs text-slate-500 leading-relaxed">
+              Not supported: multi-topic JOINs, sub-queries, arbitrary SQL functions. Up to 100 000 messages are scanned for aggregates.
+            </p>
+          </div>
+          <div className="rounded-xl border border-violet-500/20 bg-violet-500/5 p-4 space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="px-2 py-0.5 rounded border text-[10px] font-bold uppercase text-violet-400 bg-violet-500/10 border-violet-500/20">Flink Streaming</span>
+              <span className="text-[10px] text-slate-500">INSERT INTO · Continuous jobs</span>
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              <code className="text-violet-300 bg-violet-900/30 px-1 rounded">INSERT INTO</code> statements are submitted as asynchronous Flink jobs via <em>Job mode</em>.
+              Jobs are tracked in the Dashboard with their real status, Flink job ID, and history.
+            </p>
+            <p className="text-xs text-slate-500 leading-relaxed">
+              Use <code className="text-violet-300 bg-violet-900/30 px-1 rounded">EXPLAIN</code> and <code className="text-violet-300 bg-violet-900/30 px-1 rounded">CREATE TABLE</code> to register tables in the Flink catalog before submitting a job.
+            </p>
+          </div>
+        </div>
+      </section>
+
       {/* SQL Examples */}
       <section>
         <h2 className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-4 flex items-center gap-2">

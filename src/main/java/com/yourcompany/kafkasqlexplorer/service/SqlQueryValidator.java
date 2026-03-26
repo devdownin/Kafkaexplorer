@@ -4,9 +4,9 @@ package com.yourcompany.kafkasqlexplorer.service;
 
 import com.yourcompany.kafkasqlexplorer.config.ExplorerConfig;
 import org.apache.flink.table.api.TableEnvironment;
-import org.apache.flink.table.api.TableResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -15,13 +15,13 @@ public class SqlQueryValidator {
     private static final Logger log = LoggerFactory.getLogger(SqlQueryValidator.class);
     private final ExplorerConfig explorerConfig;
     private final TableEnvironment tableEnv;
+    private final FlinkRuntimeCoordinator runtimeCoordinator;
 
-    private final ClassLoader flinkClassLoader;
-
-    public SqlQueryValidator(ExplorerConfig explorerConfig, TableEnvironment tableEnv) {
+    @Autowired
+    public SqlQueryValidator(ExplorerConfig explorerConfig, TableEnvironment tableEnv, FlinkRuntimeCoordinator runtimeCoordinator) {
         this.explorerConfig = explorerConfig;
         this.tableEnv = tableEnv;
-        this.flinkClassLoader = tableEnv.getClass().getClassLoader();
+        this.runtimeCoordinator = runtimeCoordinator;
     }
 
     public void validate(String sql) {
@@ -38,16 +38,16 @@ public class SqlQueryValidator {
             return;
         }
 
+        // EXPLAIN only supports SELECT/EXPLAIN — DDL (CREATE TABLE, ALTER, DROP) is not supported
+        // and will throw "Unsupported operation: CreateTableOperation". Skip for DDL.
+        String upperTrimmed = sql.trim().toUpperCase();
+        if (!upperTrimmed.startsWith("SELECT") && !upperTrimmed.startsWith("EXPLAIN")) {
+            return;
+        }
+
         try {
             // We use EXPLAIN to get the execution plan and check for forbidden patterns
-            ClassLoader saved = Thread.currentThread().getContextClassLoader();
-            Thread.currentThread().setContextClassLoader(flinkClassLoader != null ? flinkClassLoader : saved);
-            String plan;
-            try {
-                plan = tableEnv.explainSql(sql).toUpperCase();
-            } finally {
-                Thread.currentThread().setContextClassLoader(saved);
-            }
+            String plan = runtimeCoordinator.runRead("sql-validator-explain", () -> tableEnv.explainSql(sql).toUpperCase());
 
             if (!explorerConfig.isAllowCrossJoin() && isCrossJoinInPlan(plan)) {
                 throw new IllegalArgumentException("Cross joins are not allowed in this environment.");
@@ -58,8 +58,9 @@ public class SqlQueryValidator {
             }
         } catch (Exception e) {
             if (e instanceof IllegalArgumentException) throw (IllegalArgumentException) e;
-            log.warn("SQL validation via EXPLAIN failed for query: {}. Error: {}", sql, e.getMessage());
-            // If explain fails (e.g. table not found), we let the actual execution handle it
+            // EXPLAIN fails for tables not registered in Flink (e.g. Kafka topics with dotted names
+            // or tables referenced before auto-registration). This is expected — actual execution handles it.
+            log.debug("SQL validation via EXPLAIN skipped (table not resolvable): {}", e.getMessage());
         }
     }
 

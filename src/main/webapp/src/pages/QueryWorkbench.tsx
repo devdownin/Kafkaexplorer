@@ -6,13 +6,32 @@ import axios from 'axios';
 import { useToast } from '../components/Toast';
 
 interface SchemaInfo { topics: string[]; tables: string[]; health: boolean; }
-interface QueryResult { queryId: string; columns: string[]; rows: Record<string, unknown>[]; error: string | null; tableRegistered?: boolean; }
+interface QueryResult { queryId: string; columns: string[]; rows: Record<string, unknown>[]; error: string | null; tableRegistered?: boolean; engine?: string; }
+interface FlinkJobSubmission {
+  queryId: string;
+  flinkJobId: string;
+  statementType: string;
+  status: string;
+  sql: string;
+  startedAt: number;
+  endedAt: number | null;
+  cancelRequested: boolean;
+}
 interface Tab { id: string; name: string; sql: string; }
 interface SavedQuery { id: string; name: string; sql: string; savedAt: number; }
+type ExecutionMode = 'SYNC_READ' | 'ASYNC_JOB';
 
 const DEFAULT_LIMIT = 50;
 let tabCounter = 1;
 const newTab = (sql = ''): Tab => ({ id: String(++tabCounter), name: `Query ${tabCounter}`, sql });
+const detectStatementType = (sql: string) => {
+  const stripped = sql.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, '').trim().toUpperCase();
+  if (stripped.startsWith('INSERT INTO')) return 'INSERT';
+  if (stripped.startsWith('CREATE TABLE')) return 'CREATE_TABLE';
+  if (stripped.startsWith('SELECT')) return 'SELECT';
+  if (stripped.startsWith('EXPLAIN')) return 'EXPLAIN';
+  return stripped.split(/\s+/, 1)[0] ?? 'UNKNOWN';
+};
 
 const QueryWorkbench: React.FC = () => {
   const { toast } = useToast();
@@ -164,8 +183,10 @@ const QueryWorkbench: React.FC = () => {
 
   // ── Query state ───────────────────────────────────────────────────────────────
   const [results, setResults] = useState<QueryResult | null>(null);
+  const [submittedJob, setSubmittedJob] = useState<FlinkJobSubmission | null>(null);
   const [executing, setExecuting] = useState(false);
   const [executionMs, setExecutionMs] = useState<number | null>(null);
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>('SYNC_READ');
   const [offsetMode, setOffsetMode] = useState<'EARLIEST' | 'LATEST'>('EARLIEST');
   const [validationError, setValidationError] = useState<string | null>(null);
   const [sortCol, setSortCol] = useState<string | null>(null);
@@ -280,32 +301,56 @@ const QueryWorkbench: React.FC = () => {
 
   const runQuery = async () => {
     setValidationError(null);
+    const statementType = detectStatementType(sql);
+
+    if (executionMode === 'SYNC_READ' && statementType === 'INSERT') {
+      setValidationError('INSERT INTO must be submitted in Flink Job mode.');
+      return;
+    }
+    if (executionMode === 'ASYNC_JOB' && statementType !== 'INSERT') {
+      setValidationError('Flink Job mode only accepts INSERT INTO statements.');
+      return;
+    }
+
     try {
       const vRes = await axios.post<{ valid: boolean; error?: string }>('/api/query/validate', { sql });
       if (!vRes.data.valid) { setValidationError(vRes.data.error ?? 'SQL validation failed'); return; }
     } catch { /* let execution handle it */ }
 
-    setExecuting(true); setResults(null); setSortCol(null);
+    setExecuting(true); setResults(null); setSubmittedJob(null); setSortCol(null);
     const start = Date.now();
     try {
-      const readMode = offsetMode === 'LATEST' ? 'latest-offset' : 'earliest-offset';
-      const response = await axios.post('/api/query', { sql, readMode });
-      setExecutionMs(Date.now() - start);
-      setResults(response.data);
-      if (!response.data.error) {
+      if (executionMode === 'ASYNC_JOB') {
+        const response = await axios.post<FlinkJobSubmission>('/api/query/jobs', { sql });
+        setExecutionMs(Date.now() - start);
+        setSubmittedJob(response.data);
+        setResults(null);
         saveToHistory(sql);
-        // Refresh the schema browser when:
-        // 1. The user explicitly ran a CREATE TABLE statement.
-        // 2. The backend auto-registered a Flink table during query execution.
-        const strippedForCheck = sql.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, '').trim();
-        if (strippedForCheck.toUpperCase().startsWith('CREATE TABLE') || response.data.tableRegistered) {
-          fetchSchema();
+        toast(`Streaming job submitted: ${response.data.status}`, 'success');
+      } else {
+        const readMode = offsetMode === 'LATEST' ? 'latest-offset' : 'earliest-offset';
+        const response = await axios.post<QueryResult>('/api/query/run-sync', { sql, readMode });
+        setExecutionMs(Date.now() - start);
+        setResults(response.data);
+        if (!response.data.error) {
+          saveToHistory(sql);
+          // Refresh the schema browser when:
+          // 1. The user explicitly ran a CREATE TABLE statement.
+          // 2. The backend auto-registered a Flink table during query execution.
+          const strippedForCheck = sql.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, '').trim();
+          if (strippedForCheck.toUpperCase().startsWith('CREATE TABLE') || response.data.tableRegistered) {
+            fetchSchema();
+          }
         }
       }
-    } catch {
+    } catch (error) {
       setExecutionMs(Date.now() - start);
-      setResults({ queryId: '', columns: [], rows: [], error: 'Query execution failed' });
-      toast('Query execution failed', 'error');
+      const message = axios.isAxiosError(error)
+        ? String(error.response?.data?.message ?? error.response?.data?.error ?? 'Query execution failed')
+        : 'Query execution failed';
+      setResults({ queryId: '', columns: [], rows: [], error: message });
+      setSubmittedJob(null);
+      toast(message, 'error');
     } finally { setExecuting(false); }
   };
   runQueryRef.current = runQuery;
@@ -558,16 +603,32 @@ const QueryWorkbench: React.FC = () => {
             </div>
             <div className="h-6 w-px bg-primary/20" />
             <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-400">Offset:</span>
+              <span className="text-xs text-slate-400">Mode:</span>
               <div className="flex bg-background-dark border border-primary/20 rounded overflow-hidden">
-                {(['EARLIEST', 'LATEST'] as const).map(mode => (
-                  <button key={mode} onClick={() => setOffsetMode(mode)}
-                    className={`px-2 py-1 text-[10px] font-bold border-r last:border-r-0 border-primary/20 transition-colors ${offsetMode === mode ? 'bg-primary/20 text-primary' : 'text-slate-500 hover:text-slate-300'}`}>
-                    {mode}
+                {([
+                  { value: 'SYNC_READ', label: 'SYNC' },
+                  { value: 'ASYNC_JOB', label: 'JOB' },
+                ] as const).map(mode => (
+                  <button key={mode.value} onClick={() => setExecutionMode(mode.value)}
+                    className={`px-3 py-1 text-[10px] font-bold border-r last:border-r-0 border-primary/20 transition-colors ${executionMode === mode.value ? 'bg-primary/20 text-primary' : 'text-slate-500 hover:text-slate-300'}`}>
+                    {mode.label}
                   </button>
                 ))}
               </div>
             </div>
+            {executionMode === 'SYNC_READ' && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-400">Offset:</span>
+                <div className="flex bg-background-dark border border-primary/20 rounded overflow-hidden">
+                  {(['EARLIEST', 'LATEST'] as const).map(mode => (
+                    <button key={mode} onClick={() => setOffsetMode(mode)}
+                      className={`px-2 py-1 text-[10px] font-bold border-r last:border-r-0 border-primary/20 transition-colors ${offsetMode === mode ? 'bg-primary/20 text-primary' : 'text-slate-500 hover:text-slate-300'}`}>
+                      {mode}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <div className="relative">
@@ -598,7 +659,7 @@ const QueryWorkbench: React.FC = () => {
             <button onClick={runQuery} disabled={executing}
               className="flex items-center gap-2 px-4 py-2 bg-primary text-background-dark rounded-lg text-xs font-bold hover:brightness-110 disabled:opacity-50 transition-all">
               {executing ? <span className="material-symbols-outlined text-sm animate-spin">refresh</span> : <span className="material-symbols-outlined text-sm">play_arrow</span>}
-              {executing ? 'RUNNING...' : 'RUN QUERY'}
+              {executing ? 'RUNNING...' : executionMode === 'ASYNC_JOB' ? 'SUBMIT JOB' : 'RUN QUERY'}
             </button>
           </div>
         </header>
@@ -731,6 +792,22 @@ const QueryWorkbench: React.FC = () => {
                     {results?.rows.length === DEFAULT_LIMIT && <span className="ml-1.5 text-[10px] text-amber-500 font-semibold" title="Result set may be truncated">⚠ limit reached</span>}
                   </span>
                 </div>
+                {(results?.engine || (executionMode === 'SYNC_READ' && (results || executing))) && (
+                  <div className="flex items-center gap-1.5" title={
+                    (results?.engine ?? 'KAFKA_DIRECT') === 'KAFKA_DIRECT'
+                      ? 'Kafka Direct: bounded scan over Kafka messages. Supports SELECT, WHERE, aggregates and TUMBLE windows. No multi-topic JOINs.'
+                      : 'Flink: executed by the embedded Flink SQL engine (EXPLAIN / DDL).'
+                  }>
+                    <span className="material-symbols-outlined text-sm text-slate-500">settings_ethernet</span>
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border uppercase ${
+                      (results?.engine ?? 'KAFKA_DIRECT') === 'KAFKA_DIRECT'
+                        ? 'text-cyan-400 bg-cyan-500/10 border-cyan-500/20'
+                        : 'text-violet-400 bg-violet-500/10 border-violet-500/20'
+                    }`}>
+                      {results?.engine ?? 'Kafka Direct'}
+                    </span>
+                  </div>
+                )}
               </div>
               <div className="flex items-center gap-3">
                 {results && !results.error && results.rows.length > 0 && (
@@ -740,8 +817,10 @@ const QueryWorkbench: React.FC = () => {
                     <button onClick={() => exportResults('json')} className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-primary transition-colors"><span className="material-symbols-outlined text-sm">download</span>JSON</button>
                   </div>
                 )}
-                <span className={`w-1.5 h-1.5 rounded-full ${executing ? 'bg-primary animate-pulse' : results ? 'bg-emerald-500' : 'bg-slate-600'}`} />
-                <span className="text-[10px] font-bold text-slate-400 uppercase">{executing ? 'RUNNING' : results ? 'COMPLETE' : 'IDLE'}</span>
+                <span className={`w-1.5 h-1.5 rounded-full ${executing ? 'bg-primary animate-pulse' : (results || submittedJob) ? 'bg-emerald-500' : 'bg-slate-600'}`} />
+                <span className="text-[10px] font-bold text-slate-400 uppercase">
+                  {executing ? 'RUNNING' : submittedJob ? 'JOB SUBMITTED' : results ? 'COMPLETE' : 'IDLE'}
+                </span>
               </div>
             </div>
 
@@ -773,6 +852,37 @@ const QueryWorkbench: React.FC = () => {
                       className="text-slate-600 hover:text-slate-300 shrink-0 transition-colors" title="Copy error">
                       <span className="material-symbols-outlined text-sm">content_copy</span>
                     </button>
+                  </div>
+                </div>
+              ) : submittedJob ? (
+                <div className="p-4">
+                  <div className="flex items-start gap-3 p-4 rounded-lg border border-emerald-500/30 bg-emerald-500/10">
+                    <span className="material-symbols-outlined text-emerald-400 text-base mt-0.5 shrink-0">rocket_launch</span>
+                    <div className="flex-1 min-w-0 space-y-2">
+                      <div>
+                        <p className="text-emerald-300 font-semibold text-sm">Flink job submitted</p>
+                        <p className="text-xs text-slate-400">The SQL was accepted in asynchronous job mode and is now tracked by the dashboard.</p>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px] font-mono text-slate-300">
+                        <div>
+                          <p className="text-slate-500 uppercase tracking-wider text-[10px]">Status</p>
+                          <p>{submittedJob.status}</p>
+                        </div>
+                        <div>
+                          <p className="text-slate-500 uppercase tracking-wider text-[10px]">Type</p>
+                          <p>{submittedJob.statementType.replace('_', ' ')}</p>
+                        </div>
+                        <div>
+                          <p className="text-slate-500 uppercase tracking-wider text-[10px]">Query ID</p>
+                          <p className="break-all">{submittedJob.queryId}</p>
+                        </div>
+                        <div>
+                          <p className="text-slate-500 uppercase tracking-wider text-[10px]">Flink Job ID</p>
+                          <p className="break-all">{submittedJob.flinkJobId}</p>
+                        </div>
+                      </div>
+                      <pre className="text-[10px] text-slate-500 font-mono whitespace-pre-wrap overflow-x-auto leading-relaxed border-t border-emerald-500/20 pt-2">{submittedJob.sql}</pre>
+                    </div>
                   </div>
                 </div>
               ) : results?.columns.length ? (
@@ -808,7 +918,9 @@ const QueryWorkbench: React.FC = () => {
               ) : (
                 <div className="h-full flex flex-col items-center justify-center text-slate-600 space-y-2">
                   <span className="material-symbols-outlined text-3xl opacity-20">terminal</span>
-                  <p className="text-xs font-medium uppercase tracking-widest">Run a query to see results</p>
+                  <p className="text-xs font-medium uppercase tracking-widest">
+                    {executionMode === 'ASYNC_JOB' ? 'Submit a job to track it here' : 'Run a query to see results'}
+                  </p>
                 </div>
               )}
             </div>
