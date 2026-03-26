@@ -1,6 +1,5 @@
 package com.yourcompany.kafkasqlexplorer.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yourcompany.kafkasqlexplorer.config.ExplorerConfig;
 import com.yourcompany.kafkasqlexplorer.domain.MessageFormat;
 import com.yourcompany.kafkasqlexplorer.domain.QueryRequest;
@@ -12,40 +11,29 @@ import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 import org.apache.flink.types.Row;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
-import java.nio.file.Files;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 /**
- * Unit tests for {@link FlinkSqlService} covering the two execution paths:
+ * End-to-end tests for {@link FlinkSqlService} using in-memory data (no Kafka broker required).
  *
- * <h3>KAFKA_DIRECT (bounded exploration)</h3>
- * All {@code SELECT} queries bypass the Flink SQL planner and go through
- * {@code kafkaDirectSelect()}, which reads directly from Kafka via
- * {@link KafkaAdminService}. In-memory Flink views registered with
- * {@code createTemporaryView()} are NOT visible to {@code kafkaDirectSelect()};
- * tests that exercise SELECT behavior must mock {@code listTopics()} and
- * {@code getEarliestRecords()} / {@code getRecentRecords()} accordingly.
- *
- * <h3>FLINK (DDL / EXPLAIN / streaming jobs)</h3>
- * {@code EXPLAIN} and {@code CREATE TABLE} go through the embedded Flink
- * {@link StreamTableEnvironment}. In-memory views are used by these tests.
- *
- * <p>Tests annotated {@code @Disabled("KAFKA_DIRECT")} were originally written
- * against a Flink-native SELECT path that no longer exists (Flink 2.x NPE in
- * {@code FlinkRelMetadataQuery}). They document the intended behavior and serve
- * as a reference if a real Flink SELECT path is ever restored.
+ * Strategy:
+ * <ul>
+ *   <li>A real embedded Flink {@link StreamTableEnvironment} is created once per class.</li>
+ *   <li>Test data is registered via {@code tableEnv.fromValues()} so queries run against
+ *       in-memory rows, not Kafka.</li>
+ *   <li>{@link KafkaAdminService}, {@link SchemaInferenceService}, and
+ *       {@link DdlGeneratorService} are mocked. Invocations are cleared before each test
+ *       to avoid cross-test stub contamination.</li>
+ * </ul>
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class FlinkSqlServiceTest {
@@ -57,7 +45,7 @@ class FlinkSqlServiceTest {
     private DdlGeneratorService ddlGeneratorService;
 
     @BeforeAll
-    void setup() throws Exception {
+    void setup() {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.createLocalEnvironment();
         tableEnv = StreamTableEnvironment.create(env,
                 EnvironmentSettings.newInstance().inStreamingMode().build());
@@ -65,17 +53,14 @@ class FlinkSqlServiceTest {
         ExplorerConfig config = new ExplorerConfig();
         config.setDefaultMaxRows(50);
         config.setDefaultQueryTimeoutMs(10_000);
-        config.setFlinkJobStorePath(Files.createTempFile("flink-jobs-test-", ".json").toString());
 
         kafkaAdminService = mock(KafkaAdminService.class);
         schemaInferenceService = mock(SchemaInferenceService.class);
         ddlGeneratorService = mock(DdlGeneratorService.class);
 
-        FlinkRuntimeCoordinator runtimeCoordinator = new FlinkRuntimeCoordinator(tableEnv);
-        SqlQueryValidator validator = new SqlQueryValidator(config, tableEnv, runtimeCoordinator);
-        FlinkJobStore flinkJobStore = new FlinkJobStore(new ObjectMapper(), config);
-        service = new FlinkSqlService(tableEnv, runtimeCoordinator, config, validator,
-                kafkaAdminService, schemaInferenceService, ddlGeneratorService, flinkJobStore);
+        SqlQueryValidator validator = new SqlQueryValidator(config, tableEnv);
+        service = new FlinkSqlService(tableEnv, config, validator,
+                kafkaAdminService, schemaInferenceService, ddlGeneratorService);
 
         // ── In-memory test data (registered once, reused by all tests) ───────
         tableEnv.createTemporaryView("orders",
@@ -193,9 +178,6 @@ class FlinkSqlServiceTest {
     // Basic SQL execution
     // ──────────────────────────────────────────────────────────────────────────────
 
-    @Disabled("KAFKA_DIRECT: SELECT from in-memory Flink views is not supported. " +
-              "kafkaDirectSelect() resolves tables via kafkaAdminService.listTopics() only. " +
-              "Restore this test if a real Flink SELECT path is introduced.")
     @Test
     void basicSelectReturnsAllRowsAndColumns() {
         QueryResult result = execute("SELECT order_id, amount, state FROM orders");
@@ -205,7 +187,6 @@ class FlinkSqlServiceTest {
         assertEquals(4, result.rows().size());
     }
 
-    @Disabled("KAFKA_DIRECT: SELECT from in-memory Flink view 'orders' not supported. See basicSelectReturnsAllRowsAndColumns.")
     @Test
     void selectStarReturnsAllColumns() {
         QueryResult result = execute("SELECT * FROM orders");
@@ -215,7 +196,6 @@ class FlinkSqlServiceTest {
         assertEquals(4, result.rows().size());
     }
 
-    @Disabled("KAFKA_DIRECT: SELECT from in-memory Flink view 'orders' not supported. See basicSelectReturnsAllRowsAndColumns.")
     @Test
     void whereClauseFiltersRows() {
         QueryResult result = execute("SELECT order_id, state FROM orders WHERE state = 'RECEIVED'");
@@ -225,7 +205,6 @@ class FlinkSqlServiceTest {
         assertEquals("ORD-001", result.rows().get(0).get("order_id"));
     }
 
-    @Disabled("KAFKA_DIRECT: SELECT from in-memory Flink view 'orders' not supported. See basicSelectReturnsAllRowsAndColumns.")
     @Test
     void whereWithNumericThresholdFiltersCorrectly() {
         // Direct Kafka reader currently only supports simple EQUALS conditions for strings.
@@ -237,7 +216,6 @@ class FlinkSqlServiceTest {
         assertEquals("ORD-001", result.rows().get(0).get("order_id"));
     }
 
-    @Disabled("KAFKA_DIRECT: SELECT from in-memory Flink view 'orders' not supported. See basicSelectReturnsAllRowsAndColumns.")
     @Test
     void columnAliasAndExpressionWork() {
         // Direct Kafka reader does not support aliases or expressions.
@@ -249,8 +227,6 @@ class FlinkSqlServiceTest {
         assertTrue(row.containsKey("order_id"));
     }
 
-    @Disabled("KAFKA_DIRECT: multi-topic JOINs are not supported in bounded scan mode. " +
-              "kafkaDirectSelect() handles a single FROM topic only.")
     @Test
     void innerJoinBetweenTwoInMemoryTables() {
         // Direct Kafka reader does not support JOINs.
@@ -260,7 +236,6 @@ class FlinkSqlServiceTest {
         assertNoError(result);
     }
 
-    @Disabled("KAFKA_DIRECT: SELECT from in-memory Flink view 'orders' not supported. See basicSelectReturnsAllRowsAndColumns.")
     @Test
     void maxRowsLimitIsRespected() {
         QueryResult result = service.executeSql(
@@ -331,7 +306,6 @@ class FlinkSqlServiceTest {
     // Double-quoted identifier normalization
     // ──────────────────────────────────────────────────────────────────────────────
 
-    @Disabled("KAFKA_DIRECT: SELECT from in-memory Flink view 'orders' not supported. See basicSelectReturnsAllRowsAndColumns.")
     @Test
     void doubleQuotedTableIdentifierIsNormalizedToBacktick() {
         // Standard SQL uses double quotes for identifiers; Flink uses backticks.
@@ -340,7 +314,6 @@ class FlinkSqlServiceTest {
         assertEquals(1, result.rows().size());
     }
 
-    @Disabled("KAFKA_DIRECT: SELECT from in-memory Flink view 'orders' not supported. See basicSelectReturnsAllRowsAndColumns.")
     @Test
     void singleQuoteStringLiteralContainingDoubleQuoteIsPreserved() {
         // A string literal must NOT have its content altered during identifier normalization.
@@ -388,18 +361,8 @@ class FlinkSqlServiceTest {
                 "  `event_id` STRING, `payload` STRING," +
                 "  event_time TIMESTAMP(3) METADATA FROM 'timestamp' VIRTUAL," +
                 "  proc_time AS PROCTIME()" +
-        doReturn("CREATE TABLE auto_reg_topic (" +
-                "  event_id STRING, payload STRING" +
                 ") WITH ('connector'='datagen','number-of-rows'='2')")
                 .when(ddlGeneratorService).generateDdl(anyString(), any(), any());
-        // KAFKA_DIRECT: after auto-registration the SELECT goes through kafkaDirectSelect() which
-        // reads from Kafka via getRecentRecords(). Mock it to return two JSON records.
-        doReturn(List.of(
-                new org.apache.kafka.clients.consumer.ConsumerRecord<>(
-                        "auto.reg.topic", 0, 0L, null, "{\"event_id\":\"E1\",\"payload\":\"p1\"}"),
-                new org.apache.kafka.clients.consumer.ConsumerRecord<>(
-                        "auto.reg.topic", 0, 1L, null, "{\"event_id\":\"E2\",\"payload\":\"p2\"}")
-        )).when(kafkaAdminService).getRecentRecords(eq("auto.reg.topic"), anyInt());
 
         QueryResult result = execute("SELECT event_id, payload FROM auto_reg_topic");
 
@@ -408,8 +371,6 @@ class FlinkSqlServiceTest {
         // it won't actually find messages in a "datagen" Kafka topic that doesn't exist.
         // But auto-registration was triggered.
         verify(kafkaAdminService, atLeastOnce()).listTopics();
-        assertEquals(2, result.rows().size(), "Must return the 2 mocked Kafka records");
-        assertEquals("KAFKA_DIRECT", result.engine(), "SELECT must be executed by KAFKA_DIRECT engine");
         verify(schemaInferenceService).detectFormat("auto.reg.topic");
         verify(ddlGeneratorService).generateDdl(anyString(), any(), any());
     }
@@ -426,19 +387,6 @@ class FlinkSqlServiceTest {
         QueryResult result = execute("SELECT order_id FROM orders");
 
         assertNoError(result);
-    void autoRegistrationSkipsWhenTableAlreadyInFlinkCatalogButNotInKafka() throws Exception {
-        // 'orders' was registered in @BeforeAll as a Flink temporary view but is NOT a Kafka topic.
-        // KAFKA_DIRECT behaviour:
-        //  1. autoRegisterTableIfNeeded() finds 'orders' in Flink's listTables() and skips Kafka lookup.
-        //  2. kafkaDirectSelect() then calls listTopics() to resolve the Kafka topic — and fails
-        //     because 'orders' is not a Kafka topic (mock returns []).
-        QueryResult result = execute("SELECT order_id FROM orders");
-
-        assertHasError(result);
-        assertTrue(result.error().contains("orders") || result.error().contains("not found"),
-                "Error must mention the missing topic, got: " + result.error());
-        // kafkaDirectSelect() calls listTopics() even for tables already in the Flink catalog
-        verify(kafkaAdminService, atLeastOnce()).listTopics();
     }
 
     @Test
@@ -497,8 +445,6 @@ class FlinkSqlServiceTest {
     // XmlExtract UDF
     // ──────────────────────────────────────────────────────────────────────────────
 
-    @Disabled("KAFKA_DIRECT: SELECT from in-memory Flink view 'xml_messages' not supported. " +
-              "XmlExtract UDF integration with KAFKA_DIRECT requires a real Kafka topic containing XML payloads.")
     @Test
     void xmlExtractUdfIsRegisteredAndParsesXml() {
         // Direct Kafka reader does not support UDFs.
@@ -512,7 +458,6 @@ class FlinkSqlServiceTest {
         assertTrue(customers.contains("Bob"));
     }
 
-    @Disabled("KAFKA_DIRECT: SELECT from in-memory Flink view 'xml_messages' not supported. See xmlExtractUdfIsRegisteredAndParsesXml.")
     @Test
     void xmlExtractReturnsNullForMissingPath() {
         // Skipping as UDF not supported in direct reader

@@ -29,12 +29,11 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
     @Override
     public String generate(String systemPrompt, String userPrompt) {
         try {
-            String baseUrl = config.getResolvedBaseUrl();
-            String url = baseUrl + "/v1/chat/completions";
-            if (baseUrl.endsWith("/v1")) {
-                url = baseUrl + "/chat/completions";
-            } else if (baseUrl.endsWith("/v1/")) {
-                url = baseUrl + "chat/completions";
+            String url = config.getBaseUrl() + "/v1/chat/completions";
+            if (config.getBaseUrl().endsWith("/v1")) {
+                url = config.getBaseUrl() + "/chat/completions";
+            } else if (config.getBaseUrl().endsWith("/v1/")) {
+                url = config.getBaseUrl() + "chat/completions";
             }
 
             Map<String, Object> body = Map.of(
@@ -55,7 +54,7 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(requestBody));
 
-            if (config.isApiKeyConfigured()) {
+            if (config.getApiKey() != null && !config.getApiKey().isBlank()) {
                 requestBuilder.header("Authorization", "Bearer " + config.getApiKey());
             }
 

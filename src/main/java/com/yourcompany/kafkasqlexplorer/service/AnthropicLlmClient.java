@@ -23,8 +23,8 @@ public class AnthropicLlmClient implements LlmClient {
         var builder = AnthropicOkHttpClient.builder()
             .apiKey(config.getApiKey());
 
-        if (config.getResolvedBaseUrl() != null && !config.getResolvedBaseUrl().isBlank()) {
-            builder.baseUrl(config.getResolvedBaseUrl());
+        if (config.getBaseUrl() != null && !config.getBaseUrl().isBlank()) {
+            builder.baseUrl(config.getBaseUrl());
         }
 
         this.client = builder.build();

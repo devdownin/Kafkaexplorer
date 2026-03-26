@@ -2,7 +2,6 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.yourcompany.kafkasqlexplorer.web;
 
-import com.yourcompany.kafkasqlexplorer.config.ClaudeConfig;
 import com.yourcompany.kafkasqlexplorer.config.KafkaConfig;
 import com.yourcompany.kafkasqlexplorer.service.KafkaAdminService;
 import org.springframework.stereotype.Controller;
@@ -17,14 +16,10 @@ public class ConfigController {
 
     private final KafkaConfig kafkaConfig;
     private final KafkaAdminService kafkaAdminService;
-    private final ClaudeConfig claudeConfig;
 
-    public ConfigController(KafkaConfig kafkaConfig,
-                            KafkaAdminService kafkaAdminService,
-                            ClaudeConfig claudeConfig) {
+    public ConfigController(KafkaConfig kafkaConfig, KafkaAdminService kafkaAdminService) {
         this.kafkaConfig = kafkaConfig;
         this.kafkaAdminService = kafkaAdminService;
-        this.claudeConfig = claudeConfig;
     }
 
     @GetMapping("/config")
@@ -50,84 +45,30 @@ public class ConfigController {
         result.put("mode", kafkaConfig.getMode());
         result.put("clusters", kafkaConfig.getClusters());
         result.put("isConnected", kafkaAdminService.ping());
-        appendLlmConfig(result);
         return result;
     }
 
     @PostMapping(value = "/api/config", consumes = "application/json")
     @ResponseBody
-    public Map<String, Object> updateConfig(@RequestBody Map<String, Object> body) {
-        ClaudeConfig.Provider previousProvider = claudeConfig.getProvider();
-
+    public Map<String, Object> updateConfig(@RequestBody Map<String, String> body) {
         if (body.containsKey("bootstrapServers") && body.get("bootstrapServers") != null) {
-            kafkaConfig.setBootstrapServers(asString(body.get("bootstrapServers")));
+            kafkaConfig.setBootstrapServers(body.get("bootstrapServers"));
         }
         if (body.containsKey("mode") && body.get("mode") != null) {
-            kafkaConfig.setMode(asString(body.get("mode")));
+            kafkaConfig.setMode(body.get("mode"));
         }
-        if (body.containsKey("truststorePath")) kafkaConfig.setTruststorePath(asString(body.get("truststorePath")));
-        if (body.containsKey("truststorePassword")) kafkaConfig.setTruststorePassword(asString(body.get("truststorePassword")));
-        if (body.containsKey("keystorePath")) kafkaConfig.setKeystorePath(asString(body.get("keystorePath")));
-        if (body.containsKey("keystorePassword")) kafkaConfig.setKeystorePassword(asString(body.get("keystorePassword")));
-        if (body.containsKey("keyPassword")) kafkaConfig.setKeyPassword(asString(body.get("keyPassword")));
-        if (body.containsKey("confluentKey")) kafkaConfig.setConfluentKey(asString(body.get("confluentKey")));
-        if (body.containsKey("confluentSecret")) kafkaConfig.setConfluentSecret(asString(body.get("confluentSecret")));
-
-        if (body.containsKey("llmProvider") && body.get("llmProvider") != null) {
-            claudeConfig.setProvider(ClaudeConfig.Provider.valueOf(asString(body.get("llmProvider"))));
-        }
-        if (body.containsKey("llmApiKey")) {
-            claudeConfig.setApiKey(asString(body.get("llmApiKey")));
-        }
-        if (body.containsKey("llmBaseUrl")) {
-            claudeConfig.setBaseUrl(asString(body.get("llmBaseUrl")));
-        } else if (previousProvider != claudeConfig.getProvider()
-            && isBlank(claudeConfig.getBaseUrl())) {
-            claudeConfig.setBaseUrl(ClaudeConfig.defaultBaseUrl(claudeConfig.getProvider()));
-        }
-        if (body.containsKey("llmModel")) {
-            claudeConfig.setModel(asString(body.get("llmModel")));
-        }
-        if (body.containsKey("llmMaxTokens") && body.get("llmMaxTokens") != null) {
-            claudeConfig.setMaxTokens(Integer.parseInt(asString(body.get("llmMaxTokens"))));
-        }
-        if (body.containsKey("llmSnapshotWindowSize") && body.get("llmSnapshotWindowSize") != null) {
-            claudeConfig.setSnapshotWindowSize(Integer.parseInt(asString(body.get("llmSnapshotWindowSize"))));
-        }
-        if (body.containsKey("llmSnapshotWindowTimeoutSeconds")
-            && body.get("llmSnapshotWindowTimeoutSeconds") != null) {
-            claudeConfig.setSnapshotWindowTimeoutSeconds(
-                Integer.parseInt(asString(body.get("llmSnapshotWindowTimeoutSeconds")))
-            );
-        }
-
+        if (body.containsKey("truststorePath")) kafkaConfig.setTruststorePath(body.get("truststorePath"));
+        if (body.containsKey("truststorePassword")) kafkaConfig.setTruststorePassword(body.get("truststorePassword"));
+        if (body.containsKey("keystorePath")) kafkaConfig.setKeystorePath(body.get("keystorePath"));
+        if (body.containsKey("keystorePassword")) kafkaConfig.setKeystorePassword(body.get("keystorePassword"));
+        if (body.containsKey("keyPassword")) kafkaConfig.setKeyPassword(body.get("keyPassword"));
+        if (body.containsKey("confluentKey")) kafkaConfig.setConfluentKey(body.get("confluentKey"));
+        if (body.containsKey("confluentSecret")) kafkaConfig.setConfluentSecret(body.get("confluentSecret"));
         kafkaAdminService.init();
         Map<String, Object> result = new HashMap<>();
         result.put("bootstrapServers", kafkaConfig.getBootstrapServers());
         result.put("mode", kafkaConfig.getMode());
         result.put("isConnected", kafkaAdminService.ping());
-        appendLlmConfig(result);
         return result;
-    }
-
-    private void appendLlmConfig(Map<String, Object> result) {
-        result.put("llmProvider", claudeConfig.getProvider().name());
-        result.put("llmProviderLabel", claudeConfig.getProviderLabel());
-        result.put("llmApiKeyConfigured", claudeConfig.isApiKeyConfigured());
-        result.put("llmApiKeyRequired", claudeConfig.isApiKeyRequired());
-        result.put("llmBaseUrl", claudeConfig.getResolvedBaseUrl());
-        result.put("llmModel", claudeConfig.getModel());
-        result.put("llmMaxTokens", claudeConfig.getMaxTokens());
-        result.put("llmSnapshotWindowSize", claudeConfig.getSnapshotWindowSize());
-        result.put("llmSnapshotWindowTimeoutSeconds", claudeConfig.getSnapshotWindowTimeoutSeconds());
-        result.put("llmLocalDeployment", claudeConfig.isLocalDeployment());
-    }
-
-    private boolean isBlank(String value) {
-        return value == null || value.isBlank();
-    }
-
-    private String asString(Object value) {
-        return value == null ? null : String.valueOf(value);
     }
 }

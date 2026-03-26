@@ -76,26 +76,4 @@ class FieldProfilingServiceTest {
         assertNotNull(result);
         assertTrue(result.warnings().isEmpty());
     }
-
-    @Test
-    void testProfileParsesJsonWrappedInProse() {
-        LlmClient llmClient = mock(LlmClient.class);
-        fieldProfilingService = new FieldProfilingService(snapshotReader, claudeConfig, llmClient);
-
-        when(snapshotReader.read(anyList(), any())).thenReturn(List.of(
-            new KafkaMessage("topic1", 0, 1L, 1000L, "key1", "{\"id\":1}")
-        ));
-
-        when(llmClient.generate(anyString(), anyString())).thenReturn("""
-            Here is the requested payload:
-            ```json
-            {"topics": [], "warnings": []}
-            ```
-            """);
-
-        FieldProfileResult result = fieldProfilingService.profile(List.of("topic1"), SnapshotConfig.latestN(10));
-
-        assertNotNull(result);
-        assertTrue(result.warnings().isEmpty());
-    }
 }

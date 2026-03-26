@@ -10,17 +10,10 @@ public record QueryResult(
     List<Map<String, Object>> rows,
     long durationMs,
     String error,
-    boolean tableRegistered,
-    /** Execution engine used: "KAFKA_DIRECT" for bounded SELECT reads, "FLINK" for EXPLAIN/DDL. Null on error paths. */
-    String engine
+    boolean tableRegistered
 ) {
-    /** Backwards-compatible constructor (no tableRegistered, no engine). */
+    /** Backwards-compatible constructor (no tableRegistered). */
     public QueryResult(List<String> columns, List<Map<String, Object>> rows, long durationMs, String error) {
-        this(columns, rows, durationMs, error, false, null);
-    }
-
-    /** Backwards-compatible constructor (no engine). */
-    public QueryResult(List<String> columns, List<Map<String, Object>> rows, long durationMs, String error, boolean tableRegistered) {
-        this(columns, rows, durationMs, error, tableRegistered, null);
+        this(columns, rows, durationMs, error, false);
     }
 }

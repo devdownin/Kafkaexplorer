@@ -6,10 +6,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yourcompany.kafkasqlexplorer.config.ExplorerConfig;
 import com.yourcompany.kafkasqlexplorer.config.KafkaConfig;
 import com.yourcompany.kafkasqlexplorer.domain.MetricConfig;
-import com.yourcompany.kafkasqlexplorer.domain.MetricExecutionMode;
-import com.yourcompany.kafkasqlexplorer.domain.MetricPreviewResult;
-import com.yourcompany.kafkasqlexplorer.domain.MetricTemplateDescriptor;
-import com.yourcompany.kafkasqlexplorer.domain.MetricTemplateType;
 import com.yourcompany.kafkasqlexplorer.domain.QueryRequest;
 import com.yourcompany.kafkasqlexplorer.domain.QueryResult;
 import io.micrometer.core.instrument.Counter;
@@ -33,7 +29,6 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
-import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
@@ -71,39 +66,6 @@ public class MetricService {
 
     private static final Logger log = LoggerFactory.getLogger(MetricService.class);
     private static final int MAX_HISTORY = 50;
-    private static final int DEFAULT_TEMPLATE_MAX_ROWS = 10_000;
-    private static final long DEFAULT_TEMPLATE_TIMEOUT_MS = 30_000L;
-    private static final String DEFAULT_TEMPLATE_READ_MODE = "earliest-offset";
-
-    private static final List<MetricTemplateDescriptor> TEMPLATE_DESCRIPTORS = List.of(
-        new MetricTemplateDescriptor(
-            MetricTemplateType.TOPIC_COUNT_DELTA.name(),
-            "Topic Count Delta",
-            "Compare two bounded topic counts and compute a gap, ratio or percentage difference.",
-            List.of("GAUGE"),
-            List.of("leftSql", "rightSql", "operation")
-        ),
-        new MetricTemplateDescriptor(
-            MetricTemplateType.TOPIC_TRANSIT_LATENCY.name(),
-            "Topic Transit Latency",
-            "Measure processing latency between two topics by matching events on a key and comparing timestamps.",
-            List.of("GAUGE", "HISTOGRAM", "SUMMARY"),
-            List.of("sourceSql", "targetSql")
-        )
-    );
-
-    private record MetricComputationResult(
-        List<Map<String, Object>> rows,
-        Double displayValue,
-        String error,
-        Map<String, Object> summary
-    ) {
-        static MetricComputationResult error(String error) {
-            return new MetricComputationResult(List.of(), null, error, Map.of());
-        }
-    }
-
-    private record CorrelationEvent(String matchKey, long eventTime) {}
 
     // ── metric state ─────────────────────────────────────────────────────────
     private final Map<String, MetricConfig>              metrics           = new ConcurrentHashMap<>();
@@ -228,50 +190,15 @@ public class MetricService {
         return Optional.ofNullable(metrics.get(id));
     }
 
-    public List<MetricTemplateDescriptor> listTemplates() {
-        return TEMPLATE_DESCRIPTORS;
-    }
-
-    public MetricPreviewResult previewMetric(MetricConfig metric) {
-        try {
-            MetricConfig normalized = normalizeMetric(metric);
-            validateMetric(normalized);
-            executeCreateTableIfPresent(normalized);
-
-            MetricComputationResult result = computeMetric(normalized);
-            Map<String, Object> summary = new LinkedHashMap<>(result.summary());
-            if (MetricExecutionMode.FLINK_MANAGED_JOB.name().equals(normalized.executionMode())) {
-                summary.put("plannedExecutionMode", MetricExecutionMode.FLINK_MANAGED_JOB.name());
-                summary.put("previewExecutionMode", MetricExecutionMode.TEMPLATE_BOUNDED_SCAN.name());
-                summary.put("managedJobStatus", "PLANNED");
-                summary.put("managedJobNote", "Preview uses a bounded scan until Flink job orchestration is implemented.");
-            }
-            List<Map<String, Object>> previewRows = result.rows().size() > 50
-                ? result.rows().subList(0, 50)
-                : result.rows();
-            return new MetricPreviewResult(result.displayValue(), previewRows, result.error(), summary);
-        } catch (IllegalArgumentException e) {
-            return new MetricPreviewResult(null, List.of(), e.getMessage(), Map.of());
-        } catch (Exception e) {
-            return new MetricPreviewResult(null, List.of(),
-                e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName(), Map.of());
-        }
-    }
-
     public void save(MetricConfig metric) {
         String id = (metric.id() == null || metric.id().isEmpty())
             ? UUID.randomUUID().toString() : metric.id();
-        MetricConfig m = normalizeMetric(new MetricConfig(
+        MetricConfig m = new MetricConfig(
             id, metric.name(), metric.type(), metric.sql(), metric.description(),
             metric.warningThreshold(), metric.criticalThreshold(),
             metric.lastValue(), metric.lastUpdateTime(), metric.errorMessage(),
             metric.history() != null ? metric.history() : List.of(),
-            metric.lastSummary() != null ? metric.lastSummary() : Map.of(),
-            metric.createTableSql(),
-            metric.templateType(),
-            metric.templateParams(),
-            metric.executionMode()));
-        validateMetric(m, true);
+            metric.createTableSql());
         metrics.put(id, m);
         persistToKafka(m);
     }
@@ -315,373 +242,38 @@ public class MetricService {
         return sql;
     }
 
-    private MetricConfig normalizeMetric(MetricConfig metric) {
-        String normalizedType = metric.type() == null || metric.type().isBlank()
-            ? "GAUGE"
-            : metric.type().trim().toUpperCase(Locale.ROOT);
-        MetricTemplateType templateType = MetricTemplateType.fromValue(metric.templateType());
-        MetricExecutionMode executionMode = metric.executionMode() == null || metric.executionMode().isBlank()
-            ? (templateType == MetricTemplateType.RAW_SQL ? MetricExecutionMode.SQL : MetricExecutionMode.TEMPLATE_BOUNDED_SCAN)
-            : MetricExecutionMode.valueOf(metric.executionMode().trim().toUpperCase(Locale.ROOT));
-
-        return new MetricConfig(
-            metric.id(),
-            metric.name(),
-            normalizedType,
-            metric.sql(),
-            metric.description(),
-            metric.warningThreshold(),
-            metric.criticalThreshold(),
-            metric.lastValue(),
-            metric.lastUpdateTime(),
-            metric.errorMessage(),
-            metric.history() != null ? metric.history() : List.of(),
-            metric.lastSummary() != null ? new LinkedHashMap<>(metric.lastSummary()) : Map.of(),
-            metric.createTableSql(),
-            templateType.name(),
-            metric.templateParams() != null ? new LinkedHashMap<>(metric.templateParams()) : Map.of(),
-            executionMode.name()
-        );
-    }
-
-    private void validateMetric(MetricConfig metric) {
-        validateMetric(metric, false);
-    }
-
-    private void validateMetric(MetricConfig metric, boolean requireName) {
-        if (requireName && (metric.name() == null || metric.name().isBlank())) {
-            throw new IllegalArgumentException("Metric name is required");
-        }
-
-        MetricTemplateType templateType = MetricTemplateType.fromValue(metric.templateType());
-        String metricType = metric.type() == null ? "GAUGE" : metric.type().toUpperCase(Locale.ROOT);
-        Map<String, Object> params = metric.templateParams() != null ? metric.templateParams() : Map.of();
-        MetricExecutionMode executionMode = MetricExecutionMode.valueOf(metric.executionMode().toUpperCase(Locale.ROOT));
-
-        if (executionMode == MetricExecutionMode.FLINK_MANAGED_JOB && templateType == MetricTemplateType.RAW_SQL) {
-            throw new IllegalArgumentException("FLINK_MANAGED_JOB is only available for template metrics");
-        }
-
-        switch (templateType) {
-            case RAW_SQL -> {
-                if (metric.sql() == null || metric.sql().isBlank()) {
-                    throw new IllegalArgumentException("SQL is required for RAW_SQL metrics");
-                }
-            }
-            case TOPIC_COUNT_DELTA -> {
-                requireParam(params, "leftSql");
-                requireParam(params, "rightSql");
-                if (!"GAUGE".equals(metricType)) {
-                    throw new IllegalArgumentException("TOPIC_COUNT_DELTA supports GAUGE metrics only");
-                }
-            }
-            case TOPIC_TRANSIT_LATENCY -> {
-                requireParam(params, "sourceSql");
-                requireParam(params, "targetSql");
-                if (!Set.of("GAUGE", "HISTOGRAM", "SUMMARY").contains(metricType)) {
-                    throw new IllegalArgumentException("TOPIC_TRANSIT_LATENCY supports GAUGE, HISTOGRAM or SUMMARY");
-                }
-            }
-        }
-    }
-
-    private void executeCreateTableIfPresent(MetricConfig config) {
-        if (config.createTableSql() == null || config.createTableSql().isBlank()) return;
-
-        String ddl = config.createTableSql().trim();
-        if (!ddl.toUpperCase(Locale.ROOT).contains("IF NOT EXISTS")) {
-            ddl = ddl.replaceFirst("(?i)(CREATE\\s+TABLE\\s+)", "$1IF NOT EXISTS ");
-        }
-        try {
-            flinkSqlService.executeSql(QueryRequest.ddl(ddl, 10_000L));
-            log.debug("CREATE TABLE DDL executed for metric '{}'", config.name());
-        } catch (Exception ddlEx) {
-            log.debug("CREATE TABLE for metric '{}' skipped: {}", config.name(), ddlEx.getMessage());
-        }
-    }
-
-    private MetricComputationResult computeMetric(MetricConfig config) {
-        return switch (MetricTemplateType.fromValue(config.templateType())) {
-            case RAW_SQL -> computeRawSqlMetric(config);
-            case TOPIC_COUNT_DELTA -> computeCountDeltaMetric(config);
-            case TOPIC_TRANSIT_LATENCY -> computeTransitLatencyMetric(config);
-        };
-    }
-
-    private MetricComputationResult computeRawSqlMetric(MetricConfig config) {
-        QueryResult result = executeMetricQuery(
-            config.sql(),
-            DEFAULT_TEMPLATE_MAX_ROWS,
-            DEFAULT_TEMPLATE_TIMEOUT_MS,
-            DEFAULT_TEMPLATE_READ_MODE
-        );
-        if (result.error() != null) return MetricComputationResult.error(result.error());
-        if (result.rows().isEmpty()) {
-            return MetricComputationResult.error("No rows returned — check table name and Kafka connectivity");
-        }
-
-        Double displayValue = extractPrimaryMetricValue(result.rows());
-        return new MetricComputationResult(
-            result.rows(),
-            displayValue,
-            null,
-            Map.of("rowCount", result.rows().size())
-        );
-    }
-
-    private MetricComputationResult computeCountDeltaMetric(MetricConfig config) {
-        Map<String, Object> params = config.templateParams() != null ? config.templateParams() : Map.of();
-        int maxRows = getIntParam(params, "maxRowsPerSide", DEFAULT_TEMPLATE_MAX_ROWS);
-        long timeoutMs = getLongParam(params, "timeoutMs", DEFAULT_TEMPLATE_TIMEOUT_MS);
-        String readMode = getStringParam(params, "readMode", DEFAULT_TEMPLATE_READ_MODE);
-
-        QueryResult leftResult = executeMetricQuery(requireParam(params, "leftSql"), maxRows, timeoutMs, readMode);
-        if (leftResult.error() != null) return MetricComputationResult.error(leftResult.error());
-        QueryResult rightResult = executeMetricQuery(requireParam(params, "rightSql"), maxRows, timeoutMs, readMode);
-        if (rightResult.error() != null) return MetricComputationResult.error(rightResult.error());
-
-        Double leftValue = extractPrimaryMetricValue(leftResult.rows());
-        Double rightValue = extractPrimaryMetricValue(rightResult.rows());
-        if (leftValue == null || rightValue == null) {
-            return MetricComputationResult.error("Both queries must return a numeric metric_value");
-        }
-
-        String operation = getStringParam(params, "operation", "LEFT_MINUS_RIGHT").toUpperCase(Locale.ROOT);
-        Double metricValue = switch (operation) {
-            case "LEFT_MINUS_RIGHT" -> leftValue - rightValue;
-            case "ABS_DIFF" -> Math.abs(leftValue - rightValue);
-            case "RATIO" -> rightValue == 0.0 ? null : leftValue / rightValue;
-            case "PERCENT_GAP" -> rightValue == 0.0 ? null : ((leftValue - rightValue) * 100.0) / rightValue;
-            default -> throw new IllegalArgumentException("Unsupported count delta operation: " + operation);
-        };
-        if (metricValue == null) {
-            return MetricComputationResult.error("Cannot compute " + operation + " when right metric value is zero");
-        }
-
-        Map<String, Object> row = new LinkedHashMap<>();
-        row.put("metric_value", metricValue);
-        row.put("left_value", leftValue);
-        row.put("right_value", rightValue);
-        row.put("operation", operation);
-        addIfPresent(row, "left_topic", params.get("leftTopic"));
-        addIfPresent(row, "right_topic", params.get("rightTopic"));
-
-        Map<String, Object> summary = new LinkedHashMap<>();
-        summary.put("leftValue", leftValue);
-        summary.put("rightValue", rightValue);
-        summary.put("operation", operation);
-
-        return new MetricComputationResult(List.of(row), metricValue, null, summary);
-    }
-
-    private MetricComputationResult computeTransitLatencyMetric(MetricConfig config) {
-        Map<String, Object> params = config.templateParams() != null ? config.templateParams() : Map.of();
-        int maxRows = getIntParam(params, "maxRowsPerSide", DEFAULT_TEMPLATE_MAX_ROWS);
-        long timeoutMs = getLongParam(params, "timeoutMs", DEFAULT_TEMPLATE_TIMEOUT_MS);
-        String readMode = getStringParam(params, "readMode", DEFAULT_TEMPLATE_READ_MODE);
-
-        QueryResult sourceResult = executeMetricQuery(requireParam(params, "sourceSql"), maxRows, timeoutMs, readMode);
-        if (sourceResult.error() != null) return MetricComputationResult.error(sourceResult.error());
-        QueryResult targetResult = executeMetricQuery(requireParam(params, "targetSql"), maxRows, timeoutMs, readMode);
-        if (targetResult.error() != null) return MetricComputationResult.error(targetResult.error());
-
-        List<CorrelationEvent> sourceEvents = extractCorrelationEvents(sourceResult.rows(), "sourceSql");
-        List<CorrelationEvent> targetEvents = extractCorrelationEvents(targetResult.rows(), "targetSql");
-        if (sourceEvents.isEmpty() || targetEvents.isEmpty()) {
-            return MetricComputationResult.error("Transit latency requires match_key and event_time rows on both queries");
-        }
-
-        Map<String, Deque<Long>> targetsByKey = new HashMap<>();
-        for (CorrelationEvent event : targetEvents) {
-            targetsByKey
-                .computeIfAbsent(event.matchKey(), ignored -> new ArrayDeque<>())
-                .addLast(event.eventTime());
-        }
-
-        List<Double> latencies = new ArrayList<>();
-        int unmatchedSourceCount = 0;
-        sourceEvents.sort(Comparator.comparing(CorrelationEvent::matchKey).thenComparingLong(CorrelationEvent::eventTime));
-        targetsByKey.values().forEach(queue -> {
-            List<Long> sorted = new ArrayList<>(queue);
-            sorted.sort(Long::compareTo);
-            queue.clear();
-            queue.addAll(sorted);
-        });
-
-        for (CorrelationEvent sourceEvent : sourceEvents) {
-            Deque<Long> candidates = targetsByKey.get(sourceEvent.matchKey());
-            if (candidates == null || candidates.isEmpty()) {
-                unmatchedSourceCount++;
-                continue;
-            }
-            while (!candidates.isEmpty() && candidates.peekFirst() < sourceEvent.eventTime()) {
-                candidates.removeFirst();
-            }
-            if (candidates.isEmpty()) {
-                unmatchedSourceCount++;
-                continue;
-            }
-            long targetTs = candidates.removeFirst();
-            latencies.add((double) (targetTs - sourceEvent.eventTime()));
-        }
-
-        if (latencies.isEmpty()) {
-            return MetricComputationResult.error("No correlated messages found between source and target queries");
-        }
-
-        double avgLatencyMs = latencies.stream().mapToDouble(Double::doubleValue).average().orElse(0.0);
-        Map<String, Object> sharedLabels = new LinkedHashMap<>();
-        addIfPresent(sharedLabels, "source_topic", params.get("sourceTopic"));
-        addIfPresent(sharedLabels, "target_topic", params.get("targetTopic"));
-
-        List<Map<String, Object>> rows = new ArrayList<>();
-        if ("GAUGE".equalsIgnoreCase(config.type())) {
-            Map<String, Object> row = new LinkedHashMap<>(sharedLabels);
-            row.put("metric_value", avgLatencyMs);
-            rows.add(row);
-        } else {
-            for (Double latency : latencies) {
-                Map<String, Object> row = new LinkedHashMap<>(sharedLabels);
-                row.put("metric_value", latency);
-                rows.add(row);
-            }
-        }
-
-        Map<String, Object> summary = new LinkedHashMap<>();
-        summary.put("matchedCount", latencies.size());
-        summary.put("unmatchedSourceCount", unmatchedSourceCount);
-        summary.put("avgLatencyMs", avgLatencyMs);
-        summary.put("p95LatencyMs", percentile(latencies, 0.95));
-        summary.put("maxLatencyMs", latencies.stream().mapToDouble(Double::doubleValue).max().orElse(avgLatencyMs));
-
-        return new MetricComputationResult(rows, avgLatencyMs, null, summary);
-    }
-
-    private QueryResult executeMetricQuery(String sql, int maxRows, long timeoutMs, String readMode) {
-        return flinkSqlService.executeSql(QueryRequest.sql(injectBoundedHint(sql), maxRows, timeoutMs, readMode));
-    }
-
-    private List<CorrelationEvent> extractCorrelationEvents(List<Map<String, Object>> rows, String queryName) {
-        List<CorrelationEvent> events = new ArrayList<>();
-        for (Map<String, Object> row : rows) {
-            Object key = findValueIgnoreCase(row, "match_key");
-            Object eventTime = findValueIgnoreCase(row, "event_time");
-            if (key == null || eventTime == null) continue;
-
-            Long epochMs = toEpochMillis(eventTime);
-            if (epochMs == null) {
-                throw new IllegalArgumentException(
-                    "Column event_time from " + queryName + " must be ISO-8601 or epoch-based"
-                );
-            }
-            events.add(new CorrelationEvent(String.valueOf(key), epochMs));
-        }
-        return events;
-    }
-
-    private Object findValueIgnoreCase(Map<String, Object> row, String key) {
-        for (Map.Entry<String, Object> entry : row.entrySet()) {
-            if (key.equalsIgnoreCase(entry.getKey())) return entry.getValue();
-        }
-        return null;
-    }
-
-    private Long toEpochMillis(Object value) {
-        if (value instanceof Number n) {
-            long timestamp = n.longValue();
-            return timestamp < 10_000_000_000L ? timestamp * 1000L : timestamp;
-        }
-        if (value instanceof String s) {
-            String text = s.trim();
-            if (text.isEmpty()) return null;
-            try {
-                long timestamp = Long.parseLong(text);
-                return timestamp < 10_000_000_000L ? timestamp * 1000L : timestamp;
-            } catch (NumberFormatException ignored) {
-                try {
-                    return Instant.parse(text).toEpochMilli();
-                } catch (Exception ignoredIso) {
-                    try {
-                        return java.time.LocalDateTime.parse(text.replace(' ', 'T'))
-                            .toInstant(java.time.ZoneOffset.UTC)
-                            .toEpochMilli();
-                    } catch (Exception ignoredLocal) {
-                        return null;
-                    }
-                }
-            }
-        }
-        return null;
-    }
-
-    private double percentile(List<Double> values, double quantile) {
-        List<Double> sorted = new ArrayList<>(values);
-        sorted.sort(Double::compareTo);
-        int index = (int) Math.ceil(quantile * sorted.size()) - 1;
-        index = Math.max(0, Math.min(index, sorted.size() - 1));
-        return sorted.get(index);
-    }
-
-    private Double extractPrimaryMetricValue(List<Map<String, Object>> rows) {
-        for (Map<String, Object> row : rows) {
-            Double value = extractValue(row);
-            if (value != null) return value;
-        }
-        return null;
-    }
-
-    private String requireParam(Map<String, Object> params, String key) {
-        Object value = params.get(key);
-        if (value == null || String.valueOf(value).isBlank()) {
-            throw new IllegalArgumentException("Missing required template parameter: " + key);
-        }
-        return String.valueOf(value);
-    }
-
-    private String getStringParam(Map<String, Object> params, String key, String defaultValue) {
-        Object value = params.get(key);
-        return value == null || String.valueOf(value).isBlank() ? defaultValue : String.valueOf(value);
-    }
-
-    private int getIntParam(Map<String, Object> params, String key, int defaultValue) {
-        Object value = params.get(key);
-        if (value == null || String.valueOf(value).isBlank()) return defaultValue;
-        return Integer.parseInt(String.valueOf(value));
-    }
-
-    private long getLongParam(Map<String, Object> params, String key, long defaultValue) {
-        Object value = params.get(key);
-        if (value == null || String.valueOf(value).isBlank()) return defaultValue;
-        return Long.parseLong(String.valueOf(value));
-    }
-
-    private void addIfPresent(Map<String, Object> target, String key, Object value) {
-        if (value != null && !String.valueOf(value).isBlank()) {
-            target.put(key, value);
-        }
-    }
-
     @Scheduled(fixedRateString = "${explorer.metrics-refresh-rate:30000}")
     public void refreshMetrics() {
         metrics.forEach((id, config) -> {
             try {
-                MetricConfig normalized = normalizeMetric(config);
-                validateMetric(normalized);
-
-                if (MetricExecutionMode.FLINK_MANAGED_JOB.name().equals(normalized.executionMode())) {
-                    updateMetricState(id, null, null, buildManagedJobPlannedSummary(normalized));
-                    return;
+                // ── Step 1: register the Flink table if a DDL is attached ──────────────
+                if (config.createTableSql() != null && !config.createTableSql().isBlank()) {
+                    String ddl = config.createTableSql().trim();
+                    // Ensure IF NOT EXISTS so re-runs are idempotent
+                    if (!ddl.toUpperCase().contains("IF NOT EXISTS")) {
+                        ddl = ddl.replaceFirst("(?i)(CREATE\\s+TABLE\\s+)", "$1IF NOT EXISTS ");
+                    }
+                    try {
+                        flinkSqlService.executeSql(new QueryRequest(ddl, null, 1, 10_000L, null));
+                        log.debug("CREATE TABLE DDL executed for metric '{}'", config.name());
+                    } catch (Exception ddlEx) {
+                        // Table already exists or DDL error — log and continue to the query
+                        log.debug("CREATE TABLE for metric '{}' skipped: {}", config.name(), ddlEx.getMessage());
+                    }
                 }
 
-                executeCreateTableIfPresent(normalized);
-
-                MetricComputationResult result = computeMetric(normalized);
+                // ── Step 2: run the bounded metric SQL ────────────────────────────────
+                // Pass "earliest-offset" so FlinkSqlService does NOT inject its own
+                // latest-offset hint on top of our bounded-scan hint.
+                String boundedSql = injectBoundedHint(config.sql());
+                QueryResult result = flinkSqlService.executeSql(
+                    new QueryRequest(boundedSql, "earliest-offset", 10_000, 30_000L, null));
                 if (result.error() != null) {
-                    updateMetricState(id, null, result.error(), result.summary());
+                    updateMetricState(id, null, result.error());
                 } else if (!result.rows().isEmpty()) {
-                    processRows(id, normalized, result.rows(), result.displayValue(), result.summary());
+                    processRows(id, config, result);
                 } else {
-                    updateMetricState(id, null, "No rows returned — check table name and Kafka connectivity", result.summary());
+                    updateMetricState(id, null, "No rows returned — check table name and Kafka connectivity");
                 }
             } catch (Exception e) {
                 String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
@@ -690,29 +282,18 @@ public class MetricService {
                 if (msg.contains("not found") || msg.contains("SQL validation failed")) {
                     msg = msg + " → Check that the table is registered in Flink (run CREATE TABLE in the Query Workbench first)";
                 }
-                updateMetricState(id, null, msg, Map.of());
+                updateMetricState(id, null, msg);
             }
         });
     }
 
-    private Map<String, Object> buildManagedJobPlannedSummary(MetricConfig metric) {
-        Map<String, Object> summary = new LinkedHashMap<>();
-        summary.put("managedJobStatus", "PLANNED");
-        summary.put("requestedExecutionMode", MetricExecutionMode.FLINK_MANAGED_JOB.name());
-        summary.put("currentExecutionFallback", MetricExecutionMode.TEMPLATE_BOUNDED_SCAN.name());
-        summary.put("managedJobNote", "Waiting for Flink job orchestration support before continuous execution can start.");
-        summary.put("templateType", metric.templateType());
-        return summary;
-    }
-
     // ── Core processing — dispatches by Prometheus type ───────────────────────
 
-    private void processRows(String metricId, MetricConfig config, List<Map<String, Object>> rows,
-                             Double displayValueOverride, Map<String, Object> summary) {
+    private void processRows(String metricId, MetricConfig config, QueryResult result) {
         String type = config.type() == null ? "GAUGE" : config.type().toUpperCase();
-        Double primaryValue = displayValueOverride;
+        Double primaryValue = null;
 
-        for (Map<String, Object> row : rows) {
+        for (Map<String, Object> row : result.rows()) {
             Double value   = extractValue(row);
             if (value == null) continue;
 
@@ -730,7 +311,7 @@ public class MetricService {
 
         if (primaryValue != null) {
             updateHistory(metricId, primaryValue);
-            updateMetricState(metricId, primaryValue, null, summary);
+            updateMetricState(metricId, primaryValue, null);
         }
     }
 
@@ -836,7 +417,7 @@ public class MetricService {
         if (history.size() > MAX_HISTORY) history.removeFirst();
     }
 
-    private void updateMetricState(String id, Double value, String error, Map<String, Object> summary) {
+    private void updateMetricState(String id, Double value, String error) {
         MetricConfig current = metrics.get(id);
         if (current == null) return;
         metrics.put(id, new MetricConfig(
@@ -845,11 +426,7 @@ public class MetricService {
             value != null ? value : current.lastValue(),
             System.currentTimeMillis(), error,
             new ArrayList<>(historyMap.getOrDefault(id, new LinkedList<>())),
-            summary != null && !summary.isEmpty() ? new LinkedHashMap<>(summary) : current.lastSummary(),
-            current.createTableSql(),
-            current.templateType(),
-            current.templateParams(),
-            current.executionMode()));
+            current.createTableSql()));
     }
 
     // ── Kafka persistence ─────────────────────────────────────────────────────

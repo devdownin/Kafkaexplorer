@@ -20,8 +20,6 @@ public class ExplorerConfig {
     private boolean allowCrossJoin = false;
     private boolean allowSystemTableAccess = false;
     private int cacheExpireMinutes = 10;
-    private String flinkJobStorePath = "data/flink-jobs.json";
-    private long flinkJobRetentionHours = 24;
 
     public String getClusterName() {
         return clusterName;
@@ -109,21 +107,5 @@ public class ExplorerConfig {
 
     public void setCacheExpireMinutes(int cacheExpireMinutes) {
         this.cacheExpireMinutes = cacheExpireMinutes;
-    }
-
-    public String getFlinkJobStorePath() {
-        return flinkJobStorePath;
-    }
-
-    public void setFlinkJobStorePath(String flinkJobStorePath) {
-        this.flinkJobStorePath = flinkJobStorePath;
-    }
-
-    public long getFlinkJobRetentionHours() {
-        return flinkJobRetentionHours;
-    }
-
-    public void setFlinkJobRetentionHours(long flinkJobRetentionHours) {
-        this.flinkJobRetentionHours = flinkJobRetentionHours;
     }
 }

@@ -30,7 +30,7 @@ class LineageServiceTest {
         flinkSqlService = mock(FlinkSqlService.class);
         kafkaAdminService = mock(KafkaAdminService.class);
         when(kafkaAdminService.listTopics()).thenReturn(Collections.emptyList());
-        lineageService = new LineageService(tableEnv, new FlinkRuntimeCoordinator(tableEnv), flinkSqlService, kafkaAdminService);
+        lineageService = new LineageService(tableEnv, flinkSqlService, kafkaAdminService);
     }
 
     @Test

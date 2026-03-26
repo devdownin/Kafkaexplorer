@@ -39,8 +39,9 @@ jobs:
         distribution: 'temurin'
         cache: maven
 
-    - name: Autobuild
-      uses: github/codeql-action/autobuild@v3
+    - name: Custom Build
+      if: matrix.language == 'java'
+      run: mvn clean package -DskipTests
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v3

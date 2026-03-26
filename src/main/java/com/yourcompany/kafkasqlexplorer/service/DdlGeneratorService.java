@@ -57,33 +57,6 @@ public class DdlGeneratorService {
                 String colType = schema.get(colName);
                 // Sanitize column name and type (type should be a valid Flink SQL type)
                 sb.append("    `").append(colName.replace("`", "``")).append("` ").append(colType).append(",\n");
-            sb.append("    raw_value STRING\n");
-        } else if (format == MessageFormat.AVRO) {
-            // Avro-confluent format: Flink will fetch the schema automatically from the registry.
-            // We still provide the column names for convenience in the editor.
-            List<String> cols = new ArrayList<>(schema.keySet());
-            if (cols.isEmpty()) {
-                sb.append("    raw_value STRING\n");
-            } else {
-                for (int i = 0; i < cols.size(); i++) {
-                    sb.append("    `").append(cols.get(i)).append("` ").append(schema.get(cols.get(i)));
-                    if (i < cols.size() - 1) sb.append(",");
-                    sb.append("\n");
-                }
-            }
-        } else {
-            // JSON and AUTO: use format='json' with ignore-parse-errors.
-            // Guard: an empty schema produces an invalid DDL (empty column list).
-            // Fall back to a single raw_value STRING so the table can be registered.
-            List<String> cols = new ArrayList<>(schema.keySet());
-            if (cols.isEmpty()) {
-                sb.append("    raw_value STRING\n");
-            } else {
-                for (int i = 0; i < cols.size(); i++) {
-                    sb.append("    `").append(cols.get(i)).append("` ").append(schema.get(cols.get(i)));
-                    if (i < cols.size() - 1) sb.append(",");
-                    sb.append("\n");
-                }
             }
         }
 

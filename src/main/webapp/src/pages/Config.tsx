@@ -13,17 +13,6 @@ interface ClusterConfig {
   confluentKey?: string;
   confluentSecret?: string;
   isConnected?: boolean;
-  llmProvider: 'ANTHROPIC' | 'OPENAI_COMPATIBLE' | 'OLLAMA';
-  llmProviderLabel?: string;
-  llmApiKey?: string;
-  llmApiKeyConfigured?: boolean;
-  llmApiKeyRequired?: boolean;
-  llmBaseUrl: string;
-  llmModel: string;
-  llmMaxTokens: number;
-  llmSnapshotWindowSize: number;
-  llmSnapshotWindowTimeoutSeconds: number;
-  llmLocalDeployment?: boolean;
 }
 
 const MODES = [
@@ -32,22 +21,10 @@ const MODES = [
   { value: 'CONFLUENT_CLOUD', label: 'Confluent Cloud', description: 'SASL/SSL with API keys' },
 ];
 
-const LLM_PROVIDERS = [
-  { value: 'ANTHROPIC', label: 'Anthropic', description: 'Hosted Claude models' },
-  { value: 'OPENAI_COMPATIBLE', label: 'OpenAI-compatible', description: 'vLLM, LM Studio or compatible gateways' },
-  { value: 'OLLAMA', label: 'Ollama', description: 'Lightweight local open-source models' },
-] as const;
-
 const Config: React.FC = () => {
   const [config, setConfig] = useState<ClusterConfig>({
     bootstrapServers: 'localhost:9092',
     mode: 'PLAIN',
-    llmProvider: 'OLLAMA',
-    llmBaseUrl: 'http://localhost:11434/v1',
-    llmModel: 'qwen3:4b',
-    llmMaxTokens: 4096,
-    llmSnapshotWindowSize: 100,
-    llmSnapshotWindowTimeoutSeconds: 30,
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -60,7 +37,7 @@ const Config: React.FC = () => {
     const fetchConfig = async () => {
       try {
         const res = await axios.get<ClusterConfig>('/api/config');
-        setConfig(prev => ({ ...prev, ...res.data }));
+        setConfig(res.data);
       } catch {
         // Backend may not expose REST config yet - use defaults
       } finally {
@@ -77,8 +54,7 @@ const Config: React.FC = () => {
     setError(null);
     setSaveSuccess(false);
     try {
-      const res = await axios.post<ClusterConfig>('/api/config', config);
-      setConfig(prev => ({ ...prev, ...res.data }));
+      await axios.post('/api/config', config);
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
     } catch {
@@ -95,7 +71,6 @@ const Config: React.FC = () => {
     setTestResult(null);
     try {
       const res = await axios.post<ClusterConfig>('/api/config', config);
-      setConfig(prev => ({ ...prev, ...res.data }));
       setTestResult(res.data.isConnected ?? false);
     } catch {
       setTestResult(false);
@@ -121,53 +96,10 @@ const Config: React.FC = () => {
       if (!config.truststorePath?.trim()) return 'Truststore path is required for SSL.';
       if (!config.keystorePath?.trim()) return 'Keystore path is required for SSL.';
     }
-    if (!config.llmModel?.trim()) return 'An LLM model is required for process mining.';
-    if (config.llmProvider !== 'OLLAMA' && !config.llmBaseUrl?.trim()) {
-      return 'An LLM base URL is required for hosted or OpenAI-compatible providers.';
-    }
-    if (config.llmProvider === 'ANTHROPIC'
-      && !config.llmApiKeyConfigured
-      && !config.llmApiKey?.trim()) {
-      return 'An Anthropic API key is required when the provider is Anthropic.';
-    }
-    if (!Number.isFinite(config.llmMaxTokens) || config.llmMaxTokens < 256) {
-      return 'LLM max tokens must be at least 256.';
-    }
-    if (!Number.isFinite(config.llmSnapshotWindowSize) || config.llmSnapshotWindowSize < 10) {
-      return 'Live analysis window size must be at least 10 messages.';
-    }
-    if (!Number.isFinite(config.llmSnapshotWindowTimeoutSeconds) || config.llmSnapshotWindowTimeoutSeconds < 5) {
-      return 'Live analysis timeout must be at least 5 seconds.';
-    }
     return null;
   };
 
   const set = (key: keyof ClusterConfig, value: string) => setConfig(prev => ({ ...prev, [key]: value }));
-  const setNumber = (key: keyof ClusterConfig, value: number) => setConfig(prev => ({ ...prev, [key]: value }));
-
-  const applyLlmProvider = (provider: ClusterConfig['llmProvider']) => {
-    setConfig(prev => {
-      const next: ClusterConfig = { ...prev, llmProvider: provider };
-      if (provider === 'ANTHROPIC') {
-        if (!prev.llmBaseUrl || prev.llmBaseUrl === 'http://localhost:11434/v1') {
-          next.llmBaseUrl = 'https://api.anthropic.com';
-        }
-        if (!prev.llmModel) {
-          next.llmModel = 'claude-3-5-sonnet-20241022';
-        }
-      }
-      if (provider === 'OLLAMA') {
-        if (!prev.llmBaseUrl || prev.llmBaseUrl === 'https://api.anthropic.com') {
-          next.llmBaseUrl = 'http://localhost:11434/v1';
-        }
-        if (!prev.llmModel || prev.llmModel.startsWith('claude-')) {
-          next.llmModel = 'qwen3:4b';
-        }
-        next.llmApiKey = '';
-      }
-      return next;
-    });
-  };
 
   const inputClass = "w-full bg-primary/5 border border-primary/20 rounded-lg px-3 py-2.5 text-sm text-slate-100 font-mono placeholder:text-slate-600 focus:ring-1 focus:ring-primary outline-none";
   const labelClass = "block text-[10px] uppercase font-bold tracking-wider text-slate-500 mb-1.5";
@@ -302,118 +234,6 @@ const Config: React.FC = () => {
           </div>
         </div>
       )}
-
-      <div className="rounded-xl border border-primary/10 bg-primary/5 overflow-hidden">
-        <div className="p-4 border-b border-primary/10 flex items-center gap-3">
-          <span className="material-symbols-outlined text-primary">neurology</span>
-          <div>
-            <h2 className="font-bold text-slate-100">Process Mining LLM</h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Applied at runtime. Use environment variables or `application.yml` for persistent configuration.
-            </p>
-          </div>
-        </div>
-        <div className="p-5 space-y-5">
-          <div>
-            <label className={labelClass}>Provider</label>
-            <div className="grid grid-cols-3 gap-3">
-              {LLM_PROVIDERS.map(provider => (
-                <button
-                  key={provider.value}
-                  onClick={() => applyLlmProvider(provider.value)}
-                  className={`p-3 rounded-lg border text-left transition-all ${
-                    config.llmProvider === provider.value
-                      ? 'border-primary bg-primary/10 text-slate-100'
-                      : 'border-primary/10 bg-background-dark/30 text-slate-400 hover:border-primary/30'
-                  }`}
-                >
-                  <p className="text-xs font-bold">{provider.label}</p>
-                  <p className="text-[10px] text-slate-500 mt-0.5">{provider.description}</p>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className={`rounded-lg border px-4 py-3 text-xs ${
-            config.llmLocalDeployment
-              ? 'border-emerald-500/20 bg-emerald-500/5 text-emerald-300'
-              : 'border-primary/10 bg-background-dark/20 text-slate-400'
-          }`}>
-            {config.llmLocalDeployment
-              ? 'Local inference detected. Lightweight open-source models can be used for snapshot and live process mining.'
-              : 'Remote inference detected. You can switch to Ollama or another OpenAI-compatible endpoint for local lightweight models.'}
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className={labelClass}>Model</label>
-              <input
-                type="text"
-                value={config.llmModel}
-                onChange={e => set('llmModel', e.target.value)}
-                placeholder={config.llmProvider === 'OLLAMA' ? 'qwen3:4b' : 'model name'}
-                className={inputClass}
-              />
-            </div>
-            <div>
-              <label className={labelClass}>Base URL</label>
-              <input
-                type="text"
-                value={config.llmBaseUrl}
-                onChange={e => set('llmBaseUrl', e.target.value)}
-                placeholder={config.llmProvider === 'OLLAMA' ? 'http://localhost:11434/v1' : 'https://...'}
-                className={inputClass}
-              />
-            </div>
-            <div>
-              <label className={labelClass}>API Key</label>
-              <input
-                type="password"
-                value={config.llmApiKey ?? ''}
-                onChange={e => set('llmApiKey', e.target.value)}
-                placeholder={config.llmProvider === 'OLLAMA' ? 'Optional for local deployments' : 'Required'}
-                className={inputClass}
-              />
-              <p className="text-[10px] text-slate-500 mt-1">
-                {config.llmApiKeyConfigured ? 'A key is currently configured in memory.' : 'No key configured in memory.'}
-              </p>
-            </div>
-            <div>
-              <label className={labelClass}>Max Tokens</label>
-              <input
-                type="number"
-                min={256}
-                max={32768}
-                value={config.llmMaxTokens}
-                onChange={e => setNumber('llmMaxTokens', parseInt(e.target.value, 10) || 4096)}
-                className={inputClass}
-              />
-            </div>
-            <div>
-              <label className={labelClass}>Live Window Size</label>
-              <input
-                type="number"
-                min={10}
-                max={5000}
-                value={config.llmSnapshotWindowSize}
-                onChange={e => setNumber('llmSnapshotWindowSize', parseInt(e.target.value, 10) || 100)}
-                className={inputClass}
-              />
-            </div>
-            <div>
-              <label className={labelClass}>Live Window Timeout (s)</label>
-              <input
-                type="number"
-                min={5}
-                max={600}
-                value={config.llmSnapshotWindowTimeoutSeconds}
-                onChange={e => setNumber('llmSnapshotWindowTimeoutSeconds', parseInt(e.target.value, 10) || 30)}
-                className={inputClass}
-              />
-            </div>
-          </div>
-        </div>
-      </div>
 
       {/* Error */}
       {error && (

@@ -19,14 +19,6 @@ interface ProcessMiningResult {
   anomalies: AnomalyReport[];
 }
 
-interface RuntimeLlmInfo {
-  llmProvider?: string;
-  llmProviderLabel?: string;
-  llmModel?: string;
-  llmBaseUrl?: string;
-  llmLocalDeployment?: boolean;
-}
-
 type Step = 'SELECT' | 'PROFILING' | 'VALIDATE' | 'ANALYZE' | 'RESULTS';
 type AnalysisMode = 'SNAPSHOT' | 'LIVE';
 
@@ -91,7 +83,6 @@ const ProcessMining: React.FC = () => {
   const [snapshotResult, setSnapshotResult] = useState<ProcessMiningResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [llmInfo, setLlmInfo] = useState<RuntimeLlmInfo | null>(null);
 
   // Live mode state
   const [liveConnected, setLiveConnected] = useState(false);
@@ -109,18 +100,6 @@ const ProcessMining: React.FC = () => {
         eventSourceRef.current.close();
       }
     };
-  }, []);
-
-  useEffect(() => {
-    const fetchRuntimeConfig = async () => {
-      try {
-        const res = await axios.get<RuntimeLlmInfo>('/api/config');
-        setLlmInfo(res.data);
-      } catch {
-        setLlmInfo(null);
-      }
-    };
-    fetchRuntimeConfig();
   }, []);
 
   // ---- Handlers ----
@@ -318,36 +297,6 @@ const ProcessMining: React.FC = () => {
       {/* Step indicator */}
       <StepIndicator current={step} />
 
-      {llmInfo && (
-        <div className={`rounded-xl border p-4 ${
-          llmInfo.llmLocalDeployment
-            ? 'border-emerald-500/20 bg-emerald-500/5'
-            : 'border-primary/10 bg-primary/5'
-        }`}>
-          <div className="flex items-start gap-3">
-            <span className={`material-symbols-outlined text-lg ${
-              llmInfo.llmLocalDeployment ? 'text-emerald-400' : 'text-primary'
-            }`}>
-              smart_toy
-            </span>
-            <div>
-              <p className="text-sm font-semibold text-slate-100">
-                LLM Runtime: {llmInfo.llmProviderLabel ?? llmInfo.llmProvider ?? 'Unknown'}
-                {llmInfo.llmModel ? ` · ${llmInfo.llmModel}` : ''}
-              </p>
-              <p className="text-xs text-slate-400 mt-1">
-                {llmInfo.llmLocalDeployment
-                  ? 'Local lightweight open-source inference is active for process mining.'
-                  : 'This page also supports lightweight open-source models through Ollama or any OpenAI-compatible endpoint.'}
-              </p>
-              {llmInfo.llmBaseUrl && (
-                <p className="text-[11px] font-mono text-slate-500 mt-2">{llmInfo.llmBaseUrl}</p>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Error banner */}
       {error && (
         <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 flex items-start gap-3">
@@ -378,9 +327,7 @@ const ProcessMining: React.FC = () => {
                 psychology
               </span>
             </div>
-            <p className="text-lg font-semibold text-slate-200">
-              Profiling topics with {llmInfo?.llmProviderLabel ?? 'the configured LLM'}...
-            </p>
+            <p className="text-lg font-semibold text-slate-200">Profiling topics with Claude AI...</p>
             <p className="text-sm text-slate-400 text-center max-w-md">
               Sampling messages from {selectedTopics.length} topic{selectedTopics.length > 1 ? 's' : ''},
               detecting field semantics and proposing schema unification.

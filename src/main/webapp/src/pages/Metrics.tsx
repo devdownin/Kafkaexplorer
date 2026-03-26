@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import Editor, { useMonaco } from '@monaco-editor/react';
 import { AreaChart, Area, ResponsiveContainer, ReferenceLine, Tooltip, YAxis } from 'recharts';
@@ -83,97 +82,6 @@ const TYPE_EXAMPLES: Array<{
     warn: null, crit: null,
   },
 ];
-
-// ── SQL / form validation ──────────────────────────────────────────────────
-
-interface ValidationMsg {
-  level: 'error' | 'warning' | 'info';
-  text: string;
-}
-
-function validateMetricSql(sql: string, type: string): ValidationMsg[] {
-  if (!sql.trim()) return [];
-  // Strip comments before analysis (mirrors backend SqlQueryValidator behaviour)
-  const stripped = sql.replace(/--[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '').trim();
-  const msgs: ValidationMsg[] = [];
-
-  if (!/^SELECT\b/i.test(stripped))
-    msgs.push({ level: 'error', text: 'Only SELECT queries are allowed (INSERT / UPDATE / DELETE are rejected by the server).' });
-
-  if (!/\bAS\s+metric_value\b/i.test(stripped))
-    msgs.push({ level: 'error', text: 'Result column must be aliased as metric_value — e.g. COUNT(*) AS metric_value.' });
-
-  if (!/\bFROM\b/i.test(stripped))
-    msgs.push({ level: 'error', text: 'SQL must include a FROM clause.' });
-
-  if (!/\b(COUNT|SUM|AVG|MAX|MIN)\s*\(/i.test(stripped))
-    msgs.push({ level: 'warning', text: 'No aggregate function found (COUNT, SUM, AVG, MAX, MIN). The query should return a single numeric value.' });
-
-  if (type === 'HISTOGRAM' && !/\bAS\s+le\b/i.test(stripped))
-    msgs.push({ level: 'info', text: 'HISTOGRAM works best with a le bucket column (… AS le) and GROUP BY.' });
-
-  return msgs;
-}
-
-function validateDdlSql(ddl: string): ValidationMsg[] {
-  if (!ddl.trim()) return [];
-  const stripped = ddl.replace(/--[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '').trim();
-  const msgs: ValidationMsg[] = [];
-
-  if (!/^CREATE\s+TABLE\b/i.test(stripped))
-    msgs.push({ level: 'error', text: 'DDL must be a CREATE TABLE statement.' });
-
-  if (/\b(DROP|DELETE|TRUNCATE)\b/i.test(stripped))
-    msgs.push({ level: 'error', text: 'Destructive keywords (DROP, DELETE, TRUNCATE) are not allowed in the DDL field.' });
-
-  if (!/\bWITH\b/i.test(stripped))
-    msgs.push({ level: 'warning', text: "Missing WITH clause — Flink connector options (connector, topic, …) are required." });
-
-  return msgs;
-}
-
-function validateMetricName(name: string): ValidationMsg[] {
-  if (!name.trim()) return [];
-  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name.trim()))
-    return [{ level: 'error', text: 'Metric name must start with a letter or underscore and contain only letters, digits, and underscores (Prometheus naming rules).' }];
-  return [];
-}
-
-function validateThresholds(warn: number | null, crit: number | null): ValidationMsg[] {
-  if (warn !== null && crit !== null && warn >= crit)
-    return [{ level: 'error', text: 'Warning threshold must be strictly less than the Critical threshold.' }];
-  return [];
-}
-
-// ── Inline validation hint list ───────────────────────────────────────────
-
-const HINT_ICONS: Record<ValidationMsg['level'], string> = { error: 'error', warning: 'warning', info: 'info' };
-const HINT_COLORS: Record<ValidationMsg['level'], string> = {
-  error:   'text-red-400',
-  warning: 'text-amber-400',
-  info:    'text-slate-400',
-};
-
-const ValidationHints: React.FC<{ messages: ValidationMsg[] }> = ({ messages }) => {
-  if (messages.length === 0) return null;
-  return (
-    <div className="flex flex-col gap-1 px-4 py-2.5 border-t border-primary/10 bg-background-dark/70">
-      {messages.map((m, i) => (
-        <div key={i} className={`flex items-start gap-1.5 text-[11px] leading-snug ${HINT_COLORS[m.level]}`}>
-          <span className="material-symbols-outlined text-[13px] shrink-0 mt-px">{HINT_ICONS[m.level]}</span>
-          <span>{m.text}</span>
-        </div>
-      ))}
-    </div>
-  );
-};
-
-// ── Auto-generate a Prometheus-safe metric name from type + topic ──────────
-function buildAutoName(type: string, topic: string): string {
-  const typePart  = (type || 'gauge').toLowerCase();
-  const topicPart = topic ? topicToTable(topic) : 'my_table';
-  return `${typePart}_${topicPart}`;
-}
 
 // ── Convert Kafka topic name to a valid Flink table identifier ─────────────
 function topicToTable(topic: string): string {
@@ -482,7 +390,6 @@ const EMPTY_METRIC: Partial<MetricConfig> = {
 
 const Metrics: React.FC = () => {
   const { toast } = useToast();
-  const navigate = useNavigate();
   const [metrics, setMetrics]           = useState<MetricConfig[]>([]);
   const [metadata, setMetadata]         = useState<Record<string, string[]>>({});
   const [topics, setTopics]             = useState<string[]>([]);
@@ -498,7 +405,6 @@ const Metrics: React.FC = () => {
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
   const [filterType, setFilterType]     = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
-  const [nameIsAuto, setNameIsAuto]     = useState(false);
 
   const monaco = useMonaco();
 
@@ -558,22 +464,18 @@ const Metrics: React.FC = () => {
     if (metric) {
       setEditingMetric(metric);
       setSelectedTopic('');
-      setNameIsAuto(false);
     } else {
-      const type       = typeOverride ?? 'GAUGE';
       const initialSql = sqlFn ? sqlFn(tableName) : `SELECT COUNT(*) AS metric_value\nFROM ${tableName}`;
       const initialDdl = firstTopic ? buildDdlTemplate(firstTopic, bootstrapServers) : '';
       setEditingMetric({
         ...EMPTY_METRIC,
-        type,
-        name: buildAutoName(type, firstTopic),
+        type: typeOverride ?? 'GAUGE',
         sql:  initialSql,
         warningThreshold:  warn  !== undefined ? warn  : null,
         criticalThreshold: crit  !== undefined ? crit  : null,
         createTableSql: initialDdl,
       });
       setSelectedTopic(firstTopic);
-      setNameIsAuto(true);
     }
     setEditorTab('metric');
     setPreviewResult(null);
@@ -587,7 +489,6 @@ const Metrics: React.FC = () => {
     setSelectedTopic(topic);
     setEditingMetric(m => ({
       ...m,
-      name: nameIsAuto ? buildAutoName(m.type ?? 'GAUGE', topic) : m.name,
       sql: m.sql ? m.sql.replace(new RegExp(`\\b${oldTable}\\b`, 'g'), newTable) : m.sql,
       createTableSql: topic ? buildDdlTemplate(topic, bootstrapServers) : (m.createTableSql ?? ''),
     }));
@@ -596,26 +497,10 @@ const Metrics: React.FC = () => {
   const tableName = selectedTopic ? topicToTable(selectedTopic) : 'my_table';
   const sqlTemplates = getSqlTemplates(tableName);
 
-  // ── Live validation (derived, no state needed) ────────────────────────────
-  const nameValidation      = validateMetricName(editingMetric.name ?? '');
-  const sqlValidation       = validateMetricSql(editingMetric.sql ?? '', editingMetric.type ?? 'GAUGE');
-  const ddlValidation       = validateDdlSql(editingMetric.createTableSql ?? '');
-  const thresholdValidation = validateThresholds(
-    editingMetric.warningThreshold ?? null,
-    editingMetric.criticalThreshold ?? null,
-  );
-  const hasBlockingErrors = [...nameValidation, ...sqlValidation, ...ddlValidation, ...thresholdValidation]
-    .some(m => m.level === 'error');
-
   // ── Save ──────────────────────────────────────────────────────────────────
   const handleSave = async () => {
     if (!editingMetric.name?.trim()) { toast('Name is required', 'error'); return; }
     if (!editingMetric.sql?.trim())  { toast('SQL is required', 'error'); return; }
-    if (hasBlockingErrors) {
-      const first = [...nameValidation, ...sqlValidation, ...ddlValidation, ...thresholdValidation].find(m => m.level === 'error');
-      toast(first!.text, 'error');
-      return;
-    }
     setSaving(true);
     try {
       await axios.post('/api/metrics', editingMetric);
@@ -691,9 +576,6 @@ const Metrics: React.FC = () => {
           <button onClick={fetchMetrics} className="p-2 text-slate-500 hover:text-primary transition-colors" title="Refresh all">
             <span className="material-symbols-outlined">refresh</span>
           </button>
-          <button onClick={() => navigate('/metrics/help')} className="p-2 text-slate-500 hover:text-primary transition-colors" title="Help">
-            <span className="material-symbols-outlined">help</span>
-          </button>
           <button onClick={() => openEdit()}
             className="flex items-center gap-2 bg-primary text-background-dark font-bold px-4 py-2 rounded-lg hover:brightness-110 transition-all text-sm">
             <span className="material-symbols-outlined text-lg">add</span>
@@ -721,21 +603,21 @@ const Metrics: React.FC = () => {
       {!loading && metrics.length > 0 && (
         <div className="flex items-center gap-3 flex-wrap">
           <select value={filterType} onChange={e => setFilterType(e.target.value)}
-            className="bg-background-dark border border-primary/20 rounded-lg px-3 py-1.5 text-xs text-slate-300 focus:ring-1 focus:ring-primary outline-none">
-            <option value="all"       className="bg-[#102222] text-slate-300">All types</option>
-            <option value="GAUGE"     className="bg-[#102222] text-slate-100">GAUGE</option>
-            <option value="COUNTER"   className="bg-[#102222] text-slate-100">COUNTER</option>
-            <option value="HISTOGRAM" className="bg-[#102222] text-slate-100">HISTOGRAM</option>
-            <option value="SUMMARY"   className="bg-[#102222] text-slate-100">SUMMARY</option>
+            className="bg-primary/5 border border-primary/20 rounded-lg px-3 py-1.5 text-xs text-slate-300 focus:ring-1 focus:ring-primary outline-none">
+            <option value="all">All types</option>
+            <option value="GAUGE">GAUGE</option>
+            <option value="COUNTER">COUNTER</option>
+            <option value="HISTOGRAM">HISTOGRAM</option>
+            <option value="SUMMARY">SUMMARY</option>
           </select>
           <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
-            className="bg-background-dark border border-primary/20 rounded-lg px-3 py-1.5 text-xs text-slate-300 focus:ring-1 focus:ring-primary outline-none">
-            <option value="all"      className="bg-[#102222] text-slate-300">All statuses</option>
-            <option value="error"    className="bg-[#102222] text-slate-100">Error</option>
-            <option value="critical" className="bg-[#102222] text-slate-100">Critical</option>
-            <option value="warning"  className="bg-[#102222] text-slate-100">Warning</option>
-            <option value="ok"       className="bg-[#102222] text-slate-100">Healthy</option>
-            <option value="pending"  className="bg-[#102222] text-slate-100">Pending</option>
+            className="bg-primary/5 border border-primary/20 rounded-lg px-3 py-1.5 text-xs text-slate-300 focus:ring-1 focus:ring-primary outline-none">
+            <option value="all">All statuses</option>
+            <option value="error">Error</option>
+            <option value="critical">Critical</option>
+            <option value="warning">Warning</option>
+            <option value="ok">Healthy</option>
+            <option value="pending">Pending</option>
           </select>
           {(filterType !== 'all' || filterStatus !== 'all') && (
             <button onClick={() => { setFilterType('all'); setFilterStatus('all'); }}
@@ -846,59 +728,23 @@ const Metrics: React.FC = () => {
 
                 {/* Name */}
                 <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Metric Name *</label>
-                    {nameIsAuto ? (
-                      <span className="flex items-center gap-0.5 text-[9px] text-primary/70 font-bold uppercase tracking-wider">
-                        <span className="material-symbols-outlined text-[11px]">auto_awesome</span>auto
-                      </span>
-                    ) : (
-                      <button
-                        type="button"
-                        title="Regenerate name from type + topic"
-                        onClick={() => {
-                          setNameIsAuto(true);
-                          setEditingMetric(m => ({ ...m, name: buildAutoName(m.type ?? 'GAUGE', selectedTopic) }));
-                        }}
-                        className="flex items-center gap-0.5 text-[9px] text-slate-600 hover:text-primary transition-colors uppercase tracking-wider"
-                      >
-                        <span className="material-symbols-outlined text-[11px]">refresh</span>regenerate
-                      </button>
-                    )}
-                  </div>
+                  <label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Metric Name *</label>
                   <input type="text" value={editingMetric.name ?? ''}
-                    onChange={e => { setNameIsAuto(false); setEditingMetric(m => ({ ...m, name: e.target.value })); }}
-                    placeholder="e.g. gauge_orders_topic"
-                    className={`w-full bg-primary/5 border rounded-lg px-3 py-2 text-sm font-mono text-slate-100 placeholder:text-slate-600 focus:ring-1 outline-none ${
-                      nameValidation.some(v => v.level === 'error')
-                        ? 'border-red-500/50 focus:ring-red-400'
-                        : 'border-primary/20 focus:ring-primary'
-                    }`} />
-                  {nameValidation.map((m, i) => (
-                    <p key={i} className={`text-[10px] flex items-start gap-1 ${HINT_COLORS[m.level]}`}>
-                      <span className="material-symbols-outlined text-[11px] shrink-0 mt-px">{HINT_ICONS[m.level]}</span>
-                      {m.text}
-                    </p>
-                  ))}
+                    onChange={e => setEditingMetric(m => ({ ...m, name: e.target.value }))}
+                    placeholder="e.g. orders_total"
+                    className="w-full bg-primary/5 border border-primary/20 rounded-lg px-3 py-2 text-sm font-mono text-slate-100 placeholder:text-slate-600 focus:ring-1 focus:ring-primary outline-none" />
                 </div>
 
                 {/* Type */}
                 <div className="space-y-1.5">
                   <label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Type</label>
                   <select value={editingMetric.type ?? 'GAUGE'}
-                    onChange={e => {
-                      const newType = e.target.value;
-                      setEditingMetric(m => ({
-                        ...m,
-                        type: newType,
-                        name: nameIsAuto ? buildAutoName(newType, selectedTopic) : m.name,
-                      }));
-                    }}
-                    className="w-full bg-background-dark border border-primary/20 rounded-lg px-3 py-2 text-sm text-slate-100 focus:ring-1 focus:ring-primary outline-none">
-                    <option value="GAUGE"     className="bg-[#102222] text-slate-100">GAUGE — point-in-time value</option>
-                    <option value="COUNTER"   className="bg-[#102222] text-slate-100">COUNTER — cumulative total</option>
-                    <option value="HISTOGRAM" className="bg-[#102222] text-slate-100">HISTOGRAM — bucket distribution</option>
-                    <option value="SUMMARY"   className="bg-[#102222] text-slate-100">SUMMARY — quantile observations</option>
+                    onChange={e => setEditingMetric(m => ({ ...m, type: e.target.value }))}
+                    className="w-full bg-primary/5 border border-primary/20 rounded-lg px-3 py-2 text-sm text-slate-100 focus:ring-1 focus:ring-primary outline-none">
+                    <option value="GAUGE">GAUGE — point-in-time value</option>
+                    <option value="COUNTER">COUNTER — cumulative total</option>
+                    <option value="HISTOGRAM">HISTOGRAM — bucket distribution</option>
+                    <option value="SUMMARY">SUMMARY — quantile observations</option>
                   </select>
                   <p className="text-[10px] text-slate-600">
                     {{ GAUGE: '→ explorer_metric_gauge{…}', COUNTER: '→ explorer_metric_counter_total{…}',
@@ -915,9 +761,9 @@ const Metrics: React.FC = () => {
                   </label>
                   {topics.length > 0 ? (
                     <select value={selectedTopic} onChange={e => onTopicChange(e.target.value)}
-                      className="w-full bg-background-dark border border-primary/20 rounded-lg px-3 py-2 text-sm font-mono text-slate-100 focus:ring-1 focus:ring-primary outline-none">
-                      <option value="" className="bg-[#102222] text-slate-400">— select a topic —</option>
-                      {topics.map(t => <option key={t} value={t} className="bg-[#102222] text-slate-100">{t}</option>)}
+                      className="w-full bg-primary/5 border border-primary/20 rounded-lg px-3 py-2 text-sm font-mono text-slate-100 focus:ring-1 focus:ring-primary outline-none">
+                      <option value="">— select a topic —</option>
+                      {topics.map(t => <option key={t} value={t}>{t}</option>)}
                     </select>
                   ) : (
                     <input type="text" value={selectedTopic}
@@ -942,31 +788,19 @@ const Metrics: React.FC = () => {
                 </div>
 
                 {/* Thresholds */}
-                <div className="space-y-1.5">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] uppercase font-bold text-amber-500/80 tracking-wider">⚠ Warning</label>
-                      <input type="number" value={editingMetric.warningThreshold ?? ''}
-                        onChange={e => setEditingMetric(m => ({ ...m, warningThreshold: e.target.value ? parseFloat(e.target.value) : null }))}
-                        className={`w-full bg-amber-500/5 border rounded-lg px-3 py-2 text-sm text-slate-100 focus:ring-1 outline-none ${
-                          thresholdValidation.length > 0 ? 'border-red-500/40' : 'border-amber-500/20 focus:ring-amber-400'
-                        }`} />
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] uppercase font-bold text-red-500/80 tracking-wider">🔴 Critical</label>
-                      <input type="number" value={editingMetric.criticalThreshold ?? ''}
-                        onChange={e => setEditingMetric(m => ({ ...m, criticalThreshold: e.target.value ? parseFloat(e.target.value) : null }))}
-                        className={`w-full bg-red-500/5 border rounded-lg px-3 py-2 text-sm text-slate-100 focus:ring-1 outline-none ${
-                          thresholdValidation.length > 0 ? 'border-red-500/40' : 'border-red-500/20 focus:ring-red-400'
-                        }`} />
-                    </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] uppercase font-bold text-amber-500/80 tracking-wider">⚠ Warning</label>
+                    <input type="number" value={editingMetric.warningThreshold ?? ''}
+                      onChange={e => setEditingMetric(m => ({ ...m, warningThreshold: e.target.value ? parseFloat(e.target.value) : null }))}
+                      className="w-full bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2 text-sm text-slate-100 focus:ring-1 focus:ring-amber-400 outline-none" />
                   </div>
-                  {thresholdValidation.map((m, i) => (
-                    <p key={i} className={`text-[10px] flex items-start gap-1 ${HINT_COLORS[m.level]}`}>
-                      <span className="material-symbols-outlined text-[11px] shrink-0 mt-px">{HINT_ICONS[m.level]}</span>
-                      {m.text}
-                    </p>
-                  ))}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] uppercase font-bold text-red-500/80 tracking-wider">🔴 Critical</label>
+                    <input type="number" value={editingMetric.criticalThreshold ?? ''}
+                      onChange={e => setEditingMetric(m => ({ ...m, criticalThreshold: e.target.value ? parseFloat(e.target.value) : null }))}
+                      className="w-full bg-red-500/5 border border-red-500/20 rounded-lg px-3 py-2 text-sm text-slate-100 focus:ring-1 focus:ring-red-400 outline-none" />
+                  </div>
                 </div>
 
                 {/* SQL templates */}
@@ -1058,12 +892,6 @@ const Metrics: React.FC = () => {
                   )}
                 </div>
 
-                {/* SQL validation hints (metric tab only) */}
-                {editorTab === 'metric' && <ValidationHints messages={sqlValidation} />}
-
-                {/* DDL validation hints */}
-                {editorTab === 'ddl' && <ValidationHints messages={ddlValidation} />}
-
                 {/* Preview result (metric tab only) */}
                 {editorTab === 'metric' && previewResult && (
                   <div className={`border-t px-4 py-3 text-xs font-mono ${
@@ -1108,14 +936,8 @@ const Metrics: React.FC = () => {
                 className="px-4 py-2 text-sm font-bold text-slate-500 hover:text-slate-300 transition-colors">
                 Cancel
               </button>
-              {hasBlockingErrors && (
-                <span className="flex items-center gap-1 text-xs text-red-400 mr-2">
-                  <span className="material-symbols-outlined text-sm">error</span>
-                  Fix errors before saving
-                </span>
-              )}
-              <button onClick={handleSave} disabled={saving || hasBlockingErrors}
-                className="flex items-center gap-2 bg-primary text-background-dark font-bold px-6 py-2 rounded-lg hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed transition-all text-sm">
+              <button onClick={handleSave} disabled={saving}
+                className="flex items-center gap-2 bg-primary text-background-dark font-bold px-6 py-2 rounded-lg hover:brightness-110 disabled:opacity-50 transition-all text-sm">
                 {saving
                   ? <span className="material-symbols-outlined text-lg animate-spin">refresh</span>
                   : <span className="material-symbols-outlined text-lg">save</span>}
