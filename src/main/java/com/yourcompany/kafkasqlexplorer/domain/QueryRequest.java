@@ -11,4 +11,21 @@ public record QueryRequest(
     Integer maxRows,
     Long timeout,
     String readMode
-) {}
+) {
+    public static QueryRequest sql(String sql, Integer maxRows, Long timeout, String readMode) {
+        return QueryRequest.builder()
+            .sql(sql)
+            .maxRows(maxRows)
+            .timeout(timeout)
+            .readMode(readMode)
+            .build();
+    }
+
+    public static QueryRequest ddl(String sql, Long timeout) {
+        return QueryRequest.builder()
+            .sql(sql)
+            .maxRows(1)
+            .timeout(timeout)
+            .build();
+    }
+}

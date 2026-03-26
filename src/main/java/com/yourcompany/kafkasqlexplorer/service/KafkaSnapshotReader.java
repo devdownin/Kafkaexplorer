@@ -18,7 +18,6 @@ import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -67,15 +66,22 @@ public class KafkaSnapshotReader {
             }
 
             long deadline = System.currentTimeMillis() + 30_000L;
-            int collected = 0;
-            int maxMessages = config.maxMessages();
+            Map<String, Integer> collectedByTopic = new HashMap<>();
+            topics.forEach(topic -> collectedByTopic.put(topic, 0));
+            int maxMessagesPerTopic = config.maxMessages();
 
-            while (collected < maxMessages && System.currentTimeMillis() < deadline) {
+            while (!allTopicsReachedLimit(collectedByTopic, maxMessagesPerTopic)
+                && System.currentTimeMillis() < deadline) {
                 ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(500));
                 if (records.isEmpty()) {
                     break;
                 }
                 for (ConsumerRecord<String, String> record : records) {
+                    int currentCount = collectedByTopic.getOrDefault(record.topic(), 0);
+                    if (currentCount >= maxMessagesPerTopic) {
+                        continue;
+                    }
+
                     messages.add(new KafkaMessage(
                         record.topic(),
                         record.partition(),
@@ -84,8 +90,7 @@ public class KafkaSnapshotReader {
                         record.key(),
                         record.value()
                     ));
-                    collected++;
-                    if (collected >= maxMessages) break;
+                    collectedByTopic.put(record.topic(), currentCount + 1);
                 }
             }
 
@@ -115,7 +120,7 @@ public class KafkaSnapshotReader {
         props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
-        props.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, String.valueOf(Math.min(config.maxMessages(), 500)));
+        props.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, String.valueOf(Math.min(Math.max(config.maxMessages(), 1) * 10, 1000)));
 
         String offsetReset = switch (config.mode()) {
             case "EARLIEST" -> "earliest";
@@ -130,9 +135,13 @@ public class KafkaSnapshotReader {
     private void seekToLatestN(KafkaConsumer<String, String> consumer,
                                 List<TopicPartition> partitions, int n) {
         consumer.seekToEnd(partitions);
-        // Calculate per-partition offset to go back n messages total
-        int perPartition = Math.max(1, n / Math.max(1, partitions.size()));
+        Map<String, Long> partitionsPerTopic = partitions.stream()
+            .collect(java.util.stream.Collectors.groupingBy(TopicPartition::topic, java.util.stream.Collectors.counting()));
+
         for (TopicPartition tp : partitions) {
+            int perPartition = Math.max(1, (int) Math.ceil(
+                (double) n / Math.max(1L, partitionsPerTopic.getOrDefault(tp.topic(), 1L))
+            ));
             long endOffset = consumer.position(tp);
             long startOffset = Math.max(0, endOffset - perPartition);
             consumer.seek(tp, startOffset);
@@ -158,5 +167,9 @@ public class KafkaSnapshotReader {
                 consumer.seekToEnd(List.of(tp));
             }
         }
+    }
+
+    private boolean allTopicsReachedLimit(Map<String, Integer> collectedByTopic, int maxMessagesPerTopic) {
+        return collectedByTopic.values().stream().allMatch(count -> count >= maxMessagesPerTopic);
     }
 }

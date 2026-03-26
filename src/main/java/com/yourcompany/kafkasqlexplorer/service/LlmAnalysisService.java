@@ -2,11 +2,6 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.yourcompany.kafkasqlexplorer.service;
 
-import com.anthropic.client.AnthropicClient;
-import com.anthropic.client.okhttp.AnthropicOkHttpClient;
-import com.anthropic.models.messages.MessageCreateParams;
-import com.anthropic.models.messages.MessageParam;
-import com.anthropic.models.messages.TextDelta;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yourcompany.kafkasqlexplorer.config.ClaudeConfig;
 import com.yourcompany.kafkasqlexplorer.domain.AnomalyReport;
@@ -23,7 +18,6 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 @Service
 public class LlmAnalysisService {
@@ -96,8 +90,8 @@ public class LlmAnalysisService {
         // 3. Build user prompt
         String userPrompt = buildSnapshotPrompt(topics, byTopic, fieldMapping);
 
-        // 4. Call Claude and parse
-        return callClaudeAndParse(userPrompt);
+        // 4. Call the configured LLM and parse
+        return callLlmAndParse(userPrompt);
     }
 
     public ProcessMiningResult analyzeLive(List<KafkaMessage> windowMessages,
@@ -116,7 +110,7 @@ public class LlmAnalysisService {
         Map<String, List<KafkaMessage>> byTopic = groupAndSort(topics, windowMessages);
 
         String userPrompt = buildLivePrompt(topics, byTopic, fieldMapping, referenceFlowchart);
-        return callClaudeAndParse(userPrompt);
+        return callLlmAndParse(userPrompt);
     }
 
     private Map<String, List<KafkaMessage>> groupAndSort(List<String> topics,
@@ -200,6 +194,7 @@ public class LlmAnalysisService {
 4. Liste les anomalies détectées avec leur sévérité
 5. Propose des hypothèses sur l'architecture sous-jacente
 6. Identifie les angles morts (données manquantes, topics non observés)
+7. Si une information est incertaine, préfère une liste vide à un texte hors format
 """);
     }
 
@@ -213,12 +208,7 @@ public class LlmAnalysisService {
     }
 
     private boolean isApiKeyMissing() {
-        // API key is mandatory for Anthropic
-        if (claudeConfig.getProvider() == ClaudeConfig.Provider.ANTHROPIC) {
-            return claudeConfig.getApiKey() == null || claudeConfig.getApiKey().isBlank();
-        }
-        // For OpenAI-compatible providers, the API key is optional
-        return false;
+        return claudeConfig.isApiKeyRequired() && !claudeConfig.isApiKeyConfigured();
     }
 
     private String callLlm(String userPrompt) {
@@ -233,21 +223,21 @@ public class LlmAnalysisService {
         }
     }
 
-    private ProcessMiningResult callClaudeAndParse(String userPrompt) {
+    private ProcessMiningResult callLlmAndParse(String userPrompt) {
         String rawResponse = callLlm(userPrompt);
 
         if (rawResponse == null || rawResponse.isBlank()) {
             return errorResult("LLM returned an empty response.");
         }
 
-        String json = stripMarkdownFences(rawResponse);
+        String json = LlmJsonSupport.extractJsonPayload(rawResponse);
 
         try {
             return objectMapper.readValue(json, ProcessMiningResult.class);
         } catch (Exception e) {
-            log.error("Failed to parse Claude analysis response: {}", e.getMessage());
+            log.error("Failed to parse LLM analysis response: {}", e.getMessage());
             log.debug("Raw response was: {}", rawResponse);
-            return errorResult("Failed to parse Claude response: " + e.getMessage());
+            return errorResult("Failed to parse LLM response: " + e.getMessage());
         }
     }
 
@@ -259,19 +249,5 @@ public class LlmAnalysisService {
             List.of(),
             List.of()
         );
-    }
-
-    private String stripMarkdownFences(String text) {
-        String trimmed = text.trim();
-        if (trimmed.startsWith("```")) {
-            int firstNewline = trimmed.indexOf('\n');
-            if (firstNewline >= 0) {
-                trimmed = trimmed.substring(firstNewline + 1);
-            }
-            if (trimmed.endsWith("```")) {
-                trimmed = trimmed.substring(0, trimmed.lastIndexOf("```")).trim();
-            }
-        }
-        return trimmed;
     }
 }

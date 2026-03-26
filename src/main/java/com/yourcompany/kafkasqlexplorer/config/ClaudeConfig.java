@@ -9,12 +9,12 @@ import org.springframework.context.annotation.Configuration;
 @ConfigurationProperties(prefix = "claude")
 public class ClaudeConfig {
 
-    public enum Provider { ANTHROPIC, OPENAI_COMPATIBLE }
+    public enum Provider { ANTHROPIC, OPENAI_COMPATIBLE, OLLAMA }
 
-    private Provider provider = Provider.ANTHROPIC;
+    private Provider provider = Provider.OLLAMA;
     private String apiKey = "";
-    private String baseUrl = "https://api.anthropic.com";
-    private String model = "claude-3-5-sonnet-20241022";
+    private String baseUrl = "";
+    private String model = "qwen3:4b";
     private int maxTokens = 4096;
     private int snapshotWindowSize = 100;
     private int snapshotWindowTimeoutSeconds = 30;
@@ -41,6 +41,13 @@ public class ClaudeConfig {
 
     public void setBaseUrl(String baseUrl) {
         this.baseUrl = baseUrl;
+    }
+
+    public String getResolvedBaseUrl() {
+        if (baseUrl != null && !baseUrl.isBlank()) {
+            return baseUrl;
+        }
+        return defaultBaseUrl(provider);
     }
 
     public String getModel() {
@@ -73,5 +80,43 @@ public class ClaudeConfig {
 
     public void setSnapshotWindowTimeoutSeconds(int snapshotWindowTimeoutSeconds) {
         this.snapshotWindowTimeoutSeconds = snapshotWindowTimeoutSeconds;
+    }
+
+    public boolean isApiKeyRequired() {
+        return provider == Provider.ANTHROPIC;
+    }
+
+    public boolean isApiKeyConfigured() {
+        return apiKey != null && !apiKey.isBlank();
+    }
+
+    public boolean isLocalDeployment() {
+        return provider == Provider.OLLAMA || isLoopbackUrl(getResolvedBaseUrl());
+    }
+
+    public String getProviderLabel() {
+        return switch (provider) {
+            case ANTHROPIC -> "Anthropic";
+            case OPENAI_COMPATIBLE -> "OpenAI-compatible";
+            case OLLAMA -> "Ollama";
+        };
+    }
+
+    public static String defaultBaseUrl(Provider provider) {
+        return switch (provider) {
+            case ANTHROPIC -> "https://api.anthropic.com";
+            case OPENAI_COMPATIBLE -> "";
+            case OLLAMA -> "http://localhost:11434/v1";
+        };
+    }
+
+    private boolean isLoopbackUrl(String value) {
+        if (value == null || value.isBlank()) {
+            return false;
+        }
+        String normalized = value.toLowerCase();
+        return normalized.contains("localhost")
+            || normalized.contains("127.0.0.1")
+            || normalized.contains("0.0.0.0");
     }
 }

@@ -77,4 +77,30 @@ class LlmAnalysisServiceTest {
         assertNotNull(result);
         assertEquals("NO_CHANGE", result.flowchart());
     }
+
+    @Test
+    void testAnalyzeSnapshotParsesJsonWrappedInMarkdown() {
+        when(snapshotReader.read(anyList(), any())).thenReturn(List.of(
+            new KafkaMessage("topic1", 0, 1L, 1000L, "key1", "{\"val\":1}")
+        ));
+
+        when(llmClient.generate(anyString(), anyString())).thenReturn("""
+            Analysis completed.
+            ```json
+            {
+              "flowchart": "flowchart TD\\n[A] --> [B]",
+              "comments": "Analysis",
+              "hypotheses": [],
+              "blindSpots": [],
+              "anomalies": []
+            }
+            ```
+            """);
+
+        ProcessMiningResult result = llmAnalysisService.analyzeSnapshot(
+            List.of("topic1"), SnapshotConfig.latestN(10), null);
+
+        assertNotNull(result);
+        assertEquals("flowchart TD\n[A] --> [B]", result.flowchart());
+    }
 }
