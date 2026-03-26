@@ -5,6 +5,7 @@ package com.yourcompany.kafkasqlexplorer.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yourcompany.kafkasqlexplorer.config.ExplorerConfig;
 import com.yourcompany.kafkasqlexplorer.config.KafkaConfig;
+import com.yourcompany.kafkasqlexplorer.domain.KafkaMessage;
 import com.yourcompany.kafkasqlexplorer.domain.MetricConfig;
 import com.yourcompany.kafkasqlexplorer.domain.MetricExecutionMode;
 import com.yourcompany.kafkasqlexplorer.domain.MetricPreviewResult;
@@ -123,14 +124,20 @@ public class MetricService {
     private final MeterRegistry   meterRegistry;
     private final KafkaConfig     kafkaConfig;
     private final ExplorerConfig  explorerConfig;
+    private final KafkaAdminService kafkaAdminService;
+    private final MessageFieldExtractorService messageFieldExtractorService;
     private final ObjectMapper    objectMapper = new ObjectMapper();
 
     public MetricService(FlinkSqlService flinkSqlService, MeterRegistry meterRegistry,
-                         KafkaConfig kafkaConfig, ExplorerConfig explorerConfig) {
+                         KafkaConfig kafkaConfig, ExplorerConfig explorerConfig,
+                         KafkaAdminService kafkaAdminService,
+                         MessageFieldExtractorService messageFieldExtractorService) {
         this.flinkSqlService = flinkSqlService;
         this.meterRegistry   = meterRegistry;
         this.kafkaConfig     = kafkaConfig;
         this.explorerConfig  = explorerConfig;
+        this.kafkaAdminService = kafkaAdminService;
+        this.messageFieldExtractorService = messageFieldExtractorService;
     }
 
     // ── Bootstrap ─────────────────────────────────────────────────────────────
@@ -164,7 +171,14 @@ public class MetricService {
                 m.id(), m.name(), m.type(), newSql, m.description(),
                 m.warningThreshold(), m.criticalThreshold(),
                 null, m.lastUpdateTime(), null,
-                m.history() != null ? m.history() : List.of());
+                m.history() != null ? m.history() : List.of(),
+                m.lastSummary() != null ? new LinkedHashMap<>(m.lastSummary()) : Map.of(),
+                m.createTableSql(),
+                m.templateType(),
+                m.templateParams() != null ? new LinkedHashMap<>(m.templateParams()) : Map.of(),
+                m.executionMode(),
+                m.labelTopic(),
+                m.labelFields() != null ? List.copyOf(m.labelFields()) : List.of());
             persistToKafka(updated);
             return updated;
         });
@@ -270,7 +284,9 @@ public class MetricService {
             metric.createTableSql(),
             metric.templateType(),
             metric.templateParams(),
-            metric.executionMode()));
+            metric.executionMode(),
+            metric.labelTopic(),
+            metric.labelFields() != null ? metric.labelFields() : List.of()));
         validateMetric(m, true);
         metrics.put(id, m);
         persistToKafka(m);
@@ -340,7 +356,9 @@ public class MetricService {
             metric.createTableSql(),
             templateType.name(),
             metric.templateParams() != null ? new LinkedHashMap<>(metric.templateParams()) : Map.of(),
-            executionMode.name()
+            executionMode.name(),
+            metric.labelTopic(),
+            metric.labelFields() != null ? List.copyOf(metric.labelFields()) : List.of()
         );
     }
 
@@ -351,6 +369,10 @@ public class MetricService {
     private void validateMetric(MetricConfig metric, boolean requireName) {
         if (requireName && (metric.name() == null || metric.name().isBlank())) {
             throw new IllegalArgumentException("Metric name is required");
+        }
+        if (metric.labelFields() != null && !metric.labelFields().isEmpty()
+            && (metric.labelTopic() == null || metric.labelTopic().isBlank())) {
+            throw new IllegalArgumentException("A Kafka topic is required when label fields are configured");
         }
 
         MetricTemplateType templateType = MetricTemplateType.fromValue(metric.templateType());
@@ -679,7 +701,8 @@ public class MetricService {
                 if (result.error() != null) {
                     updateMetricState(id, null, result.error(), result.summary());
                 } else if (!result.rows().isEmpty()) {
-                    processRows(id, normalized, result.rows(), result.displayValue(), result.summary());
+                    Map<String, String> configuredLabels = resolveConfiguredLabels(normalized);
+                    processRows(id, normalized, result.rows(), result.displayValue(), result.summary(), configuredLabels);
                 } else {
                     updateMetricState(id, null, "No rows returned — check table name and Kafka connectivity", result.summary());
                 }
@@ -708,7 +731,8 @@ public class MetricService {
     // ── Core processing — dispatches by Prometheus type ───────────────────────
 
     private void processRows(String metricId, MetricConfig config, List<Map<String, Object>> rows,
-                             Double displayValueOverride, Map<String, Object> summary) {
+                             Double displayValueOverride, Map<String, Object> summary,
+                             Map<String, String> configuredLabels) {
         String type = config.type() == null ? "GAUGE" : config.type().toUpperCase();
         Double primaryValue = displayValueOverride;
 
@@ -716,8 +740,8 @@ public class MetricService {
             Double value   = extractValue(row);
             if (value == null) continue;
 
-            List<Tag> tags = buildTags(metricId, config, row);
-            String labelKey = buildLabelKey(row);
+            List<Tag> tags = buildTags(metricId, config, row, configuredLabels);
+            String labelKey = buildLabelKey(row, configuredLabels);
 
             switch (type) {
                 case "COUNTER"   -> processCounter(metricId, labelKey, tags, value);
@@ -807,27 +831,70 @@ public class MetricService {
         return null;
     }
 
-    private List<Tag> buildTags(String metricId, MetricConfig config, Map<String, Object> row) {
-        List<Tag> tags = new ArrayList<>();
-        tags.add(Tag.of("metric_id",   metricId));
-        tags.add(Tag.of("metric_name", config.name()));
-        tags.add(Tag.of("metric_type", config.type()));
+    private List<Tag> buildTags(String metricId, MetricConfig config, Map<String, Object> row,
+                                Map<String, String> configuredLabels) {
+        Map<String, String> tagValues = new LinkedHashMap<>();
+        tagValues.put("metric_id", metricId);
+        tagValues.put("metric_name", config.name());
+        tagValues.put("metric_type", config.type());
+        configuredLabels.forEach(tagValues::putIfAbsent);
         for (Map.Entry<String, Object> e : row.entrySet()) {
             if (!"metric_value".equalsIgnoreCase(e.getKey())) {
-                tags.add(Tag.of(e.getKey().toLowerCase(), String.valueOf(e.getValue())));
+                tagValues.put(messageFieldExtractorService.sanitizeLabelKey(e.getKey()), String.valueOf(e.getValue()));
             }
         }
-        return tags;
+        return tagValues.entrySet().stream()
+            .map(entry -> Tag.of(entry.getKey(), entry.getValue()))
+            .toList();
     }
 
-    private String buildLabelKey(Map<String, Object> row) {
+    private String buildLabelKey(Map<String, Object> row, Map<String, String> configuredLabels) {
         StringBuilder sb = new StringBuilder();
+        configuredLabels.forEach((key, value) -> sb.append(key).append('=').append(value).append('|'));
         for (Map.Entry<String, Object> e : row.entrySet()) {
             if (!"metric_value".equalsIgnoreCase(e.getKey())) {
-                sb.append(e.getKey()).append('=').append(e.getValue()).append('|');
+                sb.append(messageFieldExtractorService.sanitizeLabelKey(e.getKey()))
+                    .append('=').append(e.getValue()).append('|');
             }
         }
         return sb.toString();
+    }
+
+    private Map<String, String> resolveConfiguredLabels(MetricConfig config) {
+        if (config.labelTopic() == null || config.labelTopic().isBlank()
+            || config.labelFields() == null || config.labelFields().isEmpty()) {
+            return Map.of();
+        }
+
+        try {
+            Optional<KafkaMessage> latestMessage = kafkaAdminService.getLatestMessage(config.labelTopic());
+            if (latestMessage.isEmpty() || latestMessage.get().value() == null || latestMessage.get().value().isBlank()) {
+                return Map.of();
+            }
+
+            Map<String, String> extractedFields = messageFieldExtractorService.extractLeafFields(latestMessage.get().value());
+            if (extractedFields.isEmpty()) {
+                return Map.of();
+            }
+
+            Map<String, String> labels = new LinkedHashMap<>();
+            for (String fieldPath : config.labelFields()) {
+                String value = extractedFields.get(fieldPath);
+                if (value == null) continue;
+
+                String baseKey = messageFieldExtractorService.sanitizeLabelKey(fieldPath);
+                String candidateKey = baseKey;
+                int suffix = 2;
+                while (labels.containsKey(candidateKey) && !Objects.equals(labels.get(candidateKey), value)) {
+                    candidateKey = baseKey + "_" + suffix++;
+                }
+                labels.put(candidateKey, value);
+            }
+            return labels;
+        } catch (Exception e) {
+            log.debug("Failed to resolve configured labels for metric '{}': {}", config.name(), e.getMessage());
+            return Map.of();
+        }
     }
 
     private void updateHistory(String id, Double value) {
@@ -849,7 +916,9 @@ public class MetricService {
             current.createTableSql(),
             current.templateType(),
             current.templateParams(),
-            current.executionMode()));
+            current.executionMode(),
+            current.labelTopic(),
+            current.labelFields() != null ? List.copyOf(current.labelFields()) : List.of()));
     }
 
     // ── Kafka persistence ─────────────────────────────────────────────────────

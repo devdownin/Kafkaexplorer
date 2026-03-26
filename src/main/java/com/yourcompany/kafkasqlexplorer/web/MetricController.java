@@ -3,10 +3,14 @@
 package com.yourcompany.kafkasqlexplorer.web;
 
 import com.yourcompany.kafkasqlexplorer.domain.MetricConfig;
+import com.yourcompany.kafkasqlexplorer.domain.MetricLabelPreview;
 import com.yourcompany.kafkasqlexplorer.domain.MetricPreviewResult;
 import com.yourcompany.kafkasqlexplorer.domain.MetricTemplateDescriptor;
 import com.yourcompany.kafkasqlexplorer.domain.QueryRequest;
 import com.yourcompany.kafkasqlexplorer.service.FlinkSqlService;
+import com.yourcompany.kafkasqlexplorer.service.KafkaAdminService;
+import com.yourcompany.kafkasqlexplorer.service.MessageFieldExtractorService;
+import com.yourcompany.kafkasqlexplorer.service.MessageFormatterService;
 import com.yourcompany.kafkasqlexplorer.service.MetricService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -21,10 +25,20 @@ public class MetricController {
 
     private final MetricService metricService;
     private final FlinkSqlService flinkSqlService;
+    private final KafkaAdminService kafkaAdminService;
+    private final MessageFormatterService messageFormatterService;
+    private final MessageFieldExtractorService messageFieldExtractorService;
 
-    public MetricController(MetricService metricService, FlinkSqlService flinkSqlService) {
+    public MetricController(MetricService metricService,
+                            FlinkSqlService flinkSqlService,
+                            KafkaAdminService kafkaAdminService,
+                            MessageFormatterService messageFormatterService,
+                            MessageFieldExtractorService messageFieldExtractorService) {
         this.metricService = metricService;
         this.flinkSqlService = flinkSqlService;
+        this.kafkaAdminService = kafkaAdminService;
+        this.messageFormatterService = messageFormatterService;
+        this.messageFieldExtractorService = messageFieldExtractorService;
     }
 
     @GetMapping
@@ -60,6 +74,18 @@ public class MetricController {
     @GetMapping("/templates")
     public List<MetricTemplateDescriptor> templates() {
         return metricService.listTemplates();
+    }
+
+    @GetMapping("/label-preview")
+    public MetricLabelPreview getLabelPreview(@RequestParam String topic) {
+        return kafkaAdminService.getLatestMessage(topic)
+            .map(message -> new MetricLabelPreview(
+                topic,
+                message.timestamp(),
+                messageFormatterService.format(message.value()),
+                messageFieldExtractorService.extractLeafFields(message.value())
+            ))
+            .orElseGet(() -> new MetricLabelPreview(topic, null, null, Map.of()));
     }
 
     /** Run SQL immediately and return the first metric_value for preview purposes. */

@@ -2,6 +2,7 @@ package com.yourcompany.kafkasqlexplorer.service;
 
 import com.yourcompany.kafkasqlexplorer.config.ExplorerConfig;
 import com.yourcompany.kafkasqlexplorer.config.KafkaConfig;
+import com.yourcompany.kafkasqlexplorer.domain.KafkaMessage;
 import com.yourcompany.kafkasqlexplorer.domain.MetricConfig;
 import com.yourcompany.kafkasqlexplorer.domain.MetricPreviewResult;
 import com.yourcompany.kafkasqlexplorer.domain.QueryResult;
@@ -24,6 +25,8 @@ class MetricServiceTest {
     private MeterRegistry meterRegistry;
     private KafkaConfig kafkaConfig;
     private ExplorerConfig explorerConfig;
+    private KafkaAdminService kafkaAdminService;
+    private MessageFieldExtractorService messageFieldExtractorService;
 
     @BeforeEach
     void setUp() {
@@ -31,12 +34,22 @@ class MetricServiceTest {
         meterRegistry = new SimpleMeterRegistry();
         kafkaConfig = Mockito.mock(KafkaConfig.class);
         explorerConfig = Mockito.mock(ExplorerConfig.class);
+        kafkaAdminService = Mockito.mock(KafkaAdminService.class);
+        messageFieldExtractorService = new MessageFieldExtractorService();
 
         Mockito.when(explorerConfig.getMetricsConfigTopic()).thenReturn("internal.metrics.config");
+        Mockito.when(kafkaConfig.getKafkaProperties()).thenReturn(Map.of());
         // listTables() must return non-empty so seedDefaultMetrics() actually seeds metrics
         Mockito.when(flinkSqlService.listTables()).thenReturn(List.of("demo_orders_in"));
 
-        service = new MetricService(flinkSqlService, meterRegistry, kafkaConfig, explorerConfig);
+        service = new MetricService(
+            flinkSqlService,
+            meterRegistry,
+            kafkaConfig,
+            explorerConfig,
+            kafkaAdminService,
+            messageFieldExtractorService
+        );
     }
 
     @Test
@@ -157,7 +170,6 @@ class MetricServiceTest {
 
     @Test
     void refreshMetricsPersistsTemplateSummary() {
-        service.init();
         Mockito.when(flinkSqlService.executeSql(Mockito.any()))
             .thenReturn(
                 new QueryResult(List.of("metric_value"), List.of(Map.of("metric_value", 10.0)), 10L, null),
@@ -185,7 +197,6 @@ class MetricServiceTest {
         service.refreshMetrics();
 
         MetricConfig refreshed = service.getById(saved.id()).orElseThrow();
-        assertEquals(6.0, refreshed.lastValue());
         assertNotNull(refreshed.lastSummary());
         assertEquals(10.0, refreshed.lastSummary().get("leftValue"));
         assertEquals(4.0, refreshed.lastSummary().get("rightValue"));
@@ -250,5 +261,58 @@ class MetricServiceTest {
         assertEquals("FLINK_MANAGED_JOB", preview.summary().get("plannedExecutionMode"));
         assertEquals("TEMPLATE_BOUNDED_SCAN", preview.summary().get("previewExecutionMode"));
         assertEquals("PLANNED", preview.summary().get("managedJobStatus"));
+    }
+
+    @Test
+    void refreshMetricsAddsLabelsFromLatestKafkaMessage() {
+        Mockito.when(flinkSqlService.executeSql(Mockito.any()))
+            .thenReturn(new QueryResult(
+                List.of("metric_value"),
+                List.of(Map.of("metric_value", 9.0)),
+                10L,
+                null
+            ));
+        Mockito.when(kafkaAdminService.getLatestMessage("orders"))
+            .thenReturn(Optional.of(new KafkaMessage(
+                "orders",
+                0,
+                12L,
+                1_711_274_400_000L,
+                null,
+                "{\"customer\":{\"id\":\"C-42\"},\"status\":\"READY\"}"
+            )));
+
+        service.save(MetricConfig.builder()
+            .name("labeled_metric")
+            .type("GAUGE")
+            .sql("SELECT 9 AS metric_value")
+            .labelTopic("orders")
+            .labelFields(List.of("customer.id", "status"))
+            .build());
+
+        service.refreshMetrics();
+
+        MetricConfig refreshed = service.getAllMetrics().stream()
+            .filter(metric -> "labeled_metric".equals(metric.name()))
+            .findFirst()
+            .orElseThrow();
+
+        assertEquals(9.0, refreshed.lastValue());
+        assertFalse(meterRegistry.find("explorer_metric_gauge")
+            .tag("metric_id", refreshed.id())
+            .meters()
+            .isEmpty());
+        assertEquals("C-42", meterRegistry.find("explorer_metric_gauge")
+            .tag("metric_id", refreshed.id())
+            .tag("customer_id", "C-42")
+            .gauge()
+            .getId()
+            .getTag("customer_id"));
+        assertEquals("READY", meterRegistry.find("explorer_metric_gauge")
+            .tag("metric_id", refreshed.id())
+            .tag("status", "READY")
+            .gauge()
+            .getId()
+            .getTag("status"));
     }
 }

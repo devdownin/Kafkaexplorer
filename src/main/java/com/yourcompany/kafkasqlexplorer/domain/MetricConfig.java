@@ -28,14 +28,18 @@ public record MetricConfig(
     /** Free-form template parameters, typically SQL snippets, window sizes or matching keys. */
     Map<String, Object> templateParams,
     /** Execution mode for the metric runtime. */
-    String executionMode
+    String executionMode,
+    /** Optional Kafka topic used to resolve labels from the latest received message. */
+    String labelTopic,
+    /** Field paths extracted from the latest Kafka message and exported as Prometheus labels. */
+    List<String> labelFields
 ) {
     /** Backwards-compatible 11-arg constructor (no DDL). */
     public MetricConfig(String id, String name, String type, String sql, String description,
                         Double warningThreshold, Double criticalThreshold, Double lastValue,
                         Long lastUpdateTime, String errorMessage) {
         this(id, name, type, sql, description, warningThreshold, criticalThreshold,
-             lastValue, lastUpdateTime, errorMessage, List.of(), Map.of(), null, null, null, null);
+             lastValue, lastUpdateTime, errorMessage, List.of(), Map.of(), null, null, null, null, null, List.of());
     }
 
     /** Backwards-compatible 12-arg constructor (history, no DDL). */
@@ -43,6 +47,6 @@ public record MetricConfig(
                         Double warningThreshold, Double criticalThreshold, Double lastValue,
                         Long lastUpdateTime, String errorMessage, List<Double> history) {
         this(id, name, type, sql, description, warningThreshold, criticalThreshold,
-             lastValue, lastUpdateTime, errorMessage, history, Map.of(), null, null, null, null);
+             lastValue, lastUpdateTime, errorMessage, history, Map.of(), null, null, null, null, null, List.of());
     }
 }
