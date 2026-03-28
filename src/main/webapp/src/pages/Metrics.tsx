@@ -17,6 +17,15 @@ interface MetricConfig {
   errorMessage: string | null;
   history: number[];
   createTableSql?: string | null;
+  labelTopic?: string | null;
+  labelFields?: string[];
+}
+
+interface MetricLabelPreview {
+  topic: string;
+  timestamp: number | null;
+  message: string | null;
+  fields: Record<string, string>;
 }
 
 // ── Type visual config ─────────────────────────────────────────────────────
@@ -82,6 +91,108 @@ const TYPE_EXAMPLES: Array<{
     warn: null, crit: null,
   },
 ];
+
+// ── SQL / form validation ──────────────────────────────────────────────────
+
+interface ValidationMsg {
+  level: 'error' | 'warning' | 'info';
+  text: string;
+}
+
+function validateMetricSql(sql: string, type: string): ValidationMsg[] {
+  if (!sql.trim()) return [];
+  // Strip comments before analysis (mirrors backend SqlQueryValidator behaviour)
+  const stripped = sql.replace(/--[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '').trim();
+  const msgs: ValidationMsg[] = [];
+
+  if (!/^SELECT\b/i.test(stripped))
+    msgs.push({ level: 'error', text: 'Only SELECT queries are allowed (INSERT / UPDATE / DELETE are rejected by the server).' });
+
+  if (!/\bAS\s+metric_value\b/i.test(stripped))
+    msgs.push({ level: 'error', text: 'Result column must be aliased as metric_value — e.g. COUNT(*) AS metric_value.' });
+
+  if (!/\bFROM\b/i.test(stripped))
+    msgs.push({ level: 'error', text: 'SQL must include a FROM clause.' });
+
+  if (!/\b(COUNT|SUM|AVG|MAX|MIN)\s*\(/i.test(stripped))
+    msgs.push({ level: 'warning', text: 'No aggregate function found (COUNT, SUM, AVG, MAX, MIN). The query should return a single numeric value.' });
+
+  if (type === 'HISTOGRAM' && !/\bAS\s+le\b/i.test(stripped))
+    msgs.push({ level: 'info', text: 'HISTOGRAM works best with a le bucket column (… AS le) and GROUP BY.' });
+
+  return msgs;
+}
+
+function validateDdlSql(ddl: string): ValidationMsg[] {
+  if (!ddl.trim()) return [];
+  const stripped = ddl.replace(/--[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '').trim();
+  const msgs: ValidationMsg[] = [];
+
+  if (!/^CREATE\s+TABLE\b/i.test(stripped))
+    msgs.push({ level: 'error', text: 'DDL must be a CREATE TABLE statement.' });
+
+  if (/\b(DROP|DELETE|TRUNCATE)\b/i.test(stripped))
+    msgs.push({ level: 'error', text: 'Destructive keywords (DROP, DELETE, TRUNCATE) are not allowed in the DDL field.' });
+
+  if (!/\bWITH\b/i.test(stripped))
+    msgs.push({ level: 'warning', text: "Missing WITH clause — Flink connector options (connector, topic, …) are required." });
+
+  return msgs;
+}
+
+function validateMetricName(name: string): ValidationMsg[] {
+  if (!name.trim()) return [];
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name.trim()))
+    return [{ level: 'error', text: 'Metric name must start with a letter or underscore and contain only letters, digits, and underscores (Prometheus naming rules).' }];
+  return [];
+}
+
+function validateThresholds(warn: number | null, crit: number | null): ValidationMsg[] {
+  if (warn !== null && crit !== null && warn >= crit)
+    return [{ level: 'error', text: 'Warning threshold must be strictly less than the Critical threshold.' }];
+  return [];
+}
+
+// ── Inline validation hint list ───────────────────────────────────────────
+
+const HINT_ICONS: Record<ValidationMsg['level'], string> = { error: 'error', warning: 'warning', info: 'info' };
+const HINT_COLORS: Record<ValidationMsg['level'], string> = {
+  error:   'text-red-400',
+  warning: 'text-amber-400',
+  info:    'text-slate-400',
+};
+
+const ValidationHints: React.FC<{ messages: ValidationMsg[] }> = ({ messages }) => {
+  if (messages.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-1 px-4 py-2.5 border-t border-primary/10 bg-background-dark/70">
+      {messages.map((m, i) => (
+        <div key={i} className={`flex items-start gap-1.5 text-[11px] leading-snug ${HINT_COLORS[m.level]}`}>
+          <span className="material-symbols-outlined text-[13px] shrink-0 mt-px">{HINT_ICONS[m.level]}</span>
+          <span>{m.text}</span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+// ── Auto-generate a Prometheus-safe metric name from type + topic ──────────
+function buildAutoName(type: string, topic: string): string {
+  const typePart  = (type || 'gauge').toLowerCase();
+  const topicPart = topic ? topicToTable(topic) : 'my_table';
+  return `${typePart}_${topicPart}`;
+}
+
+function extractTopicFromDdl(ddl?: string | null): string {
+  if (!ddl) return '';
+  const match = ddl.match(/'topic'\s*=\s*'([^']+)'/i);
+  return match?.[1] ?? '';
+}
+
+function formatPreviewTimestamp(timestamp: number | null): string {
+  if (!timestamp) return 'unknown';
+  return new Date(timestamp).toLocaleString();
+}
 
 // ── Convert Kafka topic name to a valid Flink table identifier ─────────────
 function topicToTable(topic: string): string {
@@ -251,6 +362,12 @@ const MetricCard: React.FC<{
               DDL
             </span>
           )}
+          {(metric.labelFields?.length ?? 0) > 0 && (
+            <span title="Latest-message labels configured"
+              className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase shrink-0 bg-sky-500/10 text-sky-300">
+              {metric.labelFields!.length} labels
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-1 shrink-0">
           <button onClick={onRefresh} disabled={refreshing} title="Refresh now"
@@ -386,6 +503,8 @@ const EMPTY_METRIC: Partial<MetricConfig> = {
   description: '',
   warningThreshold: null, criticalThreshold: null,
   createTableSql: '',
+  labelTopic: '',
+  labelFields: [],
 };
 
 const Metrics: React.FC = () => {
@@ -405,6 +524,9 @@ const Metrics: React.FC = () => {
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
   const [filterType, setFilterType]     = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
+  const [nameIsAuto, setNameIsAuto]     = useState(false);
+  const [labelPreview, setLabelPreview] = useState<MetricLabelPreview | null>(null);
+  const [labelPreviewLoading, setLabelPreviewLoading] = useState(false);
 
   const monaco = useMonaco();
 
@@ -429,6 +551,34 @@ const Metrics: React.FC = () => {
     const iv = setInterval(fetchMetrics, 15000);
     return () => clearInterval(iv);
   }, []);
+
+  useEffect(() => {
+    if (!isModalOpen || !selectedTopic) {
+      setLabelPreview(null);
+      setLabelPreviewLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLabelPreviewLoading(true);
+    axios.get<MetricLabelPreview>(`/api/metrics/label-preview?topic=${encodeURIComponent(selectedTopic)}`)
+      .then(response => {
+        if (!cancelled) setLabelPreview(response.data);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLabelPreview(null);
+          toast('Failed to load latest message for label selection', 'error');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLabelPreviewLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isModalOpen, selectedTopic]);
 
   // SQL autocomplete
   useEffect(() => {
@@ -462,8 +612,14 @@ const Metrics: React.FC = () => {
     const tableName  = firstTopic ? topicToTable(firstTopic) : 'my_table';
 
     if (metric) {
-      setEditingMetric(metric);
-      setSelectedTopic('');
+      const metricTopic = metric.labelTopic ?? extractTopicFromDdl(metric.createTableSql);
+      setEditingMetric({
+        ...metric,
+        labelTopic: metricTopic,
+        labelFields: metric.labelFields ?? [],
+      });
+      setSelectedTopic(metricTopic);
+      setNameIsAuto(false);
     } else {
       const initialSql = sqlFn ? sqlFn(tableName) : `SELECT COUNT(*) AS metric_value\nFROM ${tableName}`;
       const initialDdl = firstTopic ? buildDdlTemplate(firstTopic, bootstrapServers) : '';
@@ -474,6 +630,8 @@ const Metrics: React.FC = () => {
         warningThreshold:  warn  !== undefined ? warn  : null,
         criticalThreshold: crit  !== undefined ? crit  : null,
         createTableSql: initialDdl,
+        labelTopic: firstTopic,
+        labelFields: [],
       });
       setSelectedTopic(firstTopic);
     }
@@ -491,11 +649,27 @@ const Metrics: React.FC = () => {
       ...m,
       sql: m.sql ? m.sql.replace(new RegExp(`\\b${oldTable}\\b`, 'g'), newTable) : m.sql,
       createTableSql: topic ? buildDdlTemplate(topic, bootstrapServers) : (m.createTableSql ?? ''),
+      labelTopic: topic,
+      labelFields: m.labelTopic === topic ? (m.labelFields ?? []) : [],
     }));
+  };
+
+  const toggleLabelField = (field: string) => {
+    setEditingMetric(m => {
+      const current = m.labelFields ?? [];
+      return {
+        ...m,
+        labelFields: current.includes(field)
+          ? current.filter(entry => entry !== field)
+          : [...current, field],
+      };
+    });
   };
 
   const tableName = selectedTopic ? topicToTable(selectedTopic) : 'my_table';
   const sqlTemplates = getSqlTemplates(tableName);
+  const selectedLabelFields = editingMetric.labelFields ?? [];
+  const availableLabelFields = Object.entries(labelPreview?.fields ?? {});
 
   // ── Save ──────────────────────────────────────────────────────────────────
   const handleSave = async () => {
@@ -775,6 +949,90 @@ const Metrics: React.FC = () => {
                     <p className="text-[10px] text-slate-600">
                       Table: <span className="text-primary font-mono">{topicToTable(selectedTopic)}</span>
                     </p>
+                  )}
+                </div>
+
+                {/* Prometheus labels from latest Kafka message */}
+                <div className="space-y-2 rounded-xl border border-primary/10 bg-primary/5 p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Prometheus Labels</label>
+                      <p className="text-[10px] text-slate-600 mt-1 leading-relaxed">
+                        Select fields from the latest message on this topic. Their current values will be exported as labels on each metric refresh.
+                      </p>
+                    </div>
+                    {selectedTopic && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setLabelPreviewLoading(true);
+                          axios.get<MetricLabelPreview>(`/api/metrics/label-preview?topic=${encodeURIComponent(selectedTopic)}`)
+                            .then(response => setLabelPreview(response.data))
+                            .catch(() => toast('Failed to refresh latest message', 'error'))
+                            .finally(() => setLabelPreviewLoading(false));
+                        }}
+                        className="shrink-0 text-slate-500 hover:text-primary transition-colors"
+                        title="Refresh latest message"
+                      >
+                        <span className={`material-symbols-outlined text-base ${labelPreviewLoading ? 'animate-spin' : ''}`}>refresh</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {!selectedTopic ? (
+                    <p className="text-[11px] text-slate-500">Select a topic to inspect its latest message.</p>
+                  ) : labelPreviewLoading ? (
+                    <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                      <span className="material-symbols-outlined text-sm animate-spin">progress_activity</span>
+                      Loading latest message…
+                    </div>
+                  ) : !labelPreview?.message ? (
+                    <p className="text-[11px] text-slate-500">No recent message available on this topic.</p>
+                  ) : (
+                    <>
+                      <div className="flex items-center justify-between gap-2 text-[10px] text-slate-600">
+                        <span>Latest message at {formatPreviewTimestamp(labelPreview.timestamp)}</span>
+                        <span>{selectedLabelFields.length} selected</span>
+                      </div>
+
+                      {availableLabelFields.length > 0 ? (
+                        <div className="max-h-44 overflow-y-auto rounded-lg border border-primary/10 bg-background-dark/40 divide-y divide-primary/5">
+                          {availableLabelFields.map(([field, value]) => {
+                            const checked = selectedLabelFields.includes(field);
+                            return (
+                              <label
+                                key={field}
+                                className={`flex items-start gap-2 px-3 py-2 cursor-pointer transition-colors ${
+                                  checked ? 'bg-primary/10' : 'hover:bg-primary/5'
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => toggleLabelField(field)}
+                                  className="mt-0.5 rounded border-primary/30 bg-background-dark text-primary focus:ring-primary"
+                                />
+                                <div className="min-w-0">
+                                  <div className="font-mono text-[11px] text-slate-200 break-all">{field}</div>
+                                  <div className="font-mono text-[10px] text-slate-500 break-all">{value || '""'}</div>
+                                </div>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <p className="text-[11px] text-slate-500">
+                          The latest message format does not expose selectable leaf fields.
+                        </p>
+                      )}
+
+                      <div className="rounded-lg border border-primary/10 bg-background-dark/40 p-2">
+                        <p className="text-[10px] uppercase font-bold tracking-wider text-slate-500 mb-2">Latest Message</p>
+                        <pre className="max-h-36 overflow-auto whitespace-pre-wrap break-all text-[10px] font-mono text-slate-400">
+                          {labelPreview.message}
+                        </pre>
+                      </div>
+                    </>
                   )}
                 </div>
 

@@ -5,6 +5,7 @@ package com.yourcompany.kafkasqlexplorer.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yourcompany.kafkasqlexplorer.config.ExplorerConfig;
 import com.yourcompany.kafkasqlexplorer.config.KafkaConfig;
+import com.yourcompany.kafkasqlexplorer.domain.KafkaMessage;
 import com.yourcompany.kafkasqlexplorer.domain.MetricConfig;
 import com.yourcompany.kafkasqlexplorer.domain.QueryRequest;
 import com.yourcompany.kafkasqlexplorer.domain.QueryResult;
@@ -85,14 +86,20 @@ public class MetricService {
     private final MeterRegistry   meterRegistry;
     private final KafkaConfig     kafkaConfig;
     private final ExplorerConfig  explorerConfig;
+    private final KafkaAdminService kafkaAdminService;
+    private final MessageFieldExtractorService messageFieldExtractorService;
     private final ObjectMapper    objectMapper = new ObjectMapper();
 
     public MetricService(FlinkSqlService flinkSqlService, MeterRegistry meterRegistry,
-                         KafkaConfig kafkaConfig, ExplorerConfig explorerConfig) {
+                         KafkaConfig kafkaConfig, ExplorerConfig explorerConfig,
+                         KafkaAdminService kafkaAdminService,
+                         MessageFieldExtractorService messageFieldExtractorService) {
         this.flinkSqlService = flinkSqlService;
         this.meterRegistry   = meterRegistry;
         this.kafkaConfig     = kafkaConfig;
         this.explorerConfig  = explorerConfig;
+        this.kafkaAdminService = kafkaAdminService;
+        this.messageFieldExtractorService = messageFieldExtractorService;
     }
 
     // ── Bootstrap ─────────────────────────────────────────────────────────────
@@ -126,7 +133,14 @@ public class MetricService {
                 m.id(), m.name(), m.type(), newSql, m.description(),
                 m.warningThreshold(), m.criticalThreshold(),
                 null, m.lastUpdateTime(), null,
-                m.history() != null ? m.history() : List.of());
+                m.history() != null ? m.history() : List.of(),
+                m.lastSummary() != null ? new LinkedHashMap<>(m.lastSummary()) : Map.of(),
+                m.createTableSql(),
+                m.templateType(),
+                m.templateParams() != null ? new LinkedHashMap<>(m.templateParams()) : Map.of(),
+                m.executionMode(),
+                m.labelTopic(),
+                m.labelFields() != null ? List.copyOf(m.labelFields()) : List.of());
             persistToKafka(updated);
             return updated;
         });
@@ -198,7 +212,14 @@ public class MetricService {
             metric.warningThreshold(), metric.criticalThreshold(),
             metric.lastValue(), metric.lastUpdateTime(), metric.errorMessage(),
             metric.history() != null ? metric.history() : List.of(),
-            metric.createTableSql());
+            metric.lastSummary() != null ? metric.lastSummary() : Map.of(),
+            metric.createTableSql(),
+            metric.templateType(),
+            metric.templateParams(),
+            metric.executionMode(),
+            metric.labelTopic(),
+            metric.labelFields() != null ? metric.labelFields() : List.of()));
+        validateMetric(m, true);
         metrics.put(id, m);
         persistToKafka(m);
     }
@@ -242,6 +263,358 @@ public class MetricService {
         return sql;
     }
 
+    private MetricConfig normalizeMetric(MetricConfig metric) {
+        String normalizedType = metric.type() == null || metric.type().isBlank()
+            ? "GAUGE"
+            : metric.type().trim().toUpperCase(Locale.ROOT);
+        MetricTemplateType templateType = MetricTemplateType.fromValue(metric.templateType());
+        MetricExecutionMode executionMode = metric.executionMode() == null || metric.executionMode().isBlank()
+            ? (templateType == MetricTemplateType.RAW_SQL ? MetricExecutionMode.SQL : MetricExecutionMode.TEMPLATE_BOUNDED_SCAN)
+            : MetricExecutionMode.valueOf(metric.executionMode().trim().toUpperCase(Locale.ROOT));
+
+        return new MetricConfig(
+            metric.id(),
+            metric.name(),
+            normalizedType,
+            metric.sql(),
+            metric.description(),
+            metric.warningThreshold(),
+            metric.criticalThreshold(),
+            metric.lastValue(),
+            metric.lastUpdateTime(),
+            metric.errorMessage(),
+            metric.history() != null ? metric.history() : List.of(),
+            metric.lastSummary() != null ? new LinkedHashMap<>(metric.lastSummary()) : Map.of(),
+            metric.createTableSql(),
+            templateType.name(),
+            metric.templateParams() != null ? new LinkedHashMap<>(metric.templateParams()) : Map.of(),
+            executionMode.name(),
+            metric.labelTopic(),
+            metric.labelFields() != null ? List.copyOf(metric.labelFields()) : List.of()
+        );
+    }
+
+    private void validateMetric(MetricConfig metric) {
+        validateMetric(metric, false);
+    }
+
+    private void validateMetric(MetricConfig metric, boolean requireName) {
+        if (requireName && (metric.name() == null || metric.name().isBlank())) {
+            throw new IllegalArgumentException("Metric name is required");
+        }
+        if (metric.labelFields() != null && !metric.labelFields().isEmpty()
+            && (metric.labelTopic() == null || metric.labelTopic().isBlank())) {
+            throw new IllegalArgumentException("A Kafka topic is required when label fields are configured");
+        }
+
+        MetricTemplateType templateType = MetricTemplateType.fromValue(metric.templateType());
+        String metricType = metric.type() == null ? "GAUGE" : metric.type().toUpperCase(Locale.ROOT);
+        Map<String, Object> params = metric.templateParams() != null ? metric.templateParams() : Map.of();
+        MetricExecutionMode executionMode = MetricExecutionMode.valueOf(metric.executionMode().toUpperCase(Locale.ROOT));
+
+        if (executionMode == MetricExecutionMode.FLINK_MANAGED_JOB && templateType == MetricTemplateType.RAW_SQL) {
+            throw new IllegalArgumentException("FLINK_MANAGED_JOB is only available for template metrics");
+        }
+
+        switch (templateType) {
+            case RAW_SQL -> {
+                if (metric.sql() == null || metric.sql().isBlank()) {
+                    throw new IllegalArgumentException("SQL is required for RAW_SQL metrics");
+                }
+            }
+            case TOPIC_COUNT_DELTA -> {
+                requireParam(params, "leftSql");
+                requireParam(params, "rightSql");
+                if (!"GAUGE".equals(metricType)) {
+                    throw new IllegalArgumentException("TOPIC_COUNT_DELTA supports GAUGE metrics only");
+                }
+            }
+            case TOPIC_TRANSIT_LATENCY -> {
+                requireParam(params, "sourceSql");
+                requireParam(params, "targetSql");
+                if (!Set.of("GAUGE", "HISTOGRAM", "SUMMARY").contains(metricType)) {
+                    throw new IllegalArgumentException("TOPIC_TRANSIT_LATENCY supports GAUGE, HISTOGRAM or SUMMARY");
+                }
+            }
+        }
+    }
+
+    private void executeCreateTableIfPresent(MetricConfig config) {
+        if (config.createTableSql() == null || config.createTableSql().isBlank()) return;
+
+        String ddl = config.createTableSql().trim();
+        if (!ddl.toUpperCase(Locale.ROOT).contains("IF NOT EXISTS")) {
+            ddl = ddl.replaceFirst("(?i)(CREATE\\s+TABLE\\s+)", "$1IF NOT EXISTS ");
+        }
+        try {
+            flinkSqlService.executeSql(QueryRequest.ddl(ddl, 10_000L));
+            log.debug("CREATE TABLE DDL executed for metric '{}'", config.name());
+        } catch (Exception ddlEx) {
+            log.debug("CREATE TABLE for metric '{}' skipped: {}", config.name(), ddlEx.getMessage());
+        }
+    }
+
+    private MetricComputationResult computeMetric(MetricConfig config) {
+        return switch (MetricTemplateType.fromValue(config.templateType())) {
+            case RAW_SQL -> computeRawSqlMetric(config);
+            case TOPIC_COUNT_DELTA -> computeCountDeltaMetric(config);
+            case TOPIC_TRANSIT_LATENCY -> computeTransitLatencyMetric(config);
+        };
+    }
+
+    private MetricComputationResult computeRawSqlMetric(MetricConfig config) {
+        QueryResult result = executeMetricQuery(
+            config.sql(),
+            DEFAULT_TEMPLATE_MAX_ROWS,
+            DEFAULT_TEMPLATE_TIMEOUT_MS,
+            DEFAULT_TEMPLATE_READ_MODE
+        );
+        if (result.error() != null) return MetricComputationResult.error(result.error());
+        if (result.rows().isEmpty()) {
+            return MetricComputationResult.error("No rows returned — check table name and Kafka connectivity");
+        }
+
+        Double displayValue = extractPrimaryMetricValue(result.rows());
+        return new MetricComputationResult(
+            result.rows(),
+            displayValue,
+            null,
+            Map.of("rowCount", result.rows().size())
+        );
+    }
+
+    private MetricComputationResult computeCountDeltaMetric(MetricConfig config) {
+        Map<String, Object> params = config.templateParams() != null ? config.templateParams() : Map.of();
+        int maxRows = getIntParam(params, "maxRowsPerSide", DEFAULT_TEMPLATE_MAX_ROWS);
+        long timeoutMs = getLongParam(params, "timeoutMs", DEFAULT_TEMPLATE_TIMEOUT_MS);
+        String readMode = getStringParam(params, "readMode", DEFAULT_TEMPLATE_READ_MODE);
+
+        QueryResult leftResult = executeMetricQuery(requireParam(params, "leftSql"), maxRows, timeoutMs, readMode);
+        if (leftResult.error() != null) return MetricComputationResult.error(leftResult.error());
+        QueryResult rightResult = executeMetricQuery(requireParam(params, "rightSql"), maxRows, timeoutMs, readMode);
+        if (rightResult.error() != null) return MetricComputationResult.error(rightResult.error());
+
+        Double leftValue = extractPrimaryMetricValue(leftResult.rows());
+        Double rightValue = extractPrimaryMetricValue(rightResult.rows());
+        if (leftValue == null || rightValue == null) {
+            return MetricComputationResult.error("Both queries must return a numeric metric_value");
+        }
+
+        String operation = getStringParam(params, "operation", "LEFT_MINUS_RIGHT").toUpperCase(Locale.ROOT);
+        Double metricValue = switch (operation) {
+            case "LEFT_MINUS_RIGHT" -> leftValue - rightValue;
+            case "ABS_DIFF" -> Math.abs(leftValue - rightValue);
+            case "RATIO" -> rightValue == 0.0 ? null : leftValue / rightValue;
+            case "PERCENT_GAP" -> rightValue == 0.0 ? null : ((leftValue - rightValue) * 100.0) / rightValue;
+            default -> throw new IllegalArgumentException("Unsupported count delta operation: " + operation);
+        };
+        if (metricValue == null) {
+            return MetricComputationResult.error("Cannot compute " + operation + " when right metric value is zero");
+        }
+
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("metric_value", metricValue);
+        row.put("left_value", leftValue);
+        row.put("right_value", rightValue);
+        row.put("operation", operation);
+        addIfPresent(row, "left_topic", params.get("leftTopic"));
+        addIfPresent(row, "right_topic", params.get("rightTopic"));
+
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("leftValue", leftValue);
+        summary.put("rightValue", rightValue);
+        summary.put("operation", operation);
+
+        return new MetricComputationResult(List.of(row), metricValue, null, summary);
+    }
+
+    private MetricComputationResult computeTransitLatencyMetric(MetricConfig config) {
+        Map<String, Object> params = config.templateParams() != null ? config.templateParams() : Map.of();
+        int maxRows = getIntParam(params, "maxRowsPerSide", DEFAULT_TEMPLATE_MAX_ROWS);
+        long timeoutMs = getLongParam(params, "timeoutMs", DEFAULT_TEMPLATE_TIMEOUT_MS);
+        String readMode = getStringParam(params, "readMode", DEFAULT_TEMPLATE_READ_MODE);
+
+        QueryResult sourceResult = executeMetricQuery(requireParam(params, "sourceSql"), maxRows, timeoutMs, readMode);
+        if (sourceResult.error() != null) return MetricComputationResult.error(sourceResult.error());
+        QueryResult targetResult = executeMetricQuery(requireParam(params, "targetSql"), maxRows, timeoutMs, readMode);
+        if (targetResult.error() != null) return MetricComputationResult.error(targetResult.error());
+
+        List<CorrelationEvent> sourceEvents = extractCorrelationEvents(sourceResult.rows(), "sourceSql");
+        List<CorrelationEvent> targetEvents = extractCorrelationEvents(targetResult.rows(), "targetSql");
+        if (sourceEvents.isEmpty() || targetEvents.isEmpty()) {
+            return MetricComputationResult.error("Transit latency requires match_key and event_time rows on both queries");
+        }
+
+        Map<String, Deque<Long>> targetsByKey = new HashMap<>();
+        for (CorrelationEvent event : targetEvents) {
+            targetsByKey
+                .computeIfAbsent(event.matchKey(), ignored -> new ArrayDeque<>())
+                .addLast(event.eventTime());
+        }
+
+        List<Double> latencies = new ArrayList<>();
+        int unmatchedSourceCount = 0;
+        sourceEvents.sort(Comparator.comparing(CorrelationEvent::matchKey).thenComparingLong(CorrelationEvent::eventTime));
+        targetsByKey.values().forEach(queue -> {
+            List<Long> sorted = new ArrayList<>(queue);
+            sorted.sort(Long::compareTo);
+            queue.clear();
+            queue.addAll(sorted);
+        });
+
+        for (CorrelationEvent sourceEvent : sourceEvents) {
+            Deque<Long> candidates = targetsByKey.get(sourceEvent.matchKey());
+            if (candidates == null || candidates.isEmpty()) {
+                unmatchedSourceCount++;
+                continue;
+            }
+            while (!candidates.isEmpty() && candidates.peekFirst() < sourceEvent.eventTime()) {
+                candidates.removeFirst();
+            }
+            if (candidates.isEmpty()) {
+                unmatchedSourceCount++;
+                continue;
+            }
+            long targetTs = candidates.removeFirst();
+            latencies.add((double) (targetTs - sourceEvent.eventTime()));
+        }
+
+        if (latencies.isEmpty()) {
+            return MetricComputationResult.error("No correlated messages found between source and target queries");
+        }
+
+        double avgLatencyMs = latencies.stream().mapToDouble(Double::doubleValue).average().orElse(0.0);
+        Map<String, Object> sharedLabels = new LinkedHashMap<>();
+        addIfPresent(sharedLabels, "source_topic", params.get("sourceTopic"));
+        addIfPresent(sharedLabels, "target_topic", params.get("targetTopic"));
+
+        List<Map<String, Object>> rows = new ArrayList<>();
+        if ("GAUGE".equalsIgnoreCase(config.type())) {
+            Map<String, Object> row = new LinkedHashMap<>(sharedLabels);
+            row.put("metric_value", avgLatencyMs);
+            rows.add(row);
+        } else {
+            for (Double latency : latencies) {
+                Map<String, Object> row = new LinkedHashMap<>(sharedLabels);
+                row.put("metric_value", latency);
+                rows.add(row);
+            }
+        }
+
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("matchedCount", latencies.size());
+        summary.put("unmatchedSourceCount", unmatchedSourceCount);
+        summary.put("avgLatencyMs", avgLatencyMs);
+        summary.put("p95LatencyMs", percentile(latencies, 0.95));
+        summary.put("maxLatencyMs", latencies.stream().mapToDouble(Double::doubleValue).max().orElse(avgLatencyMs));
+
+        return new MetricComputationResult(rows, avgLatencyMs, null, summary);
+    }
+
+    private QueryResult executeMetricQuery(String sql, int maxRows, long timeoutMs, String readMode) {
+        return flinkSqlService.executeSql(QueryRequest.sql(injectBoundedHint(sql), maxRows, timeoutMs, readMode));
+    }
+
+    private List<CorrelationEvent> extractCorrelationEvents(List<Map<String, Object>> rows, String queryName) {
+        List<CorrelationEvent> events = new ArrayList<>();
+        for (Map<String, Object> row : rows) {
+            Object key = findValueIgnoreCase(row, "match_key");
+            Object eventTime = findValueIgnoreCase(row, "event_time");
+            if (key == null || eventTime == null) continue;
+
+            Long epochMs = toEpochMillis(eventTime);
+            if (epochMs == null) {
+                throw new IllegalArgumentException(
+                    "Column event_time from " + queryName + " must be ISO-8601 or epoch-based"
+                );
+            }
+            events.add(new CorrelationEvent(String.valueOf(key), epochMs));
+        }
+        return events;
+    }
+
+    private Object findValueIgnoreCase(Map<String, Object> row, String key) {
+        for (Map.Entry<String, Object> entry : row.entrySet()) {
+            if (key.equalsIgnoreCase(entry.getKey())) return entry.getValue();
+        }
+        return null;
+    }
+
+    private Long toEpochMillis(Object value) {
+        if (value instanceof Number n) {
+            long timestamp = n.longValue();
+            return timestamp < 10_000_000_000L ? timestamp * 1000L : timestamp;
+        }
+        if (value instanceof String s) {
+            String text = s.trim();
+            if (text.isEmpty()) return null;
+            try {
+                long timestamp = Long.parseLong(text);
+                return timestamp < 10_000_000_000L ? timestamp * 1000L : timestamp;
+            } catch (NumberFormatException ignored) {
+                try {
+                    return Instant.parse(text).toEpochMilli();
+                } catch (Exception ignoredIso) {
+                    try {
+                        return java.time.LocalDateTime.parse(text.replace(' ', 'T'))
+                            .toInstant(java.time.ZoneOffset.UTC)
+                            .toEpochMilli();
+                    } catch (Exception ignoredLocal) {
+                        return null;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    private double percentile(List<Double> values, double quantile) {
+        List<Double> sorted = new ArrayList<>(values);
+        sorted.sort(Double::compareTo);
+        int index = (int) Math.ceil(quantile * sorted.size()) - 1;
+        index = Math.max(0, Math.min(index, sorted.size() - 1));
+        return sorted.get(index);
+    }
+
+    private Double extractPrimaryMetricValue(List<Map<String, Object>> rows) {
+        for (Map<String, Object> row : rows) {
+            Double value = extractValue(row);
+            if (value != null) return value;
+        }
+        return null;
+    }
+
+    private String requireParam(Map<String, Object> params, String key) {
+        Object value = params.get(key);
+        if (value == null || String.valueOf(value).isBlank()) {
+            throw new IllegalArgumentException("Missing required template parameter: " + key);
+        }
+        return String.valueOf(value);
+    }
+
+    private String getStringParam(Map<String, Object> params, String key, String defaultValue) {
+        Object value = params.get(key);
+        return value == null || String.valueOf(value).isBlank() ? defaultValue : String.valueOf(value);
+    }
+
+    private int getIntParam(Map<String, Object> params, String key, int defaultValue) {
+        Object value = params.get(key);
+        if (value == null || String.valueOf(value).isBlank()) return defaultValue;
+        return Integer.parseInt(String.valueOf(value));
+    }
+
+    private long getLongParam(Map<String, Object> params, String key, long defaultValue) {
+        Object value = params.get(key);
+        if (value == null || String.valueOf(value).isBlank()) return defaultValue;
+        return Long.parseLong(String.valueOf(value));
+    }
+
+    private void addIfPresent(Map<String, Object> target, String key, Object value) {
+        if (value != null && !String.valueOf(value).isBlank()) {
+            target.put(key, value);
+        }
+    }
+
     @Scheduled(fixedRateString = "${explorer.metrics-refresh-rate:30000}")
     public void refreshMetrics() {
         metrics.forEach((id, config) -> {
@@ -271,7 +644,8 @@ public class MetricService {
                 if (result.error() != null) {
                     updateMetricState(id, null, result.error());
                 } else if (!result.rows().isEmpty()) {
-                    processRows(id, config, result);
+                    Map<String, String> configuredLabels = resolveConfiguredLabels(normalized);
+                    processRows(id, normalized, result.rows(), result.displayValue(), result.summary(), configuredLabels);
                 } else {
                     updateMetricState(id, null, "No rows returned — check table name and Kafka connectivity");
                 }
@@ -289,7 +663,9 @@ public class MetricService {
 
     // ── Core processing — dispatches by Prometheus type ───────────────────────
 
-    private void processRows(String metricId, MetricConfig config, QueryResult result) {
+    private void processRows(String metricId, MetricConfig config, List<Map<String, Object>> rows,
+                             Double displayValueOverride, Map<String, Object> summary,
+                             Map<String, String> configuredLabels) {
         String type = config.type() == null ? "GAUGE" : config.type().toUpperCase();
         Double primaryValue = null;
 
@@ -297,8 +673,8 @@ public class MetricService {
             Double value   = extractValue(row);
             if (value == null) continue;
 
-            List<Tag> tags = buildTags(metricId, config, row);
-            String labelKey = buildLabelKey(row);
+            List<Tag> tags = buildTags(metricId, config, row, configuredLabels);
+            String labelKey = buildLabelKey(row, configuredLabels);
 
             switch (type) {
                 case "COUNTER"   -> processCounter(metricId, labelKey, tags, value);
@@ -388,27 +764,70 @@ public class MetricService {
         return null;
     }
 
-    private List<Tag> buildTags(String metricId, MetricConfig config, Map<String, Object> row) {
-        List<Tag> tags = new ArrayList<>();
-        tags.add(Tag.of("metric_id",   metricId));
-        tags.add(Tag.of("metric_name", config.name()));
-        tags.add(Tag.of("metric_type", config.type()));
+    private List<Tag> buildTags(String metricId, MetricConfig config, Map<String, Object> row,
+                                Map<String, String> configuredLabels) {
+        Map<String, String> tagValues = new LinkedHashMap<>();
+        tagValues.put("metric_id", metricId);
+        tagValues.put("metric_name", config.name());
+        tagValues.put("metric_type", config.type());
+        configuredLabels.forEach(tagValues::putIfAbsent);
         for (Map.Entry<String, Object> e : row.entrySet()) {
             if (!"metric_value".equalsIgnoreCase(e.getKey())) {
-                tags.add(Tag.of(e.getKey().toLowerCase(), String.valueOf(e.getValue())));
+                tagValues.put(messageFieldExtractorService.sanitizeLabelKey(e.getKey()), String.valueOf(e.getValue()));
             }
         }
-        return tags;
+        return tagValues.entrySet().stream()
+            .map(entry -> Tag.of(entry.getKey(), entry.getValue()))
+            .toList();
     }
 
-    private String buildLabelKey(Map<String, Object> row) {
+    private String buildLabelKey(Map<String, Object> row, Map<String, String> configuredLabels) {
         StringBuilder sb = new StringBuilder();
+        configuredLabels.forEach((key, value) -> sb.append(key).append('=').append(value).append('|'));
         for (Map.Entry<String, Object> e : row.entrySet()) {
             if (!"metric_value".equalsIgnoreCase(e.getKey())) {
-                sb.append(e.getKey()).append('=').append(e.getValue()).append('|');
+                sb.append(messageFieldExtractorService.sanitizeLabelKey(e.getKey()))
+                    .append('=').append(e.getValue()).append('|');
             }
         }
         return sb.toString();
+    }
+
+    private Map<String, String> resolveConfiguredLabels(MetricConfig config) {
+        if (config.labelTopic() == null || config.labelTopic().isBlank()
+            || config.labelFields() == null || config.labelFields().isEmpty()) {
+            return Map.of();
+        }
+
+        try {
+            Optional<KafkaMessage> latestMessage = kafkaAdminService.getLatestMessage(config.labelTopic());
+            if (latestMessage.isEmpty() || latestMessage.get().value() == null || latestMessage.get().value().isBlank()) {
+                return Map.of();
+            }
+
+            Map<String, String> extractedFields = messageFieldExtractorService.extractLeafFields(latestMessage.get().value());
+            if (extractedFields.isEmpty()) {
+                return Map.of();
+            }
+
+            Map<String, String> labels = new LinkedHashMap<>();
+            for (String fieldPath : config.labelFields()) {
+                String value = extractedFields.get(fieldPath);
+                if (value == null) continue;
+
+                String baseKey = messageFieldExtractorService.sanitizeLabelKey(fieldPath);
+                String candidateKey = baseKey;
+                int suffix = 2;
+                while (labels.containsKey(candidateKey) && !Objects.equals(labels.get(candidateKey), value)) {
+                    candidateKey = baseKey + "_" + suffix++;
+                }
+                labels.put(candidateKey, value);
+            }
+            return labels;
+        } catch (Exception e) {
+            log.debug("Failed to resolve configured labels for metric '{}': {}", config.name(), e.getMessage());
+            return Map.of();
+        }
     }
 
     private void updateHistory(String id, Double value) {
@@ -426,7 +845,13 @@ public class MetricService {
             value != null ? value : current.lastValue(),
             System.currentTimeMillis(), error,
             new ArrayList<>(historyMap.getOrDefault(id, new LinkedList<>())),
-            current.createTableSql()));
+            summary != null && !summary.isEmpty() ? new LinkedHashMap<>(summary) : current.lastSummary(),
+            current.createTableSql(),
+            current.templateType(),
+            current.templateParams(),
+            current.executionMode(),
+            current.labelTopic(),
+            current.labelFields() != null ? List.copyOf(current.labelFields()) : List.of()));
     }
 
     // ── Kafka persistence ─────────────────────────────────────────────────────

@@ -3,6 +3,7 @@
 package com.yourcompany.kafkasqlexplorer.service;
 
 import com.yourcompany.kafkasqlexplorer.config.KafkaConfig;
+import com.yourcompany.kafkasqlexplorer.domain.KafkaMessage;
 import com.yourcompany.kafkasqlexplorer.domain.MessageFormat;
 import com.yourcompany.kafkasqlexplorer.domain.TopicDescriptor;
 import org.apache.kafka.clients.admin.AdminClient;
@@ -398,6 +399,71 @@ public class KafkaAdminService {
             log.error("Failed to get topic last-message timestamps", e);
         }
         return timestamps;
+    }
+
+    public Optional<KafkaMessage> getLatestMessage(String topicName) {
+        Properties props = new Properties();
+        props.putAll(kafkaConfig.getKafkaProperties());
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
+        props.put(ConsumerConfig.GROUP_ID_CONFIG, "kafka-sql-explorer-latest-message-" + UUID.randomUUID());
+
+        try (KafkaConsumer<byte[], byte[]> consumer = new KafkaConsumer<>(props)) {
+            Map<String, TopicDescription> descriptions = adminClient.describeTopics(Collections.singletonList(topicName))
+                .allTopicNames().get(5, TimeUnit.SECONDS);
+            TopicDescription desc = descriptions.get(topicName);
+            if (desc == null) return Optional.empty();
+
+            List<TopicPartition> partitions = desc.partitions().stream()
+                .map(p -> new TopicPartition(topicName, p.partition()))
+                .toList();
+            if (partitions.isEmpty()) return Optional.empty();
+
+            Map<TopicPartition, Long> beginningOffsets = consumer.beginningOffsets(partitions);
+            Map<TopicPartition, Long> endOffsets = consumer.endOffsets(partitions);
+            List<TopicPartition> nonEmpty = partitions.stream()
+                .filter(tp -> {
+                    Long begin = beginningOffsets.get(tp);
+                    Long end = endOffsets.get(tp);
+                    return begin != null && end != null && end > begin;
+                })
+                .toList();
+            if (nonEmpty.isEmpty()) return Optional.empty();
+
+            consumer.assign(nonEmpty);
+            for (TopicPartition tp : nonEmpty) {
+                consumer.seek(tp, endOffsets.get(tp) - 1);
+            }
+
+            Map<TopicPartition, org.apache.kafka.clients.consumer.ConsumerRecord<byte[], byte[]>> latestByPartition = new HashMap<>();
+            Set<TopicPartition> pending = new HashSet<>(nonEmpty);
+            int retries = 4;
+            while (retries-- > 0 && !pending.isEmpty()) {
+                org.apache.kafka.clients.consumer.ConsumerRecords<byte[], byte[]> polled =
+                    consumer.poll(java.time.Duration.ofMillis(500));
+                for (org.apache.kafka.clients.consumer.ConsumerRecord<byte[], byte[]> record : polled) {
+                    TopicPartition tp = new TopicPartition(record.topic(), record.partition());
+                    latestByPartition.put(tp, record);
+                    pending.remove(tp);
+                }
+            }
+
+            return latestByPartition.values().stream()
+                .max(Comparator
+                    .comparingLong(org.apache.kafka.clients.consumer.ConsumerRecord<byte[], byte[]>::timestamp)
+                    .thenComparingLong(org.apache.kafka.clients.consumer.ConsumerRecord<byte[], byte[]>::offset))
+                .map(record -> new KafkaMessage(
+                    record.topic(),
+                    record.partition(),
+                    record.offset(),
+                    record.timestamp(),
+                    record.key() != null ? new String(record.key(), StandardCharsets.UTF_8) : null,
+                    deserializeValue(record.topic(), record.value())
+                ));
+        } catch (Exception e) {
+            log.error("Failed to get latest message for topic {}", topicName, e);
+            return Optional.empty();
+        }
     }
 
     public boolean ping() {
