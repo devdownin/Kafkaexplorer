@@ -10,7 +10,6 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.DistributionSummary;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
-import io.micrometer.core.instrument.Tag;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
@@ -327,5 +326,39 @@ public class MetricIntegrationTest {
 
         assertNotNull(gauge);
         assertEquals(100.0, gauge.value());
+    }
+
+    @Test
+    void testMetricDeletionCleansUpRegistry() {
+        MetricConfig config = MetricConfig.builder()
+            .name("temp_metric")
+            .type("GAUGE")
+            .sql("SELECT 42 AS metric_value")
+            .build();
+        metricService.save(config);
+
+        metricService.refreshMetrics();
+
+        assertNotNull(meterRegistry.find("explorer_metric_gauge").tag("metric_id", config.id()).gauge());
+
+        metricService.delete(config.id());
+
+        assertNull(meterRegistry.find("explorer_metric_gauge").tag("metric_id", config.id()).gauge());
+    }
+
+    @Test
+    void testInvalidSqlHandlesErrorGracefully() {
+        MetricConfig config = MetricConfig.builder()
+            .name("invalid_sql_metric")
+            .type("GAUGE")
+            .sql("SELECT non_existent_column FROM non_existent_table")
+            .build();
+        metricService.save(config);
+
+        metricService.refreshMetrics();
+
+        MetricConfig refreshed = metricService.getById(config.id()).orElseThrow();
+        assertNotNull(refreshed.errorMessage());
+        assertTrue(refreshed.errorMessage().contains("not found") || refreshed.errorMessage().contains("SQL validation failed"));
     }
 }
