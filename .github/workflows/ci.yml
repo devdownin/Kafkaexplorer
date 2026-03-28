@@ -23,6 +23,11 @@ jobs:
           KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
           KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
           KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+        options: >-
+          --health-cmd "kafka-cluster cluster-id --bootstrap-server localhost:9092 || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
       zookeeper:
         image: confluentinc/cp-zookeeper:7.6.0
         ports:
@@ -42,4 +47,6 @@ jobs:
     - name: Build with Maven
       run: mvn -B package --file pom.xml -DskipTests
     - name: Run Tests
+      env:
+        KAFKA_BOOTSTRAP_SERVERS: localhost:9092
       run: mvn test -Dkafka.bootstrap-servers=localhost:9092

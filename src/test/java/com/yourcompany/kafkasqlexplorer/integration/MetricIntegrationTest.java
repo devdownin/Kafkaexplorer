@@ -12,13 +12,14 @@ import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.KafkaContainer;
-import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 import java.util.Map;
@@ -28,10 +29,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 @SpringBootTest
-@Testcontainers
 @ActiveProfiles("test")
 public class MetricIntegrationTest {
 
+    private static final Logger log = LoggerFactory.getLogger(MetricIntegrationTest.class);
     private static KafkaContainer kafka;
 
     @DynamicPropertySource
@@ -41,10 +42,9 @@ public class MetricIntegrationTest {
             external = System.getenv("KAFKA_BOOTSTRAP_SERVERS");
         }
 
-        final String externalKafka = external;
-
-        if (externalKafka != null) {
-            registry.add("kafka.bootstrap-servers", () -> externalKafka);
+        if (external != null) {
+            final String server = external;
+            registry.add("kafka.bootstrap-servers", () -> server);
         } else {
             kafka = new KafkaContainer(DockerImageName.parse("confluentinc/cp-kafka:7.6.0"));
             kafka.start();
@@ -85,7 +85,7 @@ public class MetricIntegrationTest {
                 "  'format' = 'json'" +
                 ")", 10000L));
         } catch (Exception e) {
-            // Might already exist
+            log.warn("Failed to ensure table {}: {}", name, e.getMessage());
         }
     }
 
