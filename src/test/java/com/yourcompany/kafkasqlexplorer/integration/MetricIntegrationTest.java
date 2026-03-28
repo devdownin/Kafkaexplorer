@@ -36,10 +36,12 @@ public class MetricIntegrationTest {
 
     @DynamicPropertySource
     static void overrideProperties(DynamicPropertyRegistry registry) {
-        String externalKafka = System.getProperty("kafka.bootstrap-servers");
-        if (externalKafka == null) {
-            externalKafka = System.getenv("KAFKA_BOOTSTRAP_SERVERS");
+        String external = System.getProperty("kafka.bootstrap-servers");
+        if (external == null) {
+            external = System.getenv("KAFKA_BOOTSTRAP_SERVERS");
         }
+
+        final String externalKafka = external;
 
         if (externalKafka != null) {
             registry.add("kafka.bootstrap-servers", () -> externalKafka);
