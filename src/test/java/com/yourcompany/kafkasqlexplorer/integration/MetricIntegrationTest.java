@@ -1,5 +1,6 @@
 package com.yourcompany.kafkasqlexplorer.integration;
 
+import com.yourcompany.kafkasqlexplorer.config.KafkaConfig;
 import com.yourcompany.kafkasqlexplorer.domain.MetricConfig;
 import com.yourcompany.kafkasqlexplorer.domain.QueryRequest;
 import com.yourcompany.kafkasqlexplorer.service.FlinkSqlService;
@@ -17,7 +18,6 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.KafkaContainer;
-import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
@@ -26,19 +26,28 @@ import java.util.concurrent.ExecutionException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @SpringBootTest
 @Testcontainers
 @ActiveProfiles("test")
 public class MetricIntegrationTest {
 
-    @Container
-    static final KafkaContainer kafka = new KafkaContainer(DockerImageName.parse("confluentinc/cp-kafka:7.6.0"));
+    private static KafkaContainer kafka;
 
     @DynamicPropertySource
     static void overrideProperties(DynamicPropertyRegistry registry) {
-        registry.add("kafka.bootstrap-servers", kafka::getBootstrapServers);
+        String externalKafka = System.getProperty("kafka.bootstrap-servers");
+        if (externalKafka == null) {
+            externalKafka = System.getenv("KAFKA_BOOTSTRAP_SERVERS");
+        }
+
+        if (externalKafka != null) {
+            registry.add("kafka.bootstrap-servers", () -> externalKafka);
+        } else {
+            kafka = new KafkaContainer(DockerImageName.parse("confluentinc/cp-kafka:7.6.0"));
+            kafka.start();
+            registry.add("kafka.bootstrap-servers", kafka::getBootstrapServers);
+        }
         registry.add("explorer.metrics-config-topic", () -> "test.metrics.config");
     }
 
@@ -54,21 +63,22 @@ public class MetricIntegrationTest {
     @Autowired
     private MeterRegistry meterRegistry;
 
-    @BeforeEach
-    void setUp() {
-        // Clean up or ensure tables exist
+    @Autowired
+    private KafkaConfig kafkaConfig;
+
+    private void ensureTable(String name) {
         try {
             flinkSqlService.executeSql(QueryRequest.ddl(
-                "CREATE TABLE IF NOT EXISTS test_topic (" +
+                "CREATE TABLE IF NOT EXISTS " + name + " (" +
                 "  id STRING," +
                 "  amount DOUBLE," +
                 "  ts TIMESTAMP(3)," +
                 "  WATERMARK FOR ts AS ts - INTERVAL '5' SECOND" +
                 ") WITH (" +
                 "  'connector' = 'kafka'," +
-                "  'topic' = 'test_topic'," +
-                "  'properties.bootstrap.servers' = '" + kafka.getBootstrapServers() + "'," +
-                "  'properties.group.id' = 'test-group'," +
+                "  'topic' = '" + name + "'," +
+                "  'properties.bootstrap.servers' = '" + kafkaConfig.getBootstrapServers() + "'," +
+                "  'properties.group.id' = 'test-group-" + name + "'," +
                 "  'scan.startup.mode' = 'earliest-offset'," +
                 "  'format' = 'json'" +
                 ")", 10000L));
@@ -79,13 +89,16 @@ public class MetricIntegrationTest {
 
     @Test
     void testGaugeMetricAccuracy() throws ExecutionException, InterruptedException {
-        messageProducerService.produce("test_topic", "k1", "{\"id\":\"1\", \"amount\": 10.5, \"ts\": \"2026-03-24T10:00:00Z\"}");
-        messageProducerService.produce("test_topic", "k2", "{\"id\":\"2\", \"amount\": 20.0, \"ts\": \"2026-03-24T10:00:01Z\"}");
+        String topic = "topic_gauge";
+        ensureTable(topic);
+
+        messageProducerService.produce(topic, "k1", "{\"id\":\"1\", \"amount\": 10.5, \"ts\": \"2026-03-24T10:00:00Z\"}");
+        messageProducerService.produce(topic, "k2", "{\"id\":\"2\", \"amount\": 20.0, \"ts\": \"2026-03-24T10:00:01Z\"}");
 
         MetricConfig config = MetricConfig.builder()
             .name("test_gauge")
             .type("GAUGE")
-            .sql("SELECT SUM(amount) AS metric_value FROM test_topic")
+            .sql("SELECT SUM(amount) AS metric_value FROM " + topic)
             .description("Sum of amounts")
             .build();
         metricService.save(config);
@@ -107,12 +120,15 @@ public class MetricIntegrationTest {
 
     @Test
     void testCounterMetricAccuracy() throws ExecutionException, InterruptedException {
-        messageProducerService.produce("test_topic", "k3", "{\"id\":\"3\", \"amount\": 1.0, \"ts\": \"2026-03-24T10:00:02Z\"}");
+        String topic = "topic_counter";
+        ensureTable(topic);
+
+        messageProducerService.produce(topic, "k3", "{\"id\":\"3\", \"amount\": 1.0, \"ts\": \"2026-03-24T10:00:02Z\"}");
 
         MetricConfig config = MetricConfig.builder()
             .name("test_counter")
             .type("COUNTER")
-            .sql("SELECT COUNT(*) AS metric_value FROM test_topic")
+            .sql("SELECT COUNT(*) AS metric_value FROM " + topic)
             .description("Total count")
             .build();
         metricService.save(config);
@@ -130,7 +146,7 @@ public class MetricIntegrationTest {
             .counter();
         assertNotNull(counter);
 
-        messageProducerService.produce("test_topic", "k4", "{\"id\":\"4\", \"amount\": 1.0, \"ts\": \"2026-03-24T10:00:03Z\"}");
+        messageProducerService.produce(topic, "k4", "{\"id\":\"4\", \"amount\": 1.0, \"ts\": \"2026-03-24T10:00:03Z\"}");
         metricService.refreshMetrics();
 
         assertEquals(firstValue + 1, metricService.getById(saved.id()).get().lastValue());
@@ -138,13 +154,16 @@ public class MetricIntegrationTest {
 
     @Test
     void testHistogramMetricAccuracy() throws ExecutionException, InterruptedException {
-        messageProducerService.produce("test_topic", "h1", "{\"id\":\"h1\", \"amount\": 10.0, \"ts\": \"2026-03-24T10:01:00Z\"}");
-        messageProducerService.produce("test_topic", "h2", "{\"id\":\"h2\", \"amount\": 50.0, \"ts\": \"2026-03-24T10:01:01Z\"}");
+        String topic = "topic_histogram";
+        ensureTable(topic);
+
+        messageProducerService.produce(topic, "h1", "{\"id\":\"h1\", \"amount\": 10.0, \"ts\": \"2026-03-24T10:01:00Z\"}");
+        messageProducerService.produce(topic, "h2", "{\"id\":\"h2\", \"amount\": 50.0, \"ts\": \"2026-03-24T10:01:01Z\"}");
 
         MetricConfig config = MetricConfig.builder()
             .name("test_histogram")
             .type("HISTOGRAM")
-            .sql("SELECT amount AS metric_value FROM test_topic WHERE id LIKE 'h%'")
+            .sql("SELECT amount AS metric_value FROM " + topic)
             .description("Amount distribution")
             .build();
         metricService.save(config);
@@ -165,13 +184,16 @@ public class MetricIntegrationTest {
 
     @Test
     void testSummaryMetricAccuracy() throws ExecutionException, InterruptedException {
-        messageProducerService.produce("test_topic", "s1", "{\"id\":\"s1\", \"amount\": 100.0, \"ts\": \"2026-03-24T10:02:00Z\"}");
-        messageProducerService.produce("test_topic", "s2", "{\"id\":\"s2\", \"amount\": 200.0, \"ts\": \"2026-03-24T10:02:01Z\"}");
+        String topic = "topic_summary";
+        ensureTable(topic);
+
+        messageProducerService.produce(topic, "s1", "{\"id\":\"s1\", \"amount\": 100.0, \"ts\": \"2026-03-24T10:02:00Z\"}");
+        messageProducerService.produce(topic, "s2", "{\"id\":\"s2\", \"amount\": 200.0, \"ts\": \"2026-03-24T10:02:01Z\"}");
 
         MetricConfig config = MetricConfig.builder()
             .name("test_summary")
             .type("SUMMARY")
-            .sql("SELECT amount AS metric_value FROM test_topic WHERE id LIKE 's%'")
+            .sql("SELECT amount AS metric_value FROM " + topic)
             .description("Amount summary")
             .build();
         metricService.save(config);
@@ -192,28 +214,34 @@ public class MetricIntegrationTest {
 
     @Test
     void testTopicCountDeltaTemplate() throws ExecutionException, InterruptedException {
-        flinkSqlService.executeSql(QueryRequest.ddl(
-            "CREATE TABLE IF NOT EXISTS test_topic_2 (" +
-            "  id STRING" +
-            ") WITH (" +
-            "  'connector' = 'kafka'," +
-            "  'topic' = 'test_topic_2'," +
-            "  'properties.bootstrap.servers' = '" + kafka.getBootstrapServers() + "'," +
-            "  'scan.startup.mode' = 'earliest-offset'," +
-            "  'format' = 'json'" +
-            ")", 10000L));
+        String topicLeft = "topic_delta_left";
+        String topicRight = "topic_delta_right";
+        ensureTable(topicLeft);
 
-        messageProducerService.produce("test_topic", "a", "{\"id\":\"a\"}");
-        messageProducerService.produce("test_topic", "b", "{\"id\":\"b\"}");
-        messageProducerService.produce("test_topic_2", "c", "{\"id\":\"c\"}");
+        try {
+            flinkSqlService.executeSql(QueryRequest.ddl(
+                "CREATE TABLE IF NOT EXISTS " + topicRight + " (" +
+                "  id STRING" +
+                ") WITH (" +
+                "  'connector' = 'kafka'," +
+                "  'topic' = '" + topicRight + "'," +
+                "  'properties.bootstrap.servers' = '" + kafkaConfig.getBootstrapServers() + "'," +
+                "  'scan.startup.mode' = 'earliest-offset'," +
+                "  'format' = 'json'" +
+                ")", 10000L));
+        } catch (Exception e) {}
+
+        messageProducerService.produce(topicLeft, "a", "{\"id\":\"a\"}");
+        messageProducerService.produce(topicLeft, "b", "{\"id\":\"b\"}");
+        messageProducerService.produce(topicRight, "c", "{\"id\":\"c\"}");
 
         MetricConfig config = MetricConfig.builder()
             .name("test_delta")
             .type("GAUGE")
             .templateType("TOPIC_COUNT_DELTA")
             .templateParams(Map.of(
-                "leftSql", "SELECT COUNT(*) AS metric_value FROM test_topic",
-                "rightSql", "SELECT COUNT(*) AS metric_value FROM test_topic_2",
+                "leftSql", "SELECT COUNT(*) AS metric_value FROM " + topicLeft,
+                "rightSql", "SELECT COUNT(*) AS metric_value FROM " + topicRight,
                 "operation", "LEFT_MINUS_RIGHT"
             ))
             .build();

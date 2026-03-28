@@ -9,6 +9,7 @@ import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.serialization.StringSerializer;
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
 
 import java.util.Properties;
@@ -16,9 +17,11 @@ import java.util.concurrent.ExecutionException;
 
 /**
  * Service to produce messages to Kafka topics, primarily used for testing and
- * data injection during development.
+ * data injection during development. Restricted to 'test' profile to avoid
+ * unnecessary instantiation in production.
  */
 @Service
+@Profile("test")
 public class MessageProducerService {
 
     private final KafkaConfig kafkaConfig;
