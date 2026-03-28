@@ -10,6 +10,7 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.DistributionSummary;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Tag;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
@@ -22,11 +23,11 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.KafkaContainer;
 import org.testcontainers.utility.DockerImageName;
 
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.*;
 
 @SpringBootTest
 @ActiveProfiles("test")
@@ -258,5 +259,73 @@ public class MetricIntegrationTest {
         Double left = (Double) saved.lastSummary().get("leftValue");
         Double right = (Double) saved.lastSummary().get("rightValue");
         assertEquals(left - right, saved.lastValue());
+    }
+
+    @Test
+    void testTransitLatencyTemplate() throws ExecutionException, InterruptedException {
+        String sourceTopic = "latency_source";
+        String targetTopic = "latency_target";
+
+        ensureTable(sourceTopic);
+        ensureTable(targetTopic);
+
+        // Produce correlated messages
+        messageProducerService.produce(sourceTopic, "ord-1", "{\"id\":\"ord-1\", \"ts\": \"2026-03-24T12:00:00Z\"}");
+        messageProducerService.produce(targetTopic, "ord-1", "{\"id\":\"ord-1\", \"ts\": \"2026-03-24T12:00:05Z\"}"); // +5s
+
+        messageProducerService.produce(sourceTopic, "ord-2", "{\"id\":\"ord-2\", \"ts\": \"2026-03-24T12:00:10Z\"}");
+        messageProducerService.produce(targetTopic, "ord-2", "{\"id\":\"ord-2\", \"ts\": \"2026-03-24T12:00:20Z\"}"); // +10s
+
+        MetricConfig config = MetricConfig.builder()
+            .name("test_latency")
+            .type("GAUGE")
+            .templateType("TOPIC_TRANSIT_LATENCY")
+            .templateParams(Map.of(
+                "sourceSql", "SELECT id AS match_key, ts AS event_time FROM " + sourceTopic,
+                "targetSql", "SELECT id AS match_key, ts AS event_time FROM " + targetTopic
+            ))
+            .build();
+        metricService.save(config);
+
+        metricService.refreshMetrics();
+
+        MetricConfig saved = metricService.getById(config.id()).orElseThrow();
+
+        // (5000 + 10000) / 2 = 7500ms
+        assertEquals(7500.0, saved.lastValue());
+        assertEquals(2, saved.lastSummary().get("matchedCount"));
+    }
+
+    @Test
+    void testMetricLabelsExtraction() throws ExecutionException, InterruptedException {
+        String topic = "topic_with_labels";
+        ensureTable(topic);
+
+        // Produce message with some business fields
+        messageProducerService.produce(topic, "m1", "{\"id\":\"m1\", \"region\":\"EU\", \"status\":\"ACTIVE\", \"amount\":100}");
+
+        MetricConfig config = MetricConfig.builder()
+            .name("labeled_metric")
+            .type("GAUGE")
+            .sql("SELECT amount AS metric_value FROM " + topic)
+            .labelTopic(topic)
+            .labelFields(List.of("region", "status"))
+            .build();
+        metricService.save(config);
+
+        metricService.refreshMetrics();
+
+        MetricConfig saved = metricService.getById(config.id()).orElseThrow();
+        assertEquals(100.0, saved.lastValue());
+
+        // Verify Micrometer labels (tags)
+        Gauge gauge = meterRegistry.find("explorer_metric_gauge")
+            .tag("metric_id", saved.id())
+            .tag("region", "EU")
+            .tag("status", "ACTIVE")
+            .gauge();
+
+        assertNotNull(gauge);
+        assertEquals(100.0, gauge.value());
     }
 }

@@ -62,18 +62,36 @@ This document outlines the strategy for extensively testing the metric generatio
   3. Refresh metric.
   4. Assert average latency is ~500ms.
 
+## Label Extraction Verification
+- **Scenario**: Dynamic labels from message payload.
+- **Test**:
+  1. Define metric with `labelFields = ['region', 'status']`.
+  2. Produce message `{"region": "EU", "status": "ACTIVE", ...}`.
+  3. Assert Micrometer metric has tags `region=EU` and `status=ACTIVE`.
+
+## Advanced Testing Scenarios
+
+### 1. Fault Tolerance
+- **Simulate Kafka Downtime**: Verify that `MetricService` handles connection losses gracefully and resumes once Kafka is back.
+- **Malformed SQL**: Ensure that invalid SQL doesn't crash the background scheduler and provides clear error messages in the metric metadata.
+- **Schema Changes**: Verify behavior when message structure changes (missing fields for labels or numeric values).
+
+### 2. Performance & Scalability
+- **High Volume Topics**: Test metrics against topics with 1M+ messages to validate bounded-scan performance.
+- **Metric Proliferation**: Create 100+ metrics and verify CPU/Memory impact of the background refresh process.
+- **Complex Aggregations**: Use heavy JOINs or window functions in metric SQL to find performance bottlenecks.
+
 ## Automation Plan
 
 ### 1. Instrumentation
-- Add `POST /api/test/produce/{topic}` to allow sending JSON payloads to Kafka for testing.
+- Added `POST /api/test/produce/{topic}` to allow sending JSON payloads to Kafka for testing.
 - This bypasses the need for external producer scripts during automated tests.
 
 ### 2. Integration Tests
-- Use `MetricIntegrationTest.java` with Testcontainers.
-- Create Flink tables using `flinkSqlService.executeSql`.
-- Define metrics via `metricService.save`.
-- Use `RestAssured` or `MockMvc` to trigger production and verify state.
-- Assert Micrometer registry state directly.
+- Uses `MetricIntegrationTest.java` with Testcontainers.
+- Creates Flink tables using `flinkSqlService.executeSql`.
+- Defines metrics via `metricService.save`.
+- Asserts Micrometer registry state directly.
 
 ## Execution Steps
 1. Create `MessageProducerService` and `TestController`.
