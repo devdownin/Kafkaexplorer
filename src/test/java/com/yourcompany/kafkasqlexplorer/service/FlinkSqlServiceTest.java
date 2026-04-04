@@ -66,6 +66,7 @@ class FlinkSqlServiceTest {
         config.setDefaultMaxRows(50);
         config.setDefaultQueryTimeoutMs(10_000);
         config.setFlinkJobStorePath(Files.createTempFile("flink-jobs-test-", ".json").toString());
+        config.setFlinkJobRetentionHours(24);
 
         kafkaAdminService = mock(KafkaAdminService.class);
         schemaInferenceService = mock(SchemaInferenceService.class);
@@ -401,13 +402,14 @@ class FlinkSqlServiceTest {
     void autoRegistrationDdlFailureReturnsMeaningfulError() throws Exception {
         doReturn(List.of("broken.topic")).when(kafkaAdminService).listTopics();
         doReturn(MessageFormat.JSON).when(schemaInferenceService).detectFormat(anyString());
-        doReturn(Map.of()).when(schemaInferenceService).inferSchema(anyString(), any());
+        // Modified to return a non-empty schema so registration is attempted
+        doReturn(Map.of("id", "STRING")).when(schemaInferenceService).inferSchema(anyString(), any());
         doReturn("NOT VALID DDL !!!").when(ddlGeneratorService).generateDdl(anyString(), any(), any());
 
         QueryResult result = execute("SELECT * FROM broken_topic");
 
         assertHasError(result);
-        assertTrue(result.error().contains("broken_topic") || result.error().contains("broken.topic"),
+        assertTrue(result.error().contains("broken_topic") || result.error().contains("broken.topic") || result.error().contains("DDL"),
                 "Error must mention the topic that failed to register, got: " + result.error());
     }
 

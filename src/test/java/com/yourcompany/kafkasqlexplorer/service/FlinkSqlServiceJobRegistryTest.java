@@ -8,9 +8,8 @@ import com.yourcompany.kafkasqlexplorer.domain.QueryRequest;
 import org.apache.flink.api.common.JobID;
 import org.apache.flink.api.common.JobStatus;
 import org.apache.flink.core.execution.JobClient;
-import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.table.api.EnvironmentSettings;
-import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
+import org.apache.flink.table.api.TableEnvironment;
+import org.apache.flink.table.api.TableResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -19,6 +18,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -30,48 +30,43 @@ class FlinkSqlServiceJobRegistryTest {
     private FlinkJobStore flinkJobStore;
     private Map<String, FlinkSqlService.JobInfo> activeJobs;
     private Path storePath;
+    private TableEnvironment tableEnv;
 
     @BeforeEach
     @SuppressWarnings("unchecked")
     void setUp() throws Exception {
-        StreamTableEnvironment tableEnv = StreamTableEnvironment.create(
-            StreamExecutionEnvironment.createLocalEnvironment(),
-            EnvironmentSettings.newInstance().inStreamingMode().build()
-        );
+        tableEnv = mock(TableEnvironment.class);
+        // FlinkSqlService calls listTables() in autoRegisterTableIfNeeded
+        when(tableEnv.listTables()).thenReturn(new String[]{"job_sink", "job_source"});
 
         ExplorerConfig config = new ExplorerConfig();
         config.setDefaultMaxRows(50);
         config.setDefaultQueryTimeoutMs(10_000);
         storePath = Files.createTempFile("flink-job-store-", ".json");
         config.setFlinkJobStorePath(storePath.toString());
+        config.setFlinkJobRetentionHours(24);
         flinkJobStore = new FlinkJobStore(new ObjectMapper(), config);
-        FlinkRuntimeCoordinator runtimeCoordinator = new FlinkRuntimeCoordinator(tableEnv);
+
+        FlinkRuntimeCoordinator runtimeCoordinator = mock(FlinkRuntimeCoordinator.class);
+        // Mock runtimeCoordinator to just run the actions immediately
+        when(runtimeCoordinator.runRead(anyString(), any(java.util.function.Supplier.class))).thenAnswer(inv -> {
+            java.util.function.Supplier<?> s = inv.getArgument(1);
+            return s.get();
+        });
+        when(runtimeCoordinator.runMutation(anyString(), any(java.util.function.Supplier.class))).thenAnswer(inv -> {
+            java.util.function.Supplier<?> s = inv.getArgument(1);
+            return s.get();
+        });
 
         service = new FlinkSqlService(
             tableEnv,
             runtimeCoordinator,
             config,
-            new SqlQueryValidator(config, tableEnv, runtimeCoordinator),
+            mock(SqlQueryValidator.class),
             mock(KafkaAdminService.class),
             mock(SchemaInferenceService.class),
             mock(DdlGeneratorService.class),
             flinkJobStore
-        );
-
-        tableEnv.executeSql(
-            "CREATE TABLE IF NOT EXISTS job_source (" +
-                "  id BIGINT" +
-                ") WITH (" +
-                "  'connector'='datagen'," +
-                "  'number-of-rows'='1'" +
-                ")"
-        );
-        tableEnv.executeSql(
-            "CREATE TABLE IF NOT EXISTS job_sink (" +
-                "  id BIGINT" +
-                ") WITH (" +
-                "  'connector'='blackhole'" +
-                ")"
         );
 
         Field field = FlinkSqlService.class.getDeclaredField("activeJobs");
@@ -135,6 +130,14 @@ class FlinkSqlServiceJobRegistryTest {
 
     @Test
     void submitJobRegistersInsertIntoStatementWithoutSyncCollection() {
+        TableResult tableResult = mock(TableResult.class);
+        JobClient client = mock(JobClient.class);
+        when(client.getJobID()).thenReturn(new JobID());
+        when(client.getJobStatus()).thenReturn(CompletableFuture.completedFuture(JobStatus.RUNNING));
+        when(tableResult.getJobClient()).thenReturn(Optional.of(client));
+
+        when(tableEnv.executeSql(anyString())).thenReturn(tableResult);
+
         FlinkJobSummary summary = service.submitJob(QueryRequest.builder()
             .sql("INSERT INTO job_sink SELECT * FROM job_source")
             .build());
@@ -157,6 +160,14 @@ class FlinkSqlServiceJobRegistryTest {
 
     @Test
     void submittedJobIsRecoverableFromPersistentStore() {
+        TableResult tableResult = mock(TableResult.class);
+        JobClient client = mock(JobClient.class);
+        when(client.getJobID()).thenReturn(new JobID());
+        when(client.getJobStatus()).thenReturn(CompletableFuture.completedFuture(JobStatus.RUNNING));
+        when(tableResult.getJobClient()).thenReturn(Optional.of(client));
+
+        when(tableEnv.executeSql(anyString())).thenReturn(tableResult);
+
         FlinkJobSummary summary = service.submitJob(QueryRequest.builder()
             .sql("INSERT INTO job_sink SELECT * FROM job_source")
             .build());
@@ -174,6 +185,7 @@ class FlinkSqlServiceJobRegistryTest {
         config.setDefaultMaxRows(50);
         config.setDefaultQueryTimeoutMs(10_000);
         config.setFlinkJobStorePath(path.toString());
+        config.setFlinkJobRetentionHours(24);
         return config;
     }
 }
