@@ -251,6 +251,9 @@ public class FlinkSqlService {
                 return AutoRegResult.skip();
             }
             String ddl = ddlGeneratorService.generateDdl(matchingTopic, schema, format);
+            if (ddl == null || !ddl.startsWith("CREATE TABLE")) {
+                return AutoRegResult.fail("DDL Generator produced invalid SQL for topic " + matchingTopic);
+            }
             log.debug("Auto-registering table '{}' with DDL:\n{}", flinkTableName, ddl);
             executeMutationSql("auto-register-table", ddl);
             log.info("Auto-registered table '{}' for Kafka topic '{}'", flinkTableName, matchingTopic);

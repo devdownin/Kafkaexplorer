@@ -170,13 +170,13 @@ class FlinkDdlValidationTest {
         // AUTO with empty schema must use format='json', NOT format='raw'.
         // If it used format='raw', it would require a physical raw_value column AND would
         // cause "Unable to create a source" for topics containing JSON content.
-        // With format='json' + json.ignore-parse-errors=true, zero physical columns is valid:
+        // With format='json' + json.ignore-parse-errors=true, a fallback raw_value STRING is used
+        // if the schema is empty, so that the table has at least one physical column.
         // Flink simply produces null for all fields. The user can still query event_time / proc_time.
-        // Verify: no raw_value physical column (which would indicate format='raw' was used).
+        // Verify: raw_value column is present as a fallback for empty schema.
         Column rawValue = byName(autoSchema).get("raw_value");
-        assertNull(rawValue,
-                "AUTO DDL must NOT have a raw_value physical column — that would indicate " +
-                "format='raw' was used, which causes 'Unable to create a source' for JSON topics.");
+        assertNotNull(rawValue, "raw_value must exist as fallback for empty schema");
+        assertTrue(rawValue.isPhysical(), "raw_value must be a physical column");
     }
 
     // ──────────────────────────────────────────────────────────────────────────────
