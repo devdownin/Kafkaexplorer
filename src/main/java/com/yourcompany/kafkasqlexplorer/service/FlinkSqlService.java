@@ -160,7 +160,7 @@ public class FlinkSqlService {
         return runtimeCoordinator.runMutation(operationName, () -> tableEnv.executeSql(sql));
     }
 
-    private TableResult executeMutationSql(String operationName, String sql) {
+    protected TableResult executeMutationSql(String operationName, String sql) {
         return runtimeCoordinator.runMutation(operationName, () -> tableEnv.executeSql(sql));
     }
 

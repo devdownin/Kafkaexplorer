@@ -48,36 +48,21 @@ public class DdlGeneratorService {
         sb.append("CREATE TABLE IF NOT EXISTS ").append(tableName).append(" (\n");
 
         if (format == MessageFormat.XML) {
-            // No Flink native XML format: read message as raw string, parse via XmlExtract UDF.
-            sb.append("    raw_value STRING\n");
-        } else if (format == MessageFormat.AVRO) {
-            // Avro-confluent format: Flink will fetch the schema automatically from the registry.
-            // We still provide the column names for convenience in the editor.
-            List<String> cols = new ArrayList<>(schema.keySet());
-            if (cols.isEmpty()) {
-                sb.append("    raw_value STRING\n");
-            } else {
-                for (int i = 0; i < cols.size(); i++) {
-                    sb.append("    `").append(cols.get(i)).append("` ").append(schema.get(cols.get(i)));
-                    if (i < cols.size() - 1) sb.append(",");
-                    sb.append("\n");
-                }
-            }
+            // For XML (value.format='raw'), raw_value MUST be a physical column.
+            // Declaring it as METADATA FROM 'value' is incompatible with value.format='raw'
+            // and causes "Unable to create a source" at SELECT time.
+            sb.append("    `raw_value` STRING,\n");
         } else {
-            // JSON and AUTO: use format='json' with ignore-parse-errors.
-            // Guard: an empty schema produces an invalid DDL (empty column list).
-            // Fall back to a single raw_value STRING so the table can be registered.
+            // JSON, AUTO, AVRO
             List<String> cols = new ArrayList<>(schema.keySet());
-            if (cols.isEmpty()) {
-                sb.append("    raw_value STRING\n");
-            } else {
-                for (int i = 0; i < cols.size(); i++) {
-                    sb.append("    `").append(cols.get(i)).append("` ").append(schema.get(cols.get(i)));
-                    if (i < cols.size() - 1) sb.append(",");
-                    sb.append("\n");
-                }
+            for (String colName : cols) {
+                sb.append("    `").append(colName).append("` ").append(schema.get(colName)).append(",\n");
             }
         }
+
+        // Mandatory technical columns for all topics
+        sb.append("    `event_time` TIMESTAMP(3) METADATA FROM 'timestamp',\n");
+        sb.append("    `proc_time` AS PROCTIME()\n");
         sb.append(") WITH (\n");
         sb.append("    'topic' = '").append(topicName).append("',\n");
         sb.append("    'properties.group.id' = 'flink_table_").append(tableName).append("',\n");
@@ -89,12 +74,12 @@ public class DdlGeneratorService {
         });
 
         if (format == MessageFormat.XML) {
-            sb.append("    'format' = 'raw',\n");
+            sb.append("    'value.format' = 'raw',\n");
         } else if (format == MessageFormat.AVRO) {
-            sb.append("    'format' = 'avro-confluent',\n");
+            sb.append("    'value.format' = 'avro-confluent',\n");
             sb.append("    'avro-confluent.url' = '").append(kafkaConfig.getSchemaRegistryUrl()).append("',\n");
         } else {
-            sb.append("    'format' = 'json',\n");
+            sb.append("    'value.format' = 'json',\n");
             sb.append("    'json.ignore-parse-errors' = 'true',\n");
         }
 
