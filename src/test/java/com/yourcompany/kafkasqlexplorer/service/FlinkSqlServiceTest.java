@@ -401,7 +401,8 @@ class FlinkSqlServiceTest {
     void autoRegistrationDdlFailureReturnsMeaningfulError() throws Exception {
         doReturn(List.of("broken.topic")).when(kafkaAdminService).listTopics();
         doReturn(MessageFormat.JSON).when(schemaInferenceService).detectFormat(anyString());
-        doReturn(Map.of()).when(schemaInferenceService).inferSchema(anyString(), any());
+        // For non-XML topics, an empty schema prevents auto-registration
+        doReturn(Map.of("id", "STRING")).when(schemaInferenceService).inferSchema(anyString(), any());
         doReturn("NOT VALID DDL !!!").when(ddlGeneratorService).generateDdl(anyString(), any(), any());
 
         QueryResult result = execute("SELECT * FROM broken_topic");
