@@ -148,9 +148,7 @@ class FlinkSqlServiceJobRegistryTest {
         FlinkSqlService spyService = spy(service);
         doReturn(mockResult).when(spyService).executeMutationSql(anyString(), anyString());
 
-        FlinkJobSummary summary = spyService.submitJob(QueryRequest.builder()
-            .sql("INSERT INTO job_sink SELECT * FROM job_source")
-            .build());
+        FlinkJobSummary summary = spyService.submitJob(QueryRequest.sql("INSERT INTO job_sink SELECT * FROM job_source", null, null, null));
 
         assertEquals("INSERT", summary.statementType());
         assertFalse(summary.queryId().isBlank());
@@ -160,9 +158,7 @@ class FlinkSqlServiceJobRegistryTest {
 
     @Test
     void executeSyncRejectsInsertStatementsWithModeGuidance() {
-        var result = service.executeSync(QueryRequest.builder()
-            .sql("INSERT INTO job_sink SELECT * FROM job_source")
-            .build());
+        var result = service.executeSync(QueryRequest.sql("INSERT INTO job_sink SELECT * FROM job_source", null, null, null));
 
         assertNotNull(result.error());
         assertTrue(result.error().contains("/api/query/jobs"));
@@ -179,9 +175,7 @@ class FlinkSqlServiceJobRegistryTest {
         FlinkSqlService spyService = spy(service);
         doReturn(mockResult).when(spyService).executeMutationSql(anyString(), anyString());
 
-        FlinkJobSummary summary = spyService.submitJob(QueryRequest.builder()
-            .sql("INSERT INTO job_sink SELECT * FROM job_source")
-            .build());
+        FlinkJobSummary summary = spyService.submitJob(QueryRequest.sql("INSERT INTO job_sink SELECT * FROM job_source", null, null, null));
 
         FlinkJobStore reloadedStore = new FlinkJobStore(new ObjectMapper(), configFor(storePath));
         FlinkManagedJobDetails persisted = reloadedStore.findById(summary.queryId()).orElseThrow();

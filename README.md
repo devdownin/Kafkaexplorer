@@ -2,7 +2,7 @@
 [![Java CI with Maven](https://github.com/yourusername/kafka-sql-explorer/actions/workflows/ci.yml/badge.svg)](https://github.com/yourusername/kafka-sql-explorer/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-AGPL%20v3-red.svg)](LICENSE)
 
-**Spring Boot 3.5.x | Apache Flink 2.2.x (Embedded) | Java 21 | React 19**
+**Spring Boot 3.5.x | Apache Flink 2.2.x (Embedded) | Java 25 | React 19**
 
 Kafka SQL Explorer is a modern web application designed for Data Engineers and Architects, allowing them to explore Kafka clusters and query topics in real-time via Flink SQL.
 
@@ -113,7 +113,7 @@ The application includes an automated demonstration setup to help you explore fe
 ---
 
 ## Tech Stack
-- **Backend**: Spring Boot 3.5.x, Java 21 (Records).
+- **Backend**: Spring Boot 3.5.x, Java 25 (Records).
 - **Streaming**: Apache Flink 2.2.x (Embedded LocalEnvironment).
 - **Parsing**: Jackson (JSON), JAXB/StAX (XML).
 - **Frontend**: React 19, Tailwind CSS, Monaco Editor, Vite.
@@ -125,7 +125,7 @@ The application includes an automated demonstration setup to help you explore fe
 
 ### Prerequisites
 - Docker & Docker Compose
-- JDK 21+
+- JDK 25+
 
 ### Installation
 1. **Launch Kafka**:
