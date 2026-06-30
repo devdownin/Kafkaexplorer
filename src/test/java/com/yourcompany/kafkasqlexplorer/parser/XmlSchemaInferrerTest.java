@@ -30,7 +30,14 @@ class XmlSchemaInferrerTest {
     void testInvalidXml() {
         XmlSchemaInferrer inferrer = new XmlSchemaInferrer();
         String xml = "<order><id>123</status></order>";
-        Map<String, String> schema = inferrer.infer(xml);
-        assertTrue(schema.isEmpty());
+        // Suppress stderr during this test to avoid polluting test logs with fatal error
+        java.io.PrintStream originalErr = System.err;
+        System.setErr(new java.io.PrintStream(new java.io.ByteArrayOutputStream()));
+        try {
+            Map<String, String> schema = inferrer.infer(xml);
+            assertTrue(schema.isEmpty());
+        } finally {
+            System.setErr(originalErr);
+        }
     }
 }

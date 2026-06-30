@@ -48,6 +48,8 @@ public class MessageFormatterService {
         try {
             TransformerFactory factory = TransformerFactory.newInstance();
             factory.setFeature(javax.xml.XMLConstants.FEATURE_SECURE_PROCESSING, true);
+            factory.setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_DTD, "");
+            factory.setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_STYLESHEET, "");
             Transformer transformer = factory.newTransformer();
             transformer.setOutputProperty(OutputKeys.INDENT, "yes");
             transformer.setOutputProperty("{http://xml.apache.org/xslt}indent-amount", "2");
