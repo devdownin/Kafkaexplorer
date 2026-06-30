@@ -2,11 +2,9 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.yourcompany.kafkasqlexplorer.domain;
 
-import lombok.Builder;
 import java.util.List;
 import java.util.Map;
 
-@Builder
 public record MetricConfig(
     String id,
     String name,

@@ -5,7 +5,7 @@ This project is a specialized web application for exploring Kafka clusters and q
 ## Project Overview
 
 - **Purpose**: Real-time Kafka topic exploration, schema inference, SQL querying, lineage tracking, and cluster auditing.
-- **Backend**: Spring Boot 3.5.x, Java 21, Apache Flink 1.18.1 (Embedded).
+- **Backend**: Spring Boot 3.5.x, Java 25, Apache Flink 1.18.1 (Embedded).
 - **Frontend**: React 19, TypeScript, Vite, Tailwind CSS, Monaco Editor.
 - **Key Feature**: Bridges raw Kafka data (JSON/XML/AVRO) to SQL via automated schema inference and dynamic table registration.
 

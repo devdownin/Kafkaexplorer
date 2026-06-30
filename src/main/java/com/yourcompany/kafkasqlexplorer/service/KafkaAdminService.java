@@ -26,6 +26,10 @@ import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.DescribeConfigsResult;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.clients.admin.AdminClient;
+import org.apache.kafka.clients.admin.DescribeFeaturesResult;
+import org.apache.kafka.clients.admin.FeatureMetadata;
+import org.apache.kafka.clients.admin.FinalizedVersionRange;
+import org.apache.kafka.clients.admin.SupportedVersionRange;
 import org.springframework.stereotype.Service;
 import io.confluent.kafka.schemaregistry.client.CachedSchemaRegistryClient;
 import io.confluent.kafka.schemaregistry.client.SchemaRegistryClient;
@@ -269,6 +273,31 @@ public class KafkaAdminService {
             }
             brokers.sort(Comparator.comparingInt(b -> (Integer) b.get("id")));
             details.put("brokers", brokers);
+
+            // Features (Kafka 4 options / KRaft metadata)
+            try {
+                DescribeFeaturesResult featuresResult = adminClient.describeFeatures();
+                FeatureMetadata featureMetadata = featuresResult.featureMetadata().get(5, TimeUnit.SECONDS);
+                Map<String, Object> finalizedFeatures = new LinkedHashMap<>();
+                for (Map.Entry<String, FinalizedVersionRange> entry : featureMetadata.finalizedFeatures().entrySet()) {
+                    Map<String, Short> range = new LinkedHashMap<>();
+                    range.put("min", entry.getValue().minVersionLevel());
+                    range.put("max", entry.getValue().maxVersionLevel());
+                    finalizedFeatures.put(entry.getKey(), range);
+                }
+                details.put("finalizedFeatures", finalizedFeatures);
+
+                Map<String, Object> supportedFeatures = new LinkedHashMap<>();
+                for (Map.Entry<String, SupportedVersionRange> entry : featureMetadata.supportedFeatures().entrySet()) {
+                    Map<String, Short> range = new LinkedHashMap<>();
+                    range.put("min", entry.getValue().minVersion());
+                    range.put("max", entry.getValue().maxVersion());
+                    supportedFeatures.put(entry.getKey(), range);
+                }
+                details.put("supportedFeatures", supportedFeatures);
+            } catch (Exception e) {
+                log.debug("Failed to retrieve feature metadata (possibly older Kafka version)", e);
+            }
 
             // Topic stats
             List<String> topicNames = new ArrayList<>(

@@ -44,6 +44,9 @@ public class StreamFlowService {
             this.xmlFactory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
             this.xmlFactory.setFeature("http://xml.org/sax/features/external-general-entities", false);
             this.xmlFactory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            this.xmlFactory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+            this.xmlFactory.setXIncludeAware(false);
+            this.xmlFactory.setExpandEntityReferences(false);
         } catch (Exception e) {
             log.warn("Could not configure XML factory with secure features", e);
         }
