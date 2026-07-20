@@ -67,6 +67,9 @@ claude:
   # use-rag=false keeps generation grounded solely on the inlined Kafka messages;
   # set it to true to also retrieve from SpectraLLM's ingested corpus.
   use-rag: false
+  # SPECTRA + use-rag only: the SpectraLLM ChromaDB collection to retrieve from.
+  # Blank uses SpectraLLM's default collection.
+  collection: ""
 
 logging:
   file:

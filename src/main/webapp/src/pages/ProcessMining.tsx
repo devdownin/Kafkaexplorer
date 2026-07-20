@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import axios from 'axios';
 import TopicSelectorPanel, { SnapshotConfig } from '../components/processmining/TopicSelectorPanel';
 import SchemaValidationPanel, {
@@ -40,7 +40,17 @@ interface AuditTemplate {
   category: string;
   description: string;
   prompt: string;
+  requiredRoles?: string[];
 }
+
+// Semantic field roles detected by profiling — used to grey out audits that
+// cannot run (e.g. amount outliers when no AMOUNT field was found).
+const ROLE_LABELS: Record<string, string> = {
+  CORRELATION_ID: 'correlation id',
+  TIMESTAMP: 'timestamp',
+  STATUS: 'status',
+  AMOUNT: 'amount',
+};
 
 type Step = 'SELECT' | 'PROFILING' | 'VALIDATE' | 'ANALYZE' | 'RESULTS';
 type AnalysisMode = 'SNAPSHOT' | 'LIVE';
@@ -158,6 +168,27 @@ const ProcessMining: React.FC = () => {
     setSelectedAuditIds(prev =>
       prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
+
+  // Semantic roles the profiling step actually detected, from the unification proposal
+  // and the per-field semantic roles. Audits requiring an absent role are greyed out.
+  const availableRoles = useMemo(() => {
+    const roles = new Set<string>();
+    const p = profileResult?.unificationProposal;
+    const hasMappings = (e: { mappings?: Record<string, string> } | null | undefined) =>
+      !!e && !!e.mappings && Object.keys(e.mappings).length > 0;
+    if (hasMappings(p?.correlationId)) roles.add('CORRELATION_ID');
+    if (hasMappings(p?.timestamp)) roles.add('TIMESTAMP');
+    if (hasMappings(p?.status)) roles.add('STATUS');
+    if (hasMappings(p?.amount)) roles.add('AMOUNT');
+    profileResult?.topics?.forEach(t =>
+      t.fields?.forEach(f => {
+        if (f.semanticRole) roles.add(f.semanticRole.toUpperCase());
+      }));
+    return roles;
+  }, [profileResult]);
+
+  const missingRolesFor = (t: AuditTemplate): string[] =>
+    (t.requiredRoles ?? []).filter(r => !availableRoles.has(r));
 
   // ---- Handlers ----
 
@@ -533,21 +564,29 @@ const ProcessMining: React.FC = () => {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {auditTemplates.map(t => {
                     const active = selectedAuditIds.includes(t.id);
+                    const missing = missingRolesFor(t);
+                    const disabled = missing.length > 0;
                     return (
                       <button
                         key={t.id}
-                        onClick={() => toggleAudit(t.id)}
+                        onClick={() => !disabled && toggleAudit(t.id)}
+                        disabled={disabled}
+                        title={disabled
+                          ? `Not applicable — needs ${missing.map(r => ROLE_LABELS[r] ?? r).join(', ')}`
+                          : undefined}
                         className={`text-left p-3 rounded-lg border transition-colors ${
-                          active
+                          disabled
+                            ? 'border-slate-800 bg-slate-800/20 opacity-50 cursor-not-allowed'
+                            : active
                             ? 'border-primary bg-primary/10'
                             : 'border-primary/15 hover:border-primary/30 hover:bg-primary/5'
                         }`}
                       >
                         <div className="flex items-start gap-2">
                           <span className={`material-symbols-outlined text-base mt-0.5 ${
-                            active ? 'text-primary' : 'text-slate-600'
+                            disabled ? 'text-slate-700' : active ? 'text-primary' : 'text-slate-600'
                           }`}>
-                            {active ? 'check_box' : 'check_box_outline_blank'}
+                            {disabled ? 'block' : active ? 'check_box' : 'check_box_outline_blank'}
                           </span>
                           <div className="min-w-0">
                             <p className="text-xs font-semibold text-slate-100 truncate">{t.name}</p>
@@ -555,6 +594,11 @@ const ProcessMining: React.FC = () => {
                             <span className="inline-block mt-1.5 text-[9px] uppercase tracking-wider font-bold text-slate-500">
                               {t.category.replace('_', ' ')}
                             </span>
+                            {disabled && (
+                              <span className="block mt-1 text-[10px] text-amber-500/80">
+                                needs {missing.map(r => ROLE_LABELS[r] ?? r).join(', ')}
+                              </span>
+                            )}
                           </div>
                         </div>
                       </button>

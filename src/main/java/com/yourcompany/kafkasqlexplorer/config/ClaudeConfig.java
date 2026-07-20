@@ -31,6 +31,11 @@ public class ClaudeConfig {
      * all the message context inline, so plain LLM generation is what we want.
      */
     private boolean useRag = false;
+    /**
+     * SPECTRA provider only: the SpectraLLM ChromaDB collection to retrieve from when
+     * {@link #useRag} is enabled. Blank = SpectraLLM's default collection.
+     */
+    private String collection = "";
 
     public Provider getProvider() {
         return provider;
@@ -101,6 +106,14 @@ public class ClaudeConfig {
 
     public void setUseRag(boolean useRag) {
         this.useRag = useRag;
+    }
+
+    public String getCollection() {
+        return collection;
+    }
+
+    public void setCollection(String collection) {
+        this.collection = collection;
     }
 
     public int getRequestTimeoutSeconds() {

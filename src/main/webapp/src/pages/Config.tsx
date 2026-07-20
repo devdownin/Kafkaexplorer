@@ -21,6 +21,7 @@ interface ClusterConfig {
   llmBaseUrl: string;
   llmModel: string;
   llmUseRag?: boolean;
+  llmCollection?: string;
   llmRequestTimeoutSeconds?: number;
   llmMaxTokens: number;
   llmSnapshotWindowSize: number;
@@ -474,6 +475,22 @@ const Config: React.FC = () => {
                 </span>
               </span>
             </label>
+          )}
+
+          {config.llmProvider === 'SPECTRA' && config.llmUseRag && (
+            <div className="mt-3">
+              <label className={labelClass}>SpectraLLM Collection</label>
+              <input
+                type="text"
+                value={config.llmCollection ?? ''}
+                onChange={e => set('llmCollection', e.target.value)}
+                placeholder="Default collection"
+                className={inputClass}
+              />
+              <p className="text-[10px] text-slate-500 mt-1">
+                Optional — the ChromaDB collection to retrieve from. Leave blank for SpectraLLM's default.
+              </p>
+            </div>
           )}
 
           <div className="mt-4 flex flex-wrap items-end gap-4">

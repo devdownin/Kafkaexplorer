@@ -56,6 +56,9 @@ public class SpectraLlmClient implements LlmClient {
             body.put("question", question);
             body.put("useRag", config.isUseRag());
             body.put("temperature", 0.0);
+            if (config.getCollection() != null && !config.getCollection().isBlank()) {
+                body.put("collection", config.getCollection().strip());
+            }
 
             String requestBody = objectMapper.writeValueAsString(body);
 

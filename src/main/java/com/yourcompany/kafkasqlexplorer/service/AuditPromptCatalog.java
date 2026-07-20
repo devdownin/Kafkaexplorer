@@ -30,7 +30,8 @@ public class AuditPromptCatalog {
                 "Out-of-order events and missing steps in the expected process order.",
                 "Vérifie l'ordre des événements par correlation id : détecte les messages hors séquence, "
                         + "les étapes manquantes ou intercalées, et les flux qui ne respectent pas l'ordre "
-                        + "métier attendu. Signale chaque rupture en type SEQUENCE."));
+                        + "métier attendu. Signale chaque rupture en type SEQUENCE.",
+                List.of()));
 
         register(new AuditPrompt(
                 "duplicates",
@@ -39,7 +40,8 @@ public class AuditPromptCatalog {
                 "Same event emitted or reprocessed more than once.",
                 "Détecte les messages dupliqués (même correlation id, même clé ou payload identique) "
                         + "émis ou retraités plusieurs fois. Indique les offsets concernés et classe l'anomalie "
-                        + "en type CARDINALITY."));
+                        + "en type CARDINALITY.",
+                List.of()));
 
         register(new AuditPrompt(
                 "orphans",
@@ -48,7 +50,8 @@ public class AuditPromptCatalog {
                 "Flows that start but never reach a terminal state, or reference an unseen event.",
                 "Identifie les correlation ids qui démarrent un flux mais n'atteignent jamais un état "
                         + "terminal, ainsi que les événements référençant un message amont non observé. "
-                        + "Classe en type SEQUENCE et précise l'étape où le flux s'interrompt."));
+                        + "Classe en type SEQUENCE et précise l'étape où le flux s'interrompt.",
+                List.of("CORRELATION_ID")));
 
         register(new AuditPrompt(
                 "latency",
@@ -57,7 +60,8 @@ public class AuditPromptCatalog {
                 "Abnormal delays between correlated steps or SLA violations.",
                 "Analyse les délais entre étapes corrélées : signale les latences anormales, les temps "
                         + "d'attente excessifs et les dépassements de SLA apparents. Classe en type TEMPORAL et "
-                        + "donne l'écart temporel constaté."));
+                        + "donne l'écart temporel constaté.",
+                List.of("TIMESTAMP")));
 
         register(new AuditPrompt(
                 "throughput",
@@ -65,7 +69,8 @@ public class AuditPromptCatalog {
                 "TEMPORAL",
                 "Bursts, sudden drops, or unexpected silence per topic.",
                 "Évalue le débit par topic dans le temps : détecte les pics soudains, les chutes de "
-                        + "volume et les fenêtres de silence inattendues. Classe en type TEMPORAL."));
+                        + "volume et les fenêtres de silence inattendues. Classe en type TEMPORAL.",
+                List.of()));
 
         register(new AuditPrompt(
                 "schema-drift",
@@ -74,7 +79,8 @@ public class AuditPromptCatalog {
                 "Inconsistent field presence or types across messages of a topic.",
                 "Compare la structure des messages d'un même topic : détecte les champs apparaissant/"
                         + "disparaissant, les types incohérents et les changements de schéma implicites. "
-                        + "Classe en type STRUCTURAL."));
+                        + "Classe en type STRUCTURAL.",
+                List.of()));
 
         register(new AuditPrompt(
                 "required-fields",
@@ -83,7 +89,8 @@ public class AuditPromptCatalog {
                 "Messages missing correlation id, timestamp or status.",
                 "Vérifie la présence des champs obligatoires (correlation id, timestamp, statut) d'après "
                         + "le mapping fourni. Signale tout message où ils sont absents, nuls ou vides. "
-                        + "Classe en type STRUCTURAL."));
+                        + "Classe en type STRUCTURAL.",
+                List.of()));
 
         register(new AuditPrompt(
                 "status-transitions",
@@ -92,7 +99,8 @@ public class AuditPromptCatalog {
                 "Illegal state changes (e.g. CANCELLED then SHIPPED).",
                 "À partir du champ statut, reconstitue les transitions d'état par correlation id et "
                         + "détecte les transitions invalides ou impossibles (ex. CANCELLED → SHIPPED). "
-                        + "Classe en type BUSINESS."));
+                        + "Classe en type BUSINESS.",
+                List.of("STATUS")));
 
         register(new AuditPrompt(
                 "error-retries",
@@ -100,7 +108,8 @@ public class AuditPromptCatalog {
                 "RELIABILITY",
                 "Failed statuses, repeated retries and dead-letter patterns.",
                 "Repère les statuts d'erreur/échec, les retries répétés sur le même correlation id et les "
-                        + "schémas de type dead-letter. Classe en type BUSINESS et estime le taux d'erreur."));
+                        + "schémas de type dead-letter. Classe en type BUSINESS et estime le taux d'erreur.",
+                List.of("STATUS")));
 
         register(new AuditPrompt(
                 "amount-outliers",
@@ -108,7 +117,8 @@ public class AuditPromptCatalog {
                 "BUSINESS",
                 "Outlier, negative or spiking monetary amounts.",
                 "Analyse les champs de montant : détecte les valeurs aberrantes, négatives ou anormalement "
-                        + "élevées par rapport à la distribution observée. Classe en type BUSINESS."));
+                        + "élevées par rapport à la distribution observée. Classe en type BUSINESS.",
+                List.of("AMOUNT")));
 
         register(new AuditPrompt(
                 "pii-leakage",
@@ -118,7 +128,8 @@ public class AuditPromptCatalog {
                 "Recherche des données personnelles ou sensibles en clair dans les payloads (emails, "
                         + "numéros de carte, téléphones, IBAN, identifiants nationaux). Ne recopie jamais la "
                         + "valeur sensible en clair : indique seulement le champ et le type de donnée. "
-                        + "Classe en type STRUCTURAL avec sévérité CRITICAL."));
+                        + "Classe en type STRUCTURAL avec sévérité CRITICAL.",
+                List.of()));
 
         register(new AuditPrompt(
                 "correlation-integrity",
@@ -127,7 +138,8 @@ public class AuditPromptCatalog {
                 "Inconsistent fan-out or mismatched joins across topics.",
                 "Vérifie l'intégrité de corrélation entre topics : détecte les correlation ids dont la "
                         + "propagation est incohérente (fan-out partiel, jointures dépareillées, id présent "
-                        + "sur un topic mais absent d'un topic attendu). Classe en type SEQUENCE."));
+                        + "sur un topic mais absent d'un topic attendu). Classe en type SEQUENCE.",
+                List.of("CORRELATION_ID")));
     }
 
     private void register(AuditPrompt prompt) {

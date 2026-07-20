@@ -29,7 +29,22 @@ class AuditPromptCatalogTest {
             assertFalse(p.category().isBlank());
             assertFalse(p.description().isBlank());
             assertFalse(p.prompt().isBlank());
+            assertNotNull(p.requiredRoles(), "requiredRoles must never be null");
         }
+    }
+
+    @Test
+    void requiredRolesUseTheKnownSemanticVocabulary() {
+        Set<String> vocabulary = Set.of("CORRELATION_ID", "TIMESTAMP", "STATUS", "AMOUNT");
+        for (AuditPrompt p : catalog.all()) {
+            for (String role : p.requiredRoles()) {
+                assertTrue(vocabulary.contains(role),
+                    "Unknown required role '" + role + "' in audit " + p.id());
+            }
+        }
+        // The amount-outliers audit must require AMOUNT (smoke check of the wiring).
+        AuditPrompt amount = catalog.findByIds(List.of("amount-outliers")).get(0);
+        assertTrue(amount.requiredRoles().contains("AMOUNT"));
     }
 
     @Test

@@ -93,6 +93,9 @@ public class ConfigController {
         if (body.containsKey("llmUseRag") && body.get("llmUseRag") != null) {
             claudeConfig.setUseRag(Boolean.parseBoolean(asString(body.get("llmUseRag"))));
         }
+        if (body.containsKey("llmCollection")) {
+            claudeConfig.setCollection(asString(body.get("llmCollection")));
+        }
         if (body.containsKey("llmRequestTimeoutSeconds") && body.get("llmRequestTimeoutSeconds") != null) {
             claudeConfig.setRequestTimeoutSeconds(Integer.parseInt(asString(body.get("llmRequestTimeoutSeconds"))));
         }
@@ -163,6 +166,7 @@ public class ConfigController {
         result.put("llmBaseUrl", claudeConfig.getResolvedBaseUrl());
         result.put("llmModel", claudeConfig.getModel());
         result.put("llmUseRag", claudeConfig.isUseRag());
+        result.put("llmCollection", claudeConfig.getCollection());
         result.put("llmRequestTimeoutSeconds", claudeConfig.getRequestTimeoutSeconds());
         result.put("llmMaxTokens", claudeConfig.getMaxTokens());
         result.put("llmSnapshotWindowSize", claudeConfig.getSnapshotWindowSize());
