@@ -61,7 +61,7 @@ docker-compose up -d
 
 ### Stack
 
-- **Backend**: Spring Boot 3.5.x, Java 21, embedded Apache Flink 2.2.x
+- **Backend**: Spring Boot 3.5.x, Java 25 (`java.version` in pom.xml), embedded Apache Flink 1.18.x (`flink.version` in pom.xml — the SELECT NPE described below was reproduced on 1.18/1.20/2.0)
 - **Frontend**: React 19, TypeScript, Vite, Tailwind CSS, Monaco Editor
 - **Kafka**: Compatible with Kafka 3.x and 4.x (KRaft)
 - **Build**: Single JAR — Maven's `frontend-maven-plugin` builds the React app and copies it to `src/main/resources/static/`
@@ -79,21 +79,23 @@ parser/       JSON, XML, and Avro (via Confluent Schema Registry) schema inferen
 **Key services:**
 - `FlinkSqlService` — executes SQL against Kafka topics using embedded Flink `LocalEnvironment`; per-request table registration ensures isolation
   - **IMPORTANT**: All SELECT queries bypass Flink entirely via `kafkaDirectSelect()` due to a persistent `FlinkRelMetadataQuery` NPE in Flink 2.x. Flink is only used for `CREATE TABLE` and `EXPLAIN`.
-  - `kafkaDirectSelect()` supports aggregate functions (COUNT/SUM/AVG/MAX/MIN with optional GROUP BY) computed in-process over fetched Kafka messages. SQL must alias the result column (e.g. `COUNT(*) AS metric_value`).
-  - For aggregate queries, up to 100 000 messages are fetched (earliest-offset).
+  - `kafkaDirectSelect()` supports aggregate functions (COUNT/SUM/AVG/MAX/MIN with optional GROUP BY) computed in-process over fetched Kafka messages. SQL must alias the result column (e.g. `COUNT(*) AS metric_value`). COUNT values are returned as `long` (integral), other aggregates as `double`.
+  - For aggregate queries, up to 100 000 messages are fetched (earliest-offset). Plain projections fetch `limit + 20`; when a `WHERE` clause is present the scan widens to `max(5000, limit×100)` capped at 100 000 (the row loop still stops at `limit` matches).
+  - **WHERE filtering**: simple `col = 'value'` conditions. Column names keep their original case and support dot-notation nested paths (resolved via `getNestedValue`, with a case-insensitive top-level fallback). Values compare case-insensitively.
+  - XML payloads are parsed with a per-thread secure `DocumentBuilder` (`XML_BUILDERS` ThreadLocal) — never build a `DocumentBuilderFactory` per message.
   - **Window functions**: `TABLE(TUMBLE(TABLE <name>, DESCRIPTOR(<time_col>), INTERVAL '<n>' MINUTE|HOUR|SECOND|DAY))` is supported via `kafkaWindowSelect()` — buckets messages by timestamp and computes aggregates per window. Time column resolution: message field (ISO-8601 or epoch) → Kafka record timestamp (fallback). HOP/SESSION syntax is accepted but treated as TUMBLE.
   - **SQL comments**: `--` line comments and `/* */` block comments are stripped before any keyword checks. A query beginning with a comment line is valid.
-- `KafkaAdminService` — Kafka AdminClient wrapper for metadata and topic ops
-- `SchemaInferenceService` — samples messages and delegates to `JsonSchemaInferrer` / `XmlSchemaInferrer` / `AvroSchemaInferrer`
-- `DdlGeneratorService` — auto-generates Flink `CREATE TABLE` DDL from inferred schemas
-- `AuditService` — async cluster health checks, persists results to `internal.audit.history` topic
+- `KafkaAdminService` — Kafka AdminClient wrapper for metadata and topic ops. Heavy metadata calls are Caffeine-cached (30s TTL): `listTopics` (`kafkaTopics`), `getTopicDescriptor` (`topicDescriptor`), `getTopicsSize` (`topicSizes`), `getTopicsLastMessageTimestamps` (`topicLastMessages`) — cache names are registered in `WebConfig`. Recent-record seeks are clamped to the partition's beginning offset (retention-trimmed topics would otherwise trigger an `auto.offset.reset` to latest and return nothing).
+- `SchemaInferenceService` — samples messages and delegates to `JsonSchemaInferrer` / `XmlSchemaInferrer` / `AvroSchemaInferrer` (inferred column order is deterministic — `LinkedHashMap`)
+- `DdlGeneratorService` — auto-generates Flink `CREATE TABLE` DDL from inferred schemas. `maskSensitiveProperties()` (static) redacts credentials (`*password*`, `*secret*`, `sasl.jaas.config`) and MUST be applied to any DDL returned to the UI (`/api/topic/{name}`, `/api/topic/{name}/ddl`, `/api/query/ddl-preview`, lineage `SHOW CREATE TABLE`); internal table registration uses the unmasked DDL.
+- `AuditService` — cluster health checks run on a dedicated single-thread executor (`startAudit` submits explicitly — do NOT reintroduce `@Async`, the self-invocation bypasses the Spring proxy and blocks the HTTP thread); per-topic audits fan out on a bounded 4-thread pool. Exact counts go through the direct SELECT engine (`COUNT(*) AS metric_value`, first numeric value of the row); duplicate detection and flow latency are computed **in-process** over fetched messages (key extraction via `MessageFieldExtractorService`) because the direct engine supports neither subqueries nor JOINs. Reports persist to `internal.audit.history` via a shared lazy producer.
 - `LineageService` — builds dependency graph (topics → tables → views → jobs) by regex-parsing DDL/SQL; uses `TableEnvironment` (not `StreamTableEnvironment`) — Flink 2.x uses the unified API
 - `StreamFlowService` — traces messages across topics using JSONPath / XPath expressions
 - `SqlQueryValidator` — whitelist-based guard: only `SELECT`, `EXPLAIN`, and `CREATE TABLE` are allowed
 - `FieldProfilingService` — sends Kafka message samples to Claude API for semantic field detection (CORRELATION_ID / TIMESTAMP / STATUS / AMOUNT); returns `FieldProfileResult`. Never swallow exceptions — propagate so callers surface the real error.
 - `LlmAnalysisService` — generates Mermaid flowcharts + `AnomalyReport` list from correlated messages (snapshot and live modes via `analyzeSnapshot` / `analyzeLive`)
 - `KafkaSnapshotReader` — temp KafkaConsumer (group `snapshot-reader-{uuid}`, `enable.auto.commit=false`) supporting EARLIEST / LATEST_N / TIMESTAMP seek modes
-- `KafkaLiveConsumer` — sliding window consumer; triggers LLM on window fill (default 100 msg) or timeout (default 30s); pushes via `SseEmitterManager`
+- `KafkaLiveConsumer` — sliding window consumer; triggers LLM on window fill (default 100 msg) or timeout (default 30s); pushes via `SseEmitterManager`. **Threading contract**: the KafkaConsumer is only ever touched by the per-session polling task (init subscribe/seek included); `stopSession()` just raises a stop flag + `consumer.wakeup()` and the polling task closes everything in `finishSession()`. LLM analyses run on a dedicated `analysisExecutor` pool — never on the 4-thread scheduler shared by all sessions' polling/heartbeat tasks.
 - `SseEmitterManager` — manages `Map<sessionId, SseEmitter>` (5 min timeout, heartbeat every 15s)
 - `ClaudeConfig` — `@ConfigurationProperties(prefix="claude")`; reads `ANTHROPIC_API_KEY` env var via `${ANTHROPIC_API_KEY:}`
 - `MetricService` — bridges Flink SQL to Prometheus metrics via Micrometer. Supports 4 Prometheus types:
@@ -103,6 +105,7 @@ parser/       JSON, XML, and Avro (via Confluent Schema Registry) schema inferen
   - `SUMMARY` → Micrometer `DistributionSummary` with client-side quantiles (p50/p75/p90/p95/p99)
   Metric status stays `pending` if `lastValue == null` — ensure aggregates use `AS metric_value` alias.
   `MetricConfig.createTableSql` (optional): when set, the DDL is executed before the metric SQL (useful for pre-registering a Flink table).
+  Metric configs persist to `internal.metrics.config` via a shared lazy producer; startup restore reads the topic to its end offsets (an empty poll does NOT mean exhausted). Within one `refreshMetrics` cycle, identical queries (same sql/maxRows/timeout/readMode) execute once and are memoized (ThreadLocal cycle cache).
 
 ### Frontend
 
@@ -132,7 +135,8 @@ Dev server proxy: Vite forwards `/api/*` to `http://localhost:8080` (configured 
 - Kafka bootstrap servers (default `localhost:9092`)
 - Kafka connection mode: `PLAIN` (default), `SSL`, or `CONFLUENT_CLOUD` — each mode has its own set of required properties (keystore/truststore for SSL, API key/secret for Confluent Cloud)
 - Query timeout (default 10s), schema inference timeout (2s)
-- Cache TTL (30s, Caffeine)
+- Cache TTL: `explorer.cache-expire-seconds` (default 30s) — applied by the custom `CacheManager` bean in `WebConfig`; a `spring.cache.caffeine.spec` in YAML would be silently ignored
+- Log level: application package defaults to INFO (`logging.level`); per-query engine logs are DEBUG
 - Default result rows (50)
 - Audit topic name (`internal.audit.history`)
 - Prometheus: `management.endpoints.web.exposure.include: health,info,prometheus` — exposes `/actuator/prometheus` for scraping
@@ -152,6 +156,10 @@ Tests use JUnit 5 + Mockito. Unit tests mock Kafka and Flink — no broker neede
 **Known issue — `FlinkDdlValidationTest`** (currently untracked): fails with a Calcite `SqlParserException` on DDL parsing — pre-existing, unrelated to the SELECT bypass.
 
 Test classes are in `src/test/java/com/yourcompany/kafkasqlexplorer/`.
+
+## Audit (2026-07)
+
+`AUDIT.md` at the repository root documents a full bug & optimisation audit. All critical (C1–C4), major (M1–M8), minor and optimisation findings listed there have been fixed on this codebase — the report describes the *pre-fix* state and the corrective decisions (useful context before refactoring `AuditService`, `KafkaLiveConsumer`, `MetricService` or the direct SELECT engine).
 
 ## License
 
@@ -183,7 +191,8 @@ Test classes are in `src/test/java/com/yourcompany/kafkasqlexplorer/`.
 
 - **SQL injection**: `SqlQueryValidator` whitelists only `SELECT`, `EXPLAIN`, `CREATE TABLE`
 - **XXE**: All XML parsers have external DTD loading disabled
-- **No authentication** out of the box — intended for internal/controlled environments
+- **Credential masking**: every endpoint returning generated or `SHOW CREATE TABLE` DDL must pass it through `DdlGeneratorService.maskSensitiveProperties()` — the DDL embeds Kafka client properties, including SSL passwords and the Confluent `sasl.jaas.config` secret
+- **No authentication** out of the box — intended for internal/controlled environments. Note that `POST /api/config` can repoint Kafka and LLM settings at runtime; protect the app before exposing it beyond a trusted network
 
 ## Secrets & CI
 
