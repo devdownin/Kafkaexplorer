@@ -719,16 +719,26 @@ public class FlinkSqlService {
                 "Table '" + rawTableRef + "' not found. No matching Kafka topic exists.");
         }
 
-        // For aggregates, read all available messages; for projections, cap at limit
-        int fetch = isAggregate ? 100_000 : limit + 20;
+        // Parse selected columns and WHERE conditions from SQL (needed to size the fetch)
+        List<String> requestedCols = isAggregate ? Collections.emptyList() : extractSelectedColumns(sql);
+        Map<String, String> whereConds = extractSimpleWhere(sql);
+
+        // For aggregates, read all available messages. For plain projections, a small
+        // overshoot over the limit is enough — but when a WHERE clause filters rows,
+        // matches may sit far beyond limit+20 messages, so scan a much larger slice
+        // (the row loop still stops as soon as `limit` matches are collected).
+        int fetch;
+        if (isAggregate) {
+            fetch = 100_000;
+        } else if (whereConds.isEmpty()) {
+            fetch = limit + 20;
+        } else {
+            fetch = Math.min(100_000, Math.max(5_000, limit * 100));
+        }
         List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records =
             "earliest-offset".equals(readMode)
                 ? kafkaAdminService.getEarliestRecords(topic, fetch)
                 : kafkaAdminService.getRecentRecords(topic, fetch);
-
-        // Parse selected columns and WHERE conditions from SQL
-        List<String> requestedCols = isAggregate ? Collections.emptyList() : extractSelectedColumns(sql);
-        Map<String, String> whereConds = extractSimpleWhere(sql);
 
         // Build result rows from JSON messages
         List<Map<String, Object>> rows = new ArrayList<>();

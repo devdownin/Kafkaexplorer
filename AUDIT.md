@@ -11,7 +11,15 @@ Chaque constat référence le fichier et la ligne. Sévérités : 🔴 Critique 
 > - M1 : `getExactCount` accepte tout `Number` de la première ligne (compatible `count_all`/Double du moteur direct) ;
 > - M2 : doublons et latence de flux réimplémentés en Java sur les messages Kafka (plus de sous-requête/JOIN non supportés) ;
 > - M3 : `findKeyField` renvoie `null` sans champ id-like (suffixes `*_id`/`*Id` acceptés) au lieu d'un champ arbitraire ;
-> - M4 : TTL de cache aligné sur 30 s (`explorer.cache-expire-seconds`, `WebConfig` en `TimeUnit.SECONDS`).
+> - M4 : TTL de cache aligné sur 30 s (`explorer.cache-expire-seconds`, `WebConfig` en `TimeUnit.SECONDS`) ;
+> - M5 : le consumer live n'est plus fermé depuis le thread HTTP — `stopSession()` signale (flag + `wakeup()`) et
+>   la tâche de polling, seule à toucher le consumer (init incluse), effectue la fermeture (`finishSession`) ;
+> - M6 : `restoreFromKafka` lit jusqu'aux end offsets (assign + seekToBeginning) au lieu de s'arrêter au premier
+>   poll vide ; un enregistrement corrompu est ignoré au lieu d'avorter la restauration ;
+> - M7 : `getRecordsWithPredicate` borne le seek au beginning offset (plus de reset `latest` silencieux sur les
+>   topics tronqués par la rétention) ;
+> - M8 : `kafkaDirectSelect` élargit le fetch (jusqu'à `max(5000, limit×100)`, plafonné à 100 000) quand un WHERE
+>   est présent, au lieu de ne lire que `limit + 20` messages avant filtrage.
 >
 > Les sections ci-dessous décrivent l'état **avant** correctif.
 

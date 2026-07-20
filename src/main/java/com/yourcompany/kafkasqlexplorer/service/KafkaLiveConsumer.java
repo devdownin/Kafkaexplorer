@@ -12,6 +12,7 @@ import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.errors.WakeupException;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,6 +29,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Component
 public class KafkaLiveConsumer {
@@ -42,6 +44,12 @@ public class KafkaLiveConsumer {
     private final Map<String, ScheduledFuture<?>> activeSessions = new ConcurrentHashMap<>();
     private final Map<String, ScheduledFuture<?>> heartbeatTasks = new ConcurrentHashMap<>();
     private final Map<String, KafkaConsumer<String, String>> activeConsumers = new ConcurrentHashMap<>();
+    /**
+     * Per-session stop signal. KafkaConsumer is not thread-safe: only the polling task may
+     * touch the consumer, so stopSession() just raises this flag (plus wakeup(), the one
+     * thread-safe consumer method) and the polling task performs the actual close.
+     */
+    private final Map<String, AtomicBoolean> stopFlags = new ConcurrentHashMap<>();
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(4);
 
     public KafkaLiveConsumer(LlmAnalysisService llmAnalysisService,
@@ -67,23 +75,32 @@ public class KafkaLiveConsumer {
 
         Properties props = buildConsumerProps(sessionId);
         KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props);
+        AtomicBoolean stopRequested = new AtomicBoolean(false);
         activeConsumers.put(sessionId, consumer);
-
-        // Subscribe and seek to latest
-        consumer.subscribe(topics);
-        // Poll once to trigger partition assignment, then seek to end
-        consumer.poll(Duration.ofMillis(500));
-        consumer.seekToEnd(consumer.assignment());
+        stopFlags.put(sessionId, stopRequested);
 
         List<KafkaMessage> buffer = new ArrayList<>();
         final String[] lastFlowchart = {null};
         final long[] lastAnalysisTime = {System.currentTimeMillis()};
+        final boolean[] initialized = {false};
 
-        // Main polling task — runs every 1 second
+        // Main polling task — runs every 1 second. ALL consumer access happens here
+        // (scheduleAtFixedRate never overlaps executions of the same task), including the
+        // initial subscribe/seek and the final close, so the consumer is never touched
+        // concurrently from two threads.
         ScheduledFuture<?> pollingFuture = scheduler.scheduleAtFixedRate(() -> {
             try {
-                if (!sseEmitterManager.exists(sessionId)) {
-                    stopSession(sessionId);
+                if (stopRequested.get() || !sseEmitterManager.exists(sessionId)) {
+                    finishSession(sessionId);
+                    return;
+                }
+
+                if (!initialized[0]) {
+                    // Subscribe, poll once to trigger partition assignment, then seek to end
+                    consumer.subscribe(topics);
+                    consumer.poll(Duration.ofMillis(500));
+                    consumer.seekToEnd(consumer.assignment());
+                    initialized[0] = true;
                     return;
                 }
 
@@ -146,6 +163,9 @@ public class KafkaLiveConsumer {
                     });
                 }
 
+            } catch (WakeupException e) {
+                // stopSession() called consumer.wakeup() while we were polling
+                finishSession(sessionId);
             } catch (Exception e) {
                 log.error("Error in live consumer polling for session {}: {}", sessionId, e.getMessage(), e);
             }
@@ -153,8 +173,8 @@ public class KafkaLiveConsumer {
 
         activeSessions.put(sessionId, pollingFuture);
 
-        // Heartbeat task — runs every 15 seconds. Keep the future so stopSession can
-        // cancel it; otherwise every session leaks a periodic task that runs forever.
+        // Heartbeat task — runs every 15 seconds. Keep the future so it can be cancelled;
+        // otherwise every session leaks a periodic task that runs forever.
         ScheduledFuture<?> heartbeatFuture = scheduler.scheduleAtFixedRate(() -> {
             if (!sseEmitterManager.exists(sessionId)) {
                 stopSession(sessionId);
@@ -165,7 +185,31 @@ public class KafkaLiveConsumer {
         heartbeatTasks.put(sessionId, heartbeatFuture);
     }
 
+    /**
+     * Requests the session to stop. The consumer itself is closed by the polling task
+     * (see {@link #finishSession}) because KafkaConsumer is not thread-safe — calling
+     * close() from an HTTP thread while a poll is in flight throws
+     * ConcurrentModificationException. wakeup() is the only thread-safe consumer method
+     * and aborts an in-flight poll immediately.
+     */
     public void stopSession(String sessionId) {
+        log.info("Stop requested for live session: {}", sessionId);
+
+        AtomicBoolean stopRequested = stopFlags.get(sessionId);
+        if (stopRequested == null) {
+            // Session unknown (already finished or never started) — just make sure the emitter is closed.
+            sseEmitterManager.complete(sessionId);
+            return;
+        }
+        stopRequested.set(true);
+        KafkaConsumer<String, String> consumer = activeConsumers.get(sessionId);
+        if (consumer != null) {
+            consumer.wakeup();
+        }
+    }
+
+    /** Tears the session down from the polling thread: the only place the consumer is closed. */
+    private void finishSession(String sessionId) {
         log.info("Stopping live session: {}", sessionId);
 
         ScheduledFuture<?> future = activeSessions.remove(sessionId);
@@ -178,6 +222,7 @@ public class KafkaLiveConsumer {
             heartbeat.cancel(false);
         }
 
+        stopFlags.remove(sessionId);
         KafkaConsumer<String, String> consumer = activeConsumers.remove(sessionId);
         if (consumer != null) {
             try {

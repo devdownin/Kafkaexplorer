@@ -26,6 +26,8 @@ import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.PartitionInfo;
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.slf4j.Logger;
@@ -945,20 +947,56 @@ public class MetricService {
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         props.put(ConsumerConfig.GROUP_ID_CONFIG,         "explorer-metrics-restorer-" + UUID.randomUUID());
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        // Fail fast when the broker is unreachable — this runs during application startup.
+        props.put(ConsumerConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, "5000");
+        props.put(ConsumerConfig.REQUEST_TIMEOUT_MS_CONFIG, "4000");
         try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props)) {
-            consumer.subscribe(Collections.singletonList(explorerConfig.getMetricsConfigTopic()));
-            long start = System.currentTimeMillis();
-            while (System.currentTimeMillis() - start < 2000) {
-                ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(500));
-                if (records.isEmpty()) break;
+            List<PartitionInfo> partitionInfos = consumer.partitionsFor(explorerConfig.getMetricsConfigTopic());
+            if (partitionInfos == null || partitionInfos.isEmpty()) {
+                return; // topic does not exist yet — nothing to restore
+            }
+            List<TopicPartition> partitions = partitionInfos.stream()
+                .map(pi -> new TopicPartition(pi.topic(), pi.partition()))
+                .toList();
+            consumer.assign(partitions);
+            consumer.seekToBeginning(partitions);
+            Map<TopicPartition, Long> endOffsets = consumer.endOffsets(partitions);
+
+            // Poll until every partition reaches its end offset. An empty poll does NOT mean
+            // the topic is exhausted (the first poll after assignment is typically empty
+            // while the fetch is in flight), so completion is tracked by position instead.
+            long deadline = System.currentTimeMillis() + 10_000;
+            while (System.currentTimeMillis() < deadline && !reachedEndOffsets(consumer, endOffsets)) {
+                ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(300));
                 for (ConsumerRecord<String, String> record : records) {
-                    MetricConfig cfg = objectMapper.readValue(record.value(), MetricConfig.class);
-                    if ("DELETED".equals(cfg.errorMessage())) metrics.remove(record.key());
-                    else metrics.put(record.key(), cfg);
+                    try {
+                        if (record.value() == null) {
+                            metrics.remove(record.key());
+                            continue;
+                        }
+                        MetricConfig cfg = objectMapper.readValue(record.value(), MetricConfig.class);
+                        if ("DELETED".equals(cfg.errorMessage())) metrics.remove(record.key());
+                        else metrics.put(record.key(), cfg);
+                    } catch (Exception e) {
+                        // One corrupt record must not abort the whole restore
+                        log.warn("Skipping unreadable metric config at {}:{}: {}",
+                            record.partition(), record.offset(), e.getMessage());
+                    }
                 }
             }
+            log.info("Restored {} metric configuration(s) from Kafka", metrics.size());
         } catch (Exception e) {
             log.debug("Restore from Kafka failed: {}", e.getMessage());
         }
+    }
+
+    private boolean reachedEndOffsets(KafkaConsumer<String, String> consumer,
+                                      Map<TopicPartition, Long> endOffsets) {
+        for (Map.Entry<TopicPartition, Long> entry : endOffsets.entrySet()) {
+            if (consumer.position(entry.getKey()) < entry.getValue()) {
+                return false;
+            }
+        }
+        return true;
     }
 }
