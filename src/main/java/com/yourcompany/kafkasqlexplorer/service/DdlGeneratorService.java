@@ -92,12 +92,12 @@ public class DdlGeneratorService {
         });
 
         if (format == MessageFormat.XML) {
-            sb.append("    'format' = 'raw',\n");
+            sb.append("    'value.format' = 'raw',\n");
         } else if (format == MessageFormat.AVRO) {
-            sb.append("    'format' = 'avro-confluent',\n");
+            sb.append("    'value.format' = 'avro-confluent',\n");
             sb.append("    'avro-confluent.url' = '").append(kafkaConfig.getSchemaRegistryUrl()).append("',\n");
         } else {
-            sb.append("    'format' = 'json',\n");
+            sb.append("    'value.format' = 'json',\n");
             sb.append("    'json.ignore-parse-errors' = 'true',\n");
         }
 

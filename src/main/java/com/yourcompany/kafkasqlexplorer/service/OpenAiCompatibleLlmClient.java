@@ -23,7 +23,7 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
 
     public OpenAiCompatibleLlmClient(ClaudeConfig config) {
         this.config = config;
-        this.httpClient = HttpClient.newHttpClient();
+        this.httpClient = LlmHttpSupport.newClient(config);
     }
 
     @Override
@@ -54,24 +54,24 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
                 .uri(URI.create(url))
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(requestBody));
+            LlmHttpSupport.withTimeout(requestBuilder, config);
 
             if (config.isApiKeyConfigured()) {
                 requestBuilder.header("Authorization", "Bearer " + config.getApiKey());
             }
 
-            HttpResponse<String> response = httpClient.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofString());
-
-            if (response.statusCode() != 200) {
-                log.error("Error from OpenAI-compatible API: {} - {}", response.statusCode(), response.body());
-                throw new RuntimeException("LLM call failed with status " + response.statusCode());
-            }
+            HttpResponse<String> response =
+                LlmHttpSupport.sendWithRetry(httpClient, requestBuilder.build(), config.getProviderLabel());
 
             JsonNode root = objectMapper.readTree(response.body());
             return root.path("choices").get(0).path("message").path("content").asText();
 
+        } catch (RuntimeException e) {
+            log.error("Error calling OpenAI-compatible API: {}", e.getMessage());
+            throw e;
         } catch (Exception e) {
             log.error("Error calling OpenAI-compatible API: {}", e.getMessage(), e);
-            throw new RuntimeException("LLM call failed", e);
+            throw new RuntimeException("LLM call failed: " + e.getMessage(), e);
         }
     }
 }

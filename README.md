@@ -2,7 +2,7 @@
 [![Java CI with Maven](https://github.com/yourusername/kafka-sql-explorer/actions/workflows/ci.yml/badge.svg)](https://github.com/yourusername/kafka-sql-explorer/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-AGPL%20v3-red.svg)](LICENSE)
 
-**Spring Boot 3.5.x | Apache Flink 2.2.x (Embedded) | Java 21 | React 19**
+**Spring Boot 3.5.x | Apache Flink 2.2.x (Embedded) | Java 25 | React 19**
 
 Kafka SQL Explorer is a modern web application designed for Data Engineers and Architects, allowing them to explore Kafka clusters and query topics in real-time via Flink SQL.
 
@@ -99,7 +99,8 @@ Kafka Explorer integrates AI to analyze message flows and detect anomalies:
 - **Automatic Field Profiling**: Detects `CORRELATION_ID`, `TIMESTAMP`, and `STATUS` fields across topics.
 - **Flow Reconstruction**: Generates Mermaid flowcharts of your business processes.
 - **Anomaly Detection**: Identifies sequence breaks, temporal delays, and structural inconsistencies.
-- **Multi-Provider Support**: Compatible with **Claude (Anthropic)** and **Open Source models** (via OpenAI-compatible APIs like Ollama).
+- **Audit checklist**: A built-in library of ready-to-use audit prompts (ordering, duplicates, orphan flows, latency/SLA, schema drift, missing required fields, invalid status transitions, error/retries, amount outliers, PII exposure, correlation integrity). Tick the checks — plus an optional free-form instruction — to focus the LLM on a specific audit, in both snapshot and live modes. Audits that need a field the profiling step didn't detect (e.g. amount outliers with no `AMOUNT` field) are greyed out automatically. Served from `GET /api/process-mining/audit-templates`.
+- **Multi-Provider Support**: Compatible with **Claude (Anthropic)**, **Open Source models** (via OpenAI-compatible APIs like Ollama), and **SpectraLLM** (self-hosted private RAG/fine-tuned models).
 
 ### 11. Demo & Sandbox Environment
 The application includes an automated demonstration setup to help you explore features immediately:
@@ -113,7 +114,7 @@ The application includes an automated demonstration setup to help you explore fe
 ---
 
 ## Tech Stack
-- **Backend**: Spring Boot 3.5.x, Java 21 (Records).
+- **Backend**: Spring Boot 3.5.x, Java 25 (Records).
 - **Streaming**: Apache Flink 2.2.x (Embedded LocalEnvironment).
 - **Parsing**: Jackson (JSON), JAXB/StAX (XML).
 - **Frontend**: React 19, Tailwind CSS, Monaco Editor, Vite.
@@ -125,7 +126,7 @@ The application includes an automated demonstration setup to help you explore fe
 
 ### Prerequisites
 - Docker & Docker Compose
-- JDK 21+
+- JDK 25+
 
 ### Installation
 1. **Launch Kafka**:
@@ -167,6 +168,37 @@ claude:
   base-url: http://localhost:11434/v1 # For Ollama
   model: qwen2.5-coder:7b
 ```
+
+### Option C: SpectraLLM (local, private, domain-tuned)
+Audit Kafka exchanges with a self-hosted [SpectraLLM](https://github.com/devdownin/SpectraLLM)
+instance — a fully local RAG + fine-tuning platform. Kafka Explorer calls SpectraLLM's
+`POST /api/query` endpoint; no API key leaves your network.
+```yaml
+claude:
+  provider: SPECTRA
+  base-url: http://localhost:8080  # SpectraLLM API (e.g. http://spectra-api:8080 in Docker)
+  use-rag: false                   # true = also retrieve from SpectraLLM's ingested corpus
+  collection: ""                   # optional: a specific SpectraLLM collection to retrieve from
+```
+The `model` field is ignored — SpectraLLM serves whichever model it is configured to run.
+Set `use-rag: true` to enrich the audit with SpectraLLM's document corpus; leave it `false`
+to ground the analysis solely on the sampled Kafka messages. All settings are also editable
+live from the **Config** page, which also offers a **Test LLM** button to verify connectivity.
+
+When RAG is enabled, the Process Mining results show an **Evidence — cited sources** panel:
+the corpus passages SpectraLLM grounded the audit on (with source file and relevance score),
+turning each verdict into something verifiable.
+
+**One-command combined stack** — Kafka (with demo topics) + Kafka Explorer + a full local
+SpectraLLM instance, pre-wired so the audit runs through SpectraLLM:
+```bash
+# SpectraLLM must be checked out next to this repo; download its models once:
+#   cd ../SpectraLLM && ./scripts/start.sh --first-run
+docker compose -f docker-compose-spectra.yml up -d --build
+```
+Explorer UI → http://localhost:8090 · SpectraLLM UI → http://localhost. Point at a
+SpectraLLM elsewhere with `SPECTRALLM_DIR=/path/to/SpectraLLM`. See the header of
+[`docker-compose-spectra.yml`](docker-compose-spectra.yml) for details.
 
 ### Recommended Lightweight Models
 - **Qwen 2.5-Coder 7B**: Best for JSON extraction and logic.

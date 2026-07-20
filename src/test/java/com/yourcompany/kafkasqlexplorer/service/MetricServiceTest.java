@@ -105,16 +105,16 @@ class MetricServiceTest {
                 new QueryResult(List.of("metric_value"), List.of(Map.of("metric_value", 7.0)), 10L, null)
             );
 
-        MetricConfig metric = MetricConfig.builder()
-            .name("delta")
-            .type("GAUGE")
-            .templateType("TOPIC_COUNT_DELTA")
-            .templateParams(Map.of(
+        MetricConfig metric = new MetricConfig(
+            null, "delta", "GAUGE", null, null, null, null, null, null, null, List.of(), Map.of(), null,
+            "TOPIC_COUNT_DELTA",
+            Map.of(
                 "leftSql", "SELECT COUNT(*) AS metric_value FROM topic_a",
                 "rightSql", "SELECT COUNT(*) AS metric_value FROM topic_b",
                 "operation", "LEFT_MINUS_RIGHT"
-            ))
-            .build();
+            ),
+            null, null, List.of()
+        );
 
         MetricPreviewResult preview = service.previewMetric(metric);
 
@@ -149,15 +149,15 @@ class MetricServiceTest {
                 )
             );
 
-        MetricConfig metric = MetricConfig.builder()
-            .name("latency")
-            .type("GAUGE")
-            .templateType("TOPIC_TRANSIT_LATENCY")
-            .templateParams(Map.of(
+        MetricConfig metric = new MetricConfig(
+            null, "latency", "GAUGE", null, null, null, null, null, null, null, List.of(), Map.of(), null,
+            "TOPIC_TRANSIT_LATENCY",
+            Map.of(
                 "sourceSql", "SELECT order_id AS match_key, created_at AS event_time FROM topic_a",
                 "targetSql", "SELECT order_id AS match_key, processed_at AS event_time FROM topic_b"
-            ))
-            .build();
+            ),
+            null, null, List.of()
+        );
 
         MetricPreviewResult preview = service.previewMetric(metric);
 
@@ -176,17 +176,16 @@ class MetricServiceTest {
                 new QueryResult(List.of("metric_value"), List.of(Map.of("metric_value", 4.0)), 10L, null)
             );
 
-        MetricConfig metric = MetricConfig.builder()
-            .name("delta-live")
-            .type("GAUGE")
-            .templateType("TOPIC_COUNT_DELTA")
-            .executionMode("TEMPLATE_BOUNDED_SCAN")
-            .templateParams(Map.of(
+        MetricConfig metric = new MetricConfig(
+            null, "delta-live", "GAUGE", null, null, null, null, null, null, null, List.of(), Map.of(), null,
+            "TOPIC_COUNT_DELTA",
+            Map.of(
                 "leftSql", "SELECT COUNT(*) AS metric_value FROM left_topic",
                 "rightSql", "SELECT COUNT(*) AS metric_value FROM right_topic",
                 "operation", "LEFT_MINUS_RIGHT"
-            ))
-            .build();
+            ),
+            "TEMPLATE_BOUNDED_SCAN", null, List.of()
+        );
 
         service.save(metric);
         MetricConfig saved = service.getAllMetrics().stream()
@@ -207,17 +206,16 @@ class MetricServiceTest {
     void refreshMetricsMarksManagedJobMetricsAsPlanned() {
         service.init();
 
-        MetricConfig metric = MetricConfig.builder()
-            .name("delta-managed")
-            .type("GAUGE")
-            .templateType("TOPIC_COUNT_DELTA")
-            .executionMode("FLINK_MANAGED_JOB")
-            .templateParams(Map.of(
+        MetricConfig metric = new MetricConfig(
+            null, "delta-managed", "GAUGE", null, null, null, null, null, null, null, List.of(), Map.of(), null,
+            "TOPIC_COUNT_DELTA",
+            Map.of(
                 "leftSql", "SELECT COUNT(*) AS metric_value FROM left_topic",
                 "rightSql", "SELECT COUNT(*) AS metric_value FROM right_topic",
                 "operation", "LEFT_MINUS_RIGHT"
-            ))
-            .build();
+            ),
+            "FLINK_MANAGED_JOB", null, List.of()
+        );
 
         service.save(metric);
         MetricConfig saved = service.getAllMetrics().stream()
@@ -242,17 +240,16 @@ class MetricServiceTest {
                 new QueryResult(List.of("metric_value"), List.of(Map.of("metric_value", 3.0)), 10L, null)
             );
 
-        MetricConfig metric = MetricConfig.builder()
-            .name("delta-managed-preview")
-            .type("GAUGE")
-            .templateType("TOPIC_COUNT_DELTA")
-            .executionMode("FLINK_MANAGED_JOB")
-            .templateParams(Map.of(
+        MetricConfig metric = new MetricConfig(
+            null, "delta-managed-preview", "GAUGE", null, null, null, null, null, null, null, List.of(), Map.of(), null,
+            "TOPIC_COUNT_DELTA",
+            Map.of(
                 "leftSql", "SELECT COUNT(*) AS metric_value FROM left_topic",
                 "rightSql", "SELECT COUNT(*) AS metric_value FROM right_topic",
                 "operation", "LEFT_MINUS_RIGHT"
-            ))
-            .build();
+            ),
+            "FLINK_MANAGED_JOB", null, List.of()
+        );
 
         MetricPreviewResult preview = service.previewMetric(metric);
 
@@ -282,13 +279,12 @@ class MetricServiceTest {
                 "{\"customer\":{\"id\":\"C-42\"},\"status\":\"READY\"}"
             )));
 
-        service.save(MetricConfig.builder()
-            .name("labeled_metric")
-            .type("GAUGE")
-            .sql("SELECT 9 AS metric_value")
-            .labelTopic("orders")
-            .labelFields(List.of("customer.id", "status"))
-            .build());
+        service.save(new MetricConfig(
+            null, "labeled_metric", "GAUGE", "SELECT 9 AS metric_value", null, null, null, null, null, null, List.of(), Map.of(), null,
+            null,
+            null,
+            null, "orders", List.of("customer.id", "status")
+        ));
 
         service.refreshMetrics();
 

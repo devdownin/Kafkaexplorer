@@ -28,9 +28,7 @@ public class FieldProfilingService {
 
     @org.springframework.beans.factory.annotation.Autowired
     public FieldProfilingService(KafkaSnapshotReader snapshotReader, ClaudeConfig claudeConfig) {
-        this(snapshotReader, claudeConfig, claudeConfig.getProvider() == ClaudeConfig.Provider.ANTHROPIC
-            ? new AnthropicLlmClient(claudeConfig)
-            : new OpenAiCompatibleLlmClient(claudeConfig));
+        this(snapshotReader, claudeConfig, LlmClientFactory.create(claudeConfig));
     }
 
     public FieldProfilingService(KafkaSnapshotReader snapshotReader, ClaudeConfig claudeConfig, LlmClient llmClient) {

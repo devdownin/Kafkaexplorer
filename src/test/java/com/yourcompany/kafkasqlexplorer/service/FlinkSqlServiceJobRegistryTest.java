@@ -10,6 +10,7 @@ import org.apache.flink.api.common.JobStatus;
 import org.apache.flink.core.execution.JobClient;
 import org.apache.flink.table.api.TableEnvironment;
 import org.apache.flink.table.api.TableResult;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.table.api.EnvironmentSettings;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 import org.junit.jupiter.api.BeforeEach;
@@ -130,17 +131,19 @@ class FlinkSqlServiceJobRegistryTest {
 
     @Test
     void submitJobRegistersInsertIntoStatementWithoutSyncCollection() {
+        // Mock TableResult to avoid Flink optimizer NPE (metadataHandlerProvider=null) in embedded environment
+        // for INSERT INTO statements during unit tests.
         TableResult mockResult = mock(TableResult.class);
         JobClient mockClient = mock(JobClient.class);
-        JobID jobId = new JobID();
-        when(mockClient.getJobID()).thenReturn(jobId);
+        when(mockClient.getJobID()).thenReturn(JobID.generate());
         when(mockClient.getJobStatus()).thenReturn(CompletableFuture.completedFuture(JobStatus.RUNNING));
-        when(mockResult.getJobClient()).thenReturn(Optional.of(mockClient));
-        when(tableEnv.executeSql(anyString())).thenReturn(mockResult);
+        when(mockResult.getJobClient()).thenReturn(java.util.Optional.of(mockClient));
 
-        FlinkJobSummary summary = service.submitJob(QueryRequest.builder()
-            .sql("INSERT INTO job_sink SELECT * FROM job_source")
-            .build());
+        // Using a spy to mock executeMutationSql while keeping the rest of the service logic
+        FlinkSqlService spyService = spy(service);
+        doReturn(mockResult).when(spyService).executeMutationSql(anyString(), anyString());
+
+        FlinkJobSummary summary = spyService.submitJob(QueryRequest.sql("INSERT INTO job_sink SELECT * FROM job_source", null, null, null));
 
         assertEquals("INSERT", summary.statementType());
         assertFalse(summary.queryId().isBlank());
@@ -150,9 +153,7 @@ class FlinkSqlServiceJobRegistryTest {
 
     @Test
     void executeSyncRejectsInsertStatementsWithModeGuidance() {
-        var result = service.executeSync(QueryRequest.builder()
-            .sql("INSERT INTO job_sink SELECT * FROM job_source")
-            .build());
+        var result = service.executeSync(QueryRequest.sql("INSERT INTO job_sink SELECT * FROM job_source", null, null, null));
 
         assertNotNull(result.error());
         assertTrue(result.error().contains("/api/query/jobs"));
@@ -162,15 +163,14 @@ class FlinkSqlServiceJobRegistryTest {
     void submittedJobIsRecoverableFromPersistentStore() {
         TableResult mockResult = mock(TableResult.class);
         JobClient mockClient = mock(JobClient.class);
-        JobID jobId = new JobID();
-        when(mockClient.getJobID()).thenReturn(jobId);
+        when(mockClient.getJobID()).thenReturn(JobID.generate());
         when(mockClient.getJobStatus()).thenReturn(CompletableFuture.completedFuture(JobStatus.RUNNING));
-        when(mockResult.getJobClient()).thenReturn(Optional.of(mockClient));
-        when(tableEnv.executeSql(anyString())).thenReturn(mockResult);
+        when(mockResult.getJobClient()).thenReturn(java.util.Optional.of(mockClient));
 
-        FlinkJobSummary summary = service.submitJob(QueryRequest.builder()
-            .sql("INSERT INTO job_sink SELECT * FROM job_source")
-            .build());
+        FlinkSqlService spyService = spy(service);
+        doReturn(mockResult).when(spyService).executeMutationSql(anyString(), anyString());
+
+        FlinkJobSummary summary = spyService.submitJob(QueryRequest.sql("INSERT INTO job_sink SELECT * FROM job_source", null, null, null));
 
         FlinkJobStore reloadedStore = new FlinkJobStore(new ObjectMapper(), configFor(storePath));
         FlinkManagedJobDetails persisted = reloadedStore.findById(summary.queryId()).orElseThrow();

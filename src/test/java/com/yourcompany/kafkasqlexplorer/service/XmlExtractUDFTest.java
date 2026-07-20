@@ -48,8 +48,15 @@ class XmlExtractUDFTest {
                 "<!DOCTYPE foo [ <!ENTITY xxe SYSTEM \"file:///etc/passwd\"> ]>" +
                 "<foo>&xxe;</foo>";
 
-        String result = udf.eval(xml, "/foo");
-        // Due to disallow-doctype-decl being true, it should throw an error or at least NOT resolve the entity
-        assertTrue(result.contains("Error") || result.isEmpty() || !result.contains("root:x:0:0"));
+        // Suppress stderr during this test to avoid polluting test logs with fatal error
+        java.io.PrintStream originalErr = System.err;
+        System.setErr(new java.io.PrintStream(new java.io.ByteArrayOutputStream()));
+        try {
+            String result = udf.eval(xml, "/foo");
+            // Due to disallow-doctype-decl being true, it should throw an error or at least NOT resolve the entity
+            assertTrue(result.contains("Error") || result.isEmpty() || !result.contains("root:x:0:0"));
+        } finally {
+            System.setErr(originalErr);
+        }
     }
 }

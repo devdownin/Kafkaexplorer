@@ -2,7 +2,7 @@
 [![Java CI with Maven](https://github.com/yourusername/kafka-sql-explorer/actions/workflows/ci.yml/badge.svg)](https://github.com/yourusername/kafka-sql-explorer/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-AGPL%20v3-red.svg)](LICENSE)
 
-**Spring Boot 3.5.x | Apache Flink 2.2.x (Embedded) | Java 21 | React 19**
+**Spring Boot 3.5.x | Apache Flink 2.2.x (Embedded) | Java 25 | React 19**
 
 Kafka SQL Explorer est une application web moderne conçue pour les Data Engineers et Architectes, permettant d'explorer des clusters Kafka et d'interroger les topics en temps réel via SQL Flink.
 
@@ -79,7 +79,7 @@ JSON Complexe : Un topic demo.orders.complex avec des structures imbriquées pou
 Messages Corrompus : Un topic demo.errors.poison contenant des données malformées pour observer la résilience aux erreurs.
 Supply Chain 2.0 (Processus Complexe) : Un pipeline massif en 20 étapes (`demo.sc.01.order.placed.out` à `20.delivered.out`) impliquant 60 topics. Il propose des payloads JSON imbriqués évolutifs (ajout de données de paiement, de préparation, de contrôle qualité et logistiques au fil de l'eau) pour démontrer l'**Inférence de Schéma** avancée et le **Stream Flow** sur des architectures complexes.
 Stack Technique
-Backend : Spring Boot 3.5.x, Java 21 (Records).
+Backend : Spring Boot 3.5.x, Java 25 (Records).
 Streaming : Apache Flink 2.2.x (Embedded LocalEnvironment).
 Parsing : Jackson (JSON), JAXB/StAX (XML).
 Frontend : React 19, Tailwind CSS, Monaco Editor, Vite.
@@ -87,7 +87,7 @@ Cache : Caffeine (Métadonnées Kafka).
 Démarrage Rapide
 Prérequis
 Docker & Docker Compose
-JDK 21+
+JDK 25+
 Installation
 Lancer Kafka :
 - Pour Kafka 3.x (mode Zookeeper) :

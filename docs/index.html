@@ -1,275 +1,421 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Kafka SQL Explorer | Real-Time Kafka Intelligence</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        primary: "#25f4f4",
+                        secondary: "#10b981",
+                        surface: "#102222",
+                        "surface-light": "#1b2d2d",
+                        border: "#2d4444",
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                }
+            }
+        }
+    </script>
     <style>
-        :root {
-            --primary-color: #00ff41; /* Cyber green */
-            --bg-dark: #0d0d0d;
-            --card-bg: #1a1a1a;
-            --text-muted: #a0a0a0;
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
         }
-        body {
-            background-color: var(--bg-dark);
-            color: white;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        .cyber-gradient {
+            background: radial-gradient(circle at 50% 50%, rgba(37, 244, 244, 0.1) 0%, transparent 50%);
         }
-        .navbar {
-            background-color: rgba(13, 13, 13, 0.9);
-            border-bottom: 1px solid #333;
+        .glass-effect {
+            background: rgba(16, 34, 34, 0.8);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(45, 68, 68, 0.5);
         }
-        .hero-section {
-            padding: 100px 0;
-            background: linear-gradient(180deg, #0d0d0d 0%, #1a1a1a 100%);
-            border-bottom: 1px solid #333;
+        .glow-text {
+            text-shadow: 0 0 20px rgba(37, 244, 244, 0.5);
         }
-        .feature-card {
-            background-color: var(--card-bg);
-            border: 1px solid #333;
-            transition: transform 0.3s, border-color 0.3s;
-            height: 100%;
-        }
-        .feature-card:hover {
-            transform: translateY(-5px);
-            border-color: var(--primary-color);
-        }
-        .icon-box {
-            font-size: 2.5rem;
-            color: var(--primary-color);
-            margin-bottom: 1rem;
-        }
-        .accent-text {
-            color: var(--primary-color);
-        }
-        .step-number {
-            background-color: var(--primary-color);
-            color: black;
-            width: 30px;
-            height: 30px;
-            border-radius: 50%;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: bold;
-            margin-right: 10px;
-        }
-        code {
-            color: #ff79c6;
-            background: #282a36;
-            padding: 2px 5px;
-            border-radius: 4px;
-        }
-        .btn-primary {
-            background-color: var(--primary-color);
-            border-color: var(--primary-color);
-            color: black;
-            font-weight: bold;
-        }
-        .btn-primary:hover {
-            background-color: #00cc33;
-            border-color: #00cc33;
-            color: black;
-        }
-        .section-title {
-            margin-bottom: 50px;
-            text-align: center;
-        }
-        .service-highlight {
-            padding: 60px 0;
-        }
-        .service-highlight:nth-child(even) {
-            background-color: #111;
+        .hero-pattern {
+            background-image: radial-gradient(#2d4444 0.5px, transparent 0.5px);
+            background-size: 24px 24px;
         }
     </style>
 </head>
-<body>
+<body class="bg-surface text-slate-200 font-sans selection:bg-primary/30 selection:text-primary">
 
-<nav class="navbar navbar-expand-lg navbar-dark sticky-top">
-    <div class="container">
-        <a class="navbar-brand fw-bold" href="#">
-            <i class="bi bi-terminal accent-text"></i> KAFKA <span class="accent-text">SQL</span> EXPLORER
-        </a>
-        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
-            <span class="navbar-toggler-icon"></span>
-        </button>
-        <div class="collapse navbar-collapse" id="navbarNav">
-            <ul class="navbar-nav ms-auto">
-                <li class="nav-item"><a class="nav-link" href="#originality">Originality</a></li>
-                <li class="nav-item"><a class="nav-link" href="#services">Services</a></li>
-                <li class="nav-item"><a class="nav-link" href="#quickstart">Quickstart</a></li>
-            </ul>
-        </div>
-    </div>
-</nav>
+    <!-- Navigation -->
+    <nav class="fixed top-0 left-0 right-0 z-50 glass-effect border-b border-border">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16 items-center">
+                <div class="flex items-center gap-2">
+                    <span class="material-symbols-outlined text-primary text-3xl">terminal</span>
+                    <span class="text-xl font-bold tracking-tight text-white">KAFKA <span class="text-primary">SQL</span> EXPLORER</span>
+                </div>
 
-<header class="hero-section text-center">
-    <div class="container">
-        <h1 class="display-3 fw-bold mb-4">Master Your Kafka Streams with <span class="accent-text">Flink SQL</span></h1>
-        <p class="lead mb-5 text-muted">A modern explorer for Data Engineers to preview, query, and trace Kafka data in real-time without the complexity of manual DDL.</p>
-        <div class="d-flex justify-content-center gap-3">
-            <a href="#quickstart" class="btn btn-primary btn-lg px-5">Get Started</a>
-            <a href="../" class="btn btn-outline-light btn-lg px-5"><i class="bi bi-github"></i> GitHub</a>
-        </div>
-    </div>
-</header>
+                <!-- Desktop Menu -->
+                <div class="hidden md:flex items-center gap-8">
+                    <a href="#features" class="text-sm font-medium hover:text-primary transition-colors">Features</a>
+                    <a href="#innovation" class="text-sm font-medium hover:text-primary transition-colors">Innovation</a>
+                    <a href="#ai" class="text-sm font-medium hover:text-primary transition-colors">AI Analysis</a>
+                    <a href="#quickstart" class="px-4 py-2 bg-primary text-surface font-bold rounded hover:bg-white transition-all transform hover:scale-105">Get Started</a>
+                </div>
 
-<section id="originality" class="py-5">
-    <div class="container">
-        <div class="section-title">
-            <h2 class="display-5 fw-bold">Why It's <span class="accent-text">Original</span></h2>
-            <p class="text-muted">Moving beyond simple topic listing to a true Query-First experience.</p>
-        </div>
-        <div class="row g-4">
-            <div class="col-md-4">
-                <div class="card feature-card p-4">
-                    <div class="icon-box"><i class="bi bi-magic"></i></div>
-                    <h3>Interactive Query Design</h3>
-                    <p class="text-muted">Stop typing long JSON paths. Click on any field in a message preview to automatically populate your <code>SELECT</code> or <code>WHERE</code> clauses.</p>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="card feature-card p-4">
-                    <div class="icon-box"><i class="bi bi-cpu"></i></div>
-                    <h3>Automated Inference</h3>
-                    <p class="text-muted">The engine analyzes message samples to generate optimal Flink DDL, mapping complex nested JSON and XML structures instantly.</p>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="card feature-card p-4">
-                    <div class="icon-box"><i class="bi bi-rewind"></i></div>
-                    <h3>Smart Offset Control</h3>
-                    <p class="text-muted">Toggle between Earliest and Latest modes with a single click. The explorer handles complex DDL or SQL hints for you.</p>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="card feature-card p-4">
-                    <div class="icon-box"><i class="bi bi-graph-up"></i></div>
-                    <h3>Visual Lineage</h3>
-                    <p class="text-muted">See your data flow. Interactive graphs show how messages propagate between topics and how views transform your streams.</p>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="card feature-card p-4">
-                    <div class="icon-box"><i class="bi bi-shield-check"></i></div>
-                    <h3>Didactic & Secure</h3>
-                    <p class="text-muted">The codebase is designed as a learning resource, featuring extensive documentation on Flink integration and built-in XXE protection.</p>
-                </div>
-            </div>
-        </div>
-    </div>
-</section>
-
-<section id="services" class="py-5">
-    <div class="container">
-        <div class="section-title">
-            <h2 class="display-5 fw-bold">Guided <span class="accent-text">Services</span> Tour</h2>
-        </div>
-
-        <div class="row align-items-center service-highlight">
-            <div class="col-md-6">
-                <h3 class="mb-3"><i class="bi bi-search me-2 accent-text"></i> Topic Exploration</h3>
-                <p>Instantly browse all topics in your cluster. Get high-level metadata like partition counts and estimated data sizes. The <strong>Sampling</strong> feature pulls the latest messages so you can understand the data structure immediately.</p>
-                <ul class="list-unstyled">
-                    <li><i class="bi bi-check2 accent-text"></i> Real-time metadata (offsets, partitions)</li>
-                    <li><i class="bi bi-check2 accent-text"></i> Pretty-print for JSON & XML</li>
-                    <li><i class="bi bi-check2 accent-text"></i> Quick copy to clipboard</li>
-                </ul>
-            </div>
-            <div class="col-md-6">
-                <div class="p-4 bg-dark rounded border border-secondary shadow">
-                    <code class="d-block text-white-50 small mb-2">// Sample Data Preview</code>
-                    <pre class="m-0" style="color: #6272a4;">{
-  "order_id": "ORD-123",
-  "customer": { "id": "C-45", "name": "Alice" },
-  "items": [...]
-}</pre>
-                </div>
+                <!-- Mobile Toggle -->
+                <button id="mobile-menu-toggle" class="md:hidden text-white p-2">
+                    <span class="material-symbols-outlined">menu</span>
+                </button>
             </div>
         </div>
 
-        <div class="row align-items-center service-highlight flex-md-row-reverse">
-            <div class="col-md-6">
-                <h3 class="mb-3"><i class="bi bi-code-square me-2 accent-text"></i> Flink SQL Assistant</h3>
-                <p>Our integrated editor powered by CodeMirror makes writing complex streaming queries easy. Use the assistant to generate <code>JSON_VALUE</code> or custom <code>XmlExtract</code> calls without looking up the syntax.</p>
-                <ul class="list-unstyled">
-                    <li><i class="bi bi-check2 accent-text"></i> SQL Auto-completion (Ctrl+Space)</li>
-                    <li><i class="bi bi-check2 accent-text"></i> Offset Reset Switch (Earliest/Latest)</li>
-                    <li><i class="bi bi-check2 accent-text"></i> Visual result grid with sorting</li>
-                </ul>
-            </div>
-            <div class="col-md-6">
-                <div class="p-4 bg-dark rounded border border-secondary shadow">
-                    <code class="d-block text-white-50 small mb-2">// Generated Flink SQL</code>
-                    <pre class="m-0" style="color: #f8f8f2;">SELECT <span style="color: #50fa7b;">JSON_VALUE</span>(raw, '$.customer.name'),
-       amount
-FROM "orders"
-WHERE amount > 100;</pre>
-                </div>
+        <!-- Mobile Menu -->
+        <div id="mobile-menu" class="hidden md:hidden glass-effect border-b border-border">
+            <div class="px-4 pt-2 pb-6 space-y-4">
+                <a href="#features" class="block text-lg font-medium hover:text-primary transition-colors py-2 border-b border-border/50">Features</a>
+                <a href="#innovation" class="block text-lg font-medium hover:text-primary transition-colors py-2 border-b border-border/50">Innovation</a>
+                <a href="#ai" class="block text-lg font-medium hover:text-primary transition-colors py-2 border-b border-border/50">AI Analysis</a>
+                <a href="#docs" class="block text-lg font-medium hover:text-primary transition-colors py-2 border-b border-border/50">Docs</a>
+                <a href="#quickstart" class="block w-full text-center px-4 py-3 bg-primary text-surface font-bold rounded mt-4">Get Started</a>
             </div>
         </div>
+    </nav>
 
-        <div class="row align-items-center service-highlight">
-            <div class="col-md-6">
-                <h3 class="mb-3"><i class="bi bi-share me-2 accent-text"></i> Stream Flow & Traceability</h3>
-                <p>Trace a specific message ID (like a Correlation ID) across your entire architecture. Visualize how a message moves from the "Received" topic to "Delivered" through various transformation steps.</p>
-                <ul class="list-unstyled">
-                    <li><i class="bi bi-check2 accent-text"></i> Cross-topic search by ID or Pattern</li>
-                    <li><i class="bi bi-check2 accent-text"></i> Support for JSONPath & XPath</li>
-                    <li><i class="bi bi-check2 accent-text"></i> Chronological flow visualization</li>
-                </ul>
+    <!-- Hero Section -->
+    <header class="relative pt-32 pb-20 overflow-hidden hero-pattern">
+        <div class="absolute inset-0 cyber-gradient pointer-events-none"></div>
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10 text-center">
+            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-bold mb-6 tracking-wider uppercase">
+                <span class="relative flex h-2 w-2">
+                  <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+                  <span class="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+                </span>
+                Powered by Flink 2.2 & React 19
             </div>
-            <div class="col-md-6">
-                <div class="text-center p-4">
-                    <i class="bi bi-node-plus display-1 accent-text opacity-50"></i>
-                    <p class="mt-3 text-muted italic">Interactive Cytoscape.js graphs</p>
-                </div>
+            <h1 class="text-5xl md:text-7xl font-extrabold text-white mb-6 tracking-tight">
+                Master the Stream with <br/>
+                <span class="text-transparent bg-clip-text bg-gradient-to-r from-primary to-secondary glow-text uppercase">Real-Time Intelligence</span>
+            </h1>
+            <p class="text-xl text-slate-400 max-w-3xl mx-auto mb-10 leading-relaxed">
+                The ultimate companion for Data Engineers. Preview, query, and trace Kafka data instantly. No manual DDL, no complexity—just SQL.
+            </p>
+            <div class="flex flex-col sm:flex-row justify-center gap-4">
+                <a href="#quickstart" class="px-8 py-4 bg-primary text-surface font-bold rounded-lg text-lg hover:bg-white transition-all shadow-[0_0_20px_rgba(37,244,244,0.3)]">
+                    Start Deploying
+                </a>
+                <a href="https://github.com/Compagnons-du-dev/kafka-sql-explorer" class="px-8 py-4 glass-effect text-white font-bold rounded-lg text-lg hover:border-primary transition-all flex items-center justify-center gap-2">
+                    <span class="material-symbols-outlined">code</span>
+                    View Source
+                </a>
             </div>
         </div>
-    </div>
-</section>
+    </header>
 
-<section id="quickstart" class="py-5 bg-dark">
-    <div class="container">
-        <div class="section-title">
-            <h2 class="display-5 fw-bold">Get Started in <span class="accent-text">Seconds</span></h2>
-        </div>
-        <div class="row justify-content-center">
-            <div class="col-md-8">
-                <div class="card bg-dark border-secondary p-4">
-                    <div class="mb-4">
-                        <h5><span class="step-number">1</span> Spin up Kafka (now with KRaft 4.2 support!)</h5>
-                        <p class="text-muted ms-4">Use our pre-configured Docker Compose to get a production-ready environment.</p>
-                        <div class="ms-4 p-3 bg-black rounded">
-                            <code>docker compose -f docker-compose-kafka4.yml up -d</code>
+    <!-- Core Innovation: Query Assistant -->
+    <section id="innovation" class="py-24 bg-surface-light/30 border-y border-border relative overflow-hidden">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="grid lg:grid-cols-2 gap-16 items-center">
+                <div>
+                    <h2 class="text-primary font-bold tracking-widest text-sm uppercase mb-4">Core Innovation</h2>
+                    <h3 class="text-4xl font-bold text-white mb-6 leading-tight">Query Design <span class="text-slate-500">at the speed of a click.</span></h3>
+                    <p class="text-lg text-slate-400 mb-8">
+                        Stop manual typing of deep JSON paths. Our Query Assistant analyzes your live stream and lets you build complex Flink SQL by simply clicking on message fields.
+                    </p>
+                    <ul class="space-y-4">
+                        <li class="flex items-start gap-3">
+                            <span class="material-symbols-outlined text-primary">check_circle</span>
+                            <span><strong class="text-white">Interactive Selection:</strong> Click any key to add to <code>SELECT</code>.</span>
+                        </li>
+                        <li class="flex items-start gap-3">
+                            <span class="material-symbols-outlined text-primary">check_circle</span>
+                            <span><strong class="text-white">Smart Filters:</strong> Click values to populate <code>WHERE</code> clauses instantly.</span>
+                        </li>
+                        <li class="flex items-start gap-3">
+                            <span class="material-symbols-outlined text-primary">check_circle</span>
+                            <span><strong class="text-white">Auto-Inference:</strong> Detecting JSON and XML structures for perfect DDL generation.</span>
+                        </li>
+                    </ul>
+                </div>
+                <div class="relative group">
+                    <div class="absolute -inset-1 bg-gradient-to-r from-primary to-secondary rounded-xl blur opacity-25 group-hover:opacity-50 transition duration-1000"></div>
+                    <div class="relative glass-effect rounded-xl overflow-hidden shadow-2xl">
+                        <div class="flex items-center gap-2 px-4 py-2 bg-black/40 border-b border-border">
+                            <div class="flex gap-1.5">
+                                <div class="w-3 h-3 rounded-full bg-red-500/50"></div>
+                                <div class="w-3 h-3 rounded-full bg-yellow-500/50"></div>
+                                <div class="w-3 h-3 rounded-full bg-green-500/50"></div>
+                            </div>
+                            <span class="text-xs font-mono text-slate-500 ml-2">query_assistant.sql</span>
+                        </div>
+                        <div class="p-6 font-mono text-sm">
+                            <div class="text-slate-500 mb-2">// Select fields by clicking preview</div>
+                            <div class="flex flex-wrap gap-x-2">
+                                <span class="text-primary">SELECT</span>
+                                <span class="text-white">order_id,</span>
+                            </div>
+                            <div class="flex flex-wrap gap-x-2 ml-4">
+                                <span class="text-secondary">JSON_VALUE</span>(raw_value, <span class="text-orange-300">'$.customer.name'</span>) <span class="text-primary">AS</span> customer,
+                            </div>
+                            <div class="flex flex-wrap gap-x-2 ml-4">
+                                <span class="text-white">amount</span>
+                            </div>
+                            <div class="text-primary mt-2">FROM <span class="text-white">"demo.orders.received"</span></div>
+                            <div class="text-primary">WHERE <span class="text-white">amount > 500;</span></div>
+                        </div>
+                        <div class="bg-black/20 p-4 border-t border-border flex justify-between items-center">
+                            <span class="text-[10px] text-slate-500 uppercase tracking-widest">Live Result Preview</span>
+                            <div class="flex gap-2">
+                                <div class="px-2 py-1 bg-primary/20 text-primary text-[10px] font-bold rounded">EARLIEST</div>
+                                <div class="px-2 py-1 bg-surface-light text-slate-400 text-[10px] font-bold rounded">RUNNING</div>
+                            </div>
                         </div>
                     </div>
-                    <div class="mb-4">
-                        <h5><span class="step-number">2</span> Run the Explorer</h5>
-                        <p class="text-muted ms-4">Launch the Spring Boot application locally.</p>
-                        <div class="ms-4 p-3 bg-black rounded">
-                            <code>./mvnw spring-boot:run</code>
-                        </div>
-                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Bento Grid Features -->
+    <section id="features" class="py-24">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center mb-16">
+                <h2 class="text-primary font-bold tracking-widest text-sm uppercase mb-4">Ecosystem</h2>
+                <h3 class="text-4xl font-bold text-white mb-4 uppercase">Powerful Tools for Data Engineers</h3>
+                <p class="text-slate-400 max-w-2xl mx-auto">One integrated platform to handle everything from discovery to deep auditing.</p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 auto-rows-[240px]">
+                <!-- Lineage -->
+                <div class="md:col-span-2 glass-effect rounded-2xl p-8 flex flex-col justify-between hover:border-primary/50 transition-colors group">
                     <div>
-                        <h5><span class="step-number">3</span> Explore</h5>
-                        <p class="text-muted ms-4">Open your browser at <span class="accent-text">http://localhost:8080</span> and start querying!</p>
+                        <span class="material-symbols-outlined text-primary text-4xl mb-4 group-hover:scale-110 transition-transform">account_tree</span>
+                        <h4 class="text-2xl font-bold text-white mb-2">Visual SQL Lineage</h4>
+                        <p class="text-slate-400">Track data flow from Kafka topics through Flink tables and views in an interactive dependency graph.</p>
+                    </div>
+                    <div class="flex gap-2">
+                        <span class="px-2 py-1 bg-primary/10 text-primary text-[10px] font-bold rounded border border-primary/20 uppercase tracking-tighter">Cytoscape.js</span>
+                        <span class="px-2 py-1 bg-primary/10 text-primary text-[10px] font-bold rounded border border-primary/20 uppercase tracking-tighter">Real-time DAG</span>
+                    </div>
+                </div>
+
+                <!-- Monaco Editor -->
+                <div class="glass-effect rounded-2xl p-8 flex flex-col justify-between hover:border-primary/50 transition-colors group">
+                    <div>
+                        <span class="material-symbols-outlined text-primary text-4xl mb-4 group-hover:scale-110 transition-transform">code_blocks</span>
+                        <h4 class="text-xl font-bold text-white mb-2">Monaco Editor</h4>
+                        <p class="text-slate-400">VS Code power in your browser. Syntax highlighting, autocomplete, and history.</p>
+                    </div>
+                    <span class="text-primary font-mono text-xs">Ctrl + Space to Complete</span>
+                </div>
+
+                <!-- Stream Flow -->
+                <div class="glass-effect rounded-2xl p-8 flex flex-col justify-between hover:border-primary/50 transition-colors group">
+                    <div>
+                        <span class="material-symbols-outlined text-primary text-4xl mb-4 group-hover:scale-110 transition-transform">trace</span>
+                        <h4 class="text-xl font-bold text-white mb-2">Stream Flow</h4>
+                        <p class="text-slate-400">Trace a specific message ID across your entire architecture chronologically.</p>
+                    </div>
+                    <span class="text-primary font-mono text-xs">JSONPath & XPath Support</span>
+                </div>
+
+                <!-- Comparison -->
+                <div class="md:col-span-2 glass-effect rounded-2xl p-8 flex flex-col justify-between hover:border-primary/50 transition-colors group relative overflow-hidden">
+                    <div class="relative z-10">
+                        <span class="material-symbols-outlined text-primary text-4xl mb-4 group-hover:scale-110 transition-transform">difference</span>
+                        <h4 class="text-2xl font-bold text-white mb-2">Side-by-Side Compare</h4>
+                        <p class="text-slate-400">Compare topics with shared SQL logic. Highlight data discrepancies and identify missing records instantly.</p>
+                    </div>
+                    <div class="flex gap-2 relative z-10">
+                        <span class="px-2 py-1 bg-primary/10 text-primary text-[10px] font-bold rounded border border-primary/20 uppercase tracking-tighter">Intelligent Diffing</span>
+                        <span class="px-2 py-1 bg-primary/10 text-primary text-[10px] font-bold rounded border border-primary/20 uppercase tracking-tighter">Live Metrics</span>
+                    </div>
+                </div>
+
+                <!-- Functional Audit -->
+                <div class="md:col-span-3 glass-effect rounded-2xl p-8 flex flex-col md:flex-row gap-8 items-center hover:border-primary/50 transition-colors group">
+                    <div class="flex-1">
+                        <span class="material-symbols-outlined text-primary text-4xl mb-4 group-hover:scale-110 transition-transform">health_metrics</span>
+                        <h4 class="text-2xl font-bold text-white mb-2">Automated Functional Audit</h4>
+                        <p class="text-slate-400">Detect "poison messages", measure end-to-end latency, and monitor drop-off rates across business processes without writing a single line of code.</p>
+                    </div>
+                    <div class="flex flex-col gap-3 min-w-[200px]">
+                        <div class="h-2 w-full bg-surface-light rounded-full overflow-hidden">
+                            <div class="h-full bg-primary w-[92%]"></div>
+                        </div>
+                        <div class="flex justify-between text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                            <span>Cluster Health</span>
+                            <span class="text-primary">92% Reliable</span>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
-    </div>
-</section>
+    </section>
 
-<footer class="py-4 border-top border-secondary text-center">
-    <div class="container">
-        <p class="mb-0 text-muted">&copy; 2026 Kafka SQL Explorer - Built for Data Engineers by <span class="accent-text">Compagnons du dev</span>.</p>
-    </div>
-</footer>
+    <!-- AI Analysis Section -->
+    <section id="ai" class="py-24 bg-gradient-to-b from-surface to-[#0a1515] relative">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
+            <div class="glass-effect rounded-3xl p-8 md:p-16 border-primary/20 shadow-[0_0_50px_rgba(37,244,244,0.1)]">
+                <div class="grid lg:grid-cols-2 gap-12 items-center">
+                    <div>
+                        <div class="inline-flex items-center gap-2 text-secondary font-bold text-xs uppercase tracking-widest mb-4">
+                            <span class="material-symbols-outlined text-sm">psychology</span>
+                            Process Mining AI
+                        </div>
+                        <h3 class="text-4xl font-bold text-white mb-6">Autonomous Stream <span class="text-primary uppercase">Analysis</span></h3>
+                        <p class="text-lg text-slate-400 mb-8 leading-relaxed">
+                            Leverage LLMs (Claude or Local Ollama) to automatically profile fields, reconstruct business flows, and detect anomalies.
+                        </p>
+                        <div class="grid grid-cols-2 gap-6">
+                            <div class="p-4 bg-surface-light rounded-xl border border-border">
+                                <h5 class="font-bold text-white mb-1">Field Profiling</h5>
+                                <p class="text-xs text-slate-500">Detects IDs, timestamps, and status fields automatically.</p>
+                            </div>
+                            <div class="p-4 bg-surface-light rounded-xl border border-border">
+                                <h5 class="font-bold text-white mb-1">Anomaly Detection</h5>
+                                <p class="text-xs text-slate-500">Identifies sequence breaks and temporal delays.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="relative">
+                         <div class="bg-black/40 rounded-2xl border border-border p-6 font-mono text-xs">
+                             <div class="text-secondary mb-4 flex items-center gap-2">
+                                 <span class="animate-pulse w-2 h-2 rounded-full bg-secondary"></span>
+                                 AI_ANALYSIS_REPORT.md
+                             </div>
+                             <div class="space-y-3">
+                                 <p><span class="text-slate-500"># Analysis:</span> Topic "demo.sc.08.logistics.planned"</p>
+                                 <p><span class="text-primary">DETECTED:</span> Correlation ID mapping across 12 topics.</p>
+                                 <p><span class="text-yellow-500">WARNING:</span> Temporal anomaly detected between step 07 and 08. Avg delay: +450ms.</p>
+                                 <p><span class="text-slate-500"># Flow:</span> Mermaid generated.</p>
+                                 <div class="pl-4 border-l border-border text-slate-400">
+                                     graph LR<br/>
+                                     A[Received] --> B[Processing]<br/>
+                                     B -- anomaly --> C[Error]
+                                 </div>
+                             </div>
+                         </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Deep Dives -->
+    <section id="docs" class="py-24 bg-surface-light/20">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center mb-16">
+                <h2 class="text-primary font-bold tracking-widest text-sm uppercase mb-4">Resources</h2>
+                <h3 class="text-4xl font-bold text-white mb-4 uppercase">Technical Deep Dives</h3>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <a href="architecture.md" class="glass-effect p-8 rounded-2xl hover:border-primary transition-all group">
+                    <span class="material-symbols-outlined text-primary mb-4">architecture</span>
+                    <h4 class="text-xl font-bold text-white mb-2 group-hover:text-primary transition-colors">Architecture</h4>
+                    <p class="text-sm text-slate-400">Deep dive into the Flink Embedded integration and backend design.</p>
+                </a>
+                <a href="UI_SPECIFICATION.md" class="glass-effect p-8 rounded-2xl hover:border-primary transition-all group">
+                    <span class="material-symbols-outlined text-primary mb-4">description</span>
+                    <h4 class="text-xl font-bold text-white mb-2 group-hover:text-primary transition-colors">UI Specification</h4>
+                    <p class="text-sm text-slate-400">Detailed functional specifications for all modules and UX principles.</p>
+                </a>
+                <a href="LLM_OPEN_SOURCE_GUIDE.md" class="glass-effect p-8 rounded-2xl hover:border-primary transition-all group">
+                    <span class="material-symbols-outlined text-primary mb-4">smart_toy</span>
+                    <h4 class="text-xl font-bold text-white mb-2 group-hover:text-primary transition-colors">LLM Guide</h4>
+                    <p class="text-sm text-slate-400">How to configure and optimize local models for process mining.</p>
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Quickstart -->
+    <section id="quickstart" class="py-24">
+        <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+            <h2 class="text-4xl font-bold text-white mb-12 uppercase">Get Started in <span class="text-primary">Seconds</span></h2>
+
+            <div class="space-y-8 text-left">
+                <div class="relative pl-12 pb-8 border-l border-border">
+                    <div class="absolute left-0 top-0 -translate-x-1/2 w-8 h-8 rounded-full bg-primary text-surface flex items-center justify-center font-bold">1</div>
+                    <h4 class="text-xl font-bold text-white mb-2">Launch Infrastructure</h4>
+                    <p class="text-slate-400 mb-4">Spin up Kafka (now with KRaft 4.2 support) via Docker Compose.</p>
+                    <div class="bg-black/60 rounded-lg p-4 border border-border group relative">
+                        <code class="text-primary font-mono text-sm">docker compose -f docker-compose-kafka4.yml up -d</code>
+                    </div>
+                </div>
+
+                <div class="relative pl-12 pb-8 border-l border-border">
+                    <div class="absolute left-0 top-0 -translate-x-1/2 w-8 h-8 rounded-full bg-primary text-surface flex items-center justify-center font-bold">2</div>
+                    <h4 class="text-xl font-bold text-white mb-2">Run the Explorer</h4>
+                    <p class="text-slate-400 mb-4">Launch the Spring Boot application locally with a single command.</p>
+                    <div class="bg-black/60 rounded-lg p-4 border border-border group relative">
+                        <code class="text-primary font-mono text-sm">./mvnw spring-boot:run</code>
+                    </div>
+                </div>
+
+                <div class="relative pl-12 border-l border-border">
+                    <div class="absolute left-0 top-0 -translate-x-1/2 w-8 h-8 rounded-full bg-primary text-surface flex items-center justify-center font-bold">3</div>
+                    <h4 class="text-xl font-bold text-white mb-2">Explore & Query</h4>
+                    <p class="text-slate-400">Open <span class="text-primary">http://localhost:8080</span> and start mastering your streams.</p>
+                </div>
+            </div>
+
+            <div class="mt-16">
+                <a href="https://github.com/Compagnons-du-dev/kafka-sql-explorer" class="inline-flex items-center gap-3 px-10 py-5 bg-white text-surface font-bold rounded-xl text-xl hover:bg-primary transition-all shadow-[0_0_30px_rgba(255,255,255,0.1)]">
+                    <span class="material-symbols-outlined">rocket_launch</span>
+                    DEPLOY NOW
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="py-12 border-t border-border bg-black/40">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex flex-col md:flex-row justify-between items-center gap-8">
+                <div class="flex items-center gap-2">
+                    <span class="material-symbols-outlined text-primary">terminal</span>
+                    <span class="text-lg font-bold text-white uppercase tracking-tighter">Kafka SQL Explorer</span>
+                </div>
+                <div class="text-slate-500 text-sm">
+                    &copy; 2026 Compagnons du dev. Released under <a href="https://github.com/Compagnons-du-dev/kafka-sql-explorer/blob/main/LICENSE" class="text-slate-400 hover:text-primary underline">AGPL v3</a>.
+                </div>
+                <div class="flex gap-6">
+                    <a href="https://github.com/Compagnons-du-dev/kafka-sql-explorer" class="text-slate-500 hover:text-white transition-colors">
+                        <span class="material-symbols-outlined">star</span> GitHub
+                    </a>
+                    <a href="mailto:contact@compagnonsdudev.com" class="text-slate-500 hover:text-white transition-colors">
+                        <span class="material-symbols-outlined">mail</span> Contact
+                    </a>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        const toggle = document.getElementById('mobile-menu-toggle');
+        const menu = document.getElementById('mobile-menu');
+
+        toggle.addEventListener('click', () => {
+            menu.classList.toggle('hidden');
+            const icon = toggle.querySelector('span');
+            icon.innerText = menu.classList.contains('hidden') ? 'menu' : 'close';
+        });
+
+        // Close menu on link click
+        document.querySelectorAll('#mobile-menu a').forEach(link => {
+            link.addEventListener('click', () => {
+                menu.classList.add('hidden');
+                toggle.querySelector('span').innerText = 'menu';
+            });
+        });
+    </script>
 </body>
 </html>

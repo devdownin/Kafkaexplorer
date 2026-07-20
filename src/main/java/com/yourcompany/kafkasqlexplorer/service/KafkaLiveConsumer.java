@@ -54,6 +54,11 @@ public class KafkaLiveConsumer {
     }
 
     public void startSession(String sessionId, List<String> topics, FieldMapping fieldMapping) {
+        startSession(sessionId, topics, fieldMapping, null);
+    }
+
+    public void startSession(String sessionId, List<String> topics, FieldMapping fieldMapping,
+                             String auditFocus) {
         log.info("Starting live session {} for topics: {}", sessionId, topics);
 
         int windowSize = claudeConfig.getSnapshotWindowSize();
@@ -106,7 +111,7 @@ public class KafkaLiveConsumer {
                     scheduler.submit(() -> {
                         try {
                             ProcessMiningResult result = llmAnalysisService.analyzeLive(
-                                snapshot, fieldMapping, lastFlowchart[0]);
+                                snapshot, fieldMapping, lastFlowchart[0], auditFocus);
 
                             if (result.flowchart() != null && !result.flowchart().isBlank()
                                     && !"NO_CHANGE".equals(result.flowchart())) {
@@ -122,6 +127,10 @@ public class KafkaLiveConsumer {
                                 for (AnomalyReport anomaly : result.anomalies()) {
                                     sseEmitterManager.send(sessionId, "ANOMALY_DETECTED", anomaly);
                                 }
+                            }
+
+                            if (result.ragSources() != null && !result.ragSources().isEmpty()) {
+                                sseEmitterManager.send(sessionId, "RAG_SOURCES", result.ragSources());
                             }
 
                             // Send window stats

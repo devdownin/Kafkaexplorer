@@ -1,0 +1,95 @@
+# Kafka Explorer + SpectraLLM — single-command combined stack.
+#
+# Brings up a Kafka broker (with demo topics), Kafka Explorer, and a full local
+# SpectraLLM instance, wired so Kafka Explorer runs its message-exchange audit
+# (Process Mining) against SpectraLLM via its API — 100% local, no API key.
+#
+# Prerequisites
+#   * SpectraLLM checked out next to this repo (sibling dir). Override the path
+#     with SPECTRALLM_DIR=/path/to/SpectraLLM if it lives elsewhere.
+#   * SpectraLLM models downloaded once (GGUF files under <SpectraLLM>/data/models):
+#         cd ../SpectraLLM && ./scripts/start.sh --first-run   # then Ctrl-C once pulled
+#     The chat/embed llama.cpp servers need those files to answer audit queries.
+#   * Docker Compose v2.20+ (for the `include:` element).
+#
+# Usage
+#   docker compose -f docker-compose-spectra.yml up -d --build
+#
+# Endpoints
+#   Kafka Explorer UI ....... http://localhost:8090   (remapped: SpectraLLM API owns 8080)
+#   SpectraLLM UI ........... http://localhost
+#   SpectraLLM API .......... http://localhost:8080   (POST /api/query)
+#   Kafka (from host) ....... localhost:9092
+#
+# In the Explorer Config page the LLM provider is pre-set to SpectraLLM
+# (base-url http://spectra-api:8080). Toggle "Enrich audit with RAG" there to
+# switch use-rag on/off at runtime.
+
+name: kafka-explorer-spectra
+
+# Pull in the entire SpectraLLM stack (chromadb, llm-chat, llm-embed,
+# spectra-api, frontend). project_directory keeps SpectraLLM's own relative
+# paths (./data/models, ./scripts/...) resolving against its repo root, exactly
+# as its native `docker compose --project-directory .` invocation does.
+include:
+  - path: ${SPECTRALLM_DIR:-../SpectraLLM}/deploy/docker/docker-compose.yml
+    project_directory: ${SPECTRALLM_DIR:-../SpectraLLM}
+
+services:
+  # ── Kafka broker to explore (KRaft, single node) ──────────────────────────
+  # Named `explorer-kafka` to avoid merging with SpectraLLM's profile-gated
+  # `kafka` service that the include also carries.
+  explorer-kafka:
+    image: apache/kafka:4.2.0
+    container_name: explorer-kafka
+    ports:
+      - "9092:9092"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092"]
+      interval: 5s
+      timeout: 10s
+      retries: 5
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@explorer-kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://:29092,CONTROLLER://:9093,PLAINTEXT_HOST://:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://explorer-kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_CLUSTER_ID: "MkU2OhlMTT69sPFvS1n16g"
+
+  # ── Seed demo topics (70+) ────────────────────────────────────────────────
+  demo-setup:
+    image: apache/kafka:4.2.0
+    depends_on:
+      explorer-kafka:
+        condition: service_healthy
+    volumes:
+      - ./setup-demo.sh:/data/setup-demo.sh
+    entrypoint: ["sh", "-c", "cp /data/setup-demo.sh /tmp/setup-demo.sh && sed -i 's/\\r$$//' /tmp/setup-demo.sh && echo 'Waiting for Kafka...' && until /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server explorer-kafka:29092 > /dev/null 2>&1; do sleep 2; done && bash /tmp/setup-demo.sh explorer-kafka:29092"]
+
+  # ── Kafka Explorer, auditing via SpectraLLM ───────────────────────────────
+  explorer:
+    build: .
+    container_name: kafka-sql-explorer
+    ports:
+      - "8090:8080"   # SpectraLLM API already publishes host 8080
+    depends_on:
+      explorer-kafka:
+        condition: service_healthy
+      demo-setup:
+        condition: service_completed_successfully
+      spectra-api:
+        condition: service_healthy
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=explorer-kafka:29092
+      - CLAUDE_PROVIDER=SPECTRA
+      - CLAUDE_BASE_URL=http://spectra-api:8080
+      - CLAUDE_USE_RAG=false
+    restart: always

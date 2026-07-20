@@ -5,6 +5,8 @@ package com.yourcompany.kafkasqlexplorer.web;
 import com.yourcompany.kafkasqlexplorer.config.ClaudeConfig;
 import com.yourcompany.kafkasqlexplorer.config.KafkaConfig;
 import com.yourcompany.kafkasqlexplorer.service.KafkaAdminService;
+import com.yourcompany.kafkasqlexplorer.service.LlmClient;
+import com.yourcompany.kafkasqlexplorer.service.LlmClientFactory;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.*;
@@ -88,6 +90,15 @@ public class ConfigController {
         if (body.containsKey("llmModel")) {
             claudeConfig.setModel(asString(body.get("llmModel")));
         }
+        if (body.containsKey("llmUseRag") && body.get("llmUseRag") != null) {
+            claudeConfig.setUseRag(Boolean.parseBoolean(asString(body.get("llmUseRag"))));
+        }
+        if (body.containsKey("llmCollection")) {
+            claudeConfig.setCollection(asString(body.get("llmCollection")));
+        }
+        if (body.containsKey("llmRequestTimeoutSeconds") && body.get("llmRequestTimeoutSeconds") != null) {
+            claudeConfig.setRequestTimeoutSeconds(Integer.parseInt(asString(body.get("llmRequestTimeoutSeconds"))));
+        }
         if (body.containsKey("llmMaxTokens") && body.get("llmMaxTokens") != null) {
             claudeConfig.setMaxTokens(Integer.parseInt(asString(body.get("llmMaxTokens"))));
         }
@@ -110,6 +121,43 @@ public class ConfigController {
         return result;
     }
 
+    @PostMapping("/api/config/test-llm")
+    @ResponseBody
+    public Map<String, Object> testLlm() {
+        Map<String, Object> result = new HashMap<>();
+        result.put("provider", claudeConfig.getProviderLabel());
+        result.put("model", claudeConfig.getModel());
+
+        if (claudeConfig.isApiKeyRequired() && !claudeConfig.isApiKeyConfigured()) {
+            result.put("ok", false);
+            result.put("message", "An API key is required for " + claudeConfig.getProviderLabel()
+                + " but none is configured.");
+            return result;
+        }
+
+        try {
+            LlmClient client = LlmClientFactory.create(claudeConfig);
+            String reply = client.generate(
+                "You are a connectivity health check. Answer in one short word.",
+                "Reply with the word OK.");
+            result.put("ok", true);
+            result.put("message", "LLM reachable via " + claudeConfig.getResolvedBaseUrl()
+                + ". Sample reply: " + summarize(reply));
+        } catch (Exception e) {
+            result.put("ok", false);
+            result.put("message", e.getMessage() != null ? e.getMessage() : e.toString());
+        }
+        return result;
+    }
+
+    private String summarize(String reply) {
+        if (reply == null || reply.isBlank()) {
+            return "(empty)";
+        }
+        String trimmed = reply.strip();
+        return trimmed.length() > 80 ? trimmed.substring(0, 80) + "…" : trimmed;
+    }
+
     private void appendLlmConfig(Map<String, Object> result) {
         result.put("llmProvider", claudeConfig.getProvider().name());
         result.put("llmProviderLabel", claudeConfig.getProviderLabel());
@@ -117,6 +165,9 @@ public class ConfigController {
         result.put("llmApiKeyRequired", claudeConfig.isApiKeyRequired());
         result.put("llmBaseUrl", claudeConfig.getResolvedBaseUrl());
         result.put("llmModel", claudeConfig.getModel());
+        result.put("llmUseRag", claudeConfig.isUseRag());
+        result.put("llmCollection", claudeConfig.getCollection());
+        result.put("llmRequestTimeoutSeconds", claudeConfig.getRequestTimeoutSeconds());
         result.put("llmMaxTokens", claudeConfig.getMaxTokens());
         result.put("llmSnapshotWindowSize", claudeConfig.getSnapshotWindowSize());
         result.put("llmSnapshotWindowTimeoutSeconds", claudeConfig.getSnapshotWindowTimeoutSeconds());

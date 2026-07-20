@@ -5,10 +5,13 @@ package com.yourcompany.kafkasqlexplorer.service;
 import com.yourcompany.kafkasqlexplorer.config.ClaudeConfig;
 import com.yourcompany.kafkasqlexplorer.domain.FieldMapping;
 import com.yourcompany.kafkasqlexplorer.domain.KafkaMessage;
+import com.yourcompany.kafkasqlexplorer.domain.LlmResponse;
 import com.yourcompany.kafkasqlexplorer.domain.ProcessMiningResult;
+import com.yourcompany.kafkasqlexplorer.domain.RagSource;
 import com.yourcompany.kafkasqlexplorer.domain.SnapshotConfig;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.util.List;
 import java.util.Map;
@@ -48,7 +51,8 @@ class LlmAnalysisServiceTest {
               "anomalies": []
             }
             """;
-        when(llmClient.generate(anyString(), anyString())).thenReturn(jsonResponse);
+        when(llmClient.generateWithMeta(anyString(), anyString()))
+            .thenReturn(new LlmResponse(jsonResponse, List.of()));
 
         ProcessMiningResult result = llmAnalysisService.analyzeSnapshot(
             List.of("topic1"), SnapshotConfig.latestN(10), null);
@@ -68,7 +72,8 @@ class LlmAnalysisServiceTest {
               "anomalies": []
             }
             """;
-        when(llmClient.generate(anyString(), anyString())).thenReturn(jsonResponse);
+        when(llmClient.generateWithMeta(anyString(), anyString()))
+            .thenReturn(new LlmResponse(jsonResponse, List.of()));
 
         ProcessMiningResult result = llmAnalysisService.analyzeLive(
             List.of(new KafkaMessage("topic1", 0, 1L, 1000L, "k", "v")),
@@ -79,12 +84,46 @@ class LlmAnalysisServiceTest {
     }
 
     @Test
+    void testAuditFocusIsInjectedIntoPrompt() {
+        when(snapshotReader.read(anyList(), any())).thenReturn(List.of(
+            new KafkaMessage("topic1", 0, 1L, 1000L, "key1", "{\"val\":1}")
+        ));
+        when(llmClient.generateWithMeta(anyString(), anyString())).thenReturn(new LlmResponse(
+            "{\"flowchart\":\"x\",\"comments\":\"\",\"hypotheses\":[],\"blindSpots\":[],\"anomalies\":[]}",
+            List.of()));
+
+        String focus = "- [Duplicates] Détecte les messages dupliqués.";
+        llmAnalysisService.analyzeSnapshot(List.of("topic1"), SnapshotConfig.latestN(10), null, focus);
+
+        ArgumentCaptor<String> userPrompt = ArgumentCaptor.forClass(String.class);
+        verify(llmClient).generateWithMeta(anyString(), userPrompt.capture());
+        assertTrue(userPrompt.getValue().contains("AUDIT CIBLÉ"));
+        assertTrue(userPrompt.getValue().contains("Détecte les messages dupliqués."));
+    }
+
+    @Test
+    void testNoAuditSectionWhenFocusAbsent() {
+        when(snapshotReader.read(anyList(), any())).thenReturn(List.of(
+            new KafkaMessage("topic1", 0, 1L, 1000L, "key1", "{\"val\":1}")
+        ));
+        when(llmClient.generateWithMeta(anyString(), anyString())).thenReturn(new LlmResponse(
+            "{\"flowchart\":\"x\",\"comments\":\"\",\"hypotheses\":[],\"blindSpots\":[],\"anomalies\":[]}",
+            List.of()));
+
+        llmAnalysisService.analyzeSnapshot(List.of("topic1"), SnapshotConfig.latestN(10), null);
+
+        ArgumentCaptor<String> userPrompt = ArgumentCaptor.forClass(String.class);
+        verify(llmClient).generateWithMeta(anyString(), userPrompt.capture());
+        assertFalse(userPrompt.getValue().contains("AUDIT CIBLÉ"));
+    }
+
+    @Test
     void testAnalyzeSnapshotParsesJsonWrappedInMarkdown() {
         when(snapshotReader.read(anyList(), any())).thenReturn(List.of(
             new KafkaMessage("topic1", 0, 1L, 1000L, "key1", "{\"val\":1}")
         ));
 
-        when(llmClient.generate(anyString(), anyString())).thenReturn("""
+        when(llmClient.generateWithMeta(anyString(), anyString())).thenReturn(new LlmResponse("""
             Analysis completed.
             ```json
             {
@@ -95,12 +134,28 @@ class LlmAnalysisServiceTest {
               "anomalies": []
             }
             ```
-            """);
+            """, List.of()));
 
         ProcessMiningResult result = llmAnalysisService.analyzeSnapshot(
             List.of("topic1"), SnapshotConfig.latestN(10), null);
 
         assertNotNull(result);
         assertEquals("flowchart TD\n[A] --> [B]", result.flowchart());
+    }
+
+    @Test
+    void testRagSourcesAreAttachedToResult() {
+        when(snapshotReader.read(anyList(), any())).thenReturn(List.of(
+            new KafkaMessage("topic1", 0, 1L, 1000L, "key1", "{\"val\":1}")
+        ));
+        when(llmClient.generateWithMeta(anyString(), anyString())).thenReturn(new LlmResponse(
+            "{\"flowchart\":\"x\",\"comments\":\"\",\"hypotheses\":[],\"blindSpots\":[],\"anomalies\":[]}",
+            List.of(new RagSource("cited passage", "spec.pdf", 0.9))));
+
+        ProcessMiningResult result = llmAnalysisService.analyzeSnapshot(
+            List.of("topic1"), SnapshotConfig.latestN(10), null);
+
+        assertEquals(1, result.ragSources().size());
+        assertEquals("spec.pdf", result.ragSources().get(0).sourceFile());
     }
 }

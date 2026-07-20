@@ -38,14 +38,13 @@ public class DdlGeneratorServiceTest {
         NamingConventionService namingConventionService = new NamingConventionService();
         DdlGeneratorService service = new DdlGeneratorService(config, namingConventionService);
 
-        Map<String, String> schema = new HashMap<>();
-        schema.put("raw_payload", "STRING");
-
-        String ddl = service.generateDdl("xml_topic", schema, MessageFormat.XML);
+        String ddl = service.generateDdl("xml_topic", Map.of(), MessageFormat.XML);
 
         assertTrue(ddl.contains("CREATE TABLE IF NOT EXISTS xml_topic"));
-        assertTrue(ddl.contains("'format' = 'raw'"));
+        assertTrue(ddl.contains("'value.format' = 'raw'"));
         assertTrue(ddl.contains("`raw_value` STRING"));
+        assertTrue(ddl.contains("`event_time` TIMESTAMP(3) METADATA FROM 'timestamp'"));
+        assertTrue(ddl.contains("`proc_time` AS PROCTIME()"));
     }
 
     @Test
