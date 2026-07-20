@@ -13,13 +13,16 @@ interface ClusterConfig {
   confluentKey?: string;
   confluentSecret?: string;
   isConnected?: boolean;
-  llmProvider: 'ANTHROPIC' | 'OPENAI_COMPATIBLE' | 'OLLAMA';
+  llmProvider: 'ANTHROPIC' | 'OPENAI_COMPATIBLE' | 'OLLAMA' | 'SPECTRA';
   llmProviderLabel?: string;
   llmApiKey?: string;
   llmApiKeyConfigured?: boolean;
   llmApiKeyRequired?: boolean;
   llmBaseUrl: string;
   llmModel: string;
+  llmUseRag?: boolean;
+  llmCollection?: string;
+  llmRequestTimeoutSeconds?: number;
   llmMaxTokens: number;
   llmSnapshotWindowSize: number;
   llmSnapshotWindowTimeoutSeconds: number;
@@ -36,6 +39,7 @@ const LLM_PROVIDERS = [
   { value: 'ANTHROPIC', label: 'Anthropic', description: 'Hosted Claude models' },
   { value: 'OPENAI_COMPATIBLE', label: 'OpenAI-compatible', description: 'vLLM, LM Studio or compatible gateways' },
   { value: 'OLLAMA', label: 'Ollama', description: 'Lightweight local open-source models' },
+  { value: 'SPECTRA', label: 'SpectraLLM', description: 'Local SpectraLLM instance (RAG + fine-tuned models)' },
 ] as const;
 
 const Config: React.FC = () => {
@@ -55,6 +59,8 @@ const Config: React.FC = () => {
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [testResult, setTestResult] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [llmTesting, setLlmTesting] = useState(false);
+  const [llmTestResult, setLlmTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   useEffect(() => {
     const fetchConfig = async () => {
@@ -104,6 +110,25 @@ const Config: React.FC = () => {
     }
   };
 
+  const handleTestLlm = async () => {
+    const validationErr = validateConfig();
+    if (validationErr) { setError(validationErr); return; }
+    setLlmTesting(true);
+    setLlmTestResult(null);
+    setError(null);
+    try {
+      // Persist current settings first so the server tests against the selected provider.
+      await axios.post('/api/config', config);
+      const res = await axios.post<{ ok: boolean; message: string }>('/api/config/test-llm');
+      setLlmTestResult(res.data);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'LLM test failed';
+      setLlmTestResult({ ok: false, message: msg });
+    } finally {
+      setLlmTesting(false);
+    }
+  };
+
   const validateConfig = (): string | null => {
     const servers = config.bootstrapServers?.trim() ?? '';
     if (!servers) return 'Bootstrap servers are required.';
@@ -121,9 +146,12 @@ const Config: React.FC = () => {
       if (!config.truststorePath?.trim()) return 'Truststore path is required for SSL.';
       if (!config.keystorePath?.trim()) return 'Keystore path is required for SSL.';
     }
-    if (!config.llmModel?.trim()) return 'An LLM model is required for process mining.';
+    // SpectraLLM picks its own served model, so the model field is optional for it.
+    if (config.llmProvider !== 'SPECTRA' && !config.llmModel?.trim()) {
+      return 'An LLM model is required for process mining.';
+    }
     if (config.llmProvider !== 'OLLAMA' && !config.llmBaseUrl?.trim()) {
-      return 'An LLM base URL is required for hosted or OpenAI-compatible providers.';
+      return 'An LLM base URL is required for hosted, OpenAI-compatible or SpectraLLM providers.';
     }
     if (config.llmProvider === 'ANTHROPIC'
       && !config.llmApiKeyConfigured
@@ -163,6 +191,15 @@ const Config: React.FC = () => {
         if (!prev.llmModel || prev.llmModel.startsWith('claude-')) {
           next.llmModel = 'qwen3:4b';
         }
+        next.llmApiKey = '';
+      }
+      if (provider === 'SPECTRA') {
+        if (!prev.llmBaseUrl
+          || prev.llmBaseUrl === 'https://api.anthropic.com'
+          || prev.llmBaseUrl === 'http://localhost:11434/v1') {
+          next.llmBaseUrl = 'http://localhost:8080';
+        }
+        // SpectraLLM serves its own configured model; no per-request model to send.
         next.llmApiKey = '';
       }
       return next;
@@ -351,7 +388,11 @@ const Config: React.FC = () => {
                 type="text"
                 value={config.llmModel}
                 onChange={e => set('llmModel', e.target.value)}
-                placeholder={config.llmProvider === 'OLLAMA' ? 'qwen3:4b' : 'model name'}
+                placeholder={
+                  config.llmProvider === 'OLLAMA' ? 'qwen3:4b'
+                  : config.llmProvider === 'SPECTRA' ? 'Served by SpectraLLM (ignored)'
+                  : 'model name'}
+                disabled={config.llmProvider === 'SPECTRA'}
                 className={inputClass}
               />
             </div>
@@ -361,7 +402,10 @@ const Config: React.FC = () => {
                 type="text"
                 value={config.llmBaseUrl}
                 onChange={e => set('llmBaseUrl', e.target.value)}
-                placeholder={config.llmProvider === 'OLLAMA' ? 'http://localhost:11434/v1' : 'https://...'}
+                placeholder={
+                  config.llmProvider === 'OLLAMA' ? 'http://localhost:11434/v1'
+                  : config.llmProvider === 'SPECTRA' ? 'http://localhost:8080'
+                  : 'https://...'}
                 className={inputClass}
               />
             </div>
@@ -371,7 +415,9 @@ const Config: React.FC = () => {
                 type="password"
                 value={config.llmApiKey ?? ''}
                 onChange={e => set('llmApiKey', e.target.value)}
-                placeholder={config.llmProvider === 'OLLAMA' ? 'Optional for local deployments' : 'Required'}
+                placeholder={
+                  config.llmProvider === 'OLLAMA' || config.llmProvider === 'SPECTRA'
+                    ? 'Optional for local deployments' : 'Required'}
                 className={inputClass}
               />
               <p className="text-[10px] text-slate-500 mt-1">
@@ -412,6 +458,77 @@ const Config: React.FC = () => {
               />
             </div>
           </div>
+
+          {config.llmProvider === 'SPECTRA' && (
+            <label className="mt-4 flex items-start gap-3 rounded-lg border border-primary/10 bg-background-dark/20 px-4 py-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={config.llmUseRag ?? false}
+                onChange={e => setConfig(prev => ({ ...prev, llmUseRag: e.target.checked }))}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="block text-xs font-bold text-slate-200">Enrich audit with SpectraLLM RAG</span>
+                <span className="block text-[10px] text-slate-500 mt-0.5">
+                  When enabled, the audit prompt is answered with hybrid retrieval over SpectraLLM's
+                  ingested corpus. Leave off to ground the audit solely on the sampled Kafka messages.
+                </span>
+              </span>
+            </label>
+          )}
+
+          {config.llmProvider === 'SPECTRA' && config.llmUseRag && (
+            <div className="mt-3">
+              <label className={labelClass}>SpectraLLM Collection</label>
+              <input
+                type="text"
+                value={config.llmCollection ?? ''}
+                onChange={e => set('llmCollection', e.target.value)}
+                placeholder="Default collection"
+                className={inputClass}
+              />
+              <p className="text-[10px] text-slate-500 mt-1">
+                Optional — the ChromaDB collection to retrieve from. Leave blank for SpectraLLM's default.
+              </p>
+            </div>
+          )}
+
+          <div className="mt-4 flex flex-wrap items-end gap-4">
+            <div className="w-40">
+              <label className={labelClass}>Request Timeout (s)</label>
+              <input
+                type="number"
+                min={5}
+                max={600}
+                value={config.llmRequestTimeoutSeconds ?? 60}
+                onChange={e => setNumber('llmRequestTimeoutSeconds', parseInt(e.target.value, 10) || 60)}
+                className={inputClass}
+              />
+            </div>
+            <button
+              onClick={handleTestLlm}
+              disabled={llmTesting}
+              className="flex items-center gap-2 px-4 py-2.5 text-sm rounded-lg border border-primary/30 text-primary hover:bg-primary/10 transition-colors disabled:opacity-50"
+            >
+              <span className={`material-symbols-outlined text-base ${llmTesting ? 'animate-spin' : ''}`}>
+                {llmTesting ? 'progress_activity' : 'network_check'}
+              </span>
+              {llmTesting ? 'Testing LLM...' : 'Test LLM'}
+            </button>
+          </div>
+
+          {llmTestResult && (
+            <div className={`mt-3 rounded-lg border px-4 py-3 text-xs flex items-start gap-2 ${
+              llmTestResult.ok
+                ? 'border-emerald-500/30 bg-emerald-500/5 text-emerald-300'
+                : 'border-red-500/30 bg-red-500/5 text-red-300'
+            }`}>
+              <span className="material-symbols-outlined text-sm mt-0.5">
+                {llmTestResult.ok ? 'check_circle' : 'error'}
+              </span>
+              <span className="break-words">{llmTestResult.message}</span>
+            </div>
+          )}
         </div>
       </div>
 

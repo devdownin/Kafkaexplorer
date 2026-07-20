@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import axios from 'axios';
 import TopicSelectorPanel, { SnapshotConfig } from '../components/processmining/TopicSelectorPanel';
 import SchemaValidationPanel, {
@@ -11,12 +11,19 @@ import AnomalyFeed, { LiveAnomaly } from '../components/processmining/AnomalyFee
 
 // ---- Types ----
 
+interface RagSource {
+  text: string;
+  sourceFile: string | null;
+  score: number | null;
+}
+
 interface ProcessMiningResult {
   flowchart: string | null;
   comments: string | null;
   hypotheses: string[];
   blindSpots: string[];
   anomalies: AnomalyReport[];
+  ragSources?: RagSource[];
 }
 
 interface RuntimeLlmInfo {
@@ -26,6 +33,24 @@ interface RuntimeLlmInfo {
   llmBaseUrl?: string;
   llmLocalDeployment?: boolean;
 }
+
+interface AuditTemplate {
+  id: string;
+  name: string;
+  category: string;
+  description: string;
+  prompt: string;
+  requiredRoles?: string[];
+}
+
+// Semantic field roles detected by profiling — used to grey out audits that
+// cannot run (e.g. amount outliers when no AMOUNT field was found).
+const ROLE_LABELS: Record<string, string> = {
+  CORRELATION_ID: 'correlation id',
+  TIMESTAMP: 'timestamp',
+  STATUS: 'status',
+  AMOUNT: 'amount',
+};
 
 type Step = 'SELECT' | 'PROFILING' | 'VALIDATE' | 'ANALYZE' | 'RESULTS';
 type AnalysisMode = 'SNAPSHOT' | 'LIVE';
@@ -92,6 +117,9 @@ const ProcessMining: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [llmInfo, setLlmInfo] = useState<RuntimeLlmInfo | null>(null);
+  const [auditTemplates, setAuditTemplates] = useState<AuditTemplate[]>([]);
+  const [selectedAuditIds, setSelectedAuditIds] = useState<string[]>([]);
+  const [customAuditPrompt, setCustomAuditPrompt] = useState('');
 
   // Live mode state
   const [liveConnected, setLiveConnected] = useState(false);
@@ -100,6 +128,7 @@ const ProcessMining: React.FC = () => {
   const [liveWindowSize, setLiveWindowSize] = useState(0);
   const [liveLastUpdate, setLiveLastUpdate] = useState<number | null>(null);
   const [liveComments, setLiveComments] = useState<string | null>(null);
+  const [liveSources, setLiveSources] = useState<RagSource[]>([]);
   const eventSourceRef = useRef<EventSource | null>(null);
 
   // Cleanup on unmount
@@ -122,6 +151,44 @@ const ProcessMining: React.FC = () => {
     };
     fetchRuntimeConfig();
   }, []);
+
+  useEffect(() => {
+    const fetchAuditTemplates = async () => {
+      try {
+        const res = await axios.get<AuditTemplate[]>('/api/process-mining/audit-templates');
+        setAuditTemplates(res.data);
+      } catch {
+        setAuditTemplates([]);
+      }
+    };
+    fetchAuditTemplates();
+  }, []);
+
+  const toggleAudit = (id: string) => {
+    setSelectedAuditIds(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
+  // Semantic roles the profiling step actually detected, from the unification proposal
+  // and the per-field semantic roles. Audits requiring an absent role are greyed out.
+  const availableRoles = useMemo(() => {
+    const roles = new Set<string>();
+    const p = profileResult?.unificationProposal;
+    const hasMappings = (e: { mappings?: Record<string, string> } | null | undefined) =>
+      !!e && !!e.mappings && Object.keys(e.mappings).length > 0;
+    if (hasMappings(p?.correlationId)) roles.add('CORRELATION_ID');
+    if (hasMappings(p?.timestamp)) roles.add('TIMESTAMP');
+    if (hasMappings(p?.status)) roles.add('STATUS');
+    if (hasMappings(p?.amount)) roles.add('AMOUNT');
+    profileResult?.topics?.forEach(t =>
+      t.fields?.forEach(f => {
+        if (f.semanticRole) roles.add(f.semanticRole.toUpperCase());
+      }));
+    return roles;
+  }, [profileResult]);
+
+  const missingRolesFor = (t: AuditTemplate): string[] =>
+    (t.requiredRoles ?? []).filter(r => !availableRoles.has(r));
 
   // ---- Handlers ----
 
@@ -179,6 +246,8 @@ const ProcessMining: React.FC = () => {
           topics: selectedTopics,
           depth,
           fieldMappingId,
+          auditPromptIds: selectedAuditIds,
+          customAuditPrompt: customAuditPrompt.trim() || null,
         });
         setSnapshotResult(res.data);
         setStep('RESULTS');
@@ -201,7 +270,11 @@ const ProcessMining: React.FC = () => {
     }
 
     const topicsParam = selectedTopics.map(t => `topics=${encodeURIComponent(t)}`).join('&');
-    const url = `/api/process-mining/live?${topicsParam}&fieldMappingId=${fieldMappingId}`;
+    const auditParam = selectedAuditIds.map(id => `&auditPromptIds=${encodeURIComponent(id)}`).join('');
+    const customParam = customAuditPrompt.trim()
+      ? `&customAuditPrompt=${encodeURIComponent(customAuditPrompt.trim())}`
+      : '';
+    const url = `/api/process-mining/live?${topicsParam}&fieldMappingId=${fieldMappingId}${auditParam}${customParam}`;
 
     const es = new EventSource(url);
     eventSourceRef.current = es;
@@ -254,6 +327,15 @@ const ProcessMining: React.FC = () => {
       }
     });
 
+    es.addEventListener('RAG_SOURCES', (e) => {
+      try {
+        const sources: RagSource[] = JSON.parse(e.data);
+        if (Array.isArray(sources)) setLiveSources(sources);
+      } catch {
+        // ignore
+      }
+    });
+
     es.addEventListener('WINDOW_STATS', (e) => {
       try {
         const stats = JSON.parse(e.data);
@@ -267,7 +349,7 @@ const ProcessMining: React.FC = () => {
     es.onerror = () => {
       setLiveConnected(false);
     };
-  }, [selectedTopics, fieldMappingId]);
+  }, [selectedTopics, fieldMappingId, selectedAuditIds, customAuditPrompt]);
 
   const stopLiveSession = () => {
     if (eventSourceRef.current) {
@@ -289,6 +371,9 @@ const ProcessMining: React.FC = () => {
     setLiveWindowSize(0);
     setLiveLastUpdate(null);
     setLiveComments(null);
+    setLiveSources([]);
+    setSelectedAuditIds([]);
+    setCustomAuditPrompt('');
     setError(null);
   };
 
@@ -452,6 +537,90 @@ const ProcessMining: React.FC = () => {
               </button>
             </div>
 
+            {/* Audit checklist */}
+            {auditTemplates.length > 0 && (
+              <div className="border border-primary/15 rounded-xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+                      <span className="material-symbols-outlined text-base text-primary">fact_check</span>
+                      Audit checklist
+                      <span className="text-xs font-normal text-slate-500">(optional)</span>
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Pick the checks to focus the LLM on. None selected = general analysis.
+                    </p>
+                  </div>
+                  {selectedAuditIds.length > 0 && (
+                    <button
+                      onClick={() => setSelectedAuditIds([])}
+                      className="text-xs text-slate-400 hover:text-slate-200"
+                    >
+                      Clear ({selectedAuditIds.length})
+                    </button>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {auditTemplates.map(t => {
+                    const active = selectedAuditIds.includes(t.id);
+                    const missing = missingRolesFor(t);
+                    const disabled = missing.length > 0;
+                    return (
+                      <button
+                        key={t.id}
+                        onClick={() => !disabled && toggleAudit(t.id)}
+                        disabled={disabled}
+                        title={disabled
+                          ? `Not applicable — needs ${missing.map(r => ROLE_LABELS[r] ?? r).join(', ')}`
+                          : undefined}
+                        className={`text-left p-3 rounded-lg border transition-colors ${
+                          disabled
+                            ? 'border-slate-800 bg-slate-800/20 opacity-50 cursor-not-allowed'
+                            : active
+                            ? 'border-primary bg-primary/10'
+                            : 'border-primary/15 hover:border-primary/30 hover:bg-primary/5'
+                        }`}
+                      >
+                        <div className="flex items-start gap-2">
+                          <span className={`material-symbols-outlined text-base mt-0.5 ${
+                            disabled ? 'text-slate-700' : active ? 'text-primary' : 'text-slate-600'
+                          }`}>
+                            {disabled ? 'block' : active ? 'check_box' : 'check_box_outline_blank'}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="text-xs font-semibold text-slate-100 truncate">{t.name}</p>
+                            <p className="text-[11px] text-slate-400 leading-snug mt-0.5">{t.description}</p>
+                            <span className="inline-block mt-1.5 text-[9px] uppercase tracking-wider font-bold text-slate-500">
+                              {t.category.replace('_', ' ')}
+                            </span>
+                            {disabled && (
+                              <span className="block mt-1 text-[10px] text-amber-500/80">
+                                needs {missing.map(r => ROLE_LABELS[r] ?? r).join(', ')}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div>
+                  <label className="block text-[10px] uppercase font-bold tracking-wider text-slate-500 mb-1.5">
+                    Custom audit instruction
+                  </label>
+                  <textarea
+                    value={customAuditPrompt}
+                    onChange={e => setCustomAuditPrompt(e.target.value)}
+                    rows={2}
+                    placeholder="e.g. Flag any order whose amount changes between the received and validated topics."
+                    className="w-full bg-primary/5 border border-primary/20 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:ring-1 focus:ring-primary outline-none resize-y"
+                  />
+                </div>
+              </div>
+            )}
+
             <button
               onClick={handleLaunchAnalysis}
               disabled={loading}
@@ -526,6 +695,41 @@ const ProcessMining: React.FC = () => {
                 </p>
               </div>
             )}
+
+            {/* RAG evidence / cited sources (SpectraLLM with use-rag) */}
+            {(() => {
+              const sources = analysisMode === 'LIVE' ? liveSources : (snapshotResult?.ragSources ?? []);
+              if (!sources || sources.length === 0) return null;
+              return (
+                <div className="border border-primary/20 rounded-xl overflow-hidden">
+                  <div className="px-4 py-2.5 border-b border-primary/10 bg-primary/5 flex items-center gap-2">
+                    <span className="material-symbols-outlined text-base text-primary">menu_book</span>
+                    <h3 className="text-sm font-semibold text-slate-200">Evidence — cited sources</h3>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary">
+                      {sources.length}
+                    </span>
+                    <span className="ml-auto text-[11px] text-slate-500">SpectraLLM RAG</span>
+                  </div>
+                  <div className="p-4 space-y-2">
+                    {sources.map((s, i) => (
+                      <div key={i} className="rounded-lg border border-primary/10 bg-background-dark/20 p-3">
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <span className="text-xs font-mono text-primary/80 truncate">
+                            {s.sourceFile ?? 'unknown source'}
+                          </span>
+                          {s.score != null && (
+                            <span className="text-[10px] text-slate-500 flex-shrink-0">
+                              score {s.score.toFixed(3)}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">{s.text}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Snapshot extra sections */}
             {analysisMode === 'SNAPSHOT' && snapshotResult && (

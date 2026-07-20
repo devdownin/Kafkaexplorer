@@ -7,6 +7,7 @@ import com.yourcompany.kafkasqlexplorer.config.ClaudeConfig;
 import com.yourcompany.kafkasqlexplorer.domain.AnomalyReport;
 import com.yourcompany.kafkasqlexplorer.domain.FieldMapping;
 import com.yourcompany.kafkasqlexplorer.domain.KafkaMessage;
+import com.yourcompany.kafkasqlexplorer.domain.LlmResponse;
 import com.yourcompany.kafkasqlexplorer.domain.ProcessMiningResult;
 import com.yourcompany.kafkasqlexplorer.domain.SnapshotConfig;
 import org.slf4j.Logger;
@@ -64,9 +65,7 @@ public class LlmAnalysisService {
 
     @org.springframework.beans.factory.annotation.Autowired
     public LlmAnalysisService(KafkaSnapshotReader snapshotReader, ClaudeConfig claudeConfig) {
-        this(snapshotReader, claudeConfig, claudeConfig.getProvider() == ClaudeConfig.Provider.ANTHROPIC
-            ? new AnthropicLlmClient(claudeConfig)
-            : new OpenAiCompatibleLlmClient(claudeConfig));
+        this(snapshotReader, claudeConfig, LlmClientFactory.create(claudeConfig));
     }
 
     public LlmAnalysisService(KafkaSnapshotReader snapshotReader, ClaudeConfig claudeConfig, LlmClient llmClient) {
@@ -77,6 +76,11 @@ public class LlmAnalysisService {
 
     public ProcessMiningResult analyzeSnapshot(List<String> topics, SnapshotConfig depth,
                                                 FieldMapping fieldMapping) {
+        return analyzeSnapshot(topics, depth, fieldMapping, null);
+    }
+
+    public ProcessMiningResult analyzeSnapshot(List<String> topics, SnapshotConfig depth,
+                                                FieldMapping fieldMapping, String auditFocus) {
         if (isApiKeyMissing()) {
             return errorResult("LLM API key not configured.");
         }
@@ -88,7 +92,7 @@ public class LlmAnalysisService {
         Map<String, List<KafkaMessage>> byTopic = groupAndSort(topics, messages);
 
         // 3. Build user prompt
-        String userPrompt = buildSnapshotPrompt(topics, byTopic, fieldMapping);
+        String userPrompt = buildSnapshotPrompt(topics, byTopic, fieldMapping, auditFocus);
 
         // 4. Call the configured LLM and parse
         return callLlmAndParse(userPrompt);
@@ -97,6 +101,13 @@ public class LlmAnalysisService {
     public ProcessMiningResult analyzeLive(List<KafkaMessage> windowMessages,
                                             FieldMapping fieldMapping,
                                             String referenceFlowchart) {
+        return analyzeLive(windowMessages, fieldMapping, referenceFlowchart, null);
+    }
+
+    public ProcessMiningResult analyzeLive(List<KafkaMessage> windowMessages,
+                                            FieldMapping fieldMapping,
+                                            String referenceFlowchart,
+                                            String auditFocus) {
         if (isApiKeyMissing()) {
             return errorResult("LLM API key not configured.");
         }
@@ -109,7 +120,7 @@ public class LlmAnalysisService {
             .toList();
         Map<String, List<KafkaMessage>> byTopic = groupAndSort(topics, windowMessages);
 
-        String userPrompt = buildLivePrompt(topics, byTopic, fieldMapping, referenceFlowchart);
+        String userPrompt = buildLivePrompt(topics, byTopic, fieldMapping, referenceFlowchart, auditFocus);
         return callLlmAndParse(userPrompt);
     }
 
@@ -128,29 +139,32 @@ public class LlmAnalysisService {
 
     private String buildSnapshotPrompt(List<String> topics,
                                         Map<String, List<KafkaMessage>> byTopic,
-                                        FieldMapping fieldMapping) {
+                                        FieldMapping fieldMapping,
+                                        String auditFocus) {
         StringBuilder sb = new StringBuilder();
         sb.append("## MODE: ANALYSE SNAPSHOT\n\n");
-        appendCommonSections(sb, topics, byTopic, fieldMapping, null);
+        appendCommonSections(sb, topics, byTopic, fieldMapping, null, auditFocus);
         return sb.toString();
     }
 
     private String buildLivePrompt(List<String> topics,
                                     Map<String, List<KafkaMessage>> byTopic,
                                     FieldMapping fieldMapping,
-                                    String referenceFlowchart) {
+                                    String referenceFlowchart,
+                                    String auditFocus) {
         StringBuilder sb = new StringBuilder();
         sb.append("## MODE: ANALYSE LIVE\n\n");
         String ref = (referenceFlowchart == null || referenceFlowchart.isBlank())
             ? "INCONNU" : referenceFlowchart;
-        appendCommonSections(sb, topics, byTopic, fieldMapping, ref);
+        appendCommonSections(sb, topics, byTopic, fieldMapping, ref, auditFocus);
         return sb.toString();
     }
 
     private void appendCommonSections(StringBuilder sb, List<String> topics,
                                        Map<String, List<KafkaMessage>> byTopic,
                                        FieldMapping fieldMapping,
-                                       String referenceFlowchart) {
+                                       String referenceFlowchart,
+                                       String auditFocus) {
         sb.append("## MAPPING DES CHAMPS\n");
         if (fieldMapping != null) {
             sb.append(fieldMapping.toPromptBlock());
@@ -158,6 +172,14 @@ public class LlmAnalysisService {
             sb.append("(aucun mapping fourni)\n");
         }
         sb.append("\n");
+
+        if (auditFocus != null && !auditFocus.isBlank()) {
+            sb.append("## AUDIT CIBLÉ\n");
+            sb.append("Concentre l'analyse en priorité sur les points d'audit suivants. "
+                + "Pour chaque anomalie trouvée, respecte la structure JSON demandée "
+                + "(type et sévérité).\n");
+            sb.append(auditFocus.strip()).append("\n\n");
+        }
 
         if (referenceFlowchart != null) {
             sb.append("## FLOWCHART DE RÉFÉRENCE\n");
@@ -211,20 +233,20 @@ public class LlmAnalysisService {
         return claudeConfig.isApiKeyRequired() && !claudeConfig.isApiKeyConfigured();
     }
 
-    private String callLlm(String userPrompt) {
-        try {
-            String fullText = llmClient.generate(SYSTEM_PROMPT, userPrompt);
-            log.debug("LLM analysis response (first 500 chars): {}",
-                fullText.length() > 500 ? fullText.substring(0, 500) : fullText);
-            return fullText;
-        } catch (Exception e) {
-            log.error("Error calling LLM API for analysis: {}", e.getMessage(), e);
-            return null;
-        }
-    }
-
     private ProcessMiningResult callLlmAndParse(String userPrompt) {
-        String rawResponse = callLlm(userPrompt);
+        LlmResponse response;
+        try {
+            response = llmClient.generateWithMeta(SYSTEM_PROMPT, userPrompt);
+        } catch (Exception e) {
+            // Surface the real cause (timeout, bad URL/model/key, provider 5xx) instead of a
+            // generic "empty response" — callers show comments() to the user.
+            log.error("Error calling LLM API for analysis: {}", e.getMessage(), e);
+            return errorResult("LLM call failed: " + e.getMessage());
+        }
+
+        String rawResponse = response.text();
+        log.debug("LLM analysis response (first 500 chars): {}",
+            rawResponse != null && rawResponse.length() > 500 ? rawResponse.substring(0, 500) : rawResponse);
 
         if (rawResponse == null || rawResponse.isBlank()) {
             return errorResult("LLM returned an empty response.");
@@ -233,7 +255,9 @@ public class LlmAnalysisService {
         String json = LlmJsonSupport.extractJsonPayload(rawResponse);
 
         try {
-            return objectMapper.readValue(json, ProcessMiningResult.class);
+            ProcessMiningResult parsed = objectMapper.readValue(json, ProcessMiningResult.class);
+            // Attach RAG citations (SpectraLLM); other providers return none.
+            return parsed.withRagSources(response.sources());
         } catch (Exception e) {
             log.error("Failed to parse LLM analysis response: {}", e.getMessage());
             log.debug("Raw response was: {}", rawResponse);
