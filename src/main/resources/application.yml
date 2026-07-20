@@ -4,8 +4,8 @@ spring:
 
   cache:
     type: caffeine
-    caffeine:
-      spec: expireAfterWrite=30s
+    # TTL is configured by the CacheManager bean in WebConfig (explorer.cache-expire-seconds,
+    # default 30s) — a `spring.cache.caffeine.spec` here would be silently ignored.
 
 kafka:
   bootstrap-servers: localhost:9092

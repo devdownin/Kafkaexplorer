@@ -19,7 +19,11 @@ public class ExplorerConfig {
     private long inferencePollTimeoutMs = 2000;
     private boolean allowCrossJoin = false;
     private boolean allowSystemTableAccess = false;
-    private int cacheExpireMinutes = 10;
+    /**
+     * TTL of the Kafka metadata caches (topic list, topic descriptors). Kept short so a
+     * newly created topic shows up quickly in the workbench and auto-registration.
+     */
+    private int cacheExpireSeconds = 30;
     private String flinkJobStorePath = "data/flink-jobs.json";
     private long flinkJobRetentionHours = 24;
 
@@ -103,12 +107,12 @@ public class ExplorerConfig {
         this.allowSystemTableAccess = allowSystemTableAccess;
     }
 
-    public int getCacheExpireMinutes() {
-        return cacheExpireMinutes;
+    public int getCacheExpireSeconds() {
+        return cacheExpireSeconds;
     }
 
-    public void setCacheExpireMinutes(int cacheExpireMinutes) {
-        this.cacheExpireMinutes = cacheExpireMinutes;
+    public void setCacheExpireSeconds(int cacheExpireSeconds) {
+        this.cacheExpireSeconds = cacheExpireSeconds;
     }
 
     public String getFlinkJobStorePath() {

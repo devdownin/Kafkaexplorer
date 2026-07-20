@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yourcompany.kafkasqlexplorer.config.ExplorerConfig;
 import com.yourcompany.kafkasqlexplorer.config.KafkaConfig;
 import com.yourcompany.kafkasqlexplorer.domain.*;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
@@ -34,11 +35,17 @@ public class AuditService {
 
     private static final Logger log = LoggerFactory.getLogger(AuditService.class);
 
+    /** Cap on messages scanned per topic when counting duplicate keys in-process. */
+    private static final int DUPLICATE_SCAN_MAX_MESSAGES = 10_000;
+    /** Cap on messages scanned per topic when correlating flow latency in-process. */
+    private static final int LATENCY_SCAN_MAX_MESSAGES = 1_000;
+
     private final KafkaAdminService kafkaAdminService;
     private final FlinkSqlService flinkSqlService;
     private final SchemaInferenceService schemaInferenceService;
     private final DdlGeneratorService ddlGeneratorService;
     private final NamingConventionService namingConventionService;
+    private final MessageFieldExtractorService messageFieldExtractorService;
     private final KafkaConfig kafkaConfig;
     private final ExplorerConfig explorerConfig;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -62,6 +69,7 @@ public class AuditService {
                         SchemaInferenceService schemaInferenceService,
                         DdlGeneratorService ddlGeneratorService,
                         NamingConventionService namingConventionService,
+                        MessageFieldExtractorService messageFieldExtractorService,
                         KafkaConfig kafkaConfig,
                         ExplorerConfig explorerConfig) {
         this.kafkaAdminService = kafkaAdminService;
@@ -69,6 +77,7 @@ public class AuditService {
         this.schemaInferenceService = schemaInferenceService;
         this.ddlGeneratorService = ddlGeneratorService;
         this.namingConventionService = namingConventionService;
+        this.messageFieldExtractorService = messageFieldExtractorService;
         this.kafkaConfig = kafkaConfig;
         this.explorerConfig = explorerConfig;
     }
@@ -194,31 +203,61 @@ public class AuditService {
 
     private long getExactCount(String topicName, long approximateCount) {
         String tableName = DdlGeneratorService.toTableName(topicName);
-        QueryResult countResult = flinkSqlService.executeSql(new QueryRequest("SELECT COUNT(*) FROM " + tableName, null, 1, explorerConfig.getAuditQueryTimeoutMs(), null));
+        QueryResult countResult = flinkSqlService.executeSql(new QueryRequest(
+            "SELECT COUNT(*) AS metric_value FROM " + tableName, null, 1, explorerConfig.getAuditQueryTimeoutMs(), null));
         if (countResult.error() == null && !countResult.rows().isEmpty()) {
-            Object val = countResult.rows().get(0).get("EXPR$0");
-            if (val instanceof Long) return (Long) val;
-            if (val instanceof Integer) return ((Integer) val).longValue();
+            // The direct Kafka engine aliases aggregates (metric_value / count_all, Double values)
+            // while Flink names them EXPR$0 (Long) — accept the first numeric value either way.
+            Long value = firstNumericValue(countResult.rows().get(0));
+            if (value != null) return value;
         }
         return approximateCount;
     }
 
+    private Long firstNumericValue(Map<String, Object> row) {
+        for (Object val : row.values()) {
+            if (val instanceof Number number) return number.longValue();
+        }
+        return null;
+    }
+
+    /**
+     * Counts keys that appear more than once, scanning messages directly.
+     * The previous SQL implementation (GROUP BY subquery with HAVING) is not supported by
+     * the direct Kafka SELECT engine and silently returned 0 for every topic.
+     */
     private long detectDuplicates(String topicName, Map<String, String> schema) {
         String keyField = namingConventionService.findKeyField(schema);
-
         if (keyField == null) return 0;
 
-        String tableName = DdlGeneratorService.toTableName(topicName);
-        String sql = "SELECT COUNT(*) FROM (SELECT 1 FROM " + tableName + " GROUP BY " + keyField + " HAVING COUNT(*) > 1)";
-        QueryResult dupResult = flinkSqlService.executeSql(new QueryRequest(sql, null, 1, explorerConfig.getAuditQueryTimeoutMs(), null));
-        if (dupResult.error() == null && !dupResult.rows().isEmpty()) {
-            Object val = dupResult.rows().get(0).get("EXPR$0");
-            if (val instanceof Long) return (Long) val;
-            if (val instanceof Integer) return ((Integer) val).longValue();
-        } else if (dupResult.error() != null) {
-            log.warn("Failed to detect duplicates for topic {}: {}", topicName, dupResult.error());
+        List<ConsumerRecord<String, String>> records =
+            kafkaAdminService.getEarliestRecords(topicName, DUPLICATE_SCAN_MAX_MESSAGES);
+        if (records.isEmpty()) return 0;
+
+        Map<String, Integer> keyCounts = new HashMap<>();
+        for (ConsumerRecord<String, String> record : records) {
+            String value = record.value();
+            if (value == null || value.isBlank()) continue;
+            String key = extractField(value, keyField);
+            if (key == null || key.isBlank()) continue;
+            keyCounts.merge(key, 1, Integer::sum);
         }
-        return 0;
+        return keyCounts.values().stream().filter(count -> count > 1).count();
+    }
+
+    /**
+     * Extracts a field value from a raw JSON/XML message. XML leaf paths are prefixed with
+     * the root tag ("order.id"), so a suffix match is attempted after the direct lookup.
+     */
+    private String extractField(String message, String field) {
+        Map<String, String> fields = messageFieldExtractorService.extractLeafFields(message);
+        String direct = fields.get(field);
+        if (direct != null) return direct;
+        String suffix = "." + field;
+        for (Map.Entry<String, String> entry : fields.entrySet()) {
+            if (entry.getKey().endsWith(suffix)) return entry.getValue();
+        }
+        return null;
     }
 
     /**
@@ -245,20 +284,43 @@ public class AuditService {
         return flowsWithLatency;
     }
 
+    /**
+     * Average delta between Kafka record timestamps of messages sharing the same "id" field
+     * in the source and target topics, computed over recent messages. The previous SQL
+     * implementation used a JOIN, which the direct Kafka SELECT engine does not support,
+     * so latency was silently always null.
+     */
     private Long calculateLatency(String sourceTopic, String targetTopic) {
-        // Simple heuristic for latency: average of (target.event_time - source.event_time) joined by ID
-        String sql = "SELECT AVG(CAST(t2.event_time AS LONG) - CAST(t1.event_time AS LONG)) " +
-                     "FROM " + DdlGeneratorService.toTableName(sourceTopic) + " t1 JOIN " + DdlGeneratorService.toTableName(targetTopic) + " t2 ON t1.id = t2.id " +
-                     "WHERE t2.event_time > t1.event_time";
+        List<ConsumerRecord<String, String>> sourceRecords =
+            kafkaAdminService.getRecentRecords(sourceTopic, LATENCY_SCAN_MAX_MESSAGES);
+        List<ConsumerRecord<String, String>> targetRecords =
+            kafkaAdminService.getRecentRecords(targetTopic, LATENCY_SCAN_MAX_MESSAGES);
+        if (sourceRecords.isEmpty() || targetRecords.isEmpty()) return null;
 
-        QueryResult result = flinkSqlService.executeSql(new QueryRequest(sql, null, 1, explorerConfig.getAuditQueryTimeoutMs(), null));
-        if (result.error() == null && !result.rows().isEmpty()) {
-            Object val = result.rows().get(0).values().iterator().next();
-            if (val instanceof Number) return ((Number) val).longValue();
-        } else if (result.error() != null) {
-            log.warn("Failed to calculate latency between {} and {}: {}", sourceTopic, targetTopic, result.error());
+        // Keep the earliest source timestamp per id (first emission of the business event)
+        Map<String, Long> sourceTimesById = new HashMap<>();
+        for (ConsumerRecord<String, String> record : sourceRecords) {
+            if (record.value() == null) continue;
+            String id = extractField(record.value(), "id");
+            if (id != null && !id.isBlank()) {
+                sourceTimesById.merge(id, record.timestamp(), Math::min);
+            }
         }
-        return null;
+        if (sourceTimesById.isEmpty()) return null;
+
+        long totalDeltaMs = 0;
+        int matched = 0;
+        for (ConsumerRecord<String, String> record : targetRecords) {
+            if (record.value() == null) continue;
+            String id = extractField(record.value(), "id");
+            if (id == null) continue;
+            Long sourceTs = sourceTimesById.get(id);
+            if (sourceTs != null && record.timestamp() > sourceTs) {
+                totalDeltaMs += record.timestamp() - sourceTs;
+                matched++;
+            }
+        }
+        return matched == 0 ? null : totalDeltaMs / matched;
     }
 
     @PreDestroy

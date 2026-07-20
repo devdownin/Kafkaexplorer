@@ -3,10 +3,16 @@
 Date : 2026-07-20 · Périmètre : backend Java (90 fichiers), frontend React, configuration, build.
 Chaque constat référence le fichier et la ligne. Sévérités : 🔴 Critique · 🟠 Majeur · 🟡 Mineur · 🔵 Optimisation.
 
-> **Statut** : les quatre bugs critiques C1–C4 sont **corrigés** sur cette branche
-> (exécuteur dédié dans `AuditService`, annulation du heartbeat dans `KafkaLiveConsumer`,
-> filtre WHERE sensible à la casse + chemins imbriqués dans `FlinkSqlService`,
-> masquage `DdlGeneratorService.maskSensitiveProperties()` appliqué à tous les endpoints exposant du DDL).
+> **Statut** : les bugs **C1–C4** et **M1–M4** sont **corrigés** sur cette branche :
+> - C1 : exécuteur dédié dans `AuditService` (plus d'`@Async` auto-invoqué) ;
+> - C2 : annulation du heartbeat dans `KafkaLiveConsumer.stopSession()` ;
+> - C3 : filtre WHERE sensible à la casse + chemins imbriqués dans `FlinkSqlService` ;
+> - C4 : masquage `DdlGeneratorService.maskSensitiveProperties()` sur tous les endpoints exposant du DDL ;
+> - M1 : `getExactCount` accepte tout `Number` de la première ligne (compatible `count_all`/Double du moteur direct) ;
+> - M2 : doublons et latence de flux réimplémentés en Java sur les messages Kafka (plus de sous-requête/JOIN non supportés) ;
+> - M3 : `findKeyField` renvoie `null` sans champ id-like (suffixes `*_id`/`*Id` acceptés) au lieu d'un champ arbitraire ;
+> - M4 : TTL de cache aligné sur 30 s (`explorer.cache-expire-seconds`, `WebConfig` en `TimeUnit.SECONDS`).
+>
 > Les sections ci-dessous décrivent l'état **avant** correctif.
 
 ---
