@@ -183,6 +183,17 @@ Set `use-rag: true` to enrich the audit with SpectraLLM's document corpus; leave
 to ground the analysis solely on the sampled Kafka messages. All settings are also editable
 live from the **Config** page.
 
+**One-command combined stack** — Kafka (with demo topics) + Kafka Explorer + a full local
+SpectraLLM instance, pre-wired so the audit runs through SpectraLLM:
+```bash
+# SpectraLLM must be checked out next to this repo; download its models once:
+#   cd ../SpectraLLM && ./scripts/start.sh --first-run
+docker compose -f docker-compose-spectra.yml up -d --build
+```
+Explorer UI → http://localhost:8090 · SpectraLLM UI → http://localhost. Point at a
+SpectraLLM elsewhere with `SPECTRALLM_DIR=/path/to/SpectraLLM`. See the header of
+[`docker-compose-spectra.yml`](docker-compose-spectra.yml) for details.
+
 ### Recommended Lightweight Models
 - **Qwen 2.5-Coder 7B**: Best for JSON extraction and logic.
 - **Llama 3.2 3B**: Fast for real-time (LIVE) analysis.
