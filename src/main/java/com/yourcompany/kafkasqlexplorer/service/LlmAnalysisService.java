@@ -233,19 +233,22 @@ public class LlmAnalysisService {
     }
 
     private String callLlm(String userPrompt) {
-        try {
-            String fullText = llmClient.generate(SYSTEM_PROMPT, userPrompt);
-            log.debug("LLM analysis response (first 500 chars): {}",
-                fullText.length() > 500 ? fullText.substring(0, 500) : fullText);
-            return fullText;
-        } catch (Exception e) {
-            log.error("Error calling LLM API for analysis: {}", e.getMessage(), e);
-            return null;
-        }
+        String fullText = llmClient.generate(SYSTEM_PROMPT, userPrompt);
+        log.debug("LLM analysis response (first 500 chars): {}",
+            fullText != null && fullText.length() > 500 ? fullText.substring(0, 500) : fullText);
+        return fullText;
     }
 
     private ProcessMiningResult callLlmAndParse(String userPrompt) {
-        String rawResponse = callLlm(userPrompt);
+        String rawResponse;
+        try {
+            rawResponse = callLlm(userPrompt);
+        } catch (Exception e) {
+            // Surface the real cause (timeout, bad URL/model/key, provider 5xx) instead of a
+            // generic "empty response" — callers show comments() to the user.
+            log.error("Error calling LLM API for analysis: {}", e.getMessage(), e);
+            return errorResult("LLM call failed: " + e.getMessage());
+        }
 
         if (rawResponse == null || rawResponse.isBlank()) {
             return errorResult("LLM returned an empty response.");

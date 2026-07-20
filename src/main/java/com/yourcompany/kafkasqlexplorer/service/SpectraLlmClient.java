@@ -33,7 +33,7 @@ public class SpectraLlmClient implements LlmClient {
 
     public SpectraLlmClient(ClaudeConfig config) {
         this.config = config;
-        this.httpClient = HttpClient.newHttpClient();
+        this.httpClient = LlmHttpSupport.newClient(config);
     }
 
     @Override
@@ -54,6 +54,7 @@ public class SpectraLlmClient implements LlmClient {
                 .uri(URI.create(resolveQueryUrl()))
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(requestBody));
+            LlmHttpSupport.withTimeout(requestBuilder, config);
 
             // SpectraLLM is API-key-less by default, but honour a bearer token if one is configured
             // (e.g. when the instance sits behind an authenticating reverse proxy).
@@ -61,13 +62,8 @@ public class SpectraLlmClient implements LlmClient {
                 requestBuilder.header("Authorization", "Bearer " + config.getApiKey());
             }
 
-            HttpResponse<String> response = httpClient.send(requestBuilder.build(),
-                HttpResponse.BodyHandlers.ofString());
-
-            if (response.statusCode() != 200) {
-                log.error("Error from SpectraLLM API: {} - {}", response.statusCode(), response.body());
-                throw new RuntimeException("SpectraLLM call failed with status " + response.statusCode());
-            }
+            HttpResponse<String> response =
+                LlmHttpSupport.sendWithRetry(httpClient, requestBuilder.build(), "SpectraLLM");
 
             JsonNode root = objectMapper.readTree(response.body());
             JsonNode answer = root.path("answer");
@@ -77,9 +73,13 @@ public class SpectraLlmClient implements LlmClient {
             }
             return answer.asText();
 
+        } catch (RuntimeException e) {
+            // Already carries a precise message (transport, status, missing answer) — propagate as-is.
+            log.error("Error calling SpectraLLM API: {}", e.getMessage());
+            throw e;
         } catch (Exception e) {
             log.error("Error calling SpectraLLM API: {}", e.getMessage(), e);
-            throw new RuntimeException("SpectraLLM call failed", e);
+            throw new RuntimeException("SpectraLLM call failed: " + e.getMessage(), e);
         }
     }
 

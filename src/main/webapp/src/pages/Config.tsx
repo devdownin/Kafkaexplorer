@@ -21,6 +21,7 @@ interface ClusterConfig {
   llmBaseUrl: string;
   llmModel: string;
   llmUseRag?: boolean;
+  llmRequestTimeoutSeconds?: number;
   llmMaxTokens: number;
   llmSnapshotWindowSize: number;
   llmSnapshotWindowTimeoutSeconds: number;
@@ -57,6 +58,8 @@ const Config: React.FC = () => {
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [testResult, setTestResult] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [llmTesting, setLlmTesting] = useState(false);
+  const [llmTestResult, setLlmTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   useEffect(() => {
     const fetchConfig = async () => {
@@ -103,6 +106,25 @@ const Config: React.FC = () => {
       setTestResult(false);
     } finally {
       setTesting(false);
+    }
+  };
+
+  const handleTestLlm = async () => {
+    const validationErr = validateConfig();
+    if (validationErr) { setError(validationErr); return; }
+    setLlmTesting(true);
+    setLlmTestResult(null);
+    setError(null);
+    try {
+      // Persist current settings first so the server tests against the selected provider.
+      await axios.post('/api/config', config);
+      const res = await axios.post<{ ok: boolean; message: string }>('/api/config/test-llm');
+      setLlmTestResult(res.data);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'LLM test failed';
+      setLlmTestResult({ ok: false, message: msg });
+    } finally {
+      setLlmTesting(false);
     }
   };
 
@@ -452,6 +474,43 @@ const Config: React.FC = () => {
                 </span>
               </span>
             </label>
+          )}
+
+          <div className="mt-4 flex flex-wrap items-end gap-4">
+            <div className="w-40">
+              <label className={labelClass}>Request Timeout (s)</label>
+              <input
+                type="number"
+                min={5}
+                max={600}
+                value={config.llmRequestTimeoutSeconds ?? 60}
+                onChange={e => setNumber('llmRequestTimeoutSeconds', parseInt(e.target.value, 10) || 60)}
+                className={inputClass}
+              />
+            </div>
+            <button
+              onClick={handleTestLlm}
+              disabled={llmTesting}
+              className="flex items-center gap-2 px-4 py-2.5 text-sm rounded-lg border border-primary/30 text-primary hover:bg-primary/10 transition-colors disabled:opacity-50"
+            >
+              <span className={`material-symbols-outlined text-base ${llmTesting ? 'animate-spin' : ''}`}>
+                {llmTesting ? 'progress_activity' : 'network_check'}
+              </span>
+              {llmTesting ? 'Testing LLM...' : 'Test LLM'}
+            </button>
+          </div>
+
+          {llmTestResult && (
+            <div className={`mt-3 rounded-lg border px-4 py-3 text-xs flex items-start gap-2 ${
+              llmTestResult.ok
+                ? 'border-emerald-500/30 bg-emerald-500/5 text-emerald-300'
+                : 'border-red-500/30 bg-red-500/5 text-red-300'
+            }`}>
+              <span className="material-symbols-outlined text-sm mt-0.5">
+                {llmTestResult.ok ? 'check_circle' : 'error'}
+              </span>
+              <span className="break-words">{llmTestResult.message}</span>
+            </div>
           )}
         </div>
       </div>

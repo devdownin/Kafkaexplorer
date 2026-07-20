@@ -32,13 +32,29 @@ class SpectraLlmClientTest {
         }
     }
 
+    private final java.util.concurrent.atomic.AtomicInteger callCount =
+        new java.util.concurrent.atomic.AtomicInteger();
+
     private ClaudeConfig startServer(int status, String responseBody) throws IOException {
+        return startServer(0, status, responseBody);
+    }
+
+    /**
+     * Serves {@code failuresBeforeSuccess} responses of HTTP 500 first, then {@code status}/
+     * {@code responseBody}. With {@code failuresBeforeSuccess == 0} it always serves the given
+     * status.
+     */
+    private ClaudeConfig startServer(int failuresBeforeSuccess, int status, String responseBody)
+            throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/api/query", exchange -> {
             lastRequestPath.set(exchange.getRequestURI().getPath());
             lastRequestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
-            byte[] out = responseBody.getBytes(StandardCharsets.UTF_8);
-            exchange.sendResponseHeaders(status, out.length);
+            int n = callCount.incrementAndGet();
+            boolean fail = n <= failuresBeforeSuccess;
+            int effectiveStatus = fail ? 500 : status;
+            byte[] out = (fail ? "transient" : responseBody).getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(effectiveStatus, out.length);
             try (OutputStream os = exchange.getResponseBody()) {
                 os.write(out);
             }
@@ -48,6 +64,7 @@ class SpectraLlmClientTest {
         ClaudeConfig config = new ClaudeConfig();
         config.setProvider(ClaudeConfig.Provider.SPECTRA);
         config.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort());
+        config.setRequestTimeoutSeconds(5);
         return config;
     }
 
@@ -123,5 +140,27 @@ class SpectraLlmClientTest {
 
         SpectraLlmClient client = new SpectraLlmClient(config);
         assertThrows(RuntimeException.class, () -> client.generate("SYS", "USR"));
+    }
+
+    @Test
+    void retriesTransient5xxThenSucceeds() throws Exception {
+        // Two 500s, then a 200 — the client should retry and return the eventual answer.
+        ClaudeConfig config = startServer(2, 200, "{\"answer\":\"recovered\"}");
+
+        String result = new SpectraLlmClient(config).generate("SYS", "USR");
+
+        assertEquals("recovered", result);
+        assertEquals(3, callCount.get());
+    }
+
+    @Test
+    void failsFastOn4xxWithoutRetry() throws Exception {
+        ClaudeConfig config = startServer(400, "bad request");
+
+        SpectraLlmClient client = new SpectraLlmClient(config);
+        RuntimeException ex = assertThrows(RuntimeException.class, () -> client.generate("SYS", "USR"));
+
+        assertTrue(ex.getMessage().contains("400"));
+        assertEquals(1, callCount.get(), "4xx must not be retried");
     }
 }

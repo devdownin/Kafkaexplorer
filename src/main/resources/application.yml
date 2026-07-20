@@ -57,6 +57,10 @@ claude:
   max-tokens: 4096
   snapshot-window-size: 100
   snapshot-window-timeout-seconds: 30
+  # Per-call timeout (connect + request) for HTTP LLM providers (OpenAI-compatible,
+  # Ollama, SpectraLLM). Transient failures (timeout, 5xx, 429) are retried with backoff;
+  # 4xx fail fast. Local audit models can be slow, hence the generous default.
+  request-timeout-seconds: 60
   # SPECTRA provider only: audit Kafka exchanges via a local SpectraLLM instance
   # (POST <base-url>/api/query). Set provider: SPECTRA and base-url to the SpectraLLM
   # API, e.g. http://localhost:8080 or http://spectra-api:8080 in Docker.

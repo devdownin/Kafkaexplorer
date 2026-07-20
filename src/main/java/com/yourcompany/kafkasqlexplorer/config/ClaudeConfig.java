@@ -19,6 +19,12 @@ public class ClaudeConfig {
     private int snapshotWindowSize = 100;
     private int snapshotWindowTimeoutSeconds = 30;
     /**
+     * Per-call timeout for HTTP-based LLM providers (OpenAI-compatible, Ollama, SpectraLLM),
+     * applied as both connect and request timeout. Local audit models can be slow, so this
+     * defaults high; lower it to fail fast against a hosted endpoint.
+     */
+    private int requestTimeoutSeconds = 60;
+    /**
      * Only used by the {@link Provider#SPECTRA} provider: when {@code true} the audit
      * question is answered with SpectraLLM's hybrid RAG retrieval over its ingested
      * corpus. Defaults to {@code false} because the Kafka audit prompt already carries
@@ -95,6 +101,14 @@ public class ClaudeConfig {
 
     public void setUseRag(boolean useRag) {
         this.useRag = useRag;
+    }
+
+    public int getRequestTimeoutSeconds() {
+        return requestTimeoutSeconds;
+    }
+
+    public void setRequestTimeoutSeconds(int requestTimeoutSeconds) {
+        this.requestTimeoutSeconds = requestTimeoutSeconds;
     }
 
     public boolean isApiKeyRequired() {
