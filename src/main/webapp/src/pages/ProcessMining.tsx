@@ -67,6 +67,22 @@ const STEPS: { key: Step; label: string; icon: string }[] = [
 
 const stepIndex = (s: Step) => STEPS.findIndex(x => x.key === s);
 
+// Prefer the backend's error payload over axios' generic
+// "Request failed with status code 500" message.
+const errorMessage = (err: unknown, fallback: string): string => {
+  if (axios.isAxiosError(err)) {
+    const data: unknown = err.response?.data;
+    if (typeof data === 'string' && data) return data;
+    if (data && typeof data === 'object') {
+      const d = data as Record<string, unknown>;
+      if (typeof d.message === 'string' && d.message) return d.message;
+      if (typeof d.error === 'string' && d.error) return d.error;
+    }
+    return err.message;
+  }
+  return err instanceof Error ? err.message : fallback;
+};
+
 const StepIndicator: React.FC<{ current: Step }> = ({ current }) => (
   <div className="flex items-center gap-0 mb-8">
     {STEPS.map((step, i) => {
@@ -207,8 +223,7 @@ const ProcessMining: React.FC = () => {
       setProfileResult(res.data);
       setStep('VALIDATE');
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Profiling failed';
-      setError(msg);
+      setError(errorMessage(err, 'Profiling failed'));
       setStep('SELECT');
     } finally {
       setLoading(false);
@@ -228,8 +243,7 @@ const ProcessMining: React.FC = () => {
       setFieldMappingId(res.data.fieldMappingId);
       setStep('ANALYZE');
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Validation failed';
-      setError(msg);
+      setError(errorMessage(err, 'Validation failed'));
     } finally {
       setLoading(false);
     }
@@ -252,8 +266,7 @@ const ProcessMining: React.FC = () => {
         setSnapshotResult(res.data);
         setStep('RESULTS');
       } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : 'Analysis failed';
-        setError(msg);
+        setError(errorMessage(err, 'Analysis failed'));
       } finally {
         setLoading(false);
       }

@@ -21,6 +21,13 @@ Chaque constat référence le fichier et la ligne. Sévérités : 🔴 Critique 
 > - M8 : `kafkaDirectSelect` élargit le fetch (jusqu'à `max(5000, limit×100)`, plafonné à 100 000) quand un WHERE
 >   est présent, au lieu de ne lire que `limit + 20` messages avant filtrage.
 >
+> Les **9 bugs mineurs** sont également corrigés : COUNT renvoyé en entier ; code mort supprimé
+> (`stripLimitClause`, `injectLatestOffsetHint`) ; `JsonSchemaInferrer` en `LinkedHashMap` (DDL déterministe) ;
+> StreamFlow refuse une recherche sans `messageKey` (plus de NPE avalées) ; parseurs XML/XPath de StreamFlow en
+> `ThreadLocal` (thread-safe) + `@PreDestroy` sur son pool ; `AnthropicLlmClient` propage la cause réelle dans son
+> message d'erreur ; Dashboard ne touche plus `localStorage` pendant le rendu (tendance « since last visit »
+> fonctionnelle) ; ProcessMining affiche le message d'erreur du backend au lieu du générique axios.
+>
 > Les sections ci-dessous décrivent l'état **avant** correctif.
 
 ---

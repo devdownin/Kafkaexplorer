@@ -1003,14 +1003,15 @@ public class FlinkSqlService {
     /** Evaluates a single aggregate function over a list of rows. */
     private Object evalAggregate(String func, String col, boolean distinct, List<Map<String, Object>> rows) {
         if ("COUNT".equals(func)) {
-            if ("*".equals(col)) return (double) rows.size();
+            // Counts are integral — returning double made the UI display "42.0"
+            if ("*".equals(col)) return (long) rows.size();
             if (distinct) {
-                return (double) rows.stream()
+                return (long) rows.stream()
                     .map(r -> r.get(col)).filter(v -> v != null)
                     .map(Object::toString)
                     .collect(Collectors.toSet()).size();
             }
-            return (double) rows.stream().filter(r -> r.get(col) != null).count();
+            return rows.stream().filter(r -> r.get(col) != null).count();
         }
         List<Double> nums = rows.stream()
             .map(r -> r.get(col))
@@ -1137,16 +1138,6 @@ public class FlinkSqlService {
     }
 
     /**
-     * Removes a trailing LIMIT N clause from a SELECT statement.
-     * Flink 2.x / Calcite crashes with NPE("metadataHandlerProvider") when LIMIT is present
-     * on a streaming Kafka source. Row count is capped by the Java iterator loop instead.
-     */
-    private String stripLimitClause(String sql) {
-        // Match LIMIT at the end of the statement (with optional semicolon), case-insensitive
-        return sql.replaceAll("(?i)\\bLIMIT\\s+\\d+\\s*;?\\s*$", "").trim();
-    }
-
-    /**
      * Converts Flink internal types that are not JSON-serializable to plain Java types.
      * Without this, objects like GenericRowData or metadata handlers appear as their
      * class toString() (e.g. "metadataHandlerProvider") in the JSON response.
@@ -1179,17 +1170,6 @@ public class FlinkSqlService {
         log.warn("[FlinkSQL] toSerializable: unexpected type {} — using toString(). value='{}'",
                 value.getClass().getName(), value);
         return value.toString();
-    }
-
-    private String injectLatestOffsetHint(String sql) {
-        Pattern pattern = Pattern.compile("(?i)FROM\\s+([^\\s;\\(]+)");
-        Matcher matcher = pattern.matcher(sql);
-        if (matcher.find()) {
-            int tableEndIdx = matcher.end();
-            String hint = " /*+ OPTIONS('scan.startup.mode'='latest-offset') */";
-            return sql.substring(0, tableEndIdx) + hint + sql.substring(tableEndIdx);
-        }
-        return sql;
     }
 
     private void cancelJobInternal(TableResult result) {
