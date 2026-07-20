@@ -2,7 +2,7 @@
 [![Java CI with Maven](https://github.com/yourusername/kafka-sql-explorer/actions/workflows/ci.yml/badge.svg)](https://github.com/yourusername/kafka-sql-explorer/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-AGPL%20v3-red.svg)](LICENSE)
 
-**Spring Boot 3.5.x | Apache Flink 2.2.x (Embedded) | Java 25 | React 19**
+**Spring Boot 3.5.x | Apache Flink 1.18.x (Embedded) | Java 25 | React 19**
 
 Kafka SQL Explorer is a modern web application designed for Data Engineers and Architects, allowing them to explore Kafka clusters and query topics in real-time via Flink SQL.
 
@@ -82,17 +82,18 @@ The assistant transforms the message preview into a query design tool:
 - **Live Metrics**: Real-time display of message counts and throughput (msg/s) for the selected topics and time ranges.
 
 ### 8. Automated Functional Audit
-- **Asynchronous Auditing**: Launch long-running cluster-wide audits in the background.
-- **Technical Health Checks**: Automatic detection of "poison messages" (malformed JSON/XML) and precise record counting via Flink SQL.
-- **Duplicate Detection**: Intelligent identification of duplicate records based on common ID fields (e.g., `id`, `order_id`).
+- **Asynchronous Auditing**: Launch long-running cluster-wide audits in the background (dedicated executor, bounded per-topic parallelism).
+- **Technical Health Checks**: Automatic detection of "poison messages" (malformed JSON/XML) and exact record counting via the direct Kafka SELECT engine.
+- **Duplicate Detection**: In-process scan (up to 10 000 messages per topic) counting keys that appear more than once, based on common ID fields (e.g., `id`, `order_id`, `*_id`).
 - **Functional Flow Analysis**: Automatic grouping of topics into logical business processes (using naming conventions) to visualize throughput and drop-off rates across steps.
-- **Latency Measurement**: Calculation of average processing time between successive topics in a flow using Flink SQL joins.
+- **Latency Measurement**: Average delta between Kafka record timestamps of messages sharing the same `id` across successive topics in a flow, computed in-process.
 - **Audit History**: Persistence of audit reports into a dedicated Kafka topic (`internal.audit.history`) for long-term tracking.
 
 ### 9. Security & Robustness
 - **XXE Protection**: Strict disabling of external DTD entities for all XML parsers (Schema Inferrer, UDF, Formatter).
 - **SQL Validation**: Whitelist of authorized commands (`SELECT`, `EXPLAIN`, `CREATE TABLE`) to prevent destructive DML operations.
-- **Connection Management**: Clean lifecycle of the Kafka AdminClient and consumers.
+- **Credential Masking**: DDL shown in the UI (topic detail, DDL preview, lineage) has SSL passwords and SASL/Confluent secrets redacted.
+- **Connection Management**: Clean lifecycle of the Kafka AdminClient, consumers, producers and thread pools; heavy metadata calls are cached (30s) to keep dashboard polling cheap.
 
 ### 10. Process Mining & AI Analysis (LLM)
 Kafka Explorer integrates AI to analyze message flows and detect anomalies:
@@ -115,7 +116,7 @@ The application includes an automated demonstration setup to help you explore fe
 
 ## Tech Stack
 - **Backend**: Spring Boot 3.5.x, Java 25 (Records).
-- **Streaming**: Apache Flink 2.2.x (Embedded LocalEnvironment).
+- **Streaming**: Apache Flink 1.18.x (Embedded LocalEnvironment).
 - **Parsing**: Jackson (JSON), JAXB/StAX (XML).
 - **Frontend**: React 19, Tailwind CSS, Monaco Editor, Vite.
 - **Cache**: Caffeine (Kafka Metadata).

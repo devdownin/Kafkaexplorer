@@ -36,7 +36,7 @@ class AuditServiceTest {
         explorerConfig = new ExplorerConfig();
         when(kafkaConfig.getKafkaProperties()).thenReturn(Map.of("bootstrap.servers", "localhost:9092"));
 
-        auditService = new AuditService(kafkaAdminService, flinkSqlService, schemaInferenceService, ddlGeneratorService, namingConventionService, kafkaConfig, explorerConfig) {
+        auditService = new AuditService(kafkaAdminService, flinkSqlService, schemaInferenceService, ddlGeneratorService, namingConventionService, new MessageFieldExtractorService(), kafkaConfig, explorerConfig) {
             @Override
             protected void persistAuditHistory(AuditReport report) {
                 // Skip Kafka persistence in unit tests

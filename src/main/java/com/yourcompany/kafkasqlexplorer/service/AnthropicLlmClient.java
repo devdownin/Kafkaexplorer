@@ -53,7 +53,10 @@ public class AnthropicLlmClient implements LlmClient {
             }
         } catch (Exception e) {
             log.error("Error calling Anthropic API: {}", e.getMessage(), e);
-            throw new RuntimeException("LLM call failed", e);
+            // Keep the real cause in the message: callers surface e.getMessage() to the UI,
+            // and a bare "LLM call failed" hides timeouts, auth and model errors.
+            throw new RuntimeException("Anthropic API call failed: "
+                + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()), e);
         }
     }
 }

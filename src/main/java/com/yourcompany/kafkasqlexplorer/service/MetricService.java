@@ -19,6 +19,7 @@ import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tag;
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
@@ -26,6 +27,8 @@ import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.PartitionInfo;
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.slf4j.Logger;
@@ -127,6 +130,16 @@ public class MetricService {
     private final KafkaAdminService kafkaAdminService;
     private final MessageFieldExtractorService messageFieldExtractorService;
     private final ObjectMapper    objectMapper = new ObjectMapper();
+
+    /** Shared producer for config persistence — creating a KafkaProducer per save is expensive. */
+    private volatile KafkaProducer<String, String> configProducer;
+
+    /**
+     * Per-refresh-cycle memoization of metric queries: the seeded metrics all share the same
+     * COUNT(*) SQL, so without this each 30s cycle re-scans the same topic once per metric.
+     * Set only for the duration of {@link #refreshMetrics()} (single scheduler thread).
+     */
+    private final ThreadLocal<Map<String, QueryResult>> refreshCycleQueryCache = new ThreadLocal<>();
 
     public MetricService(FlinkSqlService flinkSqlService, MeterRegistry meterRegistry,
                          KafkaConfig kafkaConfig, ExplorerConfig explorerConfig,
@@ -580,7 +593,13 @@ public class MetricService {
     }
 
     private QueryResult executeMetricQuery(String sql, int maxRows, long timeoutMs, String readMode) {
-        return flinkSqlService.executeSql(QueryRequest.sql(injectBoundedHint(sql), maxRows, timeoutMs, readMode));
+        Map<String, QueryResult> cycleCache = refreshCycleQueryCache.get();
+        if (cycleCache == null) {
+            return flinkSqlService.executeSql(QueryRequest.sql(injectBoundedHint(sql), maxRows, timeoutMs, readMode));
+        }
+        String key = sql + '|' + maxRows + '|' + timeoutMs + '|' + readMode;
+        return cycleCache.computeIfAbsent(key, k ->
+            flinkSqlService.executeSql(QueryRequest.sql(injectBoundedHint(sql), maxRows, timeoutMs, readMode)));
     }
 
     private List<CorrelationEvent> extractCorrelationEvents(List<Map<String, Object>> rows, String queryName) {
@@ -685,6 +704,15 @@ public class MetricService {
 
     @Scheduled(fixedRateString = "${explorer.metrics-refresh-rate:30000}")
     public void refreshMetrics() {
+        refreshCycleQueryCache.set(new HashMap<>());
+        try {
+            doRefreshMetrics();
+        } finally {
+            refreshCycleQueryCache.remove();
+        }
+    }
+
+    private void doRefreshMetrics() {
         metrics.forEach((id, config) -> {
             try {
                 MetricConfig normalized = normalizeMetric(config);
@@ -924,18 +952,46 @@ public class MetricService {
     // ── Kafka persistence ─────────────────────────────────────────────────────
 
     private void persistToKafka(MetricConfig metric) {
-        Properties props = new Properties();
-        props.putAll(kafkaConfig.getKafkaProperties());
-        props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG,   StringSerializer.class.getName());
-        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
-        try (KafkaProducer<String, String> producer = new KafkaProducer<>(props)) {
-            producer.send(new ProducerRecord<>(
+        try {
+            configProducer().send(new ProducerRecord<>(
                 explorerConfig.getMetricsConfigTopic(),
                 metric.id(),
                 objectMapper.writeValueAsString(metric))).get();
         } catch (Exception e) {
             log.warn("Failed to persist metric config: {}", e.getMessage());
+            // Drop the producer so the next attempt reconnects with fresh state/config
+            closeConfigProducer();
         }
+    }
+
+    private KafkaProducer<String, String> configProducer() {
+        KafkaProducer<String, String> existing = configProducer;
+        if (existing != null) return existing;
+        synchronized (this) {
+            if (configProducer == null) {
+                Properties props = new Properties();
+                props.putAll(kafkaConfig.getKafkaProperties());
+                props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG,   StringSerializer.class.getName());
+                props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+                configProducer = new KafkaProducer<>(props);
+            }
+            return configProducer;
+        }
+    }
+
+    private synchronized void closeConfigProducer() {
+        if (configProducer != null) {
+            try {
+                configProducer.close();
+            } catch (Exception ignored) {
+            }
+            configProducer = null;
+        }
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        closeConfigProducer();
     }
 
     private void restoreFromKafka() {
@@ -945,20 +1001,56 @@ public class MetricService {
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         props.put(ConsumerConfig.GROUP_ID_CONFIG,         "explorer-metrics-restorer-" + UUID.randomUUID());
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        // Fail fast when the broker is unreachable — this runs during application startup.
+        props.put(ConsumerConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, "5000");
+        props.put(ConsumerConfig.REQUEST_TIMEOUT_MS_CONFIG, "4000");
         try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props)) {
-            consumer.subscribe(Collections.singletonList(explorerConfig.getMetricsConfigTopic()));
-            long start = System.currentTimeMillis();
-            while (System.currentTimeMillis() - start < 2000) {
-                ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(500));
-                if (records.isEmpty()) break;
+            List<PartitionInfo> partitionInfos = consumer.partitionsFor(explorerConfig.getMetricsConfigTopic());
+            if (partitionInfos == null || partitionInfos.isEmpty()) {
+                return; // topic does not exist yet — nothing to restore
+            }
+            List<TopicPartition> partitions = partitionInfos.stream()
+                .map(pi -> new TopicPartition(pi.topic(), pi.partition()))
+                .toList();
+            consumer.assign(partitions);
+            consumer.seekToBeginning(partitions);
+            Map<TopicPartition, Long> endOffsets = consumer.endOffsets(partitions);
+
+            // Poll until every partition reaches its end offset. An empty poll does NOT mean
+            // the topic is exhausted (the first poll after assignment is typically empty
+            // while the fetch is in flight), so completion is tracked by position instead.
+            long deadline = System.currentTimeMillis() + 10_000;
+            while (System.currentTimeMillis() < deadline && !reachedEndOffsets(consumer, endOffsets)) {
+                ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(300));
                 for (ConsumerRecord<String, String> record : records) {
-                    MetricConfig cfg = objectMapper.readValue(record.value(), MetricConfig.class);
-                    if ("DELETED".equals(cfg.errorMessage())) metrics.remove(record.key());
-                    else metrics.put(record.key(), cfg);
+                    try {
+                        if (record.value() == null) {
+                            metrics.remove(record.key());
+                            continue;
+                        }
+                        MetricConfig cfg = objectMapper.readValue(record.value(), MetricConfig.class);
+                        if ("DELETED".equals(cfg.errorMessage())) metrics.remove(record.key());
+                        else metrics.put(record.key(), cfg);
+                    } catch (Exception e) {
+                        // One corrupt record must not abort the whole restore
+                        log.warn("Skipping unreadable metric config at {}:{}: {}",
+                            record.partition(), record.offset(), e.getMessage());
+                    }
                 }
             }
+            log.info("Restored {} metric configuration(s) from Kafka", metrics.size());
         } catch (Exception e) {
             log.debug("Restore from Kafka failed: {}", e.getMessage());
         }
+    }
+
+    private boolean reachedEndOffsets(KafkaConsumer<String, String> consumer,
+                                      Map<TopicPartition, Long> endOffsets) {
+        for (Map.Entry<TopicPartition, Long> entry : endOffsets.entrySet()) {
+            if (consumer.position(entry.getKey()) < entry.getValue()) {
+                return false;
+            }
+        }
+        return true;
     }
 }

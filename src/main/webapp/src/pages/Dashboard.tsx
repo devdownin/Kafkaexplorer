@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { useToast } from '../components/Toast';
@@ -7,6 +7,7 @@ import ErrorBanner from '../components/ErrorBanner';
 
 const PAGE_SIZES = [10, 25, 50, 100];
 const DASHBOARD_REFRESH_MS = 5000;
+const TOPIC_COUNT_KEY = 'dashboard.lastTopicCount';
 type SortKey = 'name' | 'size' | 'state' | 'lastMessage';
 type SortDir = 'asc' | 'desc';
 
@@ -43,6 +44,21 @@ const Dashboard: React.FC = () => {
   const [killingJob, setKillingJob] = useState<string | null>(null);
   const [hideEmpty, setHideEmpty] = useState(false);
   const [hideDlt, setHideDlt] = useState(false);
+  // Topic count from the previous visit, read once on mount. Reading/writing
+  // localStorage during render overwrote the baseline on every re-render (every
+  // 5s poll), so the "since last visit" trend always showed "No change".
+  const previousVisitTopicCount = useRef<number | null>(null);
+
+  useEffect(() => {
+    const stored = localStorage.getItem(TOPIC_COUNT_KEY);
+    previousVisitTopicCount.current = stored !== null ? Number(stored) : null;
+  }, []);
+
+  useEffect(() => {
+    if (data) {
+      localStorage.setItem(TOPIC_COUNT_KEY, String(data.topics.length));
+    }
+  }, [data]);
 
   const formatJobTime = (ms: number | null | undefined) =>
     ms ? new Date(ms).toLocaleString() : '—';
@@ -175,10 +191,8 @@ const Dashboard: React.FC = () => {
     return [0, -1, page - 1, page, page + 1, -2, totalPages - 1];
   })();
 
-  const topicCountKey = 'dashboard.lastTopicCount';
-  const prevCount = Number(localStorage.getItem(topicCountKey) ?? data.topics.length);
+  const prevCount = previousVisitTopicCount.current ?? data.topics.length;
   const topicDiff = data.topics.length - prevCount;
-  localStorage.setItem(topicCountKey, String(data.topics.length));
   const topicTrend = topicDiff > 0 ? `+${topicDiff} since last visit`
                    : topicDiff < 0 ? `${topicDiff} since last visit`
                    : 'No change since last visit';

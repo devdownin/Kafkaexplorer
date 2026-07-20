@@ -35,7 +35,8 @@ public class TopicController {
         TopicDescriptor descriptor = kafkaAdminService.getTopicDescriptor(name);
         MessageFormat format = schemaInferenceService.detectFormat(name);
         Map<String, String> schema = schemaInferenceService.inferSchema(name, format);
-        String ddl = ddlGeneratorService.generateDdl(name, schema, format, readMode);
+        String ddl = DdlGeneratorService.maskSensitiveProperties(
+                ddlGeneratorService.generateDdl(name, schema, format, readMode));
 
         return new TopicDetailResponse(
                 descriptor,
@@ -53,6 +54,7 @@ public class TopicController {
                          @RequestParam(defaultValue = "earliest-offset") String readMode) throws Exception {
         MessageFormat format = schemaInferenceService.detectFormat(name);
         Map<String, String> schema = schemaInferenceService.inferSchema(name, format);
-        return ddlGeneratorService.generateDdl(name, schema, format, readMode);
+        return DdlGeneratorService.maskSensitiveProperties(
+                ddlGeneratorService.generateDdl(name, schema, format, readMode));
     }
 }

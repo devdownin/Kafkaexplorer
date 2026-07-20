@@ -153,6 +153,11 @@ public class KafkaAdminService {
         }
     }
 
+    /**
+     * Cached (30s TTL): each call spins up a full KafkaConsumer plus a describeTopics
+     * round-trip, and the dashboard polls this every 5 seconds for every topic.
+     */
+    @Cacheable(value = "topicSizes", key = "#topicNames")
     public Map<String, Long> getTopicsSize(List<String> topicNames) {
         Map<String, Long> sizes = new HashMap<>();
         if (topicNames.isEmpty()) return sizes;
@@ -351,6 +356,8 @@ public class KafkaAdminService {
         return details;
     }
 
+    /** Cached (30s TTL) for the same reason as {@link #getTopicsSize}: consumer + seek + poll per call. */
+    @Cacheable(value = "topicLastMessages", key = "#topicNames")
     public Map<String, Long> getTopicsLastMessageTimestamps(List<String> topicNames) {
         Map<String, Long> timestamps = new HashMap<>();
         if (topicNames.isEmpty()) return timestamps;
@@ -598,10 +605,15 @@ public class KafkaAdminService {
                     }
                 }
             } else {
+                Map<TopicPartition, Long> beginningOffsets = consumer.beginningOffsets(partitions);
                 Map<TopicPartition, Long> endOffsets = consumer.endOffsets(partitions);
                 for (TopicPartition tp : partitions) {
                     long endOffset = endOffsets.get(tp);
-                    long startOffset = Math.max(0, endOffset - (maxMessages / partitions.size() + 1));
+                    // Clamp to the beginning offset: on topics where retention has deleted old
+                    // segments, seeking below it is an out-of-range position and the consumer
+                    // resets to auto.offset.reset (default "latest"), silently returning nothing.
+                    long beginningOffset = beginningOffsets.getOrDefault(tp, 0L);
+                    long startOffset = Math.max(beginningOffset, endOffset - (maxMessages / partitions.size() + 1));
                     consumer.seek(tp, startOffset);
                 }
             }

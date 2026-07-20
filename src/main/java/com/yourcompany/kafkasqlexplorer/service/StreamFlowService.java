@@ -5,6 +5,7 @@ package com.yourcompany.kafkasqlexplorer.service;
 import com.jayway.jsonpath.JsonPath;
 import com.yourcompany.kafkasqlexplorer.domain.StreamFlowRequest;
 import com.yourcompany.kafkasqlexplorer.domain.StreamFlowResponse;
+import jakarta.annotation.PreDestroy;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +23,7 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -33,28 +35,58 @@ public class StreamFlowService {
     private static final int THREAD_POOL_SIZE = 10;
 
     private final KafkaAdminService kafkaAdminService;
-    private final DocumentBuilderFactory xmlFactory;
-    private final XPathFactory xPathFactory;
     private final ExecutorService executorService;
+
+    /**
+     * DocumentBuilder, XPath and their factories are NOT thread-safe, and topics are
+     * scanned from a pool of {@value #THREAD_POOL_SIZE} threads — each worker thread
+     * gets its own parser instances, reset() before reuse.
+     */
+    private final ThreadLocal<DocumentBuilder> documentBuilders =
+        ThreadLocal.withInitial(StreamFlowService::createSecureDocumentBuilder);
+    private final ThreadLocal<XPath> xPaths =
+        ThreadLocal.withInitial(() -> XPathFactory.newInstance().newXPath());
 
     public StreamFlowService(KafkaAdminService kafkaAdminService) {
         this.kafkaAdminService = kafkaAdminService;
-        this.xmlFactory = DocumentBuilderFactory.newInstance();
-        try {
-            this.xmlFactory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-            this.xmlFactory.setFeature("http://xml.org/sax/features/external-general-entities", false);
-            this.xmlFactory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
-            this.xmlFactory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
-            this.xmlFactory.setXIncludeAware(false);
-            this.xmlFactory.setExpandEntityReferences(false);
-        } catch (Exception e) {
-            log.warn("Could not configure XML factory with secure features", e);
-        }
-        this.xPathFactory = XPathFactory.newInstance();
         this.executorService = Executors.newFixedThreadPool(THREAD_POOL_SIZE);
     }
 
+    private static DocumentBuilder createSecureDocumentBuilder() {
+        try {
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+            factory.setXIncludeAware(false);
+            factory.setExpandEntityReferences(false);
+            return factory.newDocumentBuilder();
+        } catch (Exception e) {
+            throw new IllegalStateException("Cannot create secure XML parser", e);
+        }
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        executorService.shutdown();
+        try {
+            if (!executorService.awaitTermination(5, TimeUnit.SECONDS)) {
+                executorService.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            executorService.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+    }
+
     public StreamFlowResponse getStreamFlow(StreamFlowRequest request) {
+        // Without a message key there is no search criterion: scanning every topic would
+        // NPE in checkMatch (content.contains(null)) on each record and return nothing.
+        if (request.messageKey() == null || request.messageKey().isBlank()) {
+            return new StreamFlowResponse(Collections.emptyList(), Collections.emptyList());
+        }
+
         List<String> topicsToScan;
         try {
             if (request.targetTopics() != null && !request.targetTopics().isEmpty()) {
@@ -181,6 +213,7 @@ public class StreamFlowService {
         if (pattern != null) {
             return pattern.matcher(content).find();
         }
+        if (expected == null || expected.isEmpty()) return false;
         return content.contains(expected);
     }
 
@@ -197,9 +230,11 @@ public class StreamFlowService {
 
     private boolean matchXPath(String xml, String path, String expectedValue, Pattern pattern) {
         try {
-            DocumentBuilder builder = xmlFactory.newDocumentBuilder();
+            DocumentBuilder builder = documentBuilders.get();
+            builder.reset();
             Document doc = builder.parse(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)));
-            XPath xPath = xPathFactory.newXPath();
+            XPath xPath = xPaths.get();
+            xPath.reset();
             String result = (String) xPath.compile(path).evaluate(doc, XPathConstants.STRING);
             if (result == null) return false;
             return checkMatch(result, expectedValue, pattern);

@@ -17,20 +17,26 @@ public class NamingConventionService {
 
     /**
      * Identifies a potential primary key field from a schema based on naming conventions.
+     * Returns {@code null} when no id-like field exists: falling back to an arbitrary
+     * field would make duplicate detection group by a non-key column (e.g. a status)
+     * and report massive false positives.
      */
     public String findKeyField(Map<String, String> schema) {
         if (schema == null || schema.isEmpty()) {
             return null;
         }
 
-        // Priority: exact "id", then case-insensitive "id", then case-insensitive "order_id"
+        // Priority: exact "id", then case-insensitive "id"/"order_id", then any *_id / *Id suffix
         return schema.keySet().stream()
                 .filter(k -> k.equals("id"))
                 .findFirst()
                 .orElseGet(() -> schema.keySet().stream()
                         .filter(k -> k.equalsIgnoreCase("id") || k.equalsIgnoreCase("order_id"))
                         .findFirst()
-                        .orElseGet(() -> schema.keySet().stream().findFirst().orElse(null)));
+                        .orElseGet(() -> schema.keySet().stream()
+                                .filter(k -> k.toLowerCase().endsWith("_id") || k.endsWith("Id"))
+                                .findFirst()
+                                .orElse(null)));
     }
 
     /**

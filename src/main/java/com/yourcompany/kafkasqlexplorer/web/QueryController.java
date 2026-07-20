@@ -129,7 +129,8 @@ public class QueryController {
         try {
             MessageFormat format = schemaInferenceService.detectFormat(topic);
             Map<String, String> schema = schemaInferenceService.inferSchema(topic, format);
-            String ddl = ddlGeneratorService.generateDdl(topic, schema, format);
+            String ddl = DdlGeneratorService.maskSensitiveProperties(
+                    ddlGeneratorService.generateDdl(topic, schema, format));
             return Map.of("ddl", ddl);
         } catch (Exception e) {
             return Map.of("error", e.getMessage());

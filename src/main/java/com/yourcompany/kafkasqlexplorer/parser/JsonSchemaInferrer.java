@@ -8,7 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 @Component
@@ -18,7 +18,8 @@ public class JsonSchemaInferrer {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public Map<String, String> infer(String json) {
-        Map<String, String> schema = new HashMap<>();
+        // LinkedHashMap: keep the message's field order so generated DDL is deterministic
+        Map<String, String> schema = new LinkedHashMap<>();
         try {
             JsonNode root = objectMapper.readTree(json);
             root.fields().forEachRemaining(entry -> {

@@ -149,9 +149,11 @@ public class LineageService {
 
     public String getDdlForNode(String name) {
         String ddl = getDdl(name, "TABLE");
-        if (ddl != null) return ddl;
-        ddl = getDdl(name, "VIEW");
-        if (ddl != null) return ddl;
+        if (ddl == null) ddl = getDdl(name, "VIEW");
+        if (ddl != null) {
+            // SHOW CREATE TABLE echoes connector credentials (SASL/SSL) — never send them to the UI.
+            return DdlGeneratorService.maskSensitiveProperties(ddl);
+        }
         return "-- DDL not available for: " + name;
     }
 

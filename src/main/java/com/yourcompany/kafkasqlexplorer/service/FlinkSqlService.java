@@ -111,6 +111,29 @@ public class FlinkSqlService {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    /**
+     * Secure XML parser, one per thread: building a DocumentBuilderFactory per message is
+     * far too expensive when an aggregate query parses up to 100 000 XML payloads.
+     * (DocumentBuilder and its factory are not thread-safe; reset() before each parse.)
+     */
+    private static final ThreadLocal<DocumentBuilder> XML_BUILDERS =
+        ThreadLocal.withInitial(FlinkSqlService::createSecureDocumentBuilder);
+
+    private static DocumentBuilder createSecureDocumentBuilder() {
+        try {
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+            factory.setXIncludeAware(false);
+            factory.setExpandEntityReferences(false);
+            return factory.newDocumentBuilder();
+        } catch (Exception e) {
+            throw new IllegalStateException("Cannot create secure XML parser", e);
+        }
+    }
+
     @Autowired
     public FlinkSqlService(TableEnvironment tableEnv, FlinkRuntimeCoordinator runtimeCoordinator,
                            ExplorerConfig explorerConfig, SqlQueryValidator sqlQueryValidator,
@@ -498,7 +521,7 @@ public class FlinkSqlService {
             // result.collect() starts the Flink job and provides an iterator to fetch results.
             try (org.apache.flink.util.CloseableIterator<Row> it = result.collect()) {
             List<String> columns = result.getResolvedSchema().getColumnNames();
-            log.info("[FlinkSQL] queryId={} sql='{}' resolvedColumns={} resolvedSchema={}",
+            log.debug("[FlinkSQL] queryId={} sql='{}' resolvedColumns={} resolvedSchema={}",
                     queryId, sqlToExecute, columns, result.getResolvedSchema());
             List<Map<String, Object>> rows = new ArrayList<>();
 
@@ -509,12 +532,12 @@ public class FlinkSqlService {
                 int count = 0;
                 while (it.hasNext() && count < limit) {
                     Row row = it.next();
-                    if (count == 0) {
-                        log.info("[FlinkSQL] queryId={} first row arity={} kind={} rowString='{}'",
+                    if (count == 0 && log.isDebugEnabled()) {
+                        log.debug("[FlinkSQL] queryId={} first row arity={} kind={} rowString='{}'",
                                 queryId, row.getArity(), row.getKind(), row);
                         for (int i = 0; i < columns.size(); i++) {
                             Object field = row.getField(i);
-                            log.info("[FlinkSQL] queryId={} col[{}]='{}' valueType={} value='{}'",
+                            log.debug("[FlinkSQL] queryId={} col[{}]='{}' valueType={} value='{}'",
                                     queryId, i, columns.get(i),
                                     field == null ? "null" : field.getClass().getName(), field);
                         }
@@ -528,7 +551,7 @@ public class FlinkSqlService {
                     resultRows.add(mapRow);
                     count++;
                 }
-                log.info("[FlinkSQL] queryId={} total rows fetched={}", queryId, resultRows.size());
+                log.debug("[FlinkSQL] queryId={} total rows fetched={}", queryId, resultRows.size());
                 return resultRows;
             }, queryExecutor);
 
@@ -586,14 +609,8 @@ public class FlinkSqlService {
         // ── XML ─────────────────────────────────────────────────────────────
         if (trimmed.startsWith("<")) {
             try {
-                DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-                factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-                factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
-                factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
-                factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
-                factory.setXIncludeAware(false);
-                factory.setExpandEntityReferences(false);
-                DocumentBuilder builder = factory.newDocumentBuilder();
+                DocumentBuilder builder = XML_BUILDERS.get();
+                builder.reset();
                 Document doc = builder.parse(new ByteArrayInputStream(trimmed.getBytes(StandardCharsets.UTF_8)));
                 Map<String, Object> row = new LinkedHashMap<>();
                 flattenXmlElement(doc.getDocumentElement(), "", row);
@@ -719,16 +736,26 @@ public class FlinkSqlService {
                 "Table '" + rawTableRef + "' not found. No matching Kafka topic exists.");
         }
 
-        // For aggregates, read all available messages; for projections, cap at limit
-        int fetch = isAggregate ? 100_000 : limit + 20;
+        // Parse selected columns and WHERE conditions from SQL (needed to size the fetch)
+        List<String> requestedCols = isAggregate ? Collections.emptyList() : extractSelectedColumns(sql);
+        Map<String, String> whereConds = extractSimpleWhere(sql);
+
+        // For aggregates, read all available messages. For plain projections, a small
+        // overshoot over the limit is enough — but when a WHERE clause filters rows,
+        // matches may sit far beyond limit+20 messages, so scan a much larger slice
+        // (the row loop still stops as soon as `limit` matches are collected).
+        int fetch;
+        if (isAggregate) {
+            fetch = 100_000;
+        } else if (whereConds.isEmpty()) {
+            fetch = limit + 20;
+        } else {
+            fetch = Math.min(100_000, Math.max(5_000, limit * 100));
+        }
         List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records =
             "earliest-offset".equals(readMode)
                 ? kafkaAdminService.getEarliestRecords(topic, fetch)
                 : kafkaAdminService.getRecentRecords(topic, fetch);
-
-        // Parse selected columns and WHERE conditions from SQL
-        List<String> requestedCols = isAggregate ? Collections.emptyList() : extractSelectedColumns(sql);
-        Map<String, String> whereConds = extractSimpleWhere(sql);
 
         // Build result rows from JSON messages
         List<Map<String, Object>> rows = new ArrayList<>();
@@ -773,7 +800,7 @@ public class FlinkSqlService {
                 String[] p = c.split("(?i)\\s+AS\\s+", 2);
                 return p.length > 1 ? p[1].trim() : p[0].trim();
             }).collect(Collectors.toList());
-        log.info("[KafkaDirect] topic='{}' rows={} readMode={}", topic, rows.size(), readMode);
+        log.debug("[KafkaDirect] topic='{}' rows={} readMode={}", topic, rows.size(), readMode);
         return new QueryResult(columns, rows, System.currentTimeMillis() - startTime, null, false, "KAFKA_DIRECT");
     }
 
@@ -854,7 +881,7 @@ public class FlinkSqlService {
 
         List<String> columns = resultRows.isEmpty() ? Collections.emptyList()
                              : new ArrayList<>(resultRows.get(0).keySet());
-        log.info("[KafkaDirect/Agg] inputRows={} groups={} cols={}",
+        log.debug("[KafkaDirect/Agg] inputRows={} groups={} cols={}",
                  inputRows.size(), resultRows.size(), columns);
         return new QueryResult(columns, resultRows, System.currentTimeMillis() - startTime, null, false, "KAFKA_DIRECT");
     }
@@ -985,7 +1012,7 @@ public class FlinkSqlService {
         List<String> columns = resultRows.isEmpty()
             ? List.of("window_start", "window_end")
             : new ArrayList<>(resultRows.get(0).keySet());
-        log.info("[KafkaDirect/Window] topic='{}' timeCol='{}' intervalMs={} windows={} rows={}",
+        log.debug("[KafkaDirect/Window] topic='{}' timeCol='{}' intervalMs={} windows={} rows={}",
                  topic, timeCol, intervalMs, windows.size(), resultRows.size());
         return new QueryResult(columns, resultRows, System.currentTimeMillis() - startTime, null, false, "KAFKA_DIRECT");
     }
@@ -993,14 +1020,15 @@ public class FlinkSqlService {
     /** Evaluates a single aggregate function over a list of rows. */
     private Object evalAggregate(String func, String col, boolean distinct, List<Map<String, Object>> rows) {
         if ("COUNT".equals(func)) {
-            if ("*".equals(col)) return (double) rows.size();
+            // Counts are integral — returning double made the UI display "42.0"
+            if ("*".equals(col)) return (long) rows.size();
             if (distinct) {
-                return (double) rows.stream()
+                return (long) rows.stream()
                     .map(r -> r.get(col)).filter(v -> v != null)
                     .map(Object::toString)
                     .collect(Collectors.toSet()).size();
             }
-            return (double) rows.stream().filter(r -> r.get(col) != null).count();
+            return rows.stream().filter(r -> r.get(col) != null).count();
         }
         List<Double> nums = rows.stream()
             .map(r -> r.get(col))
@@ -1035,21 +1063,35 @@ public class FlinkSqlService {
         Matcher wm = whereBlock.matcher(sql);
         if (!wm.find()) return conditions;
         String whereClause = wm.group(1).trim();
-        Pattern condPattern = Pattern.compile("(?i)`?([\\w]+)`?\\s*=\\s*'([^']*)'");
+        // Keep the original case of the column name: message fields are case-sensitive
+        // (e.g. "orderId") and lowercasing the key would make every lookup miss.
+        // Dots are allowed so nested JSON / flattened XML paths can be filtered.
+        Pattern condPattern = Pattern.compile("(?i)`?([\\w.]+)`?\\s*=\\s*'([^']*)'");
         Matcher cm = condPattern.matcher(whereClause);
         while (cm.find()) {
-            conditions.put(cm.group(1).toLowerCase(), cm.group(2));
+            conditions.put(cm.group(1), cm.group(2));
         }
         return conditions;
     }
 
     private boolean matchesWhereConditions(Map<String, Object> row, Map<String, String> conditions) {
         for (Map.Entry<String, String> cond : conditions.entrySet()) {
-            Object val = row.get(cond.getKey());
+            Object val = getNestedValue(row, cond.getKey());
+            if (val == null) {
+                val = findValueIgnoreCase(row, cond.getKey());
+            }
             if (val == null) return false;
             if (!val.toString().equalsIgnoreCase(cond.getValue())) return false;
         }
         return true;
+    }
+
+    /** Last-resort lookup for WHERE conditions whose case doesn't match the message fields. */
+    private Object findValueIgnoreCase(Map<String, Object> row, String key) {
+        for (Map.Entry<String, Object> e : row.entrySet()) {
+            if (e.getKey().equalsIgnoreCase(key)) return e.getValue();
+        }
+        return null;
     }
 
     public void cancelQuery(String queryId) {
@@ -1113,16 +1155,6 @@ public class FlinkSqlService {
     }
 
     /**
-     * Removes a trailing LIMIT N clause from a SELECT statement.
-     * Flink 2.x / Calcite crashes with NPE("metadataHandlerProvider") when LIMIT is present
-     * on a streaming Kafka source. Row count is capped by the Java iterator loop instead.
-     */
-    private String stripLimitClause(String sql) {
-        // Match LIMIT at the end of the statement (with optional semicolon), case-insensitive
-        return sql.replaceAll("(?i)\\bLIMIT\\s+\\d+\\s*;?\\s*$", "").trim();
-    }
-
-    /**
      * Converts Flink internal types that are not JSON-serializable to plain Java types.
      * Without this, objects like GenericRowData or metadata handlers appear as their
      * class toString() (e.g. "metadataHandlerProvider") in the JSON response.
@@ -1155,17 +1187,6 @@ public class FlinkSqlService {
         log.warn("[FlinkSQL] toSerializable: unexpected type {} — using toString(). value='{}'",
                 value.getClass().getName(), value);
         return value.toString();
-    }
-
-    private String injectLatestOffsetHint(String sql) {
-        Pattern pattern = Pattern.compile("(?i)FROM\\s+([^\\s;\\(]+)");
-        Matcher matcher = pattern.matcher(sql);
-        if (matcher.find()) {
-            int tableEndIdx = matcher.end();
-            String hint = " /*+ OPTIONS('scan.startup.mode'='latest-offset') */";
-            return sql.substring(0, tableEndIdx) + hint + sql.substring(tableEndIdx);
-        }
-        return sql;
     }
 
     private void cancelJobInternal(TableResult result) {

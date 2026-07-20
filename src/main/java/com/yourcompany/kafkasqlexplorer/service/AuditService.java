@@ -6,19 +6,23 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yourcompany.kafkasqlexplorer.config.ExplorerConfig;
 import com.yourcompany.kafkasqlexplorer.config.KafkaConfig;
 import com.yourcompany.kafkasqlexplorer.domain.*;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import jakarta.annotation.PreDestroy;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -31,23 +35,56 @@ public class AuditService {
 
     private static final Logger log = LoggerFactory.getLogger(AuditService.class);
 
+    /** Cap on messages scanned per topic when counting duplicate keys in-process. */
+    private static final int DUPLICATE_SCAN_MAX_MESSAGES = 10_000;
+    /** Cap on messages scanned per topic when correlating flow latency in-process. */
+    private static final int LATENCY_SCAN_MAX_MESSAGES = 1_000;
+
     private final KafkaAdminService kafkaAdminService;
     private final FlinkSqlService flinkSqlService;
     private final SchemaInferenceService schemaInferenceService;
     private final DdlGeneratorService ddlGeneratorService;
     private final NamingConventionService namingConventionService;
+    private final MessageFieldExtractorService messageFieldExtractorService;
     private final KafkaConfig kafkaConfig;
     private final ExplorerConfig explorerConfig;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private final Map<String, AuditReport> auditRuns = new ConcurrentHashMap<>();
-    private String lastAuditId = null;
+    private volatile String lastAuditId = null;
+
+    /**
+     * Dedicated executor for background audit runs. Spring's {@code @Async} cannot be used
+     * here: {@code startAudit()} would self-invoke the async method, bypassing the proxy and
+     * running the whole audit synchronously on the HTTP thread.
+     */
+    private final ExecutorService auditExecutor = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "cluster-audit-runner");
+        t.setDaemon(true);
+        return t;
+    });
+
+    /**
+     * Bounded pool for per-topic audits. Fanning one commonPool task out per topic opened
+     * dozens of simultaneous Kafka consumers (schema sampling + duplicate scans) on large
+     * clusters; four workers keep the audit parallel without hammering the broker.
+     */
+    private final ExecutorService topicAuditExecutor = Executors.newFixedThreadPool(4, r -> {
+        Thread t = new Thread(r);
+        t.setName("audit-topic-worker-" + t.getId());
+        t.setDaemon(true);
+        return t;
+    });
+
+    /** Shared producer for audit-history persistence — one KafkaProducer per report is wasteful. */
+    private volatile KafkaProducer<String, String> historyProducer;
 
     public AuditService(KafkaAdminService kafkaAdminService,
                         FlinkSqlService flinkSqlService,
                         SchemaInferenceService schemaInferenceService,
                         DdlGeneratorService ddlGeneratorService,
                         NamingConventionService namingConventionService,
+                        MessageFieldExtractorService messageFieldExtractorService,
                         KafkaConfig kafkaConfig,
                         ExplorerConfig explorerConfig) {
         this.kafkaAdminService = kafkaAdminService;
@@ -55,6 +92,7 @@ public class AuditService {
         this.schemaInferenceService = schemaInferenceService;
         this.ddlGeneratorService = ddlGeneratorService;
         this.namingConventionService = namingConventionService;
+        this.messageFieldExtractorService = messageFieldExtractorService;
         this.kafkaConfig = kafkaConfig;
         this.explorerConfig = explorerConfig;
     }
@@ -65,7 +103,7 @@ public class AuditService {
         AuditReport initialReport = new AuditReport(auditId, AuditStatus.RUNNING, 0, 0, 0, Collections.emptyList(), Collections.emptyList(), Collections.emptyMap());
         auditRuns.put(auditId, initialReport);
 
-        runAuditAsync(auditId, options);
+        auditExecutor.submit(() -> runAuditAsync(auditId, options));
         return auditId;
     }
 
@@ -78,18 +116,19 @@ public class AuditService {
     }
 
     /**
-     * Executes the audit process in a background thread to avoid blocking the UI.
+     * Executes the audit process (submitted to {@link #auditExecutor} by {@link #startAudit})
+     * so the HTTP thread returns immediately with the audit id.
      * The results are stored in an in-memory map and also persisted to Kafka.
      */
-    @Async
     protected void runAuditAsync(String auditId, AuditOptions options) {
         try {
             List<String> topics = kafkaAdminService.listTopics();
             Map<String, Long> topicSizes = kafkaAdminService.getTopicsSize(topics);
 
-            // Parallelize topic auditing
+            // Parallelize topic auditing on a bounded pool (not the shared commonPool)
             List<CompletableFuture<TopicAudit>> futures = topics.stream()
-                .map(topic -> CompletableFuture.supplyAsync(() -> auditTopic(topic, topicSizes.getOrDefault(topic, 0L), options)))
+                .map(topic -> CompletableFuture.supplyAsync(
+                    () -> auditTopic(topic, topicSizes.getOrDefault(topic, 0L), options), topicAuditExecutor))
                 .toList();
 
             List<TopicAudit> topicAudits = futures.stream()
@@ -180,31 +219,61 @@ public class AuditService {
 
     private long getExactCount(String topicName, long approximateCount) {
         String tableName = DdlGeneratorService.toTableName(topicName);
-        QueryResult countResult = flinkSqlService.executeSql(new QueryRequest("SELECT COUNT(*) FROM " + tableName, null, 1, explorerConfig.getAuditQueryTimeoutMs(), null));
+        QueryResult countResult = flinkSqlService.executeSql(new QueryRequest(
+            "SELECT COUNT(*) AS metric_value FROM " + tableName, null, 1, explorerConfig.getAuditQueryTimeoutMs(), null));
         if (countResult.error() == null && !countResult.rows().isEmpty()) {
-            Object val = countResult.rows().get(0).get("EXPR$0");
-            if (val instanceof Long) return (Long) val;
-            if (val instanceof Integer) return ((Integer) val).longValue();
+            // The direct Kafka engine aliases aggregates (metric_value / count_all, Double values)
+            // while Flink names them EXPR$0 (Long) — accept the first numeric value either way.
+            Long value = firstNumericValue(countResult.rows().get(0));
+            if (value != null) return value;
         }
         return approximateCount;
     }
 
+    private Long firstNumericValue(Map<String, Object> row) {
+        for (Object val : row.values()) {
+            if (val instanceof Number number) return number.longValue();
+        }
+        return null;
+    }
+
+    /**
+     * Counts keys that appear more than once, scanning messages directly.
+     * The previous SQL implementation (GROUP BY subquery with HAVING) is not supported by
+     * the direct Kafka SELECT engine and silently returned 0 for every topic.
+     */
     private long detectDuplicates(String topicName, Map<String, String> schema) {
         String keyField = namingConventionService.findKeyField(schema);
-
         if (keyField == null) return 0;
 
-        String tableName = DdlGeneratorService.toTableName(topicName);
-        String sql = "SELECT COUNT(*) FROM (SELECT 1 FROM " + tableName + " GROUP BY " + keyField + " HAVING COUNT(*) > 1)";
-        QueryResult dupResult = flinkSqlService.executeSql(new QueryRequest(sql, null, 1, explorerConfig.getAuditQueryTimeoutMs(), null));
-        if (dupResult.error() == null && !dupResult.rows().isEmpty()) {
-            Object val = dupResult.rows().get(0).get("EXPR$0");
-            if (val instanceof Long) return (Long) val;
-            if (val instanceof Integer) return ((Integer) val).longValue();
-        } else if (dupResult.error() != null) {
-            log.warn("Failed to detect duplicates for topic {}: {}", topicName, dupResult.error());
+        List<ConsumerRecord<String, String>> records =
+            kafkaAdminService.getEarliestRecords(topicName, DUPLICATE_SCAN_MAX_MESSAGES);
+        if (records.isEmpty()) return 0;
+
+        Map<String, Integer> keyCounts = new HashMap<>();
+        for (ConsumerRecord<String, String> record : records) {
+            String value = record.value();
+            if (value == null || value.isBlank()) continue;
+            String key = extractField(value, keyField);
+            if (key == null || key.isBlank()) continue;
+            keyCounts.merge(key, 1, Integer::sum);
         }
-        return 0;
+        return keyCounts.values().stream().filter(count -> count > 1).count();
+    }
+
+    /**
+     * Extracts a field value from a raw JSON/XML message. XML leaf paths are prefixed with
+     * the root tag ("order.id"), so a suffix match is attempted after the direct lookup.
+     */
+    private String extractField(String message, String field) {
+        Map<String, String> fields = messageFieldExtractorService.extractLeafFields(message);
+        String direct = fields.get(field);
+        if (direct != null) return direct;
+        String suffix = "." + field;
+        for (Map.Entry<String, String> entry : fields.entrySet()) {
+            if (entry.getKey().endsWith(suffix)) return entry.getValue();
+        }
+        return null;
     }
 
     /**
@@ -231,35 +300,99 @@ public class AuditService {
         return flowsWithLatency;
     }
 
+    /**
+     * Average delta between Kafka record timestamps of messages sharing the same "id" field
+     * in the source and target topics, computed over recent messages. The previous SQL
+     * implementation used a JOIN, which the direct Kafka SELECT engine does not support,
+     * so latency was silently always null.
+     */
     private Long calculateLatency(String sourceTopic, String targetTopic) {
-        // Simple heuristic for latency: average of (target.event_time - source.event_time) joined by ID
-        String sql = "SELECT AVG(CAST(t2.event_time AS LONG) - CAST(t1.event_time AS LONG)) " +
-                     "FROM " + DdlGeneratorService.toTableName(sourceTopic) + " t1 JOIN " + DdlGeneratorService.toTableName(targetTopic) + " t2 ON t1.id = t2.id " +
-                     "WHERE t2.event_time > t1.event_time";
+        List<ConsumerRecord<String, String>> sourceRecords =
+            kafkaAdminService.getRecentRecords(sourceTopic, LATENCY_SCAN_MAX_MESSAGES);
+        List<ConsumerRecord<String, String>> targetRecords =
+            kafkaAdminService.getRecentRecords(targetTopic, LATENCY_SCAN_MAX_MESSAGES);
+        if (sourceRecords.isEmpty() || targetRecords.isEmpty()) return null;
 
-        QueryResult result = flinkSqlService.executeSql(new QueryRequest(sql, null, 1, explorerConfig.getAuditQueryTimeoutMs(), null));
-        if (result.error() == null && !result.rows().isEmpty()) {
-            Object val = result.rows().get(0).values().iterator().next();
-            if (val instanceof Number) return ((Number) val).longValue();
-        } else if (result.error() != null) {
-            log.warn("Failed to calculate latency between {} and {}: {}", sourceTopic, targetTopic, result.error());
+        // Keep the earliest source timestamp per id (first emission of the business event)
+        Map<String, Long> sourceTimesById = new HashMap<>();
+        for (ConsumerRecord<String, String> record : sourceRecords) {
+            if (record.value() == null) continue;
+            String id = extractField(record.value(), "id");
+            if (id != null && !id.isBlank()) {
+                sourceTimesById.merge(id, record.timestamp(), Math::min);
+            }
         }
-        return null;
+        if (sourceTimesById.isEmpty()) return null;
+
+        long totalDeltaMs = 0;
+        int matched = 0;
+        for (ConsumerRecord<String, String> record : targetRecords) {
+            if (record.value() == null) continue;
+            String id = extractField(record.value(), "id");
+            if (id == null) continue;
+            Long sourceTs = sourceTimesById.get(id);
+            if (sourceTs != null && record.timestamp() > sourceTs) {
+                totalDeltaMs += record.timestamp() - sourceTs;
+                matched++;
+            }
+        }
+        return matched == 0 ? null : totalDeltaMs / matched;
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        shutdownExecutor(auditExecutor);
+        shutdownExecutor(topicAuditExecutor);
+        closeHistoryProducer();
+    }
+
+    private void shutdownExecutor(ExecutorService executor) {
+        executor.shutdown();
+        try {
+            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
+                executor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            executor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 
     protected void persistAuditHistory(AuditReport report) {
-        Properties props = new Properties();
-        props.putAll(kafkaConfig.getKafkaProperties());
-        props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
-        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
-        props.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, 500); // Don't block for long in tests or if Kafka is down
-
-        try (KafkaProducer<String, String> producer = new KafkaProducer<>(props)) {
+        try {
             String value = objectMapper.writeValueAsString(report);
-            producer.send(new ProducerRecord<>(explorerConfig.getAuditHistoryTopic(), report.auditId(), value)).get();
+            historyProducer().send(new ProducerRecord<>(explorerConfig.getAuditHistoryTopic(), report.auditId(), value)).get();
             log.info("Persisted audit {} to history topic", report.auditId());
         } catch (Exception e) {
             log.warn("Failed to persist audit history: {}", e.getMessage());
+            // Drop the producer so the next attempt reconnects with fresh state/config
+            closeHistoryProducer();
+        }
+    }
+
+    private KafkaProducer<String, String> historyProducer() {
+        KafkaProducer<String, String> existing = historyProducer;
+        if (existing != null) return existing;
+        synchronized (this) {
+            if (historyProducer == null) {
+                Properties props = new Properties();
+                props.putAll(kafkaConfig.getKafkaProperties());
+                props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+                props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+                props.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, 500); // Don't block for long in tests or if Kafka is down
+                historyProducer = new KafkaProducer<>(props);
+            }
+            return historyProducer;
+        }
+    }
+
+    private synchronized void closeHistoryProducer() {
+        if (historyProducer != null) {
+            try {
+                historyProducer.close();
+            } catch (Exception ignored) {
+            }
+            historyProducer = null;
         }
     }
 }
