@@ -27,6 +27,14 @@ interface RuntimeLlmInfo {
   llmLocalDeployment?: boolean;
 }
 
+interface AuditTemplate {
+  id: string;
+  name: string;
+  category: string;
+  description: string;
+  prompt: string;
+}
+
 type Step = 'SELECT' | 'PROFILING' | 'VALIDATE' | 'ANALYZE' | 'RESULTS';
 type AnalysisMode = 'SNAPSHOT' | 'LIVE';
 
@@ -92,6 +100,9 @@ const ProcessMining: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [llmInfo, setLlmInfo] = useState<RuntimeLlmInfo | null>(null);
+  const [auditTemplates, setAuditTemplates] = useState<AuditTemplate[]>([]);
+  const [selectedAuditIds, setSelectedAuditIds] = useState<string[]>([]);
+  const [customAuditPrompt, setCustomAuditPrompt] = useState('');
 
   // Live mode state
   const [liveConnected, setLiveConnected] = useState(false);
@@ -122,6 +133,23 @@ const ProcessMining: React.FC = () => {
     };
     fetchRuntimeConfig();
   }, []);
+
+  useEffect(() => {
+    const fetchAuditTemplates = async () => {
+      try {
+        const res = await axios.get<AuditTemplate[]>('/api/process-mining/audit-templates');
+        setAuditTemplates(res.data);
+      } catch {
+        setAuditTemplates([]);
+      }
+    };
+    fetchAuditTemplates();
+  }, []);
+
+  const toggleAudit = (id: string) => {
+    setSelectedAuditIds(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
 
   // ---- Handlers ----
 
@@ -179,6 +207,8 @@ const ProcessMining: React.FC = () => {
           topics: selectedTopics,
           depth,
           fieldMappingId,
+          auditPromptIds: selectedAuditIds,
+          customAuditPrompt: customAuditPrompt.trim() || null,
         });
         setSnapshotResult(res.data);
         setStep('RESULTS');
@@ -201,7 +231,11 @@ const ProcessMining: React.FC = () => {
     }
 
     const topicsParam = selectedTopics.map(t => `topics=${encodeURIComponent(t)}`).join('&');
-    const url = `/api/process-mining/live?${topicsParam}&fieldMappingId=${fieldMappingId}`;
+    const auditParam = selectedAuditIds.map(id => `&auditPromptIds=${encodeURIComponent(id)}`).join('');
+    const customParam = customAuditPrompt.trim()
+      ? `&customAuditPrompt=${encodeURIComponent(customAuditPrompt.trim())}`
+      : '';
+    const url = `/api/process-mining/live?${topicsParam}&fieldMappingId=${fieldMappingId}${auditParam}${customParam}`;
 
     const es = new EventSource(url);
     eventSourceRef.current = es;
@@ -267,7 +301,7 @@ const ProcessMining: React.FC = () => {
     es.onerror = () => {
       setLiveConnected(false);
     };
-  }, [selectedTopics, fieldMappingId]);
+  }, [selectedTopics, fieldMappingId, selectedAuditIds, customAuditPrompt]);
 
   const stopLiveSession = () => {
     if (eventSourceRef.current) {
@@ -289,6 +323,8 @@ const ProcessMining: React.FC = () => {
     setLiveWindowSize(0);
     setLiveLastUpdate(null);
     setLiveComments(null);
+    setSelectedAuditIds([]);
+    setCustomAuditPrompt('');
     setError(null);
   };
 
@@ -451,6 +487,77 @@ const ProcessMining: React.FC = () => {
                 </p>
               </button>
             </div>
+
+            {/* Audit checklist */}
+            {auditTemplates.length > 0 && (
+              <div className="border border-primary/15 rounded-xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+                      <span className="material-symbols-outlined text-base text-primary">fact_check</span>
+                      Audit checklist
+                      <span className="text-xs font-normal text-slate-500">(optional)</span>
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Pick the checks to focus the LLM on. None selected = general analysis.
+                    </p>
+                  </div>
+                  {selectedAuditIds.length > 0 && (
+                    <button
+                      onClick={() => setSelectedAuditIds([])}
+                      className="text-xs text-slate-400 hover:text-slate-200"
+                    >
+                      Clear ({selectedAuditIds.length})
+                    </button>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {auditTemplates.map(t => {
+                    const active = selectedAuditIds.includes(t.id);
+                    return (
+                      <button
+                        key={t.id}
+                        onClick={() => toggleAudit(t.id)}
+                        className={`text-left p-3 rounded-lg border transition-colors ${
+                          active
+                            ? 'border-primary bg-primary/10'
+                            : 'border-primary/15 hover:border-primary/30 hover:bg-primary/5'
+                        }`}
+                      >
+                        <div className="flex items-start gap-2">
+                          <span className={`material-symbols-outlined text-base mt-0.5 ${
+                            active ? 'text-primary' : 'text-slate-600'
+                          }`}>
+                            {active ? 'check_box' : 'check_box_outline_blank'}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="text-xs font-semibold text-slate-100 truncate">{t.name}</p>
+                            <p className="text-[11px] text-slate-400 leading-snug mt-0.5">{t.description}</p>
+                            <span className="inline-block mt-1.5 text-[9px] uppercase tracking-wider font-bold text-slate-500">
+                              {t.category.replace('_', ' ')}
+                            </span>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div>
+                  <label className="block text-[10px] uppercase font-bold tracking-wider text-slate-500 mb-1.5">
+                    Custom audit instruction
+                  </label>
+                  <textarea
+                    value={customAuditPrompt}
+                    onChange={e => setCustomAuditPrompt(e.target.value)}
+                    rows={2}
+                    placeholder="e.g. Flag any order whose amount changes between the received and validated topics."
+                    className="w-full bg-primary/5 border border-primary/20 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:ring-1 focus:ring-primary outline-none resize-y"
+                  />
+                </div>
+              </div>
+            )}
 
             <button
               onClick={handleLaunchAnalysis}

@@ -99,6 +99,7 @@ Kafka Explorer integrates AI to analyze message flows and detect anomalies:
 - **Automatic Field Profiling**: Detects `CORRELATION_ID`, `TIMESTAMP`, and `STATUS` fields across topics.
 - **Flow Reconstruction**: Generates Mermaid flowcharts of your business processes.
 - **Anomaly Detection**: Identifies sequence breaks, temporal delays, and structural inconsistencies.
+- **Audit checklist**: A built-in library of ready-to-use audit prompts (ordering, duplicates, orphan flows, latency/SLA, schema drift, missing required fields, invalid status transitions, error/retries, amount outliers, PII exposure, correlation integrity). Tick the checks — plus an optional free-form instruction — to focus the LLM on a specific audit, in both snapshot and live modes. Served from `GET /api/process-mining/audit-templates`.
 - **Multi-Provider Support**: Compatible with **Claude (Anthropic)**, **Open Source models** (via OpenAI-compatible APIs like Ollama), and **SpectraLLM** (self-hosted private RAG/fine-tuned models).
 
 ### 11. Demo & Sandbox Environment

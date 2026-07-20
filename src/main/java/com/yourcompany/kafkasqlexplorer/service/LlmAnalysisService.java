@@ -75,6 +75,11 @@ public class LlmAnalysisService {
 
     public ProcessMiningResult analyzeSnapshot(List<String> topics, SnapshotConfig depth,
                                                 FieldMapping fieldMapping) {
+        return analyzeSnapshot(topics, depth, fieldMapping, null);
+    }
+
+    public ProcessMiningResult analyzeSnapshot(List<String> topics, SnapshotConfig depth,
+                                                FieldMapping fieldMapping, String auditFocus) {
         if (isApiKeyMissing()) {
             return errorResult("LLM API key not configured.");
         }
@@ -86,7 +91,7 @@ public class LlmAnalysisService {
         Map<String, List<KafkaMessage>> byTopic = groupAndSort(topics, messages);
 
         // 3. Build user prompt
-        String userPrompt = buildSnapshotPrompt(topics, byTopic, fieldMapping);
+        String userPrompt = buildSnapshotPrompt(topics, byTopic, fieldMapping, auditFocus);
 
         // 4. Call the configured LLM and parse
         return callLlmAndParse(userPrompt);
@@ -95,6 +100,13 @@ public class LlmAnalysisService {
     public ProcessMiningResult analyzeLive(List<KafkaMessage> windowMessages,
                                             FieldMapping fieldMapping,
                                             String referenceFlowchart) {
+        return analyzeLive(windowMessages, fieldMapping, referenceFlowchart, null);
+    }
+
+    public ProcessMiningResult analyzeLive(List<KafkaMessage> windowMessages,
+                                            FieldMapping fieldMapping,
+                                            String referenceFlowchart,
+                                            String auditFocus) {
         if (isApiKeyMissing()) {
             return errorResult("LLM API key not configured.");
         }
@@ -107,7 +119,7 @@ public class LlmAnalysisService {
             .toList();
         Map<String, List<KafkaMessage>> byTopic = groupAndSort(topics, windowMessages);
 
-        String userPrompt = buildLivePrompt(topics, byTopic, fieldMapping, referenceFlowchart);
+        String userPrompt = buildLivePrompt(topics, byTopic, fieldMapping, referenceFlowchart, auditFocus);
         return callLlmAndParse(userPrompt);
     }
 
@@ -126,29 +138,32 @@ public class LlmAnalysisService {
 
     private String buildSnapshotPrompt(List<String> topics,
                                         Map<String, List<KafkaMessage>> byTopic,
-                                        FieldMapping fieldMapping) {
+                                        FieldMapping fieldMapping,
+                                        String auditFocus) {
         StringBuilder sb = new StringBuilder();
         sb.append("## MODE: ANALYSE SNAPSHOT\n\n");
-        appendCommonSections(sb, topics, byTopic, fieldMapping, null);
+        appendCommonSections(sb, topics, byTopic, fieldMapping, null, auditFocus);
         return sb.toString();
     }
 
     private String buildLivePrompt(List<String> topics,
                                     Map<String, List<KafkaMessage>> byTopic,
                                     FieldMapping fieldMapping,
-                                    String referenceFlowchart) {
+                                    String referenceFlowchart,
+                                    String auditFocus) {
         StringBuilder sb = new StringBuilder();
         sb.append("## MODE: ANALYSE LIVE\n\n");
         String ref = (referenceFlowchart == null || referenceFlowchart.isBlank())
             ? "INCONNU" : referenceFlowchart;
-        appendCommonSections(sb, topics, byTopic, fieldMapping, ref);
+        appendCommonSections(sb, topics, byTopic, fieldMapping, ref, auditFocus);
         return sb.toString();
     }
 
     private void appendCommonSections(StringBuilder sb, List<String> topics,
                                        Map<String, List<KafkaMessage>> byTopic,
                                        FieldMapping fieldMapping,
-                                       String referenceFlowchart) {
+                                       String referenceFlowchart,
+                                       String auditFocus) {
         sb.append("## MAPPING DES CHAMPS\n");
         if (fieldMapping != null) {
             sb.append(fieldMapping.toPromptBlock());
@@ -156,6 +171,14 @@ public class LlmAnalysisService {
             sb.append("(aucun mapping fourni)\n");
         }
         sb.append("\n");
+
+        if (auditFocus != null && !auditFocus.isBlank()) {
+            sb.append("## AUDIT CIBLÉ\n");
+            sb.append("Concentre l'analyse en priorité sur les points d'audit suivants. "
+                + "Pour chaque anomalie trouvée, respecte la structure JSON demandée "
+                + "(type et sévérité).\n");
+            sb.append(auditFocus.strip()).append("\n\n");
+        }
 
         if (referenceFlowchart != null) {
             sb.append("## FLOWCHART DE RÉFÉRENCE\n");
