@@ -111,6 +111,29 @@ public class FlinkSqlService {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    /**
+     * Secure XML parser, one per thread: building a DocumentBuilderFactory per message is
+     * far too expensive when an aggregate query parses up to 100 000 XML payloads.
+     * (DocumentBuilder and its factory are not thread-safe; reset() before each parse.)
+     */
+    private static final ThreadLocal<DocumentBuilder> XML_BUILDERS =
+        ThreadLocal.withInitial(FlinkSqlService::createSecureDocumentBuilder);
+
+    private static DocumentBuilder createSecureDocumentBuilder() {
+        try {
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+            factory.setXIncludeAware(false);
+            factory.setExpandEntityReferences(false);
+            return factory.newDocumentBuilder();
+        } catch (Exception e) {
+            throw new IllegalStateException("Cannot create secure XML parser", e);
+        }
+    }
+
     @Autowired
     public FlinkSqlService(TableEnvironment tableEnv, FlinkRuntimeCoordinator runtimeCoordinator,
                            ExplorerConfig explorerConfig, SqlQueryValidator sqlQueryValidator,
@@ -498,7 +521,7 @@ public class FlinkSqlService {
             // result.collect() starts the Flink job and provides an iterator to fetch results.
             try (org.apache.flink.util.CloseableIterator<Row> it = result.collect()) {
             List<String> columns = result.getResolvedSchema().getColumnNames();
-            log.info("[FlinkSQL] queryId={} sql='{}' resolvedColumns={} resolvedSchema={}",
+            log.debug("[FlinkSQL] queryId={} sql='{}' resolvedColumns={} resolvedSchema={}",
                     queryId, sqlToExecute, columns, result.getResolvedSchema());
             List<Map<String, Object>> rows = new ArrayList<>();
 
@@ -509,12 +532,12 @@ public class FlinkSqlService {
                 int count = 0;
                 while (it.hasNext() && count < limit) {
                     Row row = it.next();
-                    if (count == 0) {
-                        log.info("[FlinkSQL] queryId={} first row arity={} kind={} rowString='{}'",
+                    if (count == 0 && log.isDebugEnabled()) {
+                        log.debug("[FlinkSQL] queryId={} first row arity={} kind={} rowString='{}'",
                                 queryId, row.getArity(), row.getKind(), row);
                         for (int i = 0; i < columns.size(); i++) {
                             Object field = row.getField(i);
-                            log.info("[FlinkSQL] queryId={} col[{}]='{}' valueType={} value='{}'",
+                            log.debug("[FlinkSQL] queryId={} col[{}]='{}' valueType={} value='{}'",
                                     queryId, i, columns.get(i),
                                     field == null ? "null" : field.getClass().getName(), field);
                         }
@@ -528,7 +551,7 @@ public class FlinkSqlService {
                     resultRows.add(mapRow);
                     count++;
                 }
-                log.info("[FlinkSQL] queryId={} total rows fetched={}", queryId, resultRows.size());
+                log.debug("[FlinkSQL] queryId={} total rows fetched={}", queryId, resultRows.size());
                 return resultRows;
             }, queryExecutor);
 
@@ -586,14 +609,8 @@ public class FlinkSqlService {
         // ── XML ─────────────────────────────────────────────────────────────
         if (trimmed.startsWith("<")) {
             try {
-                DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-                factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-                factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
-                factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
-                factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
-                factory.setXIncludeAware(false);
-                factory.setExpandEntityReferences(false);
-                DocumentBuilder builder = factory.newDocumentBuilder();
+                DocumentBuilder builder = XML_BUILDERS.get();
+                builder.reset();
                 Document doc = builder.parse(new ByteArrayInputStream(trimmed.getBytes(StandardCharsets.UTF_8)));
                 Map<String, Object> row = new LinkedHashMap<>();
                 flattenXmlElement(doc.getDocumentElement(), "", row);
@@ -783,7 +800,7 @@ public class FlinkSqlService {
                 String[] p = c.split("(?i)\\s+AS\\s+", 2);
                 return p.length > 1 ? p[1].trim() : p[0].trim();
             }).collect(Collectors.toList());
-        log.info("[KafkaDirect] topic='{}' rows={} readMode={}", topic, rows.size(), readMode);
+        log.debug("[KafkaDirect] topic='{}' rows={} readMode={}", topic, rows.size(), readMode);
         return new QueryResult(columns, rows, System.currentTimeMillis() - startTime, null, false, "KAFKA_DIRECT");
     }
 
@@ -864,7 +881,7 @@ public class FlinkSqlService {
 
         List<String> columns = resultRows.isEmpty() ? Collections.emptyList()
                              : new ArrayList<>(resultRows.get(0).keySet());
-        log.info("[KafkaDirect/Agg] inputRows={} groups={} cols={}",
+        log.debug("[KafkaDirect/Agg] inputRows={} groups={} cols={}",
                  inputRows.size(), resultRows.size(), columns);
         return new QueryResult(columns, resultRows, System.currentTimeMillis() - startTime, null, false, "KAFKA_DIRECT");
     }
@@ -995,7 +1012,7 @@ public class FlinkSqlService {
         List<String> columns = resultRows.isEmpty()
             ? List.of("window_start", "window_end")
             : new ArrayList<>(resultRows.get(0).keySet());
-        log.info("[KafkaDirect/Window] topic='{}' timeCol='{}' intervalMs={} windows={} rows={}",
+        log.debug("[KafkaDirect/Window] topic='{}' timeCol='{}' intervalMs={} windows={} rows={}",
                  topic, timeCol, intervalMs, windows.size(), resultRows.size());
         return new QueryResult(columns, resultRows, System.currentTimeMillis() - startTime, null, false, "KAFKA_DIRECT");
     }

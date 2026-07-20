@@ -14,6 +14,7 @@ import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.errors.WakeupException;
 import org.apache.kafka.common.serialization.StringDeserializer;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -25,6 +26,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -51,6 +53,18 @@ public class KafkaLiveConsumer {
      */
     private final Map<String, AtomicBoolean> stopFlags = new ConcurrentHashMap<>();
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(4);
+
+    /**
+     * LLM analyses run on their own pool: a single analysis can take up to the configured
+     * request timeout (60s by default), and running them on the 4-thread scheduler starved
+     * the polling and heartbeat tasks of every other live session.
+     */
+    private final ExecutorService analysisExecutor = Executors.newFixedThreadPool(4, r -> {
+        Thread t = new Thread(r);
+        t.setName("live-analysis-" + t.getId());
+        t.setDaemon(true);
+        return t;
+    });
 
     public KafkaLiveConsumer(LlmAnalysisService llmAnalysisService,
                               SseEmitterManager sseEmitterManager,
@@ -125,8 +139,9 @@ public class KafkaLiveConsumer {
                     buffer.clear();
                     lastAnalysisTime[0] = now;
 
-                    // Run analysis in background to avoid blocking poller
-                    scheduler.submit(() -> {
+                    // Run analysis on the dedicated pool: it must never block the poller
+                    // nor occupy the scheduler threads shared by all sessions
+                    analysisExecutor.submit(() -> {
                         try {
                             ProcessMiningResult result = llmAnalysisService.analyzeLive(
                                 snapshot, fieldMapping, lastFlowchart[0], auditFocus);
@@ -233,6 +248,39 @@ public class KafkaLiveConsumer {
         }
 
         sseEmitterManager.complete(sessionId);
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        // Signal every session, then stop the pools. Once the scheduler has terminated no
+        // polling task can touch a consumer anymore, so closing the leftovers from this
+        // thread is safe (their finishSession tick may never have had a chance to run).
+        activeSessions.keySet().forEach(this::stopSession);
+        shutdownExecutor(scheduler);
+        shutdownExecutor(analysisExecutor);
+        activeConsumers.forEach((sessionId, consumer) -> {
+            try {
+                consumer.close();
+            } catch (Exception e) {
+                log.warn("Error closing live consumer for session {} at shutdown: {}", sessionId, e.getMessage());
+            }
+        });
+        activeConsumers.clear();
+        activeSessions.clear();
+        heartbeatTasks.clear();
+        stopFlags.clear();
+    }
+
+    private void shutdownExecutor(ExecutorService executor) {
+        executor.shutdown();
+        try {
+            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
+                executor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            executor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 
     private Properties buildConsumerProps(String sessionId) {

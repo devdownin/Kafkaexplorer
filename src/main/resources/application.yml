@@ -75,5 +75,6 @@ logging:
   file:
     name: logs/kafkaexplorer.log
   level:
-    com.yourcompany.kafkasqlexplorer: DEBUG
+    # INFO by default — switch to DEBUG locally when diagnosing query issues
+    com.yourcompany.kafkasqlexplorer: INFO
     org.apache.flink: WARN

@@ -153,6 +153,11 @@ public class KafkaAdminService {
         }
     }
 
+    /**
+     * Cached (30s TTL): each call spins up a full KafkaConsumer plus a describeTopics
+     * round-trip, and the dashboard polls this every 5 seconds for every topic.
+     */
+    @Cacheable(value = "topicSizes", key = "#topicNames")
     public Map<String, Long> getTopicsSize(List<String> topicNames) {
         Map<String, Long> sizes = new HashMap<>();
         if (topicNames.isEmpty()) return sizes;
@@ -351,6 +356,8 @@ public class KafkaAdminService {
         return details;
     }
 
+    /** Cached (30s TTL) for the same reason as {@link #getTopicsSize}: consumer + seek + poll per call. */
+    @Cacheable(value = "topicLastMessages", key = "#topicNames")
     public Map<String, Long> getTopicsLastMessageTimestamps(List<String> topicNames) {
         Map<String, Long> timestamps = new HashMap<>();
         if (topicNames.isEmpty()) return timestamps;

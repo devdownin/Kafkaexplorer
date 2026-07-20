@@ -28,6 +28,17 @@ Chaque constat référence le fichier et la ligne. Sévérités : 🔴 Critique 
 > message d'erreur ; Dashboard ne touche plus `localStorage` pendant le rendu (tendance « since last visit »
 > fonctionnelle) ; ProcessMining affiche le message d'erreur du backend au lieu du générique axios.
 >
+> Les **optimisations** sont également traitées : `getTopicsSize` et `getTopicsLastMessageTimestamps` mis en cache
+> (30 s) — le poll 5 s du dashboard ne crée plus 2 consumers par cycle ; producers Kafka partagés (lazy, reset sur
+> échec, fermés au shutdown) pour la persistance des métriques et de l'historique d'audit ; `DocumentBuilder`
+> par thread dans `parseMessageToRow` (plus de factory par message XML) ; mémoïsation des requêtes identiques
+> au sein d'un cycle `refreshMetrics` (les 4 métriques seed partagent le même COUNT → 1 scan au lieu de 4) ;
+> audit de topics sur un pool borné de 4 threads (plus de fan-out commonPool avec des dizaines de consumers) ;
+> analyses LLM du mode live sur un pool dédié (le scheduler 4 threads n'est plus affamé par des appels de 60 s),
+> avec arrêt propre des pools et des consumers ; logs par requête passés en DEBUG et niveau du package à INFO.
+> L'appel `listTopics()` de l'auto-registration était déjà couvert par le cache 30 s ; `listTables()` est un
+> accès in-memory au catalogue Flink (pas de changement nécessaire).
+>
 > Les sections ci-dessous décrivent l'état **avant** correctif.
 
 ---

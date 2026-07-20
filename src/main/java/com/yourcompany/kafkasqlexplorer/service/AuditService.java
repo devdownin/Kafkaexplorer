@@ -64,6 +64,21 @@ public class AuditService {
         return t;
     });
 
+    /**
+     * Bounded pool for per-topic audits. Fanning one commonPool task out per topic opened
+     * dozens of simultaneous Kafka consumers (schema sampling + duplicate scans) on large
+     * clusters; four workers keep the audit parallel without hammering the broker.
+     */
+    private final ExecutorService topicAuditExecutor = Executors.newFixedThreadPool(4, r -> {
+        Thread t = new Thread(r);
+        t.setName("audit-topic-worker-" + t.getId());
+        t.setDaemon(true);
+        return t;
+    });
+
+    /** Shared producer for audit-history persistence — one KafkaProducer per report is wasteful. */
+    private volatile KafkaProducer<String, String> historyProducer;
+
     public AuditService(KafkaAdminService kafkaAdminService,
                         FlinkSqlService flinkSqlService,
                         SchemaInferenceService schemaInferenceService,
@@ -110,9 +125,10 @@ public class AuditService {
             List<String> topics = kafkaAdminService.listTopics();
             Map<String, Long> topicSizes = kafkaAdminService.getTopicsSize(topics);
 
-            // Parallelize topic auditing
+            // Parallelize topic auditing on a bounded pool (not the shared commonPool)
             List<CompletableFuture<TopicAudit>> futures = topics.stream()
-                .map(topic -> CompletableFuture.supplyAsync(() -> auditTopic(topic, topicSizes.getOrDefault(topic, 0L), options)))
+                .map(topic -> CompletableFuture.supplyAsync(
+                    () -> auditTopic(topic, topicSizes.getOrDefault(topic, 0L), options), topicAuditExecutor))
                 .toList();
 
             List<TopicAudit> topicAudits = futures.stream()
@@ -325,30 +341,58 @@ public class AuditService {
 
     @PreDestroy
     public void shutdown() {
-        auditExecutor.shutdown();
+        shutdownExecutor(auditExecutor);
+        shutdownExecutor(topicAuditExecutor);
+        closeHistoryProducer();
+    }
+
+    private void shutdownExecutor(ExecutorService executor) {
+        executor.shutdown();
         try {
-            if (!auditExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
-                auditExecutor.shutdownNow();
+            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
+                executor.shutdownNow();
             }
         } catch (InterruptedException e) {
-            auditExecutor.shutdownNow();
+            executor.shutdownNow();
             Thread.currentThread().interrupt();
         }
     }
 
     protected void persistAuditHistory(AuditReport report) {
-        Properties props = new Properties();
-        props.putAll(kafkaConfig.getKafkaProperties());
-        props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
-        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
-        props.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, 500); // Don't block for long in tests or if Kafka is down
-
-        try (KafkaProducer<String, String> producer = new KafkaProducer<>(props)) {
+        try {
             String value = objectMapper.writeValueAsString(report);
-            producer.send(new ProducerRecord<>(explorerConfig.getAuditHistoryTopic(), report.auditId(), value)).get();
+            historyProducer().send(new ProducerRecord<>(explorerConfig.getAuditHistoryTopic(), report.auditId(), value)).get();
             log.info("Persisted audit {} to history topic", report.auditId());
         } catch (Exception e) {
             log.warn("Failed to persist audit history: {}", e.getMessage());
+            // Drop the producer so the next attempt reconnects with fresh state/config
+            closeHistoryProducer();
+        }
+    }
+
+    private KafkaProducer<String, String> historyProducer() {
+        KafkaProducer<String, String> existing = historyProducer;
+        if (existing != null) return existing;
+        synchronized (this) {
+            if (historyProducer == null) {
+                Properties props = new Properties();
+                props.putAll(kafkaConfig.getKafkaProperties());
+                props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+                props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+                props.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, 500); // Don't block for long in tests or if Kafka is down
+                historyProducer = new KafkaProducer<>(props);
+            }
+            return historyProducer;
+        }
+    }
+
+    private synchronized void closeHistoryProducer() {
+        if (historyProducer != null) {
+            try {
+                historyProducer.close();
+            } catch (Exception ignored) {
+            }
+            historyProducer = null;
         }
     }
 }
