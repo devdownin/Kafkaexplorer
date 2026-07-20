@@ -11,12 +11,19 @@ import AnomalyFeed, { LiveAnomaly } from '../components/processmining/AnomalyFee
 
 // ---- Types ----
 
+interface RagSource {
+  text: string;
+  sourceFile: string | null;
+  score: number | null;
+}
+
 interface ProcessMiningResult {
   flowchart: string | null;
   comments: string | null;
   hypotheses: string[];
   blindSpots: string[];
   anomalies: AnomalyReport[];
+  ragSources?: RagSource[];
 }
 
 interface RuntimeLlmInfo {
@@ -111,6 +118,7 @@ const ProcessMining: React.FC = () => {
   const [liveWindowSize, setLiveWindowSize] = useState(0);
   const [liveLastUpdate, setLiveLastUpdate] = useState<number | null>(null);
   const [liveComments, setLiveComments] = useState<string | null>(null);
+  const [liveSources, setLiveSources] = useState<RagSource[]>([]);
   const eventSourceRef = useRef<EventSource | null>(null);
 
   // Cleanup on unmount
@@ -288,6 +296,15 @@ const ProcessMining: React.FC = () => {
       }
     });
 
+    es.addEventListener('RAG_SOURCES', (e) => {
+      try {
+        const sources: RagSource[] = JSON.parse(e.data);
+        if (Array.isArray(sources)) setLiveSources(sources);
+      } catch {
+        // ignore
+      }
+    });
+
     es.addEventListener('WINDOW_STATS', (e) => {
       try {
         const stats = JSON.parse(e.data);
@@ -323,6 +340,7 @@ const ProcessMining: React.FC = () => {
     setLiveWindowSize(0);
     setLiveLastUpdate(null);
     setLiveComments(null);
+    setLiveSources([]);
     setSelectedAuditIds([]);
     setCustomAuditPrompt('');
     setError(null);
@@ -633,6 +651,41 @@ const ProcessMining: React.FC = () => {
                 </p>
               </div>
             )}
+
+            {/* RAG evidence / cited sources (SpectraLLM with use-rag) */}
+            {(() => {
+              const sources = analysisMode === 'LIVE' ? liveSources : (snapshotResult?.ragSources ?? []);
+              if (!sources || sources.length === 0) return null;
+              return (
+                <div className="border border-primary/20 rounded-xl overflow-hidden">
+                  <div className="px-4 py-2.5 border-b border-primary/10 bg-primary/5 flex items-center gap-2">
+                    <span className="material-symbols-outlined text-base text-primary">menu_book</span>
+                    <h3 className="text-sm font-semibold text-slate-200">Evidence — cited sources</h3>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary">
+                      {sources.length}
+                    </span>
+                    <span className="ml-auto text-[11px] text-slate-500">SpectraLLM RAG</span>
+                  </div>
+                  <div className="p-4 space-y-2">
+                    {sources.map((s, i) => (
+                      <div key={i} className="rounded-lg border border-primary/10 bg-background-dark/20 p-3">
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <span className="text-xs font-mono text-primary/80 truncate">
+                            {s.sourceFile ?? 'unknown source'}
+                          </span>
+                          {s.score != null && (
+                            <span className="text-[10px] text-slate-500 flex-shrink-0">
+                              score {s.score.toFixed(3)}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">{s.text}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Snapshot extra sections */}
             {analysisMode === 'SNAPSHOT' && snapshotResult && (

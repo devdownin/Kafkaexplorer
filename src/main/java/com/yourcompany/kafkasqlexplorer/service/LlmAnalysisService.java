@@ -7,6 +7,7 @@ import com.yourcompany.kafkasqlexplorer.config.ClaudeConfig;
 import com.yourcompany.kafkasqlexplorer.domain.AnomalyReport;
 import com.yourcompany.kafkasqlexplorer.domain.FieldMapping;
 import com.yourcompany.kafkasqlexplorer.domain.KafkaMessage;
+import com.yourcompany.kafkasqlexplorer.domain.LlmResponse;
 import com.yourcompany.kafkasqlexplorer.domain.ProcessMiningResult;
 import com.yourcompany.kafkasqlexplorer.domain.SnapshotConfig;
 import org.slf4j.Logger;
@@ -232,23 +233,20 @@ public class LlmAnalysisService {
         return claudeConfig.isApiKeyRequired() && !claudeConfig.isApiKeyConfigured();
     }
 
-    private String callLlm(String userPrompt) {
-        String fullText = llmClient.generate(SYSTEM_PROMPT, userPrompt);
-        log.debug("LLM analysis response (first 500 chars): {}",
-            fullText != null && fullText.length() > 500 ? fullText.substring(0, 500) : fullText);
-        return fullText;
-    }
-
     private ProcessMiningResult callLlmAndParse(String userPrompt) {
-        String rawResponse;
+        LlmResponse response;
         try {
-            rawResponse = callLlm(userPrompt);
+            response = llmClient.generateWithMeta(SYSTEM_PROMPT, userPrompt);
         } catch (Exception e) {
             // Surface the real cause (timeout, bad URL/model/key, provider 5xx) instead of a
             // generic "empty response" — callers show comments() to the user.
             log.error("Error calling LLM API for analysis: {}", e.getMessage(), e);
             return errorResult("LLM call failed: " + e.getMessage());
         }
+
+        String rawResponse = response.text();
+        log.debug("LLM analysis response (first 500 chars): {}",
+            rawResponse != null && rawResponse.length() > 500 ? rawResponse.substring(0, 500) : rawResponse);
 
         if (rawResponse == null || rawResponse.isBlank()) {
             return errorResult("LLM returned an empty response.");
@@ -257,7 +255,9 @@ public class LlmAnalysisService {
         String json = LlmJsonSupport.extractJsonPayload(rawResponse);
 
         try {
-            return objectMapper.readValue(json, ProcessMiningResult.class);
+            ProcessMiningResult parsed = objectMapper.readValue(json, ProcessMiningResult.class);
+            // Attach RAG citations (SpectraLLM); other providers return none.
+            return parsed.withRagSources(response.sources());
         } catch (Exception e) {
             log.error("Failed to parse LLM analysis response: {}", e.getMessage());
             log.debug("Raw response was: {}", rawResponse);

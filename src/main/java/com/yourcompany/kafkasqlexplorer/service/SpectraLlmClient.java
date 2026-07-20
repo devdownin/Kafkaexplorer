@@ -5,6 +5,8 @@ package com.yourcompany.kafkasqlexplorer.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yourcompany.kafkasqlexplorer.config.ClaudeConfig;
+import com.yourcompany.kafkasqlexplorer.domain.LlmResponse;
+import com.yourcompany.kafkasqlexplorer.domain.RagSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -12,7 +14,9 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -38,6 +42,11 @@ public class SpectraLlmClient implements LlmClient {
 
     @Override
     public String generate(String systemPrompt, String userPrompt) {
+        return generateWithMeta(systemPrompt, userPrompt).text();
+    }
+
+    @Override
+    public LlmResponse generateWithMeta(String systemPrompt, String userPrompt) {
         try {
             String question = (systemPrompt == null || systemPrompt.isBlank())
                 ? userPrompt
@@ -71,7 +80,7 @@ public class SpectraLlmClient implements LlmClient {
                 log.error("SpectraLLM response has no 'answer' field: {}", response.body());
                 throw new RuntimeException("SpectraLLM response did not contain an answer");
             }
-            return answer.asText();
+            return new LlmResponse(answer.asText(), parseSources(root.path("sources")));
 
         } catch (RuntimeException e) {
             // Already carries a precise message (transport, status, missing answer) — propagate as-is.
@@ -81,6 +90,34 @@ public class SpectraLlmClient implements LlmClient {
             log.error("Error calling SpectraLLM API: {}", e.getMessage(), e);
             throw new RuntimeException("SpectraLLM call failed: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Maps SpectraLLM's {@code sources} array into {@link RagSource}, keeping the best available
+     * relevance score (rerank &gt; BM25 &gt; similarity) and truncating long passages for display.
+     */
+    private List<RagSource> parseSources(JsonNode sources) {
+        List<RagSource> result = new ArrayList<>();
+        if (sources == null || !sources.isArray()) {
+            return result;
+        }
+        for (JsonNode s : sources) {
+            String text = s.path("text").asText("");
+            if (text.length() > 500) {
+                text = text.substring(0, 500) + "…";
+            }
+            String sourceFile = s.path("sourceFile").asText(null);
+            Double score = null;
+            if (s.hasNonNull("rerankScore")) {
+                score = s.path("rerankScore").asDouble();
+            } else if (s.hasNonNull("bm25Score")) {
+                score = s.path("bm25Score").asDouble();
+            } else if (s.hasNonNull("distance")) {
+                score = s.path("distance").asDouble();
+            }
+            result.add(new RagSource(text, sourceFile, score));
+        }
+        return result;
     }
 
     /** Builds {@code <base-url>/api/query}, tolerating an optional trailing slash on the base URL. */

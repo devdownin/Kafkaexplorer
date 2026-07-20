@@ -143,6 +143,30 @@ class SpectraLlmClientTest {
     }
 
     @Test
+    void parsesRagSourcesWithBestScore() throws Exception {
+        ClaudeConfig config = startServer(200,
+            "{\"answer\":\"ok\",\"sources\":["
+            + "{\"text\":\"passage A\",\"sourceFile\":\"spec.pdf\",\"distance\":0.4,\"rerankScore\":0.9},"
+            + "{\"text\":\"passage B\",\"sourceFile\":\"notes.md\",\"bm25Score\":2.5}"
+            + "]}");
+
+        com.yourcompany.kafkasqlexplorer.domain.LlmResponse resp =
+            new SpectraLlmClient(config).generateWithMeta("SYS", "USR");
+
+        assertEquals("ok", resp.text());
+        assertEquals(2, resp.sources().size());
+        assertEquals("spec.pdf", resp.sources().get(0).sourceFile());
+        assertEquals(0.9, resp.sources().get(0).score(), 1e-9); // rerank preferred over distance
+        assertEquals(2.5, resp.sources().get(1).score(), 1e-9); // bm25 when no rerank
+    }
+
+    @Test
+    void generateWithMetaHasEmptySourcesWhenAbsent() throws Exception {
+        ClaudeConfig config = startServer(200, "{\"answer\":\"ok\"}");
+        assertTrue(new SpectraLlmClient(config).generateWithMeta("SYS", "USR").sources().isEmpty());
+    }
+
+    @Test
     void retriesTransient5xxThenSucceeds() throws Exception {
         // Two 500s, then a 200 — the client should retry and return the eventual answer.
         ClaudeConfig config = startServer(2, 200, "{\"answer\":\"recovered\"}");

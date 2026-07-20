@@ -182,7 +182,11 @@ claude:
 The `model` field is ignored — SpectraLLM serves whichever model it is configured to run.
 Set `use-rag: true` to enrich the audit with SpectraLLM's document corpus; leave it `false`
 to ground the analysis solely on the sampled Kafka messages. All settings are also editable
-live from the **Config** page.
+live from the **Config** page, which also offers a **Test LLM** button to verify connectivity.
+
+When RAG is enabled, the Process Mining results show an **Evidence — cited sources** panel:
+the corpus passages SpectraLLM grounded the audit on (with source file and relevance score),
+turning each verdict into something verifiable.
 
 **One-command combined stack** — Kafka (with demo topics) + Kafka Explorer + a full local
 SpectraLLM instance, pre-wired so the audit runs through SpectraLLM:

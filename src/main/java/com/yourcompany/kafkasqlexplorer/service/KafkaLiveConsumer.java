@@ -129,6 +129,10 @@ public class KafkaLiveConsumer {
                                 }
                             }
 
+                            if (result.ragSources() != null && !result.ragSources().isEmpty()) {
+                                sseEmitterManager.send(sessionId, "RAG_SOURCES", result.ragSources());
+                            }
+
                             // Send window stats
                             sseEmitterManager.send(sessionId, "WINDOW_STATS", Map.of(
                                 "windowSize", snapshot.size(),
