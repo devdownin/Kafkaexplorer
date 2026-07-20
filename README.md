@@ -237,7 +237,7 @@ WHERE JSON_VALUE(raw_value, '$.quality_control.score') > 95;
 
 ## 🤝 Community & Support
 - **Code of Conduct**: We expect all contributors to follow our [Code of Conduct](CODE_OF_CONDUCT.md).
-- **Security**: Please report security vulnerabilities to [security@example.com](mailto:security@example.com) as per our [Security Policy](SECURITY.md).
+- **Security**: Please report security vulnerabilities to [contact@compagnonsdudev.com](mailto:contact@compagnonsdudev.com) as per our [Security Policy](SECURITY.md).
 - **Contributing**: Check our [Contributing Guide](CONTRIBUTING.md) to get started.
 
 ---
