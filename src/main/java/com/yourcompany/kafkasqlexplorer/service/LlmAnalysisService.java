@@ -64,9 +64,7 @@ public class LlmAnalysisService {
 
     @org.springframework.beans.factory.annotation.Autowired
     public LlmAnalysisService(KafkaSnapshotReader snapshotReader, ClaudeConfig claudeConfig) {
-        this(snapshotReader, claudeConfig, claudeConfig.getProvider() == ClaudeConfig.Provider.ANTHROPIC
-            ? new AnthropicLlmClient(claudeConfig)
-            : new OpenAiCompatibleLlmClient(claudeConfig));
+        this(snapshotReader, claudeConfig, LlmClientFactory.create(claudeConfig));
     }
 
     public LlmAnalysisService(KafkaSnapshotReader snapshotReader, ClaudeConfig claudeConfig, LlmClient llmClient) {

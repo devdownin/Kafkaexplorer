@@ -13,13 +13,14 @@ interface ClusterConfig {
   confluentKey?: string;
   confluentSecret?: string;
   isConnected?: boolean;
-  llmProvider: 'ANTHROPIC' | 'OPENAI_COMPATIBLE' | 'OLLAMA';
+  llmProvider: 'ANTHROPIC' | 'OPENAI_COMPATIBLE' | 'OLLAMA' | 'SPECTRA';
   llmProviderLabel?: string;
   llmApiKey?: string;
   llmApiKeyConfigured?: boolean;
   llmApiKeyRequired?: boolean;
   llmBaseUrl: string;
   llmModel: string;
+  llmUseRag?: boolean;
   llmMaxTokens: number;
   llmSnapshotWindowSize: number;
   llmSnapshotWindowTimeoutSeconds: number;
@@ -36,6 +37,7 @@ const LLM_PROVIDERS = [
   { value: 'ANTHROPIC', label: 'Anthropic', description: 'Hosted Claude models' },
   { value: 'OPENAI_COMPATIBLE', label: 'OpenAI-compatible', description: 'vLLM, LM Studio or compatible gateways' },
   { value: 'OLLAMA', label: 'Ollama', description: 'Lightweight local open-source models' },
+  { value: 'SPECTRA', label: 'SpectraLLM', description: 'Local SpectraLLM instance (RAG + fine-tuned models)' },
 ] as const;
 
 const Config: React.FC = () => {
@@ -121,9 +123,12 @@ const Config: React.FC = () => {
       if (!config.truststorePath?.trim()) return 'Truststore path is required for SSL.';
       if (!config.keystorePath?.trim()) return 'Keystore path is required for SSL.';
     }
-    if (!config.llmModel?.trim()) return 'An LLM model is required for process mining.';
+    // SpectraLLM picks its own served model, so the model field is optional for it.
+    if (config.llmProvider !== 'SPECTRA' && !config.llmModel?.trim()) {
+      return 'An LLM model is required for process mining.';
+    }
     if (config.llmProvider !== 'OLLAMA' && !config.llmBaseUrl?.trim()) {
-      return 'An LLM base URL is required for hosted or OpenAI-compatible providers.';
+      return 'An LLM base URL is required for hosted, OpenAI-compatible or SpectraLLM providers.';
     }
     if (config.llmProvider === 'ANTHROPIC'
       && !config.llmApiKeyConfigured
@@ -163,6 +168,15 @@ const Config: React.FC = () => {
         if (!prev.llmModel || prev.llmModel.startsWith('claude-')) {
           next.llmModel = 'qwen3:4b';
         }
+        next.llmApiKey = '';
+      }
+      if (provider === 'SPECTRA') {
+        if (!prev.llmBaseUrl
+          || prev.llmBaseUrl === 'https://api.anthropic.com'
+          || prev.llmBaseUrl === 'http://localhost:11434/v1') {
+          next.llmBaseUrl = 'http://localhost:8080';
+        }
+        // SpectraLLM serves its own configured model; no per-request model to send.
         next.llmApiKey = '';
       }
       return next;
@@ -351,7 +365,11 @@ const Config: React.FC = () => {
                 type="text"
                 value={config.llmModel}
                 onChange={e => set('llmModel', e.target.value)}
-                placeholder={config.llmProvider === 'OLLAMA' ? 'qwen3:4b' : 'model name'}
+                placeholder={
+                  config.llmProvider === 'OLLAMA' ? 'qwen3:4b'
+                  : config.llmProvider === 'SPECTRA' ? 'Served by SpectraLLM (ignored)'
+                  : 'model name'}
+                disabled={config.llmProvider === 'SPECTRA'}
                 className={inputClass}
               />
             </div>
@@ -361,7 +379,10 @@ const Config: React.FC = () => {
                 type="text"
                 value={config.llmBaseUrl}
                 onChange={e => set('llmBaseUrl', e.target.value)}
-                placeholder={config.llmProvider === 'OLLAMA' ? 'http://localhost:11434/v1' : 'https://...'}
+                placeholder={
+                  config.llmProvider === 'OLLAMA' ? 'http://localhost:11434/v1'
+                  : config.llmProvider === 'SPECTRA' ? 'http://localhost:8080'
+                  : 'https://...'}
                 className={inputClass}
               />
             </div>
@@ -371,7 +392,9 @@ const Config: React.FC = () => {
                 type="password"
                 value={config.llmApiKey ?? ''}
                 onChange={e => set('llmApiKey', e.target.value)}
-                placeholder={config.llmProvider === 'OLLAMA' ? 'Optional for local deployments' : 'Required'}
+                placeholder={
+                  config.llmProvider === 'OLLAMA' || config.llmProvider === 'SPECTRA'
+                    ? 'Optional for local deployments' : 'Required'}
                 className={inputClass}
               />
               <p className="text-[10px] text-slate-500 mt-1">
@@ -412,6 +435,24 @@ const Config: React.FC = () => {
               />
             </div>
           </div>
+
+          {config.llmProvider === 'SPECTRA' && (
+            <label className="mt-4 flex items-start gap-3 rounded-lg border border-primary/10 bg-background-dark/20 px-4 py-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={config.llmUseRag ?? false}
+                onChange={e => setConfig(prev => ({ ...prev, llmUseRag: e.target.checked }))}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="block text-xs font-bold text-slate-200">Enrich audit with SpectraLLM RAG</span>
+                <span className="block text-[10px] text-slate-500 mt-0.5">
+                  When enabled, the audit prompt is answered with hybrid retrieval over SpectraLLM's
+                  ingested corpus. Leave off to ground the audit solely on the sampled Kafka messages.
+                </span>
+              </span>
+            </label>
+          )}
         </div>
       </div>
 

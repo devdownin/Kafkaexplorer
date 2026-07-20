@@ -99,7 +99,7 @@ Kafka Explorer integrates AI to analyze message flows and detect anomalies:
 - **Automatic Field Profiling**: Detects `CORRELATION_ID`, `TIMESTAMP`, and `STATUS` fields across topics.
 - **Flow Reconstruction**: Generates Mermaid flowcharts of your business processes.
 - **Anomaly Detection**: Identifies sequence breaks, temporal delays, and structural inconsistencies.
-- **Multi-Provider Support**: Compatible with **Claude (Anthropic)** and **Open Source models** (via OpenAI-compatible APIs like Ollama).
+- **Multi-Provider Support**: Compatible with **Claude (Anthropic)**, **Open Source models** (via OpenAI-compatible APIs like Ollama), and **SpectraLLM** (self-hosted private RAG/fine-tuned models).
 
 ### 11. Demo & Sandbox Environment
 The application includes an automated demonstration setup to help you explore features immediately:
@@ -167,6 +167,21 @@ claude:
   base-url: http://localhost:11434/v1 # For Ollama
   model: qwen2.5-coder:7b
 ```
+
+### Option C: SpectraLLM (local, private, domain-tuned)
+Audit Kafka exchanges with a self-hosted [SpectraLLM](https://github.com/devdownin/SpectraLLM)
+instance — a fully local RAG + fine-tuning platform. Kafka Explorer calls SpectraLLM's
+`POST /api/query` endpoint; no API key leaves your network.
+```yaml
+claude:
+  provider: SPECTRA
+  base-url: http://localhost:8080  # SpectraLLM API (e.g. http://spectra-api:8080 in Docker)
+  use-rag: false                   # true = also retrieve from SpectraLLM's ingested corpus
+```
+The `model` field is ignored — SpectraLLM serves whichever model it is configured to run.
+Set `use-rag: true` to enrich the audit with SpectraLLM's document corpus; leave it `false`
+to ground the analysis solely on the sampled Kafka messages. All settings are also editable
+live from the **Config** page.
 
 ### Recommended Lightweight Models
 - **Qwen 2.5-Coder 7B**: Best for JSON extraction and logic.

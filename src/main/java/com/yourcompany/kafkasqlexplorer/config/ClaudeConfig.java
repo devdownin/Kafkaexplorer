@@ -9,7 +9,7 @@ import org.springframework.context.annotation.Configuration;
 @ConfigurationProperties(prefix = "claude")
 public class ClaudeConfig {
 
-    public enum Provider { ANTHROPIC, OPENAI_COMPATIBLE, OLLAMA }
+    public enum Provider { ANTHROPIC, OPENAI_COMPATIBLE, OLLAMA, SPECTRA }
 
     private Provider provider = Provider.OLLAMA;
     private String apiKey = "";
@@ -18,6 +18,13 @@ public class ClaudeConfig {
     private int maxTokens = 4096;
     private int snapshotWindowSize = 100;
     private int snapshotWindowTimeoutSeconds = 30;
+    /**
+     * Only used by the {@link Provider#SPECTRA} provider: when {@code true} the audit
+     * question is answered with SpectraLLM's hybrid RAG retrieval over its ingested
+     * corpus. Defaults to {@code false} because the Kafka audit prompt already carries
+     * all the message context inline, so plain LLM generation is what we want.
+     */
+    private boolean useRag = false;
 
     public Provider getProvider() {
         return provider;
@@ -82,6 +89,14 @@ public class ClaudeConfig {
         this.snapshotWindowTimeoutSeconds = snapshotWindowTimeoutSeconds;
     }
 
+    public boolean isUseRag() {
+        return useRag;
+    }
+
+    public void setUseRag(boolean useRag) {
+        this.useRag = useRag;
+    }
+
     public boolean isApiKeyRequired() {
         return provider == Provider.ANTHROPIC;
     }
@@ -99,6 +114,7 @@ public class ClaudeConfig {
             case ANTHROPIC -> "Anthropic";
             case OPENAI_COMPATIBLE -> "OpenAI-compatible";
             case OLLAMA -> "Ollama";
+            case SPECTRA -> "SpectraLLM";
         };
     }
 
@@ -107,6 +123,7 @@ public class ClaudeConfig {
             case ANTHROPIC -> "https://api.anthropic.com";
             case OPENAI_COMPATIBLE -> "";
             case OLLAMA -> "http://localhost:11434/v1";
+            case SPECTRA -> "http://localhost:8080";
         };
     }
 

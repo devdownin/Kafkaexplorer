@@ -50,13 +50,19 @@ management:
       application: kafka-sql-explorer
 
 claude:
-  provider: OLLAMA # ANTHROPIC | OPENAI_COMPATIBLE | OLLAMA
+  provider: OLLAMA # ANTHROPIC | OPENAI_COMPATIBLE | OLLAMA | SPECTRA
   api-key: ${ANTHROPIC_API_KEY:}
   base-url: http://localhost:11434/v1
   model: qwen3:4b
   max-tokens: 4096
   snapshot-window-size: 100
   snapshot-window-timeout-seconds: 30
+  # SPECTRA provider only: audit Kafka exchanges via a local SpectraLLM instance
+  # (POST <base-url>/api/query). Set provider: SPECTRA and base-url to the SpectraLLM
+  # API, e.g. http://localhost:8080 or http://spectra-api:8080 in Docker.
+  # use-rag=false keeps generation grounded solely on the inlined Kafka messages;
+  # set it to true to also retrieve from SpectraLLM's ingested corpus.
+  use-rag: false
 
 logging:
   file:
