@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 @Service
 public class DdlGeneratorService {
@@ -26,6 +27,24 @@ public class DdlGeneratorService {
 
     public String generateDdl(String topicName, Map<String, String> schema, MessageFormat format) {
         return generateDdl(topicName, schema, format, "earliest-offset");
+    }
+
+    /**
+     * Matches DDL properties whose key carries a credential (SSL passwords, Confluent
+     * secrets, SASL JAAS config with inline username/password).
+     */
+    private static final Pattern SENSITIVE_PROP_PATTERN = Pattern.compile(
+        "(?i)('[^']*(?:password|secret|sasl\\.jaas\\.config)[^']*'\\s*=\\s*)'[^']*'");
+
+    /**
+     * Redacts credential values from a DDL string before it is returned to the UI
+     * (topic detail, DDL preview, lineage SHOW CREATE TABLE). The full unmasked DDL is
+     * still used internally for table registration — the Flink connector needs the real
+     * credentials — but must never reach the browser.
+     */
+    public static String maskSensitiveProperties(String ddl) {
+        if (ddl == null) return null;
+        return SENSITIVE_PROP_PATTERN.matcher(ddl).replaceAll("$1'******'");
     }
 
     /**

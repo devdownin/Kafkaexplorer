@@ -3,6 +3,12 @@
 Date : 2026-07-20 · Périmètre : backend Java (90 fichiers), frontend React, configuration, build.
 Chaque constat référence le fichier et la ligne. Sévérités : 🔴 Critique · 🟠 Majeur · 🟡 Mineur · 🔵 Optimisation.
 
+> **Statut** : les quatre bugs critiques C1–C4 sont **corrigés** sur cette branche
+> (exécuteur dédié dans `AuditService`, annulation du heartbeat dans `KafkaLiveConsumer`,
+> filtre WHERE sensible à la casse + chemins imbriqués dans `FlinkSqlService`,
+> masquage `DdlGeneratorService.maskSensitiveProperties()` appliqué à tous les endpoints exposant du DDL).
+> Les sections ci-dessous décrivent l'état **avant** correctif.
+
 ---
 
 ## Résumé exécutif

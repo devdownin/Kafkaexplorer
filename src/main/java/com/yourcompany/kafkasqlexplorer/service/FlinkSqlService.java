@@ -1035,21 +1035,35 @@ public class FlinkSqlService {
         Matcher wm = whereBlock.matcher(sql);
         if (!wm.find()) return conditions;
         String whereClause = wm.group(1).trim();
-        Pattern condPattern = Pattern.compile("(?i)`?([\\w]+)`?\\s*=\\s*'([^']*)'");
+        // Keep the original case of the column name: message fields are case-sensitive
+        // (e.g. "orderId") and lowercasing the key would make every lookup miss.
+        // Dots are allowed so nested JSON / flattened XML paths can be filtered.
+        Pattern condPattern = Pattern.compile("(?i)`?([\\w.]+)`?\\s*=\\s*'([^']*)'");
         Matcher cm = condPattern.matcher(whereClause);
         while (cm.find()) {
-            conditions.put(cm.group(1).toLowerCase(), cm.group(2));
+            conditions.put(cm.group(1), cm.group(2));
         }
         return conditions;
     }
 
     private boolean matchesWhereConditions(Map<String, Object> row, Map<String, String> conditions) {
         for (Map.Entry<String, String> cond : conditions.entrySet()) {
-            Object val = row.get(cond.getKey());
+            Object val = getNestedValue(row, cond.getKey());
+            if (val == null) {
+                val = findValueIgnoreCase(row, cond.getKey());
+            }
             if (val == null) return false;
             if (!val.toString().equalsIgnoreCase(cond.getValue())) return false;
         }
         return true;
+    }
+
+    /** Last-resort lookup for WHERE conditions whose case doesn't match the message fields. */
+    private Object findValueIgnoreCase(Map<String, Object> row, String key) {
+        for (Map.Entry<String, Object> e : row.entrySet()) {
+            if (e.getKey().equalsIgnoreCase(key)) return e.getValue();
+        }
+        return null;
     }
 
     public void cancelQuery(String queryId) {

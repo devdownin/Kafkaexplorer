@@ -12,13 +12,16 @@ import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import jakarta.annotation.PreDestroy;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -41,7 +44,18 @@ public class AuditService {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private final Map<String, AuditReport> auditRuns = new ConcurrentHashMap<>();
-    private String lastAuditId = null;
+    private volatile String lastAuditId = null;
+
+    /**
+     * Dedicated executor for background audit runs. Spring's {@code @Async} cannot be used
+     * here: {@code startAudit()} would self-invoke the async method, bypassing the proxy and
+     * running the whole audit synchronously on the HTTP thread.
+     */
+    private final ExecutorService auditExecutor = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "cluster-audit-runner");
+        t.setDaemon(true);
+        return t;
+    });
 
     public AuditService(KafkaAdminService kafkaAdminService,
                         FlinkSqlService flinkSqlService,
@@ -65,7 +79,7 @@ public class AuditService {
         AuditReport initialReport = new AuditReport(auditId, AuditStatus.RUNNING, 0, 0, 0, Collections.emptyList(), Collections.emptyList(), Collections.emptyMap());
         auditRuns.put(auditId, initialReport);
 
-        runAuditAsync(auditId, options);
+        auditExecutor.submit(() -> runAuditAsync(auditId, options));
         return auditId;
     }
 
@@ -78,10 +92,10 @@ public class AuditService {
     }
 
     /**
-     * Executes the audit process in a background thread to avoid blocking the UI.
+     * Executes the audit process (submitted to {@link #auditExecutor} by {@link #startAudit})
+     * so the HTTP thread returns immediately with the audit id.
      * The results are stored in an in-memory map and also persisted to Kafka.
      */
-    @Async
     protected void runAuditAsync(String auditId, AuditOptions options) {
         try {
             List<String> topics = kafkaAdminService.listTopics();
@@ -245,6 +259,19 @@ public class AuditService {
             log.warn("Failed to calculate latency between {} and {}: {}", sourceTopic, targetTopic, result.error());
         }
         return null;
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        auditExecutor.shutdown();
+        try {
+            if (!auditExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                auditExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            auditExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 
     protected void persistAuditHistory(AuditReport report) {

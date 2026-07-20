@@ -40,6 +40,7 @@ public class KafkaLiveConsumer {
     private final KafkaConfig kafkaConfig;
 
     private final Map<String, ScheduledFuture<?>> activeSessions = new ConcurrentHashMap<>();
+    private final Map<String, ScheduledFuture<?>> heartbeatTasks = new ConcurrentHashMap<>();
     private final Map<String, KafkaConsumer<String, String>> activeConsumers = new ConcurrentHashMap<>();
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(4);
 
@@ -152,14 +153,16 @@ public class KafkaLiveConsumer {
 
         activeSessions.put(sessionId, pollingFuture);
 
-        // Heartbeat task — runs every 15 seconds
-        scheduler.scheduleAtFixedRate(() -> {
+        // Heartbeat task — runs every 15 seconds. Keep the future so stopSession can
+        // cancel it; otherwise every session leaks a periodic task that runs forever.
+        ScheduledFuture<?> heartbeatFuture = scheduler.scheduleAtFixedRate(() -> {
             if (!sseEmitterManager.exists(sessionId)) {
                 stopSession(sessionId);
                 return;
             }
             sseEmitterManager.sendHeartbeat(sessionId);
         }, 15, 15, TimeUnit.SECONDS);
+        heartbeatTasks.put(sessionId, heartbeatFuture);
     }
 
     public void stopSession(String sessionId) {
@@ -168,6 +171,11 @@ public class KafkaLiveConsumer {
         ScheduledFuture<?> future = activeSessions.remove(sessionId);
         if (future != null) {
             future.cancel(false);
+        }
+
+        ScheduledFuture<?> heartbeat = heartbeatTasks.remove(sessionId);
+        if (heartbeat != null) {
+            heartbeat.cancel(false);
         }
 
         KafkaConsumer<String, String> consumer = activeConsumers.remove(sessionId);

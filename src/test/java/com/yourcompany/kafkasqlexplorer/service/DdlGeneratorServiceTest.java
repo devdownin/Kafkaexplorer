@@ -89,4 +89,44 @@ public class DdlGeneratorServiceTest {
         assertTrue(ddl.contains("'properties.sasl.jaas.config' = 'org.apache.kafka.common.security.plain.PlainLoginModule required username=\"MY_KEY\" password=\"MY_SECRET\";'"));
         assertTrue(ddl.contains("'properties.bootstrap.servers' = 'pkc-xyz.us-east-1.aws.confluent.cloud:9092'"));
     }
+
+    @Test
+    public void testMaskSensitivePropertiesRedactsCredentials() {
+        KafkaConfig config = new KafkaConfig();
+        config.setBootstrapServers("pkc-xyz.us-east-1.aws.confluent.cloud:9092");
+        config.setMode("CONFLUENT_CLOUD");
+        config.setConfluentKey("MY_KEY");
+        config.setConfluentSecret("MY_SECRET");
+
+        DdlGeneratorService service = new DdlGeneratorService(config, new NamingConventionService());
+        String masked = DdlGeneratorService.maskSensitiveProperties(
+            service.generateDdl("cc_topic", Map.of("id", "BIGINT"), MessageFormat.JSON));
+
+        assertTrue(!masked.contains("MY_SECRET"));
+        assertTrue(!masked.contains("MY_KEY"));
+        assertTrue(masked.contains("'properties.sasl.jaas.config' = '******'"));
+        // Non-sensitive properties must survive masking
+        assertTrue(masked.contains("'properties.bootstrap.servers' = 'pkc-xyz.us-east-1.aws.confluent.cloud:9092'"));
+        assertTrue(masked.contains("'properties.security.protocol' = 'SASL_SSL'"));
+    }
+
+    @Test
+    public void testMaskSensitivePropertiesRedactsSslPasswords() {
+        KafkaConfig config = new KafkaConfig();
+        config.setBootstrapServers("kafka-ssl:9093");
+        config.setMode("SSL");
+        config.setTruststorePath("/tmp/truststore.jks");
+        config.setTruststorePassword("trust-pass");
+        config.setKeystorePassword("key-pass");
+
+        DdlGeneratorService service = new DdlGeneratorService(config, new NamingConventionService());
+        String masked = DdlGeneratorService.maskSensitiveProperties(
+            service.generateDdl("ssl_topic", Map.of("id", "BIGINT"), MessageFormat.JSON));
+
+        assertTrue(!masked.contains("trust-pass"));
+        assertTrue(!masked.contains("key-pass"));
+        assertTrue(masked.contains("'properties.ssl.truststore.password' = '******'"));
+        // The truststore location is not a credential and must stay visible
+        assertTrue(masked.contains("'properties.ssl.truststore.location' = '/tmp/truststore.jks'"));
+    }
 }
