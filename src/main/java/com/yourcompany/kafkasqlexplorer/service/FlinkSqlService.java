@@ -70,6 +70,17 @@ public class FlinkSqlService {
      */
     private final Map<String, JobInfo> activeJobs = new ConcurrentHashMap<>();
 
+    /**
+     * Circuit breaker for the Flink SELECT path. If the planner keeps failing (e.g. the
+     * historical FlinkRelMetadataQuery NPE is still present in the running Flink version),
+     * we stop attempting it after {@link #FLINK_SELECT_FAILURE_THRESHOLD} failures so every
+     * SELECT does not pay the cost of a planner attempt before falling back to the direct
+     * Kafka reader. Reset on process restart.
+     */
+    private static final int FLINK_SELECT_FAILURE_THRESHOLD = 3;
+    private final java.util.concurrent.atomic.AtomicInteger flinkSelectFailures = new java.util.concurrent.atomic.AtomicInteger(0);
+    private volatile boolean flinkSelectDisabled = false;
+
     public static final class JobInfo {
         private final String queryId;
         private final String sql;
@@ -472,7 +483,6 @@ public class FlinkSqlService {
             return new QueryResult(Collections.emptyList(), Collections.emptyList(), 0, "SQL Validation Error: " + e.getMessage());
         }
 
-        TableResult result = null;
         try {
             AutoRegResult autoReg = autoRegisterTableIfNeeded(strippedSql);
             if (autoReg.error() != null) {
@@ -485,20 +495,69 @@ public class FlinkSqlService {
             int limit = request.maxRows() != null ? request.maxRows() : explorerConfig.getDefaultMaxRows();
             long timeout = request.timeout() != null ? request.timeout() : explorerConfig.getDefaultQueryTimeoutMs();
 
-            // SELECT queries: Flink's embedded SQL planner NPEs on all SELECT statements due to a
-            // FlinkRelMetadataQuery bug (metadataHandlerProvider=null in all tested Flink versions).
-            // Bypass Flink entirely for SELECT and read directly from Kafka instead.
             if (sqlToExecute.trim().toUpperCase().startsWith("SELECT")) {
+                // Prefer the real Flink planner when enabled and not tripped by the circuit breaker.
+                // The FlinkRelMetadataQuery NPE that historically forced the bypass is version
+                // dependent, so on any planner failure we fall back to the in-process direct Kafka
+                // reader and the query still succeeds.
+                if (explorerConfig.isFlinkSelectEnabled() && !flinkSelectDisabled) {
+                    try {
+                        QueryResult flinkResult = executeViaFlinkPlanner(queryId, sqlToExecute, "SELECT", limit, timeout, startTime);
+                        if (flinkResult.error() == null) {
+                            flinkSelectFailures.set(0);
+                            return autoReg.registered() ? withRegisteredFlag(flinkResult) : flinkResult;
+                        }
+                        // A timeout means the planner worked but the job was slow (empty/large topic):
+                        // fall back for this query, but don't count it toward the circuit breaker.
+                        if (flinkResult.error().startsWith("Query timed out")) {
+                            flinkSelectFailures.set(0);
+                            log.warn("Flink SELECT timed out — falling back to direct Kafka read for this query");
+                        } else {
+                            recordFlinkSelectFailure(flinkResult.error());
+                        }
+                    } catch (Throwable t) {
+                        recordFlinkSelectFailure(t.toString());
+                    }
+                }
                 QueryResult qr = kafkaDirectSelect(sqlToExecute, readMode, limit, startTime);
                 // Propagate auto-registration flag so the frontend can refresh its schema browser.
-                if (autoReg.registered()) {
-                    return new QueryResult(qr.columns(), qr.rows(), qr.durationMs(), qr.error(), true, qr.engine());
-                }
-                return qr;
+                return autoReg.registered() ? withRegisteredFlag(qr) : qr;
             }
 
-            final String finalSql = sqlToExecute;
-            String statementType = extractStatementType(finalSql);
+            // CREATE TABLE / EXPLAIN go through the Flink planner directly.
+            return executeViaFlinkPlanner(queryId, sqlToExecute, extractStatementType(sqlToExecute), limit, timeout, startTime);
+        } catch (Exception e) {
+            log.error("Flink SQL execution error — query='{}' error='{}'", request.sql(), e.getMessage(), e);
+            long duration = System.currentTimeMillis() - startTime;
+            return new QueryResult(Collections.emptyList(), Collections.emptyList(), duration, e.getMessage());
+        }
+    }
+
+    private QueryResult withRegisteredFlag(QueryResult qr) {
+        return new QueryResult(qr.columns(), qr.rows(), qr.durationMs(), qr.error(), true, qr.engine());
+    }
+
+    private void recordFlinkSelectFailure(String reason) {
+        int failures = flinkSelectFailures.incrementAndGet();
+        if (failures >= FLINK_SELECT_FAILURE_THRESHOLD && !flinkSelectDisabled) {
+            flinkSelectDisabled = true;
+            log.warn("Flink SELECT failed {} times (last: {}); disabling the Flink planner path for SELECT "
+                + "for this process and using the direct Kafka reader instead. Restart after upgrading Flink to retry.",
+                failures, reason);
+        } else {
+            log.warn("Flink SELECT failed ({}) — falling back to direct Kafka read", reason);
+        }
+    }
+
+    /**
+     * Executes a statement through the embedded Flink planner and collects up to {@code limit}
+     * rows with a {@code timeout} guard. Returns a {@link QueryResult} whose {@code error()} is
+     * non-null on failure, so SELECT callers can detect it and fall back to the direct Kafka reader.
+     */
+    private QueryResult executeViaFlinkPlanner(String queryId, String finalSql, String statementType,
+                                               int limit, long timeout, long startTime) {
+        TableResult result = null;
+        try {
             result = executeManagedSql("execute-sql-" + statementType.toLowerCase(Locale.ROOT), statementType, finalSql);
             result.getJobClient().ifPresent(client -> {
                 JobInfo info = new JobInfo(queryId, finalSql, statementType, "SYNC_READ", client, System.currentTimeMillis());
@@ -518,12 +577,13 @@ public class FlinkSqlService {
                 persistJobSnapshot(info, summary, "Executed through synchronous exploration mode", null);
             });
 
+            final TableResult tableResult = result;
             // result.collect() starts the Flink job and provides an iterator to fetch results.
             try (org.apache.flink.util.CloseableIterator<Row> it = result.collect()) {
             List<String> columns = result.getResolvedSchema().getColumnNames();
             log.debug("[FlinkSQL] queryId={} sql='{}' resolvedColumns={} resolvedSchema={}",
-                    queryId, sqlToExecute, columns, result.getResolvedSchema());
-            List<Map<String, Object>> rows = new ArrayList<>();
+                    queryId, finalSql, columns, result.getResolvedSchema());
+            List<Map<String, Object>> rows;
 
             // We use a CompletableFuture to implement the timeout logic.
             // Streaming queries might not produce data immediately, so we don't want to block indefinitely.
@@ -558,15 +618,15 @@ public class FlinkSqlService {
             try {
                 rows = future.get(timeout, TimeUnit.MILLISECONDS);
             } catch (TimeoutException te) {
-                log.warn("Query timed out after {}ms: {}", timeout, request.sql());
+                log.warn("Query timed out after {}ms: {}", timeout, finalSql);
                 future.cancel(true);
-                cancelJobInternal(result);
+                cancelJobInternal(tableResult);
                 long duration = System.currentTimeMillis() - startTime;
                 return new QueryResult(Collections.emptyList(), Collections.emptyList(), duration,
                     "Query timed out after " + timeout + "ms. The Kafka topic may have fewer messages than the limit, " +
                     "or the broker is slow. Try adding LIMIT, reducing maxRows, or switching to 'latest-offset' mode.");
             } catch (ExecutionException ee) {
-                log.error("Query execution failed: {}", request.sql(), ee.getCause());
+                log.error("Query execution failed: {}", finalSql, ee.getCause());
                 Throwable cause = ee.getCause();
                 if (cause instanceof Exception ex) throw ex;
                 throw new RuntimeException(cause);
@@ -576,7 +636,7 @@ public class FlinkSqlService {
                 return new QueryResult(columns, rows, duration, null, false, "FLINK");
             }
         } catch (Exception e) {
-            log.error("Flink SQL execution error — query='{}' error='{}'", request.sql(), e.getMessage(), e);
+            log.error("Flink SQL execution error — query='{}' error='{}'", finalSql, e.getMessage(), e);
             cancelJobInternal(result);
             long duration = System.currentTimeMillis() - startTime;
             return new QueryResult(Collections.emptyList(), Collections.emptyList(), duration, e.getMessage());
@@ -584,10 +644,9 @@ public class FlinkSqlService {
     }
 
     /**
-     * Direct Kafka reader for SELECT queries.
-     * Flink's embedded SQL planner has a persistent FlinkRelMetadataQuery bug (metadataHandlerProvider=null)
-     * that causes NPE on every SELECT in all tested Flink versions (1.18, 1.20, 2.0).
-     * This method bypasses the Flink optimizer entirely and reads from Kafka directly.
+     * Direct Kafka reader for SELECT queries — used as a fallback when the Flink planner path is
+     * disabled or fails (historically a persistent FlinkRelMetadataQuery NPE, reproduced on Flink
+     * 1.18/1.20/2.0). Reads from Kafka directly, bypassing the Flink optimizer.
      * Aggregate functions (COUNT, SUM, AVG, MAX, MIN) are computed in-process over the fetched rows.
      */
     /**
