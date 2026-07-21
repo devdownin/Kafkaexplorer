@@ -299,6 +299,59 @@ class MetricServiceTest {
     }
 
     @Test
+    void histogramDoesNotRecordTheSameBacklogEveryRefresh() {
+        // The bounded earliest-offset scan re-reads the full backlog every cycle: same 3 rows.
+        QueryResult threeRows = new QueryResult(
+            List.of("metric_value"),
+            List.of(Map.of("metric_value", 1.0), Map.of("metric_value", 2.0), Map.of("metric_value", 3.0)),
+            10L,
+            null);
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(threeRows);
+
+        service.save(new MetricConfig(
+            null, "hist", "HISTOGRAM", "SELECT amount AS metric_value FROM t", null, null, null,
+            null, null, null, List.of(), Map.of(), null, null, null, null, null, List.of()));
+        String id = service.getAllMetrics().stream()
+            .filter(m -> "hist".equals(m.name()))
+            .findFirst().orElseThrow().id();
+
+        service.refreshMetrics();
+        service.refreshMetrics();
+        service.refreshMetrics();
+
+        var summary = meterRegistry.find("explorer_metric_histogram").tag("metric_id", id).summary();
+        assertNotNull(summary);
+        assertEquals(3, summary.count(),
+            "a static 3-row backlog must be recorded once, not once per refresh");
+    }
+
+    @Test
+    void summaryRecordsOnlyNewlyAppendedObservationsAsBacklogGrows() {
+        Mockito.when(flinkSqlService.executeSql(Mockito.any()))
+            .thenReturn(
+                new QueryResult(List.of("metric_value"),
+                    List.of(Map.of("metric_value", 10.0), Map.of("metric_value", 20.0)), 10L, null),
+                new QueryResult(List.of("metric_value"),
+                    List.of(Map.of("metric_value", 10.0), Map.of("metric_value", 20.0),
+                            Map.of("metric_value", 30.0)), 10L, null));
+
+        service.save(new MetricConfig(
+            null, "summ", "SUMMARY", "SELECT latency AS metric_value FROM t", null, null, null,
+            null, null, null, List.of(), Map.of(), null, null, null, null, null, List.of()));
+        String id = service.getAllMetrics().stream()
+            .filter(m -> "summ".equals(m.name()))
+            .findFirst().orElseThrow().id();
+
+        service.refreshMetrics(); // records 10, 20  → count 2
+        service.refreshMetrics(); // backlog grew by one (30) → records only 30 → count 3
+
+        var summary = meterRegistry.find("explorer_metric_summary").tag("metric_id", id).summary();
+        assertNotNull(summary);
+        assertEquals(3, summary.count(), "only the newly appended observation should be recorded");
+        assertEquals(60.0, summary.totalAmount(), 0.0001, "10 + 20 + 30 recorded exactly once each");
+    }
+
+    @Test
     void refreshMetricsAddsLabelsFromLatestKafkaMessage() {
         Mockito.when(flinkSqlService.executeSql(Mockito.any()))
             .thenReturn(new QueryResult(

@@ -122,6 +122,14 @@ public class MetricService {
     private final Map<String, Map<String, Double>>                   lastCounterValues = new ConcurrentHashMap<>();
     /** HISTOGRAM / SUMMARY: metricId → (labelKey → DistributionSummary) */
     private final Map<String, Map<String, DistributionSummary>>      distributionMeters = new ConcurrentHashMap<>();
+    /**
+     * HISTOGRAM / SUMMARY: metricId → (labelKey → count of observations already recorded).
+     * The scheduled refresh re-scans the full bounded (earliest-offset) backlog every cycle;
+     * without this watermark the accumulating DistributionSummary would re-record every past
+     * observation each cycle, inflating _count/_sum and biasing the distribution toward older
+     * data. Only the suffix beyond the recorded count is recorded on subsequent cycles (B2).
+     */
+    private final Map<String, Map<String, Integer>>                  distributionRecordedCounts = new ConcurrentHashMap<>();
 
     private final FlinkSqlService flinkSqlService;
     private final MeterRegistry   meterRegistry;
@@ -330,6 +338,7 @@ public class MetricService {
         lastCounterValues.remove(id);
         counterMeters.remove(id);
         distributionMeters.remove(id);
+        distributionRecordedCounts.remove(id);
         meterRegistry.find("explorer_metric_gauge").tag("metric_id", id).meters().forEach(meterRegistry::remove);
         meterRegistry.find("explorer_metric_counter").tag("metric_id", id).meters().forEach(meterRegistry::remove);
         meterRegistry.find("explorer_metric_histogram").tag("metric_id", id).meters().forEach(meterRegistry::remove);
@@ -791,28 +800,94 @@ public class MetricService {
                              Double displayValueOverride, Map<String, Object> summary,
                              Map<String, String> configuredLabels) {
         String type = config.type() == null ? "GAUGE" : config.type().toUpperCase();
-        Double primaryValue = displayValueOverride;
 
-        for (Map<String, Object> row : rows) {
-            Double value   = extractValue(row);
-            if (value == null) continue;
-
-            List<Tag> tags = buildTags(metricId, config, row, configuredLabels);
-            String labelKey = buildLabelKey(row, configuredLabels);
-
-            switch (type) {
-                case "COUNTER"   -> processCounter(metricId, labelKey, tags, value);
-                case "HISTOGRAM" -> processHistogram(metricId, labelKey, tags, value);
-                case "SUMMARY"   -> processSummary(metricId, labelKey, tags, value);
-                default          -> processGauge(metricId, labelKey, tags, value);  // GAUGE
-            }
-            if (primaryValue == null) primaryValue = value;
-        }
+        Double primaryValue = (type.equals("HISTOGRAM") || type.equals("SUMMARY"))
+            ? recordDistributionRows(metricId, config, rows, configuredLabels,
+                                     type.equals("HISTOGRAM"), displayValueOverride)
+            : processScalarRows(metricId, config, rows, configuredLabels,
+                                 type.equals("COUNTER"), displayValueOverride);
 
         if (primaryValue != null) {
             updateHistory(metricId, primaryValue);
             updateMetricState(metricId, primaryValue, null, summary);
         }
+    }
+
+    /** GAUGE / COUNTER: each row is idempotent (set) or delta-tracked, so re-scans are safe. */
+    private Double processScalarRows(String metricId, MetricConfig config, List<Map<String, Object>> rows,
+                                     Map<String, String> configuredLabels, boolean counter,
+                                     Double displayValueOverride) {
+        Double primaryValue = displayValueOverride;
+        for (Map<String, Object> row : rows) {
+            Double value = extractValue(row);
+            if (value == null) continue;
+
+            List<Tag> tags = buildTags(metricId, config, row, configuredLabels);
+            String labelKey = buildLabelKey(row, configuredLabels);
+
+            if (counter) processCounter(metricId, labelKey, tags, value);
+            else         processGauge(metricId, labelKey, tags, value);
+
+            if (primaryValue == null) primaryValue = value;
+        }
+        return primaryValue;
+    }
+
+    /**
+     * HISTOGRAM / SUMMARY: record only observations not already recorded in earlier refresh
+     * cycles. Because the scheduled refresh re-scans the whole bounded (earliest-offset)
+     * backlog every cycle, recording every returned row unconditionally would re-count the
+     * entire history each cycle — inflating _count/_sum and skewing the distribution toward
+     * older data (B2).
+     *
+     * Dedup is positional per label series: an earliest-offset scan yields an append-only
+     * stream in a stable order, so only the suffix beyond the previously recorded count is
+     * new. A series that shrinks (retention trim / stream reset) resets its watermark to the
+     * current size without re-recording, so the accumulated summary is never inflated.
+     *
+     * <p>Note: templates whose output is re-sorted each cycle rather than strictly appended
+     * (e.g. TOPIC_TRANSIT_LATENCY sorts by match key) get approximate positional dedup — the
+     * observation <em>count</em> stays bounded/correct, but the exact boundary values may
+     * shift slightly. Strictly-correct continuous distributions require FLINK_MANAGED_JOB.
+     *
+     * @return the first observed value (for display / history), or the override when provided.
+     */
+    private Double recordDistributionRows(String metricId, MetricConfig config,
+                                          List<Map<String, Object>> rows,
+                                          Map<String, String> configuredLabels,
+                                          boolean histogram, Double displayValueOverride) {
+        Map<String, Integer> recordedCounts =
+            distributionRecordedCounts.computeIfAbsent(metricId, k -> new ConcurrentHashMap<>());
+
+        // Group ordered values (and a representative tag set) per label series for this cycle.
+        // Same labelKey ⟺ same tag set by construction, so the first row's tags are canonical.
+        Map<String, List<Double>> valuesByLabel = new LinkedHashMap<>();
+        Map<String, List<Tag>>    tagsByLabel   = new LinkedHashMap<>();
+        Double primaryValue = displayValueOverride;
+
+        for (Map<String, Object> row : rows) {
+            Double value = extractValue(row);
+            if (value == null) continue;
+            String labelKey = buildLabelKey(row, configuredLabels);
+            valuesByLabel.computeIfAbsent(labelKey, k -> new ArrayList<>()).add(value);
+            tagsByLabel.computeIfAbsent(labelKey, k -> buildTags(metricId, config, row, configuredLabels));
+            if (primaryValue == null) primaryValue = value;
+        }
+
+        valuesByLabel.forEach((labelKey, values) -> {
+            int alreadyRecorded = recordedCounts.getOrDefault(labelKey, 0);
+            // On a shrink, skip recording (startIndex == size) and just reset the watermark —
+            // never re-record the surviving prefix, which would inflate the accumulated summary.
+            int startIndex = values.size() < alreadyRecorded ? values.size() : alreadyRecorded;
+            List<Tag> tags = tagsByLabel.get(labelKey);
+            for (int i = startIndex; i < values.size(); i++) {
+                if (histogram) processHistogram(metricId, labelKey, tags, values.get(i));
+                else           processSummary(metricId, labelKey, tags, values.get(i));
+            }
+            recordedCounts.put(labelKey, values.size());
+        });
+
+        return primaryValue;
     }
 
     // GAUGE → Gauge (current point-in-time value)
