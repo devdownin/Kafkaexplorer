@@ -20,6 +20,12 @@ public class ExplorerConfig {
     private boolean allowCrossJoin = false;
     private boolean allowSystemTableAccess = false;
     /**
+     * When true, SELECT queries are executed through the real Flink planner first, falling back
+     * to the in-process direct Kafka reader if the planner fails (historically a
+     * FlinkRelMetadataQuery NPE). Set to false to always use the direct reader.
+     */
+    private boolean flinkSelectEnabled = true;
+    /**
      * TTL of the Kafka metadata caches (topic list, topic descriptors). Kept short so a
      * newly created topic shows up quickly in the workbench and auto-registration.
      */
@@ -105,6 +111,14 @@ public class ExplorerConfig {
 
     public void setAllowSystemTableAccess(boolean allowSystemTableAccess) {
         this.allowSystemTableAccess = allowSystemTableAccess;
+    }
+
+    public boolean isFlinkSelectEnabled() {
+        return flinkSelectEnabled;
+    }
+
+    public void setFlinkSelectEnabled(boolean flinkSelectEnabled) {
+        this.flinkSelectEnabled = flinkSelectEnabled;
     }
 
     public int getCacheExpireSeconds() {

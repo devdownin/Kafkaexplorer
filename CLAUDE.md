@@ -61,7 +61,7 @@ docker-compose up -d
 
 ### Stack
 
-- **Backend**: Spring Boot 3.5.x, Java 25 (`java.version` in pom.xml), embedded Apache Flink 1.18.x (`flink.version` in pom.xml — the SELECT NPE described below was reproduced on 1.18/1.20/2.0)
+- **Backend**: Spring Boot 3.5.x, Java 21 (`java.version` in pom.xml — Flink 2.x supports Java 17/21, not 25), embedded Apache Flink 2.3.x (`flink.version` in pom.xml). Kafka connector: `flink-connector-kafka:4.0.1-2.0` (the `-2.0` suffix covers the whole Flink 2.x line).
 - **Frontend**: React 19, TypeScript, Vite, Tailwind CSS, Monaco Editor
 - **Kafka**: Compatible with Kafka 3.x and 4.x (KRaft)
 - **Build**: Single JAR — Maven's `frontend-maven-plugin` builds the React app and copies it to `src/main/resources/static/`
@@ -78,8 +78,8 @@ parser/       JSON, XML, and Avro (via Confluent Schema Registry) schema inferen
 
 **Key services:**
 - `FlinkSqlService` — executes SQL against Kafka topics using embedded Flink `LocalEnvironment`; per-request table registration ensures isolation
-  - **IMPORTANT**: All SELECT queries bypass Flink entirely via `kafkaDirectSelect()` due to a persistent `FlinkRelMetadataQuery` NPE in Flink 2.x. Flink is only used for `CREATE TABLE` and `EXPLAIN`.
-  - `kafkaDirectSelect()` supports aggregate functions (COUNT/SUM/AVG/MAX/MIN with optional GROUP BY) computed in-process over fetched Kafka messages. SQL must alias the result column (e.g. `COUNT(*) AS metric_value`). COUNT values are returned as `long` (integral), other aggregates as `double`.
+  - **SELECT execution**: when `explorer.flink-select-enabled` is true (default), SELECT runs through the real Flink planner via `executeViaFlinkPlanner()` and normally reports `engine=FLINK`, falling back to `kafkaDirectSelect()` only on a planner failure. The historical `FlinkRelMetadataQuery` NPE (`metadataHandlerProvider`, reproduced on Flink 1.18/1.20/2.0) that once forced every SELECT through the direct reader is **fixed**: `FlinkRuntimeCoordinator.ensureFlinkMetadataProvider()` pre-seeds Calcite's `RelMetadataQueryBase.THREAD_PROVIDERS` ThreadLocal with Flink's provider (Flink 2.x leaves it unset before the VolcanoPlanner's cost pass). A process-lifetime circuit breaker (`FLINK_SELECT_FAILURE_THRESHOLD` = 3) still guards against any residual planner failure so it does not add a failed attempt to every query (timeouts don't count toward it). `CREATE TABLE` / `EXPLAIN` always go through Flink. Engine used is reported in `QueryResult.engine()` (`FLINK` vs `KAFKA_DIRECT`).
+  - `kafkaDirectSelect()` (fallback engine) supports aggregate functions (COUNT/SUM/AVG/MAX/MIN with optional GROUP BY) computed in-process over fetched Kafka messages. SQL must alias the result column (e.g. `COUNT(*) AS metric_value`). COUNT values are returned as `long` (integral), other aggregates as `double`.
   - For aggregate queries, up to 100 000 messages are fetched (earliest-offset). Plain projections fetch `limit + 20`; when a `WHERE` clause is present the scan widens to `max(5000, limit×100)` capped at 100 000 (the row loop still stops at `limit` matches).
   - **WHERE filtering**: simple `col = 'value'` conditions. Column names keep their original case and support dot-notation nested paths (resolved via `getNestedValue`, with a case-insensitive top-level fallback). Values compare case-insensitively.
   - XML payloads are parsed with a per-thread secure `DocumentBuilder` (`XML_BUILDERS` ThreadLocal) — never build a `DocumentBuilderFactory` per message.
@@ -151,7 +151,7 @@ Tests use JUnit 5 + Mockito. Unit tests mock Kafka and Flink — no broker neede
 
 `AuditServiceTest` overrides `persistAuditHistory()` to skip real Kafka writes.
 
-**Known issue — `FlinkSqlServiceTest`** (currently untracked): registers in-memory Flink views via `tableEnv.createTemporaryView()` but `executeSql()` routes all SELECT to `kafkaDirectSelect()`, which only resolves Kafka topics. The mock returns `listTopics() = []`, so 13/27 tests fail with "Table not found". These are pre-existing failures — do not treat as regressions.
+**Known issue — `FlinkSqlServiceTest`** (currently untracked): registers in-memory Flink views via `tableEnv.createTemporaryView()`. Before the Flink 2.3 migration, `executeSql()` routed all SELECT to `kafkaDirectSelect()` (Kafka topics only), so 13/27 tests failed with "Table not found" against the mock's `listTopics() = []`. With the Flink planner path re-enabled (`flink-select-enabled: true`), SELECT is now attempted through Flink first, which *may* resolve those in-memory views — re-baseline this suite when running against Flink 2.3.
 
 **Known issue — `FlinkDdlValidationTest`** (currently untracked): fails with a Calcite `SqlParserException` on DDL parsing — pre-existing, unrelated to the SELECT bypass.
 

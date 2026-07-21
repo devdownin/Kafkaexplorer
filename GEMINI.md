@@ -5,7 +5,7 @@ This project is a specialized web application for exploring Kafka clusters and q
 ## Project Overview
 
 - **Purpose**: Real-time Kafka topic exploration, schema inference, SQL querying, lineage tracking, and cluster auditing.
-- **Backend**: Spring Boot 3.5.x, Java 25, Apache Flink 1.18.1 (Embedded).
+- **Backend**: Spring Boot 3.5.x, Java 21, Apache Flink 2.3.0 (Embedded).
 - **Frontend**: React 19, TypeScript, Vite, Tailwind CSS, Monaco Editor.
 - **Key Feature**: Bridges raw Kafka data (JSON/XML/AVRO) to SQL via automated schema inference and dynamic table registration.
 
@@ -15,7 +15,7 @@ This project is a specialized web application for exploring Kafka clusters and q
 - `web/`: REST Controllers (Query, Topic, Audit, Lineage, etc.).
 - `service/`: Core business logic.
   - `FlinkSqlService`: **CRITICAL ENGINE**.
-    - **Note**: Bypasses Flink's planner for `SELECT` queries (`kafkaDirectSelect`) to avoid a known `FlinkRelMetadataQuery` NPE.
+    - **Note**: `SELECT` runs through the Flink planner (`executeViaFlinkPlanner`) with automatic fallback to `kafkaDirectSelect` on failure (a circuit breaker disables the planner path after repeated failures — historically a `FlinkRelMetadataQuery` NPE). Toggle via `explorer.flink-select-enabled`.
     - Implements custom SQL aggregation (COUNT, SUM, AVG, MAX, MIN) and windowing (TUMBLE) directly in Java over fetched Kafka records.
     - Flink is still used for `CREATE TABLE` and `EXPLAIN`.
   - `KafkaAdminService`: Manages Kafka metadata and low-level record fetching. Supports Avro deserialization via Confluent Schema Registry.
