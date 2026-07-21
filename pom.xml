@@ -73,9 +73,16 @@
             <artifactId>flink-table-api-java</artifactId>
             <version>${flink.version}</version>
         </dependency>
+        <!--
+          Use the planner LOADER (not flink-table-planner_2.12) so the planner and its
+          Calcite dependency live in an isolated classloader. The direct planner artifact
+          on a Spring Boot fat-jar classpath can load Calcite twice, leaving
+          RelMetadataQueryBase.THREAD_PROVIDERS unset on the class FlinkRelMetadataQuery
+          reads → NullPointerException("metadataHandlerProvider") on every optimize().
+        -->
         <dependency>
             <groupId>org.apache.flink</groupId>
-            <artifactId>flink-table-planner_2.12</artifactId>
+            <artifactId>flink-table-planner-loader</artifactId>
             <version>${flink.version}</version>
         </dependency>
         <dependency>
