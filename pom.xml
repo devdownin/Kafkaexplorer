@@ -74,15 +74,14 @@
             <version>${flink.version}</version>
         </dependency>
         <!--
-          Use the planner LOADER (not flink-table-planner_2.12) so the planner and its
-          Calcite dependency live in an isolated classloader. The direct planner artifact
-          on a Spring Boot fat-jar classpath can load Calcite twice, leaving
-          RelMetadataQueryBase.THREAD_PROVIDERS unset on the class FlinkRelMetadataQuery
-          reads → NullPointerException("metadataHandlerProvider") on every optimize().
+          Direct planner artifact (not planner-loader): the app needs Calcite on the
+          classpath to pre-populate RelMetadataQueryBase.THREAD_PROVIDERS (see
+          FlinkRuntimeCoordinator) — Flink 2.x leaves that ThreadLocal unset before the
+          VolcanoPlanner's cost computation, causing NullPointerException("metadataHandlerProvider").
         -->
         <dependency>
             <groupId>org.apache.flink</groupId>
-            <artifactId>flink-table-planner-loader</artifactId>
+            <artifactId>flink-table-planner_2.12</artifactId>
             <version>${flink.version}</version>
         </dependency>
         <dependency>

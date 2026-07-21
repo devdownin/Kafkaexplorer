@@ -30,6 +30,8 @@ public class FlinkRuntimeCoordinator {
         return t;
     });
     private final ClassLoader flinkClassLoader;
+    private volatile boolean metadataProviderReady = false;
+    private volatile boolean metadataProviderWarned = false;
 
     public FlinkRuntimeCoordinator(TableEnvironment tableEnv) {
         this.flinkClassLoader = tableEnv.getClass().getClassLoader();
@@ -102,9 +104,62 @@ public class FlinkRuntimeCoordinator {
         ClassLoader saved = Thread.currentThread().getContextClassLoader();
         Thread.currentThread().setContextClassLoader(flinkClassLoader != null ? flinkClassLoader : saved);
         try {
+            ensureFlinkMetadataProvider();
             return action.get();
         } finally {
             Thread.currentThread().setContextClassLoader(saved);
+        }
+    }
+
+    /**
+     * Flink 2.x does not populate Calcite's {@code RelMetadataQueryBase.THREAD_PROVIDERS}
+     * ThreadLocal before the VolcanoPlanner runs cost-based optimization in this embedded
+     * setup, so {@code RelMetadataQuery.getNonCumulativeCost(...)} dereferences a null
+     * metadata-handler provider and throws {@code NullPointerException("metadataHandlerProvider")}
+     * on every optimize() — SELECT and EXPLAIN alike. We pre-seed the ThreadLocal with Flink's
+     * own provider (wrapped in a Janino provider, exactly as Flink's PlannerBase.optimize does)
+     * on the current thread, under the Flink context classloader so Janino compiles the metadata
+     * handlers against the right classes. Best-effort: any failure is swallowed and the query
+     * simply falls back to its existing behaviour (direct Kafka reader for SELECT).
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private void ensureFlinkMetadataProvider() {
+        try {
+            java.lang.reflect.Field threadProvidersField =
+                Class.forName("org.apache.calcite.rel.metadata.RelMetadataQueryBase")
+                    .getField("THREAD_PROVIDERS");
+            ThreadLocal threadProviders = (ThreadLocal) threadProvidersField.get(null);
+            if (threadProviders.get() != null) {
+                return; // already set on this thread (by us or by Flink)
+            }
+
+            // FlinkDefaultRelMetadataProvider.INSTANCE — Java static field or Scala object accessor
+            Class<?> flinkProviderClass =
+                Class.forName("org.apache.flink.table.planner.plan.metadata.FlinkDefaultRelMetadataProvider");
+            Object flinkProvider;
+            try {
+                flinkProvider = flinkProviderClass.getField("INSTANCE").get(null);
+            } catch (NoSuchFieldException scalaObject) {
+                Object module = flinkProviderClass.getField("MODULE$").get(null);
+                flinkProvider = module.getClass().getMethod("INSTANCE").invoke(module);
+            }
+
+            Class<?> relMetadataProvider = Class.forName("org.apache.calcite.rel.metadata.RelMetadataProvider");
+            Object janino = Class.forName("org.apache.calcite.rel.metadata.JaninoRelMetadataProvider")
+                .getMethod("of", relMetadataProvider)
+                .invoke(null, flinkProvider);
+
+            threadProviders.set(janino);
+            if (!metadataProviderReady) {
+                metadataProviderReady = true;
+                log.info("Pre-populated Flink RelMetadata provider ThreadLocal for the planner");
+            }
+        } catch (Throwable t) {
+            if (!metadataProviderWarned) {
+                metadataProviderWarned = true;
+                log.warn("Could not pre-populate Flink RelMetadata provider ThreadLocal "
+                    + "(SELECT will use the direct Kafka reader; EXPLAIN unavailable): {}", t.toString());
+            }
         }
     }
 
