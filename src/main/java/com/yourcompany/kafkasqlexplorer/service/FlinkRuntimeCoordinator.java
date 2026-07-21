@@ -133,18 +133,19 @@ public class FlinkRuntimeCoordinator {
                 return; // already set on this thread (by us or by Flink)
             }
 
-            // FlinkDefaultRelMetadataProvider.INSTANCE — Java static field or Scala object accessor
+            Class<?> relMetadataProvider = Class.forName("org.apache.calcite.rel.metadata.RelMetadataProvider");
             Class<?> flinkProviderClass =
                 Class.forName("org.apache.flink.table.planner.plan.metadata.FlinkDefaultRelMetadataProvider");
-            Object flinkProvider;
-            try {
-                flinkProvider = flinkProviderClass.getField("INSTANCE").get(null);
-            } catch (NoSuchFieldException scalaObject) {
-                Object module = flinkProviderClass.getField("MODULE$").get(null);
-                flinkProvider = module.getClass().getMethod("INSTANCE").invoke(module);
+            // Name-agnostic lookup of Flink's provider instance: any public static member
+            // (field, no-arg method, or Scala MODULE$ accessor) that yields a RelMetadataProvider.
+            Object flinkProvider = resolveRelMetadataProvider(flinkProviderClass, relMetadataProvider);
+            if (flinkProvider == null) {
+                throw new IllegalStateException("No RelMetadataProvider accessor on "
+                    + flinkProviderClass.getName()
+                    + " — static fields=" + java.util.Arrays.toString(flinkProviderClass.getFields())
+                    + " static methods=" + java.util.Arrays.toString(flinkProviderClass.getMethods()));
             }
 
-            Class<?> relMetadataProvider = Class.forName("org.apache.calcite.rel.metadata.RelMetadataProvider");
             Object janino = Class.forName("org.apache.calcite.rel.metadata.JaninoRelMetadataProvider")
                 .getMethod("of", relMetadataProvider)
                 .invoke(null, flinkProvider);
@@ -161,6 +162,38 @@ public class FlinkRuntimeCoordinator {
                     + "(SELECT will use the direct Kafka reader; EXPLAIN unavailable): {}", t.toString());
             }
         }
+    }
+
+    /**
+     * Finds the {@code RelMetadataProvider} instance exposed by {@code holder}, regardless of how
+     * it is named: a public static field, a public static no-arg method, or a Scala
+     * {@code MODULE$} object with such a method. Returns {@code null} if none is found.
+     */
+    private Object resolveRelMetadataProvider(Class<?> holder, Class<?> relMetadataProvider) throws Exception {
+        for (java.lang.reflect.Field f : holder.getFields()) {
+            if (java.lang.reflect.Modifier.isStatic(f.getModifiers())
+                && relMetadataProvider.isAssignableFrom(f.getType())) {
+                return f.get(null);
+            }
+        }
+        for (java.lang.reflect.Method m : holder.getMethods()) {
+            if (java.lang.reflect.Modifier.isStatic(m.getModifiers())
+                && m.getParameterCount() == 0
+                && relMetadataProvider.isAssignableFrom(m.getReturnType())) {
+                return m.invoke(null);
+            }
+        }
+        try {
+            Object module = holder.getField("MODULE$").get(null);
+            for (java.lang.reflect.Method m : module.getClass().getMethods()) {
+                if (m.getParameterCount() == 0 && relMetadataProvider.isAssignableFrom(m.getReturnType())) {
+                    return m.invoke(module);
+                }
+            }
+        } catch (NoSuchFieldException notScala) {
+            // not a Scala object — ignore
+        }
+        return null;
     }
 
     @PreDestroy
