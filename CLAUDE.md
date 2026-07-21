@@ -151,9 +151,7 @@ Tests use JUnit 5 + Mockito. Unit tests mock Kafka and Flink — no broker neede
 
 `AuditServiceTest` overrides `persistAuditHistory()` to skip real Kafka writes.
 
-**Known issue — `FlinkSqlServiceTest`** (currently untracked): registers in-memory Flink views via `tableEnv.createTemporaryView()`. Before the Flink 2.3 migration, `executeSql()` routed all SELECT to `kafkaDirectSelect()` (Kafka topics only), so 13/27 tests failed with "Table not found" against the mock's `listTopics() = []`. With the Flink planner path re-enabled (`flink-select-enabled: true`), SELECT is now attempted through Flink first, which *may* resolve those in-memory views — re-baseline this suite when running against Flink 2.3.
-
-**Known issue — `FlinkDdlValidationTest`** (currently untracked): fails with a Calcite `SqlParserException` on DDL parsing — pre-existing, unrelated to the SELECT bypass.
+`FlinkSqlServiceTest` and `FlinkDdlValidationTest` **pass on Flink 2.3**. Before the migration these suites were broken (SELECT was routed to `kafkaDirectSelect()`, so tests against in-memory `createTemporaryView()` tables failed with "Table not found"; DDL validation hit a Calcite `SqlParserException`). With the Flink planner path restored (the `THREAD_PROVIDERS` fix, see above), SELECT resolves in-memory views through Flink and the whole suite is green. A handful of Flink-native SELECT tests remain `@Disabled("KAFKA_DIRECT")` — they document the old bypass path and can be re-enabled/re-baselined against the restored planner.
 
 Test classes are in `src/test/java/com/yourcompany/kafkasqlexplorer/`.
 
