@@ -261,6 +261,44 @@ class MetricServiceTest {
     }
 
     @Test
+    void editingMetricTypePurgesStaleMeterSeries() {
+        // A GAUGE metric that produces one series, then re-saved as a COUNTER.
+        Mockito.when(flinkSqlService.executeSql(Mockito.any()))
+            .thenReturn(new QueryResult(
+                List.of("metric_value"),
+                List.of(Map.of("metric_value", 5.0)),
+                10L,
+                null
+            ));
+
+        MetricConfig gauge = new MetricConfig(
+            null, "shape_shift", "GAUGE", "SELECT 5 AS metric_value", null, null, null,
+            null, null, null, List.of(), Map.of(), null, null, null, null, null, List.of());
+        service.save(gauge);
+        String id = service.getAllMetrics().stream()
+            .filter(m -> "shape_shift".equals(m.name()))
+            .findFirst().orElseThrow().id();
+
+        service.refreshMetrics();
+        assertFalse(meterRegistry.find("explorer_metric_gauge").tag("metric_id", id).meters().isEmpty(),
+            "gauge series should exist after first refresh");
+
+        // Re-save with the same id but a different type — the stale gauge must be removed.
+        service.save(new MetricConfig(
+            id, "shape_shift", "COUNTER", "SELECT 5 AS metric_value", null, null, null,
+            null, null, null, List.of(), Map.of(), null, null, null, null, null, List.of()));
+
+        assertTrue(meterRegistry.find("explorer_metric_gauge").tag("metric_id", id).meters().isEmpty(),
+            "stale gauge series must be purged when the metric type changes");
+
+        service.refreshMetrics();
+        assertFalse(meterRegistry.find("explorer_metric_counter").tag("metric_id", id).meters().isEmpty(),
+            "new counter series should exist after refresh");
+        assertTrue(meterRegistry.find("explorer_metric_gauge").tag("metric_id", id).meters().isEmpty(),
+            "gauge series must not reappear after switching to COUNTER");
+    }
+
+    @Test
     void refreshMetricsAddsLabelsFromLatestKafkaMessage() {
         Mockito.when(flinkSqlService.executeSql(Mockito.any()))
             .thenReturn(new QueryResult(

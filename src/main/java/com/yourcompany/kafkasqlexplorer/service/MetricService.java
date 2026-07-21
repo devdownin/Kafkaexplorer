@@ -301,13 +301,31 @@ public class MetricService {
             metric.labelTopic(),
             metric.labelFields() != null ? metric.labelFields() : List.of()));
         validateMetric(m, true);
+        MetricConfig previous = metrics.get(id);
         metrics.put(id, m);
+        // When an existing metric's shape changes (type, SQL, labels, template, …),
+        // any Micrometer series it already registered would linger forever with stale
+        // tags/values — e.g. an old GAUGE series surviving a switch to COUNTER, or dead
+        // label series after a SQL/label edit. Purge them so the next refresh rebuilds
+        // cleanly. Value history is intentionally preserved across an edit.
+        if (previous != null && metricShapeChanged(previous, m)) {
+            purgeMeters(id);
+        }
         persistToKafka(m);
     }
 
     public void delete(String id) {
         metrics.remove(id);
         historyMap.remove(id);
+        purgeMeters(id);
+        persistToKafka(new MetricConfig(id, null, null, null, null, null, null, null, null, "DELETED"));
+    }
+
+    /**
+     * Remove every Micrometer instrument and cached delta/holder state for a metric id.
+     * Does NOT touch {@link #historyMap} or {@link #metrics} — callers decide those.
+     */
+    private void purgeMeters(String id) {
         gaugeHolders.remove(id);
         lastCounterValues.remove(id);
         counterMeters.remove(id);
@@ -316,7 +334,18 @@ public class MetricService {
         meterRegistry.find("explorer_metric_counter").tag("metric_id", id).meters().forEach(meterRegistry::remove);
         meterRegistry.find("explorer_metric_histogram").tag("metric_id", id).meters().forEach(meterRegistry::remove);
         meterRegistry.find("explorer_metric_summary").tag("metric_id", id).meters().forEach(meterRegistry::remove);
-        persistToKafka(new MetricConfig(id, null, null, null, null, null, null, null, null, "DELETED"));
+    }
+
+    /** True when a re-saved metric differs in any field that affects its Micrometer series. */
+    private boolean metricShapeChanged(MetricConfig a, MetricConfig b) {
+        return !Objects.equals(a.type(), b.type())
+            || !Objects.equals(a.sql(), b.sql())
+            || !Objects.equals(a.labelTopic(), b.labelTopic())
+            || !Objects.equals(a.labelFields(), b.labelFields())
+            || !Objects.equals(a.templateType(), b.templateType())
+            || !Objects.equals(a.templateParams(), b.templateParams())
+            || !Objects.equals(a.createTableSql(), b.createTableSql())
+            || !Objects.equals(a.executionMode(), b.executionMode());
     }
 
     // ── Scheduled refresh ─────────────────────────────────────────────────────
