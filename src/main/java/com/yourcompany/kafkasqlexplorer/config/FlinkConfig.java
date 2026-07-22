@@ -8,20 +8,26 @@ import org.apache.flink.table.api.EnvironmentSettings;
 import org.apache.flink.table.api.TableEnvironment;
 import org.springframework.context.annotation.Bean;
 
+import java.time.ZoneId;
+
 @org.springframework.context.annotation.Configuration
 public class FlinkConfig {
 
     @Bean
     public TableEnvironment tableEnv() {
+        // Flink 2.x removed the untyped Configuration setters (setString/…) and the
+        // `table.exec.legacy-cast-behaviour` option (legacy casting no longer exists),
+        // so only the typed NUM_TASK_SLOTS option is set here; the time zone is applied
+        // through TableConfig after the environment is built.
         Configuration cfg = new Configuration();
         cfg.set(TaskManagerOptions.NUM_TASK_SLOTS, 8);
-        cfg.setString("table.exec.legacy-cast-behaviour", "enabled");
-        cfg.setString("table.local-time-zone", "UTC");
 
         EnvironmentSettings settings = EnvironmentSettings.newInstance()
             .inStreamingMode()
             .withConfiguration(cfg)
             .build();
-        return TableEnvironment.create(settings);
+        TableEnvironment tableEnv = TableEnvironment.create(settings);
+        tableEnv.getConfig().setLocalTimeZone(ZoneId.of("UTC"));
+        return tableEnv;
     }
 }

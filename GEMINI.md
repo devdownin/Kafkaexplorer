@@ -5,7 +5,7 @@ This project is a specialized web application for exploring Kafka clusters and q
 ## Project Overview
 
 - **Purpose**: Real-time Kafka topic exploration, schema inference, SQL querying, lineage tracking, and cluster auditing.
-- **Backend**: Spring Boot 3.5.x, Java 25, Apache Flink 1.18.1 (Embedded).
+- **Backend**: Spring Boot 3.5.x, Java 21, Apache Flink 2.3.0 (Embedded).
 - **Frontend**: React 19, TypeScript, Vite, Tailwind CSS, Monaco Editor.
 - **Key Feature**: Bridges raw Kafka data (JSON/XML/AVRO) to SQL via automated schema inference and dynamic table registration.
 
@@ -15,9 +15,9 @@ This project is a specialized web application for exploring Kafka clusters and q
 - `web/`: REST Controllers (Query, Topic, Audit, Lineage, etc.).
 - `service/`: Core business logic.
   - `FlinkSqlService`: **CRITICAL ENGINE**.
-    - **Note**: Bypasses Flink's planner for `SELECT` queries (`kafkaDirectSelect`) to avoid a known `FlinkRelMetadataQuery` NPE.
-    - Implements custom SQL aggregation (COUNT, SUM, AVG, MAX, MIN) and windowing (TUMBLE) directly in Java over fetched Kafka records.
-    - Flink is still used for `CREATE TABLE` and `EXPLAIN`.
+    - **Note**: `SELECT` runs through the real Flink planner (`executeViaFlinkPlanner`, `engine=FLINK`), with automatic fallback to `kafkaDirectSelect` on failure. The historical `FlinkRelMetadataQuery` NPE is **fixed** — `FlinkRuntimeCoordinator.ensureFlinkMetadataProvider()` pre-seeds Calcite's `RelMetadataQueryBase.THREAD_PROVIDERS` ThreadLocal. A circuit breaker still guards against residual planner failures. Toggle via `explorer.flink-select-enabled`.
+    - `kafkaDirectSelect` (fallback) implements custom SQL aggregation (COUNT, SUM, AVG, MAX, MIN) and windowing (TUMBLE) directly in Java over fetched Kafka records.
+    - `CREATE TABLE` and `EXPLAIN` always go through Flink.
   - `KafkaAdminService`: Manages Kafka metadata and low-level record fetching. Supports Avro deserialization via Confluent Schema Registry.
   - `SchemaInferenceService`: Samples messages to detect JSON/XML/AVRO structures.
   - `AuditService`: Runs async health checks and persists reports to `internal.audit.history`.
@@ -36,7 +36,7 @@ This project is a specialized web application for exploring Kafka clusters and q
 ### Development
 - **Backend**: `./mvnw spring-boot:run` (Port 8080).
 - **Frontend**: `cd src/main/webapp && npm install && npm run dev` (Port 5173, proxies `/api` to 8080).
-- **Tests**: `mvn test` (Note: some `FlinkSqlServiceTest` failures are pre-existing due to the SELECT bypass).
+- **Tests**: `mvn test` (green on Flink 2.3 / Java 21).
 
 ### Build & Deploy
 - **Full Build**: `mvn clean package` (Produces a single executable JAR containing the static frontend).
@@ -54,7 +54,7 @@ This project is a specialized web application for exploring Kafka clusters and q
 5. **State Management**: Frontend uses simple hooks and standard REST patterns; backend relies on Spring's `@Service` and `@RestController`.
 
 ## Known Issues / TODOs
-- `FlinkSqlServiceTest` has several failures related to the SELECT bypass and mock environment limitations.
-- Aggregate queries in `kafkaDirectSelect` fetch up to 100,000 messages from the earliest offset.
+- A few Flink-native SELECT tests in `FlinkSqlServiceTest` stay `@Disabled("KAFKA_DIRECT")`; they can be re-enabled now that the planner path is restored.
+- Aggregate queries in the `kafkaDirectSelect` fallback fetch up to 100,000 messages from the earliest offset.
 - Metric status remains `pending` if SQL aggregates don't use `AS metric_value`.
 - Avro support requires a running Confluent Schema Registry (default: `http://localhost:8081`).

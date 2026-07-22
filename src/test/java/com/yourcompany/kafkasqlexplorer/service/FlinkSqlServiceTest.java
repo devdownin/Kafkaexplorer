@@ -28,24 +28,22 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 /**
- * Unit tests for {@link FlinkSqlService} covering the two execution paths:
+ * Unit tests for {@link FlinkSqlService} covering both execution engines:
  *
- * <h3>KAFKA_DIRECT (bounded exploration)</h3>
- * All {@code SELECT} queries bypass the Flink SQL planner and go through
- * {@code kafkaDirectSelect()}, which reads directly from Kafka via
- * {@link KafkaAdminService}. In-memory Flink views registered with
- * {@code createTemporaryView()} are NOT visible to {@code kafkaDirectSelect()};
- * tests that exercise SELECT behavior must mock {@code listTopics()} and
- * {@code getEarliestRecords()} / {@code getRecentRecords()} accordingly.
+ * <h3>FLINK (restored planner)</h3>
+ * {@code SELECT} runs through the real Flink planner ({@code engine=FLINK}); {@code EXPLAIN}
+ * and {@code CREATE TABLE} go through the embedded {@link StreamTableEnvironment} too.
+ * In-memory Flink views registered with {@code createTemporaryView()} are resolved by the
+ * planner. The historical {@code FlinkRelMetadataQuery} NPE that once forced every SELECT
+ * through the direct reader is fixed (THREAD_PROVIDERS pre-seed, see FlinkRuntimeCoordinator).
  *
- * <h3>FLINK (DDL / EXPLAIN / streaming jobs)</h3>
- * {@code EXPLAIN} and {@code CREATE TABLE} go through the embedded Flink
- * {@link StreamTableEnvironment}. In-memory views are used by these tests.
+ * <h3>KAFKA_DIRECT (fallback)</h3>
+ * {@code kafkaDirectSelect()} reads directly from Kafka via {@link KafkaAdminService} and is
+ * used only when the planner path is disabled or fails. Tests that exercise it mock
+ * {@code listTopics()} and {@code getEarliestRecords()} / {@code getRecentRecords()}.
  *
- * <p>Tests annotated {@code @Disabled("KAFKA_DIRECT")} were originally written
- * against a Flink-native SELECT path that no longer exists (Flink 2.x NPE in
- * {@code FlinkRelMetadataQuery}). They document the intended behavior and serve
- * as a reference if a real Flink SELECT path is ever restored.
+ * <p>A few tests annotated {@code @Disabled("KAFKA_DIRECT")} were written against the old
+ * bypass; they can be re-enabled/re-baselined now that the Flink SELECT path is restored.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class FlinkSqlServiceTest {
@@ -346,12 +344,13 @@ class FlinkSqlServiceTest {
         doReturn(MessageFormat.JSON).when(schemaInferenceService).detectFormat("auto.reg.topic");
         doReturn(Map.of("event_id", "STRING", "payload", "STRING"))
                 .when(schemaInferenceService).inferSchema(anyString(), any());
+        // Auto-registration creates a bounded datagen table (2 rows). With the Flink planner
+        // restored, the SELECT runs through Flink and reads those 2 rows.
         doReturn("CREATE TABLE auto_reg_topic (" +
                 "  event_id STRING, payload STRING" +
                 ") WITH ('connector'='datagen','number-of-rows'='2')")
                 .when(ddlGeneratorService).generateDdl(anyString(), any(), any());
-        // KAFKA_DIRECT: after auto-registration the SELECT goes through kafkaDirectSelect() which
-        // reads from Kafka via getRecentRecords(). Mock it to return two JSON records.
+        // Fallback data if the Flink planner path is unavailable and kafkaDirectSelect() takes over.
         doReturn(List.of(
                 new org.apache.kafka.clients.consumer.ConsumerRecord<>(
                         "auto.reg.topic", 0, 0L, null, "{\"event_id\":\"E1\",\"payload\":\"p1\"}"),
@@ -362,26 +361,23 @@ class FlinkSqlServiceTest {
         QueryResult result = execute("SELECT event_id, payload FROM auto_reg_topic");
 
         assertNoError(result);
-        assertEquals(2, result.rows().size(), "Must return the 2 mocked Kafka records");
-        assertEquals("KAFKA_DIRECT", result.engine(), "SELECT must be executed by KAFKA_DIRECT engine");
+        assertEquals(2, result.rows().size(), "Must return 2 rows from the registered table");
+        assertEquals("FLINK", result.engine(), "SELECT now runs through the restored Flink planner");
         verify(schemaInferenceService).detectFormat("auto.reg.topic");
         verify(ddlGeneratorService).generateDdl(anyString(), any(), any());
     }
 
     @Test
-    void autoRegistrationSkipsWhenTableAlreadyInFlinkCatalogButNotInKafka() throws Exception {
-        // 'orders' was registered in @BeforeAll as a Flink temporary view but is NOT a Kafka topic.
-        // KAFKA_DIRECT behaviour:
-        //  1. autoRegisterTableIfNeeded() finds 'orders' in Flink's listTables() and skips Kafka lookup.
-        //  2. kafkaDirectSelect() then calls listTopics() to resolve the Kafka topic — and fails
-        //     because 'orders' is not a Kafka topic (mock returns []).
+    void selectResolvesTableAlreadyInFlinkCatalog() throws Exception {
+        // 'orders' was registered in @BeforeAll as a Flink temporary view (not a Kafka topic).
+        // autoRegisterTableIfNeeded() finds it in listTables() and skips Kafka registration; the
+        // restored Flink planner then reads the in-memory view directly. (Before the planner was
+        // re-enabled, kafkaDirectSelect() failed here because 'orders' is not a Kafka topic.)
         QueryResult result = execute("SELECT order_id FROM orders");
 
-        assertHasError(result);
-        assertTrue(result.error().contains("orders") || result.error().contains("not found"),
-                "Error must mention the missing topic, got: " + result.error());
-        // kafkaDirectSelect() calls listTopics() even for tables already in the Flink catalog
-        verify(kafkaAdminService, atLeastOnce()).listTopics();
+        assertNoError(result);
+        assertEquals(4, result.rows().size(), "Flink resolves the in-memory 'orders' view (4 rows)");
+        assertEquals("FLINK", result.engine(), "A Flink-catalog table is read through the Flink planner");
     }
 
     @Test
@@ -401,8 +397,9 @@ class FlinkSqlServiceTest {
     void autoRegistrationDdlFailureReturnsMeaningfulError() throws Exception {
         doReturn(List.of("broken.topic")).when(kafkaAdminService).listTopics();
         doReturn(MessageFormat.JSON).when(schemaInferenceService).detectFormat(anyString());
-        // For non-XML topics, an empty schema prevents auto-registration
-        doReturn(Map.of("id", "STRING")).when(schemaInferenceService).inferSchema(anyString(), any());
+        // For format=JSON, an empty schema (Map.of()) would normally cause autoRegisterTableIfNeeded
+        // to return AutoRegResult.skip(). To force a DDL failure, we return a mock schema.
+        doReturn(Map.of("id", "BIGINT")).when(schemaInferenceService).inferSchema(anyString(), any());
         doReturn("NOT VALID DDL !!!").when(ddlGeneratorService).generateDdl(anyString(), any(), any());
 
         QueryResult result = execute("SELECT * FROM broken_topic");

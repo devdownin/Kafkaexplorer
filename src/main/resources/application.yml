@@ -36,6 +36,11 @@ explorer:
   inference-poll-timeout-ms: 2000
   flink-job-store-path: data/flink-jobs.json
   flink-job-retention-hours: 24
+  # SELECT execution: true = try the real Flink planner first and fall back to the in-process
+  # direct Kafka reader on failure; false = always use the direct reader. A circuit breaker
+  # disables the planner path after repeated failures (e.g. if the FlinkRelMetadataQuery NPE
+  # is still present in the running Flink version).
+  flink-select-enabled: true
 
 management:
   endpoints:

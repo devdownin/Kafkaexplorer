@@ -219,8 +219,8 @@ ou continuer à consommer jusqu'à `limit` correspondances / borne haute.
 
 ## Dérives documentation / build
 
-- `pom.xml` : **Flink 1.18.1** et `java.version` **25**, alors que CLAUDE.md/README annoncent Flink 2.2.x et Java 21.
-  Aligner la doc ou les versions (le commentaire de `FlinkSqlService` cite d'ailleurs des tests en 1.18/1.20/2.0).
+- ~~`pom.xml` : **Flink 1.18.1** et `java.version` **25**, alors que CLAUDE.md/README annoncent Flink 2.2.x et Java 21.~~
+  **Résolu** : migration vers **Flink 2.3.0 / Java 21**, doc alignée, et le NPE `FlinkRelMetadataQuery` (jadis à l'origine du bypass SELECT) corrigé par pré-seed de `RelMetadataQueryBase.THREAD_PROVIDERS`.
 - CLAUDE.md annonce un TTL de cache de 30 s — le TTL effectif est 10 min (voir M4).
 - `LineageService` est documenté comme parsant les jobs INSERT via `getActiveJobsDetails()`, mais cette map ne
   contient que les jobs de la session en cours (perdus au restart) alors que `FlinkJobStore` persiste — le lineage
