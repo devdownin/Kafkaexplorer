@@ -41,16 +41,20 @@ npm test             # Vitest (jsdom + @testing-library/react); test:watch for w
 
 ### Docker
 
+All bundled compose stacks run **Kafka 4.2 in KRaft mode** (`apache/kafka:4.2.0`, single combined broker+controller node — no Zookeeper anywhere, including CI and `docker-compose.release.yml`).
+
 ```bash
-# Kafka 4.x (KRaft mode, recommended)
+# Kafka 4.2 (KRaft) + Schema Registry + app + demo topics (recommended)
 docker compose -f docker-compose-kafka4.yml up -d
 
-# Kafka 3.x (Zookeeper)
-docker-compose up -d
+# Kafka 4.2 (KRaft) + app + demo topics, without Schema Registry
+docker compose up -d
 
 # Demo data setup (creates 70+ topics)
 ./setup-demo.sh localhost:9092
 ```
+
+KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `CLUSTER_ID` env var (a `KAFKA_CLUSTER_ID` var would be translated into an ignored `cluster.id` server property); all internal-topic replication factors (`offsets`, `transaction state`, share-group state) are pinned to 1 and `__consumer_offsets` runs with a single partition for faster startup.
 
 ### Typical local dev workflow
 
@@ -64,7 +68,7 @@ docker-compose up -d
 
 - **Backend**: Spring Boot 3.5.x, Java 21 (`java.version` in pom.xml — Flink 2.x supports Java 17/21, not 25), embedded Apache Flink 2.3.x (`flink.version` in pom.xml). Kafka connector: `flink-connector-kafka:4.0.1-2.0` (the `-2.0` suffix covers the whole Flink 2.x line).
 - **Frontend**: React 19, TypeScript, Vite, Tailwind CSS, Monaco Editor
-- **Kafka**: Compatible with Kafka 3.x and 4.x (KRaft)
+- **Kafka**: Compatible with Kafka 3.x and 4.x brokers (client is `kafka-clients` 3.9.x via Spring Boot BOM); all bundled Docker stacks run Kafka 4.2 in KRaft mode
 - **Build**: Single JAR — Maven's `frontend-maven-plugin` builds the React app and copies it to `src/main/resources/static/`
 
 ### Backend Layers

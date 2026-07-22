@@ -130,16 +130,17 @@ The application includes an automated demonstration setup to help you explore fe
 - JDK 21 (Flink 2.x supports Java 17/21)
 
 ### Installation
-1. **Launch Kafka**:
-   - For Kafka 3.x (Zookeeper mode):
+1. **Launch Kafka** — every bundled stack runs Kafka 4.2 in KRaft mode (no Zookeeper):
+   - Default stack (Kafka + app + demo topics):
      ```bash
-     docker-compose up -d
+     docker compose up -d
      ```
-   - For Kafka 4.2 (KRaft mode):
+   - With Confluent Schema Registry, for Avro topics (Kafka + Schema Registry + app + demo topics):
      ```bash
      # This starts Kafka AND the application on port 8080
      docker compose -f docker-compose-kafka4.yml up -d
      ```
+   The app itself remains compatible with external Kafka 3.x brokers — point `kafka.bootstrap-servers` at them.
 
 2. **Launch the application** (if not using the Dockerized version):
    ```bash

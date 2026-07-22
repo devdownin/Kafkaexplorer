@@ -89,16 +89,17 @@ Prérequis
 Docker & Docker Compose
 JDK 25+
 Installation
-Lancer Kafka :
-- Pour Kafka 3.x (mode Zookeeper) :
+Lancer Kafka — toutes les stacks fournies tournent en Kafka 4.2 mode KRaft (sans Zookeeper) :
+- Stack par défaut (Kafka + application + topics de démo) :
   ```bash
-  docker-compose up -d
+  docker compose up -d
   ```
-- Pour Kafka 4.2 (mode KRaft) :
+- Avec Confluent Schema Registry, pour les topics Avro :
   ```bash
   # Ceci lance Kafka ET l'application sur le port 8080
   docker compose -f docker-compose-kafka4.yml up -d
   ```
+L'application reste compatible avec des brokers Kafka 3.x externes — pointez `kafka.bootstrap-servers` dessus.
 
 Lancer l'application (si vous n'utilisez pas la version Dockerisée) :
 ```bash
