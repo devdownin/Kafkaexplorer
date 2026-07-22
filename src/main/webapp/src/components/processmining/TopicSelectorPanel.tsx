@@ -72,19 +72,19 @@ const TopicSelectorPanel: React.FC<TopicSelectorPanelProps> = ({ onStart, loadin
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-lg font-semibold text-slate-100 mb-1">Select Topics</h2>
-        <p className="text-sm text-slate-400">Choose the Kafka topics to analyse for process patterns.</p>
-        <p className="text-xs text-slate-500 mt-1">
+        <h2 className="text-lg font-semibold text-on-surface mb-1">Select Topics</h2>
+        <p className="text-sm text-on-surface-variant">Choose the Kafka topics to analyse for process patterns.</p>
+        <p className="text-xs text-on-surface-variant mt-1">
           Snapshot limits are applied per topic to keep multi-topic analysis balanced.
         </p>
       </div>
 
       {/* Topic filter + list */}
-      <div className="border border-primary/20 rounded-xl overflow-hidden">
-        <div className="p-3 border-b border-primary/10 bg-primary/5 flex items-center gap-2">
-          <span className="material-symbols-outlined text-slate-400 text-base">search</span>
+      <div className="border border-outline-variant rounded-xl overflow-hidden">
+        <div className="p-3 border-b border-outline-variant/60 bg-primary/5 flex items-center gap-2">
+          <span className="material-symbols-outlined text-on-surface-variant text-base">search</span>
           <input
-            className="flex-1 bg-transparent text-sm outline-none placeholder-slate-500"
+            className="flex-1 bg-transparent text-sm outline-none placeholder-on-surface-variant"
             placeholder="Filter topics..."
             value={filter}
             onChange={e => setFilter(e.target.value)}
@@ -100,9 +100,9 @@ const TopicSelectorPanel: React.FC<TopicSelectorPanelProps> = ({ onStart, loadin
         </div>
         <div className="max-h-64 overflow-y-auto">
           {fetchingTopics ? (
-            <div className="p-4 text-slate-500 text-sm text-center">Loading topics...</div>
+            <div className="p-4 text-on-surface-variant text-sm text-center">Loading topics...</div>
           ) : filteredTopics.length === 0 ? (
-            <div className="p-4 text-slate-500 text-sm text-center">No topics found</div>
+            <div className="p-4 text-on-surface-variant text-sm text-center">No topics found</div>
           ) : (
             filteredTopics.map(topic => (
               <label
@@ -113,9 +113,9 @@ const TopicSelectorPanel: React.FC<TopicSelectorPanelProps> = ({ onStart, loadin
                   type="checkbox"
                   checked={selectedTopics.includes(topic)}
                   onChange={() => toggleTopic(topic)}
-                  className="rounded border-slate-600 text-primary focus:ring-primary/30 bg-transparent"
+                  className="rounded border-outline-variant text-primary focus:ring-primary/30 bg-transparent"
                 />
-                <span className="text-sm font-mono text-slate-200 truncate group-hover:text-primary transition-colors">
+                <span className="text-sm font-mono text-on-surface truncate group-hover:text-primary transition-colors">
                   {topic}
                 </span>
               </label>
@@ -123,7 +123,7 @@ const TopicSelectorPanel: React.FC<TopicSelectorPanelProps> = ({ onStart, loadin
           )}
         </div>
         {selectedTopics.length > 0 && (
-          <div className="p-2 border-t border-primary/10 bg-primary/5 text-xs text-slate-400">
+          <div className="p-2 border-t border-outline-variant/60 bg-primary/5 text-xs text-on-surface-variant">
             {selectedTopics.length} topic{selectedTopics.length > 1 ? 's' : ''} selected
           </div>
         )}
@@ -132,11 +132,11 @@ const TopicSelectorPanel: React.FC<TopicSelectorPanelProps> = ({ onStart, loadin
       {/* Depth config */}
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <label className="block text-xs font-medium text-slate-400 mb-1.5">Sampling Mode</label>
+          <label className="block text-xs font-medium text-on-surface-variant mb-1.5">Sampling Mode</label>
           <select
             value={mode}
             onChange={e => setMode(e.target.value as SnapshotConfig['mode'])}
-            className="w-full bg-background-dark border border-primary/20 rounded-lg px-3 py-2 text-sm text-slate-100 focus:border-primary/50 outline-none"
+            className="w-full bg-surface-container-low border border-outline-variant rounded-md px-3 py-2 text-sm text-on-surface focus:border-primary/50 outline-none"
           >
             <option value="LATEST_N">Latest N messages</option>
             <option value="EARLIEST">From beginning</option>
@@ -144,7 +144,7 @@ const TopicSelectorPanel: React.FC<TopicSelectorPanelProps> = ({ onStart, loadin
           </select>
         </div>
         <div>
-          <label className="block text-xs font-medium text-slate-400 mb-1.5">
+          <label className="block text-xs font-medium text-on-surface-variant mb-1.5">
             {mode === 'TIMESTAMP' ? 'From timestamp' : 'Max messages per topic'}
           </label>
           {mode === 'TIMESTAMP' ? (
@@ -152,7 +152,7 @@ const TopicSelectorPanel: React.FC<TopicSelectorPanelProps> = ({ onStart, loadin
               type="datetime-local"
               value={fromTimestamp}
               onChange={e => setFromTimestamp(e.target.value)}
-              className="w-full bg-background-dark border border-primary/20 rounded-lg px-3 py-2 text-sm text-slate-100 focus:border-primary/50 outline-none"
+              className="w-full bg-surface-container-low border border-outline-variant rounded-md px-3 py-2 text-sm text-on-surface focus:border-primary/50 outline-none"
             />
           ) : (
             <input
@@ -161,7 +161,7 @@ const TopicSelectorPanel: React.FC<TopicSelectorPanelProps> = ({ onStart, loadin
               max={10000}
               value={maxMessages}
               onChange={e => setMaxMessages(parseInt(e.target.value, 10) || 500)}
-              className="w-full bg-background-dark border border-primary/20 rounded-lg px-3 py-2 text-sm text-slate-100 focus:border-primary/50 outline-none"
+              className="w-full bg-surface-container-low border border-outline-variant rounded-md px-3 py-2 text-sm text-on-surface focus:border-primary/50 outline-none"
             />
           )}
         </div>
@@ -170,7 +170,7 @@ const TopicSelectorPanel: React.FC<TopicSelectorPanelProps> = ({ onStart, loadin
       <button
         onClick={handleStart}
         disabled={selectedTopics.length === 0 || loading}
-        className="w-full flex items-center justify-center gap-2 py-3 px-6 bg-primary text-white rounded-xl font-semibold text-sm hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        className="w-full flex items-center justify-center gap-2 py-3 px-6 bg-primary text-on-primary rounded-xl font-semibold text-sm hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {loading ? (
           <>

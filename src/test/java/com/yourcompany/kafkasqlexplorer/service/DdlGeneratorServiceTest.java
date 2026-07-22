@@ -5,6 +5,8 @@ import com.yourcompany.kafkasqlexplorer.domain.MessageFormat;
 import org.junit.jupiter.api.Test;
 import java.util.HashMap;
 import java.util.Map;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class DdlGeneratorServiceTest {
@@ -24,10 +26,9 @@ public class DdlGeneratorServiceTest {
 
         assertTrue(ddl.contains("CREATE TABLE IF NOT EXISTS test_topic"));
         assertTrue(ddl.contains("`id` BIGINT"));
-        assertTrue(ddl.contains("`name` STRING"));
+        assertTrue(ddl.contains("`event_time` TIMESTAMP(3) METADATA FROM 'timestamp'"));
         assertTrue(ddl.contains("'value.format' = 'json'"));
         assertTrue(ddl.contains("localhost:9092"));
-        assertTrue(ddl.contains("`event_time` TIMESTAMP(3) METADATA FROM 'timestamp'"));
         assertTrue(ddl.contains("`proc_time` AS PROCTIME()"));
         assertTrue(ddl.contains("'properties.group.id' = 'flink_table_test_topic'"));
     }
@@ -128,5 +129,39 @@ public class DdlGeneratorServiceTest {
         assertTrue(masked.contains("'properties.ssl.truststore.password' = '******'"));
         // The truststore location is not a credential and must stay visible
         assertTrue(masked.contains("'properties.ssl.truststore.location' = '/tmp/truststore.jks'"));
+    }
+
+    @Test
+    public void testRestoreMaskedPropertiesRecoversSecretFromStored() {
+        String stored = "CREATE TABLE t (id BIGINT) WITH (\n" +
+            "  'properties.bootstrap.servers' = 'broker:9092',\n" +
+            "  'properties.ssl.truststore.password' = 'trust-pass'\n);";
+        // The UI edits a non-secret line but sends the password back masked.
+        String edited = "CREATE TABLE t (id BIGINT, name STRING) WITH (\n" +
+            "  'properties.bootstrap.servers' = 'broker:9092',\n" +
+            "  'properties.ssl.truststore.password' = '******'\n);";
+
+        String restored = DdlGeneratorService.restoreMaskedProperties(edited, stored);
+
+        assertTrue(restored.contains("'properties.ssl.truststore.password' = 'trust-pass'"),
+            "the real secret must be restored from the stored DDL");
+        assertFalse(restored.contains("******"), "no mask token should remain");
+        assertTrue(restored.contains("name STRING"), "non-secret edits must be preserved");
+    }
+
+    @Test
+    public void testRestoreMaskedPropertiesLeavesRetypedSecretUntouched() {
+        String stored = "WITH ('properties.ssl.truststore.password' = 'old-pass')";
+        // User genuinely retyped a new secret — it must be kept, not overwritten by the stored one.
+        String edited = "WITH ('properties.ssl.truststore.password' = 'new-pass')";
+
+        assertEquals(edited, DdlGeneratorService.restoreMaskedProperties(edited, stored));
+    }
+
+    @Test
+    public void testRestoreMaskedPropertiesNoOpWithoutMask() {
+        String edited = "WITH ('properties.bootstrap.servers' = 'broker:9092')";
+        assertEquals(edited, DdlGeneratorService.restoreMaskedProperties(edited, "anything"));
+        assertEquals(edited, DdlGeneratorService.restoreMaskedProperties(edited, null));
     }
 }

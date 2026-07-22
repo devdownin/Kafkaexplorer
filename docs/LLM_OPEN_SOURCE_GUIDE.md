@@ -61,4 +61,32 @@ Si vous utilisez un modèle très petit (ex: Llama 3.2 1B), il peut arriver qu'i
 - **Solution** : Utilisez un modèle quantizé (Q4_K_M ou Q8_0) ou réduisez la `snapshot-window-size` dans la configuration.
 
 ---
+
+## 🚀 Usages Spécialisés du LLM Local
+
+L'utilisation d'un LLM spécialisé en local permet de transformer l'exploration technique (SQL) en une véritable intelligence métier. Voici les cas d'usage implémentés :
+
+### 1. Profilage Sémantique Automatisé (`FieldProfilingService`)
+Le LLM analyse des échantillons de messages pour "comprendre" la donnée sans intervention humaine :
+*   **Détection d'Identifiants de Corrélation** : Repérage des champs pivots (`order_id`, `saga_id`, etc.) présents sur plusieurs topics pour reconstruire le cycle de vie d'un objet métier.
+*   **Classification Temporelle** : Distinction entre les timestamps techniques et les dates métiers critiques (`expected_delivery`, `payment_date`).
+*   **Unification des Statuts** : Cartographie sémantique des états (ex: mapper `STATE='OK'` et `STATUS='SUCCESS'` vers un état canonique).
+
+### 2. Reconstruction de Processus (Process Mining)
+Le LLM transforme des séquences de messages techniques en flux métier lisibles :
+*   **Génération de Flowcharts Mermaid** : Production automatique de diagrammes `flowchart TD` visualisant les services, topics et décisions.
+*   **Mode LIVE (Streaming)** : Analyse de fenêtres glissantes de messages via SSE pour détecter des changements de structure de flux en temps réel.
+*   **Identification des "Angles Morts"** : Signalement des topics ou services manquants pour avoir une vision complète du processus.
+
+### 3. Détection d'Anomalies Complexes
+Le LLM est capable d'identifier des problèmes que le SQL traditionnel détecte difficilement :
+*   **SEQUENCE** : Événements arrivant dans le mauvais ordre ou étapes sautées.
+*   **TEMPORAL** : Délais anormaux entre deux étapes corrélées (latence métier).
+*   **STRUCTURAL** : Valeurs aberrantes ou champs manquants dans des payloads JSON/XML imbriqués.
+*   **BUSINESS** : Violations de règles métier (ex: passage direct de "Commande créée" à "Livrée" sans "Paiement").
+
+### 4. Aide à la Remédiation (KSQL)
+Pour chaque anomalie détectée, le LLM propose une **suggestion KSQL** (ex: `CREATE STREAM ... AS SELECT ...`) permettant au Data Engineer de créer immédiatement un flux de monitoring ou de filtrage pour isoler l'erreur.
+
+---
 *Astuce : Pour une analyse de production sans GPU, le modèle **Qwen 2.5-Coder 7B** en quantification 4-bit (via Ollama) offre le meilleur rapport précision/performance.*

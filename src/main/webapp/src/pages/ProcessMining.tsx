@@ -8,6 +8,7 @@ import MermaidRenderer from '../components/processmining/MermaidRenderer';
 import AnomalyTable, { AnomalyReport } from '../components/processmining/AnomalyTable';
 import LiveStatusBar from '../components/processmining/LiveStatusBar';
 import AnomalyFeed, { LiveAnomaly } from '../components/processmining/AnomalyFeed';
+import { PageHeader, Button } from '../components/ui';
 
 // ---- Types ----
 
@@ -94,10 +95,10 @@ const StepIndicator: React.FC<{ current: Step }> = ({ current }) => (
           <div className="flex items-center gap-2">
             <div className={`flex items-center justify-center w-8 h-8 rounded-full border-2 transition-colors ${
               isActive
-                ? 'border-primary bg-primary text-white'
+                ? 'border-primary bg-primary text-on-primary'
                 : isPast
                 ? 'border-primary/60 bg-primary/20 text-primary'
-                : 'border-slate-700 bg-transparent text-slate-600'
+                : 'border-outline-variant bg-transparent text-outline'
             }`}>
               {isPast ? (
                 <span className="material-symbols-outlined text-sm">check</span>
@@ -106,13 +107,13 @@ const StepIndicator: React.FC<{ current: Step }> = ({ current }) => (
               )}
             </div>
             <span className={`text-xs font-medium hidden sm:block ${
-              isActive ? 'text-primary' : isPast ? 'text-slate-400' : 'text-slate-600'
+              isActive ? 'text-primary' : isPast ? 'text-on-surface-variant' : 'text-outline'
             }`}>
               {step.label}
             </span>
           </div>
           {i < STEPS.length - 1 && (
-            <div className={`flex-1 h-0.5 mx-2 ${i < ci ? 'bg-primary/60' : 'bg-slate-700'}`} />
+            <div className={`flex-1 h-0.5 mx-2 ${i < ci ? 'bg-primary/60' : 'bg-surface-container-high'}`} />
           )}
         </React.Fragment>
       );
@@ -393,25 +394,14 @@ const ProcessMining: React.FC = () => {
   // ---- Render ----
 
   return (
-    <div className="p-6 max-w-5xl mx-auto space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-100">Process Mining</h1>
-          <p className="text-sm text-slate-400 mt-1">
-            Discover business process flows and detect anomalies across Kafka topics using AI.
-          </p>
-        </div>
-        {step !== 'SELECT' && (
-          <button
-            onClick={resetAll}
-            className="flex items-center gap-2 px-3 py-1.5 text-xs text-slate-400 hover:text-slate-100 border border-slate-700 hover:border-slate-500 rounded-lg transition-colors"
-          >
-            <span className="material-symbols-outlined text-sm">restart_alt</span>
-            Start over
-          </button>
+    <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-6">
+      <PageHeader
+        title="Process Mining"
+        description="Discover business process flows and detect anomalies across Kafka topics using AI."
+        actions={step !== 'SELECT' && (
+          <Button variant="outline" size="sm" icon="restart_alt" onClick={resetAll}>Start over</Button>
         )}
-      </div>
+      />
 
       {/* Step indicator */}
       <StepIndicator current={step} />
@@ -419,27 +409,27 @@ const ProcessMining: React.FC = () => {
       {llmInfo && (
         <div className={`rounded-xl border p-4 ${
           llmInfo.llmLocalDeployment
-            ? 'border-emerald-500/20 bg-emerald-500/5'
-            : 'border-primary/10 bg-primary/5'
+            ? 'border-success/20 bg-success/5'
+            : 'border-outline-variant/60 bg-surface-container'
         }`}>
           <div className="flex items-start gap-3">
             <span className={`material-symbols-outlined text-lg ${
-              llmInfo.llmLocalDeployment ? 'text-emerald-400' : 'text-primary'
+              llmInfo.llmLocalDeployment ? 'text-success' : 'text-primary'
             }`}>
               smart_toy
             </span>
             <div>
-              <p className="text-sm font-semibold text-slate-100">
+              <p className="text-sm font-semibold text-on-surface">
                 LLM Runtime: {llmInfo.llmProviderLabel ?? llmInfo.llmProvider ?? 'Unknown'}
                 {llmInfo.llmModel ? ` · ${llmInfo.llmModel}` : ''}
               </p>
-              <p className="text-xs text-slate-400 mt-1">
+              <p className="text-xs text-on-surface-variant mt-1">
                 {llmInfo.llmLocalDeployment
                   ? 'Local lightweight open-source inference is active for process mining.'
                   : 'This page also supports lightweight open-source models through Ollama or any OpenAI-compatible endpoint.'}
               </p>
               {llmInfo.llmBaseUrl && (
-                <p className="text-[11px] font-mono text-slate-500 mt-2">{llmInfo.llmBaseUrl}</p>
+                <p className="text-[11px] font-mono text-on-surface-variant mt-2">{llmInfo.llmBaseUrl}</p>
               )}
             </div>
           </div>
@@ -448,20 +438,20 @@ const ProcessMining: React.FC = () => {
 
       {/* Error banner */}
       {error && (
-        <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 flex items-start gap-3">
-          <span className="material-symbols-outlined text-red-400 text-lg flex-shrink-0">error</span>
+        <div className="bg-error/10 border border-error/30 rounded-xl p-4 flex items-start gap-3">
+          <span className="material-symbols-outlined text-error text-lg flex-shrink-0">error</span>
           <div>
-            <p className="text-sm font-semibold text-red-400">Error</p>
-            <p className="text-xs text-red-300 mt-0.5">{error}</p>
+            <p className="text-sm font-semibold text-error">Error</p>
+            <p className="text-xs text-error mt-0.5">{error}</p>
           </div>
-          <button onClick={() => setError(null)} className="ml-auto text-red-400 hover:text-red-300">
+          <button onClick={() => setError(null)} className="ml-auto text-error hover:text-error">
             <span className="material-symbols-outlined text-base">close</span>
           </button>
         </div>
       )}
 
       {/* Step content */}
-      <div className="bg-white/3 dark:bg-slate-800/30 border border-primary/10 rounded-2xl p-6">
+      <div className="bg-white/3 dark:bg-surface-container/30 border border-outline-variant/60 rounded-2xl p-6">
 
         {/* STEP 1: SELECT */}
         {step === 'SELECT' && (
@@ -476,10 +466,10 @@ const ProcessMining: React.FC = () => {
                 psychology
               </span>
             </div>
-            <p className="text-lg font-semibold text-slate-200">
+            <p className="text-lg font-semibold text-on-surface">
               Profiling topics with {llmInfo?.llmProviderLabel ?? 'the configured LLM'}...
             </p>
-            <p className="text-sm text-slate-400 text-center max-w-md">
+            <p className="text-sm text-on-surface-variant text-center max-w-md">
               Sampling messages from {selectedTopics.length} topic{selectedTopics.length > 1 ? 's' : ''},
               detecting field semantics and proposing schema unification.
             </p>
@@ -506,8 +496,8 @@ const ProcessMining: React.FC = () => {
         {step === 'ANALYZE' && (
           <div className="space-y-6">
             <div>
-              <h2 className="text-lg font-semibold text-slate-100 mb-1">Choose Analysis Mode</h2>
-              <p className="text-sm text-slate-400">
+              <h2 className="text-lg font-semibold text-on-surface mb-1">Choose Analysis Mode</h2>
+              <p className="text-sm text-on-surface-variant">
                 Select how you want to analyse the Kafka message flows.
               </p>
             </div>
@@ -518,14 +508,14 @@ const ProcessMining: React.FC = () => {
                 className={`p-5 rounded-xl border-2 text-left transition-all ${
                   analysisMode === 'SNAPSHOT'
                     ? 'border-primary bg-primary/10'
-                    : 'border-primary/20 hover:border-primary/40 hover:bg-primary/5'
+                    : 'border-outline-variant hover:border-outline hover:bg-surface-container-high/40'
                 }`}
               >
                 <span className="material-symbols-outlined text-3xl text-primary mb-3 block">
                   camera
                 </span>
-                <p className="font-semibold text-slate-100">Snapshot Analysis</p>
-                <p className="text-xs text-slate-400 mt-1">
+                <p className="font-semibold text-on-surface">Snapshot Analysis</p>
+                <p className="text-xs text-on-surface-variant mt-1">
                   Analyse a fixed sample of historical messages. Produces a complete flowchart
                   and anomaly report in one shot.
                 </p>
@@ -536,14 +526,14 @@ const ProcessMining: React.FC = () => {
                 className={`p-5 rounded-xl border-2 text-left transition-all ${
                   analysisMode === 'LIVE'
                     ? 'border-primary bg-primary/10'
-                    : 'border-primary/20 hover:border-primary/40 hover:bg-primary/5'
+                    : 'border-outline-variant hover:border-outline hover:bg-surface-container-high/40'
                 }`}
               >
-                <span className="material-symbols-outlined text-3xl text-emerald-400 mb-3 block">
+                <span className="material-symbols-outlined text-3xl text-success mb-3 block">
                   stream
                 </span>
-                <p className="font-semibold text-slate-100">Live Monitoring</p>
-                <p className="text-xs text-slate-400 mt-1">
+                <p className="font-semibold text-on-surface">Live Monitoring</p>
+                <p className="text-xs text-on-surface-variant mt-1">
                   Continuously consume new messages and re-analyse each window.
                   Detects evolving anomalies in real time.
                 </p>
@@ -552,22 +542,22 @@ const ProcessMining: React.FC = () => {
 
             {/* Audit checklist */}
             {auditTemplates.length > 0 && (
-              <div className="border border-primary/15 rounded-xl p-4 space-y-3">
+              <div className="border border-outline-variant rounded-xl p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h3 className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+                    <h3 className="text-sm font-semibold text-on-surface flex items-center gap-2">
                       <span className="material-symbols-outlined text-base text-primary">fact_check</span>
                       Audit checklist
-                      <span className="text-xs font-normal text-slate-500">(optional)</span>
+                      <span className="text-xs font-normal text-on-surface-variant">(optional)</span>
                     </h3>
-                    <p className="text-xs text-slate-400 mt-0.5">
+                    <p className="text-xs text-on-surface-variant mt-0.5">
                       Pick the checks to focus the LLM on. None selected = general analysis.
                     </p>
                   </div>
                   {selectedAuditIds.length > 0 && (
                     <button
                       onClick={() => setSelectedAuditIds([])}
-                      className="text-xs text-slate-400 hover:text-slate-200"
+                      className="text-xs text-on-surface-variant hover:text-on-surface"
                     >
                       Clear ({selectedAuditIds.length})
                     </button>
@@ -589,26 +579,26 @@ const ProcessMining: React.FC = () => {
                           : undefined}
                         className={`text-left p-3 rounded-lg border transition-colors ${
                           disabled
-                            ? 'border-slate-800 bg-slate-800/20 opacity-50 cursor-not-allowed'
+                            ? 'border-outline-variant bg-surface-container/20 opacity-50 cursor-not-allowed'
                             : active
                             ? 'border-primary bg-primary/10'
-                            : 'border-primary/15 hover:border-primary/30 hover:bg-primary/5'
+                            : 'border-outline-variant hover:border-outline hover:bg-surface-container-high/40'
                         }`}
                       >
                         <div className="flex items-start gap-2">
                           <span className={`material-symbols-outlined text-base mt-0.5 ${
-                            disabled ? 'text-slate-700' : active ? 'text-primary' : 'text-slate-600'
+                            disabled ? 'text-outline' : active ? 'text-primary' : 'text-outline'
                           }`}>
                             {disabled ? 'block' : active ? 'check_box' : 'check_box_outline_blank'}
                           </span>
                           <div className="min-w-0">
-                            <p className="text-xs font-semibold text-slate-100 truncate">{t.name}</p>
-                            <p className="text-[11px] text-slate-400 leading-snug mt-0.5">{t.description}</p>
-                            <span className="inline-block mt-1.5 text-[9px] uppercase tracking-wider font-bold text-slate-500">
+                            <p className="text-xs font-semibold text-on-surface truncate">{t.name}</p>
+                            <p className="text-[11px] text-on-surface-variant leading-snug mt-0.5">{t.description}</p>
+                            <span className="inline-block mt-1.5 text-[9px] uppercase tracking-wider font-bold text-on-surface-variant">
                               {t.category.replace('_', ' ')}
                             </span>
                             {disabled && (
-                              <span className="block mt-1 text-[10px] text-amber-500/80">
+                              <span className="block mt-1 text-[10px] text-warning/80">
                                 needs {missing.map(r => ROLE_LABELS[r] ?? r).join(', ')}
                               </span>
                             )}
@@ -620,7 +610,7 @@ const ProcessMining: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-[10px] uppercase font-bold tracking-wider text-slate-500 mb-1.5">
+                  <label className="block text-[10px] uppercase font-bold tracking-wider text-on-surface-variant mb-1.5">
                     Custom audit instruction
                   </label>
                   <textarea
@@ -628,31 +618,21 @@ const ProcessMining: React.FC = () => {
                     onChange={e => setCustomAuditPrompt(e.target.value)}
                     rows={2}
                     placeholder="e.g. Flag any order whose amount changes between the received and validated topics."
-                    className="w-full bg-primary/5 border border-primary/20 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:ring-1 focus:ring-primary outline-none resize-y"
+                    className="w-full bg-surface-container-low border border-outline-variant rounded-md px-3 py-2 text-sm text-on-surface placeholder:text-outline focus:border-primary/60 outline-none resize-y"
                   />
                 </div>
               </div>
             )}
 
-            <button
+            <Button
+              variant="primary" size="lg" className="w-full"
+              loading={loading}
+              icon={loading ? undefined : (analysisMode === 'LIVE' ? 'stream' : 'analytics')}
               onClick={handleLaunchAnalysis}
               disabled={loading}
-              className="w-full flex items-center justify-center gap-2 py-3 px-6 bg-primary text-white rounded-xl font-semibold text-sm hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? (
-                <>
-                  <span className="material-symbols-outlined text-base animate-spin">progress_activity</span>
-                  Analysing...
-                </>
-              ) : (
-                <>
-                  <span className="material-symbols-outlined text-base">
-                    {analysisMode === 'LIVE' ? 'stream' : 'analytics'}
-                  </span>
-                  {analysisMode === 'LIVE' ? 'Start Live Monitoring' : 'Run Snapshot Analysis'}
-                </>
-              )}
-            </button>
+              {loading ? 'Analysing…' : analysisMode === 'LIVE' ? 'Start Live Monitoring' : 'Run Snapshot Analysis'}
+            </Button>
           </div>
         )}
 
@@ -672,7 +652,7 @@ const ProcessMining: React.FC = () => {
                 <button
                   onClick={stopLiveSession}
                   disabled={!liveConnected}
-                  className="flex items-center gap-1.5 px-3 py-2 text-xs text-red-400 border border-red-500/30 hover:bg-red-500/10 rounded-lg transition-colors disabled:opacity-40"
+                  className="flex items-center gap-1.5 px-3 py-2 text-xs text-error border border-error/30 hover:bg-error/10 rounded-lg transition-colors disabled:opacity-40"
                 >
                   <span className="material-symbols-outlined text-sm">stop_circle</span>
                   Stop
@@ -681,10 +661,10 @@ const ProcessMining: React.FC = () => {
             )}
 
             {/* Flowchart */}
-            <div className="border border-primary/20 rounded-xl overflow-hidden">
-              <div className="px-4 py-2.5 border-b border-primary/10 bg-primary/5 flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-slate-200">Process Flowchart</h3>
-                <span className="text-xs text-slate-500">Mermaid diagram</span>
+            <div className="border border-outline-variant rounded-xl overflow-hidden">
+              <div className="px-4 py-2.5 border-b border-outline-variant/60 bg-surface-container-high/60 flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-on-surface">Process Flowchart</h3>
+                <span className="text-xs text-on-surface-variant">Mermaid diagram</span>
               </div>
               <div className="p-4">
                 <MermaidRenderer
@@ -699,11 +679,11 @@ const ProcessMining: React.FC = () => {
 
             {/* Comments / Analysis narrative */}
             {(analysisMode === 'LIVE' ? liveComments : snapshotResult?.comments) && (
-              <div className="border border-primary/20 rounded-xl p-4 bg-primary/5">
-                <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+              <div className="border border-outline-variant rounded-xl p-4 bg-primary/5">
+                <h3 className="text-xs font-bold text-on-surface-variant uppercase tracking-wider mb-2">
                   Analysis Commentary
                 </h3>
-                <p className="text-sm text-slate-300 leading-relaxed">
+                <p className="text-sm text-on-surface leading-relaxed">
                   {analysisMode === 'LIVE' ? liveComments : snapshotResult?.comments}
                 </p>
               </div>
@@ -714,29 +694,29 @@ const ProcessMining: React.FC = () => {
               const sources = analysisMode === 'LIVE' ? liveSources : (snapshotResult?.ragSources ?? []);
               if (!sources || sources.length === 0) return null;
               return (
-                <div className="border border-primary/20 rounded-xl overflow-hidden">
-                  <div className="px-4 py-2.5 border-b border-primary/10 bg-primary/5 flex items-center gap-2">
+                <div className="border border-outline-variant rounded-xl overflow-hidden">
+                  <div className="px-4 py-2.5 border-b border-outline-variant/60 bg-surface-container-high/60 flex items-center gap-2">
                     <span className="material-symbols-outlined text-base text-primary">menu_book</span>
-                    <h3 className="text-sm font-semibold text-slate-200">Evidence — cited sources</h3>
+                    <h3 className="text-sm font-semibold text-on-surface">Evidence — cited sources</h3>
                     <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary">
                       {sources.length}
                     </span>
-                    <span className="ml-auto text-[11px] text-slate-500">SpectraLLM RAG</span>
+                    <span className="ml-auto text-[11px] text-on-surface-variant">SpectraLLM RAG</span>
                   </div>
                   <div className="p-4 space-y-2">
                     {sources.map((s, i) => (
-                      <div key={i} className="rounded-lg border border-primary/10 bg-background-dark/20 p-3">
+                      <div key={i} className="rounded-lg border border-outline-variant/60 bg-surface-container-low p-3">
                         <div className="flex items-center justify-between gap-2 mb-1">
                           <span className="text-xs font-mono text-primary/80 truncate">
                             {s.sourceFile ?? 'unknown source'}
                           </span>
                           {s.score != null && (
-                            <span className="text-[10px] text-slate-500 flex-shrink-0">
+                            <span className="text-[10px] text-on-surface-variant flex-shrink-0">
                               score {s.score.toFixed(3)}
                             </span>
                           )}
                         </div>
-                        <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">{s.text}</p>
+                        <p className="text-xs text-on-surface leading-relaxed whitespace-pre-wrap">{s.text}</p>
                       </div>
                     ))}
                   </div>
@@ -748,13 +728,13 @@ const ProcessMining: React.FC = () => {
             {analysisMode === 'SNAPSHOT' && snapshotResult && (
               <>
                 {snapshotResult.hypotheses && snapshotResult.hypotheses.length > 0 && (
-                  <div className="border border-primary/20 rounded-xl p-4">
-                    <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">
+                  <div className="border border-outline-variant rounded-xl p-4">
+                    <h3 className="text-xs font-bold text-on-surface-variant uppercase tracking-wider mb-3">
                       Hypotheses
                     </h3>
                     <ul className="space-y-1.5">
                       {snapshotResult.hypotheses.map((h, i) => (
-                        <li key={i} className="flex items-start gap-2 text-sm text-slate-300">
+                        <li key={i} className="flex items-start gap-2 text-sm text-on-surface">
                           <span className="material-symbols-outlined text-primary text-sm mt-0.5 flex-shrink-0">
                             lightbulb
                           </span>
@@ -766,14 +746,14 @@ const ProcessMining: React.FC = () => {
                 )}
 
                 {snapshotResult.blindSpots && snapshotResult.blindSpots.length > 0 && (
-                  <div className="border border-amber-500/20 rounded-xl p-4 bg-amber-500/5">
-                    <h3 className="text-xs font-bold text-amber-500 uppercase tracking-wider mb-3">
+                  <div className="border border-warning/20 rounded-xl p-4 bg-warning/5">
+                    <h3 className="text-xs font-bold text-warning uppercase tracking-wider mb-3">
                       Blind Spots
                     </h3>
                     <ul className="space-y-1.5">
                       {snapshotResult.blindSpots.map((bs, i) => (
-                        <li key={i} className="flex items-start gap-2 text-sm text-slate-300">
-                          <span className="material-symbols-outlined text-amber-400 text-sm mt-0.5 flex-shrink-0">
+                        <li key={i} className="flex items-start gap-2 text-sm text-on-surface">
+                          <span className="material-symbols-outlined text-warning text-sm mt-0.5 flex-shrink-0">
                             visibility_off
                           </span>
                           {bs}
@@ -786,9 +766,9 @@ const ProcessMining: React.FC = () => {
             )}
 
             {/* Anomalies */}
-            <div className="border border-primary/20 rounded-xl overflow-hidden">
-              <div className="px-4 py-2.5 border-b border-primary/10 bg-primary/5 flex items-center gap-2">
-                <h3 className="text-sm font-semibold text-slate-200">Anomalies</h3>
+            <div className="border border-outline-variant rounded-xl overflow-hidden">
+              <div className="px-4 py-2.5 border-b border-outline-variant/60 bg-surface-container-high/60 flex items-center gap-2">
+                <h3 className="text-sm font-semibold text-on-surface">Anomalies</h3>
                 {analysisMode === 'SNAPSHOT' && snapshotResult?.anomalies && (
                   <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary">
                     {snapshotResult.anomalies.length}

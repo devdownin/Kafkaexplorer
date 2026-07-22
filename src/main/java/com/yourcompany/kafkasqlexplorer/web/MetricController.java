@@ -7,6 +7,7 @@ import com.yourcompany.kafkasqlexplorer.domain.MetricLabelPreview;
 import com.yourcompany.kafkasqlexplorer.domain.MetricPreviewResult;
 import com.yourcompany.kafkasqlexplorer.domain.MetricTemplateDescriptor;
 import com.yourcompany.kafkasqlexplorer.domain.QueryRequest;
+import com.yourcompany.kafkasqlexplorer.service.DdlGeneratorService;
 import com.yourcompany.kafkasqlexplorer.service.FlinkSqlService;
 import com.yourcompany.kafkasqlexplorer.service.KafkaAdminService;
 import com.yourcompany.kafkasqlexplorer.service.MessageFieldExtractorService;
@@ -43,7 +44,23 @@ public class MetricController {
 
     @GetMapping
     public List<MetricConfig> list() {
-        return metricService.getAllMetrics();
+        return metricService.getAllMetrics().stream().map(this::maskForDisplay).toList();
+    }
+
+    /**
+     * Redacts credentials embedded in a metric's CREATE TABLE DDL before it reaches the browser.
+     * The service keeps the unmasked DDL internally for Flink registration; save() restores any
+     * secrets the UI echoes back masked.
+     */
+    private MetricConfig maskForDisplay(MetricConfig m) {
+        if (m.createTableSql() == null) return m;
+        String masked = DdlGeneratorService.maskSensitiveProperties(m.createTableSql());
+        if (masked.equals(m.createTableSql())) return m;   // nothing sensitive to hide
+        return new MetricConfig(
+            m.id(), m.name(), m.type(), m.sql(), m.description(),
+            m.warningThreshold(), m.criticalThreshold(), m.lastValue(), m.lastUpdateTime(),
+            m.errorMessage(), m.history(), m.lastSummary(), masked, m.templateType(),
+            m.templateParams(), m.executionMode(), m.labelTopic(), m.labelFields());
     }
 
     @GetMapping("/metadata")
@@ -71,6 +88,15 @@ public class MetricController {
         metricService.delete(id);
     }
 
+    /** Recompute a single metric immediately and return its refreshed (credential-masked) state. */
+    @PostMapping("/{id}/refresh")
+    public ResponseEntity<MetricConfig> refresh(@PathVariable String id) {
+        return metricService.refreshMetric(id)
+            .map(this::maskForDisplay)
+            .map(ResponseEntity::ok)
+            .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
     @GetMapping("/templates")
     public List<MetricTemplateDescriptor> templates() {
         return metricService.listTemplates();
@@ -96,7 +122,10 @@ public class MetricController {
             return Map.of("error", "SQL is required");
         }
         try {
-            var result = flinkSqlService.executeSql(QueryRequest.sql(sql, 10, 5000L, "latest-offset"));
+            // Use earliest-offset (bounded scan) to match how scheduled metrics execute.
+            // With latest-offset an aggregate like COUNT(*) sees no backlog and returns
+            // "No rows returned", making the preview misleading for working metrics.
+            var result = flinkSqlService.executeSql(QueryRequest.sql(sql, 10, 5000L, "earliest-offset"));
             if (result.error() != null) return Map.of("error", result.error());
             if (result.rows().isEmpty()) return Map.of("error", "No rows returned");
             Object val = result.rows().get(0).entrySet().stream()
