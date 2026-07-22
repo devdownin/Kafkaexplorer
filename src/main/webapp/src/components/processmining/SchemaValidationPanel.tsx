@@ -134,8 +134,8 @@ const SchemaValidationPanel: React.FC<SchemaValidationPanelProps> = ({
     if (topics.length === 0) return null;
 
     return (
-      <div key={ft} className="border border-primary/20 rounded-xl overflow-hidden">
-        <div className="flex items-center justify-between px-4 py-2.5 bg-primary/5 border-b border-primary/10">
+      <div key={ft} className="border border-outline-variant rounded-xl overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-2.5 bg-primary/5 border-b border-outline-variant/60">
           <span className="text-sm font-semibold text-on-surface">{FIELD_LABELS[ft]}</span>
           {entry && confidenceBadge(entry.confidence)}
         </div>
@@ -151,7 +151,7 @@ const SchemaValidationPanel: React.FC<SchemaValidationPanelProps> = ({
                 value={corrections[ft][topic] ?? ''}
                 onChange={e => updateCorrection(ft, topic, e.target.value)}
                 placeholder="$.fieldPath"
-                className="flex-1 bg-background-dark border border-primary/20 rounded-lg px-2.5 py-1.5 text-xs font-mono text-on-surface focus:border-primary/50 outline-none"
+                className="flex-1 bg-surface-container-low border border-outline-variant rounded-md px-2.5 py-1.5 text-xs font-mono text-on-surface focus:border-primary/50 outline-none"
               />
             </div>
           ))}
@@ -198,7 +198,7 @@ const SchemaValidationPanel: React.FC<SchemaValidationPanelProps> = ({
             {result.topics.map(tp => (
               <div
                 key={tp.name}
-                className="flex items-center justify-between px-3 py-2 bg-primary/5 border border-primary/10 rounded-lg"
+                className="flex items-center justify-between px-3 py-2 bg-primary/5 border border-outline-variant/60 rounded-lg"
               >
                 <span className="text-xs font-mono text-on-surface">{tp.name}</span>
                 <div className="flex items-center gap-2">

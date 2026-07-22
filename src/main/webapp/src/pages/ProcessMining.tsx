@@ -8,6 +8,7 @@ import MermaidRenderer from '../components/processmining/MermaidRenderer';
 import AnomalyTable, { AnomalyReport } from '../components/processmining/AnomalyTable';
 import LiveStatusBar from '../components/processmining/LiveStatusBar';
 import AnomalyFeed, { LiveAnomaly } from '../components/processmining/AnomalyFeed';
+import { PageHeader, Button } from '../components/ui';
 
 // ---- Types ----
 
@@ -393,25 +394,14 @@ const ProcessMining: React.FC = () => {
   // ---- Render ----
 
   return (
-    <div className="p-6 max-w-5xl mx-auto space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-on-surface">Process Mining</h1>
-          <p className="text-sm text-on-surface-variant mt-1">
-            Discover business process flows and detect anomalies across Kafka topics using AI.
-          </p>
-        </div>
-        {step !== 'SELECT' && (
-          <button
-            onClick={resetAll}
-            className="flex items-center gap-2 px-3 py-1.5 text-xs text-on-surface-variant hover:text-on-surface border border-outline-variant hover:border-outline-variant rounded-lg transition-colors"
-          >
-            <span className="material-symbols-outlined text-sm">restart_alt</span>
-            Start over
-          </button>
+    <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-6">
+      <PageHeader
+        title="Process Mining"
+        description="Discover business process flows and detect anomalies across Kafka topics using AI."
+        actions={step !== 'SELECT' && (
+          <Button variant="outline" size="sm" icon="restart_alt" onClick={resetAll}>Start over</Button>
         )}
-      </div>
+      />
 
       {/* Step indicator */}
       <StepIndicator current={step} />
@@ -420,7 +410,7 @@ const ProcessMining: React.FC = () => {
         <div className={`rounded-xl border p-4 ${
           llmInfo.llmLocalDeployment
             ? 'border-success/20 bg-success/5'
-            : 'border-primary/10 bg-primary/5'
+            : 'border-outline-variant/60 bg-surface-container'
         }`}>
           <div className="flex items-start gap-3">
             <span className={`material-symbols-outlined text-lg ${
@@ -461,7 +451,7 @@ const ProcessMining: React.FC = () => {
       )}
 
       {/* Step content */}
-      <div className="bg-white/3 dark:bg-surface-container/30 border border-primary/10 rounded-2xl p-6">
+      <div className="bg-white/3 dark:bg-surface-container/30 border border-outline-variant/60 rounded-2xl p-6">
 
         {/* STEP 1: SELECT */}
         {step === 'SELECT' && (
@@ -518,7 +508,7 @@ const ProcessMining: React.FC = () => {
                 className={`p-5 rounded-xl border-2 text-left transition-all ${
                   analysisMode === 'SNAPSHOT'
                     ? 'border-primary bg-primary/10'
-                    : 'border-primary/20 hover:border-primary/40 hover:bg-primary/5'
+                    : 'border-outline-variant hover:border-outline hover:bg-surface-container-high/40'
                 }`}
               >
                 <span className="material-symbols-outlined text-3xl text-primary mb-3 block">
@@ -536,7 +526,7 @@ const ProcessMining: React.FC = () => {
                 className={`p-5 rounded-xl border-2 text-left transition-all ${
                   analysisMode === 'LIVE'
                     ? 'border-primary bg-primary/10'
-                    : 'border-primary/20 hover:border-primary/40 hover:bg-primary/5'
+                    : 'border-outline-variant hover:border-outline hover:bg-surface-container-high/40'
                 }`}
               >
                 <span className="material-symbols-outlined text-3xl text-success mb-3 block">
@@ -552,7 +542,7 @@ const ProcessMining: React.FC = () => {
 
             {/* Audit checklist */}
             {auditTemplates.length > 0 && (
-              <div className="border border-primary/15 rounded-xl p-4 space-y-3">
+              <div className="border border-outline-variant rounded-xl p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="text-sm font-semibold text-on-surface flex items-center gap-2">
@@ -592,7 +582,7 @@ const ProcessMining: React.FC = () => {
                             ? 'border-outline-variant bg-surface-container/20 opacity-50 cursor-not-allowed'
                             : active
                             ? 'border-primary bg-primary/10'
-                            : 'border-primary/15 hover:border-primary/30 hover:bg-primary/5'
+                            : 'border-outline-variant hover:border-outline hover:bg-surface-container-high/40'
                         }`}
                       >
                         <div className="flex items-start gap-2">
@@ -628,31 +618,21 @@ const ProcessMining: React.FC = () => {
                     onChange={e => setCustomAuditPrompt(e.target.value)}
                     rows={2}
                     placeholder="e.g. Flag any order whose amount changes between the received and validated topics."
-                    className="w-full bg-primary/5 border border-primary/20 rounded-lg px-3 py-2 text-sm text-on-surface placeholder:text-outline focus:ring-1 focus:ring-primary outline-none resize-y"
+                    className="w-full bg-surface-container-low border border-outline-variant rounded-md px-3 py-2 text-sm text-on-surface placeholder:text-outline focus:border-primary/60 outline-none resize-y"
                   />
                 </div>
               </div>
             )}
 
-            <button
+            <Button
+              variant="primary" size="lg" className="w-full"
+              loading={loading}
+              icon={loading ? undefined : (analysisMode === 'LIVE' ? 'stream' : 'analytics')}
               onClick={handleLaunchAnalysis}
               disabled={loading}
-              className="w-full flex items-center justify-center gap-2 py-3 px-6 bg-primary text-on-primary rounded-xl font-semibold text-sm hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? (
-                <>
-                  <span className="material-symbols-outlined text-base animate-spin">progress_activity</span>
-                  Analysing...
-                </>
-              ) : (
-                <>
-                  <span className="material-symbols-outlined text-base">
-                    {analysisMode === 'LIVE' ? 'stream' : 'analytics'}
-                  </span>
-                  {analysisMode === 'LIVE' ? 'Start Live Monitoring' : 'Run Snapshot Analysis'}
-                </>
-              )}
-            </button>
+              {loading ? 'Analysing…' : analysisMode === 'LIVE' ? 'Start Live Monitoring' : 'Run Snapshot Analysis'}
+            </Button>
           </div>
         )}
 
@@ -681,8 +661,8 @@ const ProcessMining: React.FC = () => {
             )}
 
             {/* Flowchart */}
-            <div className="border border-primary/20 rounded-xl overflow-hidden">
-              <div className="px-4 py-2.5 border-b border-primary/10 bg-primary/5 flex items-center justify-between">
+            <div className="border border-outline-variant rounded-xl overflow-hidden">
+              <div className="px-4 py-2.5 border-b border-outline-variant/60 bg-surface-container-high/60 flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-on-surface">Process Flowchart</h3>
                 <span className="text-xs text-on-surface-variant">Mermaid diagram</span>
               </div>
@@ -699,7 +679,7 @@ const ProcessMining: React.FC = () => {
 
             {/* Comments / Analysis narrative */}
             {(analysisMode === 'LIVE' ? liveComments : snapshotResult?.comments) && (
-              <div className="border border-primary/20 rounded-xl p-4 bg-primary/5">
+              <div className="border border-outline-variant rounded-xl p-4 bg-primary/5">
                 <h3 className="text-xs font-bold text-on-surface-variant uppercase tracking-wider mb-2">
                   Analysis Commentary
                 </h3>
@@ -714,8 +694,8 @@ const ProcessMining: React.FC = () => {
               const sources = analysisMode === 'LIVE' ? liveSources : (snapshotResult?.ragSources ?? []);
               if (!sources || sources.length === 0) return null;
               return (
-                <div className="border border-primary/20 rounded-xl overflow-hidden">
-                  <div className="px-4 py-2.5 border-b border-primary/10 bg-primary/5 flex items-center gap-2">
+                <div className="border border-outline-variant rounded-xl overflow-hidden">
+                  <div className="px-4 py-2.5 border-b border-outline-variant/60 bg-surface-container-high/60 flex items-center gap-2">
                     <span className="material-symbols-outlined text-base text-primary">menu_book</span>
                     <h3 className="text-sm font-semibold text-on-surface">Evidence — cited sources</h3>
                     <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary">
@@ -725,7 +705,7 @@ const ProcessMining: React.FC = () => {
                   </div>
                   <div className="p-4 space-y-2">
                     {sources.map((s, i) => (
-                      <div key={i} className="rounded-lg border border-primary/10 bg-background-dark/20 p-3">
+                      <div key={i} className="rounded-lg border border-outline-variant/60 bg-surface-container-low p-3">
                         <div className="flex items-center justify-between gap-2 mb-1">
                           <span className="text-xs font-mono text-primary/80 truncate">
                             {s.sourceFile ?? 'unknown source'}
@@ -748,7 +728,7 @@ const ProcessMining: React.FC = () => {
             {analysisMode === 'SNAPSHOT' && snapshotResult && (
               <>
                 {snapshotResult.hypotheses && snapshotResult.hypotheses.length > 0 && (
-                  <div className="border border-primary/20 rounded-xl p-4">
+                  <div className="border border-outline-variant rounded-xl p-4">
                     <h3 className="text-xs font-bold text-on-surface-variant uppercase tracking-wider mb-3">
                       Hypotheses
                     </h3>
@@ -786,8 +766,8 @@ const ProcessMining: React.FC = () => {
             )}
 
             {/* Anomalies */}
-            <div className="border border-primary/20 rounded-xl overflow-hidden">
-              <div className="px-4 py-2.5 border-b border-primary/10 bg-primary/5 flex items-center gap-2">
+            <div className="border border-outline-variant rounded-xl overflow-hidden">
+              <div className="px-4 py-2.5 border-b border-outline-variant/60 bg-surface-container-high/60 flex items-center gap-2">
                 <h3 className="text-sm font-semibold text-on-surface">Anomalies</h3>
                 {analysisMode === 'SNAPSHOT' && snapshotResult?.anomalies && (
                   <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary">

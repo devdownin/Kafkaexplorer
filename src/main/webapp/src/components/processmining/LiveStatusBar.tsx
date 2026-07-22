@@ -31,7 +31,7 @@ const LiveStatusBar: React.FC<LiveStatusBarProps> = ({ connected, windowSize, la
   }, [lastUpdate]);
 
   return (
-    <div className="flex items-center gap-6 px-4 py-2.5 bg-primary/5 border border-primary/20 rounded-xl text-xs">
+    <div className="flex items-center gap-6 px-4 py-2.5 bg-surface-container-low border border-outline-variant rounded-xl text-xs">
       {/* Connection status */}
       <div className="flex items-center gap-2">
         <span className="relative flex h-2.5 w-2.5">

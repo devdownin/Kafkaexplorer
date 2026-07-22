@@ -80,8 +80,8 @@ const TopicSelectorPanel: React.FC<TopicSelectorPanelProps> = ({ onStart, loadin
       </div>
 
       {/* Topic filter + list */}
-      <div className="border border-primary/20 rounded-xl overflow-hidden">
-        <div className="p-3 border-b border-primary/10 bg-primary/5 flex items-center gap-2">
+      <div className="border border-outline-variant rounded-xl overflow-hidden">
+        <div className="p-3 border-b border-outline-variant/60 bg-primary/5 flex items-center gap-2">
           <span className="material-symbols-outlined text-on-surface-variant text-base">search</span>
           <input
             className="flex-1 bg-transparent text-sm outline-none placeholder-on-surface-variant"
@@ -123,7 +123,7 @@ const TopicSelectorPanel: React.FC<TopicSelectorPanelProps> = ({ onStart, loadin
           )}
         </div>
         {selectedTopics.length > 0 && (
-          <div className="p-2 border-t border-primary/10 bg-primary/5 text-xs text-on-surface-variant">
+          <div className="p-2 border-t border-outline-variant/60 bg-primary/5 text-xs text-on-surface-variant">
             {selectedTopics.length} topic{selectedTopics.length > 1 ? 's' : ''} selected
           </div>
         )}
@@ -136,7 +136,7 @@ const TopicSelectorPanel: React.FC<TopicSelectorPanelProps> = ({ onStart, loadin
           <select
             value={mode}
             onChange={e => setMode(e.target.value as SnapshotConfig['mode'])}
-            className="w-full bg-background-dark border border-primary/20 rounded-lg px-3 py-2 text-sm text-on-surface focus:border-primary/50 outline-none"
+            className="w-full bg-surface-container-low border border-outline-variant rounded-md px-3 py-2 text-sm text-on-surface focus:border-primary/50 outline-none"
           >
             <option value="LATEST_N">Latest N messages</option>
             <option value="EARLIEST">From beginning</option>
@@ -152,7 +152,7 @@ const TopicSelectorPanel: React.FC<TopicSelectorPanelProps> = ({ onStart, loadin
               type="datetime-local"
               value={fromTimestamp}
               onChange={e => setFromTimestamp(e.target.value)}
-              className="w-full bg-background-dark border border-primary/20 rounded-lg px-3 py-2 text-sm text-on-surface focus:border-primary/50 outline-none"
+              className="w-full bg-surface-container-low border border-outline-variant rounded-md px-3 py-2 text-sm text-on-surface focus:border-primary/50 outline-none"
             />
           ) : (
             <input
@@ -161,7 +161,7 @@ const TopicSelectorPanel: React.FC<TopicSelectorPanelProps> = ({ onStart, loadin
               max={10000}
               value={maxMessages}
               onChange={e => setMaxMessages(parseInt(e.target.value, 10) || 500)}
-              className="w-full bg-background-dark border border-primary/20 rounded-lg px-3 py-2 text-sm text-on-surface focus:border-primary/50 outline-none"
+              className="w-full bg-surface-container-low border border-outline-variant rounded-md px-3 py-2 text-sm text-on-surface focus:border-primary/50 outline-none"
             />
           )}
         </div>
