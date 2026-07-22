@@ -21,12 +21,33 @@ interface KraftQuorum {
   observers: ReplicaState[];
 }
 
+interface GroupInfo {
+  groupId: string;
+  type: string; // CLASSIC | CONSUMER (KIP-848) | SHARE (KIP-932) | STREAMS | UNKNOWN
+  state: string;
+}
+
 interface ClusterDetails {
   clusterId?: string;
   controllerId?: number | null;
   brokerCount?: number;
   kraftQuorum?: KraftQuorum;
+  groups?: GroupInfo[];
 }
+
+const GROUP_TYPE_STYLES: Record<string, string> = {
+  CONSUMER: 'bg-primary/10 text-primary border-primary/20',
+  SHARE: 'bg-tertiary/10 text-tertiary border-tertiary/25',
+  STREAMS: 'bg-primary/10 text-primary border-primary/20',
+  CLASSIC: 'bg-surface-container-high text-on-surface-variant border-outline-variant/60',
+};
+
+const GROUP_STATE_STYLES: Record<string, string> = {
+  STABLE: 'text-primary',
+  EMPTY: 'text-on-surface-variant',
+  DEAD: 'text-error',
+  NOT_READY: 'text-error',
+};
 
 const formatAge = (ts: number | null | undefined): string =>
   ts && ts > 0 ? `${Math.max(0, Math.round((Date.now() - ts) / 1000))}s ago` : '—';
@@ -159,6 +180,55 @@ const Cluster: React.FC = () => {
               Voters elect the metadata log leader; observers (brokers) replicate it. Sustained lag or a stale
               "last caught up" timestamp on a voter degrades controller failover.
             </p>
+          </section>
+        )}
+
+        {/* 0b. Client groups — classic / consumer (KIP-848) / share (KIP-932) / streams */}
+        {details?.groups && (
+          <section className="bg-surface-container ring-1 ring-white/[0.045] p-6 rounded-xl xl:col-span-2">
+            <h2 className="text-lg font-bold text-on-surface flex items-center gap-2 mb-5">
+              <span className="material-symbols-outlined text-primary">groups</span>
+              Client Groups
+              <span className="text-[11px] font-normal text-on-surface-variant">
+                {details.groups.length} group{details.groups.length === 1 ? '' : 's'} — consumer (KIP-848), share (KIP-932), classic, streams
+              </span>
+            </h2>
+            {details.groups.length === 0 ? (
+              <p className="text-[12px] text-on-surface-variant italic">
+                No registered client groups. Groups appear once a consumer with group management
+                (subscribe) connects — the explorer's own sampling consumers use manual partition
+                assignment and never register.
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/60">
+                      <th className="py-2 px-2">Group ID</th>
+                      <th className="py-2 px-2">Type</th>
+                      <th className="py-2 px-2">State</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {details.groups.map(group => (
+                      <tr key={group.groupId} className="border-b border-outline-variant/60 last:border-0 hover:bg-primary/5 transition-colors">
+                        <td className="py-2.5 px-2 font-mono text-[13px] text-on-surface">{group.groupId}</td>
+                        <td className="py-2.5 px-2">
+                          <span className={`text-[10px] px-2 py-0.5 rounded border font-bold uppercase tracking-widest ${
+                            GROUP_TYPE_STYLES[group.type] ?? GROUP_TYPE_STYLES.CLASSIC
+                          }`}>
+                            {group.type}
+                          </span>
+                        </td>
+                        <td className={`py-2.5 px-2 text-[12px] font-bold ${GROUP_STATE_STYLES[group.state] ?? 'text-on-surface'}`}>
+                          {group.state}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </section>
         )}
 

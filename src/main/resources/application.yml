@@ -11,6 +11,10 @@ kafka:
   bootstrap-servers: localhost:9092
   schema-registry-url: http://localhost:8081
   mode: PLAIN # Possible values: PLAIN, SSL, CONFLUENT_CLOUD
+  # Rebalance protocol for the group-managed (subscribe) consumer used by live
+  # Process Mining sessions. "classic" (default) works with any broker version;
+  # "consumer" opts into KIP-848 incremental rebalances — requires Kafka 4.x brokers.
+  consumer-group-protocol: classic
 
   # --- SSL Configuration Example ---
   # mode: SSL

@@ -30,6 +30,8 @@ import org.apache.kafka.clients.admin.DescribeFeaturesResult;
 import org.apache.kafka.clients.admin.DescribeMetadataQuorumOptions;
 import org.apache.kafka.clients.admin.FeatureMetadata;
 import org.apache.kafka.clients.admin.FinalizedVersionRange;
+import org.apache.kafka.clients.admin.GroupListing;
+import org.apache.kafka.clients.admin.ListGroupsOptions;
 import org.apache.kafka.clients.admin.QuorumInfo;
 import org.apache.kafka.clients.admin.SupportedVersionRange;
 import org.springframework.stereotype.Service;
@@ -322,6 +324,26 @@ public class KafkaAdminService {
                 log.debug("Failed to describe metadata quorum (Zookeeper-based cluster?)", e);
             }
 
+            // All client groups regardless of type — classic, consumer (KIP-848),
+            // share (KIP-932, Kafka 4.1+), streams. Kafka 4.x admin API.
+            try {
+                Collection<GroupListing> groups = adminClient
+                        .listGroups(new ListGroupsOptions().timeoutMs(5000))
+                        .all().get(5, TimeUnit.SECONDS);
+                List<Map<String, Object>> groupList = new ArrayList<>();
+                for (GroupListing group : groups) {
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("groupId", group.groupId());
+                    item.put("type", group.type().map(Enum::name).orElse("UNKNOWN"));
+                    item.put("state", group.groupState().map(Enum::name).orElse("UNKNOWN"));
+                    groupList.add(item);
+                }
+                groupList.sort(Comparator.comparing(g -> (String) g.get("groupId")));
+                details.put("groups", groupList);
+            } catch (Exception e) {
+                log.debug("Failed to list groups (broker may not support the ListGroups API)", e);
+            }
+
             // Topic stats
             List<String> topicNames = new ArrayList<>(
                 adminClient.listTopics(new ListTopicsOptions().listInternal(false)).names().get(5, TimeUnit.SECONDS)
@@ -583,7 +605,7 @@ public class KafkaAdminService {
                     String key = record.key() != null ? new String(record.key(), StandardCharsets.UTF_8) : null;
                     records.add(new org.apache.kafka.clients.consumer.ConsumerRecord<>(
                         record.topic(), record.partition(), record.offset(), record.timestamp(), record.timestampType(),
-                        -1L, -1, -1, key, value, record.headers(), record.leaderEpoch()));
+                        -1, -1, key, value, record.headers(), record.leaderEpoch()));
                     count++;
                     if (count >= maxMessages) break;
                 }
@@ -664,7 +686,7 @@ public class KafkaAdminService {
                     String key = record.key() != null ? new String(record.key(), StandardCharsets.UTF_8) : null;
                     records.add(new org.apache.kafka.clients.consumer.ConsumerRecord<>(
                         record.topic(), record.partition(), record.offset(), record.timestamp(), record.timestampType(),
-                        -1L, -1, -1, key, value, record.headers(), record.leaderEpoch()));
+                        -1, -1, key, value, record.headers(), record.leaderEpoch()));
                     count++;
                     if (count >= maxMessages) break;
                 }
