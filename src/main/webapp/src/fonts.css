@@ -1,0 +1,18 @@
+/* Polices auto-hébergées — supprime toute dépendance au CDN Google Fonts
+ * (robustesse hors-ligne + performance : plus de round-trip réseau).
+ *
+ * Importé AVANT index.css (voir main.tsx) pour que la règle de base
+ * `.material-symbols-outlined { font-size: 24px }` soit dominée par les
+ * utilitaires de taille Tailwind (text-[Npx], couche `utilities`).
+ */
+@import "@fontsource/inter/300.css";
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/inter/700.css";
+
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/500.css";
+@import "@fontsource/jetbrains-mono/600.css";
+
+@import "material-symbols/outlined.css";
