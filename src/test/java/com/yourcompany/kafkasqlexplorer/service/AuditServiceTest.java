@@ -101,7 +101,7 @@ class AuditServiceTest {
     }
 
     @Test
-    void auditIsolatesAFailingTopic() {
+    void auditIsolatesAFailingTopic() throws Exception {
         when(kafkaAdminService.listTopics()).thenReturn(List.of("demo.test.1", "demo.test.2"));
         when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("demo.test.1", 100L, "demo.test.2", 80L));
         when(schemaInferenceService.detectFormat(anyString())).thenReturn(MessageFormat.JSON);
