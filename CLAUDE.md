@@ -34,8 +34,9 @@ cd src/main/webapp
 
 npm install          # Install dependencies
 npm run dev          # Dev server with hot reload (proxies /api to localhost:8080)
-npm run build        # Production build → src/main/resources/static/
-npm run lint         # TypeScript + ESLint checks
+npm run build        # Production build (tsc + vite) → src/main/resources/static/
+npm run lint         # ESLint (TS/TSX, --max-warnings 0)
+npm test             # Vitest (jsdom + @testing-library/react); test:watch for watch mode
 ```
 
 ### Docker
@@ -109,22 +110,31 @@ parser/       JSON, XML, and Avro (via Confluent Schema Registry) schema inferen
 
 ### Frontend
 
-The SPA lives in `src/main/webapp/src/`. Routing is in `App.tsx`. Pages:
+The SPA lives in `src/main/webapp/src/`. Stack: React 19 + TypeScript + Vite + Tailwind, Monaco (SQL editor), Recharts (metric charts), Mermaid (process-mining flowcharts), `lucide-react` + Material Symbols (icons), `axios` (API).
 
-- `Dashboard` — topic list with filtering
-- `QueryWorkbench` — Monaco SQL editor with history (sessionStorage)
-- `TopicExplorer` — message sampling and schema preview
-- `Lineage` — interactive Cytoscape.js graph
-- `StreamFlow` — message tracing across topics
-- `Compare` — side-by-side topic comparison
-- `Audit` — cluster health dashboard
-- `Metrics` — Prometheus metric configuration and live values
-- `Config` — Kafka connection and application settings UI
-- `Help` — documentation / quick-start guide
-- `Cluster` — broker details and configuration (`/api/cluster`)
-- `ProcessMining` — 4-step pipeline: topic selection → Claude profiling → schema validation → snapshot/live analysis with Mermaid flowchart + anomaly table. Sub-components in `src/main/webapp/src/components/processmining/`
+**App shell** — `App.tsx` wraps everything in `ToastProvider` + `ConfirmProvider`, renders the `Layout`, and defines the routes. **Pages are lazy-loaded** (`React.lazy` + `Suspense`, `ProgressBar` fallback) for code-splitting; unknown routes render a `NotFound` (404). `Layout` (`components/Layout.tsx`) is the shell: collapsible `Sidebar` (drawer on mobile) + `Header` + an internally-scrolling content viewport. It polls `/api/dashboard` every 30s for connection health and to feed global search (topics + Flink tables).
 
-Shared UI components: `Toast` (global notifications via `ToastProvider` wrapping `App.tsx`), `ErrorBanner`, `LoadingSpinner`.
+**Navigation is centralized** in `navigation.ts` (single source of truth): `NAV_ITEMS` grouped into **Explore** (SQL Editor, Compare, Stream Flow) / **Observe** (Metrics, Audit, Cluster) / **Analyze** (Lineage, Process Mining), plus pinned Dashboard, and `CONFIG_ITEM` (Settings) / `HELP_ITEM` (Help). `resolvePageName()` and `groupNavItems()` derive the Header breadcrumb and Sidebar sections. Add a screen here, not in each component.
+
+**Command palette** — `CommandPalette` (⌘K / Ctrl+K, wired in `Layout`) is the single global search over quick actions, pages, Kafka topics and Flink tables, fully keyboard-driven.
+
+**Design-system library** — `components/ui/` (`import { … } from '../components/ui'`), built on the `tailwind.config.js` + `index.css` tokens; prefer it for any new surface: `Button`, `Card`/`CardHeader`, `Badge`, `EmptyState`, `PageHeader`, `Stat`, `Field`/`Input`/`Select`/`Textarea`, `Table` (+ `Th`/`Td`/…), the `Skeleton` family, `Spinner`/`ProgressBar`, `ConfirmProvider`/`useConfirm` (async confirm dialogs), `useVirtualRows` (row virtualization), and `cn()` (clsx + tailwind-merge). Other shared components: `Toast`/`ToastProvider`, `ErrorBanner`, `LoadingSpinner`.
+
+**Routes / pages** (`pages/`):
+- `Dashboard` (`/`) — topic list with filtering
+- `QueryWorkbench` (`/query`, nav "SQL Editor") — Monaco SQL editor; saved queries + history in `localStorage` (`kse:saved-queries`, `kse:query-history`)
+- `TopicExplorer` (`/topic/:name`) — message sampling and schema preview
+- `Compare` (`/compare`) — side-by-side topic comparison
+- `StreamFlow` (`/stream-flow`) — message tracing across topics
+- `Lineage` (`/lineage`) — interactive dependency graph (custom SVG; no external graph lib)
+- `Metrics` (`/metrics`) + `MetricsHelp` (`/metrics/help`) — Prometheus metric config, live values and Recharts charts
+- `Audit` (`/audit`) — cluster health dashboard
+- `Cluster` (`/cluster`) — broker details and configuration (`/api/cluster`)
+- `Config` (`/config`, nav "Settings") — Kafka connection and application settings UI
+- `Help` (`/help`) — documentation / quick-start guide
+- `ProcessMining` (`/process-mining`) — 4-step pipeline: topic selection → Claude profiling → schema validation → snapshot/live analysis with Mermaid flowchart + anomaly table. Sub-components in `components/processmining/`
+
+**Tests** — Vitest + `@testing-library/react` on jsdom (`src/test/setup.ts`): `navigation.test.ts`, `components/ui/ui.test.tsx`, `ConfirmDialog.test.tsx`, `useVirtualRows.test.ts`. Run with `npm test`.
 
 Dev server proxy: Vite forwards `/api/*` to `http://localhost:8080` (configured in `vite.config.ts`).
 

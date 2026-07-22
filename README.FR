@@ -41,7 +41,7 @@ Support des Chemins Imbriqués : Génération automatique de JSON_VALUE pour les
 Extraction XML : Utilisation de la fonction personnalisée XmlExtract (basée sur XPath) pour interroger les payloads XML.
 Enregistrement en un clic : Bouton "Register Table" pour exécuter instantanément le DDL généré.
 4. Lineage de Requête Visuel
-Graphe Interactif : Propulsé par Cytoscape.js, visualisant les relations entre topics, tables et vues.
+Graphe Interactif : Un graphe de dépendances SVG maison, visualisant les relations entre topics, tables et vues.
 Suivi des Jobs Actifs : Visualisation en temps réel des requêtes INSERT INTO en cours sous forme de nœuds reliant les tables sources et cibles.
 Inspecteur de Nœuds : Cliquez sur n'importe quel nœud pour voir des informations détaillées, comme le schéma de la table ou le type de topic.
 5. Propagation de Message (Stream Flow)
@@ -56,7 +56,7 @@ Monaco Editor : Éditeur SQL haute performance (moteur VS Code) avec coloration 
 Sélecteur de Mode de Lecture : Toggle entre offsets **Earliest** (début du topic) et **Latest** (nouveaux messages uniquement) directement dans l'UI.
 Hints SQL Dynamiques : Injection automatique de hints Flink SQL (`/*+ OPTIONS(...) */`) pour un contrôle précis des offsets par requête sans modifier le DDL.
 Auto-complétion : Suggestion intelligente des noms de topics et tables enregistrées (Ctrl+Space).
-Historique des Requêtes : Accès rapide aux 20 dernières requêtes exécutées via une sidebar persistante (sessionStorage).
+Historique des Requêtes : Accès rapide aux requêtes récentes et sauvegardées, persistées dans le navigateur (localStorage).
 Gestion des Ressources : Annulation automatique des jobs Flink en cas de timeout ou d'erreur, évitant toute fuite de ressources dans le minicluster.
 7. Audit Fonctionnel Automatisé
 Audit Asynchrone : Lancez des audits complets du cluster en arrière-plan sans bloquer l'interface.
