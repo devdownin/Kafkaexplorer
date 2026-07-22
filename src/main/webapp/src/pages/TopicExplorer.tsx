@@ -5,6 +5,7 @@ import Editor from '@monaco-editor/react';
 import { useToast } from '../components/Toast';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorBanner from '../components/ErrorBanner';
+import { Button, Badge, Stat, Input, EmptyState } from '../components/ui';
 
 interface TopicDetail {
   topic: {
@@ -227,8 +228,8 @@ const SampleCard: React.FC<{
   const needsCollapse = lines.length > 8;
 
   return (
-    <div className="border-b border-primary/5 last:border-b-0 group">
-      <div className="flex items-start gap-3 p-4 hover:bg-primary/5 transition-colors">
+    <div className="border-b border-outline-variant/40 last:border-b-0 group">
+      <div className="flex items-start gap-3 p-4 hover:bg-surface-container-high/40 transition-colors">
         <span className="text-[10px] font-mono text-outline mt-0.5 w-6 shrink-0">{index + 1}</span>
         <div className="flex-1 min-w-0 overflow-x-auto">
           {isJson && parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? (
@@ -334,54 +335,41 @@ const TopicExplorer: React.FC = () => {
   );
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-6">
+    <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-6">
       {/* Header */}
       <div className="flex flex-col gap-3">
-        <Link to="/" className="flex items-center gap-1.5 text-[10px] font-bold text-on-surface-variant hover:text-primary uppercase tracking-widest transition-colors w-fit">
-          <span className="material-symbols-outlined text-sm">chevron_left</span> Dashboard
+        <Link to="/" className="flex items-center gap-1 text-[12px] font-medium text-on-surface-variant hover:text-on-surface transition-colors w-fit">
+          <span className="material-symbols-outlined text-[16px]">chevron_left</span> Dashboard
         </Link>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold font-mono text-on-surface">{data.topic.name}</h1>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <h1 className="text-2xl font-semibold font-mono tracking-tight text-on-surface truncate">{data.topic.name}</h1>
             {data.topic.name.toLowerCase().endsWith('.dlt') && (
-              <span className="px-2 py-0.5 rounded border border-warning/30 bg-warning/10 text-warning text-[10px] font-bold uppercase">
-                Dead Letter Topic
-              </span>
+              <Badge tone="warning">Dead Letter Topic</Badge>
             )}
-            <span className="px-2 py-0.5 rounded border border-primary/20 bg-primary/10 text-primary text-[10px] font-bold uppercase">
-              {data.format}
-            </span>
+            <Badge tone="primary">{data.format}</Badge>
           </div>
-          <button
-            onClick={openInEditor}
-            className="flex items-center gap-2 px-4 py-2 bg-primary text-background-dark font-bold text-sm rounded-lg hover:brightness-110 transition-all"
-          >
-            <span className="material-symbols-outlined text-lg">terminal</span>
-            {selectedFields.length > 0 ? `SELECT ${selectedFields.length} field${selectedFields.length > 1 ? 's' : ''}` : 'Query this topic'}
-          </button>
+          <Button variant="primary" icon="terminal" onClick={openInEditor}>
+            {selectedFields.length > 0 ? `Select ${selectedFields.length} field${selectedFields.length > 1 ? 's' : ''}` : 'Query this topic'}
+          </Button>
         </div>
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-3 gap-4">
-        <div className="rounded-xl border border-primary/10 bg-primary/5 p-5">
-          <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-1">Partitions</p>
-          <p className="text-3xl font-bold text-on-surface">{data.topic.partitions}</p>
-        </div>
-        <div className="rounded-xl border border-primary/10 bg-primary/5 p-5">
-          <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-1">Messages (Approx)</p>
-          <p className="text-3xl font-bold text-primary">{data.topic.estimatedSize.toLocaleString()}</p>
-        </div>
-        <div className="rounded-xl border border-primary/10 bg-primary/5 p-5">
-          <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-1">Read Mode</p>
-          <div className="flex gap-1 mt-1">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <Stat label="Partitions" icon="device_hub" value={data.topic.partitions} />
+        <Stat label="Messages (approx)" icon="bolt" tone="primary" value={data.topic.estimatedSize.toLocaleString()} />
+        <div className="bg-surface-container rounded-xl ring-1 ring-white/[0.045] p-5">
+          <p className="text-[11px] font-medium uppercase tracking-[0.05em] text-on-surface-variant mb-2">Read Mode</p>
+          <div className="inline-flex bg-surface-container-low border border-outline-variant rounded-md p-0.5">
             {['earliest-offset', 'latest-offset'].map(mode => (
               <button
                 key={mode}
                 onClick={() => setReadMode(mode)}
-                className={`px-2 py-1 text-[10px] font-bold rounded transition-colors ${readMode === mode ? 'bg-primary/20 text-primary' : 'bg-surface-container text-on-surface-variant hover:bg-surface-container-high'}`}
+                aria-pressed={readMode === mode}
+                className={`px-3 h-7 text-[12px] font-medium rounded transition-colors ${readMode === mode ? 'bg-surface-container-highest text-on-surface' : 'text-on-surface-variant hover:text-on-surface'}`}
               >
-                {mode === 'earliest-offset' ? 'EARLIEST' : 'LATEST'}
+                {mode === 'earliest-offset' ? 'Earliest' : 'Latest'}
               </button>
             ))}
           </div>
@@ -389,7 +377,7 @@ const TopicExplorer: React.FC = () => {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-primary/10">
+      <div className="flex gap-1 border-b border-outline-variant/60 overflow-x-auto">
         {([
           { key: 'samples', label: `Messages (${data.samples.length})`, icon: 'mail' },
           { key: 'ddl', label: 'Flink DDL', icon: 'code' },
@@ -399,13 +387,13 @@ const TopicExplorer: React.FC = () => {
           <button
             key={tab.key}
             onClick={() => setActiveTab(tab.key)}
-            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-bold uppercase tracking-wider border-b-2 -mb-px transition-colors ${
+            className={`flex items-center gap-2 px-4 py-2.5 text-[13px] font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ${
               activeTab === tab.key
-                ? 'border-primary text-primary'
+                ? 'border-primary text-on-surface'
                 : 'border-transparent text-on-surface-variant hover:text-on-surface'
             }`}
           >
-            <span className="material-symbols-outlined text-base">{tab.icon}</span>
+            <span className="material-symbols-outlined text-[18px]">{tab.icon}</span>
             {tab.label}
           </button>
         ))}
@@ -415,22 +403,22 @@ const TopicExplorer: React.FC = () => {
       {activeTab === 'samples' && (
         <div className="space-y-3">
           <div className="flex items-center gap-3">
-            <div className="flex-1 flex items-center gap-2 bg-primary/5 border border-primary/20 rounded-lg px-3 py-2">
-              <span className="material-symbols-outlined text-on-surface-variant text-lg">search</span>
-              <input
-                type="text"
+            <div className="relative flex-1">
+              <span aria-hidden="true" className="material-symbols-outlined text-on-surface-variant text-[18px] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none">search</span>
+              <Input
                 value={sampleFilter}
                 onChange={e => setSampleFilter(e.target.value)}
-                placeholder="Filter messages..."
-                className="flex-1 bg-transparent border-none focus:ring-0 text-sm text-on-surface placeholder:text-outline outline-none"
+                placeholder="Filter messages…"
+                aria-label="Filter messages"
+                className="pl-9 pr-8"
               />
               {sampleFilter && (
-                <button onClick={() => setSampleFilter('')} className="text-on-surface-variant hover:text-on-surface">
-                  <span className="material-symbols-outlined text-base">close</span>
+                <button onClick={() => setSampleFilter('')} aria-label="Clear filter" className="absolute right-2 top-1/2 -translate-y-1/2 text-outline hover:text-on-surface">
+                  <span className="material-symbols-outlined text-[16px]">close</span>
                 </button>
               )}
             </div>
-            <span className="text-xs text-on-surface-variant shrink-0">{filteredSamples.length} of {data.samples.length}</span>
+            <span className="text-[12px] text-on-surface-variant shrink-0 tabular-nums">{filteredSamples.length} of {data.samples.length}</span>
           </div>
 
           {/* Field selection bar */}
@@ -459,7 +447,7 @@ const TopicExplorer: React.FC = () => {
             </div>
           )}
 
-          <div className="rounded-xl border border-primary/10 overflow-hidden">
+          <div className="rounded-xl bg-surface-container ring-1 ring-white/[0.045] overflow-hidden">
             {filteredSamples.map((sample, i) => (
               <SampleCard
                 key={i}
@@ -471,12 +459,11 @@ const TopicExplorer: React.FC = () => {
               />
             ))}
             {filteredSamples.length === 0 && (
-              <div className="p-16 text-center text-outline space-y-2">
-                <span className="material-symbols-outlined text-4xl block opacity-30">search_off</span>
-                <p className="text-xs uppercase tracking-widest">
-                  {sampleFilter ? 'No messages match your filter' : 'No messages in topic'}
-                </p>
-              </div>
+              <EmptyState
+                icon="search_off"
+                title={sampleFilter ? 'No matching messages' : 'No messages in topic'}
+                description={sampleFilter ? `Nothing matches “${sampleFilter}”.` : undefined}
+              />
             )}
           </div>
         </div>
@@ -484,16 +471,10 @@ const TopicExplorer: React.FC = () => {
 
       {/* DDL Tab */}
       {activeTab === 'ddl' && (
-        <div className="rounded-xl border border-primary/10 overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-2.5 border-b border-primary/10 bg-primary/5">
-            <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Auto-Generated Definition</span>
-            <button
-              onClick={() => copyToClipboard(data.ddl)}
-              className="flex items-center gap-1.5 text-xs text-on-surface-variant hover:text-primary transition-colors"
-            >
-              <span className="material-symbols-outlined text-base">content_copy</span>
-              Copy
-            </button>
+        <div className="rounded-xl bg-surface-container ring-1 ring-white/[0.045] overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-2.5 border-b border-outline-variant/60 bg-surface-container-high/60">
+            <span className="text-[11px] font-medium text-on-surface-variant uppercase tracking-[0.05em]">Auto-Generated Definition</span>
+            <Button variant="ghost" size="sm" icon="content_copy" onClick={() => copyToClipboard(data.ddl)}>Copy</Button>
           </div>
           <div className="h-72">
             <Editor
@@ -509,24 +490,24 @@ const TopicExplorer: React.FC = () => {
 
       {/* Partitions Tab */}
       {activeTab === 'partitions' && (
-        <div className="rounded-xl border border-primary/10 overflow-hidden">
+        <div className="rounded-xl bg-surface-container ring-1 ring-white/[0.045] overflow-hidden">
           <table className="w-full text-sm">
             <thead>
-              <tr className="bg-primary/5 border-b border-primary/10 text-[10px] uppercase tracking-widest text-on-surface-variant">
+              <tr className="bg-surface-container-high/60 border-b border-outline-variant/60 text-[10px] uppercase tracking-widest text-on-surface-variant">
                 <th className="text-left px-5 py-3">Partition</th>
                 <th className="text-right px-5 py-3">Start Offset</th>
                 <th className="text-right px-5 py-3">End Offset</th>
                 <th className="text-right px-5 py-3">Messages</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-primary/5">
+            <tbody className="divide-y divide-outline-variant/40">
               {Object.keys(data.topic.maxOffsets).map(p => {
                 const partition = Number(p);
                 const start = data.topic.minOffsets[partition] ?? 0;
                 const end = data.topic.maxOffsets[partition] ?? 0;
                 const count = end - start;
                 return (
-                  <tr key={partition} className="hover:bg-primary/5 transition-colors">
+                  <tr key={partition} className="hover:bg-surface-container-high/40 transition-colors">
                     <td className="px-5 py-3 font-mono text-on-surface">P{partition}</td>
                     <td className="px-5 py-3 text-right font-mono text-on-surface-variant">{start.toLocaleString()}</td>
                     <td className="px-5 py-3 text-right font-mono text-on-surface-variant">{end.toLocaleString()}</td>
@@ -538,7 +519,7 @@ const TopicExplorer: React.FC = () => {
               })}
             </tbody>
             <tfoot>
-              <tr className="bg-primary/5 border-t border-primary/10">
+              <tr className="bg-surface-container-high/60 border-t border-outline-variant/60">
                 <td colSpan={3} className="px-5 py-2.5 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Total</td>
                 <td className="px-5 py-2.5 text-right font-mono font-bold text-primary text-sm">
                   {data.topic.estimatedSize.toLocaleString()}
@@ -551,17 +532,17 @@ const TopicExplorer: React.FC = () => {
 
       {/* Schema Tab */}
       {activeTab === 'schema' && (
-        <div className="rounded-xl border border-primary/10 overflow-hidden">
+        <div className="rounded-xl bg-surface-container ring-1 ring-white/[0.045] overflow-hidden">
           <table className="w-full text-sm">
             <thead>
-              <tr className="bg-primary/5 border-b border-primary/10">
+              <tr className="bg-surface-container-high/60 border-b border-outline-variant/60">
                 <th className="text-left px-5 py-3 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Field</th>
                 <th className="text-right px-5 py-3 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Type</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-primary/5">
+            <tbody className="divide-y divide-outline-variant/40">
               {Object.entries(data.schema).map(([field, type]) => (
-                <tr key={field} className="hover:bg-primary/5 transition-colors">
+                <tr key={field} className="hover:bg-surface-container-high/40 transition-colors">
                   <td className="px-5 py-3 font-medium text-on-surface">{field}</td>
                   <td className="px-5 py-3 text-right font-mono text-[11px] text-primary/80 uppercase">{type}</td>
                 </tr>
