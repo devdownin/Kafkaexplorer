@@ -21,10 +21,10 @@ interface LineageData {
 }
 
 const nodeConfig: Record<string, { shape: 'circle' | 'rect' | 'diamond' | 'hex'; color: string; bg: string }> = {
-  topic:  { shape: 'circle',  color: '#25f4f4', bg: '#1b2d2d' },
-  table:  { shape: 'rect',    color: '#25f4f4', bg: '#0f2d1a' },
-  view:   { shape: 'diamond', color: '#a78bfa', bg: '#2d1b3d' },
-  query:  { shape: 'hex',     color: '#f59e0b', bg: '#2d2008' },
+  topic:  { shape: 'circle',  color: '#a3adff', bg: '#12151a' },
+  table:  { shape: 'rect',    color: '#a3adff', bg: '#14402a' },
+  view:   { shape: 'diamond', color: '#c9a9f7', bg: '#3b2762' },
+  query:  { shape: 'hex',     color: '#f5c264', bg: '#4a3a12' },
 };
 
 const NODE_W = 140;
@@ -463,7 +463,7 @@ const Lineage: React.FC = () => {
           >
             <defs>
               <marker id="arrow-lin" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-                <polygon points="0 0, 8 3, 0 6" fill="#25f4f4" opacity="0.6" />
+                <polygon points="0 0, 8 3, 0 6" fill="#a3adff" opacity="0.6" />
               </marker>
               <marker id="arrow-lin-hi" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
                 <polygon points="0 0, 8 3, 0 6" fill="#ffffff" opacity="0.9" />
@@ -491,7 +491,7 @@ const Lineage: React.FC = () => {
                     <path
                       d={`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`}
                       fill="none"
-                      stroke={hi ? '#ffffff' : '#25f4f4'}
+                      stroke={hi ? '#ffffff' : '#a3adff'}
                       strokeWidth={hi ? 2 : 1.5}
                       opacity={dim ? 0.05 : (hi ? 0.9 : 0.3)}
                       // Remove marker on dimmed edges (markers ignore parent opacity)
@@ -499,7 +499,7 @@ const Lineage: React.FC = () => {
                     />
                     {edge.label && !dim && (
                       <text x={mx} y={Math.min(y1, y2) - 7} textAnchor="middle"
-                        fill="#475569" fontSize={9}>{edge.label}</text>
+                        fill="#79839a" fontSize={9}>{edge.label}</text>
                     )}
                   </g>
                 );

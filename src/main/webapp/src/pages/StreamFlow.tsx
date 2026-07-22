@@ -341,7 +341,7 @@ const StreamFlow: React.FC = () => {
           >
             <defs>
               <marker id="sf-arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-                <polygon points="0 0, 10 3.5, 0 7" fill="#25f4f4" opacity="0.6" />
+                <polygon points="0 0, 10 3.5, 0 7" fill="#a3adff" opacity="0.6" />
               </marker>
             </defs>
 
@@ -360,11 +360,11 @@ const StreamFlow: React.FC = () => {
                   <g key={i}>
                     <path
                       d={`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`}
-                      fill="none" stroke="#25f4f4" strokeWidth="2" opacity="0.5"
+                      fill="none" stroke="#a3adff" strokeWidth="2" opacity="0.5"
                       markerEnd="url(#sf-arrow)"
                     />
                     {edge.label && (
-                      <text x={mx} y={Math.min(y1, y2) - 6} textAnchor="middle" fill="#94a3b8" fontSize="10">
+                      <text x={mx} y={Math.min(y1, y2) - 6} textAnchor="middle" fill="#9aa3b2" fontSize="10">
                         {edge.label}
                       </text>
                     )}
@@ -382,7 +382,7 @@ const StreamFlow: React.FC = () => {
                 return (
                   <g key={node.id} transform={`translate(${pos.x}, ${pos.y})`}>
                     <rect width={nodeW} height={nodeH} rx="8"
-                      fill="#1b2d2d" stroke="#25f4f4" strokeWidth="1.5" strokeOpacity="0.6" />
+                      fill="#12151a" stroke="#a3adff" strokeWidth="1.5" strokeOpacity="0.6" />
                     <text x={cx} y={ts ? nodeH / 2 - 8 : nodeH / 2 + 4}
                       textAnchor="middle" fill="white" fontSize="11"
                       fontFamily="JetBrains Mono, monospace" fontWeight="bold">
@@ -390,7 +390,7 @@ const StreamFlow: React.FC = () => {
                     </text>
                     {ts && (
                       <text x={cx} y={nodeH / 2 + 10} textAnchor="middle"
-                        fill="#25f4f4" fontSize="9" fontFamily="Inter, sans-serif" opacity="0.7">
+                        fill="#a3adff" fontSize="9" fontFamily="Inter, sans-serif" opacity="0.7">
                         {ts}
                       </text>
                     )}

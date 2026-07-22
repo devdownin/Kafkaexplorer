@@ -358,7 +358,7 @@ const MetricCard: React.FC<{
     : metric.history ?? []
   ).map((v, i) => ({ i, v }));
 
-  const strokeColor = status === 'critical' ? '#f87171' : status === 'warning' ? '#fbbf24' : '#25f4f4';
+  const strokeColor = status === 'critical' ? '#f58c8c' : status === 'warning' ? '#f5c264' : '#a3adff';
 
   return (
     <div className="flex flex-col border border-primary/10 rounded-xl bg-primary/5 overflow-hidden hover:border-primary/25 transition-colors">
@@ -445,12 +445,12 @@ const MetricCard: React.FC<{
                   </defs>
                   <YAxis domain={[minV - pad, maxV + pad]} hide />
                   {metric.warningThreshold !== null && (
-                    <ReferenceLine y={metric.warningThreshold} stroke="#fbbf24" strokeDasharray="4 3" strokeWidth={1}
-                      label={{ value: 'warn', position: 'insideTopRight', fontSize: 8, fill: '#fbbf24', dy: -2 }} />
+                    <ReferenceLine y={metric.warningThreshold} stroke="#f5c264" strokeDasharray="4 3" strokeWidth={1}
+                      label={{ value: 'warn', position: 'insideTopRight', fontSize: 8, fill: '#f5c264', dy: -2 }} />
                   )}
                   {metric.criticalThreshold !== null && (
-                    <ReferenceLine y={metric.criticalThreshold} stroke="#f87171" strokeDasharray="4 3" strokeWidth={1}
-                      label={{ value: 'crit', position: 'insideTopRight', fontSize: 8, fill: '#f87171', dy: -2 }} />
+                    <ReferenceLine y={metric.criticalThreshold} stroke="#f58c8c" strokeDasharray="4 3" strokeWidth={1}
+                      label={{ value: 'crit', position: 'insideTopRight', fontSize: 8, fill: '#f58c8c', dy: -2 }} />
                   )}
                   <Area type="monotone" dataKey="v" stroke={strokeColor} strokeWidth={2}
                     fill={`url(#grad-${metric.id})`} dot={false}
@@ -556,7 +556,7 @@ const TemplateParamsEditor: React.FC<{
             <select value={p('operation') || 'LEFT_MINUS_RIGHT'} onChange={e => setParam('operation', e.target.value)}
               className="w-full bg-background-dark border border-primary/20 rounded-lg px-3 py-2 text-sm text-on-surface focus:ring-1 focus:ring-primary outline-none">
               {DELTA_OPERATIONS.map(o => (
-                <option key={o.value} value={o.value} className="bg-[#102222] text-on-surface">{o.label}</option>
+                <option key={o.value} value={o.value} className="bg-[#12151a] text-on-surface">{o.label}</option>
               ))}
             </select>
           </div>
@@ -585,7 +585,7 @@ const TemplateParamsEditor: React.FC<{
         <select value={executionMode || 'TEMPLATE_BOUNDED_SCAN'} onChange={e => setExecutionMode(e.target.value)}
           className="w-full bg-background-dark border border-primary/20 rounded-lg px-3 py-2 text-sm text-on-surface focus:ring-1 focus:ring-primary outline-none">
           {EXECUTION_MODES.map(m => (
-            <option key={m.value} value={m.value} className="bg-[#102222] text-on-surface">{m.label}</option>
+            <option key={m.value} value={m.value} className="bg-[#12151a] text-on-surface">{m.label}</option>
           ))}
         </select>
         <p className="text-[10px] text-outline">
@@ -979,20 +979,20 @@ const Metrics: React.FC = () => {
         <div className="flex items-center gap-3 flex-wrap">
           <select value={filterType} onChange={e => setFilterType(e.target.value)}
             className="bg-background-dark border border-primary/20 rounded-lg px-3 py-1.5 text-xs text-on-surface focus:ring-1 focus:ring-primary outline-none">
-            <option value="all"       className="bg-[#102222] text-on-surface">All types</option>
-            <option value="GAUGE"     className="bg-[#102222] text-on-surface">GAUGE</option>
-            <option value="COUNTER"   className="bg-[#102222] text-on-surface">COUNTER</option>
-            <option value="HISTOGRAM" className="bg-[#102222] text-on-surface">HISTOGRAM</option>
-            <option value="SUMMARY"   className="bg-[#102222] text-on-surface">SUMMARY</option>
+            <option value="all"       className="bg-[#12151a] text-on-surface">All types</option>
+            <option value="GAUGE"     className="bg-[#12151a] text-on-surface">GAUGE</option>
+            <option value="COUNTER"   className="bg-[#12151a] text-on-surface">COUNTER</option>
+            <option value="HISTOGRAM" className="bg-[#12151a] text-on-surface">HISTOGRAM</option>
+            <option value="SUMMARY"   className="bg-[#12151a] text-on-surface">SUMMARY</option>
           </select>
           <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
             className="bg-background-dark border border-primary/20 rounded-lg px-3 py-1.5 text-xs text-on-surface focus:ring-1 focus:ring-primary outline-none">
-            <option value="all"      className="bg-[#102222] text-on-surface">All statuses</option>
-            <option value="error"    className="bg-[#102222] text-on-surface">Error</option>
-            <option value="critical" className="bg-[#102222] text-on-surface">Critical</option>
-            <option value="warning"  className="bg-[#102222] text-on-surface">Warning</option>
-            <option value="ok"       className="bg-[#102222] text-on-surface">Healthy</option>
-            <option value="pending"  className="bg-[#102222] text-on-surface">Pending</option>
+            <option value="all"      className="bg-[#12151a] text-on-surface">All statuses</option>
+            <option value="error"    className="bg-[#12151a] text-on-surface">Error</option>
+            <option value="critical" className="bg-[#12151a] text-on-surface">Critical</option>
+            <option value="warning"  className="bg-[#12151a] text-on-surface">Warning</option>
+            <option value="ok"       className="bg-[#12151a] text-on-surface">Healthy</option>
+            <option value="pending"  className="bg-[#12151a] text-on-surface">Pending</option>
           </select>
           {(filterType !== 'all' || filterStatus !== 'all') && (
             <button onClick={() => { setFilterType('all'); setFilterStatus('all'); }}
@@ -1147,9 +1147,9 @@ const Metrics: React.FC = () => {
                     <label className="text-[10px] uppercase font-bold text-on-surface0 tracking-wider">Metric Source</label>
                     <select value={templateType} onChange={e => onTemplateTypeChange(e.target.value)}
                       className="w-full bg-background-dark border border-primary/20 rounded-lg px-3 py-2 text-sm text-on-surface focus:ring-1 focus:ring-primary outline-none">
-                      <option value={RAW_SQL} className="bg-[#102222] text-on-surface">Raw SQL</option>
+                      <option value={RAW_SQL} className="bg-[#12151a] text-on-surface">Raw SQL</option>
                       {templates.map(t => (
-                        <option key={t.type} value={t.type} className="bg-[#102222] text-on-surface">{t.label}</option>
+                        <option key={t.type} value={t.type} className="bg-[#12151a] text-on-surface">{t.label}</option>
                       ))}
                     </select>
                     {isTemplate && currentDescriptor && (
@@ -1177,7 +1177,7 @@ const Metrics: React.FC = () => {
                       { value: 'HISTOGRAM', label: 'HISTOGRAM — bucket distribution' },
                       { value: 'SUMMARY',   label: 'SUMMARY — quantile observations' },
                     ].filter(o => allowedTypes.includes(o.value)).map(o => (
-                      <option key={o.value} value={o.value} className="bg-[#102222] text-on-surface">{o.label}</option>
+                      <option key={o.value} value={o.value} className="bg-[#12151a] text-on-surface">{o.label}</option>
                     ))}
                   </select>
                   <p className="text-[10px] text-outline">
@@ -1196,8 +1196,8 @@ const Metrics: React.FC = () => {
                   {topics.length > 0 ? (
                     <select value={selectedTopic} onChange={e => onTopicChange(e.target.value)}
                       className="w-full bg-background-dark border border-primary/20 rounded-lg px-3 py-2 text-sm font-mono text-on-surface focus:ring-1 focus:ring-primary outline-none">
-                      <option value="" className="bg-[#102222] text-on-surface-variant">— select a topic —</option>
-                      {topics.map(t => <option key={t} value={t} className="bg-[#102222] text-on-surface">{t}</option>)}
+                      <option value="" className="bg-[#12151a] text-on-surface-variant">— select a topic —</option>
+                      {topics.map(t => <option key={t} value={t} className="bg-[#12151a] text-on-surface">{t}</option>)}
                     </select>
                   ) : (
                     <input type="text" value={selectedTopic}

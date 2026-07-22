@@ -17,12 +17,12 @@ const MermaidRenderer: React.FC<MermaidRendererProps> = ({ chart }) => {
         startOnLoad: false,
         theme: 'dark',
         themeVariables: {
-          primaryColor: '#1e40af',
-          primaryTextColor: '#e2e8f0',
-          primaryBorderColor: '#3b82f6',
-          lineColor: '#64748b',
-          secondaryColor: '#1e293b',
-          tertiaryColor: '#0f172a',
+          primaryColor: '#272e55',
+          primaryTextColor: '#e8eaf0',
+          primaryBorderColor: '#a3adff',
+          lineColor: '#79839a',
+          secondaryColor: '#191d24',
+          tertiaryColor: '#12151a',
         },
       });
       mermaidInitialized = true;
