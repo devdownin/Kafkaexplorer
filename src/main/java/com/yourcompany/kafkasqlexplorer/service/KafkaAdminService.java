@@ -315,19 +315,9 @@ public class KafkaAdminService {
             }
 
             // KRaft controller quorum (KIP-595) — unavailable on Zookeeper-based clusters
-            try {
-                QuorumInfo quorum = adminClient
-                        .describeMetadataQuorum(new DescribeMetadataQuorumOptions().timeoutMs(5000))
-                        .quorumInfo().get(5, TimeUnit.SECONDS);
-                Map<String, Object> kraftQuorum = new LinkedHashMap<>();
-                kraftQuorum.put("leaderId", quorum.leaderId());
-                kraftQuorum.put("leaderEpoch", quorum.leaderEpoch());
-                kraftQuorum.put("highWatermark", quorum.highWatermark());
-                kraftQuorum.put("voters", toReplicaStates(quorum.voters(), quorum));
-                kraftQuorum.put("observers", toReplicaStates(quorum.observers(), quorum));
+            Map<String, Object> kraftQuorum = getQuorumSnapshot();
+            if (kraftQuorum != null) {
                 details.put("kraftQuorum", kraftQuorum);
-            } catch (Exception e) {
-                log.debug("Failed to describe metadata quorum (Zookeeper-based cluster?)", e);
             }
 
             // All client groups regardless of type — classic, consumer (KIP-848),
@@ -400,6 +390,31 @@ public class KafkaAdminService {
             details.put("error", e.getMessage());
         }
         return details;
+    }
+
+    /**
+     * Point-in-time KRaft controller quorum snapshot (KIP-595): leader id/epoch, high
+     * watermark and per-replica voter/observer state. Deliberately uncached and cheap
+     * (a single admin call) — used by {@code getClusterDetails()} and polled by
+     * {@code KraftQuorumMetrics} for the Prometheus gauges. Returns null when the broker
+     * doesn't expose the metadata quorum (Zookeeper mode).
+     */
+    public Map<String, Object> getQuorumSnapshot() {
+        try {
+            QuorumInfo quorum = adminClient
+                    .describeMetadataQuorum(new DescribeMetadataQuorumOptions().timeoutMs(5000))
+                    .quorumInfo().get(5, TimeUnit.SECONDS);
+            Map<String, Object> kraftQuorum = new LinkedHashMap<>();
+            kraftQuorum.put("leaderId", quorum.leaderId());
+            kraftQuorum.put("leaderEpoch", quorum.leaderEpoch());
+            kraftQuorum.put("highWatermark", quorum.highWatermark());
+            kraftQuorum.put("voters", toReplicaStates(quorum.voters(), quorum));
+            kraftQuorum.put("observers", toReplicaStates(quorum.observers(), quorum));
+            return kraftQuorum;
+        } catch (Exception e) {
+            log.debug("Failed to describe metadata quorum (Zookeeper-based cluster?)", e);
+            return null;
+        }
     }
 
     /**

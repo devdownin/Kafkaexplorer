@@ -27,12 +27,19 @@ interface GroupInfo {
   state: string;
 }
 
+interface VersionRange {
+  min: number;
+  max: number;
+}
+
 interface ClusterDetails {
   clusterId?: string;
   controllerId?: number | null;
   brokerCount?: number;
   kraftQuorum?: KraftQuorum;
   groups?: GroupInfo[];
+  finalizedFeatures?: Record<string, VersionRange>;
+  supportedFeatures?: Record<string, VersionRange>;
 }
 
 const GROUP_TYPE_STYLES: Record<string, string> = {
@@ -229,6 +236,42 @@ const Cluster: React.FC = () => {
                 </table>
               </div>
             )}
+          </section>
+        )}
+
+        {/* 0c. Feature versions — finalized vs supported (Kafka 4 / KRaft feature flags) */}
+        {details?.supportedFeatures && Object.keys(details.supportedFeatures).length > 0 && (
+          <section className="bg-surface-container ring-1 ring-white/[0.045] p-6 rounded-xl xl:col-span-2">
+            <h2 className="text-lg font-bold text-on-surface flex items-center gap-2 mb-5">
+              <span className="material-symbols-outlined text-primary">flag</span>
+              Feature Versions
+              <span className="text-[11px] font-normal text-on-surface-variant">finalized cluster-wide vs supported by brokers</span>
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {Object.entries(details.supportedFeatures).sort(([a], [b]) => a.localeCompare(b)).map(([feature, supported]) => {
+                const finalized = details.finalizedFeatures?.[feature];
+                const lagging = !finalized || finalized.max < supported.max;
+                return (
+                  <div key={feature} className={`p-4 bg-surface-container-high border-l-2 rounded-lg ${lagging ? 'border-warning' : 'border-primary'}`}>
+                    <div className="text-[10px] font-bold text-primary uppercase tracking-widest mb-1">{feature}</div>
+                    <div className="text-lg font-bold text-on-surface mb-1 flex items-center gap-2">
+                      {finalized ? `v${finalized.max}` : '—'}
+                      <span className={`text-[10px] px-2 py-0.5 rounded border font-bold uppercase tracking-widest ${
+                        lagging
+                          ? 'bg-warning/10 text-warning border-warning/25'
+                          : 'bg-primary/10 text-primary border-primary/20'
+                      }`}>
+                        {lagging ? 'Lagging' : 'Up to date'}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-on-surface-variant">
+                      Brokers support up to v{supported.max}
+                      {lagging && feature === 'metadata.version' && ' — finalize with kafka-features.sh upgrade'}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
           </section>
         )}
 
