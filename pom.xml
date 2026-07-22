@@ -24,7 +24,7 @@
     <properties>
         <java.version>21</java.version>
         <flink.version>2.3.0</flink.version>
-        <confluent.version>7.6.0</confluent.version>
+        <confluent.version>8.3.0</confluent.version>
     </properties>
 
     <repositories>
