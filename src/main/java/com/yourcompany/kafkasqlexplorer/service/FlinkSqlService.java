@@ -379,13 +379,28 @@ public class FlinkSqlService {
     }
 
     private void syncPersistedJobs() {
-        activeJobs.entrySet().removeIf(entry -> {
-            JobInfo info = entry.getValue();
-            FlinkJobSummary summary = buildJobSummary(info);
+        // buildJobSummary blocks up to 150ms on the Flink status call per job, so a serial sweep of
+        // N jobs would block up to N×150ms. Poll the statuses in parallel; keep persistence serial
+        // (single writer to the job store) and remove jobs that have reached a terminal state.
+        List<Map.Entry<String, JobInfo>> entries = new ArrayList<>(activeJobs.entrySet());
+        if (entries.isEmpty()) return;
+
+        Map<String, FlinkJobSummary> summaries = entries.stream()
+            .map(e -> CompletableFuture.supplyAsync(
+                () -> Map.entry(e.getKey(), buildJobSummary(e.getValue())), queryExecutor))
+            .toList().stream()
+            .map(CompletableFuture::join)
+            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+        for (Map.Entry<String, JobInfo> e : entries) {
+            JobInfo info = e.getValue();
+            FlinkJobSummary summary = summaries.get(e.getKey());
             String statusDetail = summary.cancelRequested() ? "Cancellation requested by user" : null;
             persistJobSnapshot(info, summary, statusDetail, null);
-            return summary.endedAt() != null;
-        });
+            if (summary.endedAt() != null) {
+                activeJobs.remove(e.getKey());
+            }
+        }
     }
 
     private String prepareSql(String sql) {
@@ -1065,17 +1080,7 @@ public class FlinkSqlService {
             if (!matchesWhereConditions(row, whereConds)) continue;
 
             // Resolve timestamp: message field → epoch detection → Kafka record ts
-            long tsMillis;
-            Object tsVal = row.get(timeCol);
-            if (tsVal instanceof Number n) {
-                tsMillis = n.longValue();
-                if (tsMillis < 10_000_000_000L) tsMillis *= 1000; // seconds → millis
-            } else if (tsVal instanceof String s) {
-                try { tsMillis = java.time.Instant.parse(s).toEpochMilli(); }
-                catch (Exception e) { tsMillis = record.timestamp(); }
-            } else {
-                tsMillis = record.timestamp(); // fallback: Kafka record timestamp
-            }
+            long tsMillis = parseEventTimeMillis(row.get(timeCol), record.timestamp());
 
             long bucket = (tsMillis / intervalMs) * intervalMs;
             windows.computeIfAbsent(bucket, k -> new ArrayList<>()).add(row);
@@ -1105,6 +1110,39 @@ public class FlinkSqlService {
         log.debug("[KafkaDirect/Window] topic='{}' timeCol='{}' intervalMs={} windows={} rows={}",
                  topic, timeCol, intervalMs, windows.size(), resultRows.size());
         return new QueryResult(columns, resultRows, System.currentTimeMillis() - startTime, null, false, "KAFKA_DIRECT");
+    }
+
+    /**
+     * Resolves an event-time value (message field) to epoch millis, mirroring the metric engine:
+     * numbers and numeric strings below 10^10 are treated as epoch seconds, ISO-8601 and
+     * space-separated LocalDateTime strings are parsed, and anything else falls back to {@code fallback}.
+     */
+    private long parseEventTimeMillis(Object tsVal, long fallback) {
+        if (tsVal instanceof Number n) {
+            long ts = n.longValue();
+            return ts < 10_000_000_000L ? ts * 1000L : ts;
+        }
+        if (tsVal instanceof String s) {
+            String text = s.trim();
+            if (!text.isEmpty()) {
+                try {
+                    long ts = Long.parseLong(text);
+                    return ts < 10_000_000_000L ? ts * 1000L : ts;
+                } catch (NumberFormatException ignoredNumeric) {
+                    try {
+                        return java.time.Instant.parse(text).toEpochMilli();
+                    } catch (Exception ignoredIso) {
+                        try {
+                            return java.time.LocalDateTime.parse(text.replace(' ', 'T'))
+                                .toInstant(java.time.ZoneOffset.UTC).toEpochMilli();
+                        } catch (Exception ignoredLocal) {
+                            // fall through to the fallback
+                        }
+                    }
+                }
+            }
+        }
+        return fallback;
     }
 
     /** Evaluates a single aggregate function over a list of rows. */
@@ -1244,7 +1282,8 @@ public class FlinkSqlService {
     }
 
     public Map<String, JobInfo> getActiveJobsDetails() {
-        return activeJobs;
+        // Defensive snapshot — callers (lineage) only read; never hand out the live internal map.
+        return Map.copyOf(activeJobs);
     }
 
     @PreDestroy
