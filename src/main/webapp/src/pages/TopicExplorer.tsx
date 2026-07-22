@@ -283,13 +283,22 @@ const TopicExplorer: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchTopicDetails();
+    // Guard against out-of-order responses: toggling read mode quickly fires several requests,
+    // and without this a slower one could overwrite the newer result with stale data.
+    let active = true;
+    setLoading(true);
+    axios.get(`/api/topic/${encodeURIComponent(name ?? '')}?readMode=${readMode}`)
+      .then(res => { if (active) setData(res.data); })
+      .catch(() => { if (active) toast('Failed to load topic details', 'error'); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, [name, readMode]);
 
+  // Manual retry from the error banner — last-wins is fine here (only shown on the error state).
   const fetchTopicDetails = async () => {
     setLoading(true);
     try {
-      const response = await axios.get(`/api/topic/${name}?readMode=${readMode}`);
+      const response = await axios.get(`/api/topic/${encodeURIComponent(name ?? '')}?readMode=${readMode}`);
       setData(response.data);
     } catch {
       toast('Failed to load topic details', 'error');
