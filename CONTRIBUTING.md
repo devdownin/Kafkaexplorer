@@ -54,4 +54,4 @@ mvn test
 - Ensure all new features are covered by tests.
 
 ## License
-By contributing to Kafka SQL Explorer, you agree that your contributions will be licensed under its Apache License 2.0.
+By contributing to Kafka SQL Explorer, you agree that your contributions will be licensed under its GNU Affero General Public License, Version 3.0.
