@@ -353,6 +353,51 @@ class MetricServiceTest {
     }
 
     @Test
+    void savePreservesRealSecretWhenEditedDdlComesBackMasked() {
+        String ddlWithSecret = "CREATE TABLE t (id BIGINT) WITH (\n" +
+            "  'properties.ssl.truststore.password' = 'super-secret'\n);";
+        service.save(new MetricConfig(
+            null, "sec", "GAUGE", "SELECT 1 AS metric_value FROM t", null, null, null,
+            null, null, null, List.of(), Map.of(), ddlWithSecret, null, null, null, null, List.of()));
+        String id = service.getAllMetrics().stream()
+            .filter(m -> "sec".equals(m.name()))
+            .findFirst().orElseThrow().id();
+
+        // The UI re-saves the metric with the password echoed back masked.
+        String maskedDdl = "CREATE TABLE t (id BIGINT) WITH (\n" +
+            "  'properties.ssl.truststore.password' = '******'\n);";
+        service.save(new MetricConfig(
+            id, "sec", "GAUGE", "SELECT 1 AS metric_value FROM t", null, null, null,
+            null, null, null, List.of(), Map.of(), maskedDdl, null, null, null, null, List.of()));
+
+        MetricConfig stored = service.getById(id).orElseThrow();
+        assertTrue(stored.createTableSql().contains("super-secret"),
+            "the real secret must survive an edit that echoed it back masked");
+        assertFalse(stored.createTableSql().contains("******"));
+    }
+
+    @Test
+    void refreshMetricRecomputesASingleMetricOnDemand() {
+        Mockito.when(flinkSqlService.executeSql(Mockito.any()))
+            .thenReturn(new QueryResult(
+                List.of("metric_value"), List.of(Map.of("metric_value", 42.0)), 10L, null));
+
+        service.save(new MetricConfig(
+            null, "on_demand", "GAUGE", "SELECT 42 AS metric_value FROM t", null, null, null,
+            null, null, null, List.of(), Map.of(), null, null, null, null, null, List.of()));
+        String id = service.getAllMetrics().stream()
+            .filter(m -> "on_demand".equals(m.name()))
+            .findFirst().orElseThrow().id();
+
+        Optional<MetricConfig> refreshed = service.refreshMetric(id);
+
+        assertTrue(refreshed.isPresent());
+        assertEquals(42.0, refreshed.get().lastValue());
+        assertNull(refreshed.get().errorMessage());
+        assertTrue(service.refreshMetric("does-not-exist").isEmpty());
+    }
+
+    @Test
     void counterSumsRowsSharingALabelKeyInsteadOfMergingDeltas() {
         // Two rows with no distinct label column → same (empty) label key. Their cumulative
         // totals must sum (4 + 6 = 10), not collapse to the last row's value (which the old

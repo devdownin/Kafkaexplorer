@@ -20,6 +20,18 @@ interface MetricConfig {
   createTableSql?: string | null;
   labelTopic?: string | null;
   labelFields?: string[];
+  templateType?: string | null;
+  templateParams?: Record<string, unknown> | null;
+  executionMode?: string | null;
+  lastSummary?: Record<string, unknown> | null;
+}
+
+interface MetricTemplateDescriptor {
+  type: string;
+  label: string;
+  description: string;
+  supportedMetricTypes: string[];
+  requiredParams: string[];
 }
 
 interface MetricLabelPreview {
@@ -28,6 +40,21 @@ interface MetricLabelPreview {
   message: string | null;
   fields: Record<string, string>;
 }
+
+// ── Metric template metadata (mirrors the backend TEMPLATE_DESCRIPTORS) ──────
+const RAW_SQL = 'RAW_SQL';
+
+const DELTA_OPERATIONS: Array<{ value: string; label: string }> = [
+  { value: 'LEFT_MINUS_RIGHT', label: 'Left − Right' },
+  { value: 'ABS_DIFF',         label: '|Left − Right|' },
+  { value: 'RATIO',            label: 'Left ÷ Right' },
+  { value: 'PERCENT_GAP',      label: '(Left − Right) ÷ Right × 100' },
+];
+
+const EXECUTION_MODES: Array<{ value: string; label: string; note: string }> = [
+  { value: 'TEMPLATE_BOUNDED_SCAN', label: 'Bounded scan (default)', note: 'Re-scans bounded data every refresh cycle.' },
+  { value: 'FLINK_MANAGED_JOB',     label: 'Flink managed job (planned)', note: 'Continuous execution — planned; previews use a bounded scan for now.' },
+];
 
 // ── Type visual config ─────────────────────────────────────────────────────
 const TYPE_META: Record<string, { color: string; bg: string; border: string; icon: string; badge: string }> = {
@@ -63,32 +90,21 @@ const TYPE_EXAMPLES: Array<{
   {
     type: 'HISTOGRAM',
     title: 'Payload Size Distribution',
-    description: 'Distributes observations into buckets (le label) → Prometheus _bucket/_count/_sum.',
+    description: 'One row = one observation. The engine auto-buckets metric_value → Prometheus _bucket/_count/_sum.',
     sql: t =>
-      `SELECT COUNT(*) AS metric_value,\n` +
-      `  CASE\n` +
-      `    WHEN LENGTH(value) <= 256  THEN '256'\n` +
-      `    WHEN LENGTH(value) <= 1024 THEN '1024'\n` +
-      `    WHEN LENGTH(value) <= 4096 THEN '4096'\n` +
-      `    ELSE '+Inf'\n` +
-      `  END AS le\n` +
+      `SELECT CAST(LENGTH(value) AS DOUBLE) AS metric_value\n` +
       `FROM ${t}\n` +
-      `GROUP BY CASE\n` +
-      `  WHEN LENGTH(value) <= 256  THEN '256'\n` +
-      `  WHEN LENGTH(value) <= 1024 THEN '1024'\n` +
-      `  WHEN LENGTH(value) <= 4096 THEN '4096'\n` +
-      `  ELSE '+Inf'\n` +
-      `END`,
+      `-- one row per event; the engine auto-buckets the observed values`,
     warn: null, crit: null,
   },
   {
     type: 'SUMMARY',
     title: 'Value Quantiles',
-    description: 'Micrometer computes P50/P75/P90/P95/P99 from recorded observations.',
+    description: 'One row = one observation. Micrometer computes P50/P75/P90/P95/P99 from them.',
     sql: t =>
-      `SELECT AVG(CAST(value AS DOUBLE)) AS metric_value\n` +
+      `SELECT CAST(value AS DOUBLE) AS metric_value\n` +
       `FROM ${t}\n` +
-      `-- Replace AVG(CAST(value AS DOUBLE)) with your numeric column`,
+      `-- one row per event; replace value with your numeric column`,
     warn: null, crit: null,
   },
 ];
@@ -115,11 +131,22 @@ function validateMetricSql(sql: string, type: string): ValidationMsg[] {
   if (!/\bFROM\b/i.test(stripped))
     msgs.push({ level: 'error', text: 'SQL must include a FROM clause.' });
 
-  if (!/\b(COUNT|SUM|AVG|MAX|MIN)\s*\(/i.test(stripped))
-    msgs.push({ level: 'warning', text: 'No aggregate function found (COUNT, SUM, AVG, MAX, MIN). The query should return a single numeric value.' });
+  const hasAggregate = /\b(COUNT|SUM|AVG|MAX|MIN)\s*\(/i.test(stripped);
+  const hasGroupBy   = /\bGROUP\s+BY\b/i.test(stripped);
+  const isDistribution = type === 'HISTOGRAM' || type === 'SUMMARY';
 
-  if (type === 'HISTOGRAM' && !/\bAS\s+le\b/i.test(stripped))
-    msgs.push({ level: 'info', text: 'HISTOGRAM works best with a le bucket column (… AS le) and GROUP BY.' });
+  if (isDistribution) {
+    // HISTOGRAM/SUMMARY record ONE observation per returned row. A bare aggregate collapses to a
+    // single row, giving a degenerate distribution — the query should return the raw values.
+    if (hasAggregate && !hasGroupBy)
+      msgs.push({ level: 'warning', text: `${type} records one observation per row. A bare aggregate (AVG/SUM/COUNT/…) collapses to a single row → a degenerate distribution. Select the raw numeric column instead — e.g. SELECT amount AS metric_value FROM …` });
+    if (type === 'HISTOGRAM' && /\bAS\s+le\b/i.test(stripped))
+      msgs.push({ level: 'info', text: 'An "le" column is exported as an ordinary label, not a native Prometheus bucket boundary — the engine auto-buckets metric_value itself.' });
+  } else {
+    // GAUGE / COUNTER expose a single point-in-time / cumulative numeric value.
+    if (!hasAggregate)
+      msgs.push({ level: 'warning', text: 'No aggregate function found (COUNT, SUM, AVG, MAX, MIN). GAUGE/COUNTER should return a single numeric value.' });
+  }
 
   return msgs;
 }
@@ -152,6 +179,29 @@ function validateThresholds(warn: number | null, crit: number | null): Validatio
   if (warn !== null && crit !== null && warn >= crit)
     return [{ level: 'error', text: 'Warning threshold must be strictly less than the Critical threshold.' }];
   return [];
+}
+
+function paramStr(params: Record<string, unknown>, key: string): string {
+  const v = params[key];
+  return v == null ? '' : String(v);
+}
+
+// Front-end mirror of the backend template validation (MetricService.validateMetric).
+function validateTemplate(templateType: string, metricType: string,
+                          params: Record<string, unknown>): ValidationMsg[] {
+  const msgs: ValidationMsg[] = [];
+  if (templateType === 'TOPIC_COUNT_DELTA') {
+    if (!paramStr(params, 'leftSql').trim())  msgs.push({ level: 'error', text: 'Left query (leftSql) is required.' });
+    if (!paramStr(params, 'rightSql').trim()) msgs.push({ level: 'error', text: 'Right query (rightSql) is required.' });
+    if (metricType !== 'GAUGE')               msgs.push({ level: 'error', text: 'Topic Count Delta supports GAUGE metrics only.' });
+  } else if (templateType === 'TOPIC_TRANSIT_LATENCY') {
+    if (!paramStr(params, 'sourceSql').trim()) msgs.push({ level: 'error', text: 'Source query (sourceSql) is required.' });
+    if (!paramStr(params, 'targetSql').trim()) msgs.push({ level: 'error', text: 'Target query (targetSql) is required.' });
+    if (!['GAUGE', 'HISTOGRAM', 'SUMMARY'].includes(metricType))
+      msgs.push({ level: 'error', text: 'Topic Transit Latency supports GAUGE, HISTOGRAM or SUMMARY.' });
+    msgs.push({ level: 'info', text: 'Both queries must return match_key and event_time columns (event_time as ISO-8601 or epoch).' });
+  }
+  return msgs;
 }
 
 // ── Inline validation hint list ───────────────────────────────────────────
@@ -245,56 +295,19 @@ function getSqlTemplates(table: string) {
       ],
     },
     {
-      group: 'HISTOGRAM — bucket distribution',
+      group: 'HISTOGRAM — value distribution',
       color: 'text-violet-400',
       items: [
-        {
-          label: 'Amount buckets (le)',
-          sql:
-            `SELECT COUNT(*) AS metric_value,\n` +
-            `  CASE\n` +
-            `    WHEN amount <= 10  THEN '10'\n` +
-            `    WHEN amount <= 50  THEN '50'\n` +
-            `    WHEN amount <= 100 THEN '100'\n` +
-            `    WHEN amount <= 500 THEN '500'\n` +
-            `    ELSE '+Inf'\n` +
-            `  END AS le\n` +
-            `FROM ${table}\n` +
-            `GROUP BY CASE\n` +
-            `  WHEN amount <= 10  THEN '10'\n` +
-            `  WHEN amount <= 50  THEN '50'\n` +
-            `  WHEN amount <= 100 THEN '100'\n` +
-            `  WHEN amount <= 500 THEN '500'\n` +
-            `  ELSE '+Inf'\n` +
-            `END`,
-        },
-        {
-          label: 'Payload size (le)',
-          sql:
-            `SELECT COUNT(*) AS metric_value,\n` +
-            `  CASE\n` +
-            `    WHEN LENGTH(value) <= 256  THEN '256'\n` +
-            `    WHEN LENGTH(value) <= 1024 THEN '1024'\n` +
-            `    WHEN LENGTH(value) <= 4096 THEN '4096'\n` +
-            `    ELSE '+Inf'\n` +
-            `  END AS le\n` +
-            `FROM ${table}\n` +
-            `GROUP BY CASE\n` +
-            `  WHEN LENGTH(value) <= 256  THEN '256'\n` +
-            `  WHEN LENGTH(value) <= 1024 THEN '1024'\n` +
-            `  WHEN LENGTH(value) <= 4096 THEN '4096'\n` +
-            `  ELSE '+Inf'\n` +
-            `END`,
-        },
+        { label: 'Amount observations',  sql: `SELECT CAST(amount AS DOUBLE) AS metric_value\nFROM ${table}\n-- one row per event → engine auto-buckets the values` },
+        { label: 'Payload size',         sql: `SELECT CAST(LENGTH(value) AS DOUBLE) AS metric_value\nFROM ${table}\n-- one row per event → engine auto-buckets the values` },
       ],
     },
     {
       group: 'SUMMARY — quantile observations',
       color: 'text-amber-400',
       items: [
-        { label: 'Amount P50/P95/P99',    sql: `SELECT AVG(amount) AS metric_value\nFROM ${table}\n-- Micrometer records each value and computes P50/P75/P90/P95/P99` },
-        { label: 'Error rate %',          sql: `SELECT\n  COUNT(CASE WHEN status = 'ERROR' THEN 1 END)\n  * 100.0 / NULLIF(COUNT(*), 0)\n  AS metric_value\nFROM ${table}` },
-        { label: 'Windowed avg (1 min)',  sql: `SELECT AVG(amount) AS metric_value\nFROM TABLE(\n  TUMBLE(TABLE ${table},\n    DESCRIPTOR(ts),\n    INTERVAL '1' MINUTE)\n)\nGROUP BY window_start, window_end` },
+        { label: 'Amount observations',  sql: `SELECT CAST(amount AS DOUBLE) AS metric_value\nFROM ${table}\n-- one row per event → Micrometer computes P50/P75/P90/P95/P99` },
+        { label: 'Latency observations', sql: `SELECT CAST(latency_ms AS DOUBLE) AS metric_value\nFROM ${table}\n-- one row per event; replace latency_ms with your numeric column` },
       ],
     },
   ];
@@ -496,6 +509,93 @@ const MetricCard: React.FC<{
   );
 };
 
+// ── Template parameter editor (shown in place of the raw SQL editor) ─────────
+const ParamSql: React.FC<{
+  label: string; hint?: string; value: string; placeholder: string;
+  onChange: (v: string) => void;
+}> = ({ label, hint, value, placeholder, onChange }) => (
+  <div className="space-y-1.5">
+    <label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">{label}</label>
+    {hint && <p className="text-[10px] text-slate-600 leading-relaxed">{hint}</p>}
+    <textarea value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} rows={4} spellCheck={false}
+      className="w-full bg-primary/5 border border-primary/20 rounded-lg px-3 py-2 text-[12px] font-mono text-slate-100 placeholder:text-slate-600 focus:ring-1 focus:ring-primary outline-none resize-y" />
+  </div>
+);
+
+const ParamText: React.FC<{
+  label: string; value: string; placeholder: string; onChange: (v: string) => void;
+}> = ({ label, value, placeholder, onChange }) => (
+  <div className="space-y-1.5">
+    <label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">{label}</label>
+    <input type="text" value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+      className="w-full bg-primary/5 border border-primary/20 rounded-lg px-3 py-2 text-[12px] font-mono text-slate-100 placeholder:text-slate-600 focus:ring-1 focus:ring-primary outline-none" />
+  </div>
+);
+
+const TemplateParamsEditor: React.FC<{
+  templateType: string;
+  params: Record<string, unknown>;
+  executionMode: string;
+  table: string;
+  setParam: (key: string, value: string) => void;
+  setExecutionMode: (mode: string) => void;
+}> = ({ templateType, params, executionMode, table, setParam, setExecutionMode }) => {
+  const p = (k: string) => paramStr(params, k);
+  return (
+    <div className="h-full overflow-y-auto p-5 space-y-4">
+      {templateType === 'TOPIC_COUNT_DELTA' ? (
+        <>
+          <ParamSql label="Left query — metric_value" value={p('leftSql')} onChange={v => setParam('leftSql', v)}
+            hint="Bounded query returning a single metric_value."
+            placeholder={`SELECT COUNT(*) AS metric_value\nFROM ${table}`} />
+          <ParamSql label="Right query — metric_value" value={p('rightSql')} onChange={v => setParam('rightSql', v)}
+            hint="Compared against the left query."
+            placeholder={`SELECT COUNT(*) AS metric_value\nFROM other_table`} />
+          <div className="space-y-1.5">
+            <label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Operation</label>
+            <select value={p('operation') || 'LEFT_MINUS_RIGHT'} onChange={e => setParam('operation', e.target.value)}
+              className="w-full bg-background-dark border border-primary/20 rounded-lg px-3 py-2 text-sm text-slate-100 focus:ring-1 focus:ring-primary outline-none">
+              {DELTA_OPERATIONS.map(o => (
+                <option key={o.value} value={o.value} className="bg-[#102222] text-slate-100">{o.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <ParamText label="Left topic (label)"  value={p('leftTopic')}  onChange={v => setParam('leftTopic', v)}  placeholder="optional" />
+            <ParamText label="Right topic (label)" value={p('rightTopic')} onChange={v => setParam('rightTopic', v)} placeholder="optional" />
+          </div>
+        </>
+      ) : (
+        <>
+          <ParamSql label="Source query — match_key, event_time" value={p('sourceSql')} onChange={v => setParam('sourceSql', v)}
+            hint="Emit one row per source event with a match_key and an event_time (ISO-8601 or epoch)."
+            placeholder={`SELECT order_id AS match_key,\n       created_at AS event_time\nFROM ${table}`} />
+          <ParamSql label="Target query — match_key, event_time" value={p('targetSql')} onChange={v => setParam('targetSql', v)}
+            hint="Downstream events, matched on match_key; latency = target − source."
+            placeholder={`SELECT order_id AS match_key,\n       processed_at AS event_time\nFROM target_table`} />
+          <div className="grid grid-cols-2 gap-3">
+            <ParamText label="Source topic (label)" value={p('sourceTopic')} onChange={v => setParam('sourceTopic', v)} placeholder="optional" />
+            <ParamText label="Target topic (label)" value={p('targetTopic')} onChange={v => setParam('targetTopic', v)} placeholder="optional" />
+          </div>
+        </>
+      )}
+
+      <div className="space-y-1.5 border-t border-primary/10 pt-4">
+        <label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Execution Mode</label>
+        <select value={executionMode || 'TEMPLATE_BOUNDED_SCAN'} onChange={e => setExecutionMode(e.target.value)}
+          className="w-full bg-background-dark border border-primary/20 rounded-lg px-3 py-2 text-sm text-slate-100 focus:ring-1 focus:ring-primary outline-none">
+          {EXECUTION_MODES.map(m => (
+            <option key={m.value} value={m.value} className="bg-[#102222] text-slate-100">{m.label}</option>
+          ))}
+        </select>
+        <p className="text-[10px] text-slate-600">
+          {EXECUTION_MODES.find(m => m.value === (executionMode || 'TEMPLATE_BOUNDED_SCAN'))?.note}
+        </p>
+      </div>
+    </div>
+  );
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 const EMPTY_METRIC: Partial<MetricConfig> = {
@@ -506,6 +606,9 @@ const EMPTY_METRIC: Partial<MetricConfig> = {
   createTableSql: '',
   labelTopic: '',
   labelFields: [],
+  templateType: RAW_SQL,
+  templateParams: {},
+  executionMode: 'SQL',
 };
 
 const Metrics: React.FC = () => {
@@ -522,7 +625,8 @@ const Metrics: React.FC = () => {
   const [editorTab, setEditorTab]       = useState<'metric' | 'ddl'>('metric');
   const [saving, setSaving]             = useState(false);
   const [previewing, setPreviewing]     = useState(false);
-  const [previewResult, setPreviewResult] = useState<{ value?: unknown; rows?: unknown[]; error?: string } | null>(null);
+  const [previewResult, setPreviewResult] = useState<{ value?: unknown; rows?: unknown[]; error?: string; summary?: Record<string, unknown> } | null>(null);
+  const [templates, setTemplates]       = useState<MetricTemplateDescriptor[]>([]);
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
   const [filterType, setFilterType]     = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
@@ -550,6 +654,7 @@ const Metrics: React.FC = () => {
     axios.get<{ bootstrapServers: string }>('/api/config').then(r => {
       if (r.data.bootstrapServers) setBootstrapServers(r.data.bootstrapServers);
     }).catch(() => {});
+    axios.get<MetricTemplateDescriptor[]>('/api/metrics/templates').then(r => setTemplates(r.data)).catch(() => {});
     const iv = setInterval(fetchMetrics, 15000);
     return () => clearInterval(iv);
   }, []);
@@ -581,6 +686,14 @@ const Metrics: React.FC = () => {
       cancelled = true;
     };
   }, [isModalOpen, selectedTopic]);
+
+  // U9 — close the modal on Escape.
+  useEffect(() => {
+    if (!isModalOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setIsModalOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isModalOpen]);
 
   // SQL autocomplete
   useEffect(() => {
@@ -653,7 +766,9 @@ const Metrics: React.FC = () => {
     setEditingMetric(m => ({
       ...m,
       name: nameIsAuto ? buildAutoName(m.type ?? 'GAUGE', topic) : m.name,
-      sql: m.sql ? m.sql.replace(new RegExp(`\\b${oldTable}\\b`, 'g'), newTable) : m.sql,
+      // Only rewrite the table where it is actually referenced (FROM/JOIN/TABLE …), never inside
+      // column names or string literals that happen to match the old table token.
+      sql: m.sql ? m.sql.replace(new RegExp(`\\b(FROM|JOIN|TABLE)\\s+${oldTable}\\b`, 'gi'), `$1 ${newTable}`) : m.sql,
       createTableSql: topic ? buildDdlTemplate(topic, bootstrapServers) : (m.createTableSql ?? ''),
       labelTopic: topic,
       labelFields: m.labelTopic === topic ? (m.labelFields ?? []) : [],
@@ -677,23 +792,73 @@ const Metrics: React.FC = () => {
   const selectedLabelFields = editingMetric.labelFields ?? [];
   const availableLabelFields = Object.entries(labelPreview?.fields ?? {});
 
+  // ── Template mode ─────────────────────────────────────────────────────────
+  const templateType = editingMetric.templateType ?? RAW_SQL;
+  const isTemplate   = templateType !== RAW_SQL;
+  const templateParams = editingMetric.templateParams ?? {};
+  const currentDescriptor = templates.find(t => t.type === templateType);
+  const allowedTypes = isTemplate
+    ? (currentDescriptor?.supportedMetricTypes ?? ['GAUGE'])
+    : ['GAUGE', 'COUNTER', 'HISTOGRAM', 'SUMMARY'];
+
+  const setParam = (key: string, value: string) =>
+    setEditingMetric(m => ({ ...m, templateParams: { ...(m.templateParams ?? {}), [key]: value } }));
+
+  const setExecutionMode = (mode: string) =>
+    setEditingMetric(m => ({ ...m, executionMode: mode }));
+
+  const onTemplateTypeChange = (tt: string) => {
+    setPreviewResult(null);
+    setEditingMetric(m => {
+      const desc = templates.find(t => t.type === tt);
+      const supported = desc?.supportedMetricTypes ?? ['GAUGE'];
+      const nextType = tt !== RAW_SQL && !supported.includes(m.type ?? 'GAUGE') ? supported[0] : (m.type ?? 'GAUGE');
+      return {
+        ...m,
+        templateType: tt,
+        type: nextType,
+        name: nameIsAuto ? buildAutoName(nextType, selectedTopic) : m.name,
+        executionMode: tt === RAW_SQL ? 'SQL'
+          : (m.executionMode && m.executionMode !== 'SQL' ? m.executionMode : 'TEMPLATE_BOUNDED_SCAN'),
+        templateParams: tt === RAW_SQL ? {} : (m.templateParams ?? {}),
+      };
+    });
+    if (tt !== RAW_SQL) setEditorTab('metric');
+  };
+
   // ── Live validation (derived, no state needed) ────────────────────────────
-  const nameValidation      = validateMetricName(editingMetric.name ?? '');
-  const sqlValidation       = validateMetricSql(editingMetric.sql ?? '', editingMetric.type ?? 'GAUGE');
+  const nameValidationBase  = validateMetricName(editingMetric.name ?? '');
+  // U10 — warn (non-blocking) when the name collides with a different existing metric: the
+  // metric_name Prometheus label would then be shared across two distinct series.
+  const nameCollision = (editingMetric.name ?? '').trim().length > 0
+    && metrics.some(m => m.name === editingMetric.name?.trim() && m.id !== editingMetric.id);
+  const nameValidation: ValidationMsg[] = nameCollision
+    ? [...nameValidationBase, { level: 'warning', text: 'Another metric already uses this name — the metric_name label will be shared across both series.' }]
+    : nameValidationBase;
+  const sqlValidation       = isTemplate ? [] : validateMetricSql(editingMetric.sql ?? '', editingMetric.type ?? 'GAUGE');
+  const templateValidation  = isTemplate ? validateTemplate(templateType, editingMetric.type ?? 'GAUGE', templateParams) : [];
   const ddlValidation       = validateDdlSql(editingMetric.createTableSql ?? '');
   const thresholdValidation = validateThresholds(
     editingMetric.warningThreshold ?? null,
     editingMetric.criticalThreshold ?? null,
   );
-  const hasBlockingErrors = [...nameValidation, ...sqlValidation, ...ddlValidation, ...thresholdValidation]
+  // U7 — thresholds on a COUNTER compare against an ever-growing cumulative total, so any
+  // threshold eventually trips. Surface this as a non-blocking warning.
+  const counterThresholdWarning: ValidationMsg[] =
+    (editingMetric.type === 'COUNTER'
+      && (editingMetric.warningThreshold !== null || editingMetric.criticalThreshold !== null))
+      ? [{ level: 'warning', text: 'Thresholds on a COUNTER compare against a cumulative total that only grows, so they will eventually always trip. Consider a GAUGE (e.g. a rate or point-in-time count) for alerting.' }]
+      : [];
+  const thresholdHints = [...thresholdValidation, ...counterThresholdWarning];
+  const hasBlockingErrors = [...nameValidation, ...sqlValidation, ...templateValidation, ...ddlValidation, ...thresholdValidation]
     .some(m => m.level === 'error');
 
   // ── Save ──────────────────────────────────────────────────────────────────
   const handleSave = async () => {
     if (!editingMetric.name?.trim()) { toast('Name is required', 'error'); return; }
-    if (!editingMetric.sql?.trim())  { toast('SQL is required', 'error'); return; }
+    if (!isTemplate && !editingMetric.sql?.trim()) { toast('SQL is required', 'error'); return; }
     if (hasBlockingErrors) {
-      const first = [...nameValidation, ...sqlValidation, ...ddlValidation, ...thresholdValidation].find(m => m.level === 'error');
+      const first = [...nameValidation, ...sqlValidation, ...templateValidation, ...ddlValidation, ...thresholdValidation].find(m => m.level === 'error');
       toast(first!.text, 'error');
       return;
     }
@@ -722,11 +887,15 @@ const Metrics: React.FC = () => {
   };
 
   const handlePreview = async () => {
-    if (!editingMetric.sql?.trim()) return;
+    if (!isTemplate && !editingMetric.sql?.trim()) return;
     setPreviewing(true);
     setPreviewResult(null);
     try {
-      const res = await axios.post<{ value?: unknown; rows?: unknown[]; error?: string }>('/api/metrics/preview', { sql: editingMetric.sql });
+      // Preview through the template endpoint so the attached CREATE TABLE DDL is executed first
+      // (mirrors the scheduled refresh) and the value is computed with the metric's real type
+      // (or template semantics — count delta, transit latency).
+      const res = await axios.post<{ value?: unknown; rows?: unknown[]; error?: string; summary?: Record<string, unknown> }>(
+        '/api/metrics/preview-template', editingMetric);
       setPreviewResult(res.data);
     } catch {
       setPreviewResult({ error: 'Preview request failed' });
@@ -738,9 +907,16 @@ const Metrics: React.FC = () => {
   const handleRefreshOne = async (id: string) => {
     setRefreshingId(id);
     try {
-      await new Promise(r => setTimeout(r, 800));
-      await fetchMetrics();
-      toast('Metric refreshed', 'success');
+      // Force an immediate server-side recompute of this metric (not just a list re-fetch).
+      const res = await axios.post<MetricConfig>(`/api/metrics/${id}/refresh`);
+      setMetrics(prev => prev.map(m => (m.id === id ? res.data : m)));
+      if (res.data.errorMessage) {
+        toast(`Refreshed with error: ${res.data.errorMessage}`, 'error');
+      } else {
+        toast('Metric refreshed', 'success');
+      }
+    } catch {
+      toast('Failed to refresh metric', 'error');
     } finally {
       setRefreshingId(null);
     }
@@ -862,7 +1038,7 @@ const Metrics: React.FC = () => {
               refreshing={refreshingId === metric.id}
             />
           )) : (
-            <div className="col-span-3 text-center py-12 text-slate-500 text-sm">
+            <div className="col-span-full text-center py-12 text-slate-500 text-sm">
               No metrics match the current filters.
             </div>
           )}
@@ -906,8 +1082,10 @@ const Metrics: React.FC = () => {
 
       {/* ── Modal ──────────────────────────────────────────────────────────── */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-background-dark border border-primary/20 rounded-2xl w-full max-w-5xl max-h-[92vh] overflow-hidden flex flex-col shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          role="dialog" aria-modal="true" onClick={() => setIsModalOpen(false)}>
+          <div className="bg-background-dark border border-primary/20 rounded-2xl w-full max-w-5xl max-h-[92vh] overflow-hidden flex flex-col shadow-2xl"
+            onClick={e => e.stopPropagation()}>
 
             {/* Modal header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-primary/10">
@@ -963,6 +1141,23 @@ const Metrics: React.FC = () => {
                   ))}
                 </div>
 
+                {/* Metric source / template */}
+                {templates.length > 0 && (
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Metric Source</label>
+                    <select value={templateType} onChange={e => onTemplateTypeChange(e.target.value)}
+                      className="w-full bg-background-dark border border-primary/20 rounded-lg px-3 py-2 text-sm text-slate-100 focus:ring-1 focus:ring-primary outline-none">
+                      <option value={RAW_SQL} className="bg-[#102222] text-slate-100">Raw SQL</option>
+                      {templates.map(t => (
+                        <option key={t.type} value={t.type} className="bg-[#102222] text-slate-100">{t.label}</option>
+                      ))}
+                    </select>
+                    {isTemplate && currentDescriptor && (
+                      <p className="text-[10px] text-slate-600 leading-relaxed">{currentDescriptor.description}</p>
+                    )}
+                  </div>
+                )}
+
                 {/* Type */}
                 <div className="space-y-1.5">
                   <label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Type</label>
@@ -976,14 +1171,18 @@ const Metrics: React.FC = () => {
                       }));
                     }}
                     className="w-full bg-background-dark border border-primary/20 rounded-lg px-3 py-2 text-sm text-slate-100 focus:ring-1 focus:ring-primary outline-none">
-                    <option value="GAUGE"     className="bg-[#102222] text-slate-100">GAUGE — point-in-time value</option>
-                    <option value="COUNTER"   className="bg-[#102222] text-slate-100">COUNTER — cumulative total</option>
-                    <option value="HISTOGRAM" className="bg-[#102222] text-slate-100">HISTOGRAM — bucket distribution</option>
-                    <option value="SUMMARY"   className="bg-[#102222] text-slate-100">SUMMARY — quantile observations</option>
+                    {[
+                      { value: 'GAUGE',     label: 'GAUGE — point-in-time value' },
+                      { value: 'COUNTER',   label: 'COUNTER — cumulative total' },
+                      { value: 'HISTOGRAM', label: 'HISTOGRAM — bucket distribution' },
+                      { value: 'SUMMARY',   label: 'SUMMARY — quantile observations' },
+                    ].filter(o => allowedTypes.includes(o.value)).map(o => (
+                      <option key={o.value} value={o.value} className="bg-[#102222] text-slate-100">{o.label}</option>
+                    ))}
                   </select>
                   <p className="text-[10px] text-slate-600">
                     {{ GAUGE: '→ explorer_metric_gauge{…}', COUNTER: '→ explorer_metric_counter_total{…}',
-                       HISTOGRAM: '→ explorer_metric_histogram_bucket{le=…}', SUMMARY: '→ explorer_metric_summary{quantile=0.95,…}',
+                       HISTOGRAM: '→ explorer_metric_histogram_bucket{le=…} — auto-bucketed over metric_value', SUMMARY: '→ explorer_metric_summary{quantile=0.95,…}',
                     }[editingMetric.type ?? 'GAUGE']}
                   </p>
                 </div>
@@ -1126,7 +1325,7 @@ const Metrics: React.FC = () => {
                         }`} />
                     </div>
                   </div>
-                  {thresholdValidation.map((m, i) => (
+                  {thresholdHints.map((m, i) => (
                     <p key={i} className={`text-[10px] flex items-start gap-1 ${HINT_COLORS[m.level]}`}>
                       <span className="material-symbols-outlined text-[11px] shrink-0 mt-px">{HINT_ICONS[m.level]}</span>
                       {m.text}
@@ -1134,7 +1333,8 @@ const Metrics: React.FC = () => {
                   ))}
                 </div>
 
-                {/* SQL templates */}
+                {/* SQL templates (raw SQL mode only) */}
+                {!isTemplate && (
                 <div className="border-t border-primary/10 pt-4">
                   <p className="text-[10px] uppercase font-bold text-slate-500 tracking-wider mb-3">SQL Templates</p>
                   <div className="space-y-3">
@@ -1154,6 +1354,7 @@ const Metrics: React.FC = () => {
                     ))}
                   </div>
                 </div>
+                )}
               </div>
 
               {/* Right: tabbed editors */}
@@ -1171,7 +1372,7 @@ const Metrics: React.FC = () => {
                       {tab === 'metric' ? (
                         <span className="flex items-center gap-1.5">
                           <span className="material-symbols-outlined text-sm">code</span>
-                          Metric SQL
+                          {isTemplate ? 'Parameters' : 'Metric SQL'}
                         </span>
                       ) : (
                         <span className="flex items-center gap-1.5">
@@ -1186,7 +1387,7 @@ const Metrics: React.FC = () => {
                   ))}
 
                   {editorTab === 'metric' && (
-                    <button onClick={handlePreview} disabled={previewing || !editingMetric.sql?.trim()}
+                    <button onClick={handlePreview} disabled={previewing || (!isTemplate && !editingMetric.sql?.trim()) || hasBlockingErrors}
                       className="ml-auto flex items-center gap-1.5 px-3 py-1 bg-primary/10 border border-primary/20 text-primary rounded-lg text-xs font-bold hover:bg-primary/20 disabled:opacity-40 transition-all">
                       {previewing
                         ? <span className="material-symbols-outlined text-sm animate-spin">refresh</span>
@@ -1205,6 +1406,16 @@ const Metrics: React.FC = () => {
                 {/* Editor area */}
                 <div className="flex-1 overflow-hidden">
                   {editorTab === 'metric' ? (
+                    isTemplate ? (
+                      <TemplateParamsEditor
+                        templateType={templateType}
+                        params={templateParams}
+                        executionMode={editingMetric.executionMode ?? 'TEMPLATE_BOUNDED_SCAN'}
+                        table={tableName}
+                        setParam={(k, v) => { setParam(k, v); setPreviewResult(null); }}
+                        setExecutionMode={setExecutionMode}
+                      />
+                    ) : (
                     <Editor height="100%" defaultLanguage="sql" theme="vs-dark"
                       value={editingMetric.sql ?? ''}
                       onChange={val => { setEditingMetric(m => ({ ...m, sql: val ?? '' })); setPreviewResult(null); }}
@@ -1212,6 +1423,7 @@ const Metrics: React.FC = () => {
                         lineNumbers: 'on', scrollBeyondLastLine: false, padding: { top: 12, bottom: 12 },
                         wordWrap: 'on', suggest: { showKeywords: true } }}
                     />
+                    )
                   ) : (
                     <Editor height="100%" defaultLanguage="sql" theme="vs-dark"
                       value={editingMetric.createTableSql ?? ''}
@@ -1223,8 +1435,8 @@ const Metrics: React.FC = () => {
                   )}
                 </div>
 
-                {/* SQL validation hints (metric tab only) */}
-                {editorTab === 'metric' && <ValidationHints messages={sqlValidation} />}
+                {/* SQL / template validation hints (metric tab only) */}
+                {editorTab === 'metric' && <ValidationHints messages={isTemplate ? templateValidation : sqlValidation} />}
 
                 {/* DDL validation hints */}
                 {editorTab === 'ddl' && <ValidationHints messages={ddlValidation} />}
@@ -1242,13 +1454,24 @@ const Metrics: React.FC = () => {
                         {previewResult.error}
                       </span>
                     ) : (
-                      <span className="flex items-center gap-2">
-                        <span className="material-symbols-outlined text-sm">check_circle</span>
-                        metric_value = <strong>{String(previewResult.value)}</strong>
-                        {Array.isArray(previewResult.rows) && previewResult.rows.length > 1 && (
-                          <span className="text-emerald-600 ml-2">({previewResult.rows.length} rows total)</span>
+                      <div className="space-y-1.5">
+                        <span className="flex items-center gap-2">
+                          <span className="material-symbols-outlined text-sm">check_circle</span>
+                          {isTemplate ? 'value' : 'metric_value'} = <strong>{String(previewResult.value)}</strong>
+                          {Array.isArray(previewResult.rows) && previewResult.rows.length > 1 && (
+                            <span className="text-emerald-600 ml-2">({previewResult.rows.length} rows total)</span>
+                          )}
+                        </span>
+                        {previewResult.summary && Object.keys(previewResult.summary).length > 0 && (
+                          <div className="flex flex-wrap gap-1.5 pt-0.5">
+                            {Object.entries(previewResult.summary).map(([k, v]) => (
+                              <span key={k} className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 text-[10px]">
+                                {k}: <strong>{String(v)}</strong>
+                              </span>
+                            ))}
+                          </div>
                         )}
-                      </span>
+                      </div>
                     )}
                   </div>
                 )}

@@ -7,6 +7,7 @@ import com.yourcompany.kafkasqlexplorer.domain.MetricLabelPreview;
 import com.yourcompany.kafkasqlexplorer.domain.MetricPreviewResult;
 import com.yourcompany.kafkasqlexplorer.domain.MetricTemplateDescriptor;
 import com.yourcompany.kafkasqlexplorer.domain.QueryRequest;
+import com.yourcompany.kafkasqlexplorer.service.DdlGeneratorService;
 import com.yourcompany.kafkasqlexplorer.service.FlinkSqlService;
 import com.yourcompany.kafkasqlexplorer.service.KafkaAdminService;
 import com.yourcompany.kafkasqlexplorer.service.MessageFieldExtractorService;
@@ -43,7 +44,23 @@ public class MetricController {
 
     @GetMapping
     public List<MetricConfig> list() {
-        return metricService.getAllMetrics();
+        return metricService.getAllMetrics().stream().map(this::maskForDisplay).toList();
+    }
+
+    /**
+     * Redacts credentials embedded in a metric's CREATE TABLE DDL before it reaches the browser.
+     * The service keeps the unmasked DDL internally for Flink registration; save() restores any
+     * secrets the UI echoes back masked.
+     */
+    private MetricConfig maskForDisplay(MetricConfig m) {
+        if (m.createTableSql() == null) return m;
+        String masked = DdlGeneratorService.maskSensitiveProperties(m.createTableSql());
+        if (masked.equals(m.createTableSql())) return m;   // nothing sensitive to hide
+        return new MetricConfig(
+            m.id(), m.name(), m.type(), m.sql(), m.description(),
+            m.warningThreshold(), m.criticalThreshold(), m.lastValue(), m.lastUpdateTime(),
+            m.errorMessage(), m.history(), m.lastSummary(), masked, m.templateType(),
+            m.templateParams(), m.executionMode(), m.labelTopic(), m.labelFields());
     }
 
     @GetMapping("/metadata")
@@ -69,6 +86,15 @@ public class MetricController {
     @DeleteMapping("/{id}")
     public void delete(@PathVariable String id) {
         metricService.delete(id);
+    }
+
+    /** Recompute a single metric immediately and return its refreshed (credential-masked) state. */
+    @PostMapping("/{id}/refresh")
+    public ResponseEntity<MetricConfig> refresh(@PathVariable String id) {
+        return metricService.refreshMetric(id)
+            .map(this::maskForDisplay)
+            .map(ResponseEntity::ok)
+            .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
     @GetMapping("/templates")

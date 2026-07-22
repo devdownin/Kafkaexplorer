@@ -9,8 +9,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @Service
@@ -45,6 +48,49 @@ public class DdlGeneratorService {
     public static String maskSensitiveProperties(String ddl) {
         if (ddl == null) return null;
         return SENSITIVE_PROP_PATTERN.matcher(ddl).replaceAll("$1'******'");
+    }
+
+    /** Key/value split of a sensitive property: group(1) = key, group(2) = value (quotes stripped). */
+    private static final Pattern SENSITIVE_KV_PATTERN = Pattern.compile(
+        "(?i)'([^']*(?:password|secret|sasl\\.jaas\\.config)[^']*)'\\s*=\\s*'([^']*)'");
+
+    private static final String MASK = "******";
+
+    /**
+     * Restores masked credential values in an edited DDL from the stored original. The UI only
+     * ever receives DDL with credentials masked ({@link #maskSensitiveProperties}); when it sends
+     * that DDL back on save, each {@code '******'} sensitive value is replaced with the real value
+     * carried by the same property key in {@code storedDdl}. Non-sensitive edits in
+     * {@code editedDdl} are preserved, and secrets the user did not retype are not lost. A masked
+     * value with no stored counterpart is left as-is (Flink registration then fails loudly rather
+     * than silently persisting a redacted secret).
+     */
+    public static String restoreMaskedProperties(String editedDdl, String storedDdl) {
+        if (editedDdl == null || storedDdl == null || !editedDdl.contains(MASK)) {
+            return editedDdl;
+        }
+        Map<String, String> realValues = new HashMap<>();
+        Matcher stored = SENSITIVE_KV_PATTERN.matcher(storedDdl);
+        while (stored.find()) {
+            realValues.put(stored.group(1).toLowerCase(Locale.ROOT), stored.group(2));
+        }
+
+        Matcher edited = SENSITIVE_KV_PATTERN.matcher(editedDdl);
+        StringBuilder out = new StringBuilder();
+        while (edited.find()) {
+            String match = edited.group(0);
+            if (MASK.equals(edited.group(2))) {
+                String real = realValues.get(edited.group(1).toLowerCase(Locale.ROOT));
+                if (real != null) {
+                    // The match ends with '******'; swap only the value token, keeping key + spacing.
+                    match = match.substring(0, match.length() - ("'" + MASK + "'").length())
+                        + "'" + real + "'";
+                }
+            }
+            edited.appendReplacement(out, Matcher.quoteReplacement(match));
+        }
+        edited.appendTail(out);
+        return out.toString();
     }
 
     /**
