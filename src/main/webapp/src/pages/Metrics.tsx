@@ -545,6 +545,14 @@ const Metrics: React.FC = () => {
     };
   }, [isModalOpen, selectedTopic]);
 
+  // U9 — close the modal on Escape.
+  useEffect(() => {
+    if (!isModalOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setIsModalOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isModalOpen]);
+
   // SQL autocomplete
   useEffect(() => {
     if (!monaco) return;
@@ -616,7 +624,9 @@ const Metrics: React.FC = () => {
     setEditingMetric(m => ({
       ...m,
       name: nameIsAuto ? buildAutoName(m.type ?? 'GAUGE', topic) : m.name,
-      sql: m.sql ? m.sql.replace(new RegExp(`\\b${oldTable}\\b`, 'g'), newTable) : m.sql,
+      // Only rewrite the table where it is actually referenced (FROM/JOIN/TABLE …), never inside
+      // column names or string literals that happen to match the old table token.
+      sql: m.sql ? m.sql.replace(new RegExp(`\\b(FROM|JOIN|TABLE)\\s+${oldTable}\\b`, 'gi'), `$1 ${newTable}`) : m.sql,
       createTableSql: topic ? buildDdlTemplate(topic, bootstrapServers) : (m.createTableSql ?? ''),
       labelTopic: topic,
       labelFields: m.labelTopic === topic ? (m.labelFields ?? []) : [],
@@ -641,13 +651,28 @@ const Metrics: React.FC = () => {
   const availableLabelFields = Object.entries(labelPreview?.fields ?? {});
 
   // ── Live validation (derived, no state needed) ────────────────────────────
-  const nameValidation      = validateMetricName(editingMetric.name ?? '');
+  const nameValidationBase  = validateMetricName(editingMetric.name ?? '');
+  // U10 — warn (non-blocking) when the name collides with a different existing metric: the
+  // metric_name Prometheus label would then be shared across two distinct series.
+  const nameCollision = (editingMetric.name ?? '').trim().length > 0
+    && metrics.some(m => m.name === editingMetric.name?.trim() && m.id !== editingMetric.id);
+  const nameValidation: ValidationMsg[] = nameCollision
+    ? [...nameValidationBase, { level: 'warning', text: 'Another metric already uses this name — the metric_name label will be shared across both series.' }]
+    : nameValidationBase;
   const sqlValidation       = validateMetricSql(editingMetric.sql ?? '', editingMetric.type ?? 'GAUGE');
   const ddlValidation       = validateDdlSql(editingMetric.createTableSql ?? '');
   const thresholdValidation = validateThresholds(
     editingMetric.warningThreshold ?? null,
     editingMetric.criticalThreshold ?? null,
   );
+  // U7 — thresholds on a COUNTER compare against an ever-growing cumulative total, so any
+  // threshold eventually trips. Surface this as a non-blocking warning.
+  const counterThresholdWarning: ValidationMsg[] =
+    (editingMetric.type === 'COUNTER'
+      && (editingMetric.warningThreshold !== null || editingMetric.criticalThreshold !== null))
+      ? [{ level: 'warning', text: 'Thresholds on a COUNTER compare against a cumulative total that only grows, so they will eventually always trip. Consider a GAUGE (e.g. a rate or point-in-time count) for alerting.' }]
+      : [];
+  const thresholdHints = [...thresholdValidation, ...counterThresholdWarning];
   const hasBlockingErrors = [...nameValidation, ...sqlValidation, ...ddlValidation, ...thresholdValidation]
     .some(m => m.level === 'error');
 
@@ -835,7 +860,7 @@ const Metrics: React.FC = () => {
               refreshing={refreshingId === metric.id}
             />
           )) : (
-            <div className="col-span-3 text-center py-12 text-slate-500 text-sm">
+            <div className="col-span-full text-center py-12 text-slate-500 text-sm">
               No metrics match the current filters.
             </div>
           )}
@@ -879,8 +904,10 @@ const Metrics: React.FC = () => {
 
       {/* ── Modal ──────────────────────────────────────────────────────────── */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-background-dark border border-primary/20 rounded-2xl w-full max-w-5xl max-h-[92vh] overflow-hidden flex flex-col shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          role="dialog" aria-modal="true" onClick={() => setIsModalOpen(false)}>
+          <div className="bg-background-dark border border-primary/20 rounded-2xl w-full max-w-5xl max-h-[92vh] overflow-hidden flex flex-col shadow-2xl"
+            onClick={e => e.stopPropagation()}>
 
             {/* Modal header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-primary/10">
@@ -1099,7 +1126,7 @@ const Metrics: React.FC = () => {
                         }`} />
                     </div>
                   </div>
-                  {thresholdValidation.map((m, i) => (
+                  {thresholdHints.map((m, i) => (
                     <p key={i} className={`text-[10px] flex items-start gap-1 ${HINT_COLORS[m.level]}`}>
                       <span className="material-symbols-outlined text-[11px] shrink-0 mt-px">{HINT_ICONS[m.level]}</span>
                       {m.text}
@@ -1159,7 +1186,7 @@ const Metrics: React.FC = () => {
                   ))}
 
                   {editorTab === 'metric' && (
-                    <button onClick={handlePreview} disabled={previewing || !editingMetric.sql?.trim()}
+                    <button onClick={handlePreview} disabled={previewing || !editingMetric.sql?.trim() || hasBlockingErrors}
                       className="ml-auto flex items-center gap-1.5 px-3 py-1 bg-primary/10 border border-primary/20 text-primary rounded-lg text-xs font-bold hover:bg-primary/20 disabled:opacity-40 transition-all">
                       {previewing
                         ? <span className="material-symbols-outlined text-sm animate-spin">refresh</span>
