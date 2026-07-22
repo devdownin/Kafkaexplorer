@@ -439,7 +439,7 @@ const ProcessMining: React.FC = () => {
                   : 'This page also supports lightweight open-source models through Ollama or any OpenAI-compatible endpoint.'}
               </p>
               {llmInfo.llmBaseUrl && (
-                <p className="text-[11px] font-mono text-on-surface0 mt-2">{llmInfo.llmBaseUrl}</p>
+                <p className="text-[11px] font-mono text-on-surface-variant mt-2">{llmInfo.llmBaseUrl}</p>
               )}
             </div>
           </div>
@@ -558,7 +558,7 @@ const ProcessMining: React.FC = () => {
                     <h3 className="text-sm font-semibold text-on-surface flex items-center gap-2">
                       <span className="material-symbols-outlined text-base text-primary">fact_check</span>
                       Audit checklist
-                      <span className="text-xs font-normal text-on-surface0">(optional)</span>
+                      <span className="text-xs font-normal text-on-surface-variant">(optional)</span>
                     </h3>
                     <p className="text-xs text-on-surface-variant mt-0.5">
                       Pick the checks to focus the LLM on. None selected = general analysis.
@@ -604,7 +604,7 @@ const ProcessMining: React.FC = () => {
                           <div className="min-w-0">
                             <p className="text-xs font-semibold text-on-surface truncate">{t.name}</p>
                             <p className="text-[11px] text-on-surface-variant leading-snug mt-0.5">{t.description}</p>
-                            <span className="inline-block mt-1.5 text-[9px] uppercase tracking-wider font-bold text-on-surface0">
+                            <span className="inline-block mt-1.5 text-[9px] uppercase tracking-wider font-bold text-on-surface-variant">
                               {t.category.replace('_', ' ')}
                             </span>
                             {disabled && (
@@ -620,7 +620,7 @@ const ProcessMining: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-[10px] uppercase font-bold tracking-wider text-on-surface0 mb-1.5">
+                  <label className="block text-[10px] uppercase font-bold tracking-wider text-on-surface-variant mb-1.5">
                     Custom audit instruction
                   </label>
                   <textarea
@@ -684,7 +684,7 @@ const ProcessMining: React.FC = () => {
             <div className="border border-primary/20 rounded-xl overflow-hidden">
               <div className="px-4 py-2.5 border-b border-primary/10 bg-primary/5 flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-on-surface">Process Flowchart</h3>
-                <span className="text-xs text-on-surface0">Mermaid diagram</span>
+                <span className="text-xs text-on-surface-variant">Mermaid diagram</span>
               </div>
               <div className="p-4">
                 <MermaidRenderer
@@ -700,7 +700,7 @@ const ProcessMining: React.FC = () => {
             {/* Comments / Analysis narrative */}
             {(analysisMode === 'LIVE' ? liveComments : snapshotResult?.comments) && (
               <div className="border border-primary/20 rounded-xl p-4 bg-primary/5">
-                <h3 className="text-xs font-bold text-on-surface0 uppercase tracking-wider mb-2">
+                <h3 className="text-xs font-bold text-on-surface-variant uppercase tracking-wider mb-2">
                   Analysis Commentary
                 </h3>
                 <p className="text-sm text-on-surface leading-relaxed">
@@ -721,7 +721,7 @@ const ProcessMining: React.FC = () => {
                     <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary">
                       {sources.length}
                     </span>
-                    <span className="ml-auto text-[11px] text-on-surface0">SpectraLLM RAG</span>
+                    <span className="ml-auto text-[11px] text-on-surface-variant">SpectraLLM RAG</span>
                   </div>
                   <div className="p-4 space-y-2">
                     {sources.map((s, i) => (
@@ -731,7 +731,7 @@ const ProcessMining: React.FC = () => {
                             {s.sourceFile ?? 'unknown source'}
                           </span>
                           {s.score != null && (
-                            <span className="text-[10px] text-on-surface0 flex-shrink-0">
+                            <span className="text-[10px] text-on-surface-variant flex-shrink-0">
                               score {s.score.toFixed(3)}
                             </span>
                           )}
@@ -749,7 +749,7 @@ const ProcessMining: React.FC = () => {
               <>
                 {snapshotResult.hypotheses && snapshotResult.hypotheses.length > 0 && (
                   <div className="border border-primary/20 rounded-xl p-4">
-                    <h3 className="text-xs font-bold text-on-surface0 uppercase tracking-wider mb-3">
+                    <h3 className="text-xs font-bold text-on-surface-variant uppercase tracking-wider mb-3">
                       Hypotheses
                     </h3>
                     <ul className="space-y-1.5">

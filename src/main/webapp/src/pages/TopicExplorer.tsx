@@ -51,32 +51,32 @@ const JsonNode: React.FC<{
   ) : null;
 
   if (value === null) {
-    return <span>{keyEl && <>{keyEl}<span className="text-on-surface0">: </span></>}<span className="text-on-surface0 font-mono text-[11px]">null</span></span>;
+    return <span>{keyEl && <>{keyEl}<span className="text-on-surface-variant">: </span></>}<span className="text-on-surface-variant font-mono text-[11px]">null</span></span>;
   }
   if (typeof value === 'boolean') {
-    return <span>{keyEl && <>{keyEl}<span className="text-on-surface0">: </span></>}<span className="text-secondary font-mono text-[11px]">{String(value)}</span></span>;
+    return <span>{keyEl && <>{keyEl}<span className="text-on-surface-variant">: </span></>}<span className="text-secondary font-mono text-[11px]">{String(value)}</span></span>;
   }
   if (typeof value === 'number') {
-    return <span>{keyEl && <>{keyEl}<span className="text-on-surface0">: </span></>}<span className="text-success font-mono text-[11px]">{value}</span></span>;
+    return <span>{keyEl && <>{keyEl}<span className="text-on-surface-variant">: </span></>}<span className="text-success font-mono text-[11px]">{value}</span></span>;
   }
   if (typeof value === 'string') {
-    return <span>{keyEl && <>{keyEl}<span className="text-on-surface0">: </span></>}<span className="text-primary font-mono text-[11px]">"{value}"</span></span>;
+    return <span>{keyEl && <>{keyEl}<span className="text-on-surface-variant">: </span></>}<span className="text-primary font-mono text-[11px]">"{value}"</span></span>;
   }
   if (Array.isArray(value)) {
-    if (value.length === 0) return <span>{keyEl && <>{keyEl}<span className="text-on-surface0">: </span></>}<span className="text-on-surface-variant font-mono text-[11px]">[]</span></span>;
+    if (value.length === 0) return <span>{keyEl && <>{keyEl}<span className="text-on-surface-variant">: </span></>}<span className="text-on-surface-variant font-mono text-[11px]">[]</span></span>;
     return (
       <span>
-        {keyEl && <>{keyEl}<span className="text-on-surface0">: </span></>}
+        {keyEl && <>{keyEl}<span className="text-on-surface-variant">: </span></>}
         <span className="text-on-surface-variant font-mono text-[11px]">{'['}</span>
         <div>
           {value.slice(0, 3).map((item, i) => (
             <div key={i} className="font-mono text-[11px]">
               {indent + '  '}
               <JsonNode value={item} depth={depth + 1} />
-              {i < Math.min(value.length, 3) - 1 && <span className="text-on-surface0">,</span>}
+              {i < Math.min(value.length, 3) - 1 && <span className="text-on-surface-variant">,</span>}
             </div>
           ))}
-          {value.length > 3 && <div className="text-on-surface0 font-mono text-[11px]">{indent}  ... ({value.length} items)</div>}
+          {value.length > 3 && <div className="text-on-surface-variant font-mono text-[11px]">{indent}  ... ({value.length} items)</div>}
         </div>
         <span className="text-on-surface-variant font-mono text-[11px]">{indent}{']'}</span>
       </span>
@@ -84,10 +84,10 @@ const JsonNode: React.FC<{
   }
   if (typeof value === 'object') {
     const entries = Object.entries(value as Record<string, unknown>);
-    if (entries.length === 0) return <span>{keyEl && <>{keyEl}<span className="text-on-surface0">: </span></>}<span className="text-on-surface-variant font-mono text-[11px]">{'{}'}</span></span>;
+    if (entries.length === 0) return <span>{keyEl && <>{keyEl}<span className="text-on-surface-variant">: </span></>}<span className="text-on-surface-variant font-mono text-[11px]">{'{}'}</span></span>;
     return (
       <span>
-        {keyEl && <>{keyEl}<span className="text-on-surface0">: </span></>}
+        {keyEl && <>{keyEl}<span className="text-on-surface-variant">: </span></>}
         <span className="text-on-surface-variant font-mono text-[11px]">{'{'}</span>
         <div>
           {entries.map(([k, v], i) => {
@@ -103,7 +103,7 @@ const JsonNode: React.FC<{
                   onFieldClick={onFieldClick}
                   selectedFields={selectedFields}
                 />
-                {i < entries.length - 1 && <span className="text-on-surface0">,</span>}
+                {i < entries.length - 1 && <span className="text-on-surface-variant">,</span>}
               </div>
             );
           })}
@@ -164,20 +164,20 @@ const XmlViewer: React.FC<{
     if (isLeaf) {
       return (
         <div key={path} style={{ paddingLeft: `${indentPx}px` }} className="font-mono text-[11px]">
-          <span className="text-on-surface0">{'<'}</span>{tagBtn}<span className="text-on-surface0">{'>'}</span>
+          <span className="text-on-surface-variant">{'<'}</span>{tagBtn}<span className="text-on-surface-variant">{'>'}</span>
           <span className="text-on-surface">{el.textContent?.trim()}</span>
-          <span className="text-on-surface0">{`</${tag}>`}</span>
+          <span className="text-on-surface-variant">{`</${tag}>`}</span>
         </div>
       );
     }
 
     return (
       <div key={path} style={{ paddingLeft: `${indentPx}px` }} className="font-mono text-[11px]">
-        <span className="text-on-surface0">{'<'}</span>{tagBtn}<span className="text-on-surface0">{'>'}</span>
+        <span className="text-on-surface-variant">{'<'}</span>{tagBtn}<span className="text-on-surface-variant">{'>'}</span>
         {childEls.map((child, i) => (
           <React.Fragment key={i}>{renderElement(child, path, depth + 1)}</React.Fragment>
         ))}
-        <div style={{ paddingLeft: 0 }}><span className="text-on-surface0">{`</${tag}>`}</span></div>
+        <div style={{ paddingLeft: 0 }}><span className="text-on-surface-variant">{`</${tag}>`}</span></div>
       </div>
     );
   };
@@ -263,7 +263,7 @@ const SampleCard: React.FC<{
           {isXml && <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-success/10 text-success">XML</span>}
           <button
             onClick={() => onCopy(formatted)}
-            className="p-1.5 text-on-surface0 hover:text-primary hover:bg-primary/10 rounded transition-colors"
+            className="p-1.5 text-on-surface-variant hover:text-primary hover:bg-primary/10 rounded transition-colors"
             title="Copy"
           >
             <span className="material-symbols-outlined text-base">content_copy</span>
@@ -337,7 +337,7 @@ const TopicExplorer: React.FC = () => {
     <div className="p-6 max-w-7xl mx-auto space-y-6">
       {/* Header */}
       <div className="flex flex-col gap-3">
-        <Link to="/" className="flex items-center gap-1.5 text-[10px] font-bold text-on-surface0 hover:text-primary uppercase tracking-widest transition-colors w-fit">
+        <Link to="/" className="flex items-center gap-1.5 text-[10px] font-bold text-on-surface-variant hover:text-primary uppercase tracking-widest transition-colors w-fit">
           <span className="material-symbols-outlined text-sm">chevron_left</span> Dashboard
         </Link>
         <div className="flex items-center justify-between">
@@ -365,21 +365,21 @@ const TopicExplorer: React.FC = () => {
       {/* Stats */}
       <div className="grid grid-cols-3 gap-4">
         <div className="rounded-xl border border-primary/10 bg-primary/5 p-5">
-          <p className="text-[10px] font-bold text-on-surface0 uppercase tracking-widest mb-1">Partitions</p>
+          <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-1">Partitions</p>
           <p className="text-3xl font-bold text-on-surface">{data.topic.partitions}</p>
         </div>
         <div className="rounded-xl border border-primary/10 bg-primary/5 p-5">
-          <p className="text-[10px] font-bold text-on-surface0 uppercase tracking-widest mb-1">Messages (Approx)</p>
+          <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-1">Messages (Approx)</p>
           <p className="text-3xl font-bold text-primary">{data.topic.estimatedSize.toLocaleString()}</p>
         </div>
         <div className="rounded-xl border border-primary/10 bg-primary/5 p-5">
-          <p className="text-[10px] font-bold text-on-surface0 uppercase tracking-widest mb-1">Read Mode</p>
+          <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-1">Read Mode</p>
           <div className="flex gap-1 mt-1">
             {['earliest-offset', 'latest-offset'].map(mode => (
               <button
                 key={mode}
                 onClick={() => setReadMode(mode)}
-                className={`px-2 py-1 text-[10px] font-bold rounded transition-colors ${readMode === mode ? 'bg-primary/20 text-primary' : 'bg-surface-container text-on-surface0 hover:bg-surface-container-high'}`}
+                className={`px-2 py-1 text-[10px] font-bold rounded transition-colors ${readMode === mode ? 'bg-primary/20 text-primary' : 'bg-surface-container text-on-surface-variant hover:bg-surface-container-high'}`}
               >
                 {mode === 'earliest-offset' ? 'EARLIEST' : 'LATEST'}
               </button>
@@ -402,7 +402,7 @@ const TopicExplorer: React.FC = () => {
             className={`flex items-center gap-2 px-4 py-2.5 text-sm font-bold uppercase tracking-wider border-b-2 -mb-px transition-colors ${
               activeTab === tab.key
                 ? 'border-primary text-primary'
-                : 'border-transparent text-on-surface0 hover:text-on-surface'
+                : 'border-transparent text-on-surface-variant hover:text-on-surface'
             }`}
           >
             <span className="material-symbols-outlined text-base">{tab.icon}</span>
@@ -416,7 +416,7 @@ const TopicExplorer: React.FC = () => {
         <div className="space-y-3">
           <div className="flex items-center gap-3">
             <div className="flex-1 flex items-center gap-2 bg-primary/5 border border-primary/20 rounded-lg px-3 py-2">
-              <span className="material-symbols-outlined text-on-surface0 text-lg">search</span>
+              <span className="material-symbols-outlined text-on-surface-variant text-lg">search</span>
               <input
                 type="text"
                 value={sampleFilter}
@@ -425,12 +425,12 @@ const TopicExplorer: React.FC = () => {
                 className="flex-1 bg-transparent border-none focus:ring-0 text-sm text-on-surface placeholder:text-outline outline-none"
               />
               {sampleFilter && (
-                <button onClick={() => setSampleFilter('')} className="text-on-surface0 hover:text-on-surface">
+                <button onClick={() => setSampleFilter('')} className="text-on-surface-variant hover:text-on-surface">
                   <span className="material-symbols-outlined text-base">close</span>
                 </button>
               )}
             </div>
-            <span className="text-xs text-on-surface0 shrink-0">{filteredSamples.length} of {data.samples.length}</span>
+            <span className="text-xs text-on-surface-variant shrink-0">{filteredSamples.length} of {data.samples.length}</span>
           </div>
 
           {/* Field selection bar */}
@@ -452,7 +452,7 @@ const TopicExplorer: React.FC = () => {
               </div>
               <button
                 onClick={() => setSelectedFields([])}
-                className="text-[10px] text-on-surface0 hover:text-on-surface shrink-0"
+                className="text-[10px] text-on-surface-variant hover:text-on-surface shrink-0"
               >
                 Clear all
               </button>
@@ -486,10 +486,10 @@ const TopicExplorer: React.FC = () => {
       {activeTab === 'ddl' && (
         <div className="rounded-xl border border-primary/10 overflow-hidden">
           <div className="flex items-center justify-between px-4 py-2.5 border-b border-primary/10 bg-primary/5">
-            <span className="text-[10px] font-bold text-on-surface0 uppercase tracking-widest">Auto-Generated Definition</span>
+            <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Auto-Generated Definition</span>
             <button
               onClick={() => copyToClipboard(data.ddl)}
-              className="flex items-center gap-1.5 text-xs text-on-surface0 hover:text-primary transition-colors"
+              className="flex items-center gap-1.5 text-xs text-on-surface-variant hover:text-primary transition-colors"
             >
               <span className="material-symbols-outlined text-base">content_copy</span>
               Copy
@@ -512,7 +512,7 @@ const TopicExplorer: React.FC = () => {
         <div className="rounded-xl border border-primary/10 overflow-hidden">
           <table className="w-full text-sm">
             <thead>
-              <tr className="bg-primary/5 border-b border-primary/10 text-[10px] uppercase tracking-widest text-on-surface0">
+              <tr className="bg-primary/5 border-b border-primary/10 text-[10px] uppercase tracking-widest text-on-surface-variant">
                 <th className="text-left px-5 py-3">Partition</th>
                 <th className="text-right px-5 py-3">Start Offset</th>
                 <th className="text-right px-5 py-3">End Offset</th>
@@ -539,7 +539,7 @@ const TopicExplorer: React.FC = () => {
             </tbody>
             <tfoot>
               <tr className="bg-primary/5 border-t border-primary/10">
-                <td colSpan={3} className="px-5 py-2.5 text-[10px] font-bold text-on-surface0 uppercase tracking-widest">Total</td>
+                <td colSpan={3} className="px-5 py-2.5 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Total</td>
                 <td className="px-5 py-2.5 text-right font-mono font-bold text-primary text-sm">
                   {data.topic.estimatedSize.toLocaleString()}
                 </td>
@@ -555,8 +555,8 @@ const TopicExplorer: React.FC = () => {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-primary/5 border-b border-primary/10">
-                <th className="text-left px-5 py-3 text-[10px] font-bold text-on-surface0 uppercase tracking-widest">Field</th>
-                <th className="text-right px-5 py-3 text-[10px] font-bold text-on-surface0 uppercase tracking-widest">Type</th>
+                <th className="text-left px-5 py-3 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Field</th>
+                <th className="text-right px-5 py-3 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Type</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-primary/5">

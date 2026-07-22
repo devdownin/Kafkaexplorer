@@ -34,7 +34,7 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies }) => {
 
   if (!anomalies || anomalies.length === 0) {
     return (
-      <div className="flex items-center justify-center h-24 text-on-surface0 text-sm">
+      <div className="flex items-center justify-center h-24 text-on-surface-variant text-sm">
         <span className="material-symbols-outlined mr-2 text-success">check_circle</span>
         No anomalies detected
       </div>
@@ -68,7 +68,7 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies }) => {
                 {anomaly.topic}
               </span>
               <span className="flex-1 text-sm text-on-surface truncate">{anomaly.description}</span>
-              <span className="material-symbols-outlined text-on-surface0 text-base transition-transform" style={{
+              <span className="material-symbols-outlined text-on-surface-variant text-base transition-transform" style={{
                 transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)'
               }}>
                 expand_more
@@ -80,7 +80,7 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies }) => {
               <div className="px-4 pb-4 pt-3 space-y-3 bg-surface-container-low/30">
                 {anomaly.fields && anomaly.fields.length > 0 && (
                   <div>
-                    <p className="text-[10px] font-bold text-on-surface0 uppercase tracking-wider mb-1">
+                    <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider mb-1">
                       Affected Fields
                     </p>
                     <div className="flex flex-wrap gap-1.5">
@@ -94,7 +94,7 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies }) => {
                 )}
 
                 <div>
-                  <p className="text-[10px] font-bold text-on-surface0 uppercase tracking-wider mb-1">
+                  <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider mb-1">
                     Probable Cause
                   </p>
                   <p className="text-xs text-on-surface">{anomaly.probableCause}</p>
@@ -102,7 +102,7 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies }) => {
 
                 {anomaly.ksqlSuggestion && (
                   <div>
-                    <p className="text-[10px] font-bold text-on-surface0 uppercase tracking-wider mb-1">
+                    <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider mb-1">
                       KSQL / Flink SQL Suggestion
                     </p>
                     <pre className="text-xs font-mono text-success bg-surface-container-low/60 rounded-lg p-3 overflow-auto whitespace-pre-wrap">

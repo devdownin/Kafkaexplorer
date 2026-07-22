@@ -54,7 +54,7 @@ const MermaidRenderer: React.FC<MermaidRendererProps> = ({ chart }) => {
 
   if (!chart || chart.trim() === '') {
     return (
-      <div className="flex items-center justify-center h-40 text-on-surface0 text-sm">
+      <div className="flex items-center justify-center h-40 text-on-surface-variant text-sm">
         <span className="material-symbols-outlined mr-2">schema</span>
         No flowchart available yet
       </div>
@@ -63,7 +63,7 @@ const MermaidRenderer: React.FC<MermaidRendererProps> = ({ chart }) => {
 
   if (chart === 'NO_CHANGE') {
     return (
-      <div className="flex items-center justify-center h-16 text-on-surface0 text-sm">
+      <div className="flex items-center justify-center h-16 text-on-surface-variant text-sm">
         <span className="material-symbols-outlined mr-2 text-success">check_circle</span>
         No structural changes detected in this window
       </div>
@@ -77,7 +77,7 @@ const MermaidRenderer: React.FC<MermaidRendererProps> = ({ chart }) => {
           <p className="text-xs font-bold text-error mb-1">Mermaid render error</p>
           <p className="text-xs text-error font-mono">{error}</p>
         </div>
-        <pre className="text-xs text-on-surface0 font-mono p-3 bg-primary/5 rounded-lg overflow-auto max-h-48">
+        <pre className="text-xs text-on-surface-variant font-mono p-3 bg-primary/5 rounded-lg overflow-auto max-h-48">
           {chart}
         </pre>
       </div>

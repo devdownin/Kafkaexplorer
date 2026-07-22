@@ -74,7 +74,7 @@ const Help: React.FC = () => {
     <div className="p-6 max-w-4xl mx-auto space-y-10">
       <div>
         <h1 className="text-2xl font-bold">Help & Reference</h1>
-        <p className="text-on-surface0 text-sm mt-1">Keyboard shortcuts, SQL examples, and format support.</p>
+        <p className="text-on-surface-variant text-sm mt-1">Keyboard shortcuts, SQL examples, and format support.</p>
       </div>
 
       {/* Quick links */}
@@ -98,14 +98,14 @@ const Help: React.FC = () => {
 
       {/* Keyboard shortcuts */}
       <section>
-        <h2 className="text-sm font-bold text-on-surface0 uppercase tracking-widest mb-4 flex items-center gap-2">
+        <h2 className="text-sm font-bold text-on-surface-variant uppercase tracking-widest mb-4 flex items-center gap-2">
           <span className="material-symbols-outlined text-primary">keyboard</span>
           Keyboard Shortcuts
         </h2>
         <div className="rounded-xl border border-primary/10 overflow-hidden">
           <table className="w-full text-sm">
             <thead>
-              <tr className="bg-primary/5 border-b border-primary/10 text-[10px] uppercase tracking-widest text-on-surface0">
+              <tr className="bg-primary/5 border-b border-primary/10 text-[10px] uppercase tracking-widest text-on-surface-variant">
                 <th className="text-left px-5 py-3">Shortcut</th>
                 <th className="text-left px-5 py-3">Action</th>
                 <th className="text-left px-5 py-3">Context</th>
@@ -118,7 +118,7 @@ const Help: React.FC = () => {
                     <kbd className="px-2 py-0.5 rounded bg-surface-container border border-outline-variant font-mono text-xs text-on-surface">{s.key}</kbd>
                   </td>
                   <td className="px-5 py-3 text-on-surface">{s.desc}</td>
-                  <td className="px-5 py-3 text-xs text-on-surface0">{s.where}</td>
+                  <td className="px-5 py-3 text-xs text-on-surface-variant">{s.where}</td>
                 </tr>
               ))}
             </tbody>
@@ -128,7 +128,7 @@ const Help: React.FC = () => {
 
       {/* Message formats */}
       <section>
-        <h2 className="text-sm font-bold text-on-surface0 uppercase tracking-widest mb-4 flex items-center gap-2">
+        <h2 className="text-sm font-bold text-on-surface-variant uppercase tracking-widest mb-4 flex items-center gap-2">
           <span className="material-symbols-outlined text-primary">format_shapes</span>
           Supported Message Formats
         </h2>
@@ -144,7 +144,7 @@ const Help: React.FC = () => {
 
       {/* Execution Engines */}
       <section>
-        <h2 className="text-sm font-bold text-on-surface0 uppercase tracking-widest mb-4 flex items-center gap-2">
+        <h2 className="text-sm font-bold text-on-surface-variant uppercase tracking-widest mb-4 flex items-center gap-2">
           <span className="material-symbols-outlined text-primary">settings_ethernet</span>
           Execution Engines
         </h2>
@@ -152,26 +152,26 @@ const Help: React.FC = () => {
           <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 space-y-2">
             <div className="flex items-center gap-2">
               <span className="px-2 py-0.5 rounded border text-[10px] font-bold uppercase text-primary bg-primary/10 border-primary/20">Kafka Direct</span>
-              <span className="text-[10px] text-on-surface0">SELECT · Exploration</span>
+              <span className="text-[10px] text-on-surface-variant">SELECT · Exploration</span>
             </div>
             <p className="text-xs text-on-surface leading-relaxed">
               All <code className="text-primary bg-primary/30 px-1 rounded">SELECT</code> queries run through a bounded Kafka scan — no Flink SQL planner involved.
               Supported: projections, <code className="text-primary bg-primary/30 px-1 rounded">WHERE</code>, aggregates (<code className="text-primary bg-primary/30 px-1 rounded">COUNT / SUM / AVG / MAX / MIN</code>), <code className="text-primary bg-primary/30 px-1 rounded">GROUP BY</code>, and <code className="text-primary bg-primary/30 px-1 rounded">TUMBLE</code> windows.
             </p>
-            <p className="text-xs text-on-surface0 leading-relaxed">
+            <p className="text-xs text-on-surface-variant leading-relaxed">
               Not supported: multi-topic JOINs, sub-queries, arbitrary SQL functions. Up to 100 000 messages are scanned for aggregates.
             </p>
           </div>
           <div className="rounded-xl border border-secondary/20 bg-secondary/5 p-4 space-y-2">
             <div className="flex items-center gap-2">
               <span className="px-2 py-0.5 rounded border text-[10px] font-bold uppercase text-secondary bg-secondary/10 border-secondary/20">Flink Streaming</span>
-              <span className="text-[10px] text-on-surface0">INSERT INTO · Continuous jobs</span>
+              <span className="text-[10px] text-on-surface-variant">INSERT INTO · Continuous jobs</span>
             </div>
             <p className="text-xs text-on-surface leading-relaxed">
               <code className="text-secondary bg-secondary/30 px-1 rounded">INSERT INTO</code> statements are submitted as asynchronous Flink jobs via <em>Job mode</em>.
               Jobs are tracked in the Dashboard with their real status, Flink job ID, and history.
             </p>
-            <p className="text-xs text-on-surface0 leading-relaxed">
+            <p className="text-xs text-on-surface-variant leading-relaxed">
               Use <code className="text-secondary bg-secondary/30 px-1 rounded">EXPLAIN</code> and <code className="text-secondary bg-secondary/30 px-1 rounded">CREATE TABLE</code> to register tables in the Flink catalog before submitting a job.
             </p>
           </div>
@@ -180,7 +180,7 @@ const Help: React.FC = () => {
 
       {/* SQL Examples */}
       <section>
-        <h2 className="text-sm font-bold text-on-surface0 uppercase tracking-widest mb-4 flex items-center gap-2">
+        <h2 className="text-sm font-bold text-on-surface-variant uppercase tracking-widest mb-4 flex items-center gap-2">
           <span className="material-symbols-outlined text-primary">code</span>
           Flink SQL Examples
         </h2>
@@ -190,12 +190,12 @@ const Help: React.FC = () => {
               <div className="px-4 py-3 bg-primary/5 border-b border-primary/10 flex items-center justify-between">
                 <div>
                   <span className="font-bold text-sm text-on-surface">{ex.title}</span>
-                  <span className="text-on-surface0 text-xs ml-3">{ex.description}</span>
+                  <span className="text-on-surface-variant text-xs ml-3">{ex.description}</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => copy(ex.sql, idx)}
-                    className="flex items-center gap-1.5 text-xs text-on-surface0 hover:text-primary transition-colors"
+                    className="flex items-center gap-1.5 text-xs text-on-surface-variant hover:text-primary transition-colors"
                   >
                     <span className="material-symbols-outlined text-base">
                       {copiedIdx === idx ? 'check' : 'content_copy'}

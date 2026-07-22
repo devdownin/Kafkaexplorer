@@ -15,7 +15,7 @@ interface AnomalyFeedProps {
 const statusConfig: Record<AnomalyStatus, { bg: string; text: string; border: string; label: string }> = {
   NEW: { bg: 'bg-primary/15', text: 'text-primary', border: 'border-primary/30', label: 'NEW' },
   RECURRENT: { bg: 'bg-warning/15', text: 'text-warning', border: 'border-warning/30', label: 'RECURRENT' },
-  RESOLVED: { bg: 'bg-outline/10', text: 'text-on-surface0', border: 'border-outline-variant/30', label: 'RESOLVED' },
+  RESOLVED: { bg: 'bg-outline/10', text: 'text-on-surface-variant', border: 'border-outline-variant/30', label: 'RESOLVED' },
 };
 
 const severityDot: Record<string, string> = {
@@ -27,7 +27,7 @@ const severityDot: Record<string, string> = {
 const AnomalyFeed: React.FC<AnomalyFeedProps> = ({ anomalies }) => {
   if (!anomalies || anomalies.length === 0) {
     return (
-      <div className="flex items-center justify-center h-24 text-on-surface0 text-sm">
+      <div className="flex items-center justify-center h-24 text-on-surface-variant text-sm">
         <span className="material-symbols-outlined mr-2 text-success">check_circle</span>
         No anomalies in current window
       </div>
@@ -72,11 +72,11 @@ const AnomalyFeed: React.FC<AnomalyFeedProps> = ({ anomalies }) => {
                   {new Date(anomaly.detectedAt).toLocaleTimeString()}
                 </span>
               </div>
-              <p className={`text-xs text-on-surface ${isResolved ? 'line-through text-on-surface0' : ''}`}>
+              <p className={`text-xs text-on-surface ${isResolved ? 'line-through text-on-surface-variant' : ''}`}>
                 {anomaly.description}
               </p>
               {anomaly.probableCause && !isResolved && (
-                <p className="text-[11px] text-on-surface0 mt-0.5 truncate">
+                <p className="text-[11px] text-on-surface-variant mt-0.5 truncate">
                   Cause: {anomaly.probableCause}
                 </p>
               )}

@@ -275,7 +275,7 @@ const Lineage: React.FC = () => {
           className="bg-background-dark/95 border border-primary/30 rounded-lg px-3 py-2 shadow-2xl text-xs max-w-[220px]"
         >
           <p className="font-mono font-bold text-on-surface break-all leading-snug">{tooltip.node.label}</p>
-          <p className="text-on-surface0 uppercase text-[10px] mt-0.5">{tooltip.node.type}</p>
+          <p className="text-on-surface-variant uppercase text-[10px] mt-0.5">{tooltip.node.type}</p>
           {tooltip.node.type === 'topic' && tooltip.node.messageCount !== undefined && (
             <p className="text-primary font-mono text-[10px] mt-0.5">
               {tooltip.node.messageCount.toLocaleString()} messages
@@ -290,7 +290,7 @@ const Lineage: React.FC = () => {
         {/* Search */}
         <div className="relative">
           <div className="flex items-center gap-2 bg-primary/5 border border-primary/20 rounded-lg px-2.5 py-1.5 focus-within:border-primary/40 transition-colors">
-            <span className="material-symbols-outlined text-on-surface0 text-base shrink-0">search</span>
+            <span className="material-symbols-outlined text-on-surface-variant text-base shrink-0">search</span>
             <input
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
@@ -330,7 +330,7 @@ const Lineage: React.FC = () => {
 
         {/* Node type legend */}
         <div>
-          <h3 className="text-xs font-bold text-on-surface0 uppercase tracking-widest mb-2">Node Types</h3>
+          <h3 className="text-xs font-bold text-on-surface-variant uppercase tracking-widest mb-2">Node Types</h3>
           <div className="space-y-1">
             {(['topic', 'table', 'view', 'query'] as const).map(type => {
               const count = data.nodes.filter(n => n.type === type).length;
@@ -348,7 +348,7 @@ const Lineage: React.FC = () => {
 
         {/* Options */}
         <div className="border-t border-primary/10 pt-3 space-y-2.5">
-          <h3 className="text-xs font-bold text-on-surface0 uppercase tracking-widest mb-2">Options</h3>
+          <h3 className="text-xs font-bold text-on-surface-variant uppercase tracking-widest mb-2">Options</h3>
 
           <label className="flex items-center justify-between cursor-pointer select-none group">
             <span className="text-xs text-on-surface-variant group-hover:text-on-surface transition-colors leading-none">
@@ -375,7 +375,7 @@ const Lineage: React.FC = () => {
         </div>
 
         {/* Stats */}
-        <div className="border-t border-primary/10 pt-3 text-xs text-on-surface0 space-y-1">
+        <div className="border-t border-primary/10 pt-3 text-xs text-on-surface-variant space-y-1">
           <p className="font-bold text-on-surface-variant uppercase tracking-wider text-[10px]">Stats</p>
           <p>{data.nodes.length} nodes · {data.edges.length} edges</p>
           {selectedNode && (
@@ -550,7 +550,7 @@ const Lineage: React.FC = () => {
                 {selectedNode.type}
               </span>
               <button onClick={() => { setSelectedNode(null); setDdl(null); }}
-                className="text-on-surface0 hover:text-on-surface transition-colors">
+                className="text-on-surface-variant hover:text-on-surface transition-colors">
                 <span className="material-symbols-outlined text-lg">close</span>
               </button>
             </div>
@@ -568,7 +568,7 @@ const Lineage: React.FC = () => {
             {/* Writes to (outgoing) */}
             {data.edges.filter(e => e.from === selectedNode.id).length > 0 && (
               <section>
-                <h3 className="text-[10px] font-bold text-on-surface0 uppercase tracking-widest mb-2">Writes to</h3>
+                <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-2">Writes to</h3>
                 <div className="space-y-1.5">
                   {data.edges.filter(e => e.from === selectedNode.id).map((e, i) => (
                     <button
@@ -593,7 +593,7 @@ const Lineage: React.FC = () => {
             {/* Reads from (incoming) */}
             {data.edges.filter(e => e.to === selectedNode.id).length > 0 && (
               <section>
-                <h3 className="text-[10px] font-bold text-on-surface0 uppercase tracking-widest mb-2">Reads from</h3>
+                <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-2">Reads from</h3>
                 <div className="space-y-1.5">
                   {data.edges.filter(e => e.to === selectedNode.id).map((e, i) => (
                     <button
@@ -604,7 +604,7 @@ const Lineage: React.FC = () => {
                       }}
                       className="w-full flex items-center gap-2 text-xs bg-primary/5 rounded-lg px-3 py-2 hover:bg-primary/10 transition-colors text-left"
                     >
-                      <span className="material-symbols-outlined text-on-surface0 text-sm">arrow_back</span>
+                      <span className="material-symbols-outlined text-on-surface-variant text-sm">arrow_back</span>
                       <span className="font-mono text-on-surface-variant truncate">
                         {nodeById[e.from]?.label ?? e.from}
                       </span>

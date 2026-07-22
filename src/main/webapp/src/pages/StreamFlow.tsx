@@ -177,14 +177,14 @@ const StreamFlow: React.FC = () => {
       {/* ── Config Panel ── */}
       <aside className="w-72 border-r border-primary/10 bg-background-dark/50 p-5 flex flex-col gap-5 shrink-0 overflow-y-auto">
         <div>
-          <h3 className="text-xs font-bold text-on-surface0 uppercase tracking-widest mb-4">Stream Flow Tracer</h3>
+          <h3 className="text-xs font-bold text-on-surface-variant uppercase tracking-widest mb-4">Stream Flow Tracer</h3>
           <p className="text-xs text-on-surface-variant">Trace a message key across Kafka topics to visualize the data flow pipeline.</p>
         </div>
 
         <div className="space-y-4">
           {/* Message Key */}
           <div className="space-y-1.5">
-            <label className="text-[10px] uppercase font-bold text-on-surface0 tracking-wider">Message Key *</label>
+            <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">Message Key *</label>
             <input
               type="text"
               value={messageKey}
@@ -197,7 +197,7 @@ const StreamFlow: React.FC = () => {
 
           {/* Search Path */}
           <div className="space-y-1.5">
-            <label className="text-[10px] uppercase font-bold text-on-surface0 tracking-wider">Search Path (JSONPath / XPath)</label>
+            <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">Search Path (JSONPath / XPath)</label>
             <input
               type="text"
               value={searchPath}
@@ -209,7 +209,7 @@ const StreamFlow: React.FC = () => {
 
           {/* Target Topics */}
           <div className="space-y-1.5">
-            <label className="text-[10px] uppercase font-bold text-on-surface0 tracking-wider">Target Topics</label>
+            <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">Target Topics</label>
             <textarea
               value={targetTopics}
               onChange={e => setTargetTopics(e.target.value)}
@@ -217,12 +217,12 @@ const StreamFlow: React.FC = () => {
               rows={3}
               className="w-full bg-primary/5 border border-primary/20 rounded-lg px-3 py-2 text-sm font-mono text-on-surface placeholder:text-outline focus:ring-1 focus:ring-primary outline-none resize-none"
             />
-            <p className="text-[10px] text-on-surface0">One per line or comma-separated. Empty = scan all topics.</p>
+            <p className="text-[10px] text-on-surface-variant">One per line or comma-separated. Empty = scan all topics.</p>
           </div>
 
           {/* Max Messages */}
           <div className="space-y-1.5">
-            <label className="text-[10px] uppercase font-bold text-on-surface0 tracking-wider">
+            <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">
               Max Messages / Topic: <span className="text-primary">{maxMessages}</span>
             </label>
             <input
@@ -234,7 +234,7 @@ const StreamFlow: React.FC = () => {
 
           {/* Time Limit */}
           <div className="space-y-1.5">
-            <label className="text-[10px] uppercase font-bold text-on-surface0 tracking-wider">Time Limit (minutes)</label>
+            <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">Time Limit (minutes)</label>
             <input
               type="number" min={1} max={60} value={timeLimitMinutes}
               onChange={e => setTimeLimitMinutes(Number(e.target.value))}
@@ -244,7 +244,7 @@ const StreamFlow: React.FC = () => {
 
           {/* Use Regex */}
           <div className="flex items-center justify-between">
-            <span className="text-[10px] uppercase font-bold text-on-surface0 tracking-wider">Use Regex</span>
+            <span className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">Use Regex</span>
             <button
               onClick={() => setUseRegex(!useRegex)}
               className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${useRegex ? 'bg-primary' : 'bg-surface-container-high'}`}

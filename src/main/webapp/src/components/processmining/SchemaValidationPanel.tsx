@@ -191,7 +191,7 @@ const SchemaValidationPanel: React.FC<SchemaValidationPanelProps> = ({
       {/* Topic profiles summary */}
       {result.topics && result.topics.length > 0 && (
         <div>
-          <p className="text-xs font-bold text-on-surface0 uppercase tracking-wider mb-2">
+          <p className="text-xs font-bold text-on-surface-variant uppercase tracking-wider mb-2">
             Profiled Topics ({result.topics.length})
           </p>
           <div className="grid gap-2">
@@ -202,8 +202,8 @@ const SchemaValidationPanel: React.FC<SchemaValidationPanelProps> = ({
               >
                 <span className="text-xs font-mono text-on-surface">{tp.name}</span>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-on-surface0">{tp.format}</span>
-                  <span className="text-xs text-on-surface0">{tp.fields?.length ?? 0} fields</span>
+                  <span className="text-xs text-on-surface-variant">{tp.format}</span>
+                  <span className="text-xs text-on-surface-variant">{tp.fields?.length ?? 0} fields</span>
                 </div>
               </div>
             ))}
@@ -214,13 +214,13 @@ const SchemaValidationPanel: React.FC<SchemaValidationPanelProps> = ({
       {/* Mapping editors */}
       {proposal ? (
         <div className="space-y-4">
-          <p className="text-xs font-bold text-on-surface0 uppercase tracking-wider">
+          <p className="text-xs font-bold text-on-surface-variant uppercase tracking-wider">
             Field Mappings — Edit JSONPath if needed
           </p>
           {(['correlationId', 'timestamp', 'status', 'amount'] as FieldType[]).map(renderMappingEditor)}
         </div>
       ) : (
-        <div className="text-sm text-on-surface0 text-center py-4">
+        <div className="text-sm text-on-surface-variant text-center py-4">
           No field mapping proposal available. You can proceed without mappings.
         </div>
       )}

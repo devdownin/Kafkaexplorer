@@ -56,7 +56,7 @@ const MessageCard: React.FC<{
           const status = diff?.[k] ?? 'same';
           return (
             <div key={k} className={`flex justify-between px-1 rounded gap-3 ${fieldColors[status]}`}>
-              <span className="text-on-surface0 shrink-0">{k}:</span>
+              <span className="text-on-surface-variant shrink-0">{k}:</span>
               <span className="truncate text-right">{JSON.stringify(v)}</span>
             </div>
           );
@@ -154,7 +154,7 @@ const Compare: React.FC = () => {
           <div className="flex justify-between items-center p-3 bg-primary/5 border-t border-primary/10">
             <div className="flex items-center gap-6">
               <label className="flex items-center gap-2 cursor-pointer">
-                <span className="text-[10px] uppercase text-on-surface0 font-bold">Sync Scroll</span>
+                <span className="text-[10px] uppercase text-on-surface-variant font-bold">Sync Scroll</span>
                 <button
                   onClick={() => setSyncCursors(!syncCursors)}
                   className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${syncCursors ? 'bg-primary' : 'bg-surface-container-high'}`}
@@ -163,7 +163,7 @@ const Compare: React.FC = () => {
                 </button>
               </label>
               <label className="flex items-center gap-2 cursor-pointer">
-                <span className="text-[10px] uppercase text-on-surface0 font-bold">Diff Only</span>
+                <span className="text-[10px] uppercase text-on-surface-variant font-bold">Diff Only</span>
                 <button
                   onClick={() => setShowDiffOnly(!showDiffOnly)}
                   className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${showDiffOnly ? 'bg-primary' : 'bg-surface-container-high'}`}
@@ -201,7 +201,7 @@ const Compare: React.FC = () => {
                 {topics.map(t => <option key={t} value={t} className="bg-surface-container-low text-on-surface">{t}</option>)}
               </select>
             </div>
-            <span className="text-xs text-on-surface0">{samplesA.length} msgs</span>
+            <span className="text-xs text-on-surface-variant">{samplesA.length} msgs</span>
           </div>
           <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-2">
             {!hasResult && (
@@ -226,7 +226,7 @@ const Compare: React.FC = () => {
                 {topics.map(t => <option key={t} value={t} className="bg-surface-container-low text-on-surface">{t}</option>)}
               </select>
             </div>
-            <span className="text-xs text-on-surface0">{samplesB.length} msgs</span>
+            <span className="text-xs text-on-surface-variant">{samplesB.length} msgs</span>
           </div>
           <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-2">
             {!hasResult && (

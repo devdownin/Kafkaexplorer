@@ -207,7 +207,7 @@ const Config: React.FC = () => {
   };
 
   const inputClass = "w-full bg-primary/5 border border-primary/20 rounded-lg px-3 py-2.5 text-sm text-on-surface font-mono placeholder:text-outline focus:ring-1 focus:ring-primary outline-none";
-  const labelClass = "block text-[10px] uppercase font-bold tracking-wider text-on-surface0 mb-1.5";
+  const labelClass = "block text-[10px] uppercase font-bold tracking-wider text-on-surface-variant mb-1.5";
 
   if (loading) return <LoadingSpinner />;
 
@@ -216,7 +216,7 @@ const Config: React.FC = () => {
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold">Configuration</h1>
-        <p className="text-on-surface0 dark:text-on-surface-variant text-sm mt-1">
+        <p className="text-on-surface-variant dark:text-on-surface-variant text-sm mt-1">
           Manage Kafka cluster connection and security settings.
         </p>
       </div>
@@ -235,7 +235,7 @@ const Config: React.FC = () => {
           <p className={`text-sm font-bold ${config.isConnected ? 'text-success' : 'text-on-surface-variant'}`}>
             {config.isConnected ? 'Connected' : 'Not connected'}
           </p>
-          <p className="text-xs text-on-surface0">{config.bootstrapServers}</p>
+          <p className="text-xs text-on-surface-variant">{config.bootstrapServers}</p>
         </div>
         {testResult !== null && (
           <div className={`ml-auto flex items-center gap-1.5 text-xs font-bold ${testResult ? 'text-success' : 'text-error'}`}>
@@ -262,7 +262,7 @@ const Config: React.FC = () => {
               placeholder="localhost:9092"
               className={inputClass}
             />
-            <p className="text-[10px] text-on-surface0 mt-1">Comma-separated list of host:port pairs.</p>
+            <p className="text-[10px] text-on-surface-variant mt-1">Comma-separated list of host:port pairs.</p>
           </div>
 
           {/* Security Mode */}
@@ -280,7 +280,7 @@ const Config: React.FC = () => {
                   }`}
                 >
                   <p className="text-xs font-bold">{mode.label}</p>
-                  <p className="text-[10px] text-on-surface0 mt-0.5">{mode.description}</p>
+                  <p className="text-[10px] text-on-surface-variant mt-0.5">{mode.description}</p>
                 </button>
               ))}
             </div>
@@ -345,7 +345,7 @@ const Config: React.FC = () => {
           <span className="material-symbols-outlined text-primary">neurology</span>
           <div>
             <h2 className="font-bold text-on-surface">Process Mining LLM</h2>
-            <p className="text-xs text-on-surface0 mt-0.5">
+            <p className="text-xs text-on-surface-variant mt-0.5">
               Applied at runtime. Use environment variables or `application.yml` for persistent configuration.
             </p>
           </div>
@@ -365,7 +365,7 @@ const Config: React.FC = () => {
                   }`}
                 >
                   <p className="text-xs font-bold">{provider.label}</p>
-                  <p className="text-[10px] text-on-surface0 mt-0.5">{provider.description}</p>
+                  <p className="text-[10px] text-on-surface-variant mt-0.5">{provider.description}</p>
                 </button>
               ))}
             </div>
@@ -420,7 +420,7 @@ const Config: React.FC = () => {
                     ? 'Optional for local deployments' : 'Required'}
                 className={inputClass}
               />
-              <p className="text-[10px] text-on-surface0 mt-1">
+              <p className="text-[10px] text-on-surface-variant mt-1">
                 {config.llmApiKeyConfigured ? 'A key is currently configured in memory.' : 'No key configured in memory.'}
               </p>
             </div>
@@ -469,7 +469,7 @@ const Config: React.FC = () => {
               />
               <span>
                 <span className="block text-xs font-bold text-on-surface">Enrich audit with SpectraLLM RAG</span>
-                <span className="block text-[10px] text-on-surface0 mt-0.5">
+                <span className="block text-[10px] text-on-surface-variant mt-0.5">
                   When enabled, the audit prompt is answered with hybrid retrieval over SpectraLLM's
                   ingested corpus. Leave off to ground the audit solely on the sampled Kafka messages.
                 </span>
@@ -487,7 +487,7 @@ const Config: React.FC = () => {
                 placeholder="Default collection"
                 className={inputClass}
               />
-              <p className="text-[10px] text-on-surface0 mt-1">
+              <p className="text-[10px] text-on-surface-variant mt-1">
                 Optional — the ChromaDB collection to retrieve from. Leave blank for SpectraLLM's default.
               </p>
             </div>

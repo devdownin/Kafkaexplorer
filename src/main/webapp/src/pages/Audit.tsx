@@ -132,7 +132,7 @@ const Audit: React.FC = () => {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Cluster Audit</h1>
-          <p className="text-on-surface0 dark:text-on-surface-variant text-sm mt-1">
+          <p className="text-on-surface-variant dark:text-on-surface-variant text-sm mt-1">
             Deep health scan of topics, schemas, and stream flows.
           </p>
         </div>
@@ -153,12 +153,12 @@ const Audit: React.FC = () => {
       {/* Check selection */}
       <div className="rounded-xl border border-primary/10 bg-primary/5 p-4">
         <div className="flex items-center justify-between mb-3">
-          <span className="text-[10px] uppercase font-bold tracking-widest text-on-surface0">Checks to run</span>
+          <span className="text-[10px] uppercase font-bold tracking-widest text-on-surface-variant">Checks to run</span>
           <div className="flex gap-3 text-xs">
             <button onClick={() => setOptions(ALL_CHECKED)} className="text-primary hover:underline">All</button>
             <button
               onClick={() => setOptions({ checkSchema: false, checkPoisonMessages: false, checkDuplicates: false, checkFlows: false, checkExactCount: false })}
-              className="text-on-surface0 hover:underline"
+              className="text-on-surface-variant hover:underline"
             >None</button>
           </div>
         </div>
@@ -180,10 +180,10 @@ const Audit: React.FC = () => {
               />
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5">
-                  <span className={`material-symbols-outlined text-sm ${options[key] ? 'text-primary' : 'text-on-surface0'}`}>{icon}</span>
+                  <span className={`material-symbols-outlined text-sm ${options[key] ? 'text-primary' : 'text-on-surface-variant'}`}>{icon}</span>
                   <span className={`text-xs font-bold ${options[key] ? 'text-on-surface' : 'text-on-surface-variant'}`}>{label}</span>
                 </div>
-                <p className="text-[10px] text-on-surface0 mt-0.5 leading-snug">{description}</p>
+                <p className="text-[10px] text-on-surface-variant mt-0.5 leading-snug">{description}</p>
               </div>
             </label>
           ))}
@@ -218,7 +218,7 @@ const Audit: React.FC = () => {
           <span className="material-symbols-outlined text-5xl text-outline">assignment</span>
           <div>
             <p className="font-bold text-on-surface">No audit report yet</p>
-            <p className="text-sm text-on-surface0 mt-1">Click <b>Run New Audit</b> to start a full cluster health scan.</p>
+            <p className="text-sm text-on-surface-variant mt-1">Click <b>Run New Audit</b> to start a full cluster health scan.</p>
           </div>
         </div>
       )}
@@ -237,7 +237,7 @@ const Audit: React.FC = () => {
               <div key={kpi.label} className="rounded-xl border border-primary/10 bg-primary/5 p-5">
                 <div className="flex items-center gap-2 mb-2">
                   <span className={`material-symbols-outlined text-xl ${kpi.color}`}>{kpi.icon}</span>
-                  <span className="text-[10px] uppercase font-bold tracking-widest text-on-surface0">{kpi.label}</span>
+                  <span className="text-[10px] uppercase font-bold tracking-widest text-on-surface-variant">{kpi.label}</span>
                 </div>
                 <p className={`text-3xl font-bold ${kpi.color}`}>
                   {kpi.raw ? kpi.value : kpi.value}
@@ -255,7 +255,7 @@ const Audit: React.FC = () => {
                 className={`px-4 py-2 text-sm font-bold uppercase tracking-wider transition-colors border-b-2 -mb-px ${
                   activeTab === tab
                     ? 'border-primary text-primary'
-                    : 'border-transparent text-on-surface0 hover:text-on-surface'
+                    : 'border-transparent text-on-surface-variant hover:text-on-surface'
                 }`}
               >
                 {tab === 'topics' ? `Topics (${report.topicAudits.length})` : `Flows (${report.flowAudits.length})`}
@@ -268,7 +268,7 @@ const Audit: React.FC = () => {
             <div className="rounded-xl border border-primary/10 overflow-hidden">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="bg-primary/5 border-b border-primary/10 text-[10px] uppercase tracking-widest text-on-surface0">
+                  <tr className="bg-primary/5 border-b border-primary/10 text-[10px] uppercase tracking-widest text-on-surface-variant">
                     <th className="text-left px-4 py-3">Topic</th>
                     <th className="text-right px-4 py-3">Messages</th>
                     <th className="text-center px-4 py-3">Format</th>
@@ -286,10 +286,10 @@ const Audit: React.FC = () => {
                       <td className="px-4 py-3 text-center">
                         <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-surface-container-high text-on-surface">{t.format}</span>
                       </td>
-                      <td className={`px-4 py-3 text-right font-mono ${t.poisonMessageCount > 0 ? 'text-error font-bold' : 'text-on-surface0'}`}>
+                      <td className={`px-4 py-3 text-right font-mono ${t.poisonMessageCount > 0 ? 'text-error font-bold' : 'text-on-surface-variant'}`}>
                         {t.poisonMessageCount}
                       </td>
-                      <td className={`px-4 py-3 text-right font-mono ${t.duplicateCount > 0 ? 'text-warning' : 'text-on-surface0'}`}>
+                      <td className={`px-4 py-3 text-right font-mono ${t.duplicateCount > 0 ? 'text-warning' : 'text-on-surface-variant'}`}>
                         {t.duplicateCount}
                       </td>
                       <td className="px-4 py-3 text-center">
@@ -313,7 +313,7 @@ const Audit: React.FC = () => {
                   ))}
                   {report.topicAudits.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="px-4 py-8 text-center text-on-surface0">No topic audits available.</td>
+                      <td colSpan={7} className="px-4 py-8 text-center text-on-surface-variant">No topic audits available.</td>
                     </tr>
                   )}
                 </tbody>
@@ -325,7 +325,7 @@ const Audit: React.FC = () => {
           {activeTab === 'flows' && (
             <div className="space-y-4">
               {report.flowAudits.length === 0 && (
-                <div className="rounded-xl border border-primary/10 p-10 text-center text-on-surface0">
+                <div className="rounded-xl border border-primary/10 p-10 text-center text-on-surface-variant">
                   No flow audits available.
                 </div>
               )}
@@ -337,7 +337,7 @@ const Audit: React.FC = () => {
                       <span className="font-bold text-on-surface">{flow.flowName}</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] uppercase font-bold text-on-surface0">Health Score</span>
+                      <span className="text-[10px] uppercase font-bold text-on-surface-variant">Health Score</span>
                       <span className={`text-lg font-bold ${flow.overallHealthScore >= 0.8 ? 'text-success' : flow.overallHealthScore >= 0.5 ? 'text-warning' : 'text-error'}`}>
                         {Math.round(flow.overallHealthScore * 100)}%
                       </span>
@@ -348,9 +348,9 @@ const Audit: React.FC = () => {
                       <React.Fragment key={step.topicName}>
                         <div className="flex-shrink-0 bg-background-dark/50 border border-primary/20 rounded-lg p-3 min-w-[140px]">
                           <p className="font-mono text-xs font-bold text-on-surface truncate">{step.topicName}</p>
-                          <p className="text-[10px] text-on-surface0 mt-1">{formatNum(step.count)} msgs</p>
+                          <p className="text-[10px] text-on-surface-variant mt-1">{formatNum(step.count)} msgs</p>
                           {step.averageLatencyMs !== null && (
-                            <p className="text-[10px] text-on-surface0">{step.averageLatencyMs}ms avg</p>
+                            <p className="text-[10px] text-on-surface-variant">{step.averageLatencyMs}ms avg</p>
                           )}
                           {idx > 0 && (
                             <div className={`mt-2 text-[10px] font-bold ${step.throughputPercentage >= 90 ? 'text-success' : step.throughputPercentage >= 70 ? 'text-warning' : 'text-error'}`}>

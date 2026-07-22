@@ -385,15 +385,15 @@ const MetricCard: React.FC<{
         </div>
         <div className="flex items-center gap-1 shrink-0">
           <button onClick={onRefresh} disabled={refreshing} title="Refresh now"
-            className="p-1 text-on-surface0 hover:text-primary transition-colors disabled:opacity-40">
+            className="p-1 text-on-surface-variant hover:text-primary transition-colors disabled:opacity-40">
             <span className={`material-symbols-outlined text-base ${refreshing ? 'animate-spin' : ''}`}>refresh</span>
           </button>
           <button onClick={onEdit} title="Edit"
-            className="p-1 text-on-surface0 hover:text-primary transition-colors">
+            className="p-1 text-on-surface-variant hover:text-primary transition-colors">
             <span className="material-symbols-outlined text-base">edit</span>
           </button>
           <button onClick={onDelete} title="Delete"
-            className="p-1 text-on-surface0 hover:text-error transition-colors">
+            className="p-1 text-on-surface-variant hover:text-error transition-colors">
             <span className="material-symbols-outlined text-base">delete</span>
           </button>
         </div>
@@ -407,7 +407,7 @@ const MetricCard: React.FC<{
             : '—'}
         </div>
         <div className="flex items-center gap-3 mt-0.5 flex-wrap">
-          {metric.description && <p className="text-xs text-on-surface0 truncate">{metric.description}</p>}
+          {metric.description && <p className="text-xs text-on-surface-variant truncate">{metric.description}</p>}
           {metric.warningThreshold !== null && (
             <span className="flex items-center gap-0.5 text-[10px] text-warning font-mono shrink-0">
               <span className="material-symbols-outlined text-[11px]">warning</span>≥ {metric.warningThreshold.toLocaleString()}
@@ -488,7 +488,7 @@ const MetricCard: React.FC<{
       {/* SQL footer */}
       <div className="group border-t border-primary/10 bg-background-dark/40 px-4 py-2.5 flex items-start gap-2">
         <span className="material-symbols-outlined text-primary/40 text-base shrink-0 mt-0.5">code</span>
-        <pre className="flex-1 text-[10px] font-mono text-on-surface0 truncate leading-relaxed whitespace-nowrap overflow-hidden">
+        <pre className="flex-1 text-[10px] font-mono text-on-surface-variant truncate leading-relaxed whitespace-nowrap overflow-hidden">
           {metric.sql.replace(/\s+/g, ' ')}
         </pre>
         <button onClick={() => { navigator.clipboard.writeText(metric.sql); toast('SQL copied', 'success'); }}
@@ -515,7 +515,7 @@ const ParamSql: React.FC<{
   onChange: (v: string) => void;
 }> = ({ label, hint, value, placeholder, onChange }) => (
   <div className="space-y-1.5">
-    <label className="text-[10px] uppercase font-bold text-on-surface0 tracking-wider">{label}</label>
+    <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">{label}</label>
     {hint && <p className="text-[10px] text-outline leading-relaxed">{hint}</p>}
     <textarea value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} rows={4} spellCheck={false}
       className="w-full bg-primary/5 border border-primary/20 rounded-lg px-3 py-2 text-[12px] font-mono text-on-surface placeholder:text-outline focus:ring-1 focus:ring-primary outline-none resize-y" />
@@ -526,7 +526,7 @@ const ParamText: React.FC<{
   label: string; value: string; placeholder: string; onChange: (v: string) => void;
 }> = ({ label, value, placeholder, onChange }) => (
   <div className="space-y-1.5">
-    <label className="text-[10px] uppercase font-bold text-on-surface0 tracking-wider">{label}</label>
+    <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">{label}</label>
     <input type="text" value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
       className="w-full bg-primary/5 border border-primary/20 rounded-lg px-3 py-2 text-[12px] font-mono text-on-surface placeholder:text-outline focus:ring-1 focus:ring-primary outline-none" />
   </div>
@@ -552,7 +552,7 @@ const TemplateParamsEditor: React.FC<{
             hint="Compared against the left query."
             placeholder={`SELECT COUNT(*) AS metric_value\nFROM other_table`} />
           <div className="space-y-1.5">
-            <label className="text-[10px] uppercase font-bold text-on-surface0 tracking-wider">Operation</label>
+            <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">Operation</label>
             <select value={p('operation') || 'LEFT_MINUS_RIGHT'} onChange={e => setParam('operation', e.target.value)}
               className="w-full bg-background-dark border border-primary/20 rounded-lg px-3 py-2 text-sm text-on-surface focus:ring-1 focus:ring-primary outline-none">
               {DELTA_OPERATIONS.map(o => (
@@ -581,7 +581,7 @@ const TemplateParamsEditor: React.FC<{
       )}
 
       <div className="space-y-1.5 border-t border-primary/10 pt-4">
-        <label className="text-[10px] uppercase font-bold text-on-surface0 tracking-wider">Execution Mode</label>
+        <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">Execution Mode</label>
         <select value={executionMode || 'TEMPLATE_BOUNDED_SCAN'} onChange={e => setExecutionMode(e.target.value)}
           className="w-full bg-background-dark border border-primary/20 rounded-lg px-3 py-2 text-sm text-on-surface focus:ring-1 focus:ring-primary outline-none">
           {EXECUTION_MODES.map(m => (
@@ -940,15 +940,15 @@ const Metrics: React.FC = () => {
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-on-surface">Business Metrics</h1>
-          <p className="text-sm text-on-surface0 mt-0.5">
+          <p className="text-sm text-on-surface-variant mt-0.5">
             Flink SQL queries scheduled continuously — values exported to Prometheus.
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={fetchMetrics} className="p-2 text-on-surface0 hover:text-primary transition-colors" title="Refresh all">
+          <button onClick={fetchMetrics} className="p-2 text-on-surface-variant hover:text-primary transition-colors" title="Refresh all">
             <span className="material-symbols-outlined">refresh</span>
           </button>
-          <button onClick={() => navigate('/metrics/help')} className="p-2 text-on-surface0 hover:text-primary transition-colors" title="Help">
+          <button onClick={() => navigate('/metrics/help')} className="p-2 text-on-surface-variant hover:text-primary transition-colors" title="Help">
             <span className="material-symbols-outlined">help</span>
           </button>
           <button onClick={() => openEdit()}
@@ -968,7 +968,7 @@ const Metrics: React.FC = () => {
           { label: 'Critical', value: counts.critical + counts.error, color: 'text-error',  border: 'border-error/20' },
         ].map(s => (
           <div key={s.label} className={`border ${s.border} bg-primary/5 rounded-xl px-4 py-3 flex items-center justify-between`}>
-            <span className="text-xs text-on-surface0 uppercase font-bold tracking-wider">{s.label}</span>
+            <span className="text-xs text-on-surface-variant uppercase font-bold tracking-wider">{s.label}</span>
             <span className={`text-2xl font-bold tabular-nums ${s.color}`}>{s.value}</span>
           </div>
         ))}
@@ -996,7 +996,7 @@ const Metrics: React.FC = () => {
           </select>
           {(filterType !== 'all' || filterStatus !== 'all') && (
             <button onClick={() => { setFilterType('all'); setFilterStatus('all'); }}
-              className="text-xs text-on-surface0 hover:text-primary transition-colors flex items-center gap-1">
+              className="text-xs text-on-surface-variant hover:text-primary transition-colors flex items-center gap-1">
               <span className="material-symbols-outlined text-sm">close</span>Clear filters
             </button>
           )}
@@ -1038,7 +1038,7 @@ const Metrics: React.FC = () => {
               refreshing={refreshingId === metric.id}
             />
           )) : (
-            <div className="col-span-full text-center py-12 text-on-surface0 text-sm">
+            <div className="col-span-full text-center py-12 text-on-surface-variant text-sm">
               No metrics match the current filters.
             </div>
           )}
@@ -1048,7 +1048,7 @@ const Metrics: React.FC = () => {
       {/* ── Quick-start templates — always visible ─────────────────────────── */}
       {!loading && (
         <div>
-          <p className="text-xs font-bold text-on-surface0 uppercase tracking-widest mb-3">Quick-start templates</p>
+          <p className="text-xs font-bold text-on-surface-variant uppercase tracking-widest mb-3">Quick-start templates</p>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
             {TYPE_EXAMPLES.map(ex => {
               const tm = TYPE_META[ex.type] ?? TYPE_META.GAUGE;
@@ -1061,9 +1061,9 @@ const Metrics: React.FC = () => {
                   </div>
                   <div>
                     <p className="font-bold text-on-surface text-sm">{ex.title}</p>
-                    <p className="text-xs text-on-surface0 mt-0.5 leading-relaxed">{ex.description}</p>
+                    <p className="text-xs text-on-surface-variant mt-0.5 leading-relaxed">{ex.description}</p>
                   </div>
-                  <pre className="text-[10px] font-mono text-on-surface0 bg-black/20 rounded-lg p-2 overflow-hidden line-clamp-4 whitespace-pre-wrap">
+                  <pre className="text-[10px] font-mono text-on-surface-variant bg-black/20 rounded-lg p-2 overflow-hidden line-clamp-4 whitespace-pre-wrap">
                     {ex.sql(firstTable)}
                   </pre>
                   <button
@@ -1092,7 +1092,7 @@ const Metrics: React.FC = () => {
               <h2 className="text-lg font-bold text-on-surface">
                 {editingMetric.id ? 'Edit Metric' : 'New SQL Metric'}
               </h2>
-              <button onClick={() => setIsModalOpen(false)} className="text-on-surface0 hover:text-on-surface transition-colors">
+              <button onClick={() => setIsModalOpen(false)} className="text-on-surface-variant hover:text-on-surface transition-colors">
                 <span className="material-symbols-outlined">close</span>
               </button>
             </div>
@@ -1106,7 +1106,7 @@ const Metrics: React.FC = () => {
                 {/* Name */}
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
-                    <label className="text-[10px] uppercase font-bold text-on-surface0 tracking-wider">Metric Name *</label>
+                    <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">Metric Name *</label>
                     {nameIsAuto ? (
                       <span className="flex items-center gap-0.5 text-[9px] text-primary/70 font-bold uppercase tracking-wider">
                         <span className="material-symbols-outlined text-[11px]">auto_awesome</span>auto
@@ -1144,7 +1144,7 @@ const Metrics: React.FC = () => {
                 {/* Metric source / template */}
                 {templates.length > 0 && (
                   <div className="space-y-1.5">
-                    <label className="text-[10px] uppercase font-bold text-on-surface0 tracking-wider">Metric Source</label>
+                    <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">Metric Source</label>
                     <select value={templateType} onChange={e => onTemplateTypeChange(e.target.value)}
                       className="w-full bg-background-dark border border-primary/20 rounded-lg px-3 py-2 text-sm text-on-surface focus:ring-1 focus:ring-primary outline-none">
                       <option value={RAW_SQL} className="bg-[#12151a] text-on-surface">Raw SQL</option>
@@ -1160,7 +1160,7 @@ const Metrics: React.FC = () => {
 
                 {/* Type */}
                 <div className="space-y-1.5">
-                  <label className="text-[10px] uppercase font-bold text-on-surface0 tracking-wider">Type</label>
+                  <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">Type</label>
                   <select value={editingMetric.type ?? 'GAUGE'}
                     onChange={e => {
                       const newType = e.target.value;
@@ -1189,7 +1189,7 @@ const Metrics: React.FC = () => {
 
                 {/* Topic selector */}
                 <div className="space-y-1.5">
-                  <label className="text-[10px] uppercase font-bold text-on-surface0 tracking-wider">
+                  <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">
                     Kafka Topic
                     <span className="ml-1 text-outline font-normal normal-case">— used in SQL templates &amp; DDL</span>
                   </label>
@@ -1216,7 +1216,7 @@ const Metrics: React.FC = () => {
                 <div className="space-y-2 rounded-xl border border-primary/10 bg-primary/5 p-3">
                   <div className="flex items-start justify-between gap-2">
                     <div>
-                      <label className="text-[10px] uppercase font-bold text-on-surface0 tracking-wider">Prometheus Labels</label>
+                      <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">Prometheus Labels</label>
                       <p className="text-[10px] text-outline mt-1 leading-relaxed">
                         Select fields from the latest message on this topic. Their current values will be exported as labels on each metric refresh.
                       </p>
@@ -1231,7 +1231,7 @@ const Metrics: React.FC = () => {
                             .catch(() => toast('Failed to refresh latest message', 'error'))
                             .finally(() => setLabelPreviewLoading(false));
                         }}
-                        className="shrink-0 text-on-surface0 hover:text-primary transition-colors"
+                        className="shrink-0 text-on-surface-variant hover:text-primary transition-colors"
                         title="Refresh latest message"
                       >
                         <span className={`material-symbols-outlined text-base ${labelPreviewLoading ? 'animate-spin' : ''}`}>refresh</span>
@@ -1240,14 +1240,14 @@ const Metrics: React.FC = () => {
                   </div>
 
                   {!selectedTopic ? (
-                    <p className="text-[11px] text-on-surface0">Select a topic to inspect its latest message.</p>
+                    <p className="text-[11px] text-on-surface-variant">Select a topic to inspect its latest message.</p>
                   ) : labelPreviewLoading ? (
-                    <div className="flex items-center gap-2 text-[11px] text-on-surface0">
+                    <div className="flex items-center gap-2 text-[11px] text-on-surface-variant">
                       <span className="material-symbols-outlined text-sm animate-spin">progress_activity</span>
                       Loading latest message…
                     </div>
                   ) : !labelPreview?.message ? (
-                    <p className="text-[11px] text-on-surface0">No recent message available on this topic.</p>
+                    <p className="text-[11px] text-on-surface-variant">No recent message available on this topic.</p>
                   ) : (
                     <>
                       <div className="flex items-center justify-between gap-2 text-[10px] text-outline">
@@ -1274,20 +1274,20 @@ const Metrics: React.FC = () => {
                                 />
                                 <div className="min-w-0">
                                   <div className="font-mono text-[11px] text-on-surface break-all">{field}</div>
-                                  <div className="font-mono text-[10px] text-on-surface0 break-all">{value || '""'}</div>
+                                  <div className="font-mono text-[10px] text-on-surface-variant break-all">{value || '""'}</div>
                                 </div>
                               </label>
                             );
                           })}
                         </div>
                       ) : (
-                        <p className="text-[11px] text-on-surface0">
+                        <p className="text-[11px] text-on-surface-variant">
                           The latest message format does not expose selectable leaf fields.
                         </p>
                       )}
 
                       <div className="rounded-lg border border-primary/10 bg-background-dark/40 p-2">
-                        <p className="text-[10px] uppercase font-bold tracking-wider text-on-surface0 mb-2">Latest Message</p>
+                        <p className="text-[10px] uppercase font-bold tracking-wider text-on-surface-variant mb-2">Latest Message</p>
                         <pre className="max-h-36 overflow-auto whitespace-pre-wrap break-all text-[10px] font-mono text-on-surface-variant">
                           {labelPreview.message}
                         </pre>
@@ -1298,7 +1298,7 @@ const Metrics: React.FC = () => {
 
                 {/* Description */}
                 <div className="space-y-1.5">
-                  <label className="text-[10px] uppercase font-bold text-on-surface0 tracking-wider">Description</label>
+                  <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">Description</label>
                   <textarea value={editingMetric.description ?? ''}
                     onChange={e => setEditingMetric(m => ({ ...m, description: e.target.value }))}
                     placeholder="What does this metric track?" rows={2}
@@ -1336,7 +1336,7 @@ const Metrics: React.FC = () => {
                 {/* SQL templates (raw SQL mode only) */}
                 {!isTemplate && (
                 <div className="border-t border-primary/10 pt-4">
-                  <p className="text-[10px] uppercase font-bold text-on-surface0 tracking-wider mb-3">SQL Templates</p>
+                  <p className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider mb-3">SQL Templates</p>
                   <div className="space-y-3">
                     {sqlTemplates.map(group => (
                       <div key={group.group}>
@@ -1367,7 +1367,7 @@ const Metrics: React.FC = () => {
                       className={`px-4 py-2.5 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 ${
                         editorTab === tab
                           ? 'border-primary text-primary'
-                          : 'border-transparent text-on-surface0 hover:text-on-surface'
+                          : 'border-transparent text-on-surface-variant hover:text-on-surface'
                       }`}>
                       {tab === 'metric' ? (
                         <span className="flex items-center gap-1.5">
@@ -1478,7 +1478,7 @@ const Metrics: React.FC = () => {
 
                 {/* DDL hint panel */}
                 {editorTab === 'ddl' && !editingMetric.createTableSql?.trim() && (
-                  <div className="border-t border-primary/10 px-4 py-3 text-xs text-on-surface0 bg-primary/5 space-y-1">
+                  <div className="border-t border-primary/10 px-4 py-3 text-xs text-on-surface-variant bg-primary/5 space-y-1">
                     <p className="font-bold text-on-surface-variant">No DDL defined</p>
                     <p>The metric SQL will run against tables already registered in Flink.</p>
                     <p>
@@ -1493,7 +1493,7 @@ const Metrics: React.FC = () => {
             {/* Modal footer */}
             <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-primary/10 bg-primary/5">
               <button onClick={() => setIsModalOpen(false)}
-                className="px-4 py-2 text-sm font-bold text-on-surface0 hover:text-on-surface transition-colors">
+                className="px-4 py-2 text-sm font-bold text-on-surface-variant hover:text-on-surface transition-colors">
                 Cancel
               </button>
               {hasBlockingErrors && (

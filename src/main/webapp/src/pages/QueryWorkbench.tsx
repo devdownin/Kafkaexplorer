@@ -406,18 +406,18 @@ const QueryWorkbench: React.FC = () => {
             <div className="flex items-center justify-between p-4 border-b border-primary/10">
               <div>
                 <h2 className="text-sm font-bold">DDL Preview</h2>
-                <p className="text-[10px] text-on-surface0 font-mono mt-0.5">{ddlPreviewTopic}</p>
+                <p className="text-[10px] text-on-surface-variant font-mono mt-0.5">{ddlPreviewTopic}</p>
               </div>
-              <button onClick={() => setDdlPreviewTopic(null)} className="text-on-surface0 hover:text-white transition-colors">
+              <button onClick={() => setDdlPreviewTopic(null)} className="text-on-surface-variant hover:text-white transition-colors">
                 <span className="material-symbols-outlined">close</span>
               </button>
             </div>
             <div className="flex-1 overflow-auto p-4">
               {ddlPreviewLoading
-                ? <div className="flex items-center gap-2 text-on-surface0 py-4"><span className="material-symbols-outlined animate-spin text-sm">refresh</span><span className="text-xs">Inferring schema…</span></div>
+                ? <div className="flex items-center gap-2 text-on-surface-variant py-4"><span className="material-symbols-outlined animate-spin text-sm">refresh</span><span className="text-xs">Inferring schema…</span></div>
                 : ddlPreview
                   ? <pre className="text-xs font-mono text-on-surface whitespace-pre-wrap leading-relaxed">{ddlPreview}</pre>
-                  : <p className="text-xs text-on-surface0">Failed to generate DDL</p>
+                  : <p className="text-xs text-on-surface-variant">Failed to generate DDL</p>
               }
             </div>
             <div className="p-4 border-t border-primary/10 flex items-center justify-between">
@@ -453,7 +453,7 @@ const QueryWorkbench: React.FC = () => {
         <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xs font-semibold text-on-surface-variant uppercase tracking-widest">Schema Browser</h2>
-            <button onClick={fetchSchema} disabled={schemaLoading} className="text-on-surface0 hover:text-primary transition-colors disabled:opacity-50" title="Refresh">
+            <button onClick={fetchSchema} disabled={schemaLoading} className="text-on-surface-variant hover:text-primary transition-colors disabled:opacity-50" title="Refresh">
               <span className={`material-symbols-outlined text-base ${schemaLoading ? 'animate-spin' : ''}`}>refresh</span>
             </button>
           </div>
@@ -472,7 +472,7 @@ const QueryWorkbench: React.FC = () => {
                   <div key={table}>
                     <div className="flex items-center py-1 px-2 rounded hover:bg-primary/5 transition-colors group/tbl">
                       <div onClick={() => toggleTable(table)} className="flex-1 flex items-center gap-1 min-w-0 cursor-pointer">
-                        <span className={`material-symbols-outlined text-xs text-on-surface0 transition-transform duration-200 shrink-0 ${expandedTables[table] ? 'rotate-90' : ''}`}>chevron_right</span>
+                        <span className={`material-symbols-outlined text-xs text-on-surface-variant transition-transform duration-200 shrink-0 ${expandedTables[table] ? 'rotate-90' : ''}`}>chevron_right</span>
                         <span className="text-xs text-on-surface truncate font-mono">{table}</span>
                       </div>
                       <button onClick={() => setSql(`SELECT * FROM ${table} LIMIT 50`)}
@@ -505,7 +505,7 @@ const QueryWorkbench: React.FC = () => {
               </summary>
               <div className="pl-4 pt-1 space-y-0.5">
                 {schemaLoading ? (
-                  <div className="flex items-center gap-2 py-3 px-2 text-on-surface0">
+                  <div className="flex items-center gap-2 py-3 px-2 text-on-surface-variant">
                     <span className="material-symbols-outlined text-sm animate-spin">refresh</span>
                     <span className="text-xs">Loading…</span>
                   </div>
@@ -610,7 +610,7 @@ const QueryWorkbench: React.FC = () => {
                   { value: 'ASYNC_JOB', label: 'JOB' },
                 ] as const).map(mode => (
                   <button key={mode.value} onClick={() => setExecutionMode(mode.value)}
-                    className={`px-3 py-1 text-[10px] font-bold border-r last:border-r-0 border-primary/20 transition-colors ${executionMode === mode.value ? 'bg-primary/20 text-primary' : 'text-on-surface0 hover:text-on-surface'}`}>
+                    className={`px-3 py-1 text-[10px] font-bold border-r last:border-r-0 border-primary/20 transition-colors ${executionMode === mode.value ? 'bg-primary/20 text-primary' : 'text-on-surface-variant hover:text-on-surface'}`}>
                     {mode.label}
                   </button>
                 ))}
@@ -622,7 +622,7 @@ const QueryWorkbench: React.FC = () => {
                 <div className="flex bg-background-dark border border-primary/20 rounded overflow-hidden">
                   {(['EARLIEST', 'LATEST'] as const).map(mode => (
                     <button key={mode} onClick={() => setOffsetMode(mode)}
-                      className={`px-2 py-1 text-[10px] font-bold border-r last:border-r-0 border-primary/20 transition-colors ${offsetMode === mode ? 'bg-primary/20 text-primary' : 'text-on-surface0 hover:text-on-surface'}`}>
+                      className={`px-2 py-1 text-[10px] font-bold border-r last:border-r-0 border-primary/20 transition-colors ${offsetMode === mode ? 'bg-primary/20 text-primary' : 'text-on-surface-variant hover:text-on-surface'}`}>
                       {mode}
                     </button>
                   ))}
@@ -633,14 +633,14 @@ const QueryWorkbench: React.FC = () => {
           <div className="flex items-center gap-2">
             <div className="relative">
               <button onClick={() => setShowHistory(h => !h)}
-                className="flex items-center gap-1.5 p-2 text-on-surface0 hover:text-primary border border-primary/20 rounded-lg transition-colors" title="Query history">
+                className="flex items-center gap-1.5 p-2 text-on-surface-variant hover:text-primary border border-primary/20 rounded-lg transition-colors" title="Query history">
                 <span className="material-symbols-outlined text-base">history</span>
                 {history.length > 0 && <span className="text-[9px] bg-primary text-background-dark font-bold px-1 rounded">{history.length}</span>}
               </button>
               {showHistory && (
                 <div className="absolute right-0 top-full mt-1 w-96 max-h-64 overflow-y-auto bg-background-dark border border-primary/20 rounded-xl shadow-2xl z-30">
                   <div className="px-3 py-2 border-b border-primary/10 flex items-center justify-between">
-                    <span className="text-[10px] font-bold text-on-surface0 uppercase tracking-wider">Recent Queries</span>
+                    <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Recent Queries</span>
                     <button onClick={() => { setHistory([]); localStorage.removeItem('kse:query-history'); }} className="text-[10px] text-outline hover:text-error">Clear</button>
                   </div>
                   {history.length === 0 ? <p className="p-4 text-xs text-outline">No history yet</p>
@@ -677,7 +677,7 @@ const QueryWorkbench: React.FC = () => {
                   <div
                     key={tab.id}
                     onClick={() => setActiveTabId(tab.id)}
-                    className={`group/tab flex items-center gap-1.5 px-3 py-1.5 border-r border-primary/10 cursor-pointer shrink-0 transition-colors ${tab.id === activeTabId ? 'bg-background-dark/40 text-primary border-b-2 border-b-primary' : 'text-on-surface0 hover:text-on-surface hover:bg-primary/5'}`}
+                    className={`group/tab flex items-center gap-1.5 px-3 py-1.5 border-r border-primary/10 cursor-pointer shrink-0 transition-colors ${tab.id === activeTabId ? 'bg-background-dark/40 text-primary border-b-2 border-b-primary' : 'text-on-surface-variant hover:text-on-surface hover:bg-primary/5'}`}
                   >
                     {renamingTabId === tab.id ? (
                       <input
@@ -710,7 +710,7 @@ const QueryWorkbench: React.FC = () => {
                 {/* Format button pushed to the right */}
                 <div className="ml-auto px-3 flex items-center">
                   <button onClick={() => editorRef.current?.getAction('editor.action.formatDocument')?.run()}
-                    className="flex items-center gap-1 text-[10px] text-on-surface0 hover:text-primary transition-colors" title="Format SQL (Shift+Alt+F)">
+                    className="flex items-center gap-1 text-[10px] text-on-surface-variant hover:text-primary transition-colors" title="Format SQL (Shift+Alt+F)">
                     <span className="material-symbols-outlined text-sm">auto_fix_high</span>
                     Format
                   </button>
@@ -744,7 +744,7 @@ const QueryWorkbench: React.FC = () => {
               <p className="text-xs text-on-surface-variant leading-relaxed">Generate windowing SQL for your streaming queries.</p>
               <div className="space-y-3">
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-on-surface0 uppercase">Window Type</label>
+                  <label className="text-[10px] font-bold text-on-surface-variant uppercase">Window Type</label>
                   <select value={windowType} onChange={e => setWindowType(e.target.value)} className="w-full bg-background-dark border border-primary/20 rounded px-3 py-2 text-xs text-on-surface focus:ring-1 focus:ring-primary outline-none">
                     <option>Tumbling (Non-overlapping)</option>
                     <option>Hopping (Overlapping)</option>
@@ -753,11 +753,11 @@ const QueryWorkbench: React.FC = () => {
                 </div>
                 <div className="flex gap-2">
                   <div className="flex-1 space-y-1.5">
-                    <label className="text-[10px] font-bold text-on-surface0 uppercase">Size</label>
+                    <label className="text-[10px] font-bold text-on-surface-variant uppercase">Size</label>
                     <input type="number" value={windowSize} onChange={e => setWindowSize(parseInt(e.target.value))} className="w-full bg-background-dark border border-primary/20 rounded px-3 py-2 text-xs text-on-surface focus:ring-1 focus:ring-primary outline-none" />
                   </div>
                   <div className="w-20 space-y-1.5">
-                    <label className="text-[10px] font-bold text-on-surface0 uppercase">Unit</label>
+                    <label className="text-[10px] font-bold text-on-surface-variant uppercase">Unit</label>
                     <select value={windowUnit} onChange={e => setWindowUnit(e.target.value)} className="w-full bg-background-dark border border-primary/20 rounded px-3 py-2 text-xs text-on-surface outline-none">
                       <option>MIN</option><option>SEC</option><option>HOUR</option>
                     </select>
@@ -798,7 +798,7 @@ const QueryWorkbench: React.FC = () => {
                       ? 'Kafka Direct: bounded scan over Kafka messages. Supports SELECT, WHERE, aggregates and TUMBLE windows. No multi-topic JOINs.'
                       : 'Flink: executed by the embedded Flink SQL engine (EXPLAIN / DDL).'
                   }>
-                    <span className="material-symbols-outlined text-sm text-on-surface0">settings_ethernet</span>
+                    <span className="material-symbols-outlined text-sm text-on-surface-variant">settings_ethernet</span>
                     <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border uppercase ${
                       (results?.engine ?? 'KAFKA_DIRECT') === 'KAFKA_DIRECT'
                         ? 'text-primary bg-primary/10 border-primary/20'
@@ -812,9 +812,9 @@ const QueryWorkbench: React.FC = () => {
               <div className="flex items-center gap-3">
                 {results && !results.error && results.rows.length > 0 && (
                   <div className="flex items-center gap-1">
-                    <button onClick={() => exportResults('csv')} className="flex items-center gap-1 text-[10px] text-on-surface0 hover:text-primary transition-colors"><span className="material-symbols-outlined text-sm">download</span>CSV</button>
+                    <button onClick={() => exportResults('csv')} className="flex items-center gap-1 text-[10px] text-on-surface-variant hover:text-primary transition-colors"><span className="material-symbols-outlined text-sm">download</span>CSV</button>
                     <span className="text-outline">·</span>
-                    <button onClick={() => exportResults('json')} className="flex items-center gap-1 text-[10px] text-on-surface0 hover:text-primary transition-colors"><span className="material-symbols-outlined text-sm">download</span>JSON</button>
+                    <button onClick={() => exportResults('json')} className="flex items-center gap-1 text-[10px] text-on-surface-variant hover:text-primary transition-colors"><span className="material-symbols-outlined text-sm">download</span>JSON</button>
                   </div>
                 )}
                 <span className={`w-1.5 h-1.5 rounded-full ${executing ? 'bg-primary animate-pulse' : (results || submittedJob) ? 'bg-success' : 'bg-surface-container-highest'}`} />
@@ -840,12 +840,12 @@ const QueryWorkbench: React.FC = () => {
                     <div className="flex-1 min-w-0">
                       <p className="text-error font-mono text-sm break-words">{errorSummary}</p>
                       {errorDetails && (
-                        <button onClick={() => setShowErrorDetails(s => !s)} className="text-[10px] text-on-surface0 hover:text-on-surface mt-1.5 transition-colors">
+                        <button onClick={() => setShowErrorDetails(s => !s)} className="text-[10px] text-on-surface-variant hover:text-on-surface mt-1.5 transition-colors">
                           {showErrorDetails ? '▲ Hide details' : '▼ Show details'}
                         </button>
                       )}
                       {showErrorDetails && errorDetails && (
-                        <pre className="mt-2 text-[10px] text-on-surface0 font-mono whitespace-pre-wrap overflow-x-auto leading-relaxed border-t border-error/20 pt-2">{errorDetails}</pre>
+                        <pre className="mt-2 text-[10px] text-on-surface-variant font-mono whitespace-pre-wrap overflow-x-auto leading-relaxed border-t border-error/20 pt-2">{errorDetails}</pre>
                       )}
                     </div>
                     <button onClick={() => navigator.clipboard.writeText(results.error!).then(() => toast('Error copied', 'success'))}
@@ -865,23 +865,23 @@ const QueryWorkbench: React.FC = () => {
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px] font-mono text-on-surface">
                         <div>
-                          <p className="text-on-surface0 uppercase tracking-wider text-[10px]">Status</p>
+                          <p className="text-on-surface-variant uppercase tracking-wider text-[10px]">Status</p>
                           <p>{submittedJob.status}</p>
                         </div>
                         <div>
-                          <p className="text-on-surface0 uppercase tracking-wider text-[10px]">Type</p>
+                          <p className="text-on-surface-variant uppercase tracking-wider text-[10px]">Type</p>
                           <p>{submittedJob.statementType.replace('_', ' ')}</p>
                         </div>
                         <div>
-                          <p className="text-on-surface0 uppercase tracking-wider text-[10px]">Query ID</p>
+                          <p className="text-on-surface-variant uppercase tracking-wider text-[10px]">Query ID</p>
                           <p className="break-all">{submittedJob.queryId}</p>
                         </div>
                         <div>
-                          <p className="text-on-surface0 uppercase tracking-wider text-[10px]">Flink Job ID</p>
+                          <p className="text-on-surface-variant uppercase tracking-wider text-[10px]">Flink Job ID</p>
                           <p className="break-all">{submittedJob.flinkJobId}</p>
                         </div>
                       </div>
-                      <pre className="text-[10px] text-on-surface0 font-mono whitespace-pre-wrap overflow-x-auto leading-relaxed border-t border-success/20 pt-2">{submittedJob.sql}</pre>
+                      <pre className="text-[10px] text-on-surface-variant font-mono whitespace-pre-wrap overflow-x-auto leading-relaxed border-t border-success/20 pt-2">{submittedJob.sql}</pre>
                     </div>
                   </div>
                 </div>
@@ -891,7 +891,7 @@ const QueryWorkbench: React.FC = () => {
                     <tr>
                       {results.columns.map(col => (
                         <th key={col} onClick={() => handleSortColumn(col)}
-                          className="px-4 py-2.5 border-b border-primary/10 text-[10px] font-bold text-on-surface0 uppercase tracking-widest cursor-pointer hover:text-primary select-none transition-colors">
+                          className="px-4 py-2.5 border-b border-primary/10 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest cursor-pointer hover:text-primary select-none transition-colors">
                           <span className="flex items-center gap-1">
                             {col}
                             {sortCol === col

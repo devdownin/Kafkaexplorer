@@ -74,7 +74,7 @@ const TopicSelectorPanel: React.FC<TopicSelectorPanelProps> = ({ onStart, loadin
       <div>
         <h2 className="text-lg font-semibold text-on-surface mb-1">Select Topics</h2>
         <p className="text-sm text-on-surface-variant">Choose the Kafka topics to analyse for process patterns.</p>
-        <p className="text-xs text-on-surface0 mt-1">
+        <p className="text-xs text-on-surface-variant mt-1">
           Snapshot limits are applied per topic to keep multi-topic analysis balanced.
         </p>
       </div>
@@ -84,7 +84,7 @@ const TopicSelectorPanel: React.FC<TopicSelectorPanelProps> = ({ onStart, loadin
         <div className="p-3 border-b border-primary/10 bg-primary/5 flex items-center gap-2">
           <span className="material-symbols-outlined text-on-surface-variant text-base">search</span>
           <input
-            className="flex-1 bg-transparent text-sm outline-none placeholder-on-surface0"
+            className="flex-1 bg-transparent text-sm outline-none placeholder-on-surface-variant"
             placeholder="Filter topics..."
             value={filter}
             onChange={e => setFilter(e.target.value)}
@@ -100,9 +100,9 @@ const TopicSelectorPanel: React.FC<TopicSelectorPanelProps> = ({ onStart, loadin
         </div>
         <div className="max-h-64 overflow-y-auto">
           {fetchingTopics ? (
-            <div className="p-4 text-on-surface0 text-sm text-center">Loading topics...</div>
+            <div className="p-4 text-on-surface-variant text-sm text-center">Loading topics...</div>
           ) : filteredTopics.length === 0 ? (
-            <div className="p-4 text-on-surface0 text-sm text-center">No topics found</div>
+            <div className="p-4 text-on-surface-variant text-sm text-center">No topics found</div>
           ) : (
             filteredTopics.map(topic => (
               <label
