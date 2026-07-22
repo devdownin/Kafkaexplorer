@@ -1,5 +1,9 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
+import {
+  PageHeader, Card, Button, Badge, type BadgeTone,
+  Table, TableHead, TableBody, TableRow, Th, Td,
+} from '../components/ui';
 
 const SHORTCUTS = [
   { key: 'Ctrl + Enter', desc: 'Execute current SQL query', where: 'SQL Editor' },
@@ -55,11 +59,18 @@ FROM xml_topic`,
   },
 ];
 
-const FORMATS = [
-  { name: 'JSON', badge: 'text-success bg-success/10 border-success/20', desc: 'Auto-detected. Schema inferred from sampled messages.' },
-  { name: 'XML', badge: 'text-primary bg-primary/10 border-primary/20', desc: 'Auto-detected. Use XmlExtract UDF to navigate payloads.' },
-  { name: 'PLAIN', badge: 'text-on-surface-variant bg-outline/10 border-outline-variant/20', desc: 'Raw string. No schema inference.' },
+const FORMATS: { name: string; tone: BadgeTone; desc: string }[] = [
+  { name: 'JSON', tone: 'success', desc: 'Auto-detected. Schema inferred from sampled messages.' },
+  { name: 'XML', tone: 'primary', desc: 'Auto-detected. Use XmlExtract UDF to navigate payloads.' },
+  { name: 'PLAIN', tone: 'neutral', desc: 'Raw string. No schema inference.' },
 ];
+
+const SectionTitle: React.FC<{ icon: string; children: React.ReactNode }> = ({ icon, children }) => (
+  <h2 className="text-[13px] font-semibold text-on-surface mb-4 flex items-center gap-2">
+    <span className="material-symbols-outlined text-primary text-[18px]">{icon}</span>
+    {children}
+  </h2>
+);
 
 const Help: React.FC = () => {
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
@@ -71,148 +82,118 @@ const Help: React.FC = () => {
   };
 
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-10">
-      <div>
-        <h1 className="text-2xl font-bold">Help & Reference</h1>
-        <p className="text-on-surface-variant text-sm mt-1">Keyboard shortcuts, SQL examples, and format support.</p>
-      </div>
+    <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-10">
+      <PageHeader
+        title="Help & Reference"
+        description="Keyboard shortcuts, SQL examples, and format support."
+      />
 
       {/* Quick links */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
           { label: 'SQL Editor', path: '/query', icon: 'terminal' },
           { label: 'Lineage Graph', path: '/lineage', icon: 'account_tree' },
-          { label: 'Audit', path: '/audit', icon: 'assignment' },
+          { label: 'Audit', path: '/audit', icon: 'fact_check' },
           { label: 'Configuration', path: '/config', icon: 'settings' },
         ].map(link => (
           <Link
             key={link.path}
             to={link.path}
-            className="flex items-center gap-3 p-3 rounded-xl border border-primary/10 bg-primary/5 hover:border-primary/30 hover:bg-primary/10 transition-all"
+            className="flex items-center gap-3 p-3 rounded-xl bg-surface-container ring-1 ring-white/[0.045] card-hover"
           >
-            <span className="material-symbols-outlined text-primary">{link.icon}</span>
-            <span className="text-sm font-medium">{link.label}</span>
+            <span className="material-symbols-outlined text-primary text-[20px]">{link.icon}</span>
+            <span className="text-[13px] font-medium text-on-surface">{link.label}</span>
           </Link>
         ))}
       </div>
 
       {/* Keyboard shortcuts */}
       <section>
-        <h2 className="text-sm font-bold text-on-surface-variant uppercase tracking-widest mb-4 flex items-center gap-2">
-          <span className="material-symbols-outlined text-primary">keyboard</span>
-          Keyboard Shortcuts
-        </h2>
-        <div className="rounded-xl border border-primary/10 overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-primary/5 border-b border-primary/10 text-[10px] uppercase tracking-widest text-on-surface-variant">
-                <th className="text-left px-5 py-3">Shortcut</th>
-                <th className="text-left px-5 py-3">Action</th>
-                <th className="text-left px-5 py-3">Context</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-primary/5">
-              {SHORTCUTS.map(s => (
-                <tr key={s.key} className="hover:bg-primary/5 transition-colors">
-                  <td className="px-5 py-3">
-                    <kbd className="px-2 py-0.5 rounded bg-surface-container border border-outline-variant font-mono text-xs text-on-surface">{s.key}</kbd>
-                  </td>
-                  <td className="px-5 py-3 text-on-surface">{s.desc}</td>
-                  <td className="px-5 py-3 text-xs text-on-surface-variant">{s.where}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <SectionTitle icon="keyboard">Keyboard Shortcuts</SectionTitle>
+        <Table>
+          <TableHead>
+            <tr><Th>Shortcut</Th><Th>Action</Th><Th>Context</Th></tr>
+          </TableHead>
+          <TableBody>
+            {SHORTCUTS.map(s => (
+              <TableRow key={s.key}>
+                <Td><kbd className="px-2 py-0.5 rounded-md bg-surface-container-high border border-outline-variant font-mono text-[11px] text-on-surface">{s.key}</kbd></Td>
+                <Td className="text-on-surface">{s.desc}</Td>
+                <Td className="text-on-surface-variant">{s.where}</Td>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
       </section>
 
       {/* Message formats */}
       <section>
-        <h2 className="text-sm font-bold text-on-surface-variant uppercase tracking-widest mb-4 flex items-center gap-2">
-          <span className="material-symbols-outlined text-primary">format_shapes</span>
-          Supported Message Formats
-        </h2>
-        <div className="grid grid-cols-3 gap-3">
+        <SectionTitle icon="format_shapes">Supported Message Formats</SectionTitle>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {FORMATS.map(f => (
-            <div key={f.name} className="rounded-xl border border-primary/10 bg-primary/5 p-4">
-              <span className={`inline-block px-2 py-0.5 rounded border text-[10px] font-bold uppercase mb-2 ${f.badge}`}>{f.name}</span>
-              <p className="text-xs text-on-surface-variant leading-relaxed">{f.desc}</p>
-            </div>
+            <Card key={f.name} padding="md">
+              <Badge tone={f.tone} className="mb-2">{f.name}</Badge>
+              <p className="text-[12px] text-on-surface-variant leading-relaxed">{f.desc}</p>
+            </Card>
           ))}
         </div>
       </section>
 
       {/* Execution Engines */}
       <section>
-        <h2 className="text-sm font-bold text-on-surface-variant uppercase tracking-widest mb-4 flex items-center gap-2">
-          <span className="material-symbols-outlined text-primary">settings_ethernet</span>
-          Execution Engines
-        </h2>
+        <SectionTitle icon="settings_ethernet">Execution Engines</SectionTitle>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 space-y-2">
+          <Card padding="md" className="space-y-2">
             <div className="flex items-center gap-2">
-              <span className="px-2 py-0.5 rounded border text-[10px] font-bold uppercase text-primary bg-primary/10 border-primary/20">Kafka Direct</span>
-              <span className="text-[10px] text-on-surface-variant">SELECT · Exploration</span>
+              <Badge tone="primary">Kafka Direct</Badge>
+              <span className="text-[11px] text-on-surface-variant">SELECT · Exploration</span>
             </div>
-            <p className="text-xs text-on-surface leading-relaxed">
-              All <code className="text-primary bg-primary/30 px-1 rounded">SELECT</code> queries run through a bounded Kafka scan — no Flink SQL planner involved.
-              Supported: projections, <code className="text-primary bg-primary/30 px-1 rounded">WHERE</code>, aggregates (<code className="text-primary bg-primary/30 px-1 rounded">COUNT / SUM / AVG / MAX / MIN</code>), <code className="text-primary bg-primary/30 px-1 rounded">GROUP BY</code>, and <code className="text-primary bg-primary/30 px-1 rounded">TUMBLE</code> windows.
+            <p className="text-[12px] text-on-surface leading-relaxed">
+              All <code className="text-primary bg-primary/15 px-1 rounded">SELECT</code> queries run through a bounded Kafka scan — no Flink SQL planner involved.
+              Supported: projections, <code className="text-primary bg-primary/15 px-1 rounded">WHERE</code>, aggregates (<code className="text-primary bg-primary/15 px-1 rounded">COUNT / SUM / AVG / MAX / MIN</code>), <code className="text-primary bg-primary/15 px-1 rounded">GROUP BY</code>, and <code className="text-primary bg-primary/15 px-1 rounded">TUMBLE</code> windows.
             </p>
-            <p className="text-xs text-on-surface-variant leading-relaxed">
+            <p className="text-[12px] text-on-surface-variant leading-relaxed">
               Not supported: multi-topic JOINs, sub-queries, arbitrary SQL functions. Up to 100 000 messages are scanned for aggregates.
             </p>
-          </div>
-          <div className="rounded-xl border border-secondary/20 bg-secondary/5 p-4 space-y-2">
+          </Card>
+          <Card padding="md" className="space-y-2">
             <div className="flex items-center gap-2">
-              <span className="px-2 py-0.5 rounded border text-[10px] font-bold uppercase text-secondary bg-secondary/10 border-secondary/20">Flink Streaming</span>
-              <span className="text-[10px] text-on-surface-variant">INSERT INTO · Continuous jobs</span>
+              <Badge tone="secondary">Flink Streaming</Badge>
+              <span className="text-[11px] text-on-surface-variant">INSERT INTO · Continuous jobs</span>
             </div>
-            <p className="text-xs text-on-surface leading-relaxed">
-              <code className="text-secondary bg-secondary/30 px-1 rounded">INSERT INTO</code> statements are submitted as asynchronous Flink jobs via <em>Job mode</em>.
+            <p className="text-[12px] text-on-surface leading-relaxed">
+              <code className="text-secondary bg-secondary/15 px-1 rounded">INSERT INTO</code> statements are submitted as asynchronous Flink jobs via <em>Job mode</em>.
               Jobs are tracked in the Dashboard with their real status, Flink job ID, and history.
             </p>
-            <p className="text-xs text-on-surface-variant leading-relaxed">
-              Use <code className="text-secondary bg-secondary/30 px-1 rounded">EXPLAIN</code> and <code className="text-secondary bg-secondary/30 px-1 rounded">CREATE TABLE</code> to register tables in the Flink catalog before submitting a job.
+            <p className="text-[12px] text-on-surface-variant leading-relaxed">
+              Use <code className="text-secondary bg-secondary/15 px-1 rounded">EXPLAIN</code> and <code className="text-secondary bg-secondary/15 px-1 rounded">CREATE TABLE</code> to register tables in the Flink catalog before submitting a job.
             </p>
-          </div>
+          </Card>
         </div>
       </section>
 
       {/* SQL Examples */}
       <section>
-        <h2 className="text-sm font-bold text-on-surface-variant uppercase tracking-widest mb-4 flex items-center gap-2">
-          <span className="material-symbols-outlined text-primary">code</span>
-          Flink SQL Examples
-        </h2>
+        <SectionTitle icon="code">Flink SQL Examples</SectionTitle>
         <div className="space-y-4">
           {SQL_EXAMPLES.map((ex, idx) => (
-            <div key={idx} className="rounded-xl border border-primary/10 overflow-hidden">
-              <div className="px-4 py-3 bg-primary/5 border-b border-primary/10 flex items-center justify-between">
-                <div>
-                  <span className="font-bold text-sm text-on-surface">{ex.title}</span>
-                  <span className="text-on-surface-variant text-xs ml-3">{ex.description}</span>
+            <Card key={idx} padding="none" className="overflow-hidden">
+              <div className="px-4 py-3 bg-surface-container-high/60 border-b border-outline-variant/60 flex items-center justify-between gap-3 flex-wrap">
+                <div className="min-w-0">
+                  <span className="font-semibold text-[13px] text-on-surface">{ex.title}</span>
+                  <span className="text-on-surface-variant text-[12px] ml-3">{ex.description}</span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => copy(ex.sql, idx)}
-                    className="flex items-center gap-1.5 text-xs text-on-surface-variant hover:text-primary transition-colors"
-                  >
-                    <span className="material-symbols-outlined text-base">
-                      {copiedIdx === idx ? 'check' : 'content_copy'}
-                    </span>
+                <div className="flex items-center gap-1">
+                  <Button variant="ghost" size="sm" icon={copiedIdx === idx ? 'check' : 'content_copy'} onClick={() => copy(ex.sql, idx)}>
                     {copiedIdx === idx ? 'Copied' : 'Copy'}
-                  </button>
-                  <Link
-                    to={`/query?sql=${encodeURIComponent(ex.sql)}`}
-                    className="flex items-center gap-1.5 text-xs text-primary hover:underline"
-                  >
-                    <span className="material-symbols-outlined text-base">open_in_new</span>
-                    Open in editor
+                  </Button>
+                  <Link to={`/query?sql=${encodeURIComponent(ex.sql)}`}>
+                    <Button variant="ghost" size="sm" icon="open_in_new">Open in editor</Button>
                   </Link>
                 </div>
               </div>
-              <pre className="p-4 font-mono text-xs text-on-surface leading-relaxed overflow-x-auto bg-background-dark/50">{ex.sql}</pre>
-            </div>
+              <pre className="p-4 font-mono text-[12px] text-on-surface leading-relaxed overflow-x-auto bg-surface-container-low">{ex.sql}</pre>
+            </Card>
           ))}
         </div>
       </section>
