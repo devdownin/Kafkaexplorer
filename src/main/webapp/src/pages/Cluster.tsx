@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useToast } from '../components/Toast';
-import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorBanner from '../components/ErrorBanner';
-import { PageHeader, Button } from '../components/ui';
+import { PageHeader, Button, CardSkeleton } from '../components/ui';
 
 const Cluster: React.FC = () => {
   const { toast } = useToast();
@@ -30,7 +29,16 @@ const Cluster: React.FC = () => {
 
   const getConfig = (key: string, defaultValue = '—') => configs.get(key) || defaultValue;
 
-  if (loading) return <LoadingSpinner />;
+  if (loading) return (
+    <div className="p-8 space-y-6">
+      <PageHeader title="Cluster Configuration" description="Advanced broker-level parameters and infrastructure tuning." />
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <CardSkeleton lines={5} />
+        <CardSkeleton lines={5} />
+        <CardSkeleton className="xl:col-span-2" lines={4} />
+      </div>
+    </div>
+  );
   if (error) return <ErrorBanner message={error} onRetry={fetchConfigs} />;
 
   return (

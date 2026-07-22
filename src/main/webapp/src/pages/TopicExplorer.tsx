@@ -3,9 +3,8 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import Editor from '@monaco-editor/react';
 import { useToast } from '../components/Toast';
-import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorBanner from '../components/ErrorBanner';
-import { Button, Badge, Stat, Input, EmptyState } from '../components/ui';
+import { Button, Badge, Stat, Input, EmptyState, StatGridSkeleton, TableSkeleton } from '../components/ui';
 
 interface TopicDetail {
   topic: {
@@ -328,7 +327,13 @@ const TopicExplorer: React.FC = () => {
     navigate(`/query?sql=${encodeURIComponent(`SELECT ${cols} FROM "${name}" LIMIT 50`)}`);
   };
 
-  if (loading && !data) return <LoadingSpinner />;
+  if (loading && !data) return (
+    <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-6">
+      <div className="skeleton-shimmer h-8 w-72" />
+      <StatGridSkeleton count={3} columns="grid-cols-1 sm:grid-cols-3" />
+      <TableSkeleton rows={6} columns={2} />
+    </div>
+  );
   if (!data) return <ErrorBanner message="Failed to load topic" onRetry={fetchTopicDetails} />;
 
   const filteredSamples = data.samples.filter(s =>

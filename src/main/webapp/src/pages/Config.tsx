@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import LoadingSpinner from '../components/LoadingSpinner';
-import { PageHeader, Button } from '../components/ui';
+import { PageHeader, Button, CardSkeleton } from '../components/ui';
 
 interface ClusterConfig {
   bootstrapServers: string;
@@ -210,7 +209,14 @@ const Config: React.FC = () => {
   const inputClass = "w-full bg-surface-container-low border border-outline-variant rounded-md px-3 py-2.5 text-[13px] text-on-surface font-mono placeholder:text-outline focus:border-primary/60 outline-none transition-colors";
   const labelClass = "block text-[12px] font-medium text-on-surface-variant mb-1.5";
 
-  if (loading) return <LoadingSpinner />;
+  if (loading) return (
+    <div className="p-4 md:p-6 max-w-3xl space-y-6">
+      <PageHeader title="Configuration" description="Manage Kafka cluster connection, security and process-mining LLM settings." />
+      <div className="skeleton-shimmer h-16 w-full rounded-xl" />
+      <CardSkeleton lines={4} />
+      <CardSkeleton lines={5} />
+    </div>
+  );
 
   return (
     <div className="p-4 md:p-6 max-w-3xl space-y-6">

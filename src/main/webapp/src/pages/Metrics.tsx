@@ -4,7 +4,7 @@ import axios from 'axios';
 import Editor, { useMonaco } from '@monaco-editor/react';
 import { AreaChart, Area, ResponsiveContainer, ReferenceLine, Tooltip, YAxis } from 'recharts';
 import { useToast } from '../components/Toast';
-import { PageHeader, Button, Stat, Select, EmptyState, ProgressBar, useConfirm } from '../components/ui';
+import { PageHeader, Button, Stat, Select, EmptyState, CardSkeleton, useConfirm } from '../components/ui';
 
 interface MetricConfig {
   id: string;
@@ -1002,7 +1002,9 @@ const Metrics: React.FC = () => {
 
       {/* Content */}
       {loading ? (
-        <ProgressBar className="py-16" label="Loading metrics" />
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" role="status" aria-label="Loading metrics">
+          {Array.from({ length: 6 }).map((_, i) => <CardSkeleton key={i} lines={2} />)}
+        </div>
       ) : metrics.length === 0 ? (
         <EmptyState
           icon="monitoring"

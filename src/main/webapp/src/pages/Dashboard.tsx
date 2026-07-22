@@ -2,12 +2,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { useToast } from '../components/Toast';
-import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorBanner from '../components/ErrorBanner';
 import {
   PageHeader, Stat, Card, Badge, Button, EmptyState,
   Table, TableHead, TableBody, TableRow, Th, Td,
-  Input, Select, useConfirm, type BadgeTone,
+  Input, Select, useConfirm, StatGridSkeleton, TableSkeleton, type BadgeTone,
 } from '../components/ui';
 
 const PAGE_SIZES = [10, 25, 50, 100];
@@ -123,7 +122,14 @@ const Dashboard: React.FC = () => {
     };
   }, []);
 
-  if (loading) return <LoadingSpinner />;
+  if (loading) return (
+    <div className="p-4 md:p-6 space-y-6">
+      <PageHeader title="Dashboard" description="Live overview of your Kafka cluster — topics, throughput and running Flink jobs." />
+      <StatGridSkeleton count={4} />
+      <div className="skeleton-shimmer h-5 w-28" />
+      <TableSkeleton rows={8} columns={5} />
+    </div>
+  );
   if (error || !data) return <ErrorBanner message={error ?? 'Failed to load dashboard'} onRetry={fetchData} />;
 
   const getState = (topic: string) =>
