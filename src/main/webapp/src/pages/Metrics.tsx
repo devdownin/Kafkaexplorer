@@ -63,32 +63,21 @@ const TYPE_EXAMPLES: Array<{
   {
     type: 'HISTOGRAM',
     title: 'Payload Size Distribution',
-    description: 'Distributes observations into buckets (le label) → Prometheus _bucket/_count/_sum.',
+    description: 'One row = one observation. The engine auto-buckets metric_value → Prometheus _bucket/_count/_sum.',
     sql: t =>
-      `SELECT COUNT(*) AS metric_value,\n` +
-      `  CASE\n` +
-      `    WHEN LENGTH(value) <= 256  THEN '256'\n` +
-      `    WHEN LENGTH(value) <= 1024 THEN '1024'\n` +
-      `    WHEN LENGTH(value) <= 4096 THEN '4096'\n` +
-      `    ELSE '+Inf'\n` +
-      `  END AS le\n` +
+      `SELECT CAST(LENGTH(value) AS DOUBLE) AS metric_value\n` +
       `FROM ${t}\n` +
-      `GROUP BY CASE\n` +
-      `  WHEN LENGTH(value) <= 256  THEN '256'\n` +
-      `  WHEN LENGTH(value) <= 1024 THEN '1024'\n` +
-      `  WHEN LENGTH(value) <= 4096 THEN '4096'\n` +
-      `  ELSE '+Inf'\n` +
-      `END`,
+      `-- one row per event; the engine auto-buckets the observed values`,
     warn: null, crit: null,
   },
   {
     type: 'SUMMARY',
     title: 'Value Quantiles',
-    description: 'Micrometer computes P50/P75/P90/P95/P99 from recorded observations.',
+    description: 'One row = one observation. Micrometer computes P50/P75/P90/P95/P99 from them.',
     sql: t =>
-      `SELECT AVG(CAST(value AS DOUBLE)) AS metric_value\n` +
+      `SELECT CAST(value AS DOUBLE) AS metric_value\n` +
       `FROM ${t}\n` +
-      `-- Replace AVG(CAST(value AS DOUBLE)) with your numeric column`,
+      `-- one row per event; replace value with your numeric column`,
     warn: null, crit: null,
   },
 ];
@@ -115,11 +104,22 @@ function validateMetricSql(sql: string, type: string): ValidationMsg[] {
   if (!/\bFROM\b/i.test(stripped))
     msgs.push({ level: 'error', text: 'SQL must include a FROM clause.' });
 
-  if (!/\b(COUNT|SUM|AVG|MAX|MIN)\s*\(/i.test(stripped))
-    msgs.push({ level: 'warning', text: 'No aggregate function found (COUNT, SUM, AVG, MAX, MIN). The query should return a single numeric value.' });
+  const hasAggregate = /\b(COUNT|SUM|AVG|MAX|MIN)\s*\(/i.test(stripped);
+  const hasGroupBy   = /\bGROUP\s+BY\b/i.test(stripped);
+  const isDistribution = type === 'HISTOGRAM' || type === 'SUMMARY';
 
-  if (type === 'HISTOGRAM' && !/\bAS\s+le\b/i.test(stripped))
-    msgs.push({ level: 'info', text: 'HISTOGRAM works best with a le bucket column (… AS le) and GROUP BY.' });
+  if (isDistribution) {
+    // HISTOGRAM/SUMMARY record ONE observation per returned row. A bare aggregate collapses to a
+    // single row, giving a degenerate distribution — the query should return the raw values.
+    if (hasAggregate && !hasGroupBy)
+      msgs.push({ level: 'warning', text: `${type} records one observation per row. A bare aggregate (AVG/SUM/COUNT/…) collapses to a single row → a degenerate distribution. Select the raw numeric column instead — e.g. SELECT amount AS metric_value FROM …` });
+    if (type === 'HISTOGRAM' && /\bAS\s+le\b/i.test(stripped))
+      msgs.push({ level: 'info', text: 'An "le" column is exported as an ordinary label, not a native Prometheus bucket boundary — the engine auto-buckets metric_value itself.' });
+  } else {
+    // GAUGE / COUNTER expose a single point-in-time / cumulative numeric value.
+    if (!hasAggregate)
+      msgs.push({ level: 'warning', text: 'No aggregate function found (COUNT, SUM, AVG, MAX, MIN). GAUGE/COUNTER should return a single numeric value.' });
+  }
 
   return msgs;
 }
@@ -245,56 +245,19 @@ function getSqlTemplates(table: string) {
       ],
     },
     {
-      group: 'HISTOGRAM — bucket distribution',
+      group: 'HISTOGRAM — value distribution',
       color: 'text-violet-400',
       items: [
-        {
-          label: 'Amount buckets (le)',
-          sql:
-            `SELECT COUNT(*) AS metric_value,\n` +
-            `  CASE\n` +
-            `    WHEN amount <= 10  THEN '10'\n` +
-            `    WHEN amount <= 50  THEN '50'\n` +
-            `    WHEN amount <= 100 THEN '100'\n` +
-            `    WHEN amount <= 500 THEN '500'\n` +
-            `    ELSE '+Inf'\n` +
-            `  END AS le\n` +
-            `FROM ${table}\n` +
-            `GROUP BY CASE\n` +
-            `  WHEN amount <= 10  THEN '10'\n` +
-            `  WHEN amount <= 50  THEN '50'\n` +
-            `  WHEN amount <= 100 THEN '100'\n` +
-            `  WHEN amount <= 500 THEN '500'\n` +
-            `  ELSE '+Inf'\n` +
-            `END`,
-        },
-        {
-          label: 'Payload size (le)',
-          sql:
-            `SELECT COUNT(*) AS metric_value,\n` +
-            `  CASE\n` +
-            `    WHEN LENGTH(value) <= 256  THEN '256'\n` +
-            `    WHEN LENGTH(value) <= 1024 THEN '1024'\n` +
-            `    WHEN LENGTH(value) <= 4096 THEN '4096'\n` +
-            `    ELSE '+Inf'\n` +
-            `  END AS le\n` +
-            `FROM ${table}\n` +
-            `GROUP BY CASE\n` +
-            `  WHEN LENGTH(value) <= 256  THEN '256'\n` +
-            `  WHEN LENGTH(value) <= 1024 THEN '1024'\n` +
-            `  WHEN LENGTH(value) <= 4096 THEN '4096'\n` +
-            `  ELSE '+Inf'\n` +
-            `END`,
-        },
+        { label: 'Amount observations',  sql: `SELECT CAST(amount AS DOUBLE) AS metric_value\nFROM ${table}\n-- one row per event → engine auto-buckets the values` },
+        { label: 'Payload size',         sql: `SELECT CAST(LENGTH(value) AS DOUBLE) AS metric_value\nFROM ${table}\n-- one row per event → engine auto-buckets the values` },
       ],
     },
     {
       group: 'SUMMARY — quantile observations',
       color: 'text-amber-400',
       items: [
-        { label: 'Amount P50/P95/P99',    sql: `SELECT AVG(amount) AS metric_value\nFROM ${table}\n-- Micrometer records each value and computes P50/P75/P90/P95/P99` },
-        { label: 'Error rate %',          sql: `SELECT\n  COUNT(CASE WHEN status = 'ERROR' THEN 1 END)\n  * 100.0 / NULLIF(COUNT(*), 0)\n  AS metric_value\nFROM ${table}` },
-        { label: 'Windowed avg (1 min)',  sql: `SELECT AVG(amount) AS metric_value\nFROM TABLE(\n  TUMBLE(TABLE ${table},\n    DESCRIPTOR(ts),\n    INTERVAL '1' MINUTE)\n)\nGROUP BY window_start, window_end` },
+        { label: 'Amount observations',  sql: `SELECT CAST(amount AS DOUBLE) AS metric_value\nFROM ${table}\n-- one row per event → Micrometer computes P50/P75/P90/P95/P99` },
+        { label: 'Latency observations', sql: `SELECT CAST(latency_ms AS DOUBLE) AS metric_value\nFROM ${table}\n-- one row per event; replace latency_ms with your numeric column` },
       ],
     },
   ];
@@ -726,7 +689,10 @@ const Metrics: React.FC = () => {
     setPreviewing(true);
     setPreviewResult(null);
     try {
-      const res = await axios.post<{ value?: unknown; rows?: unknown[]; error?: string }>('/api/metrics/preview', { sql: editingMetric.sql });
+      // Preview through the template endpoint so the attached CREATE TABLE DDL is executed first
+      // (mirrors the scheduled refresh) and the value is computed with the metric's real type.
+      const res = await axios.post<{ value?: unknown; rows?: unknown[]; error?: string }>(
+        '/api/metrics/preview-template', editingMetric);
       setPreviewResult(res.data);
     } catch {
       setPreviewResult({ error: 'Preview request failed' });
@@ -983,7 +949,7 @@ const Metrics: React.FC = () => {
                   </select>
                   <p className="text-[10px] text-slate-600">
                     {{ GAUGE: '→ explorer_metric_gauge{…}', COUNTER: '→ explorer_metric_counter_total{…}',
-                       HISTOGRAM: '→ explorer_metric_histogram_bucket{le=…}', SUMMARY: '→ explorer_metric_summary{quantile=0.95,…}',
+                       HISTOGRAM: '→ explorer_metric_histogram_bucket{le=…} — auto-bucketed over metric_value', SUMMARY: '→ explorer_metric_summary{quantile=0.95,…}',
                     }[editingMetric.type ?? 'GAUGE']}
                   </p>
                 </div>
