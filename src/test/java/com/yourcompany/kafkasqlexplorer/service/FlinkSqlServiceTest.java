@@ -28,24 +28,22 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 /**
- * Unit tests for {@link FlinkSqlService} covering the two execution paths:
+ * Unit tests for {@link FlinkSqlService} covering both execution engines:
  *
- * <h3>KAFKA_DIRECT (bounded exploration)</h3>
- * All {@code SELECT} queries bypass the Flink SQL planner and go through
- * {@code kafkaDirectSelect()}, which reads directly from Kafka via
- * {@link KafkaAdminService}. In-memory Flink views registered with
- * {@code createTemporaryView()} are NOT visible to {@code kafkaDirectSelect()};
- * tests that exercise SELECT behavior must mock {@code listTopics()} and
- * {@code getEarliestRecords()} / {@code getRecentRecords()} accordingly.
+ * <h3>FLINK (restored planner)</h3>
+ * {@code SELECT} runs through the real Flink planner ({@code engine=FLINK}); {@code EXPLAIN}
+ * and {@code CREATE TABLE} go through the embedded {@link StreamTableEnvironment} too.
+ * In-memory Flink views registered with {@code createTemporaryView()} are resolved by the
+ * planner. The historical {@code FlinkRelMetadataQuery} NPE that once forced every SELECT
+ * through the direct reader is fixed (THREAD_PROVIDERS pre-seed, see FlinkRuntimeCoordinator).
  *
- * <h3>FLINK (DDL / EXPLAIN / streaming jobs)</h3>
- * {@code EXPLAIN} and {@code CREATE TABLE} go through the embedded Flink
- * {@link StreamTableEnvironment}. In-memory views are used by these tests.
+ * <h3>KAFKA_DIRECT (fallback)</h3>
+ * {@code kafkaDirectSelect()} reads directly from Kafka via {@link KafkaAdminService} and is
+ * used only when the planner path is disabled or fails. Tests that exercise it mock
+ * {@code listTopics()} and {@code getEarliestRecords()} / {@code getRecentRecords()}.
  *
- * <p>Tests annotated {@code @Disabled("KAFKA_DIRECT")} were originally written
- * against a Flink-native SELECT path that no longer exists (Flink 2.x NPE in
- * {@code FlinkRelMetadataQuery}). They document the intended behavior and serve
- * as a reference if a real Flink SELECT path is ever restored.
+ * <p>A few tests annotated {@code @Disabled("KAFKA_DIRECT")} were written against the old
+ * bypass; they can be re-enabled/re-baselined now that the Flink SELECT path is restored.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class FlinkSqlServiceTest {
