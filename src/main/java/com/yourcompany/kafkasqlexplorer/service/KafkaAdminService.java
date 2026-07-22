@@ -396,6 +396,36 @@ public class KafkaAdminService {
         return details;
     }
 
+    /**
+     * Features whose finalized version lags what every broker supports (finalized max <
+     * supported max). On KRaft the prime suspect is {@code metadata.version} staying behind
+     * after a rolling upgrade until {@code kafka-features.sh upgrade} is run — new metadata
+     * features stay disabled cluster-wide until then. Returns an empty list when everything
+     * is up to date or the broker doesn't expose feature metadata (e.g. Zookeeper mode).
+     */
+    public List<Map<String, Object>> getLaggingFeatures() {
+        List<Map<String, Object>> lagging = new ArrayList<>();
+        try {
+            FeatureMetadata featureMetadata = adminClient.describeFeatures().featureMetadata().get(5, TimeUnit.SECONDS);
+            for (Map.Entry<String, SupportedVersionRange> entry : featureMetadata.supportedFeatures().entrySet()) {
+                FinalizedVersionRange finalized = featureMetadata.finalizedFeatures().get(entry.getKey());
+                short supportedMax = entry.getValue().maxVersion();
+                Short finalizedMax = finalized != null ? finalized.maxVersionLevel() : null;
+                if (finalizedMax == null || finalizedMax < supportedMax) {
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("feature", entry.getKey());
+                    item.put("finalizedVersion", finalizedMax);
+                    item.put("supportedMaxVersion", supportedMax);
+                    lagging.add(item);
+                }
+            }
+            lagging.sort(Comparator.comparing(f -> (String) f.get("feature")));
+        } catch (Exception e) {
+            log.debug("Failed to compute feature version lag (broker may not support describeFeatures)", e);
+        }
+        return lagging;
+    }
+
     /** Flattens raft replica states for the cluster-details payload, with lag vs the quorum high watermark. */
     private static List<Map<String, Object>> toReplicaStates(List<QuorumInfo.ReplicaState> replicas, QuorumInfo quorum) {
         List<Map<String, Object>> out = new ArrayList<>();

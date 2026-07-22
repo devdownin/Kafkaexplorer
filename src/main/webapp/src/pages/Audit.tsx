@@ -227,6 +227,17 @@ const Audit: React.FC = () => {
               value={`${healthScore}%`} />
           </div>
 
+          {/* KRaft upgrade completeness — set when metadata.version lags broker support */}
+          {typeof report.globalStats.metadataVersionWarning === 'string' && (
+            <div className="rounded-xl border border-warning/25 bg-warning/10 p-4 flex items-start gap-3 text-[13px]" role="alert">
+              <span className="material-symbols-outlined text-[20px] text-warning shrink-0">update</span>
+              <div>
+                <span className="text-[11px] font-bold text-warning uppercase tracking-widest">Incomplete KRaft upgrade</span>
+                <p className="text-on-surface mt-1 leading-relaxed">{report.globalStats.metadataVersionWarning}</p>
+              </div>
+            </div>
+          )}
+
           {/* Tabs */}
           <div className="flex gap-1 border-b border-outline-variant/60">
             {(['topics', 'flows'] as const).map((tab) => (
