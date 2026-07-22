@@ -258,6 +258,12 @@ public class KafkaAdminService {
         );
     }
 
+    /**
+     * Cached (30s TTL): every call fans out into describeCluster + describeFeatures +
+     * describeMetadataQuorum + listGroups + a full describeTopics + per-topic size scan —
+     * far too heavy to run on each visit of the Cluster page.
+     */
+    @Cacheable("clusterDetails")
     public Map<String, Object> getClusterDetails() {
         Map<String, Object> details = new LinkedHashMap<>();
         try {

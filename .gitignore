@@ -55,3 +55,6 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+
+# Runtime logs (logging.file.name: logs/kafkaexplorer.log)
+logs/
