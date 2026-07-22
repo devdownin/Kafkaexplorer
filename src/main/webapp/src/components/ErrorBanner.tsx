@@ -5,18 +5,19 @@ interface ErrorBannerProps {
   onRetry?: () => void;
 }
 
+/** Bandeau d'erreur inline : icône, message et action de réessai optionnelle. */
 const ErrorBanner: React.FC<ErrorBannerProps> = ({ message, onRetry }) => (
-  <div className="p-8 flex flex-col items-center gap-4">
-    <div className="text-red-400 flex items-center gap-2">
-      <span className="material-symbols-outlined">warning</span>
-      {message}
+  <div className="flex flex-col items-center gap-4 py-12 px-6 text-center" role="alert">
+    <div className="w-11 h-11 rounded-xl bg-error/10 border border-error/25 flex items-center justify-center">
+      <span aria-hidden="true" className="material-symbols-outlined text-[22px] text-error">error</span>
     </div>
+    <p className="text-[13px] text-on-surface max-w-md leading-relaxed">{message}</p>
     {onRetry && (
       <button
         onClick={onRetry}
-        className="flex items-center gap-2 px-4 py-2 rounded-lg border border-primary/30 text-primary text-sm font-bold hover:bg-primary/10 transition-colors"
+        className="inline-flex items-center gap-2 h-9 px-4 rounded-md border border-outline-variant text-on-surface text-[13px] font-medium hover:bg-surface-container-high transition-colors"
       >
-        <span className="material-symbols-outlined text-base">refresh</span>
+        <span aria-hidden="true" className="material-symbols-outlined text-[16px]">refresh</span>
         Retry
       </button>
     )}
