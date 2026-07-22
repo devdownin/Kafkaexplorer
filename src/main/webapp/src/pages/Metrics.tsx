@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import Editor, { useMonaco } from '@monaco-editor/react';
+import '../monaco-setup';
 import { AreaChart, Area, ResponsiveContainer, ReferenceLine, Tooltip, YAxis } from 'recharts';
 import { useToast } from '../components/Toast';
 import { PageHeader, Button, Stat, Select, EmptyState, CardSkeleton, useConfirm } from '../components/ui';

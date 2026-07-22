@@ -9,10 +9,13 @@
  * (`?worker` de Vite) — l'éditeur SQL n'a pas besoin des workers de langage
  * TS/JSON/CSS/HTML.
  *
- * Importé une seule fois au démarrage (main.tsx) pour garantir que le loader
- * est configuré avant le premier montage d'un éditeur. `manualChunks`
- * (vite.config.ts) isole monaco-editor dans son propre chunk `monaco` : le
- * bundle initial `index` reste petit et Monaco est mis en cache séparément.
+ * Importé statiquement par chaque page qui monte un éditeur (QueryWorkbench,
+ * Metrics, TopicExplorer) — PAS par main.tsx : ces pages étant lazy-loadées,
+ * Monaco (3,9 Mo) n'est téléchargé qu'à la première visite d'une de ces routes,
+ * jamais sur le Dashboard. L'évaluation du module (donc `loader.config`) a lieu
+ * pendant la phase d'import du chunk de page, avant tout montage d'éditeur.
+ * `manualChunks` (vite.config.ts) garde monaco-editor dans son propre chunk
+ * `monaco`, partagé et mis en cache entre les trois pages.
  */
 import * as monaco from 'monaco-editor';
 import { loader } from '@monaco-editor/react';
