@@ -47,7 +47,7 @@ const Cluster: React.FC = () => {
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         {/* 1. Gestion des offsets — Critical */}
-        <section className="bg-primary/5 border border-error/25 p-6 rounded-xl relative overflow-hidden">
+        <section className="bg-surface-container ring-1 ring-white/[0.045] p-6 rounded-xl relative overflow-hidden">
           <div className="absolute top-0 right-0 px-3 py-1.5 bg-error/10 text-error text-[10px] font-mono font-bold tracking-widest uppercase border-l border-b border-error/25">
             Critical Path
           </div>
@@ -62,7 +62,7 @@ const Cluster: React.FC = () => {
               { key: 'offsets.topic.segment.bytes',      label: 'Size of offset log segments before rotation' },
               { key: 'offsets.retention.minutes',        label: 'How long offsets are stored after last commit' },
             ].map(item => (
-              <div key={item.key} className="grid grid-cols-12 gap-4 items-center py-2 border-b border-primary/10 last:border-0 hover:bg-primary/5 transition-colors px-2 rounded">
+              <div key={item.key} className="grid grid-cols-12 gap-4 items-center py-2 border-b border-outline-variant/60 last:border-0 hover:bg-primary/5 transition-colors px-2 rounded">
                 <div className="col-span-6">
                   <code className="text-primary text-[13px] font-mono">{item.key}</code>
                   <p className="text-[10px] text-on-surface-variant uppercase mt-0.5">{item.label}</p>
@@ -89,7 +89,7 @@ const Cluster: React.FC = () => {
         </section>
 
         {/* 2. Consumer Groups */}
-        <section className="bg-primary/5 border border-primary/10 p-6 rounded-xl">
+        <section className="bg-surface-container ring-1 ring-white/[0.045] p-6 rounded-xl">
           <h2 className="text-lg font-bold text-on-surface flex items-center gap-2 mb-5">
             <span className="material-symbols-outlined text-primary">groups</span>
             Consumer Groups & Coordination
@@ -101,7 +101,7 @@ const Cluster: React.FC = () => {
               { key: 'group.max.session.timeout.ms',     label: 'Upper bound to prevent ghost members.' },
               { key: 'group.max.size',                   label: 'Prevents oversized groups impacting cluster.' },
             ].map(item => (
-              <div key={item.key} className="flex justify-between items-center p-3 bg-background-dark/50 rounded-lg border border-primary/10">
+              <div key={item.key} className="flex justify-between items-center p-3 bg-surface-container-high rounded-lg border border-outline-variant/60">
                 <div>
                   <code className="text-primary text-[13px] font-mono">{item.key}</code>
                   <p className="text-[11px] text-on-surface-variant mt-0.5">{item.label}</p>
@@ -118,7 +118,7 @@ const Cluster: React.FC = () => {
         </section>
 
         {/* 3. Log & rétention */}
-        <section className="bg-primary/5 border border-primary/10 p-6 rounded-xl xl:col-span-2">
+        <section className="bg-surface-container ring-1 ring-white/[0.045] p-6 rounded-xl xl:col-span-2">
           <h2 className="text-lg font-bold text-on-surface flex items-center gap-2 mb-5 uppercase tracking-tight">
             <span className="material-symbols-outlined text-primary">history</span>
             Log & rétention des messages
@@ -132,7 +132,7 @@ const Cluster: React.FC = () => {
               { key: 'log.min.cleanable.dirty.ratio', label: 'Log compaction frequency. High values save CPU, low values save disk.' },
               { key: 'log.segment.ms',                label: 'Max time before log segment is rolled even if not full.' },
             ].map(item => (
-              <div key={item.key} className="p-4 bg-background-dark/50 border-l-2 border-primary rounded-lg">
+              <div key={item.key} className="p-4 bg-surface-container-high border-l-2 border-primary rounded-lg">
                 <div className="text-[10px] font-bold text-primary uppercase tracking-widest mb-1">{item.key}</div>
                 <div className="text-lg font-bold text-on-surface mb-2 flex items-center gap-2">
                   {getConfig(item.key)}
@@ -147,7 +147,7 @@ const Cluster: React.FC = () => {
         </section>
 
         {/* 4. Réplication & durabilité */}
-        <section className="bg-primary/5 border border-primary/10 p-6 rounded-xl">
+        <section className="bg-surface-container ring-1 ring-white/[0.045] p-6 rounded-xl">
           <h2 className="text-lg font-bold text-on-surface flex items-center gap-2 mb-5">
             <span className="material-symbols-outlined text-primary">verified_user</span>
             Réplication & durabilité
@@ -158,7 +158,7 @@ const Cluster: React.FC = () => {
               { key: 'default.replication.factor',       label: 'Fallback factor for auto-created topics' },
               { key: 'unclean.leader.election.enable',   label: 'Prioritize availability over data loss' },
             ].map(item => (
-              <div key={item.key} className="p-4 border border-primary/10 bg-background-dark/40 rounded-lg flex justify-between items-center hover:border-primary/30 transition-colors">
+              <div key={item.key} className="p-4 border border-outline-variant/60 bg-surface-container-high rounded-lg flex justify-between items-center hover:border-primary/30 transition-colors">
                 <div>
                   <div className="text-[12px] font-mono text-primary">{item.key}</div>
                   <div className="text-[10px] text-on-surface-variant mt-0.5">{item.label}</div>
@@ -180,7 +180,7 @@ const Cluster: React.FC = () => {
         </section>
 
         {/* 5. Performance I/O & fetch */}
-        <section className="bg-primary/5 border border-primary/10 p-6 rounded-xl">
+        <section className="bg-surface-container ring-1 ring-white/[0.045] p-6 rounded-xl">
           <h2 className="text-lg font-bold text-on-surface flex items-center gap-2 mb-5">
             <span className="material-symbols-outlined text-primary">speed</span>
             Performance I/O & fetch
@@ -188,28 +188,28 @@ const Cluster: React.FC = () => {
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1">
               <span className="text-[10px] font-bold uppercase text-on-surface-variant">num.network.threads</span>
-              <div className="bg-background-dark/50 p-2.5 border border-primary/10 rounded-lg flex justify-between items-center">
+              <div className="bg-surface-container-high p-2.5 border border-outline-variant/60 rounded-lg flex justify-between items-center">
                 <span className="font-bold text-on-surface">{getConfig('num.network.threads')}</span>
                 <span className="material-symbols-outlined text-sm text-primary/40">settings_ethernet</span>
               </div>
             </div>
             <div className="flex flex-col gap-1">
               <span className="text-[10px] font-bold uppercase text-on-surface-variant">num.io.threads</span>
-              <div className="bg-background-dark/50 p-2.5 border border-primary/10 rounded-lg flex justify-between items-center">
+              <div className="bg-surface-container-high p-2.5 border border-outline-variant/60 rounded-lg flex justify-between items-center">
                 <span className="font-bold text-on-surface">{getConfig('num.io.threads')}</span>
                 <span className="material-symbols-outlined text-sm text-primary/40">storage</span>
               </div>
             </div>
             <div className="col-span-2 flex flex-col gap-1">
               <span className="text-[10px] font-bold uppercase text-on-surface-variant">queued.max.requests</span>
-              <div className="bg-background-dark/50 p-2.5 border border-primary/10 rounded-lg flex justify-between items-center">
+              <div className="bg-surface-container-high p-2.5 border border-outline-variant/60 rounded-lg flex justify-between items-center">
                 <span className="font-bold text-on-surface">{getConfig('queued.max.requests')}</span>
                 <span className="text-[10px] text-on-surface-variant">Latency buffer</span>
               </div>
             </div>
             <div className="col-span-2 space-y-2 pt-1">
               {['socket.receive.buffer.bytes', 'socket.send.buffer.bytes', 'socket.request.max.bytes'].map(key => (
-                <div key={key} className="flex justify-between items-center text-[12px] border-b border-primary/10 pb-1.5 last:border-0">
+                <div key={key} className="flex justify-between items-center text-[12px] border-b border-outline-variant/60 pb-1.5 last:border-0">
                   <span className="font-mono text-primary/80">{key}</span>
                   <span className="font-bold text-on-surface uppercase tracking-tight">{getConfig(key)}</span>
                 </div>
