@@ -1,254 +1,100 @@
-# KAFKA SQL EXPLORER
-[![Java CI with Maven](https://github.com/yourusername/kafka-sql-explorer/actions/workflows/ci.yml/badge.svg)](https://github.com/yourusername/kafka-sql-explorer/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/License-AGPL%20v3-red.svg)](LICENSE)
+<div align="center">
 
-**Spring Boot 3.5.x | Apache Flink 2.3.x (Embedded) | Java 21 | React 19**
+# ⚡ Kafka SQL Explorer
 
-Kafka SQL Explorer is a modern web application designed for Data Engineers and Architects, allowing them to explore Kafka clusters and query topics in real-time via Flink SQL.
+### See your Kafka. Query it like a database. Audit it with AI.
 
-🚀 **[Explore the Documentation](docs/)**
+[![CI](https://github.com/devdownin/Kafkaexplorer/actions/workflows/ci.yml/badge.svg)](https://github.com/devdownin/Kafkaexplorer/actions/workflows/ci.yml)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+[![Docker](https://img.shields.io/badge/ghcr.io-kafkaexplorer-2496ED?logo=docker&logoColor=white)](https://github.com/devdownin/Kafkaexplorer/pkgs/container/kafkaexplorer)
+[![Java 21](https://img.shields.io/badge/Java-21-orange)](pom.xml)
+[![Kafka 4.2](https://img.shields.io/badge/Kafka-4.2_KRaft-231F20?logo=apachekafka)](https://kafka.apache.org/)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
----
+[Website](https://devdownin.github.io/Kafkaexplorer/) · [Feature Tour](docs/FEATURES.md) · [Quick Start](#-quick-start) · [Contributing](CONTRIBUTING.md) · [🇫🇷 Français](README.fr.md)
 
-## 🛠️ Developer Resources
-- **Unit Tests**: Coverage for all core services (SQL Execution, Lineage, Auditing, XML Extraction). Run via `mvn test`.
-- **Didactic Code**: The codebase is heavily commented to serve as a learning resource for Flink SQL integration in Spring Boot.
-- **XXE Security**: Integrated protection against XML External Entity attacks in all parsing layers.
-
-## Why Kafka SQL Explorer?
-
-Writing Flink SQL for Kafka topics can be tedious and error-prone, especially when dealing with nested JSON or complex XML payloads. This application innovates by bridging the gap between raw data and SQL queries:
-
-- **From Preview to Query**: No more manual typing of long paths. Click on any field in a message preview to instantly add it to your `SELECT` or `WHERE` clause.
-- **Automated Schema Inference**: It automatically detects JSON structures and generates the necessary `JSON_VALUE` or `XmlExtract` calls for you.
-- **Zero-Configuration DDL**: Instantly register Kafka topics as Flink tables with pre-configured schemas, serialization formats, and watermark settings.
-- **Tailored for Beginners**: Complex operations like windowing (TUMBLE/HOP) and stateful aggregations are simplified through a visual assistant.
-- **Visual Query Lineage**: An interactive graph showing data flow from Kafka topics through Flink tables, views, and active streaming queries.
+</div>
 
 ---
 
-## Detailed Features
+**Stop squinting at console consumers.** Kafka SQL Explorer is a web app that turns any Kafka cluster into something you can *see and query*: browse topics, click on a message field, and get a runnable Flink SQL query — no DDL to write, no schema to guess, no CLI gymnastics. One JAR, one URL, zero cluster-side installation.
 
-### 1. Dashboard & Navigation
-- **Topic List**: Overview of all topics available on the Kafka cluster.
-- **Advanced Filtering**:
-  - **Prefix Filter**: Allows quickly finding topics belonging to a domain (e.g., `order.*`).
-  - **Full Name Match**: Exact search to isolate a specific topic.
-  - **DLT Filtering**: Toggle to hide Dead Letter Topics (`*.dlt`) and focus on functional streams.
-- **Flink Dynamic Tables**: Dedicated section to manage temporary tables and views registered in the local Flink engine.
+Built for data engineers, architects and anyone who has ever asked *"what's actually flowing through this topic?"*
 
-### 2. Topic Exploration
-- **Real-Time Metadata**: Visualization of the number of partitions, min/max offsets, and estimated data size.
-- **DLT Identification**: Specific badges and warnings for Dead Letter Topics, alerting about potentially malformed data.
-- **Sampling**: Automatic reading of the latest messages from the topic (partition 0) for analysis.
-- **Advanced Formatting**: Native pretty-print for messages in **JSON** and **XML** formats.
-- **Quick Copy**: One-click copy button for each previewed message.
+## ✨ Highlights
 
-### 3. Query Assistant (Integrated Intelligence)
-The assistant transforms the message preview into a query design tool:
-- **Interactive Selection**: Click on a JSON key or an XML tag to automatically add it to the `SELECT` clause.
-- **Dynamic Filters**: Click on a value to add it to the `WHERE` clause.
-- **Comparison Operators**: Dynamically choose the operator (`=`, `!=`, `LIKE`, `>`, `<`) for your filters.
-- **Support for Nested Paths**: Automatic generation of `JSON_VALUE` for complex JSON structures.
-- **XML Extraction**: Use of the custom `XmlExtract` function (based on XPath) to query XML payloads.
-- **One-Click Registration**: "Register Table" button to instantly execute the generated DDL.
+- 🖱️ **Click-to-query** — click a JSON key or XML tag in a message preview and it lands in your `SELECT`/`WHERE`, with `JSON_VALUE`/XPath generated for you.
+- 🧠 **Zero-config schemas** — topics are sampled, their structure inferred (JSON, XML, Avro via Schema Registry), and registered as Flink tables in one click.
+- 📝 **A real SQL editor** — Monaco (the VS Code engine), auto-completion of topics and tables, query history, earliest/latest read modes.
+- 🕸️ **Lineage & tracing** — an interactive graph of topics → tables → live jobs, plus cross-topic message tracing by JSONPath/XPath.
+- 🩺 **One-click cluster audit** — poison messages, duplicates, flow drop-offs and latency, computed across your whole cluster in the background.
+- 🤖 **AI-powered process mining** — reconstruct business flows as flowcharts and hunt anomalies with Claude, any local LLM (Ollama…), or a private [SpectraLLM](https://github.com/devdownin/SpectraLLM).
+- 🔭 **Kafka 4 native** — KRaft controller quorum, KIP-848 consumer groups, share groups (KIP-932) and feature versions, visible in the UI and exported to Prometheus.
+- 🎁 **A batteries-included sandbox** — 70+ demo topics, from a 6-step order pipeline to a 60-topic supply chain, seeded automatically.
 
-### 4. Professional SQL Editor
-- **Monaco Editor**: High-performance SQL editor (VS Code engine) with SQL syntax highlighting and Cyberpunk theme.
-- **Read Mode Switch**: Toggle between **Earliest** (start from beginning) and **Latest** (new messages only) offsets directly in the UI.
-- **Dynamic SQL Hints**: Automatic injection of Flink SQL hints (`/*+ OPTIONS(...) */`) for per-query offset control without DDL changes.
-- **Auto-completion**: Intelligent suggestion of topic names and registered tables (`Ctrl+Space`).
-- **Query History**: Quick access to recent and saved queries, persisted in the browser (localStorage).
-- **Resource Management**: Automatic cancellation of Flink jobs in case of timeout or error, preventing any resource leak in the minicluster.
+## 🚀 Quick Start
 
-### 5. Visual Query Lineage
-- **Interactive Graph**: A custom SVG dependency graph visualizing the relationships between topics, tables, and views.
-- **Active Job Tracking**: Real-time visualization of running `INSERT INTO` queries as nodes connecting source and target tables.
-- **Node Inspector**: Click on any node to view detailed information, such as the table schema or topic type.
+One command — Kafka 4.2 (KRaft), the app, and all demo topics:
 
-### 6. Message Propagation (Stream Flow)
-- **Message Tracing**: Trace the path of a specific message across multiple Kafka topics by searching for a key or pattern.
-- **Advanced Targeting**: Use **JSONPath** or **XPath** to pinpoint the exact location of the search key within complex payloads.
-- **Regular Expression Support**: Flexible matching using standard regex syntax.
-- **Time-Based Filtering**: Narrow down the search to specific time windows (e.g., messages from the last 60 minutes).
-- **Parallel Scanning**: High-performance concurrent scanning of topics with managed resource limits.
-- **Chronological Visualization**: Interactive graph showing the sequential flow of messages between topics.
-
-### 7. Advanced Topic Comparison
-- **Side-by-Side Analysis**: Compare messages from two Kafka topics in independent columns.
-- **Shared SQL Template**: Apply identical logic to both topics using a shared Flink SQL editor with `{topic}` placeholder support.
-- **Time Synchronization**: Linked time range filters for temporal correlation between datasets.
-- **Intelligent Diffing**: Specify an ID column to highlight value discrepancies and identify missing records across topics.
-- **Live Metrics**: Real-time display of message counts and throughput (msg/s) for the selected topics and time ranges.
-
-### 8. Automated Functional Audit
-- **Asynchronous Auditing**: Launch long-running cluster-wide audits in the background (dedicated executor, bounded per-topic parallelism).
-- **Technical Health Checks**: Automatic detection of "poison messages" (malformed JSON/XML) and exact record counting via the direct Kafka SELECT engine.
-- **Duplicate Detection**: In-process scan (up to 10 000 messages per topic) counting keys that appear more than once, based on common ID fields (e.g., `id`, `order_id`, `*_id`).
-- **Functional Flow Analysis**: Automatic grouping of topics into logical business processes (using naming conventions) to visualize throughput and drop-off rates across steps.
-- **Latency Measurement**: Average delta between Kafka record timestamps of messages sharing the same `id` across successive topics in a flow, computed in-process.
-- **Audit History**: Persistence of audit reports into a dedicated Kafka topic (`internal.audit.history`) for long-term tracking.
-
-### 9. Security & Robustness
-- **XXE Protection**: Strict disabling of external DTD entities for all XML parsers (Schema Inferrer, UDF, Formatter).
-- **SQL Validation**: Whitelist of authorized commands (`SELECT`, `EXPLAIN`, `CREATE TABLE`) to prevent destructive DML operations.
-- **Credential Masking**: DDL shown in the UI (topic detail, DDL preview, lineage) has SSL passwords and SASL/Confluent secrets redacted.
-- **Connection Management**: Clean lifecycle of the Kafka AdminClient, consumers, producers and thread pools; heavy metadata calls are cached (30s) to keep dashboard polling cheap.
-
-### 10. Process Mining & AI Analysis (LLM)
-Kafka Explorer integrates AI to analyze message flows and detect anomalies:
-- **Automatic Field Profiling**: Detects `CORRELATION_ID`, `TIMESTAMP`, and `STATUS` fields across topics.
-- **Flow Reconstruction**: Generates Mermaid flowcharts of your business processes.
-- **Anomaly Detection**: Identifies sequence breaks, temporal delays, and structural inconsistencies.
-- **Audit checklist**: A built-in library of ready-to-use audit prompts (ordering, duplicates, orphan flows, latency/SLA, schema drift, missing required fields, invalid status transitions, error/retries, amount outliers, PII exposure, correlation integrity). Tick the checks — plus an optional free-form instruction — to focus the LLM on a specific audit, in both snapshot and live modes. Audits that need a field the profiling step didn't detect (e.g. amount outliers with no `AMOUNT` field) are greyed out automatically. Served from `GET /api/process-mining/audit-templates`.
-- **Multi-Provider Support**: Compatible with **Claude (Anthropic)**, **Open Source models** (via OpenAI-compatible APIs like Ollama), and **SpectraLLM** (self-hosted private RAG/fine-tuned models).
-
-### 11. Demo & Sandbox Environment
-The application includes an automated demonstration setup to help you explore features immediately:
-- **6-Step Order Pipeline**: Sequential topics (`demo.orders.1.received` to `6.delivered`) to test **Stream Flow** traceability.
-- **JOINs & Reference Data**: A `demo.customers` topic to practice SQL JOINs with orders.
-- **XML Processing**: A `demo.orders.xml` topic to test `XmlExtract` UDF.
-- **Complex JSON**: A `demo.orders.complex` topic with deep nesting for testing **Schema Inference**.
-- **Poison Messages**: A `demo.errors.poison` topic containing malformed data to observe error resilience.
-- **Supply Chain 2.0 (Complex Process)**: A 20-step massive pipeline (`demo.sc.01.order.placed.out` to `20.delivered.out`) involving 60 topics. It features evolving nested JSON payloads (adding payment, fulfillment, quality control, and logistics data incrementally) to demonstrate advanced **Schema Inference** and **Stream Flow** across complex architectures.
-
-### 12. Kafka 4 / KRaft Observability
-- **KRaft Controller Quorum** (Cluster page): metadata-log leader, epoch and high watermark, plus a voters/observers table with per-replica lag and last fetch / last caught-up timestamps. Hidden automatically on Zookeeper-based clusters.
-- **Client Groups** (Cluster page): every registered group with its type — `CLASSIC`, `CONSUMER` (KIP-848), `SHARE` (KIP-932 queues) or `STREAMS` — and state.
-- **Feature Versions** (Cluster page): finalized vs broker-supported version for each cluster feature (`metadata.version`, `group.version`, `share.version`, …) with an *Up to date / Lagging* badge.
-- **Incomplete-upgrade detection** (Audit page): if the finalized `metadata.version` lags what every broker supports (a rolling upgrade that was never finalized with `kafka-features.sh upgrade`), the audit report raises a dedicated warning banner.
-- **Prometheus quorum gauges** (`/actuator/prometheus`): `kafka_quorum_leader_id`, `kafka_quorum_leader_epoch`, `kafka_quorum_high_watermark` and `kafka_quorum_replica_lag{replicaId,role}` — alert on a lagging voter or a controller failover.
-- **KIP-848 rebalances (opt-in)**: set `kafka.consumer-group-protocol: consumer` (env `KAFKA_CONSUMER_GROUP_PROTOCOL=consumer`) to switch the live Process Mining consumer to the next-gen incremental rebalance protocol. Requires Kafka 4.x brokers; the default `classic` keeps compatibility with older brokers. The bundled Docker stacks enable it out of the box.
-
----
-
-## Tech Stack
-- **Backend**: Spring Boot 3.5.x, Java 21 (Records).
-- **Streaming**: Apache Flink 2.3.x (Embedded LocalEnvironment).
-- **Kafka**: `kafka-clients` 4.2 (compatible with Kafka 2.1+ brokers on the classic protocol); bundled Docker stacks run Kafka 4.2 in KRaft mode.
-- **Parsing**: Jackson (JSON), JAXB/StAX (XML).
-- **Frontend**: React 19, Tailwind CSS, Monaco Editor, Vite.
-- **Cache**: Caffeine (Kafka Metadata).
-
----
-
-## Quick Start
-
-### Prerequisites
-- Docker & Docker Compose
-- JDK 21 (Flink 2.x supports Java 17/21)
-
-### Installation
-1. **Launch Kafka** — every bundled stack runs Kafka 4.2 in KRaft mode (no Zookeeper):
-   - Default stack (Kafka + app + demo topics):
-     ```bash
-     docker compose up -d
-     ```
-   - With Confluent Schema Registry, for Avro topics (Kafka + Schema Registry + app + demo topics):
-     ```bash
-     # This starts Kafka AND the application on port 8080
-     docker compose -f docker-compose-kafka4.yml up -d
-     ```
-   The app itself remains compatible with external Kafka 3.x brokers — point `kafka.bootstrap-servers` at them.
-
-2. **Launch the application** (if not using the Dockerized version):
-   ```bash
-   # If you started ONLY Kafka via: docker compose -f docker-compose-kafka4.yml up -d kafka
-   ./mvnw spring-boot:run
-   ```
-3. **Access the interface**: `http://localhost:8080`
-
----
-
-## 🤖 LLM Configuration (Process Mining)
-
-Kafka Explorer supports both cloud and local LLMs for process mining.
-
-### Option A: Anthropic Claude (Default)
-Set your API key as an environment variable:
 ```bash
-export ANTHROPIC_API_KEY='your-api-key'
+docker compose up -d
 ```
 
-### Option B: Open Source / Local (Ollama, vLLM, LM Studio)
-1. Run your model (e.g., `ollama run qwen2.5-coder:7b`).
-2. Update `src/main/resources/application.yml`:
-```yaml
-claude:
-  provider: OPENAI_COMPATIBLE
-  base-url: http://localhost:11434/v1 # For Ollama
-  model: qwen2.5-coder:7b
-```
+Then open **http://localhost:8080** and start clicking. That's it.
 
-### Option C: SpectraLLM (local, private, domain-tuned)
-Audit Kafka exchanges with a self-hosted [SpectraLLM](https://github.com/devdownin/SpectraLLM)
-instance — a fully local RAG + fine-tuning platform. Kafka Explorer calls SpectraLLM's
-`POST /api/query` endpoint; no API key leaves your network.
-```yaml
-claude:
-  provider: SPECTRA
-  base-url: http://localhost:8080  # SpectraLLM API (e.g. http://spectra-api:8080 in Docker)
-  use-rag: false                   # true = also retrieve from SpectraLLM's ingested corpus
-  collection: ""                   # optional: a specific SpectraLLM collection to retrieve from
-```
-The `model` field is ignored — SpectraLLM serves whichever model it is configured to run.
-Set `use-rag: true` to enrich the audit with SpectraLLM's document corpus; leave it `false`
-to ground the analysis solely on the sampled Kafka messages. All settings are also editable
-live from the **Config** page, which also offers a **Test LLM** button to verify connectivity.
+<details>
+<summary>Other ways to run it</summary>
 
-When RAG is enabled, the Process Mining results show an **Evidence — cited sources** panel:
-the corpus passages SpectraLLM grounded the audit on (with source file and relevance score),
-turning each verdict into something verifiable.
+- **With Confluent Schema Registry** (Avro topics): `docker compose -f docker-compose-kafka4.yml up -d`
+- **With a local LLM pre-wired** (Ollama): `docker compose -f docker-compose-llm.yml up -d`
+- **From source** (JDK 21): start Kafka with `docker compose up -d kafka`, then `./mvnw spring-boot:run`
+- **Prebuilt image**: `docker run -p 8080:8080 -e SPRING_KAFKA_BOOTSTRAP_SERVERS=your-broker:9092 ghcr.io/devdownin/kafkaexplorer:latest`
+- **Against your own cluster**: point `kafka.bootstrap-servers` at any Kafka 2.1+ broker (PLAIN, SSL or Confluent Cloud) — nothing to install cluster-side.
 
-**One-command combined stack** — Kafka (with demo topics) + Kafka Explorer + a full local
-SpectraLLM instance, pre-wired so the audit runs through SpectraLLM:
-```bash
-# SpectraLLM must be checked out next to this repo; download its models once:
-#   cd ../SpectraLLM && ./scripts/start.sh --first-run
-docker compose -f docker-compose-spectra.yml up -d --build
-```
-Explorer UI → http://localhost:8090 · SpectraLLM UI → http://localhost. Point at a
-SpectraLLM elsewhere with `SPECTRALLM_DIR=/path/to/SpectraLLM`. See the header of
-[`docker-compose-spectra.yml`](docker-compose-spectra.yml) for details.
+</details>
 
-### Recommended Lightweight Models
-- **Qwen 2.5-Coder 7B**: Best for JSON extraction and logic.
-- **Llama 3.2 3B**: Fast for real-time (LIVE) analysis.
-- **DeepSeek-R1-Distill-Qwen-7B**: Superior for complex anomaly reasoning.
+## 🧭 Take the tour
+
+| You want to… | Head to… |
+|---|---|
+| Browse topics, partitions, sizes and sample messages | **Dashboard** & **Topic Explorer** |
+| Write and run SQL against topics | **SQL Editor** — or just click fields and let it write itself |
+| Compare two topics side by side, diff by ID | **Compare** |
+| Follow one message across a whole pipeline | **Stream Flow** |
+| Visualize topics → tables → running jobs | **Lineage** |
+| Turn SQL into Prometheus metrics with live charts | **Metrics** |
+| Health-check the entire cluster in one click | **Audit** |
+| Inspect brokers, KRaft quorum, client groups, feature flags | **Cluster** |
+| Let an LLM reconstruct and audit your business flows | **Process Mining** |
+
+Every feature in detail: **[docs/FEATURES.md](docs/FEATURES.md)** · Ready-to-run SQL: **[docs/QUERY-EXAMPLES.md](docs/QUERY-EXAMPLES.md)**
+
+## 🤖 Bring your own AI
+
+Process Mining works with the LLM you already have — **Anthropic Claude**, anything speaking the OpenAI API (**Ollama**, vLLM, LM Studio…), or a fully private, RAG-enabled **SpectraLLM** where no byte leaves your network. Provider, model and connectivity test are all configurable live from the UI.
+
+→ **[LLM provider guide](docs/LLM-PROVIDERS.md)**
+
+## 🛠️ Under the hood
+
+A single Spring Boot 3.5 JAR embedding Apache Flink 2.3 as the SQL engine, with a React 19 + Tailwind frontend. Kafka clients 4.2 (compatible with brokers 2.1+), Avro via Confluent Schema Registry, Prometheus metrics on `/actuator/prometheus`. SQL is whitelisted (`SELECT` / `EXPLAIN` / `CREATE TABLE` only), XML parsing is XXE-hardened, and credentials are redacted from any DDL shown in the UI.
+
+Architecture deep-dive: **[docs/architecture.md](docs/architecture.md)**
+
+## 🤝 Contributing
+
+Contributions are welcome — the codebase is deliberately heavily commented to double as a learning resource for Flink SQL + Spring Boot integration, and `mvn test` / `npm test` cover the core services.
+
+- Read the **[Contributing Guide](CONTRIBUTING.md)** to get started
+- Be excellent to each other: **[Code of Conduct](CODE_OF_CONDUCT.md)**
+- Found a vulnerability? Follow the **[Security Policy](SECURITY.md)**
+
+## 📄 License
+
+[AGPL v3](LICENSE) — free to use, study, share and improve.
 
 ---
 
-### XML Query Example
-```sql
-SELECT XmlExtract(raw_value, '/Order/Customer') as customer,
-       XmlExtract(raw_value, '/Order/Amount') as amount
-FROM "demo.orders.xml"
-WHERE amount > 100;
-```
-
-### JOIN Query Example
-```sql
-SELECT c.name, c.segment, o.amount, o.state
-FROM "demo.orders.1.received" o
-JOIN "demo.customers" c ON o.customer_id = c.customer_id;
-```
-
-### Complex JSON Query (Supply Chain 2.0)
-```sql
-SELECT order_id,
-       step,
-       JSON_VALUE(raw_value, '$.quality_control.score') as qc_score,
-       JSON_VALUE(raw_value, '$.logistics.tracking') as tracking
-FROM "demo.sc.13.carrier.assigned.out"
-WHERE JSON_VALUE(raw_value, '$.quality_control.score') > 95;
-```
-
----
-
-## 🤝 Community & Support
-- **Code of Conduct**: We expect all contributors to follow our [Code of Conduct](CODE_OF_CONDUCT.md).
-- **Security**: Please report security vulnerabilities to [contact@compagnonsdudev.com](mailto:contact@compagnonsdudev.com) as per our [Security Policy](SECURITY.md).
-- **Contributing**: Check our [Contributing Guide](CONTRIBUTING.md) to get started.
-
----
-*© 2026 Kafka SQL Explorer - Compagnons du dev. Licensed under AGPL v3.*
+<div align="center">
+<sub>© 2026 Kafka SQL Explorer — Compagnons du dev. If this project saves you a debugging afternoon, a ⭐ makes our day.</sub>
+</div>
