@@ -26,4 +26,6 @@ export { Spinner, ProgressBar } from './Spinner';
 export type { SpinnerProps } from './Spinner';
 export { ConfirmProvider, useConfirm } from './ConfirmDialog';
 export type { ConfirmOptions } from './ConfirmDialog';
+export { useVirtualRows } from './useVirtualRows';
+export type { VirtualWindow } from './useVirtualRows';
 export { cn } from './cn';

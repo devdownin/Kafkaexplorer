@@ -4,7 +4,7 @@ import Editor, { useMonaco } from '@monaco-editor/react';
 import type { editor, languages } from 'monaco-editor';
 import axios from 'axios';
 import { useToast } from '../components/Toast';
-import { Button, Badge, Input, Select, EmptyState, useConfirm, cn } from '../components/ui';
+import { Button, Badge, Input, Select, EmptyState, useConfirm, cn, useVirtualRows } from '../components/ui';
 
 /** Contrôle segmenté compact (mode d'exécution, offset). */
 function Segmented<T extends string>({ value, onChange, options, ariaLabel }: {
@@ -46,6 +46,14 @@ interface SavedQuery { id: string; name: string; sql: string; savedAt: number; }
 type ExecutionMode = 'SYNC_READ' | 'ASYNC_JOB';
 
 const DEFAULT_LIMIT = 50;
+// Au-delà de ce nombre de lignes, la grille passe en rendu virtualisé (seules
+// les lignes visibles sont montées). En-deçà, on garde le rendu classique —
+// aucun changement d'apparence ni de comportement pour le cas courant.
+const VIRTUALIZE_THRESHOLD = 200;
+// Hauteur d'une ligne virtualisée (px-4 py-2.5 text-[12px], forcée sur une
+// seule ligne) — mesurée sur la première ligne montée, cette valeur sert de
+// point de départ.
+const EST_ROW_HEIGHT = 37;
 let tabCounter = 1;
 const newTab = (sql = ''): Tab => ({ id: String(++tabCounter), name: `Query ${tabCounter}`, sql });
 const detectStatementType = (sql: string) => {
@@ -243,6 +251,20 @@ const QueryWorkbench: React.FC = () => {
     const idx = results.error.indexOf('\n');
     return idx === -1 ? [results.error, null] : [results.error.substring(0, idx), results.error.substring(idx + 1)];
   }, [results?.error]);
+
+  // ── Virtualisation de la grille de résultats ────────────────────────────────
+  const resultsScrollRef = useRef<HTMLDivElement>(null);
+  const [rowHeight, setRowHeight] = useState(EST_ROW_HEIGHT);
+  const virtualized = sortedRows.length > VIRTUALIZE_THRESHOLD;
+  const vwin = useVirtualRows(resultsScrollRef, virtualized ? sortedRows.length : 0, rowHeight);
+  // Mesure la hauteur réelle de la première ligne montée (métriques de police
+  // variables selon la plateforme) et réaligne la virtualisation dessus.
+  const measureRow = useCallback((tr: HTMLTableRowElement | null) => {
+    if (!tr) return;
+    const h = tr.getBoundingClientRect().height;
+    if (h > 0) setRowHeight(prev => (Math.abs(prev - h) > 0.5 ? h : prev));
+  }, []);
+  const visibleRows = virtualized ? sortedRows.slice(vwin.start, vwin.end) : sortedRows;
 
   // ── DDL preview ───────────────────────────────────────────────────────────────
   const [ddlPreviewTopic, setDdlPreviewTopic] = useState<string | null>(null);
@@ -855,7 +877,7 @@ const QueryWorkbench: React.FC = () => {
               </div>
             )}
 
-            <div className="flex-1 overflow-auto custom-scrollbar">
+            <div ref={resultsScrollRef} className="flex-1 overflow-auto custom-scrollbar">
               {results?.error ? (
                 <div className="p-4">
                   <div className="flex items-start gap-3 p-3 rounded-lg border border-error/30 bg-error/10">
@@ -909,7 +931,7 @@ const QueryWorkbench: React.FC = () => {
                   </div>
                 </div>
               ) : results?.columns.length ? (
-                <table className="w-full text-left border-collapse">
+                <table className={cn('w-full text-left border-collapse', virtualized && 'table-fixed')}>
                   <thead className="sticky top-0 bg-surface-container-high/90 backdrop-blur-sm z-10">
                     <tr>
                       {results.columns.map(col => (
@@ -926,16 +948,36 @@ const QueryWorkbench: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-outline-variant/40">
-                    {sortedRows.map((row, i) => (
-                      <tr key={i} className="hover:bg-surface-container-high/40 transition-colors">
-                        {results.columns.map(col => (
-                          <td key={col} onClick={() => copyCell(row[col])}
-                            className="px-4 py-2.5 text-[12px] font-mono text-on-surface cursor-pointer hover:text-primary transition-colors" title="Click to copy">
-                            {typeof row[col] === 'object' ? JSON.stringify(row[col]) : String(row[col] ?? '')}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
+                    {/* Cale supérieure : préserve la hauteur des lignes non montées. */}
+                    {virtualized && vwin.padTop > 0 && (
+                      <tr aria-hidden="true" className="border-t-0"><td colSpan={results.columns.length} style={{ height: vwin.padTop, padding: 0 }} /></tr>
+                    )}
+                    {visibleRows.map((row, i) => {
+                      const absIndex = virtualized ? vwin.start + i : i;
+                      return (
+                        <tr key={absIndex} ref={virtualized && i === 0 ? measureRow : undefined} className="hover:bg-surface-container-high/40 transition-colors">
+                          {results.columns.map(col => {
+                            const text = typeof row[col] === 'object' ? JSON.stringify(row[col]) : String(row[col] ?? '');
+                            return (
+                              <td key={col} onClick={() => copyCell(row[col])}
+                                className={cn(
+                                  'px-4 py-2.5 text-[12px] font-mono text-on-surface cursor-pointer hover:text-primary transition-colors',
+                                  // En mode virtualisé, les lignes doivent rester à hauteur constante :
+                                  // on force chaque cellule sur une seule ligne (troncature + tooltip).
+                                  virtualized && 'whitespace-nowrap max-w-md truncate',
+                                )}
+                                title={virtualized ? text : 'Click to copy'}>
+                                {text}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
+                    {/* Cale inférieure. */}
+                    {virtualized && vwin.padBottom > 0 && (
+                      <tr aria-hidden="true" className="border-t-0"><td colSpan={results.columns.length} style={{ height: vwin.padBottom, padding: 0 }} /></tr>
+                    )}
                   </tbody>
                 </table>
               ) : (
