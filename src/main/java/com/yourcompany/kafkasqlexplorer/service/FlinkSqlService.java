@@ -582,7 +582,11 @@ public class FlinkSqlService {
 
             final TableResult tableResult = result;
             // result.collect() starts the Flink job and provides an iterator to fetch results.
-            try (org.apache.flink.util.CloseableIterator<Row> it = result.collect()) {
+            // The iterator is NOT thread-safe and is touched by a single thread only — the fetcher
+            // task below, which also closes it in its finally. Closing it from this (calling) thread
+            // via try-with-resources would race with an in-flight read on timeout, so on timeout we
+            // instead cancel the Flink job to unblock the fetcher and let it close the iterator.
+            final org.apache.flink.util.CloseableIterator<Row> it = result.collect();
             List<String> columns = result.getResolvedSchema().getColumnNames();
             log.debug("[FlinkSQL] queryId={} sql='{}' resolvedColumns={} resolvedSchema={}",
                     queryId, finalSql, columns, result.getResolvedSchema());
@@ -590,40 +594,59 @@ public class FlinkSqlService {
 
             // We use a CompletableFuture to implement the timeout logic.
             // Streaming queries might not produce data immediately, so we don't want to block indefinitely.
-            CompletableFuture<List<Map<String, Object>>> future = CompletableFuture.supplyAsync(() -> {
-                List<Map<String, Object>> resultRows = new ArrayList<>();
-                int count = 0;
-                while (it.hasNext() && count < limit) {
-                    Row row = it.next();
-                    if (count == 0 && log.isDebugEnabled()) {
-                        log.debug("[FlinkSQL] queryId={} first row arity={} kind={} rowString='{}'",
-                                queryId, row.getArity(), row.getKind(), row);
-                        for (int i = 0; i < columns.size(); i++) {
-                            Object field = row.getField(i);
-                            log.debug("[FlinkSQL] queryId={} col[{}]='{}' valueType={} value='{}'",
-                                    queryId, i, columns.get(i),
-                                    field == null ? "null" : field.getClass().getName(), field);
+            CompletableFuture<List<Map<String, Object>>> future;
+            try {
+                future = CompletableFuture.supplyAsync(() -> {
+                    try {
+                        List<Map<String, Object>> resultRows = new ArrayList<>();
+                        int count = 0;
+                        while (it.hasNext() && count < limit) {
+                            Row row = it.next();
+                            if (count == 0 && log.isDebugEnabled()) {
+                                log.debug("[FlinkSQL] queryId={} first row arity={} kind={} rowString='{}'",
+                                        queryId, row.getArity(), row.getKind(), row);
+                                for (int i = 0; i < columns.size(); i++) {
+                                    Object field = row.getField(i);
+                                    log.debug("[FlinkSQL] queryId={} col[{}]='{}' valueType={} value='{}'",
+                                            queryId, i, columns.get(i),
+                                            field == null ? "null" : field.getClass().getName(), field);
+                                }
+                            }
+                            Map<String, Object> mapRow = new HashMap<>();
+                            for (int i = 0; i < columns.size(); i++) {
+                                Object field = row.getField(i);
+                                // Convert non-serializable Flink internal types to String to avoid JSON issues
+                                mapRow.put(columns.get(i), field == null ? null : toSerializable(field));
+                            }
+                            resultRows.add(mapRow);
+                            count++;
+                        }
+                        log.debug("[FlinkSQL] queryId={} total rows fetched={}", queryId, resultRows.size());
+                        return resultRows;
+                    } finally {
+                        // Only the fetcher thread ever touches the iterator, so it closes it too —
+                        // never the calling thread, even on timeout.
+                        try {
+                            it.close();
+                        } catch (Exception ce) {
+                            log.debug("[FlinkSQL] queryId={} error closing result iterator: {}", queryId, ce.getMessage());
                         }
                     }
-                    Map<String, Object> mapRow = new HashMap<>();
-                    for (int i = 0; i < columns.size(); i++) {
-                        Object field = row.getField(i);
-                        // Convert non-serializable Flink internal types to String to avoid JSON issues
-                        mapRow.put(columns.get(i), field == null ? null : toSerializable(field));
-                    }
-                    resultRows.add(mapRow);
-                    count++;
-                }
-                log.debug("[FlinkSQL] queryId={} total rows fetched={}", queryId, resultRows.size());
-                return resultRows;
-            }, queryExecutor);
+                }, queryExecutor);
+            } catch (RuntimeException submitFailure) {
+                // The fetcher never started, so it will never close the iterator — do it here.
+                try { it.close(); } catch (Exception ignored) { }
+                throw submitFailure;
+            }
 
             try {
                 rows = future.get(timeout, TimeUnit.MILLISECONDS);
             } catch (TimeoutException te) {
                 log.warn("Query timed out after {}ms: {}", timeout, finalSql);
-                future.cancel(true);
+                // Cancel the job first so the fetcher's hasNext() unblocks and its finally closes the
+                // iterator; then abandon the fetch. The iterator is never closed from this thread.
                 cancelJobInternal(tableResult);
+                future.cancel(true);
                 long duration = System.currentTimeMillis() - startTime;
                 return new QueryResult(Collections.emptyList(), Collections.emptyList(), duration,
                     "Query timed out after " + timeout + "ms. The Kafka topic may have fewer messages than the limit, " +
@@ -635,9 +658,8 @@ public class FlinkSqlService {
                 throw new RuntimeException(cause);
             }
 
-                long duration = System.currentTimeMillis() - startTime;
-                return new QueryResult(columns, rows, duration, null, false, "FLINK");
-            }
+            long duration = System.currentTimeMillis() - startTime;
+            return new QueryResult(columns, rows, duration, null, false, "FLINK");
         } catch (Exception e) {
             log.error("Flink SQL execution error — query='{}' error='{}'", finalSql, e.getMessage(), e);
             cancelJobInternal(result);
@@ -917,7 +939,13 @@ public class FlinkSqlService {
         } else {
             for (Map<String, Object> row : inputRows) {
                 String key = groupCols.stream()
-                    .map(c -> String.valueOf(row.getOrDefault(c, "")))
+                    // Resolve nested JSON / flattened XML paths (and case) like WHERE does, instead
+                    // of a direct key lookup that would collapse nested paths into a single group.
+                    .map(c -> {
+                        Object v = getNestedValue(row, c);
+                        if (v == null) v = findValueIgnoreCase(row, c);
+                        return v == null ? "" : String.valueOf(v);
+                    })
                     .collect(Collectors.joining("\u0001"));
                 groups.computeIfAbsent(key, k -> new ArrayList<>()).add(row);
             }
