@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useToast } from '../components/Toast';
+import { Button } from '../components/ui';
 
 // Parse JSON safely, return null on failure
 function tryParse(s: string): Record<string, unknown> | null {
@@ -34,7 +35,7 @@ const MessageCard: React.FC<{
 
   if (!parsed) {
     return (
-      <div className="rounded-lg border border-primary/10 bg-background-dark/50 p-3 font-mono text-xs text-on-surface">
+      <div className="rounded-lg border border-outline-variant bg-surface-container-low p-3 font-mono text-[12px] text-on-surface">
         {sample}
       </div>
     );
@@ -50,8 +51,8 @@ const MessageCard: React.FC<{
   const entries = Object.entries(parsed);
 
   return (
-    <div className="rounded-lg border border-primary/10 bg-background-dark/50 p-3 hover:border-primary/30 transition-all">
-      <div className="font-mono text-xs space-y-1">
+    <div className="rounded-lg border border-outline-variant bg-surface-container-low p-3 hover:border-outline transition-colors">
+      <div className="font-mono text-[12px] space-y-1">
         {entries.map(([k, v]) => {
           const status = diff?.[k] ?? 'same';
           return (
@@ -65,6 +66,48 @@ const MessageCard: React.FC<{
     </div>
   );
 };
+
+const Toggle: React.FC<{ label: string; on: boolean; onClick: () => void }> = ({ label, on, onClick }) => (
+  <label className="flex items-center gap-2 cursor-pointer select-none">
+    <span className="text-[11px] text-on-surface-variant font-medium">{label}</span>
+    <button
+      role="switch" aria-checked={on} aria-label={label} onClick={onClick}
+      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${on ? 'bg-primary' : 'bg-surface-container-highest'}`}
+    >
+      <span className={`inline-block h-3.5 w-3.5 transform rounded-full transition-transform ${on ? 'translate-x-[18px] bg-on-primary' : 'translate-x-1 bg-on-surface-variant'}`} />
+    </button>
+  </label>
+);
+
+const TopicPane: React.FC<{
+  side: 'A' | 'B'; topic: string; setTopic: (t: string) => void; count: number;
+  display: string[]; paired: string[]; topics: string[]; hasResult: boolean;
+}> = ({ side, topic, setTopic, count, display, paired, topics, hasResult }) => (
+  <div className="flex-1 flex flex-col rounded-xl bg-surface-container ring-1 ring-white/[0.045] overflow-hidden">
+    <div className="p-3 border-b border-outline-variant/60 flex items-center justify-between bg-surface-container-high/60">
+      <div className="flex flex-col gap-0.5 min-w-0">
+        <span className="text-[11px] font-medium text-primary uppercase tracking-[0.05em]">Topic {side} ({side === 'A' ? 'Source' : 'Target'})</span>
+        <select
+          value={topic}
+          onChange={e => setTopic(e.target.value)}
+          aria-label={`Topic ${side}`}
+          className="bg-transparent border-none text-on-surface font-medium p-0 focus:outline-none text-[13px] cursor-pointer max-w-full truncate"
+        >
+          {topics.map(t => <option key={t} value={t} className="bg-surface-container text-on-surface">{t}</option>)}
+        </select>
+      </div>
+      <span className="text-[12px] text-on-surface-variant tabular-nums shrink-0">{count} msgs</span>
+    </div>
+    <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-2">
+      {!hasResult && (
+        <div className="p-8 text-center text-outline text-[12px]">Select topics and run compare</div>
+      )}
+      {display.map((s, i) => (
+        <MessageCard key={i} sample={s} paired={paired[i]} side={side} />
+      ))}
+    </div>
+  </div>
+);
 
 const Compare: React.FC = () => {
   const { toast } = useToast();
@@ -138,114 +181,40 @@ const Compare: React.FC = () => {
     <div className="flex-1 flex flex-col p-4 gap-4 overflow-hidden h-full">
       {/* Query bar */}
       <section className="flex flex-col">
-        <div className="flex flex-col border border-primary/20 rounded-xl overflow-hidden bg-background-dark/30">
-          <div className="flex bg-primary/5 px-4 py-2.5 border-b border-primary/10 items-center justify-between">
-            <span className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant">Shared Filter Context (optional)</span>
-            <div className="flex items-center gap-2">
-              <span className="text-on-surface-variant hover:text-primary cursor-pointer transition-all">
-                <span className="material-symbols-outlined text-lg">format_align_left</span>
-              </span>
-            </div>
+        <div className="flex flex-col rounded-xl overflow-hidden bg-surface-container ring-1 ring-white/[0.045]">
+          <div className="flex bg-surface-container-high/60 px-4 py-2.5 border-b border-outline-variant/60 items-center justify-between">
+            <span className="text-[11px] uppercase tracking-[0.05em] text-on-surface-variant">Shared Filter Context (optional)</span>
           </div>
           <textarea
-            className="w-full bg-transparent border-none focus:ring-0 font-mono text-sm p-4 h-16 text-primary resize-none placeholder:text-outline"
+            aria-label="Shared filter SQL"
+            className="w-full bg-transparent border-none focus:outline-none font-mono text-[13px] p-4 h-16 text-on-surface resize-none placeholder:text-outline"
             placeholder="-- Optional: filter applied to both topics&#10;SELECT * FROM TABLE WHERE event_type = 'ORDER_CREATED'"
           />
-          <div className="flex justify-between items-center p-3 bg-primary/5 border-t border-primary/10">
-            <div className="flex items-center gap-6">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <span className="text-[10px] uppercase text-on-surface-variant font-bold">Sync Scroll</span>
-                <button
-                  onClick={() => setSyncCursors(!syncCursors)}
-                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${syncCursors ? 'bg-primary' : 'bg-surface-container-high'}`}
-                >
-                  <span className={`inline-block h-3 w-3 transform rounded-full bg-background-dark transition-transform ${syncCursors ? 'translate-x-5' : 'translate-x-1'}`} />
-                </button>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <span className="text-[10px] uppercase text-on-surface-variant font-bold">Diff Only</span>
-                <button
-                  onClick={() => setShowDiffOnly(!showDiffOnly)}
-                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${showDiffOnly ? 'bg-primary' : 'bg-surface-container-high'}`}
-                >
-                  <span className={`inline-block h-3 w-3 transform rounded-full bg-background-dark transition-transform ${showDiffOnly ? 'translate-x-5' : 'translate-x-1'}`} />
-                </button>
-              </label>
+          <div className="flex justify-between items-center gap-3 p-3 bg-surface-container-high/40 border-t border-outline-variant/60">
+            <div className="flex items-center gap-5">
+              <Toggle label="Sync scroll" on={syncCursors} onClick={() => setSyncCursors(!syncCursors)} />
+              <Toggle label="Diff only" on={showDiffOnly} onClick={() => setShowDiffOnly(!showDiffOnly)} />
             </div>
-            <button
-              onClick={runCompare}
-              disabled={loading}
-              className="flex items-center gap-2 px-5 py-2 bg-primary text-background-dark font-bold rounded-lg hover:brightness-110 disabled:opacity-50 transition-all text-sm"
-            >
-              {loading
-                ? <span className="material-symbols-outlined text-lg animate-spin">refresh</span>
-                : <span className="material-symbols-outlined text-lg">compare_arrows</span>}
-              {loading ? 'LOADING...' : 'RUN COMPARE'}
-            </button>
+            <Button variant="primary" icon={loading ? undefined : 'compare_arrows'} loading={loading} onClick={runCompare} disabled={loading}>
+              {loading ? 'Loading…' : 'Run compare'}
+            </Button>
           </div>
         </div>
       </section>
 
       {/* Side-by-side */}
       <section className="flex-1 flex gap-4 overflow-hidden">
-        {/* Topic A */}
-        <div className="flex-1 flex flex-col border border-primary/20 rounded-xl bg-background-dark/30 overflow-hidden">
-          <div className="p-3 border-b border-primary/10 flex items-center justify-between bg-primary/5">
-            <div className="flex flex-col gap-0.5">
-              <span className="text-[10px] font-bold text-primary uppercase">Topic A (Source)</span>
-              <select
-                value={topicA}
-                onChange={e => setTopicA(e.target.value)}
-                className="bg-surface-container-low border-none text-on-surface font-bold p-0 focus:ring-0 text-sm cursor-pointer outline-none"
-              >
-                {topics.map(t => <option key={t} value={t} className="bg-surface-container-low text-on-surface">{t}</option>)}
-              </select>
-            </div>
-            <span className="text-xs text-on-surface-variant">{samplesA.length} msgs</span>
-          </div>
-          <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-2">
-            {!hasResult && (
-              <div className="p-8 text-center text-outline text-xs uppercase tracking-widest">Select topics and run compare</div>
-            )}
-            {displayA.map((s, i) => (
-              <MessageCard key={i} sample={s} paired={samplesB[i]} side="A" />
-            ))}
-          </div>
-        </div>
-
-        {/* Topic B */}
-        <div className="flex-1 flex flex-col border border-primary/20 rounded-xl bg-background-dark/30 overflow-hidden">
-          <div className="p-3 border-b border-primary/10 flex items-center justify-between bg-primary/5">
-            <div className="flex flex-col gap-0.5">
-              <span className="text-[10px] font-bold text-primary uppercase">Topic B (Target)</span>
-              <select
-                value={topicB}
-                onChange={e => setTopicB(e.target.value)}
-                className="bg-surface-container-low border-none text-on-surface font-bold p-0 focus:ring-0 text-sm cursor-pointer outline-none"
-              >
-                {topics.map(t => <option key={t} value={t} className="bg-surface-container-low text-on-surface">{t}</option>)}
-              </select>
-            </div>
-            <span className="text-xs text-on-surface-variant">{samplesB.length} msgs</span>
-          </div>
-          <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-2">
-            {!hasResult && (
-              <div className="p-8 text-center text-outline text-xs uppercase tracking-widest">Select topics and run compare</div>
-            )}
-            {displayB.map((s, i) => (
-              <MessageCard key={i} sample={s} paired={samplesA[i]} side="B" />
-            ))}
-          </div>
-        </div>
+        <TopicPane side="A" topic={topicA} setTopic={setTopicA} count={samplesA.length} display={displayA} paired={samplesB} topics={topics} hasResult={hasResult} />
+        <TopicPane side="B" topic={topicB} setTopic={setTopicB} count={samplesB.length} display={displayB} paired={samplesA} topics={topics} hasResult={hasResult} />
       </section>
 
       {/* Diff Summary Bar */}
-      <footer className="h-10 border-t border-primary/20 flex items-center px-4 bg-primary/5 rounded-lg justify-between text-xs">
+      <footer className="h-11 border border-outline-variant/60 bg-surface-container rounded-xl flex items-center px-4 justify-between gap-3 text-[12px]">
         <div className="flex gap-4">
           {hasResult ? (
             <>
-              <span className="text-on-surface-variant">Messages compared: <b className="text-primary">{Math.min(samplesA.length, samplesB.length)}</b></span>
-              <span className="text-on-surface-variant">Differences: <b className={diffCount > 0 ? 'text-warning' : 'text-success'}>{diffCount}</b></span>
+              <span className="text-on-surface-variant">Compared <b className="text-on-surface tabular-nums">{Math.min(samplesA.length, samplesB.length)}</b></span>
+              <span className="text-on-surface-variant">Differences <b className={`tabular-nums ${diffCount > 0 ? 'text-warning' : 'text-success'}`}>{diffCount}</b></span>
             </>
           ) : (
             <span className="text-outline">No comparison run yet</span>
@@ -253,12 +222,12 @@ const Compare: React.FC = () => {
         </div>
         <div className="flex gap-4 items-center">
           <div className="flex items-center gap-1.5">
-            <div className="w-2 h-2 rounded-full bg-success" />
-            <span className="text-on-surface-variant text-[10px]">Added / Higher</span>
+            <div className="w-1.5 h-1.5 rounded-full bg-success" />
+            <span className="text-on-surface-variant text-[11px]">Added / Higher</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <div className="w-2 h-2 rounded-full bg-error" />
-            <span className="text-on-surface-variant text-[10px]">Removed / Lower</span>
+            <div className="w-1.5 h-1.5 rounded-full bg-error" />
+            <span className="text-on-surface-variant text-[11px]">Removed / Lower</span>
           </div>
           {hasResult && (
             <button
@@ -270,9 +239,9 @@ const Compare: React.FC = () => {
                 a.href = url; a.download = `diff-${topicA}-vs-${topicB}.json`; a.click();
                 URL.revokeObjectURL(url);
               }}
-              className="flex items-center gap-1 border-l border-primary/20 pl-4 hover:text-primary text-on-surface-variant transition-colors"
+              className="flex items-center gap-1 border-l border-outline-variant pl-4 hover:text-on-surface text-on-surface-variant transition-colors"
             >
-              <span className="material-symbols-outlined text-sm">download</span>
+              <span className="material-symbols-outlined text-[16px]">download</span>
               <span>Export</span>
             </button>
           )}

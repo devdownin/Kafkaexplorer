@@ -1,5 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
+import {
+  PageHeader, Button, Stat, Badge, EmptyState, Card,
+  Table, TableHead, TableBody, TableRow, Th, Td, type BadgeTone,
+} from '../components/ui';
+
+const HEALTH_TONE: Record<string, BadgeTone> = {
+  HEALTHY: 'success', WARNING: 'warning', CRITICAL: 'error', UNKNOWN: 'neutral',
+};
 
 interface TopicAudit {
   name: string;
@@ -34,20 +42,6 @@ interface AuditReport {
   flowAudits: FlowAudit[];
   globalStats: Record<string, unknown>;
 }
-
-const healthColor: Record<string, string> = {
-  HEALTHY: 'text-success bg-success/10 border-success/20',
-  WARNING: 'text-warning bg-warning/10 border-warning/20',
-  CRITICAL: 'text-error bg-error/10 border-error/20',
-  UNKNOWN: 'text-on-surface-variant bg-outline/10 border-outline-variant/20',
-};
-
-const healthDot: Record<string, string> = {
-  HEALTHY: 'bg-success',
-  WARNING: 'bg-warning',
-  CRITICAL: 'bg-error',
-  UNKNOWN: 'bg-outline',
-};
 
 interface AuditOptions {
   checkSchema: boolean;
@@ -127,38 +121,32 @@ const Audit: React.FC = () => {
   };
 
   return (
-    <div className="p-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Cluster Audit</h1>
-          <p className="text-on-surface-variant dark:text-on-surface-variant text-sm mt-1">
-            Deep health scan of topics, schemas, and stream flows.
-          </p>
-        </div>
-        <button
-          onClick={startAudit}
-          disabled={loading || Object.values(options).every(v => !v)}
-          className="flex items-center gap-2 bg-primary hover:brightness-110 disabled:opacity-50 text-background-dark px-5 py-2.5 rounded-lg font-bold transition-all text-sm"
-        >
-          {loading ? (
-            <span className="material-symbols-outlined animate-spin text-lg">refresh</span>
-          ) : (
-            <span className="material-symbols-outlined text-lg">play_circle</span>
-          )}
-          {loading ? 'Running...' : 'Run New Audit'}
-        </button>
-      </div>
+    <div className="p-4 md:p-6 space-y-6">
+      <PageHeader
+        title="Cluster Audit"
+        description="Deep health scan of topics, schemas, and stream flows."
+        actions={
+          <Button
+            variant="primary"
+            icon={loading ? undefined : 'play_circle'}
+            loading={loading}
+            onClick={startAudit}
+            disabled={loading || Object.values(options).every(v => !v)}
+          >
+            {loading ? 'Running…' : 'Run new audit'}
+          </Button>
+        }
+      />
 
       {/* Check selection */}
-      <div className="rounded-xl border border-primary/10 bg-primary/5 p-4">
+      <Card padding="md">
         <div className="flex items-center justify-between mb-3">
-          <span className="text-[10px] uppercase font-bold tracking-widest text-on-surface-variant">Checks to run</span>
-          <div className="flex gap-3 text-xs">
+          <span className="text-[11px] uppercase font-medium tracking-[0.05em] text-on-surface-variant">Checks to run</span>
+          <div className="flex gap-3 text-[12px]">
             <button onClick={() => setOptions(ALL_CHECKED)} className="text-primary hover:underline">All</button>
             <button
               onClick={() => setOptions({ checkSchema: false, checkPoisonMessages: false, checkDuplicates: false, checkFlows: false, checkExactCount: false })}
-              className="text-on-surface-variant hover:underline"
+              className="text-on-surface-variant hover:text-on-surface"
             >None</button>
           </div>
         </div>
@@ -168,8 +156,8 @@ const Audit: React.FC = () => {
               key={key}
               className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
                 options[key]
-                  ? 'border-primary/30 bg-primary/10'
-                  : 'border-primary/10 bg-transparent hover:border-primary/20'
+                  ? 'border-primary/40 bg-primary/10'
+                  : 'border-outline-variant bg-transparent hover:border-outline'
               }`}
             >
               <input
@@ -180,47 +168,48 @@ const Audit: React.FC = () => {
               />
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5">
-                  <span className={`material-symbols-outlined text-sm ${options[key] ? 'text-primary' : 'text-on-surface-variant'}`}>{icon}</span>
-                  <span className={`text-xs font-bold ${options[key] ? 'text-on-surface' : 'text-on-surface-variant'}`}>{label}</span>
+                  <span className={`material-symbols-outlined text-[16px] ${options[key] ? 'text-primary' : 'text-on-surface-variant'}`}>{icon}</span>
+                  <span className={`text-[13px] font-medium ${options[key] ? 'text-on-surface' : 'text-on-surface-variant'}`}>{label}</span>
                 </div>
-                <p className="text-[10px] text-on-surface-variant mt-0.5 leading-snug">{description}</p>
+                <p className="text-[11px] text-on-surface-variant mt-0.5 leading-snug">{description}</p>
               </div>
             </label>
           ))}
         </div>
-      </div>
+      </Card>
 
       {/* Running State */}
       {loading && (
-        <div className="rounded-xl border border-primary/20 bg-primary/5 p-6 flex items-center gap-4">
-          <span className="material-symbols-outlined text-primary text-3xl animate-pulse">radar</span>
+        <Card padding="md" className="flex items-center gap-4">
+          <span className="material-symbols-outlined text-primary text-[30px] animate-pulse">radar</span>
           <div className="flex-1">
-            <p className="text-sm font-bold text-primary">Scanning cluster...</p>
-            <p className="text-xs text-on-surface-variant mt-1">Inspecting topics, schema formats, duplicates, and stream flows.</p>
-            <div className="mt-3 h-1.5 bg-primary/10 rounded-full overflow-hidden">
+            <p className="text-[13px] font-semibold text-primary">Scanning cluster…</p>
+            <p className="text-[12px] text-on-surface-variant mt-1">Inspecting topics, schema formats, duplicates, and stream flows.</p>
+            <div className="mt-3 h-1.5 bg-primary/15 rounded-full overflow-hidden">
               <div className="h-full bg-primary rounded-full animate-pulse" style={{ width: '60%' }} />
             </div>
           </div>
-        </div>
+        </Card>
       )}
 
       {/* Error */}
       {error && (
-        <div className="rounded-xl border border-error/20 bg-error/5 p-4 flex items-center gap-3 text-error text-sm">
-          <span className="material-symbols-outlined">warning</span>
+        <div className="rounded-xl border border-error/25 bg-error/10 p-4 flex items-center gap-3 text-error text-[13px]" role="alert">
+          <span className="material-symbols-outlined text-[20px]">error</span>
           {error}
         </div>
       )}
 
       {/* Empty State */}
       {!loading && !report && !error && (
-        <div className="rounded-xl border border-primary/10 bg-background-dark/30 p-16 flex flex-col items-center gap-4 text-center">
-          <span className="material-symbols-outlined text-5xl text-outline">assignment</span>
-          <div>
-            <p className="font-bold text-on-surface">No audit report yet</p>
-            <p className="text-sm text-on-surface-variant mt-1">Click <b>Run New Audit</b> to start a full cluster health scan.</p>
-          </div>
-        </div>
+        <Card padding="none">
+          <EmptyState
+            icon="fact_check"
+            title="No audit report yet"
+            description="Run a full cluster health scan to inspect topics, schemas, duplicates and stream flows."
+            action={<Button variant="primary" icon="play_circle" onClick={startAudit} disabled={Object.values(options).every(v => !v)}>Run new audit</Button>}
+          />
+        </Card>
       )}
 
       {/* Report */}
@@ -228,33 +217,25 @@ const Audit: React.FC = () => {
         <>
           {/* KPI Summary */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            {[
-              { label: 'Total Topics', value: report.totalTopics, icon: 'format_list_bulleted', color: 'text-primary' },
-              { label: 'Total Messages', value: formatNum(report.totalMessages), icon: 'bolt', color: 'text-primary', raw: true },
-              { label: 'Unhealthy Topics', value: report.unhealthyTopicsCount, icon: 'warning', color: report.unhealthyTopicsCount > 0 ? 'text-error' : 'text-success' },
-              { label: 'Health Score', value: `${healthScore}%`, icon: 'health_metrics', color: healthScore! >= 80 ? 'text-success' : healthScore! >= 50 ? 'text-warning' : 'text-error', raw: true },
-            ].map((kpi) => (
-              <div key={kpi.label} className="rounded-xl border border-primary/10 bg-primary/5 p-5">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className={`material-symbols-outlined text-xl ${kpi.color}`}>{kpi.icon}</span>
-                  <span className="text-[10px] uppercase font-bold tracking-widest text-on-surface-variant">{kpi.label}</span>
-                </div>
-                <p className={`text-3xl font-bold ${kpi.color}`}>
-                  {kpi.raw ? kpi.value : kpi.value}
-                </p>
-              </div>
-            ))}
+            <Stat label="Total Topics" icon="format_list_bulleted" value={report.totalTopics.toLocaleString()} />
+            <Stat label="Total Messages" icon="bolt" tone="primary" value={formatNum(report.totalMessages)} />
+            <Stat label="Unhealthy Topics" icon="warning"
+              tone={report.unhealthyTopicsCount > 0 ? 'error' : 'success'}
+              value={report.unhealthyTopicsCount.toLocaleString()} />
+            <Stat label="Health Score" icon="health_metrics"
+              tone={healthScore! >= 80 ? 'success' : healthScore! >= 50 ? 'warning' : 'error'}
+              value={`${healthScore}%`} />
           </div>
 
           {/* Tabs */}
-          <div className="flex gap-1 border-b border-primary/10">
+          <div className="flex gap-1 border-b border-outline-variant/60">
             {(['topics', 'flows'] as const).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
-                className={`px-4 py-2 text-sm font-bold uppercase tracking-wider transition-colors border-b-2 -mb-px ${
+                className={`px-4 py-2 text-[13px] font-medium transition-colors border-b-2 -mb-px ${
                   activeTab === tab
-                    ? 'border-primary text-primary'
+                    ? 'border-primary text-on-surface'
                     : 'border-transparent text-on-surface-variant hover:text-on-surface'
                 }`}
               >
@@ -265,80 +246,65 @@ const Audit: React.FC = () => {
 
           {/* Topics Table */}
           {activeTab === 'topics' && (
-            <div className="rounded-xl border border-primary/10 overflow-hidden">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-primary/5 border-b border-primary/10 text-[10px] uppercase tracking-widest text-on-surface-variant">
-                    <th className="text-left px-4 py-3">Topic</th>
-                    <th className="text-right px-4 py-3">Messages</th>
-                    <th className="text-center px-4 py-3">Format</th>
-                    <th className="text-right px-4 py-3">Poison</th>
-                    <th className="text-right px-4 py-3">Duplicates</th>
-                    <th className="text-center px-4 py-3">Health</th>
-                    <th className="text-left px-4 py-3">Issues</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-primary/5">
-                  {report.topicAudits.map((t) => (
-                    <tr key={t.name} className="hover:bg-primary/5 transition-colors">
-                      <td className="px-4 py-3 font-mono font-medium text-on-surface">{t.name}</td>
-                      <td className="px-4 py-3 text-right font-mono text-on-surface">{formatNum(t.messageCount)}</td>
-                      <td className="px-4 py-3 text-center">
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-surface-container-high text-on-surface">{t.format}</span>
-                      </td>
-                      <td className={`px-4 py-3 text-right font-mono ${t.poisonMessageCount > 0 ? 'text-error font-bold' : 'text-on-surface-variant'}`}>
-                        {t.poisonMessageCount}
-                      </td>
-                      <td className={`px-4 py-3 text-right font-mono ${t.duplicateCount > 0 ? 'text-warning' : 'text-on-surface-variant'}`}>
-                        {t.duplicateCount}
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[10px] font-bold ${healthColor[t.healthStatus] ?? healthColor.UNKNOWN}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${healthDot[t.healthStatus] ?? healthDot.UNKNOWN}`} />
-                          {t.healthStatus}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        {t.issues.length > 0 ? (
-                          <div className="flex flex-wrap gap-1">
-                            {t.issues.map((issue, i) => (
-                              <span key={i} className="text-[10px] bg-error/10 text-error px-1.5 py-0.5 rounded border border-error/20">{issue}</span>
-                            ))}
-                          </div>
-                        ) : (
-                          <span className="text-outline text-xs">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                  {report.topicAudits.length === 0 && (
-                    <tr>
-                      <td colSpan={7} className="px-4 py-8 text-center text-on-surface-variant">No topic audits available.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+            <Table>
+              <TableHead>
+                <tr>
+                  <Th>Topic</Th>
+                  <Th className="text-right">Messages</Th>
+                  <Th className="text-center">Format</Th>
+                  <Th className="text-right">Poison</Th>
+                  <Th className="text-right">Duplicates</Th>
+                  <Th className="text-center">Health</Th>
+                  <Th>Issues</Th>
+                </tr>
+              </TableHead>
+              <TableBody>
+                {report.topicAudits.map((t) => (
+                  <TableRow key={t.name}>
+                    <Td className="font-mono font-medium text-on-surface">{t.name}</Td>
+                    <Td className="text-right font-mono tabular-nums">{formatNum(t.messageCount)}</Td>
+                    <Td className="text-center"><Badge tone="neutral">{t.format}</Badge></Td>
+                    <Td className={`text-right font-mono tabular-nums ${t.poisonMessageCount > 0 ? 'text-error font-semibold' : 'text-on-surface-variant'}`}>{t.poisonMessageCount}</Td>
+                    <Td className={`text-right font-mono tabular-nums ${t.duplicateCount > 0 ? 'text-warning' : 'text-on-surface-variant'}`}>{t.duplicateCount}</Td>
+                    <Td className="text-center">
+                      <Badge tone={HEALTH_TONE[t.healthStatus] ?? 'neutral'} dot>{t.healthStatus}</Badge>
+                    </Td>
+                    <Td>
+                      {t.issues.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {t.issues.map((issue, i) => (
+                            <span key={i} className="text-[11px] bg-error/10 text-error px-1.5 py-0.5 rounded border border-error/25">{issue}</span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-outline">—</span>
+                      )}
+                    </Td>
+                  </TableRow>
+                ))}
+                {report.topicAudits.length === 0 && (
+                  <tr><td colSpan={7}><EmptyState icon="inbox" title="No topic audits available" /></td></tr>
+                )}
+              </TableBody>
+            </Table>
           )}
 
           {/* Flow Audits */}
           {activeTab === 'flows' && (
             <div className="space-y-4">
               {report.flowAudits.length === 0 && (
-                <div className="rounded-xl border border-primary/10 p-10 text-center text-on-surface-variant">
-                  No flow audits available.
-                </div>
+                <Card padding="none"><EmptyState icon="account_tree" title="No flow audits available" description="Flows are grouped from topic naming conventions." /></Card>
               )}
               {report.flowAudits.map((flow) => (
-                <div key={flow.flowName} className="rounded-xl border border-primary/10 bg-primary/5 overflow-hidden">
-                  <div className="p-4 border-b border-primary/10 flex items-center justify-between">
+                <Card key={flow.flowName} padding="none" className="overflow-hidden">
+                  <div className="p-4 border-b border-outline-variant/60 flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <span className="material-symbols-outlined text-primary">account_tree</span>
-                      <span className="font-bold text-on-surface">{flow.flowName}</span>
+                      <span className="material-symbols-outlined text-primary text-[20px]">account_tree</span>
+                      <span className="font-semibold text-on-surface">{flow.flowName}</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] uppercase font-bold text-on-surface-variant">Health Score</span>
-                      <span className={`text-lg font-bold ${flow.overallHealthScore >= 0.8 ? 'text-success' : flow.overallHealthScore >= 0.5 ? 'text-warning' : 'text-error'}`}>
+                      <span className="text-[11px] uppercase font-medium tracking-[0.05em] text-on-surface-variant">Health Score</span>
+                      <span className={`text-lg font-semibold tabular-nums ${flow.overallHealthScore >= 0.8 ? 'text-success' : flow.overallHealthScore >= 0.5 ? 'text-warning' : 'text-error'}`}>
                         {Math.round(flow.overallHealthScore * 100)}%
                       </span>
                     </div>
@@ -346,25 +312,25 @@ const Audit: React.FC = () => {
                   <div className="p-4 flex items-start gap-2 overflow-x-auto">
                     {flow.steps.map((step, idx) => (
                       <React.Fragment key={step.topicName}>
-                        <div className="flex-shrink-0 bg-background-dark/50 border border-primary/20 rounded-lg p-3 min-w-[140px]">
-                          <p className="font-mono text-xs font-bold text-on-surface truncate">{step.topicName}</p>
-                          <p className="text-[10px] text-on-surface-variant mt-1">{formatNum(step.count)} msgs</p>
+                        <div className="flex-shrink-0 bg-surface-container-high border border-outline-variant rounded-lg p-3 min-w-[140px]">
+                          <p className="font-mono text-[12px] font-medium text-on-surface truncate">{step.topicName}</p>
+                          <p className="text-[11px] text-on-surface-variant mt-1 tabular-nums">{formatNum(step.count)} msgs</p>
                           {step.averageLatencyMs !== null && (
-                            <p className="text-[10px] text-on-surface-variant">{step.averageLatencyMs}ms avg</p>
+                            <p className="text-[11px] text-on-surface-variant tabular-nums">{step.averageLatencyMs}ms avg</p>
                           )}
                           {idx > 0 && (
-                            <div className={`mt-2 text-[10px] font-bold ${step.throughputPercentage >= 90 ? 'text-success' : step.throughputPercentage >= 70 ? 'text-warning' : 'text-error'}`}>
+                            <div className={`mt-2 text-[11px] font-semibold tabular-nums ${step.throughputPercentage >= 90 ? 'text-success' : step.throughputPercentage >= 70 ? 'text-warning' : 'text-error'}`}>
                               {step.throughputPercentage.toFixed(1)}% throughput
                             </div>
                           )}
                         </div>
                         {idx < flow.steps.length - 1 && (
-                          <span className="material-symbols-outlined text-primary/40 self-center flex-shrink-0">arrow_forward</span>
+                          <span className="material-symbols-outlined text-outline self-center flex-shrink-0">arrow_forward</span>
                         )}
                       </React.Fragment>
                     ))}
                   </div>
-                </div>
+                </Card>
               ))}
             </div>
           )}
