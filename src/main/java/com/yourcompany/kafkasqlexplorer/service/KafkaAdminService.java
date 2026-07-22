@@ -27,8 +27,12 @@ import org.apache.kafka.clients.admin.DescribeConfigsResult;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.DescribeFeaturesResult;
+import org.apache.kafka.clients.admin.DescribeMetadataQuorumOptions;
 import org.apache.kafka.clients.admin.FeatureMetadata;
 import org.apache.kafka.clients.admin.FinalizedVersionRange;
+import org.apache.kafka.clients.admin.GroupListing;
+import org.apache.kafka.clients.admin.ListGroupsOptions;
+import org.apache.kafka.clients.admin.QuorumInfo;
 import org.apache.kafka.clients.admin.SupportedVersionRange;
 import org.springframework.stereotype.Service;
 import io.confluent.kafka.schemaregistry.client.CachedSchemaRegistryClient;
@@ -304,6 +308,42 @@ public class KafkaAdminService {
                 log.debug("Failed to retrieve feature metadata (possibly older Kafka version)", e);
             }
 
+            // KRaft controller quorum (KIP-595) — unavailable on Zookeeper-based clusters
+            try {
+                QuorumInfo quorum = adminClient
+                        .describeMetadataQuorum(new DescribeMetadataQuorumOptions().timeoutMs(5000))
+                        .quorumInfo().get(5, TimeUnit.SECONDS);
+                Map<String, Object> kraftQuorum = new LinkedHashMap<>();
+                kraftQuorum.put("leaderId", quorum.leaderId());
+                kraftQuorum.put("leaderEpoch", quorum.leaderEpoch());
+                kraftQuorum.put("highWatermark", quorum.highWatermark());
+                kraftQuorum.put("voters", toReplicaStates(quorum.voters(), quorum));
+                kraftQuorum.put("observers", toReplicaStates(quorum.observers(), quorum));
+                details.put("kraftQuorum", kraftQuorum);
+            } catch (Exception e) {
+                log.debug("Failed to describe metadata quorum (Zookeeper-based cluster?)", e);
+            }
+
+            // All client groups regardless of type — classic, consumer (KIP-848),
+            // share (KIP-932, Kafka 4.1+), streams. Kafka 4.x admin API.
+            try {
+                Collection<GroupListing> groups = adminClient
+                        .listGroups(new ListGroupsOptions().timeoutMs(5000))
+                        .all().get(5, TimeUnit.SECONDS);
+                List<Map<String, Object>> groupList = new ArrayList<>();
+                for (GroupListing group : groups) {
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("groupId", group.groupId());
+                    item.put("type", group.type().map(Enum::name).orElse("UNKNOWN"));
+                    item.put("state", group.groupState().map(Enum::name).orElse("UNKNOWN"));
+                    groupList.add(item);
+                }
+                groupList.sort(Comparator.comparing(g -> (String) g.get("groupId")));
+                details.put("groups", groupList);
+            } catch (Exception e) {
+                log.debug("Failed to list groups (broker may not support the ListGroups API)", e);
+            }
+
             // Topic stats
             List<String> topicNames = new ArrayList<>(
                 adminClient.listTopics(new ListTopicsOptions().listInternal(false)).names().get(5, TimeUnit.SECONDS)
@@ -354,6 +394,54 @@ public class KafkaAdminService {
             details.put("error", e.getMessage());
         }
         return details;
+    }
+
+    /**
+     * Features whose finalized version lags what every broker supports (finalized max <
+     * supported max). On KRaft the prime suspect is {@code metadata.version} staying behind
+     * after a rolling upgrade until {@code kafka-features.sh upgrade} is run — new metadata
+     * features stay disabled cluster-wide until then. Returns an empty list when everything
+     * is up to date or the broker doesn't expose feature metadata (e.g. Zookeeper mode).
+     */
+    public List<Map<String, Object>> getLaggingFeatures() {
+        List<Map<String, Object>> lagging = new ArrayList<>();
+        try {
+            FeatureMetadata featureMetadata = adminClient.describeFeatures().featureMetadata().get(5, TimeUnit.SECONDS);
+            for (Map.Entry<String, SupportedVersionRange> entry : featureMetadata.supportedFeatures().entrySet()) {
+                FinalizedVersionRange finalized = featureMetadata.finalizedFeatures().get(entry.getKey());
+                short supportedMax = entry.getValue().maxVersion();
+                Short finalizedMax = finalized != null ? finalized.maxVersionLevel() : null;
+                if (finalizedMax == null || finalizedMax < supportedMax) {
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("feature", entry.getKey());
+                    item.put("finalizedVersion", finalizedMax);
+                    item.put("supportedMaxVersion", supportedMax);
+                    lagging.add(item);
+                }
+            }
+            lagging.sort(Comparator.comparing(f -> (String) f.get("feature")));
+        } catch (Exception e) {
+            log.debug("Failed to compute feature version lag (broker may not support describeFeatures)", e);
+        }
+        return lagging;
+    }
+
+    /** Flattens raft replica states for the cluster-details payload, with lag vs the quorum high watermark. */
+    private static List<Map<String, Object>> toReplicaStates(List<QuorumInfo.ReplicaState> replicas, QuorumInfo quorum) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (QuorumInfo.ReplicaState replica : replicas) {
+            Map<String, Object> state = new LinkedHashMap<>();
+            state.put("replicaId", replica.replicaId());
+            state.put("isLeader", replica.replicaId() == quorum.leaderId());
+            state.put("logEndOffset", replica.logEndOffset());
+            state.put("lag", Math.max(0L, quorum.highWatermark() - replica.logEndOffset()));
+            state.put("lastFetchTimestampMs",
+                    replica.lastFetchTimestamp().isPresent() ? replica.lastFetchTimestamp().getAsLong() : null);
+            state.put("lastCaughtUpTimestampMs",
+                    replica.lastCaughtUpTimestamp().isPresent() ? replica.lastCaughtUpTimestamp().getAsLong() : null);
+            out.add(state);
+        }
+        return out;
     }
 
     /** Cached (30s TTL) for the same reason as {@link #getTopicsSize}: consumer + seek + poll per call. */
@@ -547,7 +635,7 @@ public class KafkaAdminService {
                     String key = record.key() != null ? new String(record.key(), StandardCharsets.UTF_8) : null;
                     records.add(new org.apache.kafka.clients.consumer.ConsumerRecord<>(
                         record.topic(), record.partition(), record.offset(), record.timestamp(), record.timestampType(),
-                        -1L, -1, -1, key, value, record.headers(), record.leaderEpoch()));
+                        -1, -1, key, value, record.headers(), record.leaderEpoch()));
                     count++;
                     if (count >= maxMessages) break;
                 }
@@ -628,7 +716,7 @@ public class KafkaAdminService {
                     String key = record.key() != null ? new String(record.key(), StandardCharsets.UTF_8) : null;
                     records.add(new org.apache.kafka.clients.consumer.ConsumerRecord<>(
                         record.topic(), record.partition(), record.offset(), record.timestamp(), record.timestampType(),
-                        -1L, -1, -1, key, value, record.headers(), record.leaderEpoch()));
+                        -1, -1, key, value, record.headers(), record.leaderEpoch()));
                     count++;
                     if (count >= maxMessages) break;
                 }

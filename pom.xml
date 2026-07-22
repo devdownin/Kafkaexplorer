@@ -25,13 +25,23 @@
         <java.version>21</java.version>
         <flink.version>2.3.0</flink.version>
         <!--
-          Confluent 7.x is built against Apache Kafka 3.x (matching the kafka-clients that
-          Spring Boot + the Flink Kafka connector resolve). Confluent 8.x targets Kafka 4.x,
-          whose serdes reference org.apache.kafka.common.metrics.Monitorable — a class absent
-          from the Kafka 3.x client on the classpath — which breaks compilation
-          (KafkaAdminService, the KafkaAvroDeserializer call site).
+          Aligns the whole classpath on Kafka 4.x clients (overrides Spring Boot's managed
+          3.9.x). flink-connector-kafka 5.0.0-2.2 is itself built against kafka-clients
+          4.2.0, so before this override the connector was actually running on an OLDER
+          client than it targets. Kafka 4.x clients also unlock the Kafka 4 admin APIs
+          (Admin.listGroups incl. share groups / KIP-932) and the next-gen consumer
+          rebalance protocol (KIP-848, group.protocol=consumer). Still compatible with
+          Kafka 2.1+ brokers on the classic protocol.
         -->
-        <confluent.version>7.9.1</confluent.version>
+        <kafka.version>4.2.0</kafka.version>
+        <!--
+          Confluent must move in lockstep with kafka.version: Confluent 8.x is built
+          against Kafka 4.x clients (its serdes reference
+          org.apache.kafka.common.metrics.Monitorable, absent from 3.x clients), while
+          Confluent 7.x pairs with kafka-clients 3.x. Mismatched pairs break compilation
+          (KafkaAdminService, the KafkaAvroDeserializer call site) or runtime linkage.
+        -->
+        <confluent.version>8.0.0</confluent.version>
     </properties>
 
     <repositories>

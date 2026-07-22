@@ -41,16 +41,20 @@ npm test             # Vitest (jsdom + @testing-library/react); test:watch for w
 
 ### Docker
 
+All bundled compose stacks run **Kafka 4.2 in KRaft mode** (`apache/kafka:4.2.0`, single combined broker+controller node — no Zookeeper anywhere, including CI and `docker-compose.release.yml`).
+
 ```bash
-# Kafka 4.x (KRaft mode, recommended)
+# Kafka 4.2 (KRaft) + Schema Registry + app + demo topics (recommended)
 docker compose -f docker-compose-kafka4.yml up -d
 
-# Kafka 3.x (Zookeeper)
-docker-compose up -d
+# Kafka 4.2 (KRaft) + app + demo topics, without Schema Registry
+docker compose up -d
 
 # Demo data setup (creates 70+ topics)
 ./setup-demo.sh localhost:9092
 ```
+
+KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `CLUSTER_ID` env var (a `KAFKA_CLUSTER_ID` var would be translated into an ignored `cluster.id` server property); all internal-topic replication factors (`offsets`, `transaction state`, share-group state) are pinned to 1 and `__consumer_offsets` runs with a single partition for faster startup.
 
 ### Typical local dev workflow
 
@@ -64,7 +68,7 @@ docker-compose up -d
 
 - **Backend**: Spring Boot 3.5.x, Java 21 (`java.version` in pom.xml — Flink 2.x supports Java 17/21, not 25), embedded Apache Flink 2.3.x (`flink.version` in pom.xml). Kafka connector: `flink-connector-kafka:4.0.1-2.0` (the `-2.0` suffix covers the whole Flink 2.x line).
 - **Frontend**: React 19, TypeScript, Vite, Tailwind CSS, Monaco Editor
-- **Kafka**: Compatible with Kafka 3.x and 4.x (KRaft)
+- **Kafka**: `kafka-clients` 4.2.0 (`kafka.version` override in pom.xml — moves in lockstep with `confluent.version` 8.x, see the pom comment) — compatible with Kafka 2.1+ brokers on the classic protocol; all bundled Docker stacks run Kafka 4.2 in KRaft mode. The live Process Mining consumer can opt into the KIP-848 rebalance protocol via `kafka.consumer-group-protocol: consumer` (default `classic`).
 - **Build**: Single JAR — Maven's `frontend-maven-plugin` builds the React app and copies it to `src/main/resources/static/`
 
 ### Backend Layers
@@ -86,10 +90,10 @@ parser/       JSON, XML, and Avro (via Confluent Schema Registry) schema inferen
   - XML payloads are parsed with a per-thread secure `DocumentBuilder` (`XML_BUILDERS` ThreadLocal) — never build a `DocumentBuilderFactory` per message.
   - **Window functions**: `TABLE(TUMBLE(TABLE <name>, DESCRIPTOR(<time_col>), INTERVAL '<n>' MINUTE|HOUR|SECOND|DAY))` is supported via `kafkaWindowSelect()` — buckets messages by timestamp and computes aggregates per window. Time column resolution: message field (ISO-8601 or epoch) → Kafka record timestamp (fallback). HOP/SESSION syntax is accepted but treated as TUMBLE.
   - **SQL comments**: `--` line comments and `/* */` block comments are stripped before any keyword checks. A query beginning with a comment line is valid.
-- `KafkaAdminService` — Kafka AdminClient wrapper for metadata and topic ops. Heavy metadata calls are Caffeine-cached (30s TTL): `listTopics` (`kafkaTopics`), `getTopicDescriptor` (`topicDescriptor`), `getTopicsSize` (`topicSizes`), `getTopicsLastMessageTimestamps` (`topicLastMessages`) — cache names are registered in `WebConfig`. Recent-record seeks are clamped to the partition's beginning offset (retention-trimmed topics would otherwise trigger an `auto.offset.reset` to latest and return nothing).
+- `KafkaAdminService` — Kafka AdminClient wrapper for metadata and topic ops. `getClusterDetails()` also reports the KRaft controller quorum (`describeMetadataQuorum`: leader, epoch, high watermark, voters/observers with lag) under `kraftQuorum`, and all client groups (`listGroups`, Kafka 4 admin API — types CLASSIC / CONSUMER (KIP-848) / SHARE (KIP-932) / STREAMS with state) under `groups` — each absent when the broker doesn't support the API, and the Cluster page hides the section accordingly. Heavy metadata calls are Caffeine-cached (30s TTL): `listTopics` (`kafkaTopics`), `getTopicDescriptor` (`topicDescriptor`), `getTopicsSize` (`topicSizes`), `getTopicsLastMessageTimestamps` (`topicLastMessages`) — cache names are registered in `WebConfig`. Recent-record seeks are clamped to the partition's beginning offset (retention-trimmed topics would otherwise trigger an `auto.offset.reset` to latest and return nothing).
 - `SchemaInferenceService` — samples messages and delegates to `JsonSchemaInferrer` / `XmlSchemaInferrer` / `AvroSchemaInferrer` (inferred column order is deterministic — `LinkedHashMap`)
 - `DdlGeneratorService` — auto-generates Flink `CREATE TABLE` DDL from inferred schemas. `maskSensitiveProperties()` (static) redacts credentials (`*password*`, `*secret*`, `sasl.jaas.config`) and MUST be applied to any DDL returned to the UI (`/api/topic/{name}`, `/api/topic/{name}/ddl`, `/api/query/ddl-preview`, lineage `SHOW CREATE TABLE`); internal table registration uses the unmasked DDL.
-- `AuditService` — cluster health checks run on a dedicated single-thread executor (`startAudit` submits explicitly — do NOT reintroduce `@Async`, the self-invocation bypasses the Spring proxy and blocks the HTTP thread); per-topic audits fan out on a bounded 4-thread pool. Exact counts go through the direct SELECT engine (`COUNT(*) AS metric_value`, first numeric value of the row); duplicate detection and flow latency are computed **in-process** over fetched messages (key extraction via `MessageFieldExtractorService`) because the direct engine supports neither subqueries nor JOINs. Reports persist to `internal.audit.history` via a shared lazy producer.
+- `AuditService` — cluster health checks run on a dedicated single-thread executor (`startAudit` submits explicitly — do NOT reintroduce `@Async`, the self-invocation bypasses the Spring proxy and blocks the HTTP thread); per-topic audits fan out on a bounded 4-thread pool. Exact counts go through the direct SELECT engine (`COUNT(*) AS metric_value`, first numeric value of the row); duplicate detection and flow latency are computed **in-process** over fetched messages (key extraction via `MessageFieldExtractorService`) because the direct engine supports neither subqueries nor JOINs. Reports persist to `internal.audit.history` via a shared lazy producer. Cluster-level findings go into `globalStats`: `getLaggingFeatures()` (KafkaAdminService, `describeFeatures`) compares finalized vs supported feature versions, and a lagging `metadata.version` adds a `metadataVersionWarning` (incomplete KRaft rolling upgrade — surfaced as a banner on the Audit page).
 - `LineageService` — builds dependency graph (topics → tables → views → jobs) by regex-parsing DDL/SQL; uses `TableEnvironment` (not `StreamTableEnvironment`) — Flink 2.x uses the unified API
 - `StreamFlowService` — traces messages across topics using JSONPath / XPath expressions
 - `SqlQueryValidator` — whitelist-based guard: only `SELECT`, `EXPLAIN`, and `CREATE TABLE` are allowed

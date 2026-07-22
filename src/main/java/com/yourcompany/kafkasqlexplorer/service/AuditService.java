@@ -147,6 +147,25 @@ public class AuditService {
 
             long totalMessages = topicSizes.values().stream().mapToLong(Long::longValue).sum();
 
+            Map<String, Object> globalStats = new LinkedHashMap<>();
+            globalStats.put("timestamp", System.currentTimeMillis());
+
+            // KRaft upgrade completeness: features finalized below what the brokers support.
+            // metadata.version lagging means a rolling upgrade was never finalized with
+            // `kafka-features.sh upgrade` — new metadata features stay disabled cluster-wide.
+            List<Map<String, Object>> laggingFeatures = kafkaAdminService.getLaggingFeatures();
+            if (!laggingFeatures.isEmpty()) {
+                globalStats.put("laggingFeatures", laggingFeatures);
+                laggingFeatures.stream()
+                    .filter(f -> "metadata.version".equals(f.get("feature")))
+                    .findFirst()
+                    .ifPresent(f -> globalStats.put("metadataVersionWarning", String.format(
+                        "KRaft metadata.version is finalized at %s while brokers support up to %s — "
+                        + "the cluster upgrade is incomplete until `kafka-features.sh upgrade "
+                        + "--release-version <version>` is run (new metadata features stay disabled).",
+                        f.get("finalizedVersion"), f.get("supportedMaxVersion"))));
+            }
+
             AuditReport finalReport = new AuditReport(
                 auditId,
                 AuditStatus.COMPLETED,
@@ -155,7 +174,7 @@ public class AuditService {
                 (int) unhealthyCount,
                 topicAudits,
                 flowAudits,
-                Map.of("timestamp", System.currentTimeMillis())
+                globalStats
             );
 
             auditRuns.put(auditId, finalReport);

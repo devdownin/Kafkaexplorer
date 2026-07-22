@@ -41,9 +41,9 @@ This project is a specialized web application for exploring Kafka clusters and q
 
 ### Build & Deploy
 - **Full Build**: `mvn clean package` (Produces a single executable JAR containing the static frontend).
-- **Docker**:
-  - Kafka 4.x (KRaft): `docker compose -f docker-compose-kafka4.yml up -d`
-  - Kafka 3.x (Zookeeper): `docker-compose up -d`
+- **Docker** (every stack runs Kafka 4.2 in KRaft mode — no Zookeeper):
+  - Kafka 4.2 (KRaft) + Schema Registry: `docker compose -f docker-compose-kafka4.yml up -d`
+  - Kafka 4.2 (KRaft), no Schema Registry: `docker compose up -d`
 - **Demo Setup**: `./setup-demo.sh localhost:9092` (Creates 70+ topics for testing).
 
 ## Development Conventions

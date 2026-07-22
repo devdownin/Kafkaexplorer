@@ -4,9 +4,58 @@ import { useToast } from '../components/Toast';
 import ErrorBanner from '../components/ErrorBanner';
 import { PageHeader, Button, CardSkeleton } from '../components/ui';
 
+interface ReplicaState {
+  replicaId: number;
+  isLeader: boolean;
+  logEndOffset: number;
+  lag: number;
+  lastFetchTimestampMs: number | null;
+  lastCaughtUpTimestampMs: number | null;
+}
+
+interface KraftQuorum {
+  leaderId: number;
+  leaderEpoch: number;
+  highWatermark: number;
+  voters: ReplicaState[];
+  observers: ReplicaState[];
+}
+
+interface GroupInfo {
+  groupId: string;
+  type: string; // CLASSIC | CONSUMER (KIP-848) | SHARE (KIP-932) | STREAMS | UNKNOWN
+  state: string;
+}
+
+interface ClusterDetails {
+  clusterId?: string;
+  controllerId?: number | null;
+  brokerCount?: number;
+  kraftQuorum?: KraftQuorum;
+  groups?: GroupInfo[];
+}
+
+const GROUP_TYPE_STYLES: Record<string, string> = {
+  CONSUMER: 'bg-primary/10 text-primary border-primary/20',
+  SHARE: 'bg-tertiary/10 text-tertiary border-tertiary/25',
+  STREAMS: 'bg-primary/10 text-primary border-primary/20',
+  CLASSIC: 'bg-surface-container-high text-on-surface-variant border-outline-variant/60',
+};
+
+const GROUP_STATE_STYLES: Record<string, string> = {
+  STABLE: 'text-primary',
+  EMPTY: 'text-on-surface-variant',
+  DEAD: 'text-error',
+  NOT_READY: 'text-error',
+};
+
+const formatAge = (ts: number | null | undefined): string =>
+  ts && ts > 0 ? `${Math.max(0, Math.round((Date.now() - ts) / 1000))}s ago` : '—';
+
 const Cluster: React.FC = () => {
   const { toast } = useToast();
   const [configs, setConfigs] = useState<Map<string, string>>(new Map());
+  const [details, setDetails] = useState<ClusterDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -14,8 +63,13 @@ const Cluster: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await axios.get<Record<string, string>>('/api/cluster/configs');
-      setConfigs(new Map(Object.entries(res.data)));
+      // Quorum/details failure must not take down the configs view (e.g. Zookeeper clusters)
+      const [configsRes, detailsRes] = await Promise.all([
+        axios.get<Record<string, string>>('/api/cluster/configs'),
+        axios.get<ClusterDetails>('/api/cluster').catch(() => null),
+      ]);
+      setConfigs(new Map(Object.entries(configsRes.data)));
+      setDetails(detailsRes ? detailsRes.data : null);
     } catch {
       toast('Failed to fetch broker configs', 'error');
       setError('Failed to load cluster configuration');
@@ -55,6 +109,129 @@ const Cluster: React.FC = () => {
       />
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        {/* 0. KRaft Controller Quorum (hidden on Zookeeper-based clusters) */}
+        {details?.kraftQuorum && (
+          <section className="bg-surface-container ring-1 ring-white/[0.045] p-6 rounded-xl xl:col-span-2">
+            <h2 className="text-lg font-bold text-on-surface flex items-center gap-2 mb-5">
+              <span className="material-symbols-outlined text-primary">account_tree</span>
+              KRaft Controller Quorum
+              <span className="text-[10px] px-2 py-0.5 bg-primary/10 text-primary border border-primary/20 rounded font-mono tracking-widest uppercase">KIP-595</span>
+            </h2>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
+              {[
+                { label: 'Cluster ID', value: details.clusterId ?? '—', mono: true },
+                { label: 'Quorum Leader', value: `Node ${details.kraftQuorum.leaderId}`, mono: false },
+                { label: 'Leader Epoch', value: String(details.kraftQuorum.leaderEpoch), mono: false },
+                { label: 'High Watermark', value: details.kraftQuorum.highWatermark.toLocaleString(), mono: false },
+              ].map(stat => (
+                <div key={stat.label} className="p-4 bg-surface-container-high border-l-2 border-primary rounded-lg">
+                  <div className="text-[10px] font-bold text-primary uppercase tracking-widest mb-1">{stat.label}</div>
+                  <div className={`font-bold text-on-surface truncate ${stat.mono ? 'text-sm font-mono' : 'text-lg'}`} title={stat.value}>
+                    {stat.value}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/60">
+                    <th className="py-2 px-2">Role</th>
+                    <th className="py-2 px-2">Replica</th>
+                    <th className="py-2 px-2 text-right">Log End Offset</th>
+                    <th className="py-2 px-2 text-right">Lag</th>
+                    <th className="py-2 px-2 text-right">Last Fetch</th>
+                    <th className="py-2 px-2 text-right">Last Caught Up</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    ...details.kraftQuorum.voters.map(r => ({ ...r, role: 'Voter' })),
+                    ...details.kraftQuorum.observers.map(r => ({ ...r, role: 'Observer' })),
+                  ].map(replica => (
+                    <tr key={`${replica.role}-${replica.replicaId}`} className="border-b border-outline-variant/60 last:border-0 hover:bg-primary/5 transition-colors">
+                      <td className="py-2.5 px-2">
+                        <span className={`text-[10px] px-2 py-0.5 rounded border font-bold uppercase tracking-widest ${
+                          replica.role === 'Voter'
+                            ? 'bg-primary/10 text-primary border-primary/20'
+                            : 'bg-surface-container-high text-on-surface-variant border-outline-variant/60'
+                        }`}>
+                          {replica.role}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-2 font-bold text-on-surface">
+                        Node {replica.replicaId}
+                        {replica.isLeader && (
+                          <span className="ml-2 text-[10px] px-2 py-0.5 bg-tertiary/10 text-tertiary border border-tertiary/25 rounded font-bold uppercase tracking-widest">Leader</span>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-2 text-right font-mono text-on-surface">{replica.logEndOffset.toLocaleString()}</td>
+                      <td className={`py-2.5 px-2 text-right font-mono font-bold ${replica.lag > 0 ? 'text-error' : 'text-on-surface-variant'}`}>
+                        {replica.lag.toLocaleString()}
+                      </td>
+                      <td className="py-2.5 px-2 text-right text-[12px] text-on-surface-variant">{formatAge(replica.lastFetchTimestampMs)}</td>
+                      <td className="py-2.5 px-2 text-right text-[12px] text-on-surface-variant">{formatAge(replica.lastCaughtUpTimestampMs)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-[11px] text-on-surface-variant italic pt-3">
+              Voters elect the metadata log leader; observers (brokers) replicate it. Sustained lag or a stale
+              "last caught up" timestamp on a voter degrades controller failover.
+            </p>
+          </section>
+        )}
+
+        {/* 0b. Client groups — classic / consumer (KIP-848) / share (KIP-932) / streams */}
+        {details?.groups && (
+          <section className="bg-surface-container ring-1 ring-white/[0.045] p-6 rounded-xl xl:col-span-2">
+            <h2 className="text-lg font-bold text-on-surface flex items-center gap-2 mb-5">
+              <span className="material-symbols-outlined text-primary">groups</span>
+              Client Groups
+              <span className="text-[11px] font-normal text-on-surface-variant">
+                {details.groups.length} group{details.groups.length === 1 ? '' : 's'} — consumer (KIP-848), share (KIP-932), classic, streams
+              </span>
+            </h2>
+            {details.groups.length === 0 ? (
+              <p className="text-[12px] text-on-surface-variant italic">
+                No registered client groups. Groups appear once a consumer with group management
+                (subscribe) connects — the explorer's own sampling consumers use manual partition
+                assignment and never register.
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/60">
+                      <th className="py-2 px-2">Group ID</th>
+                      <th className="py-2 px-2">Type</th>
+                      <th className="py-2 px-2">State</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {details.groups.map(group => (
+                      <tr key={group.groupId} className="border-b border-outline-variant/60 last:border-0 hover:bg-primary/5 transition-colors">
+                        <td className="py-2.5 px-2 font-mono text-[13px] text-on-surface">{group.groupId}</td>
+                        <td className="py-2.5 px-2">
+                          <span className={`text-[10px] px-2 py-0.5 rounded border font-bold uppercase tracking-widest ${
+                            GROUP_TYPE_STYLES[group.type] ?? GROUP_TYPE_STYLES.CLASSIC
+                          }`}>
+                            {group.type}
+                          </span>
+                        </td>
+                        <td className={`py-2.5 px-2 text-[12px] font-bold ${GROUP_STATE_STYLES[group.state] ?? 'text-on-surface'}`}>
+                          {group.state}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        )}
+
         {/* 1. Offset Management — Critical */}
         <section className="bg-surface-container ring-1 ring-white/[0.045] p-6 rounded-xl relative overflow-hidden">
           <div className="absolute top-0 right-0 px-3 py-1.5 bg-error/10 text-error text-[10px] font-mono font-bold tracking-widest uppercase border-l border-b border-error/25">

@@ -18,6 +18,14 @@ public class KafkaConfig {
     private String schemaRegistryUrl = "http://localhost:8081";
     private String mode = "PLAIN"; // PLAIN, SSL, CONFLUENT_CLOUD
 
+    /**
+     * Rebalance protocol for consumers that use group management (subscribe), i.e. the
+     * live Process Mining consumer. "classic" (default) works against any broker;
+     * "consumer" opts into the KIP-848 incremental protocol — near-instant rebalances,
+     * but requires Kafka 4.x brokers (or 3.x with the new group coordinator enabled).
+     */
+    private String consumerGroupProtocol = "classic";
+
     public String getSchemaRegistryUrl() {
         return schemaRegistryUrl;
     }
@@ -131,6 +139,14 @@ public class KafkaConfig {
 
     public void setConfluentKey(String confluentKey) {
         this.confluentKey = confluentKey;
+    }
+
+    public String getConsumerGroupProtocol() {
+        return consumerGroupProtocol;
+    }
+
+    public void setConsumerGroupProtocol(String consumerGroupProtocol) {
+        this.consumerGroupProtocol = consumerGroupProtocol;
     }
 
     public String getConfluentSecret() {

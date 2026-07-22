@@ -11,6 +11,7 @@ services:
       interval: 5s
       timeout: 10s
       retries: 5
+      start_period: 15s
     environment:
       # KRaft settings
       KAFKA_NODE_ID: 1
@@ -22,11 +23,19 @@ services:
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      # Single-node dev: 1 __consumer_offsets partition instead of the default 50
+      KAFKA_OFFSETS_TOPIC_NUM_PARTITIONS: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      # Best practice for KRaft: provide a Cluster ID
-      KAFKA_CLUSTER_ID: "MkU2OhlMTT69sPFvS1n16g"
+      # Share groups (KIP-932, Kafka 4.1+) state topic on a single node
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: 1
+      # internal.audit.history / internal.metrics.config are auto-created on first write
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      # Fixed KRaft cluster id — the apache/kafka image reads CLUSTER_ID
+      # (KAFKA_CLUSTER_ID would be passed to server.properties and ignored)
+      CLUSTER_ID: "MkU2OhlMTT69sPFvS1n16g"
 
   explorer:
     build: .

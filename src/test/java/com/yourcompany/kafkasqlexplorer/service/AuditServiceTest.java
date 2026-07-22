@@ -101,6 +101,40 @@ class AuditServiceTest {
     }
 
     @Test
+    void auditFlagsLaggingMetadataVersion() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(Collections.emptyList());
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(Collections.emptyMap());
+        when(kafkaAdminService.getLaggingFeatures()).thenReturn(List.of(
+                new java.util.LinkedHashMap<>(Map.of(
+                        "feature", "metadata.version",
+                        "finalizedVersion", (short) 21,
+                        "supportedMaxVersion", (short) 25))));
+
+        auditService.runAuditAsync("lagging", AuditOptions.all());
+
+        AuditReport report = auditService.getAuditReport("lagging");
+        assertEquals(AuditStatus.COMPLETED, report.status());
+        assertNotNull(report.globalStats().get("laggingFeatures"));
+        String warning = (String) report.globalStats().get("metadataVersionWarning");
+        assertNotNull(warning, "a lagging metadata.version must surface a warning");
+        assertTrue(warning.contains("21") && warning.contains("25"), "warning should cite both versions");
+    }
+
+    @Test
+    void auditStaysQuietWhenFeaturesAreCurrent() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(Collections.emptyList());
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(Collections.emptyMap());
+        when(kafkaAdminService.getLaggingFeatures()).thenReturn(Collections.emptyList());
+
+        auditService.runAuditAsync("current", AuditOptions.all());
+
+        AuditReport report = auditService.getAuditReport("current");
+        assertEquals(AuditStatus.COMPLETED, report.status());
+        assertNull(report.globalStats().get("laggingFeatures"));
+        assertNull(report.globalStats().get("metadataVersionWarning"));
+    }
+
+    @Test
     void auditIsolatesAFailingTopic() throws Exception {
         when(kafkaAdminService.listTopics()).thenReturn(List.of("demo.test.1", "demo.test.2"));
         when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("demo.test.1", 100L, "demo.test.2", 80L));

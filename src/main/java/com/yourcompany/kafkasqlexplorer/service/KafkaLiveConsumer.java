@@ -332,6 +332,11 @@ public class KafkaLiveConsumer {
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         props.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, "1000");
+        // KIP-848 incremental rebalance protocol, opt-in via kafka.consumer-group-protocol
+        // (requires a Kafka 4.x broker; the classic default keeps 3.x broker compatibility)
+        if ("consumer".equalsIgnoreCase(kafkaConfig.getConsumerGroupProtocol())) {
+            props.put(ConsumerConfig.GROUP_PROTOCOL_CONFIG, "consumer");
+        }
         return props;
     }
 }
