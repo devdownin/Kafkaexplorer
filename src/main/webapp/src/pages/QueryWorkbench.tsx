@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useLocation } from 'react-router-dom';
 import Editor, { useMonaco } from '@monaco-editor/react';
 import type { editor, languages } from 'monaco-editor';
+import '../monaco-setup';
 import axios from 'axios';
 import { useToast } from '../components/Toast';
 import { Button, Badge, Input, Select, EmptyState, useConfirm, cn, useVirtualRows } from '../components/ui';

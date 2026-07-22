@@ -74,6 +74,8 @@ services:
         condition: service_completed_successfully
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      # Bundled broker is Kafka 4.2 — use the KIP-848 rebalance protocol for the live consumer
+      - KAFKA_CONSUMER_GROUP_PROTOCOL=consumer
       - CLAUDE_PROVIDER=OPENAI_COMPATIBLE
       - CLAUDE_BASE_URL=http://ollama:11434/v1
       - CLAUDE_MODEL=qwen2.5-coder:7b

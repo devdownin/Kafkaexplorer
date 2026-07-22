@@ -31,11 +31,23 @@ export default defineConfig({
         // Isole les grosses dépendances dans des chunks vendor stables, mis en
         // cache indépendamment du code applicatif et partagés entre les pages
         // (recharts par Metrics + ProcessMining). L'`index` initial reste petit.
+        // Règles ancrées sur le chemin du package (node_modules/<pkg>/) : un motif
+        // trop large (ex. `includes('monaco-editor')` qui attrapait aussi
+        // @monaco-editor/loader) fait colocaliser des petits helpers partagés dans
+        // le gros chunk, et l'entrée se met alors à l'importer statiquement —
+        // Monaco se retrouvait préchargé sur toutes les pages.
         manualChunks(id) {
+          // Le helper de préchargement virtuel de Vite est importé par l'entrée ET
+          // par chaque page lazy : sans assignation explicite, Rollup le colocalise
+          // dans un gros chunk (monaco) que l'entrée se met alors à précharger.
+          if (id.includes('vite/preload-helper')) return 'preload';
           if (!id.includes('node_modules')) return;
-          if (id.includes('monaco-editor')) return 'monaco';
-          if (id.includes('recharts') || id.includes('/d3-') || id.includes('victory-vendor')) return 'charts';
-          if (/[\\/]react(-dom|-router|-router-dom)?[\\/]/.test(id)) return 'react-vendor';
+          // Même problème pour clsx/tailwind-merge, partagés entre cn() (entrée)
+          // et recharts (chunk charts).
+          if (/[\\/]node_modules[\\/](clsx|tailwind-merge)[\\/]/.test(id)) return 'ui-utils';
+          if (/[\\/]node_modules[\\/]monaco-editor[\\/]/.test(id)) return 'monaco';
+          if (/[\\/]node_modules[\\/](recharts|d3-[^\\/]+|victory-vendor)[\\/]/.test(id)) return 'charts';
+          if (/[\\/]node_modules[\\/]react(-dom|-router|-router-dom)?[\\/]/.test(id)) return 'react-vendor';
         },
       },
     },

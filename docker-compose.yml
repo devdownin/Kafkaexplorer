@@ -49,6 +49,8 @@ services:
         condition: service_completed_successfully
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      # Bundled broker is Kafka 4.2 — use the KIP-848 rebalance protocol for the live consumer
+      - KAFKA_CONSUMER_GROUP_PROTOCOL=consumer
     volumes:
       - ./Kafkaexplorer.log:/app/logs/kafkaexplorer.log
     restart: always

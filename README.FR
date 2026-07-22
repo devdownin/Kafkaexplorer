@@ -107,6 +107,15 @@ Lancer l'application (si vous n'utilisez pas la version Dockerisée) :
 ./mvnw spring-boot:run
 ```
 Accéder à l'interface : http://localhost:8080
+
+Observabilité Kafka 4 / KRaft
+- Quorum du contrôleur KRaft (page Cluster) : leader du log de métadonnées, epoch, high watermark, et table des voters/observers avec lag par réplique. Masqué automatiquement sur un cluster Zookeeper.
+- Groupes clients (page Cluster) : chaque groupe enregistré avec son type — CLASSIC, CONSUMER (KIP-848), SHARE (files KIP-932) ou STREAMS — et son état.
+- Versions de features (page Cluster) : version finalisée vs supportée par les brokers (metadata.version, group.version, share.version…), avec badge Up to date / Lagging.
+- Détection d'upgrade incomplet (page Audit) : si la metadata.version finalisée est en retard sur ce que supportent les brokers (rolling upgrade jamais finalisé via `kafka-features.sh upgrade`), l'audit affiche une bannière d'alerte dédiée.
+- Métriques Prometheus du quorum (`/actuator/prometheus`) : `kafka_quorum_leader_id`, `kafka_quorum_leader_epoch`, `kafka_quorum_high_watermark` et `kafka_quorum_replica_lag{replicaId,role}`.
+- Rebalances KIP-848 (opt-in) : `kafka.consumer-group-protocol: consumer` (env `KAFKA_CONSUMER_GROUP_PROTOCOL=consumer`) bascule le consumer live du Process Mining sur le protocole incrémental — brokers Kafka 4.x requis ; le défaut `classic` reste compatible avec les brokers plus anciens. Les stacks Docker fournies l'activent d'office.
+
 Exemple de Requête XML
 ```sql
 SELECT XmlExtract(raw_value, '/Order/Customer') as client,

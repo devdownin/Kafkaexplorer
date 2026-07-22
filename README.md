@@ -112,11 +112,20 @@ The application includes an automated demonstration setup to help you explore fe
 - **Poison Messages**: A `demo.errors.poison` topic containing malformed data to observe error resilience.
 - **Supply Chain 2.0 (Complex Process)**: A 20-step massive pipeline (`demo.sc.01.order.placed.out` to `20.delivered.out`) involving 60 topics. It features evolving nested JSON payloads (adding payment, fulfillment, quality control, and logistics data incrementally) to demonstrate advanced **Schema Inference** and **Stream Flow** across complex architectures.
 
+### 12. Kafka 4 / KRaft Observability
+- **KRaft Controller Quorum** (Cluster page): metadata-log leader, epoch and high watermark, plus a voters/observers table with per-replica lag and last fetch / last caught-up timestamps. Hidden automatically on Zookeeper-based clusters.
+- **Client Groups** (Cluster page): every registered group with its type — `CLASSIC`, `CONSUMER` (KIP-848), `SHARE` (KIP-932 queues) or `STREAMS` — and state.
+- **Feature Versions** (Cluster page): finalized vs broker-supported version for each cluster feature (`metadata.version`, `group.version`, `share.version`, …) with an *Up to date / Lagging* badge.
+- **Incomplete-upgrade detection** (Audit page): if the finalized `metadata.version` lags what every broker supports (a rolling upgrade that was never finalized with `kafka-features.sh upgrade`), the audit report raises a dedicated warning banner.
+- **Prometheus quorum gauges** (`/actuator/prometheus`): `kafka_quorum_leader_id`, `kafka_quorum_leader_epoch`, `kafka_quorum_high_watermark` and `kafka_quorum_replica_lag{replicaId,role}` — alert on a lagging voter or a controller failover.
+- **KIP-848 rebalances (opt-in)**: set `kafka.consumer-group-protocol: consumer` (env `KAFKA_CONSUMER_GROUP_PROTOCOL=consumer`) to switch the live Process Mining consumer to the next-gen incremental rebalance protocol. Requires Kafka 4.x brokers; the default `classic` keeps compatibility with older brokers. The bundled Docker stacks enable it out of the box.
+
 ---
 
 ## Tech Stack
 - **Backend**: Spring Boot 3.5.x, Java 21 (Records).
 - **Streaming**: Apache Flink 2.3.x (Embedded LocalEnvironment).
+- **Kafka**: `kafka-clients` 4.2 (compatible with Kafka 2.1+ brokers on the classic protocol); bundled Docker stacks run Kafka 4.2 in KRaft mode.
 - **Parsing**: Jackson (JSON), JAXB/StAX (XML).
 - **Frontend**: React 19, Tailwind CSS, Monaco Editor, Vite.
 - **Cache**: Caffeine (Kafka Metadata).
