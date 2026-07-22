@@ -790,7 +790,7 @@ const QueryWorkbench: React.FC = () => {
 
           {/* Drag handle */}
           <div onMouseDown={e => { isDragging.current = true; document.body.style.cursor = 'row-resize'; e.preventDefault(); }}
-            className="h-2 border-y border-primary/10 bg-surface-container-low/60 hover:bg-primary/10 cursor-row-resize flex items-center justify-center transition-colors shrink-0 group">
+            className="h-2 border-y border-outline-variant/60 bg-surface-container-low/60 hover:bg-primary/10 cursor-row-resize flex items-center justify-center transition-colors shrink-0 group">
             <div className="w-16 h-0.5 bg-primary/20 group-hover:bg-primary/50 rounded-full transition-colors" />
           </div>
 
