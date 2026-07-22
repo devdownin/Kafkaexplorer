@@ -460,6 +460,26 @@ class MetricServiceTest {
     }
 
     @Test
+    void configuredLabelsFetchLatestMessageOncePerTopicPerCycle() {
+        Mockito.when(flinkSqlService.executeSql(Mockito.any()))
+            .thenReturn(new QueryResult(List.of("metric_value"), List.of(Map.of("metric_value", 1.0)), 10L, null));
+        Mockito.when(kafkaAdminService.getLatestMessage("orders"))
+            .thenReturn(Optional.of(new KafkaMessage(
+                "orders", 0, 1L, 1_711_274_400_000L, null, "{\"status\":\"OK\",\"region\":\"eu\"}")));
+
+        // Two metrics labelling off the same topic — the expensive latest-message read must be
+        // shared within one refresh cycle, not repeated per metric.
+        service.save(new MetricConfig(null, "m1", "GAUGE", "SELECT 1 AS metric_value", null, null, null,
+            null, null, null, List.of(), Map.of(), null, null, null, null, "orders", List.of("status")));
+        service.save(new MetricConfig(null, "m2", "GAUGE", "SELECT 1 AS metric_value", null, null, null,
+            null, null, null, List.of(), Map.of(), null, null, null, null, "orders", List.of("region")));
+
+        service.refreshMetrics();
+
+        Mockito.verify(kafkaAdminService, Mockito.times(1)).getLatestMessage("orders");
+    }
+
+    @Test
     void refreshMetricsAddsLabelsFromLatestKafkaMessage() {
         Mockito.when(flinkSqlService.executeSql(Mockito.any()))
             .thenReturn(new QueryResult(
