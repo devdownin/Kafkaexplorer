@@ -40,7 +40,7 @@ Ce document détaille l'ensemble des modules du **Kafka SQL Explorer**. L'object
 *   **Détection d'anomalies :** Identification automatique des "Poison Messages" (JSON/XML invalides) et des doublons.
 
 ## 6. Lignage de Données (`lineage.html`)
-*   **Graphe de Dépendances :** Utilisation de Cytoscape.js pour dessiner les liens entre les Topics Kafka, les Tables Flink, les Vues SQL et les requêtes actives.
+*   **Graphe de Dépendances :** Un graphe SVG maison dessine les liens entre les Topics Kafka, les Tables Flink, les Vues SQL et les requêtes actives.
 *   **Inspecteur :** Panneau de détails s'ouvrant au clic sur un nœud du graphe pour voir sa définition technique (DDL) et son schéma.
 
 ## 7. Traçabilité - Stream Flow (`stream-flow.html`)

@@ -28,7 +28,8 @@ This project is a specialized web application for exploring Kafka clusters and q
 ### Frontend Structure (`src/main/webapp/src/`)
 - **SPA**: React 19 with client-side routing.
 - **Editor**: Monaco Editor for SQL with custom highlighting.
-- **Visuals**: Cytoscape.js for lineage graphs, Recharts for metrics.
+- **Visuals**: custom SVG for the lineage graph, Recharts for metrics, Mermaid for process-mining flowcharts.
+- **UI kit**: shared design-system components in `src/main/webapp/src/components/ui/`; navigation is centralized in `navigation.ts`; a ⌘K command palette (`CommandPalette`) is the global search. Frontend tests run on Vitest (`npm test`).
 - **Build**: Integrated into Maven via `frontend-maven-plugin`.
 
 ## Commands & Workflows

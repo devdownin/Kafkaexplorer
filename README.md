@@ -58,11 +58,11 @@ The assistant transforms the message preview into a query design tool:
 - **Read Mode Switch**: Toggle between **Earliest** (start from beginning) and **Latest** (new messages only) offsets directly in the UI.
 - **Dynamic SQL Hints**: Automatic injection of Flink SQL hints (`/*+ OPTIONS(...) */`) for per-query offset control without DDL changes.
 - **Auto-completion**: Intelligent suggestion of topic names and registered tables (`Ctrl+Space`).
-- **Query History**: Quick access to the last 20 queries executed via a persistent sidebar (sessionStorage).
+- **Query History**: Quick access to recent and saved queries, persisted in the browser (localStorage).
 - **Resource Management**: Automatic cancellation of Flink jobs in case of timeout or error, preventing any resource leak in the minicluster.
 
 ### 5. Visual Query Lineage
-- **Interactive Graph**: Powered by `Cytoscape.js`, visualizing the relationships between topics, tables, and views.
+- **Interactive Graph**: A custom SVG dependency graph visualizing the relationships between topics, tables, and views.
 - **Active Job Tracking**: Real-time visualization of running `INSERT INTO` queries as nodes connecting source and target tables.
 - **Node Inspector**: Click on any node to view detailed information, such as the table schema or topic type.
 
