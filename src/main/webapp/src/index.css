@@ -2,53 +2,191 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   Kafka Explorer — Design System (aligné sur Spectra)
+   Thème sombre premium. Les tokens de couleur vivent dans tailwind.config.js ;
+   ce fichier porte les primitives visuelles (base, focus, skeletons, cartes,
+   scrollbars) et les animations. Toute page consommant `bg-surface-*`,
+   `text-on-surface*`, `text-primary`… hérite du rendu premium.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
 :root {
   color-scheme: dark;
 }
 
-body {
-  @apply bg-background-dark text-slate-300 antialiased;
+@layer base {
+  body {
+    @apply bg-surface text-on-surface font-body antialiased;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: "cv05", "cv11";
+  }
+
+  ::selection {
+    background: rgb(163 173 255 / 0.28);
+  }
+
+  /* Anneau de focus clavier visible (WCAG 2.4.7). */
+  :focus-visible {
+    outline: 2px solid #a3adff;
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
 }
 
-.custom-scrollbar::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+/* ═══ Scrollbars discrètes ═══ */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a303b;
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3a4250;
 }
 
-.custom-scrollbar::-webkit-scrollbar-track {
-  @apply bg-transparent;
+/* Alias hérité : les pages référencent `.custom-scrollbar`. */
+.custom-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
+.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: #2a303b; border-radius: 8px; }
+.custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #3a4250; }
+
+/* ═══ Scène de fond : lueur indigo très discrète en haut ═══ */
+.bg-scene::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(ellipse 70% 40% at 50% -10%, rgba(163, 173, 255, 0.035) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
 }
 
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  @apply bg-slate-800 rounded-full hover:bg-slate-700 transition-colors;
+/* ═══ Cartes ═══ */
+.card-hover {
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+.card-hover:hover {
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 24px rgb(0 0 0 / 0.28),
+    inset 0 0 0 1px rgb(255 255 255 / 0.07);
 }
 
-/* Redesign Utilities */
+/* ═══ Navigation active (sidebar) ═══ */
+.nav-active {
+  background: rgb(255 255 255 / 0.06);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.04);
+}
+
+/* ═══ Header : simple filet inférieur ═══ */
+.header-border {
+  position: relative;
+}
+.header-border::after {
+  content: '';
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 1px;
+  background: rgb(255 255 255 / 0.06);
+}
+
+/* ═══ Skeleton shimmer (chargements) ═══ */
+@keyframes shimmer {
+  0%   { background-position: -600px 0; }
+  100% { background-position:  600px 0; }
+}
+.skeleton-shimmer {
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    #191d24 0%,
+    rgba(255, 255, 255, 0.055) 40%,
+    rgba(255, 255, 255, 0.055) 60%,
+    #191d24 100%
+  );
+  background-size: 600px 100%;
+  animation: shimmer 1.6s ease-in-out infinite;
+}
+
+/* ═══ Barre de progression indéterminée ═══ */
+@keyframes progress-fast {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+.animate-progress-fast {
+  animation: progress-fast 1s linear infinite;
+}
+
+/* ═══ Verre dépoli (overlays / modales) ═══ */
+.glass-overlay {
+  background: rgba(11, 13, 16, 0.65);
+  backdrop-filter: blur(12px);
+}
+/* Alias hérité `.glass` (quelques pages). */
 .glass {
-  @apply bg-background-dark/60 backdrop-blur-md border border-white/5 shadow-2xl;
+  @apply bg-surface/60 backdrop-blur-md border border-white/5 shadow-2xl;
 }
 
+/* ═══ Utilitaires métier hérités ═══ */
 .diamond {
   clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
 }
-
 .graph-bg {
-  background-image: radial-gradient(circle, #2d4444 1px, transparent 1px);
+  background-image: radial-gradient(circle, #2a303b 1px, transparent 1px);
   background-size: 30px 30px;
 }
-
 .diff-added {
-  @apply bg-green-500/10 text-green-400;
+  @apply bg-success/10 text-success;
 }
-
 .diff-removed {
-  @apply bg-red-500/10 text-red-400;
+  @apply bg-error/10 text-error;
 }
 
+/* ═══ Toast (entrée) ═══ */
 @keyframes toast-in {
-  from { opacity: 0; transform: translateX(2rem); }
-  to   { opacity: 1; transform: translateX(0); }
+  from { opacity: 0; transform: translateY(-6px) translateX(6px); }
+  to   { opacity: 1; transform: translateY(0) translateX(0); }
 }
 .toast-in {
-  animation: toast-in 0.2s ease-out forwards;
+  animation: toast-in 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* ═══ Icônes Material Symbols ═══ */
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 350, 'GRAD' 0, 'opsz' 24;
+  vertical-align: middle;
+}
+
+/* ═══ Rendu paresseux natif des longues listes ═══ */
+.cv-auto {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 76px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Overrides éditoriaux — normalisent l'héritage « terminal » sans toucher aux
+   pages : capitales agressives, letter-spacing excessif, micro-texte.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Letter-spacing hérité plafonné (lisibilité). */
+.tracking-widest { letter-spacing: 0.07em; }
+
+/* Micro-texte 9–11 px remonté à 11–12 px (WCAG). */
+.text-\[9px\]  { font-size: 0.6875rem; }
+.text-\[10px\] { font-size: 0.6875rem; }
+.text-\[11px\] { font-size: 0.75rem; }
+
+/* Respect de prefers-reduced-motion : neutralise les animations décoratives. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }

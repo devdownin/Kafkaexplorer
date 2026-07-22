@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import axios from 'axios';
+import { Button, EmptyState } from '../components/ui';
 
 interface FlowNode {
   id: string;
@@ -175,54 +176,54 @@ const StreamFlow: React.FC = () => {
     <div className="flex h-full overflow-hidden">
 
       {/* ── Config Panel ── */}
-      <aside className="w-72 border-r border-primary/10 bg-background-dark/50 p-5 flex flex-col gap-5 shrink-0 overflow-y-auto">
+      <aside className="w-72 border-r border-outline-variant/60 bg-surface-container-low p-5 flex flex-col gap-5 shrink-0 overflow-y-auto">
         <div>
-          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Stream Flow Tracer</h3>
-          <p className="text-xs text-slate-400">Trace a message key across Kafka topics to visualize the data flow pipeline.</p>
+          <h3 className="text-xs font-bold text-on-surface-variant uppercase tracking-widest mb-4">Stream Flow Tracer</h3>
+          <p className="text-xs text-on-surface-variant">Trace a message key across Kafka topics to visualize the data flow pipeline.</p>
         </div>
 
         <div className="space-y-4">
           {/* Message Key */}
           <div className="space-y-1.5">
-            <label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Message Key *</label>
+            <label className="text-[12px] font-medium text-on-surface-variant">Message Key *</label>
             <input
               type="text"
               value={messageKey}
               onChange={e => setMessageKey(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter' && !loading && messageKey.trim()) handleRun(); }}
               placeholder="e.g. order_88219"
-              className="w-full bg-primary/5 border border-primary/20 rounded-lg px-3 py-2 text-sm font-mono text-slate-100 placeholder:text-slate-600 focus:ring-1 focus:ring-primary outline-none"
+              className="w-full bg-surface-container-low border border-outline-variant rounded-md px-3 py-2 text-sm font-mono text-on-surface placeholder:text-outline focus:border-primary/60 outline-none"
             />
           </div>
 
           {/* Search Path */}
           <div className="space-y-1.5">
-            <label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Search Path (JSONPath / XPath)</label>
+            <label className="text-[12px] font-medium text-on-surface-variant">Search Path (JSONPath / XPath)</label>
             <input
               type="text"
               value={searchPath}
               onChange={e => setSearchPath(e.target.value)}
               placeholder="e.g. $.orderId"
-              className="w-full bg-primary/5 border border-primary/20 rounded-lg px-3 py-2 text-sm font-mono text-slate-100 placeholder:text-slate-600 focus:ring-1 focus:ring-primary outline-none"
+              className="w-full bg-surface-container-low border border-outline-variant rounded-md px-3 py-2 text-sm font-mono text-on-surface placeholder:text-outline focus:border-primary/60 outline-none"
             />
           </div>
 
           {/* Target Topics */}
           <div className="space-y-1.5">
-            <label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Target Topics</label>
+            <label className="text-[12px] font-medium text-on-surface-variant">Target Topics</label>
             <textarea
               value={targetTopics}
               onChange={e => setTargetTopics(e.target.value)}
               placeholder={"orders_raw\norders_processed\n..."}
               rows={3}
-              className="w-full bg-primary/5 border border-primary/20 rounded-lg px-3 py-2 text-sm font-mono text-slate-100 placeholder:text-slate-600 focus:ring-1 focus:ring-primary outline-none resize-none"
+              className="w-full bg-surface-container-low border border-outline-variant rounded-md px-3 py-2 text-sm font-mono text-on-surface placeholder:text-outline focus:border-primary/60 outline-none resize-none"
             />
-            <p className="text-[10px] text-slate-500">One per line or comma-separated. Empty = scan all topics.</p>
+            <p className="text-[10px] text-on-surface-variant">One per line or comma-separated. Empty = scan all topics.</p>
           </div>
 
           {/* Max Messages */}
           <div className="space-y-1.5">
-            <label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">
+            <label className="text-[12px] font-medium text-on-surface-variant">
               Max Messages / Topic: <span className="text-primary">{maxMessages}</span>
             </label>
             <input
@@ -234,36 +235,37 @@ const StreamFlow: React.FC = () => {
 
           {/* Time Limit */}
           <div className="space-y-1.5">
-            <label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Time Limit (minutes)</label>
+            <label className="text-[12px] font-medium text-on-surface-variant">Time Limit (minutes)</label>
             <input
               type="number" min={1} max={60} value={timeLimitMinutes}
               onChange={e => setTimeLimitMinutes(Number(e.target.value))}
-              className="w-full bg-primary/5 border border-primary/20 rounded-lg px-3 py-2 text-sm text-slate-100 focus:ring-1 focus:ring-primary outline-none"
+              className="w-full bg-surface-container-low border border-outline-variant rounded-md px-3 py-2 text-sm text-on-surface focus:border-primary/60 outline-none"
             />
           </div>
 
           {/* Use Regex */}
           <div className="flex items-center justify-between">
-            <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Use Regex</span>
+            <span className="text-[12px] font-medium text-on-surface-variant">Use Regex</span>
             <button
+              role="switch" aria-checked={useRegex} aria-label="Use Regex"
               onClick={() => setUseRegex(!useRegex)}
-              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${useRegex ? 'bg-primary' : 'bg-slate-700'}`}
+              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${useRegex ? 'bg-primary' : 'bg-surface-container-highest'}`}
             >
-              <span className={`inline-block h-3 w-3 transform rounded-full bg-background-dark transition-transform ${useRegex ? 'translate-x-5' : 'translate-x-1'}`} />
+              <span className={`inline-block h-3.5 w-3.5 transform rounded-full transition-transform ${useRegex ? 'translate-x-[18px] bg-on-primary' : 'translate-x-1 bg-on-surface-variant'}`} />
             </button>
           </div>
         </div>
 
-        <button
+        <Button
+          variant="primary"
+          className="mt-auto w-full"
+          icon={loading ? undefined : 'route'}
+          loading={loading}
           onClick={handleRun}
           disabled={loading || !messageKey.trim()}
-          className="mt-auto flex items-center justify-center gap-2 w-full h-11 bg-primary text-background-dark font-bold rounded-lg hover:brightness-110 disabled:opacity-50 transition-all text-sm"
         >
-          {loading
-            ? <span className="material-symbols-outlined animate-spin text-lg">refresh</span>
-            : <span className="material-symbols-outlined text-lg">route</span>}
-          {loading ? 'Tracing...' : 'Trace Flow'}
-        </button>
+          {loading ? 'Tracing…' : 'Trace Flow'}
+        </Button>
       </aside>
 
       {/* ── Graph Area ── */}
@@ -272,28 +274,28 @@ const StreamFlow: React.FC = () => {
         {/* Stats badge */}
         {hasResult && nodes.length > 0 && (
           <div className="absolute top-4 left-4 z-10 pointer-events-none">
-            <div className="flex items-center gap-2 bg-background-dark/90 border border-primary/20 px-3 py-1.5 rounded-full text-xs">
+            <div className="flex items-center gap-2 bg-surface-container/90 border border-outline-variant px-3 py-1.5 rounded-full text-xs">
               <span className="material-symbols-outlined text-sm text-primary">route</span>
-              <span className="text-slate-400">{nodes.length} topics</span>
-              <span className="text-slate-600">·</span>
-              <span className="text-slate-400">{edges.length} edges</span>
+              <span className="text-on-surface-variant">{nodes.length} topics</span>
+              <span className="text-outline">·</span>
+              <span className="text-on-surface-variant">{edges.length} edges</span>
             </div>
           </div>
         )}
 
         {/* Zoom controls */}
         {hasResult && nodes.length > 0 && (
-          <div className="absolute bottom-6 left-4 z-10 flex flex-col bg-background-dark border border-primary/20 rounded-xl overflow-hidden shadow-xl">
+          <div className="absolute bottom-6 left-4 z-10 flex flex-col bg-background-dark border border-outline-variant rounded-xl overflow-hidden shadow-xl">
             <button onClick={() => setTransform(t => ({ ...t, scale: Math.min(4, t.scale * 1.25) }))}
-              className="p-2 hover:bg-primary/10 text-slate-400 hover:text-primary border-b border-primary/10 transition-colors">
+              className="p-2 hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface border-b border-outline-variant/60 transition-colors">
               <span className="material-symbols-outlined text-lg">add</span>
             </button>
             <button onClick={() => setTransform(t => ({ ...t, scale: Math.max(0.15, t.scale * 0.8) }))}
-              className="p-2 hover:bg-primary/10 text-slate-400 hover:text-primary border-b border-primary/10 transition-colors">
+              className="p-2 hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface border-b border-outline-variant/60 transition-colors">
               <span className="material-symbols-outlined text-lg">remove</span>
             </button>
             <button onClick={() => setTransform({ x: 40, y: 40, scale: 1 })}
-              className="p-2 hover:bg-primary/10 text-slate-400 hover:text-primary transition-colors" title="Reset view">
+              className="p-2 hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface transition-colors" title="Reset view">
               <span className="material-symbols-outlined text-lg">center_focus_weak</span>
             </button>
           </div>
@@ -301,7 +303,7 @@ const StreamFlow: React.FC = () => {
 
         {/* Error */}
         {error && (
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 bg-red-500/10 border border-red-500/20 text-red-400 text-xs px-4 py-2 rounded-lg flex items-center gap-2">
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 bg-error/10 border border-error/20 text-error text-xs px-4 py-2 rounded-lg flex items-center gap-2">
             <span className="material-symbols-outlined text-sm">warning</span>
             {error}
           </div>
@@ -309,22 +311,20 @@ const StreamFlow: React.FC = () => {
 
         {/* Empty state */}
         {!hasResult && !loading && (
-          <div className="flex-1 flex flex-col items-center justify-center gap-4 text-center p-12">
-            <span className="material-symbols-outlined text-6xl text-slate-700">waves</span>
-            <div>
-              <p className="font-bold text-slate-400">No flow traced yet</p>
-              <p className="text-sm text-slate-600 mt-1">
-                Enter a message key and click <b>Trace Flow</b> to visualize the stream pipeline.
-              </p>
-            </div>
+          <div className="flex-1 flex items-center justify-center">
+            <EmptyState
+              icon="waves"
+              title="No flow traced yet"
+              description="Enter a message key and click Trace Flow to visualize the stream pipeline."
+            />
           </div>
         )}
 
         {/* Loading */}
         {loading && (
-          <div className="flex-1 flex flex-col items-center justify-center gap-4">
-            <div className="animate-spin rounded-full h-10 w-10 border-2 border-primary border-t-transparent" />
-            <p className="text-sm text-slate-400">Tracing message across topics...</p>
+          <div className="flex-1 flex flex-col items-center justify-center gap-3" role="status" aria-live="polite">
+            <span aria-hidden="true" className="material-symbols-outlined animate-spin text-[32px] text-primary">progress_activity</span>
+            <p className="text-[13px] text-on-surface-variant">Tracing message across topics…</p>
           </div>
         )}
 
@@ -341,7 +341,7 @@ const StreamFlow: React.FC = () => {
           >
             <defs>
               <marker id="sf-arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-                <polygon points="0 0, 10 3.5, 0 7" fill="#25f4f4" opacity="0.6" />
+                <polygon points="0 0, 10 3.5, 0 7" fill="#a3adff" opacity="0.6" />
               </marker>
             </defs>
 
@@ -360,11 +360,11 @@ const StreamFlow: React.FC = () => {
                   <g key={i}>
                     <path
                       d={`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`}
-                      fill="none" stroke="#25f4f4" strokeWidth="2" opacity="0.5"
+                      fill="none" stroke="#a3adff" strokeWidth="2" opacity="0.5"
                       markerEnd="url(#sf-arrow)"
                     />
                     {edge.label && (
-                      <text x={mx} y={Math.min(y1, y2) - 6} textAnchor="middle" fill="#94a3b8" fontSize="10">
+                      <text x={mx} y={Math.min(y1, y2) - 6} textAnchor="middle" fill="#9aa3b2" fontSize="10">
                         {edge.label}
                       </text>
                     )}
@@ -382,7 +382,7 @@ const StreamFlow: React.FC = () => {
                 return (
                   <g key={node.id} transform={`translate(${pos.x}, ${pos.y})`}>
                     <rect width={nodeW} height={nodeH} rx="8"
-                      fill="#1b2d2d" stroke="#25f4f4" strokeWidth="1.5" strokeOpacity="0.6" />
+                      fill="#12151a" stroke="#a3adff" strokeWidth="1.5" strokeOpacity="0.6" />
                     <text x={cx} y={ts ? nodeH / 2 - 8 : nodeH / 2 + 4}
                       textAnchor="middle" fill="white" fontSize="11"
                       fontFamily="JetBrains Mono, monospace" fontWeight="bold">
@@ -390,7 +390,7 @@ const StreamFlow: React.FC = () => {
                     </text>
                     {ts && (
                       <text x={cx} y={nodeH / 2 + 10} textAnchor="middle"
-                        fill="#25f4f4" fontSize="9" fontFamily="Inter, sans-serif" opacity="0.7">
+                        fill="#a3adff" fontSize="9" fontFamily="Inter, sans-serif" opacity="0.7">
                         {ts}
                       </text>
                     )}
@@ -404,10 +404,10 @@ const StreamFlow: React.FC = () => {
         {/* No result */}
         {hasResult && !loading && nodes.length === 0 && (
           <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center p-12">
-            <span className="material-symbols-outlined text-5xl text-slate-600">search_off</span>
+            <span className="material-symbols-outlined text-5xl text-outline">search_off</span>
             <div>
-              <p className="font-bold text-slate-400">No flow found</p>
-              <p className="text-sm text-slate-600 mt-1">The message key was not found in the specified topics.</p>
+              <p className="font-bold text-on-surface-variant">No flow found</p>
+              <p className="text-sm text-outline mt-1">The message key was not found in the specified topics.</p>
             </div>
           </div>
         )}

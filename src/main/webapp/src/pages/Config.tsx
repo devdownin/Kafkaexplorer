@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import LoadingSpinner from '../components/LoadingSpinner';
+import { PageHeader, Button, CardSkeleton } from '../components/ui';
 
 interface ClusterConfig {
   bootstrapServers: string;
@@ -206,39 +206,43 @@ const Config: React.FC = () => {
     });
   };
 
-  const inputClass = "w-full bg-primary/5 border border-primary/20 rounded-lg px-3 py-2.5 text-sm text-slate-100 font-mono placeholder:text-slate-600 focus:ring-1 focus:ring-primary outline-none";
-  const labelClass = "block text-[10px] uppercase font-bold tracking-wider text-slate-500 mb-1.5";
+  const inputClass = "w-full bg-surface-container-low border border-outline-variant rounded-md px-3 py-2.5 text-[13px] text-on-surface font-mono placeholder:text-outline focus:border-primary/60 outline-none transition-colors";
+  const labelClass = "block text-[12px] font-medium text-on-surface-variant mb-1.5";
 
-  if (loading) return <LoadingSpinner />;
+  if (loading) return (
+    <div className="p-4 md:p-6 max-w-3xl space-y-6">
+      <PageHeader title="Configuration" description="Manage Kafka cluster connection, security and process-mining LLM settings." />
+      <div className="skeleton-shimmer h-16 w-full rounded-xl" />
+      <CardSkeleton lines={4} />
+      <CardSkeleton lines={5} />
+    </div>
+  );
 
   return (
-    <div className="p-6 max-w-3xl space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold">Configuration</h1>
-        <p className="text-slate-500 dark:text-slate-400 text-sm mt-1">
-          Manage Kafka cluster connection and security settings.
-        </p>
-      </div>
+    <div className="p-4 md:p-6 max-w-3xl space-y-6">
+      <PageHeader
+        title="Configuration"
+        description="Manage Kafka cluster connection, security and process-mining LLM settings."
+      />
 
       {/* Connection Status Banner */}
       <div className={`rounded-xl border p-4 flex items-center gap-3 ${
         config.isConnected
-          ? 'bg-emerald-500/5 border-emerald-500/20'
-          : 'bg-slate-500/5 border-slate-500/20'
+          ? 'bg-success/10 border-success/25'
+          : 'bg-surface-container border-outline-variant'
       }`}>
         <span className="relative flex h-3 w-3">
-          <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${config.isConnected ? 'bg-emerald-400' : 'bg-slate-500'}`} />
-          <span className={`relative inline-flex rounded-full h-3 w-3 ${config.isConnected ? 'bg-emerald-500' : 'bg-slate-500'}`} />
+          <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${config.isConnected ? 'bg-success' : 'bg-outline'}`} />
+          <span className={`relative inline-flex rounded-full h-3 w-3 ${config.isConnected ? 'bg-success' : 'bg-outline'}`} />
         </span>
         <div>
-          <p className={`text-sm font-bold ${config.isConnected ? 'text-emerald-400' : 'text-slate-400'}`}>
+          <p className={`text-sm font-bold ${config.isConnected ? 'text-success' : 'text-on-surface-variant'}`}>
             {config.isConnected ? 'Connected' : 'Not connected'}
           </p>
-          <p className="text-xs text-slate-500">{config.bootstrapServers}</p>
+          <p className="text-xs text-on-surface-variant">{config.bootstrapServers}</p>
         </div>
         {testResult !== null && (
-          <div className={`ml-auto flex items-center gap-1.5 text-xs font-bold ${testResult ? 'text-emerald-400' : 'text-red-400'}`}>
+          <div className={`ml-auto flex items-center gap-1.5 text-xs font-bold ${testResult ? 'text-success' : 'text-error'}`}>
             <span className="material-symbols-outlined text-sm">{testResult ? 'check_circle' : 'cancel'}</span>
             {testResult ? 'Connection successful' : 'Connection failed'}
           </div>
@@ -246,10 +250,10 @@ const Config: React.FC = () => {
       </div>
 
       {/* Cluster Connection */}
-      <div className="rounded-xl border border-primary/10 bg-primary/5 overflow-hidden">
-        <div className="p-4 border-b border-primary/10 flex items-center gap-3">
+      <div className="rounded-xl bg-surface-container ring-1 ring-white/[0.045] overflow-hidden">
+        <div className="p-4 border-b border-outline-variant/60 flex items-center gap-3">
           <span className="material-symbols-outlined text-primary">lan</span>
-          <h2 className="font-bold text-slate-100">Cluster Connection</h2>
+          <h2 className="font-bold text-on-surface">Cluster Connection</h2>
         </div>
         <div className="p-5 space-y-5">
           {/* Bootstrap Servers */}
@@ -262,7 +266,7 @@ const Config: React.FC = () => {
               placeholder="localhost:9092"
               className={inputClass}
             />
-            <p className="text-[10px] text-slate-500 mt-1">Comma-separated list of host:port pairs.</p>
+            <p className="text-[10px] text-on-surface-variant mt-1">Comma-separated list of host:port pairs.</p>
           </div>
 
           {/* Security Mode */}
@@ -275,12 +279,12 @@ const Config: React.FC = () => {
                   onClick={() => set('mode', mode.value)}
                   className={`p-3 rounded-lg border text-left transition-all ${
                     config.mode === mode.value
-                      ? 'border-primary bg-primary/10 text-slate-100'
-                      : 'border-primary/10 bg-background-dark/30 text-slate-400 hover:border-primary/30'
+                      ? 'border-primary bg-primary/10 text-on-surface'
+                      : 'border-outline-variant bg-surface-container-low text-on-surface-variant hover:border-outline'
                   }`}
                 >
                   <p className="text-xs font-bold">{mode.label}</p>
-                  <p className="text-[10px] text-slate-500 mt-0.5">{mode.description}</p>
+                  <p className="text-[10px] text-on-surface-variant mt-0.5">{mode.description}</p>
                 </button>
               ))}
             </div>
@@ -290,10 +294,10 @@ const Config: React.FC = () => {
 
       {/* SSL Config */}
       {config.mode === 'SSL' && (
-        <div className="rounded-xl border border-primary/10 bg-primary/5 overflow-hidden">
-          <div className="p-4 border-b border-primary/10 flex items-center gap-3">
+        <div className="rounded-xl bg-surface-container ring-1 ring-white/[0.045] overflow-hidden">
+          <div className="p-4 border-b border-outline-variant/60 flex items-center gap-3">
             <span className="material-symbols-outlined text-primary">lock</span>
-            <h2 className="font-bold text-slate-100">SSL / mTLS Settings</h2>
+            <h2 className="font-bold text-on-surface">SSL / mTLS Settings</h2>
           </div>
           <div className="p-5 grid grid-cols-2 gap-4">
             <div>
@@ -322,10 +326,10 @@ const Config: React.FC = () => {
 
       {/* Confluent Cloud Config */}
       {config.mode === 'CONFLUENT_CLOUD' && (
-        <div className="rounded-xl border border-primary/10 bg-primary/5 overflow-hidden">
-          <div className="p-4 border-b border-primary/10 flex items-center gap-3">
+        <div className="rounded-xl bg-surface-container ring-1 ring-white/[0.045] overflow-hidden">
+          <div className="p-4 border-b border-outline-variant/60 flex items-center gap-3">
             <span className="material-symbols-outlined text-primary">cloud</span>
-            <h2 className="font-bold text-slate-100">Confluent Cloud Settings</h2>
+            <h2 className="font-bold text-on-surface">Confluent Cloud Settings</h2>
           </div>
           <div className="p-5 grid grid-cols-2 gap-4">
             <div>
@@ -340,12 +344,12 @@ const Config: React.FC = () => {
         </div>
       )}
 
-      <div className="rounded-xl border border-primary/10 bg-primary/5 overflow-hidden">
-        <div className="p-4 border-b border-primary/10 flex items-center gap-3">
+      <div className="rounded-xl bg-surface-container ring-1 ring-white/[0.045] overflow-hidden">
+        <div className="p-4 border-b border-outline-variant/60 flex items-center gap-3">
           <span className="material-symbols-outlined text-primary">neurology</span>
           <div>
-            <h2 className="font-bold text-slate-100">Process Mining LLM</h2>
-            <p className="text-xs text-slate-500 mt-0.5">
+            <h2 className="font-bold text-on-surface">Process Mining LLM</h2>
+            <p className="text-xs text-on-surface-variant mt-0.5">
               Applied at runtime. Use environment variables or `application.yml` for persistent configuration.
             </p>
           </div>
@@ -360,12 +364,12 @@ const Config: React.FC = () => {
                   onClick={() => applyLlmProvider(provider.value)}
                   className={`p-3 rounded-lg border text-left transition-all ${
                     config.llmProvider === provider.value
-                      ? 'border-primary bg-primary/10 text-slate-100'
-                      : 'border-primary/10 bg-background-dark/30 text-slate-400 hover:border-primary/30'
+                      ? 'border-primary bg-primary/10 text-on-surface'
+                      : 'border-outline-variant bg-surface-container-low text-on-surface-variant hover:border-outline'
                   }`}
                 >
                   <p className="text-xs font-bold">{provider.label}</p>
-                  <p className="text-[10px] text-slate-500 mt-0.5">{provider.description}</p>
+                  <p className="text-[10px] text-on-surface-variant mt-0.5">{provider.description}</p>
                 </button>
               ))}
             </div>
@@ -373,8 +377,8 @@ const Config: React.FC = () => {
 
           <div className={`rounded-lg border px-4 py-3 text-xs ${
             config.llmLocalDeployment
-              ? 'border-emerald-500/20 bg-emerald-500/5 text-emerald-300'
-              : 'border-primary/10 bg-background-dark/20 text-slate-400'
+              ? 'border-success/20 bg-success/5 text-success'
+              : 'border-outline-variant/60 bg-surface-container-low text-on-surface-variant'
           }`}>
             {config.llmLocalDeployment
               ? 'Local inference detected. Lightweight open-source models can be used for snapshot and live process mining.'
@@ -420,7 +424,7 @@ const Config: React.FC = () => {
                     ? 'Optional for local deployments' : 'Required'}
                 className={inputClass}
               />
-              <p className="text-[10px] text-slate-500 mt-1">
+              <p className="text-[10px] text-on-surface-variant mt-1">
                 {config.llmApiKeyConfigured ? 'A key is currently configured in memory.' : 'No key configured in memory.'}
               </p>
             </div>
@@ -460,7 +464,7 @@ const Config: React.FC = () => {
           </div>
 
           {config.llmProvider === 'SPECTRA' && (
-            <label className="mt-4 flex items-start gap-3 rounded-lg border border-primary/10 bg-background-dark/20 px-4 py-3 cursor-pointer">
+            <label className="mt-4 flex items-start gap-3 rounded-lg border border-outline-variant/60 bg-background-dark/20 px-4 py-3 cursor-pointer">
               <input
                 type="checkbox"
                 checked={config.llmUseRag ?? false}
@@ -468,8 +472,8 @@ const Config: React.FC = () => {
                 className="mt-0.5"
               />
               <span>
-                <span className="block text-xs font-bold text-slate-200">Enrich audit with SpectraLLM RAG</span>
-                <span className="block text-[10px] text-slate-500 mt-0.5">
+                <span className="block text-xs font-bold text-on-surface">Enrich audit with SpectraLLM RAG</span>
+                <span className="block text-[10px] text-on-surface-variant mt-0.5">
                   When enabled, the audit prompt is answered with hybrid retrieval over SpectraLLM's
                   ingested corpus. Leave off to ground the audit solely on the sampled Kafka messages.
                 </span>
@@ -487,7 +491,7 @@ const Config: React.FC = () => {
                 placeholder="Default collection"
                 className={inputClass}
               />
-              <p className="text-[10px] text-slate-500 mt-1">
+              <p className="text-[10px] text-on-surface-variant mt-1">
                 Optional — the ChromaDB collection to retrieve from. Leave blank for SpectraLLM's default.
               </p>
             </div>
@@ -505,25 +509,18 @@ const Config: React.FC = () => {
                 className={inputClass}
               />
             </div>
-            <button
-              onClick={handleTestLlm}
-              disabled={llmTesting}
-              className="flex items-center gap-2 px-4 py-2.5 text-sm rounded-lg border border-primary/30 text-primary hover:bg-primary/10 transition-colors disabled:opacity-50"
-            >
-              <span className={`material-symbols-outlined text-base ${llmTesting ? 'animate-spin' : ''}`}>
-                {llmTesting ? 'progress_activity' : 'network_check'}
-              </span>
-              {llmTesting ? 'Testing LLM...' : 'Test LLM'}
-            </button>
+            <Button variant="outline" icon={llmTesting ? undefined : 'network_check'} loading={llmTesting} onClick={handleTestLlm} disabled={llmTesting}>
+              {llmTesting ? 'Testing LLM…' : 'Test LLM'}
+            </Button>
           </div>
 
           {llmTestResult && (
-            <div className={`mt-3 rounded-lg border px-4 py-3 text-xs flex items-start gap-2 ${
+            <div className={`mt-3 rounded-lg border px-4 py-3 text-[12px] flex items-start gap-2 ${
               llmTestResult.ok
-                ? 'border-emerald-500/30 bg-emerald-500/5 text-emerald-300'
-                : 'border-red-500/30 bg-red-500/5 text-red-300'
+                ? 'border-success/30 bg-success/10 text-success'
+                : 'border-error/30 bg-error/10 text-error'
             }`}>
-              <span className="material-symbols-outlined text-sm mt-0.5">
+              <span className="material-symbols-outlined text-[16px] mt-0.5">
                 {llmTestResult.ok ? 'check_circle' : 'error'}
               </span>
               <span className="break-words">{llmTestResult.message}</span>
@@ -534,41 +531,20 @@ const Config: React.FC = () => {
 
       {/* Error */}
       {error && (
-        <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 flex items-center gap-2 text-red-400 text-sm">
-          <span className="material-symbols-outlined text-sm">warning</span>
+        <div className="rounded-lg border border-error/25 bg-error/10 p-3 flex items-center gap-2 text-error text-[13px]" role="alert">
+          <span className="material-symbols-outlined text-[18px]">error</span>
           {error}
         </div>
       )}
 
       {/* Actions */}
       <div className="flex items-center justify-between pt-2">
-        <button
-          onClick={handleTestConnection}
-          disabled={testing || saving}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-primary/30 text-primary font-bold text-sm hover:bg-primary/10 disabled:opacity-50 transition-all"
-        >
-          {testing ? (
-            <span className="material-symbols-outlined animate-spin text-lg">refresh</span>
-          ) : (
-            <span className="material-symbols-outlined text-lg">wifi_tethering</span>
-          )}
-          {testing ? 'Testing...' : 'Test Connection'}
-        </button>
-
-        <button
-          onClick={handleSave}
-          disabled={saving || testing}
-          className="flex items-center gap-2 px-6 py-2.5 rounded-lg bg-primary text-background-dark font-bold text-sm hover:brightness-110 disabled:opacity-50 transition-all"
-        >
-          {saving ? (
-            <span className="material-symbols-outlined animate-spin text-lg">refresh</span>
-          ) : saveSuccess ? (
-            <span className="material-symbols-outlined text-lg">check_circle</span>
-          ) : (
-            <span className="material-symbols-outlined text-lg">save</span>
-          )}
-          {saving ? 'Saving...' : saveSuccess ? 'Saved!' : 'Save Configuration'}
-        </button>
+        <Button variant="outline" icon={testing ? undefined : 'wifi_tethering'} loading={testing} onClick={handleTestConnection} disabled={testing || saving}>
+          {testing ? 'Testing…' : 'Test connection'}
+        </Button>
+        <Button variant="primary" icon={saving ? undefined : saveSuccess ? 'check_circle' : 'save'} loading={saving} onClick={handleSave} disabled={saving || testing}>
+          {saving ? 'Saving…' : saveSuccess ? 'Saved!' : 'Save configuration'}
+        </Button>
       </div>
     </div>
   );
