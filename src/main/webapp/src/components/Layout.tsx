@@ -3,6 +3,7 @@ import type { FC, ReactNode } from 'react';
 import axios from 'axios';
 import Sidebar from './Sidebar';
 import Header from './Header';
+import CommandPalette from './CommandPalette';
 
 const DESKTOP_QUERY = '(min-width: 768px)';
 
@@ -22,6 +23,7 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
 
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [isDesktop, setIsDesktop] = useState(
     () => typeof window !== 'undefined' && window.matchMedia(DESKTOP_QUERY).matches,
   );
@@ -53,6 +55,18 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
     return () => mq.removeEventListener('change', handler);
   }, []);
 
+  // Raccourci global ⌘K / Ctrl+K : ouvre/ferme la palette de commandes.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setPaletteOpen((o) => !o);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   const effectiveCollapsed = isDesktop ? isCollapsed : false;
 
   return (
@@ -79,15 +93,21 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
       >
         <Header
           onMenuClick={() => setMobileOpen(true)}
+          onSearchClick={() => setPaletteOpen(true)}
           isHealthy={isHealthy}
           clusterName={clusterName}
-          searchTopics={searchTopics}
-          searchTables={searchTables}
         />
         <main className="flex-1 overflow-y-auto custom-scrollbar relative">
           {children}
         </main>
       </div>
+
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        topics={searchTopics}
+        tables={searchTables}
+      />
     </div>
   );
 };
