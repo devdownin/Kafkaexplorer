@@ -41,7 +41,7 @@
           Confluent 7.x pairs with kafka-clients 3.x. Mismatched pairs break compilation
           (KafkaAdminService, the KafkaAvroDeserializer call site) or runtime linkage.
         -->
-        <confluent.version>8.0.0</confluent.version>
+        <confluent.version>8.3.0</confluent.version>
     </properties>
 
     <repositories>
