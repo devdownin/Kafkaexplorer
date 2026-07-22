@@ -12,6 +12,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -258,6 +259,159 @@ class MetricServiceTest {
         assertEquals("FLINK_MANAGED_JOB", preview.summary().get("plannedExecutionMode"));
         assertEquals("TEMPLATE_BOUNDED_SCAN", preview.summary().get("previewExecutionMode"));
         assertEquals("PLANNED", preview.summary().get("managedJobStatus"));
+    }
+
+    @Test
+    void editingMetricTypePurgesStaleMeterSeries() {
+        // A GAUGE metric that produces one series, then re-saved as a COUNTER.
+        Mockito.when(flinkSqlService.executeSql(Mockito.any()))
+            .thenReturn(new QueryResult(
+                List.of("metric_value"),
+                List.of(Map.of("metric_value", 5.0)),
+                10L,
+                null
+            ));
+
+        MetricConfig gauge = new MetricConfig(
+            null, "shape_shift", "GAUGE", "SELECT 5 AS metric_value", null, null, null,
+            null, null, null, List.of(), Map.of(), null, null, null, null, null, List.of());
+        service.save(gauge);
+        String id = service.getAllMetrics().stream()
+            .filter(m -> "shape_shift".equals(m.name()))
+            .findFirst().orElseThrow().id();
+
+        service.refreshMetrics();
+        assertFalse(meterRegistry.find("explorer_metric_gauge").tag("metric_id", id).meters().isEmpty(),
+            "gauge series should exist after first refresh");
+
+        // Re-save with the same id but a different type — the stale gauge must be removed.
+        service.save(new MetricConfig(
+            id, "shape_shift", "COUNTER", "SELECT 5 AS metric_value", null, null, null,
+            null, null, null, List.of(), Map.of(), null, null, null, null, null, List.of()));
+
+        assertTrue(meterRegistry.find("explorer_metric_gauge").tag("metric_id", id).meters().isEmpty(),
+            "stale gauge series must be purged when the metric type changes");
+
+        service.refreshMetrics();
+        assertFalse(meterRegistry.find("explorer_metric_counter").tag("metric_id", id).meters().isEmpty(),
+            "new counter series should exist after refresh");
+        assertTrue(meterRegistry.find("explorer_metric_gauge").tag("metric_id", id).meters().isEmpty(),
+            "gauge series must not reappear after switching to COUNTER");
+    }
+
+    @Test
+    void histogramDoesNotRecordTheSameBacklogEveryRefresh() {
+        // The bounded earliest-offset scan re-reads the full backlog every cycle: same 3 rows.
+        QueryResult threeRows = new QueryResult(
+            List.of("metric_value"),
+            List.of(Map.of("metric_value", 1.0), Map.of("metric_value", 2.0), Map.of("metric_value", 3.0)),
+            10L,
+            null);
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(threeRows);
+
+        service.save(new MetricConfig(
+            null, "hist", "HISTOGRAM", "SELECT amount AS metric_value FROM t", null, null, null,
+            null, null, null, List.of(), Map.of(), null, null, null, null, null, List.of()));
+        String id = service.getAllMetrics().stream()
+            .filter(m -> "hist".equals(m.name()))
+            .findFirst().orElseThrow().id();
+
+        service.refreshMetrics();
+        service.refreshMetrics();
+        service.refreshMetrics();
+
+        var summary = meterRegistry.find("explorer_metric_histogram").tag("metric_id", id).summary();
+        assertNotNull(summary);
+        assertEquals(3, summary.count(),
+            "a static 3-row backlog must be recorded once, not once per refresh");
+    }
+
+    @Test
+    void summaryRecordsOnlyNewlyAppendedObservationsAsBacklogGrows() {
+        Mockito.when(flinkSqlService.executeSql(Mockito.any()))
+            .thenReturn(
+                new QueryResult(List.of("metric_value"),
+                    List.of(Map.of("metric_value", 10.0), Map.of("metric_value", 20.0)), 10L, null),
+                new QueryResult(List.of("metric_value"),
+                    List.of(Map.of("metric_value", 10.0), Map.of("metric_value", 20.0),
+                            Map.of("metric_value", 30.0)), 10L, null));
+
+        service.save(new MetricConfig(
+            null, "summ", "SUMMARY", "SELECT latency AS metric_value FROM t", null, null, null,
+            null, null, null, List.of(), Map.of(), null, null, null, null, null, List.of()));
+        String id = service.getAllMetrics().stream()
+            .filter(m -> "summ".equals(m.name()))
+            .findFirst().orElseThrow().id();
+
+        service.refreshMetrics(); // records 10, 20  → count 2
+        service.refreshMetrics(); // backlog grew by one (30) → records only 30 → count 3
+
+        var summary = meterRegistry.find("explorer_metric_summary").tag("metric_id", id).summary();
+        assertNotNull(summary);
+        assertEquals(3, summary.count(), "only the newly appended observation should be recorded");
+        assertEquals(60.0, summary.totalAmount(), 0.0001, "10 + 20 + 30 recorded exactly once each");
+    }
+
+    @Test
+    void counterSumsRowsSharingALabelKeyInsteadOfMergingDeltas() {
+        // Two rows with no distinct label column → same (empty) label key. Their cumulative
+        // totals must sum (4 + 6 = 10), not collapse to the last row's value (which the old
+        // per-row delta path produced: 4 + (6-4) = 6).
+        Mockito.when(flinkSqlService.executeSql(Mockito.any()))
+            .thenReturn(new QueryResult(
+                List.of("metric_value"),
+                List.of(Map.of("metric_value", 4.0), Map.of("metric_value", 6.0)),
+                10L,
+                null));
+
+        service.save(new MetricConfig(
+            null, "multi_counter", "COUNTER", "SELECT cnt AS metric_value FROM t", null, null, null,
+            null, null, null, List.of(), Map.of(), null, null, null, null, null, List.of()));
+        String id = service.getAllMetrics().stream()
+            .filter(m -> "multi_counter".equals(m.name()))
+            .findFirst().orElseThrow().id();
+
+        service.refreshMetrics();
+
+        var counter = meterRegistry.find("explorer_metric_counter").tag("metric_id", id).counter();
+        assertNotNull(counter);
+        assertEquals(10.0, counter.count(), 0.0001,
+            "rows sharing a label key must sum into one cumulative counter value");
+    }
+
+    private static Map<String, Object> row(String labelValue, double metricValue) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("region", labelValue);
+        row.put("metric_value", metricValue);
+        return row;
+    }
+
+    @Test
+    void staleLabelSeriesArePrunedWhenALabelValueStopsAppearing() {
+        // Cycle 1 returns two label series (us, eu); cycle 2 drops eu.
+        Mockito.when(flinkSqlService.executeSql(Mockito.any()))
+            .thenReturn(
+                new QueryResult(List.of("region", "metric_value"),
+                    List.of(row("us", 1.0), row("eu", 2.0)), 10L, null),
+                new QueryResult(List.of("region", "metric_value"),
+                    List.of(row("us", 3.0)), 10L, null));
+
+        service.save(new MetricConfig(
+            null, "by_region", "GAUGE", "SELECT region, COUNT(*) AS metric_value FROM t GROUP BY region",
+            null, null, null, null, null, null, List.of(), Map.of(), null, null, null, null, null, List.of()));
+        String id = service.getAllMetrics().stream()
+            .filter(m -> "by_region".equals(m.name()))
+            .findFirst().orElseThrow().id();
+
+        service.refreshMetrics();
+        assertFalse(meterRegistry.find("explorer_metric_gauge").tag("metric_id", id).tag("region", "eu").gauges().isEmpty());
+        assertFalse(meterRegistry.find("explorer_metric_gauge").tag("metric_id", id).tag("region", "us").gauges().isEmpty());
+
+        service.refreshMetrics();
+        assertTrue(meterRegistry.find("explorer_metric_gauge").tag("metric_id", id).tag("region", "eu").gauges().isEmpty(),
+            "series for a label value that stopped appearing must be pruned");
+        assertFalse(meterRegistry.find("explorer_metric_gauge").tag("metric_id", id).tag("region", "us").gauges().isEmpty(),
+            "series still present in the latest cycle must be kept");
     }
 
     @Test

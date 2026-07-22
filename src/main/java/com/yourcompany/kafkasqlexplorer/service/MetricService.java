@@ -16,6 +16,7 @@ import com.yourcompany.kafkasqlexplorer.domain.QueryResult;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.DistributionSummary;
 import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.Meter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tag;
 import jakarta.annotation.PostConstruct;
@@ -116,12 +117,22 @@ public class MetricService {
     // ── Micrometer instruments per type ──────────────────────────────────────
     /** GAUGE:     metricId → (labelKey → holder)  */
     private final Map<String, Map<String, AtomicReference<Double>>> gaugeHolders = new ConcurrentHashMap<>();
+    /** GAUGE:     metricId → (labelKey → registered Gauge) — kept so a stale series can be removed. */
+    private final Map<String, Map<String, Gauge>>                   gaugeMeters   = new ConcurrentHashMap<>();
     /** COUNTER:   metricId → (labelKey → Counter) */
     private final Map<String, Map<String, Counter>>                  counterMeters = new ConcurrentHashMap<>();
     /** COUNTER:   metricId → (labelKey → lastSeenValue) for delta computation */
     private final Map<String, Map<String, Double>>                   lastCounterValues = new ConcurrentHashMap<>();
     /** HISTOGRAM / SUMMARY: metricId → (labelKey → DistributionSummary) */
     private final Map<String, Map<String, DistributionSummary>>      distributionMeters = new ConcurrentHashMap<>();
+    /**
+     * HISTOGRAM / SUMMARY: metricId → (labelKey → count of observations already recorded).
+     * The scheduled refresh re-scans the full bounded (earliest-offset) backlog every cycle;
+     * without this watermark the accumulating DistributionSummary would re-record every past
+     * observation each cycle, inflating _count/_sum and biasing the distribution toward older
+     * data. Only the suffix beyond the recorded count is recorded on subsequent cycles (B2).
+     */
+    private final Map<String, Map<String, Integer>>                  distributionRecordedCounts = new ConcurrentHashMap<>();
 
     private final FlinkSqlService flinkSqlService;
     private final MeterRegistry   meterRegistry;
@@ -301,22 +312,53 @@ public class MetricService {
             metric.labelTopic(),
             metric.labelFields() != null ? metric.labelFields() : List.of()));
         validateMetric(m, true);
+        MetricConfig previous = metrics.get(id);
         metrics.put(id, m);
+        // When an existing metric's shape changes (type, SQL, labels, template, …),
+        // any Micrometer series it already registered would linger forever with stale
+        // tags/values — e.g. an old GAUGE series surviving a switch to COUNTER, or dead
+        // label series after a SQL/label edit. Purge them so the next refresh rebuilds
+        // cleanly. Value history is intentionally preserved across an edit.
+        if (previous != null && metricShapeChanged(previous, m)) {
+            purgeMeters(id);
+        }
         persistToKafka(m);
     }
 
     public void delete(String id) {
         metrics.remove(id);
         historyMap.remove(id);
+        purgeMeters(id);
+        persistToKafka(new MetricConfig(id, null, null, null, null, null, null, null, null, "DELETED"));
+    }
+
+    /**
+     * Remove every Micrometer instrument and cached delta/holder state for a metric id.
+     * Does NOT touch {@link #historyMap} or {@link #metrics} — callers decide those.
+     */
+    private void purgeMeters(String id) {
         gaugeHolders.remove(id);
+        gaugeMeters.remove(id);
         lastCounterValues.remove(id);
         counterMeters.remove(id);
         distributionMeters.remove(id);
+        distributionRecordedCounts.remove(id);
         meterRegistry.find("explorer_metric_gauge").tag("metric_id", id).meters().forEach(meterRegistry::remove);
         meterRegistry.find("explorer_metric_counter").tag("metric_id", id).meters().forEach(meterRegistry::remove);
         meterRegistry.find("explorer_metric_histogram").tag("metric_id", id).meters().forEach(meterRegistry::remove);
         meterRegistry.find("explorer_metric_summary").tag("metric_id", id).meters().forEach(meterRegistry::remove);
-        persistToKafka(new MetricConfig(id, null, null, null, null, null, null, null, null, "DELETED"));
+    }
+
+    /** True when a re-saved metric differs in any field that affects its Micrometer series. */
+    private boolean metricShapeChanged(MetricConfig a, MetricConfig b) {
+        return !Objects.equals(a.type(), b.type())
+            || !Objects.equals(a.sql(), b.sql())
+            || !Objects.equals(a.labelTopic(), b.labelTopic())
+            || !Objects.equals(a.labelFields(), b.labelFields())
+            || !Objects.equals(a.templateType(), b.templateType())
+            || !Objects.equals(a.templateParams(), b.templateParams())
+            || !Objects.equals(a.createTableSql(), b.createTableSql())
+            || !Objects.equals(a.executionMode(), b.executionMode());
     }
 
     // ── Scheduled refresh ─────────────────────────────────────────────────────
@@ -762,28 +804,172 @@ public class MetricService {
                              Double displayValueOverride, Map<String, Object> summary,
                              Map<String, String> configuredLabels) {
         String type = config.type() == null ? "GAUGE" : config.type().toUpperCase();
-        Double primaryValue = displayValueOverride;
 
-        for (Map<String, Object> row : rows) {
-            Double value   = extractValue(row);
-            if (value == null) continue;
+        Double primaryValue = (type.equals("HISTOGRAM") || type.equals("SUMMARY"))
+            ? recordDistributionRows(metricId, config, rows, configuredLabels,
+                                     type.equals("HISTOGRAM"), displayValueOverride)
+            : processScalarRows(metricId, config, rows, configuredLabels,
+                                 type.equals("COUNTER"), displayValueOverride);
 
-            List<Tag> tags = buildTags(metricId, config, row, configuredLabels);
-            String labelKey = buildLabelKey(row, configuredLabels);
-
-            switch (type) {
-                case "COUNTER"   -> processCounter(metricId, labelKey, tags, value);
-                case "HISTOGRAM" -> processHistogram(metricId, labelKey, tags, value);
-                case "SUMMARY"   -> processSummary(metricId, labelKey, tags, value);
-                default          -> processGauge(metricId, labelKey, tags, value);  // GAUGE
-            }
-            if (primaryValue == null) primaryValue = value;
-        }
+        pruneStaleSeries(metricId, liveLabelKeys(rows, configuredLabels));
 
         if (primaryValue != null) {
             updateHistory(metricId, primaryValue);
             updateMetricState(metricId, primaryValue, null, summary);
         }
+    }
+
+    /** The set of label series produced by this cycle's rows (rows without a numeric value are ignored). */
+    private Set<String> liveLabelKeys(List<Map<String, Object>> rows, Map<String, String> configuredLabels) {
+        Set<String> keys = new HashSet<>();
+        for (Map<String, Object> row : rows) {
+            if (extractValue(row) == null) continue;
+            keys.add(buildLabelKey(row, configuredLabels));
+        }
+        return keys;
+    }
+
+    /**
+     * Drop Micrometer series (and their internal state) whose label key did not appear in the
+     * latest successful refresh. Without this, a GROUP BY value that stops occurring — or a label
+     * sourced from the latest Kafka message that keeps changing — leaves a series registered
+     * forever, frozen at its last value and inflating cardinality (B4). Only invoked with the live
+     * key set of a non-empty successful cycle, so a transiently empty/errored cycle prunes nothing.
+     */
+    private void pruneStaleSeries(String metricId, Set<String> liveKeys) {
+        if (liveKeys.isEmpty()) return;   // no successful rows this cycle — keep existing series
+
+        removeStaleMeters(gaugeMeters.get(metricId), liveKeys);
+        retainLiveKeys(gaugeHolders.get(metricId), liveKeys);
+
+        removeStaleMeters(counterMeters.get(metricId), liveKeys);
+        retainLiveKeys(lastCounterValues.get(metricId), liveKeys);
+
+        removeStaleMeters(distributionMeters.get(metricId), liveKeys);
+        retainLiveKeys(distributionRecordedCounts.get(metricId), liveKeys);
+    }
+
+    private void removeStaleMeters(Map<String, ? extends Meter> series, Set<String> liveKeys) {
+        if (series == null) return;
+        for (String key : new ArrayList<>(series.keySet())) {
+            if (!liveKeys.contains(key)) {
+                Meter meter = series.remove(key);
+                if (meter != null) meterRegistry.remove(meter);
+            }
+        }
+    }
+
+    private void retainLiveKeys(Map<String, ?> state, Set<String> liveKeys) {
+        if (state != null) state.keySet().retainAll(liveKeys);
+    }
+
+    /** GAUGE / COUNTER: each row is idempotent (set) or delta-tracked, so re-scans are safe. */
+    private Double processScalarRows(String metricId, MetricConfig config, List<Map<String, Object>> rows,
+                                     Map<String, String> configuredLabels, boolean counter,
+                                     Double displayValueOverride) {
+        if (counter) {
+            return processCounterRows(metricId, config, rows, configuredLabels, displayValueOverride);
+        }
+        // GAUGE — point-in-time; last row wins per label series.
+        Double primaryValue = displayValueOverride;
+        for (Map<String, Object> row : rows) {
+            Double value = extractValue(row);
+            if (value == null) continue;
+
+            List<Tag> tags = buildTags(metricId, config, row, configuredLabels);
+            String labelKey = buildLabelKey(row, configuredLabels);
+            processGauge(metricId, labelKey, tags, value);
+
+            if (primaryValue == null) primaryValue = value;
+        }
+        return primaryValue;
+    }
+
+    /**
+     * COUNTER: a counter's SQL yields the current cumulative total per label series. Rows that
+     * map to the same label key are summed into one cumulative value <em>before</em> the delta is
+     * computed. Previously each such row drove a separate delta against the shared last-seen
+     * value, so several independent groups collapsed onto one key (e.g. a GROUP BY whose grouping
+     * column is not selected → all rows share the empty key) incremented the counter by only the
+     * last row's total, silently discarding the rest (B5). Summing is order-independent and, for a
+     * cumulative counter, reconstitutes the intended series total. The single-row case is
+     * unchanged (sum of one value == that value).
+     */
+    private Double processCounterRows(String metricId, MetricConfig config, List<Map<String, Object>> rows,
+                                      Map<String, String> configuredLabels, Double displayValueOverride) {
+        Map<String, Double>    totalsByLabel = new LinkedHashMap<>();
+        Map<String, List<Tag>> tagsByLabel   = new LinkedHashMap<>();
+        Double primaryValue = displayValueOverride;
+
+        for (Map<String, Object> row : rows) {
+            Double value = extractValue(row);
+            if (value == null) continue;
+            String labelKey = buildLabelKey(row, configuredLabels);
+            totalsByLabel.merge(labelKey, value, Double::sum);
+            tagsByLabel.computeIfAbsent(labelKey, k -> buildTags(metricId, config, row, configuredLabels));
+            if (primaryValue == null) primaryValue = value;
+        }
+
+        totalsByLabel.forEach((labelKey, total) ->
+            processCounter(metricId, labelKey, tagsByLabel.get(labelKey), total));
+        return primaryValue;
+    }
+
+    /**
+     * HISTOGRAM / SUMMARY: record only observations not already recorded in earlier refresh
+     * cycles. Because the scheduled refresh re-scans the whole bounded (earliest-offset)
+     * backlog every cycle, recording every returned row unconditionally would re-count the
+     * entire history each cycle — inflating _count/_sum and skewing the distribution toward
+     * older data (B2).
+     *
+     * Dedup is positional per label series: an earliest-offset scan yields an append-only
+     * stream in a stable order, so only the suffix beyond the previously recorded count is
+     * new. A series that shrinks (retention trim / stream reset) resets its watermark to the
+     * current size without re-recording, so the accumulated summary is never inflated.
+     *
+     * <p>Note: templates whose output is re-sorted each cycle rather than strictly appended
+     * (e.g. TOPIC_TRANSIT_LATENCY sorts by match key) get approximate positional dedup — the
+     * observation <em>count</em> stays bounded/correct, but the exact boundary values may
+     * shift slightly. Strictly-correct continuous distributions require FLINK_MANAGED_JOB.
+     *
+     * @return the first observed value (for display / history), or the override when provided.
+     */
+    private Double recordDistributionRows(String metricId, MetricConfig config,
+                                          List<Map<String, Object>> rows,
+                                          Map<String, String> configuredLabels,
+                                          boolean histogram, Double displayValueOverride) {
+        Map<String, Integer> recordedCounts =
+            distributionRecordedCounts.computeIfAbsent(metricId, k -> new ConcurrentHashMap<>());
+
+        // Group ordered values (and a representative tag set) per label series for this cycle.
+        // Same labelKey ⟺ same tag set by construction, so the first row's tags are canonical.
+        Map<String, List<Double>> valuesByLabel = new LinkedHashMap<>();
+        Map<String, List<Tag>>    tagsByLabel   = new LinkedHashMap<>();
+        Double primaryValue = displayValueOverride;
+
+        for (Map<String, Object> row : rows) {
+            Double value = extractValue(row);
+            if (value == null) continue;
+            String labelKey = buildLabelKey(row, configuredLabels);
+            valuesByLabel.computeIfAbsent(labelKey, k -> new ArrayList<>()).add(value);
+            tagsByLabel.computeIfAbsent(labelKey, k -> buildTags(metricId, config, row, configuredLabels));
+            if (primaryValue == null) primaryValue = value;
+        }
+
+        valuesByLabel.forEach((labelKey, values) -> {
+            int alreadyRecorded = recordedCounts.getOrDefault(labelKey, 0);
+            // On a shrink, skip recording (startIndex == size) and just reset the watermark —
+            // never re-record the surviving prefix, which would inflate the accumulated summary.
+            int startIndex = values.size() < alreadyRecorded ? values.size() : alreadyRecorded;
+            List<Tag> tags = tagsByLabel.get(labelKey);
+            for (int i = startIndex; i < values.size(); i++) {
+                if (histogram) processHistogram(metricId, labelKey, tags, values.get(i));
+                else           processSummary(metricId, labelKey, tags, values.get(i));
+            }
+            recordedCounts.put(labelKey, values.size());
+        });
+
+        return primaryValue;
     }
 
     // GAUGE → Gauge (current point-in-time value)
@@ -792,10 +978,11 @@ public class MetricService {
             .computeIfAbsent(metricId, k -> new ConcurrentHashMap<>())
             .computeIfAbsent(labelKey, k -> {
                 AtomicReference<Double> ref = new AtomicReference<>(0.0);
-                Gauge.builder("explorer_metric_gauge", ref, AtomicReference::get)
+                Gauge gauge = Gauge.builder("explorer_metric_gauge", ref, AtomicReference::get)
                     .description("Flink SQL gauge metric")
                     .tags(tags)
                     .register(meterRegistry);
+                gaugeMeters.computeIfAbsent(metricId, x -> new ConcurrentHashMap<>()).put(labelKey, gauge);
                 return ref;
             })
             .set(value);

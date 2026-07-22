@@ -96,7 +96,10 @@ public class MetricController {
             return Map.of("error", "SQL is required");
         }
         try {
-            var result = flinkSqlService.executeSql(QueryRequest.sql(sql, 10, 5000L, "latest-offset"));
+            // Use earliest-offset (bounded scan) to match how scheduled metrics execute.
+            // With latest-offset an aggregate like COUNT(*) sees no backlog and returns
+            // "No rows returned", making the preview misleading for working metrics.
+            var result = flinkSqlService.executeSql(QueryRequest.sql(sql, 10, 5000L, "earliest-offset"));
             if (result.error() != null) return Map.of("error", result.error());
             if (result.rows().isEmpty()) return Map.of("error", "No rows returned");
             Object val = result.rows().get(0).entrySet().stream()
