@@ -1093,9 +1093,8 @@ public class FlinkSqlService {
             return rows.stream().filter(r -> r.get(col) != null).count();
         }
         List<Double> nums = rows.stream()
-            .map(r -> r.get(col))
-            .filter(v -> v instanceof Number)
-            .map(v -> ((Number) v).doubleValue())
+            .map(r -> asDouble(r.get(col)))
+            .filter(Objects::nonNull)
             .collect(Collectors.toList());
         if (nums.isEmpty()) return null;
         return switch (func) {
@@ -1105,6 +1104,23 @@ public class FlinkSqlService {
             case "MIN" -> nums.stream().mapToDouble(d -> d).min().orElse(0.0);
             default    -> null;
         };
+    }
+
+    /**
+     * Coerces an aggregate operand to a double. Handles genuine numbers and numeric values stored
+     * as strings — XML payloads flatten every field to text, and JSON numbers are sometimes quoted,
+     * so without this SUM/AVG/MAX/MIN over those topics would silently return null.
+     */
+    private Double asDouble(Object value) {
+        if (value instanceof Number n) return n.doubleValue();
+        if (value instanceof String s) {
+            try {
+                return Double.parseDouble(s.trim());
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
     }
 
     private List<String> extractSelectedColumns(String sql) {
