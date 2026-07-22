@@ -1,4 +1,5 @@
-import type { ButtonHTMLAttributes, FC, ReactNode } from 'react';
+import { forwardRef } from 'react';
+import type { ButtonHTMLAttributes, ReactNode } from 'react';
 import { cn } from './cn';
 
 export type ButtonVariant = 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger';
@@ -36,7 +37,7 @@ const SIZES: Record<ButtonSize, string> = {
  * Bouton du design system. Toujours arrondi (8 px), transitions 150 ms,
  * focus clavier visible via le style global :focus-visible.
  */
-export const Button: FC<ButtonProps> = ({
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button({
   variant = 'primary',
   size = 'md',
   icon,
@@ -45,24 +46,27 @@ export const Button: FC<ButtonProps> = ({
   children,
   disabled,
   ...props
-}) => (
-  <button
-    className={cn(
-      'inline-flex items-center justify-center rounded-md font-medium transition-all duration-150 select-none disabled:cursor-not-allowed',
-      VARIANTS[variant],
-      SIZES[size],
-      className,
-    )}
-    disabled={disabled || loading}
-    {...props}
-  >
-    {loading ? (
-      <span aria-hidden="true" className="material-symbols-outlined text-[16px] animate-spin">progress_activity</span>
-    ) : (
-      icon && <span aria-hidden="true" className="material-symbols-outlined text-[16px]">{icon}</span>
-    )}
-    {children}
-  </button>
-);
+}, ref) {
+  return (
+    <button
+      ref={ref}
+      className={cn(
+        'inline-flex items-center justify-center rounded-md font-medium transition-all duration-150 select-none disabled:cursor-not-allowed',
+        VARIANTS[variant],
+        SIZES[size],
+        className,
+      )}
+      disabled={disabled || loading}
+      {...props}
+    >
+      {loading ? (
+        <span aria-hidden="true" className="material-symbols-outlined text-[16px] animate-spin">progress_activity</span>
+      ) : (
+        icon && <span aria-hidden="true" className="material-symbols-outlined text-[16px]">{icon}</span>
+      )}
+      {children}
+    </button>
+  );
+});
 
 export default Button;

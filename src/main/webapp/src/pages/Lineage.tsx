@@ -175,6 +175,7 @@ const Lineage: React.FC = () => {
     } finally {
       setLoading(false);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- toast is stable
   }, [connectedOnly]);
 
   useEffect(() => { fetchLineage(); }, [fetchLineage]);

@@ -3,7 +3,7 @@ import type { FC } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
 import Layout from './components/Layout';
 import { ToastProvider } from './components/Toast';
-import { ProgressBar } from './components/ui';
+import { ProgressBar, ConfirmProvider } from './components/ui';
 
 /* Code-splitting : chaque page est chargée à la demande (lazy loading), ce qui
    réduit le bundle initial et accélère le premier rendu. */
@@ -47,6 +47,7 @@ const NotFound: FC = () => (
 const App: FC = () => {
   return (
     <ToastProvider>
+      <ConfirmProvider>
       <Router>
         <Layout>
           <Suspense fallback={<PageFallback />}>
@@ -69,6 +70,7 @@ const App: FC = () => {
           </Suspense>
         </Layout>
       </Router>
+      </ConfirmProvider>
     </ToastProvider>
   );
 };

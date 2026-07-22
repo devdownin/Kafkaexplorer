@@ -4,7 +4,7 @@ import Editor, { useMonaco } from '@monaco-editor/react';
 import type { editor, languages } from 'monaco-editor';
 import axios from 'axios';
 import { useToast } from '../components/Toast';
-import { Button, Badge, Input, Select, EmptyState, cn } from '../components/ui';
+import { Button, Badge, Input, Select, EmptyState, useConfirm, cn } from '../components/ui';
 
 /** Contrôle segmenté compact (mode d'exécution, offset). */
 function Segmented<T extends string>({ value, onChange, options, ariaLabel }: {
@@ -59,6 +59,7 @@ const detectStatementType = (sql: string) => {
 
 const QueryWorkbench: React.FC = () => {
   const { toast } = useToast();
+  const confirm = useConfirm();
   const location = useLocation();
 
   // ── Schema state ──────────────────────────────────────────────────────────────
@@ -135,7 +136,17 @@ const QueryWorkbench: React.FC = () => {
     toast(`Saved "${name}"`, 'success');
   };
 
-  const deleteSavedQuery = (id: string) => persistSaved(savedQueries.filter(q => q.id !== id));
+  const deleteSavedQuery = async (id: string) => {
+    const q = savedQueries.find(s => s.id === id);
+    const ok = await confirm({
+      title: 'Delete saved query?',
+      description: q ? <>“{q.name}” will be removed from your saved queries.</> : undefined,
+      confirmLabel: 'Delete',
+      tone: 'danger',
+      icon: 'delete',
+    });
+    if (ok) persistSaved(savedQueries.filter(s => s.id !== id));
+  };
 
   const loadSavedQuery = (q: SavedQuery) => {
     const t = newTab(q.sql);
@@ -305,6 +316,7 @@ const QueryWorkbench: React.FC = () => {
   }, [tabs]);
 
   // ── Actions ───────────────────────────────────────────────────────────────────
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- fetch once on mount
   useEffect(() => { fetchSchema(); }, []);
 
   const fetchSchema = async () => {
@@ -543,7 +555,7 @@ const QueryWorkbench: React.FC = () => {
                   <p className="text-[10px] text-outline px-2 py-2">No topics with messages</p>
                 ) : schema?.topics.map(topic => (
                   <div key={topic} className="flex items-center py-1 px-2 rounded hover:bg-primary/5 transition-colors group/topic">
-                    <div onClick={() => setSql(`SELECT * FROM ${topic.replace(/[.\-]/g, '_')} LIMIT 50`)} className="flex-1 min-w-0 cursor-pointer">
+                    <div onClick={() => setSql(`SELECT * FROM ${topic.replace(/[.-]/g, '_')} LIMIT 50`)} className="flex-1 min-w-0 cursor-pointer">
                       <span className="text-xs text-on-surface-variant hover:text-primary font-mono truncate block">{topic}</span>
                     </div>
                     <button onClick={e => { e.stopPropagation(); fetchDdlPreview(topic); }}

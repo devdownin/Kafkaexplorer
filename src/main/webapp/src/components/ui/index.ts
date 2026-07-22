@@ -24,4 +24,6 @@ export { Skeleton, SkeletonText } from './Skeleton';
 export type { SkeletonProps, SkeletonTextProps } from './Skeleton';
 export { Spinner, ProgressBar } from './Spinner';
 export type { SpinnerProps } from './Spinner';
+export { ConfirmProvider, useConfirm } from './ConfirmDialog';
+export type { ConfirmOptions } from './ConfirmDialog';
 export { cn } from './cn';

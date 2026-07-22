@@ -131,6 +131,7 @@ const Compare: React.FC = () => {
         }
       })
       .catch(() => toast('Failed to load topics', 'error'));
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- fetch once on mount; toast is stable
   }, []);
 
   const runCompare = async () => {

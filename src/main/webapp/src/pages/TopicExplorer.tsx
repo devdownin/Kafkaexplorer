@@ -302,6 +302,7 @@ const TopicExplorer: React.FC = () => {
       .catch(() => { if (active) toast('Failed to load topic details', 'error'); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- toast is stable
   }, [name, readMode]);
 
   // Manual retry from the error banner — last-wins is fine here (only shown on the error state).

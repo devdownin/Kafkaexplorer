@@ -4,7 +4,7 @@ import axios from 'axios';
 import Editor, { useMonaco } from '@monaco-editor/react';
 import { AreaChart, Area, ResponsiveContainer, ReferenceLine, Tooltip, YAxis } from 'recharts';
 import { useToast } from '../components/Toast';
-import { PageHeader, Button, Stat, Select, EmptyState, ProgressBar } from '../components/ui';
+import { PageHeader, Button, Stat, Select, EmptyState, ProgressBar, useConfirm } from '../components/ui';
 
 interface MetricConfig {
   id: string;
@@ -249,7 +249,7 @@ function formatPreviewTimestamp(timestamp: number | null): string {
 // ── Convert Kafka topic name to a valid Flink table identifier ─────────────
 function topicToTable(topic: string): string {
   return (
-    topic.replace(/[.\-]/g, '_').replace(/[^a-zA-Z0-9_]/g, '').replace(/^_+|_+$/g, '') || 'my_table'
+    topic.replace(/[.-]/g, '_').replace(/[^a-zA-Z0-9_]/g, '').replace(/^_+|_+$/g, '') || 'my_table'
   );
 }
 
@@ -614,6 +614,7 @@ const EMPTY_METRIC: Partial<MetricConfig> = {
 
 const Metrics: React.FC = () => {
   const { toast } = useToast();
+  const confirm = useConfirm();
   const navigate = useNavigate();
   const [metrics, setMetrics]           = useState<MetricConfig[]>([]);
   const [metadata, setMetadata]         = useState<Record<string, string[]>>({});
@@ -646,6 +647,7 @@ const Metrics: React.FC = () => {
     } finally {
       setLoading(false);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- toast is stable
   }, []);
 
   useEffect(() => {
@@ -658,6 +660,7 @@ const Metrics: React.FC = () => {
     axios.get<MetricTemplateDescriptor[]>('/api/metrics/templates').then(r => setTemplates(r.data)).catch(() => {});
     const iv = setInterval(fetchMetrics, 15000);
     return () => clearInterval(iv);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- poll on mount; fetchMetrics/toast are stable
   }, []);
 
   useEffect(() => {
@@ -686,6 +689,7 @@ const Metrics: React.FC = () => {
     return () => {
       cancelled = true;
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- toast is stable
   }, [isModalOpen, selectedTopic]);
 
   // U9 — close the modal on Escape.
@@ -877,7 +881,15 @@ const Metrics: React.FC = () => {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Delete this metric?')) return;
+    const metric = metrics.find(m => m.id === id);
+    const ok = await confirm({
+      title: 'Delete this metric?',
+      description: metric ? <>The metric <span className="font-mono text-on-surface">{metric.name}</span> will stop being scheduled and exported to Prometheus.</> : 'This metric will stop being scheduled and exported to Prometheus.',
+      confirmLabel: 'Delete',
+      tone: 'danger',
+      icon: 'delete',
+    });
+    if (!ok) return;
     try {
       await axios.delete(`/api/metrics/${id}`);
       toast('Metric deleted', 'success');

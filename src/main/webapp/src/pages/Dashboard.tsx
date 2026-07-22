@@ -7,7 +7,7 @@ import ErrorBanner from '../components/ErrorBanner';
 import {
   PageHeader, Stat, Card, Badge, Button, EmptyState,
   Table, TableHead, TableBody, TableRow, Th, Td,
-  Input, Select, type BadgeTone,
+  Input, Select, useConfirm, type BadgeTone,
 } from '../components/ui';
 
 const PAGE_SIZES = [10, 25, 50, 100];
@@ -37,6 +37,7 @@ interface DashboardData {
 
 const Dashboard: React.FC = () => {
   const { toast } = useToast();
+  const confirm = useConfirm();
   const navigate = useNavigate();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -161,6 +162,14 @@ const Dashboard: React.FC = () => {
   };
 
   const killJob = async (jobId: string) => {
+    const ok = await confirm({
+      title: 'Cancel this Flink job?',
+      description: 'The running SQL statement will be cancelled. This cannot be undone.',
+      confirmLabel: 'Kill job',
+      tone: 'danger',
+      icon: 'cancel',
+    });
+    if (!ok) return;
     setKillingJob(jobId);
     try {
       await axios.post(`/api/query/jobs/${jobId}/cancel`);
