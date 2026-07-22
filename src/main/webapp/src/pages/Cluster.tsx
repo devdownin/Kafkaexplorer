@@ -55,14 +55,14 @@ const Cluster: React.FC = () => {
       />
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-        {/* 1. Gestion des offsets — Critical */}
+        {/* 1. Offset Management — Critical */}
         <section className="bg-surface-container ring-1 ring-white/[0.045] p-6 rounded-xl relative overflow-hidden">
           <div className="absolute top-0 right-0 px-3 py-1.5 bg-error/10 text-error text-[10px] font-mono font-bold tracking-widest uppercase border-l border-b border-error/25">
             Critical Path
           </div>
           <h2 className="text-lg font-bold text-on-surface flex items-center gap-2 mb-5">
             <span className="material-symbols-outlined text-error">warning</span>
-            Gestion des offsets
+            Offset Management
           </h2>
           <div className="space-y-1">
             {[
@@ -126,11 +126,11 @@ const Cluster: React.FC = () => {
           </div>
         </section>
 
-        {/* 3. Log & rétention */}
+        {/* 3. Log & retention */}
         <section className="bg-surface-container ring-1 ring-white/[0.045] p-6 rounded-xl xl:col-span-2">
-          <h2 className="text-lg font-bold text-on-surface flex items-center gap-2 mb-5 uppercase tracking-tight">
+          <h2 className="text-lg font-bold text-on-surface flex items-center gap-2 mb-5">
             <span className="material-symbols-outlined text-primary">history</span>
-            Log & rétention des messages
+            Log & Message Retention
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {[
@@ -155,11 +155,11 @@ const Cluster: React.FC = () => {
           </div>
         </section>
 
-        {/* 4. Réplication & durabilité */}
+        {/* 4. Replication & Durability */}
         <section className="bg-surface-container ring-1 ring-white/[0.045] p-6 rounded-xl">
           <h2 className="text-lg font-bold text-on-surface flex items-center gap-2 mb-5">
             <span className="material-symbols-outlined text-primary">verified_user</span>
-            Réplication & durabilité
+            Replication & Durability
           </h2>
           <div className="space-y-2">
             {[
@@ -188,11 +188,11 @@ const Cluster: React.FC = () => {
           </div>
         </section>
 
-        {/* 5. Performance I/O & fetch */}
+        {/* 5. I/O & Fetch Performance */}
         <section className="bg-surface-container ring-1 ring-white/[0.045] p-6 rounded-xl">
           <h2 className="text-lg font-bold text-on-surface flex items-center gap-2 mb-5">
             <span className="material-symbols-outlined text-primary">speed</span>
-            Performance I/O & fetch
+            I/O & Fetch Performance
           </h2>
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1">
