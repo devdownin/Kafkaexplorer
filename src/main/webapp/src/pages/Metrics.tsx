@@ -4,6 +4,7 @@ import axios from 'axios';
 import Editor, { useMonaco } from '@monaco-editor/react';
 import { AreaChart, Area, ResponsiveContainer, ReferenceLine, Tooltip, YAxis } from 'recharts';
 import { useToast } from '../components/Toast';
+import { PageHeader, Button, Stat, Select, EmptyState, ProgressBar } from '../components/ui';
 
 interface MetricConfig {
   id: string;
@@ -216,7 +217,7 @@ const HINT_COLORS: Record<ValidationMsg['level'], string> = {
 const ValidationHints: React.FC<{ messages: ValidationMsg[] }> = ({ messages }) => {
   if (messages.length === 0) return null;
   return (
-    <div className="flex flex-col gap-1 px-4 py-2.5 border-t border-primary/10 bg-background-dark/70">
+    <div className="flex flex-col gap-1 px-4 py-2.5 border-t border-outline-variant/60 bg-background-dark/70">
       {messages.map((m, i) => (
         <div key={i} className={`flex items-start gap-1.5 text-[11px] leading-snug ${HINT_COLORS[m.level]}`}>
           <span className="material-symbols-outlined text-[13px] shrink-0 mt-px">{HINT_ICONS[m.level]}</span>
@@ -361,12 +362,12 @@ const MetricCard: React.FC<{
   const strokeColor = status === 'critical' ? '#f58c8c' : status === 'warning' ? '#f5c264' : '#a3adff';
 
   return (
-    <div className="flex flex-col border border-primary/10 rounded-xl bg-primary/5 overflow-hidden hover:border-primary/25 transition-colors">
+    <div className="flex flex-col rounded-xl bg-surface-container ring-1 ring-white/[0.045] overflow-hidden card-hover">
       {/* Header */}
       <div className="flex items-center justify-between px-4 pt-4 pb-2 gap-2">
         <div className="flex items-center gap-2 min-w-0">
           <span className={`w-2 h-2 rounded-full shrink-0 ${st.dot} ${status === 'ok' ? 'animate-pulse' : ''}`} />
-          <h3 className="font-bold text-on-surface truncate font-mono text-sm">{metric.name}</h3>
+          <h3 className="font-semibold text-on-surface truncate font-mono text-[13px]">{metric.name}</h3>
           <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase shrink-0 ${tm.badge}`}>
             {metric.type}
           </span>
@@ -434,7 +435,7 @@ const MetricCard: React.FC<{
           const maxV = Math.max(...vals);
           const pad = (maxV - minV) * 0.15 || 1;
           return (
-            <div className="rounded-lg overflow-hidden border border-primary/10 bg-background-dark/60">
+            <div className="rounded-lg overflow-hidden border border-outline-variant/60 bg-background-dark/60">
               <ResponsiveContainer width="100%" height={80}>
                 <AreaChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
                   <defs>
@@ -458,7 +459,7 @@ const MetricCard: React.FC<{
                   <Tooltip cursor={{ stroke: strokeColor, strokeWidth: 1, strokeOpacity: 0.3 }}
                     content={({ active, payload }) =>
                       active && payload?.length ? (
-                        <div className="bg-background-dark border border-primary/20 px-2 py-1 rounded-lg text-[10px] font-mono" style={{ color: strokeColor }}>
+                        <div className="bg-surface-container-low border border-outline-variant px-2 py-1 rounded-lg text-[10px] font-mono" style={{ color: strokeColor }}>
                           {Number(payload[0].value).toLocaleString(undefined, { maximumFractionDigits: 2 })}
                         </div>
                       ) : null
@@ -474,7 +475,7 @@ const MetricCard: React.FC<{
             </div>
           );
         })() : (
-          <div className="rounded-lg border border-primary/10 bg-background-dark/60 h-24 flex flex-col items-center justify-center gap-1.5">
+          <div className="rounded-lg border border-outline-variant/60 bg-background-dark/60 h-24 flex flex-col items-center justify-center gap-1.5">
             <div className="flex items-end gap-0.5 h-6 opacity-20">
               {Array.from({ length: 20 }).map((_, i) => (
                 <div key={i} className="w-1 bg-primary rounded-sm" style={{ height: `${Math.random() * 100}%` }} />
@@ -486,7 +487,7 @@ const MetricCard: React.FC<{
       </div>
 
       {/* SQL footer */}
-      <div className="group border-t border-primary/10 bg-background-dark/40 px-4 py-2.5 flex items-start gap-2">
+      <div className="group border-t border-outline-variant/60 bg-background-dark/40 px-4 py-2.5 flex items-start gap-2">
         <span className="material-symbols-outlined text-primary/40 text-base shrink-0 mt-0.5">code</span>
         <pre className="flex-1 text-[10px] font-mono text-on-surface-variant truncate leading-relaxed whitespace-nowrap overflow-hidden">
           {metric.sql.replace(/\s+/g, ' ')}
@@ -518,7 +519,7 @@ const ParamSql: React.FC<{
     <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">{label}</label>
     {hint && <p className="text-[10px] text-outline leading-relaxed">{hint}</p>}
     <textarea value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} rows={4} spellCheck={false}
-      className="w-full bg-primary/5 border border-primary/20 rounded-lg px-3 py-2 text-[12px] font-mono text-on-surface placeholder:text-outline focus:ring-1 focus:ring-primary outline-none resize-y" />
+      className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-[12px] font-mono text-on-surface placeholder:text-outline focus:border-primary/60 outline-none resize-y" />
   </div>
 );
 
@@ -528,7 +529,7 @@ const ParamText: React.FC<{
   <div className="space-y-1.5">
     <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">{label}</label>
     <input type="text" value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
-      className="w-full bg-primary/5 border border-primary/20 rounded-lg px-3 py-2 text-[12px] font-mono text-on-surface placeholder:text-outline focus:ring-1 focus:ring-primary outline-none" />
+      className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-[12px] font-mono text-on-surface placeholder:text-outline focus:border-primary/60 outline-none" />
   </div>
 );
 
@@ -554,7 +555,7 @@ const TemplateParamsEditor: React.FC<{
           <div className="space-y-1.5">
             <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">Operation</label>
             <select value={p('operation') || 'LEFT_MINUS_RIGHT'} onChange={e => setParam('operation', e.target.value)}
-              className="w-full bg-background-dark border border-primary/20 rounded-lg px-3 py-2 text-sm text-on-surface focus:ring-1 focus:ring-primary outline-none">
+              className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm text-on-surface focus:border-primary/60 outline-none">
               {DELTA_OPERATIONS.map(o => (
                 <option key={o.value} value={o.value} className="bg-[#12151a] text-on-surface">{o.label}</option>
               ))}
@@ -580,10 +581,10 @@ const TemplateParamsEditor: React.FC<{
         </>
       )}
 
-      <div className="space-y-1.5 border-t border-primary/10 pt-4">
+      <div className="space-y-1.5 border-t border-outline-variant/60 pt-4">
         <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">Execution Mode</label>
         <select value={executionMode || 'TEMPLATE_BOUNDED_SCAN'} onChange={e => setExecutionMode(e.target.value)}
-          className="w-full bg-background-dark border border-primary/20 rounded-lg px-3 py-2 text-sm text-on-surface focus:ring-1 focus:ring-primary outline-none">
+          className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm text-on-surface focus:border-primary/60 outline-none">
           {EXECUTION_MODES.map(m => (
             <option key={m.value} value={m.value} className="bg-[#12151a] text-on-surface">{m.label}</option>
           ))}
@@ -937,70 +938,51 @@ const Metrics: React.FC = () => {
     <div className="p-6 space-y-6 overflow-y-auto h-full">
 
       {/* Header */}
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-on-surface">Business Metrics</h1>
-          <p className="text-sm text-on-surface-variant mt-0.5">
-            Flink SQL queries scheduled continuously — values exported to Prometheus.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button onClick={fetchMetrics} className="p-2 text-on-surface-variant hover:text-primary transition-colors" title="Refresh all">
-            <span className="material-symbols-outlined">refresh</span>
-          </button>
-          <button onClick={() => navigate('/metrics/help')} className="p-2 text-on-surface-variant hover:text-primary transition-colors" title="Help">
-            <span className="material-symbols-outlined">help</span>
-          </button>
-          <button onClick={() => openEdit()}
-            className="flex items-center gap-2 bg-primary text-background-dark font-bold px-4 py-2 rounded-lg hover:brightness-110 transition-all text-sm">
-            <span className="material-symbols-outlined text-lg">add</span>
-            Add Metric
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        title="Business Metrics"
+        description="Flink SQL queries scheduled continuously — values exported to Prometheus."
+        actions={
+          <>
+            <Button variant="ghost" size="sm" icon="refresh" onClick={fetchMetrics} aria-label="Refresh all">Refresh</Button>
+            <Button variant="ghost" size="sm" icon="help" onClick={() => navigate('/metrics/help')} aria-label="Help">Help</Button>
+            <Button variant="primary" icon="add" onClick={() => openEdit()}>Add metric</Button>
+          </>
+        }
+      />
 
       {/* Summary bar */}
-      <div className="grid grid-cols-4 gap-3">
-        {[
-          { label: 'Total',    value: metrics.length,              color: 'text-on-surface', border: 'border-primary/10' },
-          { label: 'Healthy',  value: counts.ok,                   color: 'text-success', border: 'border-success/20' },
-          { label: 'Warning',  value: counts.warning,              color: 'text-warning',   border: 'border-warning/20' },
-          { label: 'Critical', value: counts.critical + counts.error, color: 'text-error',  border: 'border-error/20' },
-        ].map(s => (
-          <div key={s.label} className={`border ${s.border} bg-primary/5 rounded-xl px-4 py-3 flex items-center justify-between`}>
-            <span className="text-xs text-on-surface-variant uppercase font-bold tracking-wider">{s.label}</span>
-            <span className={`text-2xl font-bold tabular-nums ${s.color}`}>{s.value}</span>
-          </div>
-        ))}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <Stat label="Total" value={metrics.length} />
+        <Stat label="Healthy" value={counts.ok} tone={counts.ok > 0 ? 'success' : 'none'} />
+        <Stat label="Warning" value={counts.warning} tone={counts.warning > 0 ? 'warning' : 'none'} />
+        <Stat label="Critical" value={counts.critical + counts.error} tone={(counts.critical + counts.error) > 0 ? 'error' : 'none'} />
       </div>
 
       {/* Filters */}
       {!loading && metrics.length > 0 && (
         <div className="flex items-center gap-3 flex-wrap">
-          <select value={filterType} onChange={e => setFilterType(e.target.value)}
-            className="bg-background-dark border border-primary/20 rounded-lg px-3 py-1.5 text-xs text-on-surface focus:ring-1 focus:ring-primary outline-none">
-            <option value="all"       className="bg-[#12151a] text-on-surface">All types</option>
-            <option value="GAUGE"     className="bg-[#12151a] text-on-surface">GAUGE</option>
-            <option value="COUNTER"   className="bg-[#12151a] text-on-surface">COUNTER</option>
-            <option value="HISTOGRAM" className="bg-[#12151a] text-on-surface">HISTOGRAM</option>
-            <option value="SUMMARY"   className="bg-[#12151a] text-on-surface">SUMMARY</option>
-          </select>
-          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
-            className="bg-background-dark border border-primary/20 rounded-lg px-3 py-1.5 text-xs text-on-surface focus:ring-1 focus:ring-primary outline-none">
-            <option value="all"      className="bg-[#12151a] text-on-surface">All statuses</option>
-            <option value="error"    className="bg-[#12151a] text-on-surface">Error</option>
-            <option value="critical" className="bg-[#12151a] text-on-surface">Critical</option>
-            <option value="warning"  className="bg-[#12151a] text-on-surface">Warning</option>
-            <option value="ok"       className="bg-[#12151a] text-on-surface">Healthy</option>
-            <option value="pending"  className="bg-[#12151a] text-on-surface">Pending</option>
-          </select>
+          <Select value={filterType} onChange={e => setFilterType(e.target.value)} className="w-auto" aria-label="Filter by type">
+            <option value="all">All types</option>
+            <option value="GAUGE">GAUGE</option>
+            <option value="COUNTER">COUNTER</option>
+            <option value="HISTOGRAM">HISTOGRAM</option>
+            <option value="SUMMARY">SUMMARY</option>
+          </Select>
+          <Select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="w-auto" aria-label="Filter by status">
+            <option value="all">All statuses</option>
+            <option value="error">Error</option>
+            <option value="critical">Critical</option>
+            <option value="warning">Warning</option>
+            <option value="ok">Healthy</option>
+            <option value="pending">Pending</option>
+          </Select>
           {(filterType !== 'all' || filterStatus !== 'all') && (
             <button onClick={() => { setFilterType('all'); setFilterStatus('all'); }}
-              className="text-xs text-on-surface-variant hover:text-primary transition-colors flex items-center gap-1">
-              <span className="material-symbols-outlined text-sm">close</span>Clear filters
+              className="text-[12px] text-on-surface-variant hover:text-on-surface transition-colors flex items-center gap-1">
+              <span className="material-symbols-outlined text-[16px]">close</span>Clear filters
             </button>
           )}
-          <span className="text-xs text-outline ml-auto">
+          <span className="text-[12px] text-outline ml-auto tabular-nums">
             {filteredMetrics.length} / {metrics.length} metrics · sorted by severity
           </span>
         </div>
@@ -1008,24 +990,16 @@ const Metrics: React.FC = () => {
 
       {/* Content */}
       {loading ? (
-        <div className="flex items-center justify-center py-16">
-          <div className="animate-spin rounded-full h-8 w-8 border-2 border-primary border-t-transparent" />
-        </div>
+        <ProgressBar className="py-16" label="Loading metrics" />
       ) : metrics.length === 0 ? (
-        <div className="border border-dashed border-primary/20 rounded-xl p-6 text-center space-y-2">
-          <span className="material-symbols-outlined text-4xl text-outline">monitoring</span>
-          <p className="font-bold text-on-surface-variant">No metrics yet</p>
-          <p className="text-sm text-outline max-w-md mx-auto">
-            Pick one of the templates below to get started, or click{' '}
-            <button onClick={() => openEdit()} className="text-primary underline underline-offset-2 font-bold">Add Metric</button>{' '}
-            to create your own.
-            {topics.length === 0 && (
-              <span className="block mt-1 text-warning/80 text-xs">
-                No Kafka topics found — make sure the broker is reachable.
-              </span>
-            )}
-          </p>
-        </div>
+        <EmptyState
+          icon="monitoring"
+          title="No metrics yet"
+          description={topics.length === 0
+            ? 'No Kafka topics found — make sure the broker is reachable. Pick a template below once topics are available.'
+            : 'Pick one of the quick-start templates below, or create your own.'}
+          action={<Button variant="primary" icon="add" onClick={() => openEdit()}>Add metric</Button>}
+        />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {filteredMetrics.length > 0 ? filteredMetrics.map(metric => (
@@ -1082,18 +1056,19 @@ const Metrics: React.FC = () => {
 
       {/* ── Modal ──────────────────────────────────────────────────────────── */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 glass-overlay"
           role="dialog" aria-modal="true" onClick={() => setIsModalOpen(false)}>
-          <div className="bg-background-dark border border-primary/20 rounded-2xl w-full max-w-5xl max-h-[92vh] overflow-hidden flex flex-col shadow-2xl"
+          <div className="bg-surface-container border border-outline-variant rounded-2xl w-full max-w-5xl max-h-[92vh] overflow-hidden flex flex-col shadow-2xl"
             onClick={e => e.stopPropagation()}>
 
             {/* Modal header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-primary/10">
-              <h2 className="text-lg font-bold text-on-surface">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-outline-variant/60">
+              <h2 className="text-[16px] font-semibold text-on-surface">
                 {editingMetric.id ? 'Edit Metric' : 'New SQL Metric'}
               </h2>
-              <button onClick={() => setIsModalOpen(false)} className="text-on-surface-variant hover:text-on-surface transition-colors">
-                <span className="material-symbols-outlined">close</span>
+              <button onClick={() => setIsModalOpen(false)} aria-label="Close"
+                className="p-1.5 rounded-md text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors">
+                <span className="material-symbols-outlined text-[20px]">close</span>
               </button>
             </div>
 
@@ -1101,7 +1076,7 @@ const Metrics: React.FC = () => {
             <div className="flex flex-1 overflow-hidden">
 
               {/* Left: form */}
-              <div className="w-72 border-r border-primary/10 flex flex-col shrink-0 overflow-y-auto p-5 space-y-4">
+              <div className="w-72 border-r border-outline-variant/60 flex flex-col shrink-0 overflow-y-auto p-5 space-y-4">
 
                 {/* Name */}
                 <div className="space-y-1.5">
@@ -1130,7 +1105,7 @@ const Metrics: React.FC = () => {
                     placeholder="e.g. gauge_orders_topic"
                     className={`w-full bg-primary/5 border rounded-lg px-3 py-2 text-sm font-mono text-on-surface placeholder:text-outline focus:ring-1 outline-none ${
                       nameValidation.some(v => v.level === 'error')
-                        ? 'border-error/50 focus:ring-error'
+                        ? 'border-error/50 focus:border-error'
                         : 'border-primary/20 focus:ring-primary'
                     }`} />
                   {nameValidation.map((m, i) => (
@@ -1146,7 +1121,7 @@ const Metrics: React.FC = () => {
                   <div className="space-y-1.5">
                     <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">Metric Source</label>
                     <select value={templateType} onChange={e => onTemplateTypeChange(e.target.value)}
-                      className="w-full bg-background-dark border border-primary/20 rounded-lg px-3 py-2 text-sm text-on-surface focus:ring-1 focus:ring-primary outline-none">
+                      className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm text-on-surface focus:border-primary/60 outline-none">
                       <option value={RAW_SQL} className="bg-[#12151a] text-on-surface">Raw SQL</option>
                       {templates.map(t => (
                         <option key={t.type} value={t.type} className="bg-[#12151a] text-on-surface">{t.label}</option>
@@ -1170,7 +1145,7 @@ const Metrics: React.FC = () => {
                         name: nameIsAuto ? buildAutoName(newType, selectedTopic) : m.name,
                       }));
                     }}
-                    className="w-full bg-background-dark border border-primary/20 rounded-lg px-3 py-2 text-sm text-on-surface focus:ring-1 focus:ring-primary outline-none">
+                    className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm text-on-surface focus:border-primary/60 outline-none">
                     {[
                       { value: 'GAUGE',     label: 'GAUGE — point-in-time value' },
                       { value: 'COUNTER',   label: 'COUNTER — cumulative total' },
@@ -1195,7 +1170,7 @@ const Metrics: React.FC = () => {
                   </label>
                   {topics.length > 0 ? (
                     <select value={selectedTopic} onChange={e => onTopicChange(e.target.value)}
-                      className="w-full bg-background-dark border border-primary/20 rounded-lg px-3 py-2 text-sm font-mono text-on-surface focus:ring-1 focus:ring-primary outline-none">
+                      className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm font-mono text-on-surface focus:border-primary/60 outline-none">
                       <option value="" className="bg-[#12151a] text-on-surface-variant">— select a topic —</option>
                       {topics.map(t => <option key={t} value={t} className="bg-[#12151a] text-on-surface">{t}</option>)}
                     </select>
@@ -1203,7 +1178,7 @@ const Metrics: React.FC = () => {
                     <input type="text" value={selectedTopic}
                       onChange={e => onTopicChange(e.target.value)}
                       placeholder="my_topic (type manually)"
-                      className="w-full bg-primary/5 border border-primary/20 rounded-lg px-3 py-2 text-sm font-mono text-on-surface placeholder:text-outline focus:ring-1 focus:ring-primary outline-none" />
+                      className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm font-mono text-on-surface placeholder:text-outline focus:border-primary/60 outline-none" />
                   )}
                   {selectedTopic && (
                     <p className="text-[10px] text-outline">
@@ -1213,7 +1188,7 @@ const Metrics: React.FC = () => {
                 </div>
 
                 {/* Prometheus labels from latest Kafka message */}
-                <div className="space-y-2 rounded-xl border border-primary/10 bg-primary/5 p-3">
+                <div className="space-y-2 rounded-xl border border-outline-variant/60 bg-primary/5 p-3">
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">Prometheus Labels</label>
@@ -1256,7 +1231,7 @@ const Metrics: React.FC = () => {
                       </div>
 
                       {availableLabelFields.length > 0 ? (
-                        <div className="max-h-44 overflow-y-auto rounded-lg border border-primary/10 bg-background-dark/40 divide-y divide-primary/5">
+                        <div className="max-h-44 overflow-y-auto rounded-lg border border-outline-variant/60 bg-background-dark/40 divide-y divide-primary/5">
                           {availableLabelFields.map(([field, value]) => {
                             const checked = selectedLabelFields.includes(field);
                             return (
@@ -1286,7 +1261,7 @@ const Metrics: React.FC = () => {
                         </p>
                       )}
 
-                      <div className="rounded-lg border border-primary/10 bg-background-dark/40 p-2">
+                      <div className="rounded-lg border border-outline-variant/60 bg-background-dark/40 p-2">
                         <p className="text-[10px] uppercase font-bold tracking-wider text-on-surface-variant mb-2">Latest Message</p>
                         <pre className="max-h-36 overflow-auto whitespace-pre-wrap break-all text-[10px] font-mono text-on-surface-variant">
                           {labelPreview.message}
@@ -1302,7 +1277,7 @@ const Metrics: React.FC = () => {
                   <textarea value={editingMetric.description ?? ''}
                     onChange={e => setEditingMetric(m => ({ ...m, description: e.target.value }))}
                     placeholder="What does this metric track?" rows={2}
-                    className="w-full bg-primary/5 border border-primary/20 rounded-lg px-3 py-2 text-sm text-on-surface placeholder:text-outline focus:ring-1 focus:ring-primary outline-none resize-none" />
+                    className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm text-on-surface placeholder:text-outline focus:border-primary/60 outline-none resize-none" />
                 </div>
 
                 {/* Thresholds */}
@@ -1321,7 +1296,7 @@ const Metrics: React.FC = () => {
                       <input type="number" value={editingMetric.criticalThreshold ?? ''}
                         onChange={e => setEditingMetric(m => ({ ...m, criticalThreshold: e.target.value ? parseFloat(e.target.value) : null }))}
                         className={`w-full bg-error/5 border rounded-lg px-3 py-2 text-sm text-on-surface focus:ring-1 outline-none ${
-                          thresholdValidation.length > 0 ? 'border-error/40' : 'border-error/20 focus:ring-error'
+                          thresholdValidation.length > 0 ? 'border-error/40' : 'border-error/20 focus:border-error'
                         }`} />
                     </div>
                   </div>
@@ -1335,7 +1310,7 @@ const Metrics: React.FC = () => {
 
                 {/* SQL templates (raw SQL mode only) */}
                 {!isTemplate && (
-                <div className="border-t border-primary/10 pt-4">
+                <div className="border-t border-outline-variant/60 pt-4">
                   <p className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider mb-3">SQL Templates</p>
                   <div className="space-y-3">
                     {sqlTemplates.map(group => (
@@ -1361,7 +1336,7 @@ const Metrics: React.FC = () => {
               <div className="flex-1 flex flex-col overflow-hidden">
 
                 {/* Tabs */}
-                <div className="flex items-center border-b border-primary/10 bg-primary/5 px-4 gap-1">
+                <div className="flex items-center border-b border-outline-variant/60 bg-primary/5 px-4 gap-1">
                   {(['metric', 'ddl'] as const).map(tab => (
                     <button key={tab} onClick={() => setEditorTab(tab)}
                       className={`px-4 py-2.5 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 ${
@@ -1387,13 +1362,12 @@ const Metrics: React.FC = () => {
                   ))}
 
                   {editorTab === 'metric' && (
-                    <button onClick={handlePreview} disabled={previewing || (!isTemplate && !editingMetric.sql?.trim()) || hasBlockingErrors}
-                      className="ml-auto flex items-center gap-1.5 px-3 py-1 bg-primary/10 border border-primary/20 text-primary rounded-lg text-xs font-bold hover:bg-primary/20 disabled:opacity-40 transition-all">
-                      {previewing
-                        ? <span className="material-symbols-outlined text-sm animate-spin">refresh</span>
-                        : <span className="material-symbols-outlined text-sm">play_arrow</span>}
-                      {previewing ? 'Running…' : 'Preview'}
-                    </button>
+                    <div className="ml-auto">
+                      <Button variant="secondary" size="sm" icon={previewing ? undefined : 'play_arrow'} loading={previewing}
+                        onClick={handlePreview} disabled={previewing || (!isTemplate && !editingMetric.sql?.trim()) || hasBlockingErrors}>
+                        {previewing ? 'Running…' : 'Preview'}
+                      </Button>
+                    </div>
                   )}
 
                   {editorTab === 'ddl' && (
@@ -1478,7 +1452,7 @@ const Metrics: React.FC = () => {
 
                 {/* DDL hint panel */}
                 {editorTab === 'ddl' && !editingMetric.createTableSql?.trim() && (
-                  <div className="border-t border-primary/10 px-4 py-3 text-xs text-on-surface-variant bg-primary/5 space-y-1">
+                  <div className="border-t border-outline-variant/60 px-4 py-3 text-xs text-on-surface-variant bg-primary/5 space-y-1">
                     <p className="font-bold text-on-surface-variant">No DDL defined</p>
                     <p>The metric SQL will run against tables already registered in Flink.</p>
                     <p>
@@ -1491,24 +1465,18 @@ const Metrics: React.FC = () => {
             </div>
 
             {/* Modal footer */}
-            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-primary/10 bg-primary/5">
-              <button onClick={() => setIsModalOpen(false)}
-                className="px-4 py-2 text-sm font-bold text-on-surface-variant hover:text-on-surface transition-colors">
-                Cancel
-              </button>
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-outline-variant/60 bg-surface-container-low/60">
               {hasBlockingErrors && (
-                <span className="flex items-center gap-1 text-xs text-error mr-2">
-                  <span className="material-symbols-outlined text-sm">error</span>
+                <span className="flex items-center gap-1 text-[12px] text-error mr-auto">
+                  <span className="material-symbols-outlined text-[16px]">error</span>
                   Fix errors before saving
                 </span>
               )}
-              <button onClick={handleSave} disabled={saving || hasBlockingErrors}
-                className="flex items-center gap-2 bg-primary text-background-dark font-bold px-6 py-2 rounded-lg hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed transition-all text-sm">
-                {saving
-                  ? <span className="material-symbols-outlined text-lg animate-spin">refresh</span>
-                  : <span className="material-symbols-outlined text-lg">save</span>}
+              <Button variant="ghost" onClick={() => setIsModalOpen(false)}>Cancel</Button>
+              <Button variant="primary" icon={saving ? undefined : 'save'} loading={saving}
+                onClick={handleSave} disabled={saving || hasBlockingErrors}>
                 {saving ? 'Saving…' : 'Save & Activate'}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
