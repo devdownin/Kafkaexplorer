@@ -152,6 +152,9 @@ public class MetricService {
      */
     private final ThreadLocal<Map<String, QueryResult>> refreshCycleQueryCache = new ThreadLocal<>();
 
+    /** Serializes scheduled and on-demand refreshes so meter state is never mutated concurrently. */
+    private final java.util.concurrent.locks.ReentrantLock refreshLock = new java.util.concurrent.locks.ReentrantLock();
+
     public MetricService(FlinkSqlService flinkSqlService, MeterRegistry meterRegistry,
                          KafkaConfig kafkaConfig, ExplorerConfig explorerConfig,
                          KafkaAdminService kafkaAdminService,
@@ -299,20 +302,26 @@ public class MetricService {
     public void save(MetricConfig metric) {
         String id = (metric.id() == null || metric.id().isEmpty())
             ? UUID.randomUUID().toString() : metric.id();
+        MetricConfig previous = metrics.get(id);
+        // The UI only ever sees the DDL with credentials masked; if it sends that DDL back on an
+        // edit, restore the real secrets from the stored version so they are not overwritten with
+        // '******' (which would break Flink table registration).
+        String effectiveDdl = previous != null
+            ? DdlGeneratorService.restoreMaskedProperties(metric.createTableSql(), previous.createTableSql())
+            : metric.createTableSql();
         MetricConfig m = normalizeMetric(new MetricConfig(
             id, metric.name(), metric.type(), metric.sql(), metric.description(),
             metric.warningThreshold(), metric.criticalThreshold(),
             metric.lastValue(), metric.lastUpdateTime(), metric.errorMessage(),
             metric.history() != null ? metric.history() : List.of(),
             metric.lastSummary() != null ? metric.lastSummary() : Map.of(),
-            metric.createTableSql(),
+            effectiveDdl,
             metric.templateType(),
             metric.templateParams(),
             metric.executionMode(),
             metric.labelTopic(),
             metric.labelFields() != null ? metric.labelFields() : List.of()));
         validateMetric(m, true);
-        MetricConfig previous = metrics.get(id);
         metrics.put(id, m);
         // When an existing metric's shape changes (type, SQL, labels, template, …),
         // any Micrometer series it already registered would linger forever with stale
@@ -746,46 +755,77 @@ public class MetricService {
 
     @Scheduled(fixedRateString = "${explorer.metrics-refresh-rate:30000}")
     public void refreshMetrics() {
-        refreshCycleQueryCache.set(new HashMap<>());
+        // Serialize with on-demand single-metric refreshes so counter deltas / gauge holders are
+        // never mutated concurrently (the processing path assumes a single refresh thread).
+        refreshLock.lock();
         try {
-            doRefreshMetrics();
+            refreshCycleQueryCache.set(new HashMap<>());
+            try {
+                doRefreshMetrics();
+            } finally {
+                refreshCycleQueryCache.remove();
+            }
         } finally {
-            refreshCycleQueryCache.remove();
+            refreshLock.unlock();
+        }
+    }
+
+    /**
+     * Recompute a single metric immediately (on-demand "refresh now"), reusing the exact same
+     * pipeline as the scheduled cycle. Returns the updated config, or empty if the id is unknown.
+     */
+    public Optional<MetricConfig> refreshMetric(String id) {
+        if (!metrics.containsKey(id)) return Optional.empty();
+        refreshLock.lock();
+        try {
+            MetricConfig config = metrics.get(id);
+            if (config == null) return Optional.empty();
+            refreshCycleQueryCache.set(new HashMap<>());
+            try {
+                refreshSingleMetric(id, config);
+            } finally {
+                refreshCycleQueryCache.remove();
+            }
+            return Optional.ofNullable(metrics.get(id));
+        } finally {
+            refreshLock.unlock();
         }
     }
 
     private void doRefreshMetrics() {
-        metrics.forEach((id, config) -> {
-            try {
-                MetricConfig normalized = normalizeMetric(config);
-                validateMetric(normalized);
+        metrics.forEach(this::refreshSingleMetric);
+    }
 
-                if (MetricExecutionMode.FLINK_MANAGED_JOB.name().equals(normalized.executionMode())) {
-                    updateMetricState(id, null, null, buildManagedJobPlannedSummary(normalized));
-                    return;
-                }
+    private void refreshSingleMetric(String id, MetricConfig config) {
+        try {
+            MetricConfig normalized = normalizeMetric(config);
+            validateMetric(normalized);
 
-                executeCreateTableIfPresent(normalized);
-
-                MetricComputationResult result = computeMetric(normalized);
-                if (result.error() != null) {
-                    updateMetricState(id, null, result.error(), result.summary());
-                } else if (!result.rows().isEmpty()) {
-                    Map<String, String> configuredLabels = resolveConfiguredLabels(normalized);
-                    processRows(id, normalized, result.rows(), result.displayValue(), result.summary(), configuredLabels);
-                } else {
-                    updateMetricState(id, null, "No rows returned — check table name and Kafka connectivity", result.summary());
-                }
-            } catch (Exception e) {
-                String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-                // Flink ValidationException wraps the root cause as "SQL validation failed. ..."
-                // Provide a cleaner hint when the table simply doesn't exist yet.
-                if (msg.contains("not found") || msg.contains("SQL validation failed")) {
-                    msg = msg + " → Check that the table is registered in Flink (run CREATE TABLE in the Query Workbench first)";
-                }
-                updateMetricState(id, null, msg, Map.of());
+            if (MetricExecutionMode.FLINK_MANAGED_JOB.name().equals(normalized.executionMode())) {
+                updateMetricState(id, null, null, buildManagedJobPlannedSummary(normalized));
+                return;
             }
-        });
+
+            executeCreateTableIfPresent(normalized);
+
+            MetricComputationResult result = computeMetric(normalized);
+            if (result.error() != null) {
+                updateMetricState(id, null, result.error(), result.summary());
+            } else if (!result.rows().isEmpty()) {
+                Map<String, String> configuredLabels = resolveConfiguredLabels(normalized);
+                processRows(id, normalized, result.rows(), result.displayValue(), result.summary(), configuredLabels);
+            } else {
+                updateMetricState(id, null, "No rows returned — check table name and Kafka connectivity", result.summary());
+            }
+        } catch (Exception e) {
+            String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            // Flink ValidationException wraps the root cause as "SQL validation failed. ..."
+            // Provide a cleaner hint when the table simply doesn't exist yet.
+            if (msg.contains("not found") || msg.contains("SQL validation failed")) {
+                msg = msg + " → Check that the table is registered in Flink (run CREATE TABLE in the Query Workbench first)";
+            }
+            updateMetricState(id, null, msg, Map.of());
+        }
     }
 
     private Map<String, Object> buildManagedJobPlannedSummary(MetricConfig metric) {

@@ -704,9 +704,16 @@ const Metrics: React.FC = () => {
   const handleRefreshOne = async (id: string) => {
     setRefreshingId(id);
     try {
-      await new Promise(r => setTimeout(r, 800));
-      await fetchMetrics();
-      toast('Metric refreshed', 'success');
+      // Force an immediate server-side recompute of this metric (not just a list re-fetch).
+      const res = await axios.post<MetricConfig>(`/api/metrics/${id}/refresh`);
+      setMetrics(prev => prev.map(m => (m.id === id ? res.data : m)));
+      if (res.data.errorMessage) {
+        toast(`Refreshed with error: ${res.data.errorMessage}`, 'error');
+      } else {
+        toast('Metric refreshed', 'success');
+      }
+    } catch {
+      toast('Failed to refresh metric', 'error');
     } finally {
       setRefreshingId(null);
     }
