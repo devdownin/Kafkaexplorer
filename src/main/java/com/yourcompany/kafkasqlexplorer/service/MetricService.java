@@ -152,6 +152,14 @@ public class MetricService {
      */
     private final ThreadLocal<Map<String, QueryResult>> refreshCycleQueryCache = new ThreadLocal<>();
 
+    /**
+     * Per-refresh-cycle cache of a topic's latest-message leaf fields. Resolving configured labels
+     * calls the expensive {@link KafkaAdminService#getLatestMessage} (spins up a throwaway consumer)
+     * once per labelled metric; without this, several metrics labelling off the same topic each
+     * pay that cost every cycle. Set only for the duration of a refresh (single scheduler thread).
+     */
+    private final ThreadLocal<Map<String, Map<String, String>>> refreshCycleLabelCache = new ThreadLocal<>();
+
     /** Serializes scheduled and on-demand refreshes so meter state is never mutated concurrently. */
     private final java.util.concurrent.locks.ReentrantLock refreshLock = new java.util.concurrent.locks.ReentrantLock();
 
@@ -759,15 +767,25 @@ public class MetricService {
         // never mutated concurrently (the processing path assumes a single refresh thread).
         refreshLock.lock();
         try {
-            refreshCycleQueryCache.set(new HashMap<>());
+            beginRefreshCycle();
             try {
                 doRefreshMetrics();
             } finally {
-                refreshCycleQueryCache.remove();
+                endRefreshCycle();
             }
         } finally {
             refreshLock.unlock();
         }
+    }
+
+    private void beginRefreshCycle() {
+        refreshCycleQueryCache.set(new HashMap<>());
+        refreshCycleLabelCache.set(new HashMap<>());
+    }
+
+    private void endRefreshCycle() {
+        refreshCycleQueryCache.remove();
+        refreshCycleLabelCache.remove();
     }
 
     /**
@@ -780,11 +798,11 @@ public class MetricService {
         try {
             MetricConfig config = metrics.get(id);
             if (config == null) return Optional.empty();
-            refreshCycleQueryCache.set(new HashMap<>());
+            beginRefreshCycle();
             try {
                 refreshSingleMetric(id, config);
             } finally {
-                refreshCycleQueryCache.remove();
+                endRefreshCycle();
             }
             return Optional.ofNullable(metrics.get(id));
         } finally {
@@ -1122,12 +1140,7 @@ public class MetricService {
         }
 
         try {
-            Optional<KafkaMessage> latestMessage = kafkaAdminService.getLatestMessage(config.labelTopic());
-            if (latestMessage.isEmpty() || latestMessage.get().value() == null || latestMessage.get().value().isBlank()) {
-                return Map.of();
-            }
-
-            Map<String, String> extractedFields = messageFieldExtractorService.extractLeafFields(latestMessage.get().value());
+            Map<String, String> extractedFields = latestLeafFields(config.labelTopic());
             if (extractedFields.isEmpty()) {
                 return Map.of();
             }
@@ -1150,6 +1163,26 @@ public class MetricService {
             log.debug("Failed to resolve configured labels for metric '{}': {}", config.name(), e.getMessage());
             return Map.of();
         }
+    }
+
+    /** Latest-message leaf fields for a topic, memoized per refresh cycle (see refreshCycleLabelCache). */
+    private Map<String, String> latestLeafFields(String topic) {
+        Map<String, Map<String, String>> cache = refreshCycleLabelCache.get();
+        if (cache != null) {
+            Map<String, String> cached = cache.get(topic);
+            if (cached != null) return cached;
+        }
+        Map<String, String> fields = computeLatestLeafFields(topic);
+        if (cache != null) cache.put(topic, fields);
+        return fields;
+    }
+
+    private Map<String, String> computeLatestLeafFields(String topic) {
+        Optional<KafkaMessage> latestMessage = kafkaAdminService.getLatestMessage(topic);
+        if (latestMessage.isEmpty() || latestMessage.get().value() == null || latestMessage.get().value().isBlank()) {
+            return Map.of();
+        }
+        return messageFieldExtractorService.extractLeafFields(latestMessage.get().value());
     }
 
     private void updateHistory(String id, Double value) {

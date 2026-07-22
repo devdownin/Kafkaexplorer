@@ -137,7 +137,10 @@ const XmlViewer: React.FC<{
   }
 
   const renderElement = (el: Element, parentPath: string, depth: number): React.ReactNode => {
-    const tag = el.localName;
+    // Use tagName (qualified name, prefix included) to match the backend's getTagName()-based
+    // field paths — the server parser is not namespace-aware, so a "<ns:order>" element is keyed
+    // as "ns:order". localName would drop the prefix and break field selection on namespaced XML.
+    const tag = el.tagName;
     const path = parentPath ? `${parentPath}.${tag}` : tag;
     const childEls = Array.from(el.childNodes).filter(n => n.nodeType === Node.ELEMENT_NODE) as Element[];
     const isLeaf = childEls.length === 0;
@@ -184,11 +187,11 @@ const XmlViewer: React.FC<{
 
   return (
     <div className="font-mono text-[11px] leading-relaxed">
-      <div><span className="text-on-surface0">{'<'}</span><span className="text-success/50">{root.localName}</span><span className="text-on-surface0">{'>'}</span></div>
+      <div><span className="text-slate-500">{'<'}</span><span className="text-emerald-400/50">{root.tagName}</span><span className="text-slate-500">{'>'}</span></div>
       {rootChildren.map((child, i) => (
         <React.Fragment key={i}>{renderElement(child as Element, '', 0)}</React.Fragment>
       ))}
-      <div><span className="text-on-surface0">{`</${root.localName}>`}</span></div>
+      <div><span className="text-slate-500">{`</${root.tagName}>`}</span></div>
     </div>
   );
 };
@@ -202,13 +205,19 @@ const SampleCard: React.FC<{
   selectedFields?: string[];
 }> = ({ sample, index, onCopy, onFieldClick, selectedFields }) => {
   const [expanded, setExpanded] = useState(index < 3);
+  // Cards are keyed by list position, so when filtering shifts a different message into this slot
+  // the instance is reused — reset the expand state to the default for the new content instead of
+  // bleeding the previous message's state.
+  useEffect(() => { setExpanded(index < 3); }, [sample, index]);
 
   let parsed: unknown = null;
   let isJson = false;
   let isXml = false;
   try {
     parsed = JSON.parse(sample);
-    isJson = true;
+    // Only structured JSON (object/array) counts as JSON — a bare number/string/boolean that
+    // happens to parse is shown as plain text rather than mislabelled with a JSON badge.
+    isJson = parsed !== null && typeof parsed === 'object';
   } catch {
     isXml = sample.trimStart().startsWith('<');
   }
@@ -283,13 +292,22 @@ const TopicExplorer: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchTopicDetails();
+    // Guard against out-of-order responses: toggling read mode quickly fires several requests,
+    // and without this a slower one could overwrite the newer result with stale data.
+    let active = true;
+    setLoading(true);
+    axios.get(`/api/topic/${encodeURIComponent(name ?? '')}?readMode=${readMode}`)
+      .then(res => { if (active) setData(res.data); })
+      .catch(() => { if (active) toast('Failed to load topic details', 'error'); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, [name, readMode]);
 
+  // Manual retry from the error banner — last-wins is fine here (only shown on the error state).
   const fetchTopicDetails = async () => {
     setLoading(true);
     try {
-      const response = await axios.get(`/api/topic/${name}?readMode=${readMode}`);
+      const response = await axios.get(`/api/topic/${encodeURIComponent(name ?? '')}?readMode=${readMode}`);
       setData(response.data);
     } catch {
       toast('Failed to load topic details', 'error');

@@ -125,10 +125,12 @@ public class AuditService {
             List<String> topics = kafkaAdminService.listTopics();
             Map<String, Long> topicSizes = kafkaAdminService.getTopicsSize(topics);
 
-            // Parallelize topic auditing on a bounded pool (not the shared commonPool)
+            // Parallelize topic auditing on a bounded pool (not the shared commonPool). Each topic
+            // is isolated (auditTopicSafe) so one topic's failure degrades that topic to UNHEALTHY
+            // rather than aborting the whole cluster audit via CompletableFuture.join().
             List<CompletableFuture<TopicAudit>> futures = topics.stream()
                 .map(topic -> CompletableFuture.supplyAsync(
-                    () -> auditTopic(topic, topicSizes.getOrDefault(topic, 0L), options), topicAuditExecutor))
+                    () -> auditTopicSafe(topic, topicSizes.getOrDefault(topic, 0L), options), topicAuditExecutor))
                 .toList();
 
             List<TopicAudit> topicAudits = futures.stream()
@@ -162,6 +164,22 @@ public class AuditService {
         } catch (Exception e) {
             log.error("Audit failed for id {}", auditId, e);
             auditRuns.put(auditId, new AuditReport(auditId, AuditStatus.FAILED, 0, 0, 0, Collections.emptyList(), Collections.emptyList(), Map.of("error", e.getMessage())));
+        }
+    }
+
+    /**
+     * Isolates a single topic's audit: any failure (Kafka sampling error, schema inference, …) is
+     * turned into a degraded UNHEALTHY {@link TopicAudit} carrying the reason, so one bad topic
+     * never fails the whole cluster audit.
+     */
+    private TopicAudit auditTopicSafe(String topicName, long approximateCount, AuditOptions options) {
+        try {
+            return auditTopic(topicName, approximateCount, options);
+        } catch (Exception e) {
+            String reason = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            log.warn("Audit failed for topic '{}': {}", topicName, reason);
+            return new TopicAudit(topicName, approximateCount, MessageFormat.AUTO, 0, 0L,
+                HealthStatus.UNHEALTHY, List.of("Audit failed: " + reason));
         }
     }
 
@@ -199,7 +217,7 @@ public class AuditService {
 
         if (poisonCount > 0) issues.add("Detected " + poisonCount + " malformed messages in sample.");
         if (options.checkExactCount() && approximateCount > 0 && exactCount == 0) issues.add("Flink SQL returned 0 rows despite Kafka having messages.");
-        if (duplicates > 0) issues.add("Detected " + duplicates + " potential duplicate records.");
+        if (duplicates > 0) issues.add("Detected " + duplicates + " key(s) with duplicate records.");
 
         HealthStatus status = issues.isEmpty() ? HealthStatus.HEALTHY : HealthStatus.UNHEALTHY;
 
