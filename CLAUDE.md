@@ -54,7 +54,7 @@ docker compose up -d
 ./setup-demo.sh localhost:9092
 ```
 
-KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `CLUSTER_ID` env var (a `KAFKA_CLUSTER_ID` var would be translated into an ignored `cluster.id` server property); all internal-topic replication factors (`offsets`, `transaction state`, share-group state) are pinned to 1 and `__consumer_offsets` runs with a single partition for faster startup.
+KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `CLUSTER_ID` env var (a `KAFKA_CLUSTER_ID` var would be translated into an ignored `cluster.id` server property); all internal-topic replication factors (`offsets`, `transaction state`, share-group state) are pinned to 1 and `__consumer_offsets` runs with a single partition for faster startup. Kafka data persists in a named `kafka_data` volume (`KAFKA_LOG_DIRS=/var/lib/kafka/data`) so `internal.*` topics survive `docker compose down` (`down -v` resets); the image runs as non-root `appuser`, so a `kafka-data-init` one-shot service chowns the volume before the broker starts — don't remove it.
 
 ### Typical local dev workflow
 

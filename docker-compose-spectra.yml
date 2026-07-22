@@ -73,6 +73,25 @@ services:
       # Fixed KRaft cluster id — the apache/kafka image reads CLUSTER_ID
       # (KAFKA_CLUSTER_ID would be passed to server.properties and ignored)
       CLUSTER_ID: "MkU2OhlMTT69sPFvS1n16g"
+      # Persist data & metadata logs across restarts — KRaft re-uses the storage
+      # formatted with the fixed CLUSTER_ID above, so metric configs and audit
+      # history (internal.* topics) survive `docker compose down`.
+      # `docker compose down -v` still resets everything.
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    depends_on:
+      kafka-data-init:
+        condition: service_completed_successfully
+
+  # The apache/kafka image runs as the non-root `appuser`, but Docker creates a
+  # fresh named volume owned by root — chown it once before the broker starts.
+  kafka-data-init:
+    image: apache/kafka:4.2.0
+    user: root
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    entrypoint: ["sh", "-c", "chown -R appuser:appuser /var/lib/kafka/data"]
 
   # ── Seed demo topics (70+) ────────────────────────────────────────────────
   demo-setup:
@@ -105,3 +124,6 @@ services:
       - CLAUDE_BASE_URL=http://spectra-api:8080
       - CLAUDE_USE_RAG=false
     restart: always
+
+volumes:
+  kafka_data:

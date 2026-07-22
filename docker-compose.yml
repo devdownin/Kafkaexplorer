@@ -36,6 +36,25 @@ services:
       # Fixed KRaft cluster id — the apache/kafka image reads CLUSTER_ID
       # (KAFKA_CLUSTER_ID would be passed to server.properties and ignored)
       CLUSTER_ID: "MkU2OhlMTT69sPFvS1n16g"
+      # Persist data & metadata logs across restarts — KRaft re-uses the storage
+      # formatted with the fixed CLUSTER_ID above, so metric configs and audit
+      # history (internal.* topics) survive `docker compose down`.
+      # `docker compose down -v` still resets everything.
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    depends_on:
+      kafka-data-init:
+        condition: service_completed_successfully
+
+  # The apache/kafka image runs as the non-root `appuser`, but Docker creates a
+  # fresh named volume owned by root — chown it once before the broker starts.
+  kafka-data-init:
+    image: apache/kafka:4.2.0
+    user: root
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    entrypoint: ["sh", "-c", "chown -R appuser:appuser /var/lib/kafka/data"]
 
   explorer:
     build: .
@@ -63,3 +82,6 @@ services:
     volumes:
       - ./setup-demo.sh:/data/setup-demo.sh
     entrypoint: [ "sh", "-c", "cp /data/setup-demo.sh /tmp/setup-demo.sh && sed -i 's/\\r$//' /tmp/setup-demo.sh && echo 'Waiting for Kafka...' && until /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka:29092 > /dev/null 2>&1; do sleep 2; done && bash /tmp/setup-demo.sh kafka:29092" ]
+
+volumes:
+  kafka_data:
