@@ -38,6 +38,11 @@ public class KafkaLiveConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(KafkaLiveConsumer.class);
 
+    /** Buffer is capped at windowSize × this factor so a slow analysis backlog can't grow unbounded. */
+    private static final int BUFFER_CAP_FACTOR = 10;
+    /** Finish a session after this many consecutive failing poll ticks (~seconds) to stop error spam. */
+    private static final int MAX_CONSECUTIVE_POLL_ERRORS = 30;
+
     private final LlmAnalysisService llmAnalysisService;
     private final SseEmitterManager sseEmitterManager;
     private final ClaudeConfig claudeConfig;
@@ -84,6 +89,13 @@ public class KafkaLiveConsumer {
                              String auditFocus) {
         log.info("Starting live session {} for topics: {}", sessionId, topics);
 
+        // Defensive: a live session id is a fresh UUID per request, but never double-start one —
+        // it would overwrite (and leak) the previous consumer and polling task.
+        if (activeSessions.containsKey(sessionId)) {
+            log.warn("Live session {} already active — ignoring duplicate start request", sessionId);
+            return;
+        }
+
         int windowSize = claudeConfig.getSnapshotWindowSize();
         long windowTimeoutMs = claudeConfig.getSnapshotWindowTimeoutSeconds() * 1000L;
 
@@ -97,6 +109,11 @@ public class KafkaLiveConsumer {
         final String[] lastFlowchart = {null};
         final long[] lastAnalysisTime = {System.currentTimeMillis()};
         final boolean[] initialized = {false};
+        // At most one analysis in flight per session: serializes lastFlowchart access, keeps SSE
+        // updates ordered, and bounds the analysis backlog. Cleared in the analysis task's finally.
+        final AtomicBoolean analysisInFlight = new AtomicBoolean(false);
+        final int[] consecutiveErrors = {0};
+        final int maxBuffer = Math.max(windowSize, windowSize * BUFFER_CAP_FACTOR);
 
         // Main polling task — runs every 1 second. ALL consumer access happens here
         // (scheduleAtFixedRate never overlaps executions of the same task), including the
@@ -119,6 +136,7 @@ public class KafkaLiveConsumer {
                 }
 
                 ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(500));
+                consecutiveErrors[0] = 0;   // a successful poll clears the error streak
                 for (var record : records) {
                     buffer.add(new KafkaMessage(
                         record.topic(),
@@ -129,12 +147,23 @@ public class KafkaLiveConsumer {
                         record.value()
                     ));
                 }
+                // Bound memory: if analyses fall behind ingestion, keep only the most recent messages.
+                if (buffer.size() > maxBuffer) {
+                    int drop = buffer.size() - maxBuffer;
+                    buffer.subList(0, drop).clear();
+                    log.warn("Live session {}: buffer cap {} exceeded, dropped {} oldest message(s)",
+                        sessionId, maxBuffer, drop);
+                }
 
                 long now = System.currentTimeMillis();
                 boolean bufferFull = buffer.size() >= windowSize;
                 boolean timedOut = (now - lastAnalysisTime[0]) >= windowTimeoutMs && !buffer.isEmpty();
 
-                if (bufferFull || timedOut) {
+                // Single-flight per session: only start a new analysis when the previous one has
+                // finished. This serializes lastFlowchart access, keeps SSE updates ordered, and
+                // caps the analysis backlog at one in-flight task (the buffer keeps accumulating —
+                // up to maxBuffer — until the in-flight analysis frees the slot).
+                if ((bufferFull || timedOut) && analysisInFlight.compareAndSet(false, true)) {
                     List<KafkaMessage> snapshot = new ArrayList<>(buffer);
                     buffer.clear();
                     lastAnalysisTime[0] = now;
@@ -174,6 +203,10 @@ public class KafkaLiveConsumer {
 
                         } catch (Exception e) {
                             log.error("Error during live analysis for session {}: {}", sessionId, e.getMessage(), e);
+                            sseEmitterManager.send(sessionId, "ANALYSIS_ERROR", Map.of(
+                                "message", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()));
+                        } finally {
+                            analysisInFlight.set(false);
                         }
                     });
                 }
@@ -182,7 +215,14 @@ public class KafkaLiveConsumer {
                 // stopSession() called consumer.wakeup() while we were polling
                 finishSession(sessionId);
             } catch (Exception e) {
-                log.error("Error in live consumer polling for session {}: {}", sessionId, e.getMessage(), e);
+                // A persistent failure (e.g. broker down) would otherwise log every second forever.
+                if (++consecutiveErrors[0] >= MAX_CONSECUTIVE_POLL_ERRORS) {
+                    log.error("Live session {}: {} consecutive polling errors — finishing session. Last error: {}",
+                        sessionId, consecutiveErrors[0], e.getMessage(), e);
+                    finishSession(sessionId);
+                } else {
+                    log.error("Error in live consumer polling for session {}: {}", sessionId, e.getMessage(), e);
+                }
             }
         }, 0, 1, TimeUnit.SECONDS);
 

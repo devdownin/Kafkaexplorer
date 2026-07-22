@@ -99,4 +99,35 @@ class AuditServiceTest {
         assertEquals("demo.test", flow.flowName());
         assertEquals(2, flow.steps().size());
     }
+
+    @Test
+    void auditIsolatesAFailingTopic() {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("demo.test.1", "demo.test.2"));
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("demo.test.1", 100L, "demo.test.2", 80L));
+        when(schemaInferenceService.detectFormat(anyString())).thenReturn(MessageFormat.JSON);
+        when(schemaInferenceService.inferSchema(eq("demo.test.1"), any())).thenReturn(Map.of("id", "STRING"));
+        // One topic blows up during audit — it must not abort the whole run.
+        when(schemaInferenceService.inferSchema(eq("demo.test.2"), any())).thenThrow(new RuntimeException("boom"));
+        when(flinkSqlService.listTables()).thenReturn(Collections.emptyList());
+        when(ddlGeneratorService.generateDdl(anyString(), any(), any()))
+                .thenReturn("CREATE TABLE demo_test_1 (id STRING) WITH ('connector'='blackhole')");
+        when(flinkSqlService.executeSql(any(QueryRequest.class)))
+                .thenReturn(new QueryResult(List.of("EXPR$0"), List.of(Map.of("EXPR$0", 100L)), 10, null));
+
+        auditService.runAuditAsync("iso", AuditOptions.all());
+
+        AuditReport report = auditService.getAuditReport("iso");
+        assertEquals(AuditStatus.COMPLETED, report.status(), "one bad topic must not fail the whole audit");
+        assertEquals(2, report.totalTopics());
+
+        TopicAudit failed = report.topicAudits().stream()
+                .filter(t -> "demo.test.2".equals(t.name())).findFirst().orElseThrow();
+        assertEquals(HealthStatus.UNHEALTHY, failed.healthStatus());
+        assertTrue(failed.issues().stream().anyMatch(s -> s.contains("Audit failed")),
+                "the degraded topic should carry the failure reason");
+
+        TopicAudit ok = report.topicAudits().stream()
+                .filter(t -> "demo.test.1".equals(t.name())).findFirst().orElseThrow();
+        assertEquals(HealthStatus.HEALTHY, ok.healthStatus());
+    }
 }
