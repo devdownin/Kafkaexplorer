@@ -24,7 +24,8 @@
       "Bash(cmd //c \"mvn compile -q 2>&1\" 2>&1 | grep -i \"error\\\\|FAIL\" | head -10)",
       "Bash(git pull:*)",
       "Bash(git stash:*)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "mcp__Claude_Code_Remote__send_later"
     ]
   }
 }
