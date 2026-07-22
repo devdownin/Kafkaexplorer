@@ -867,6 +867,10 @@ public class MetricService {
     private Double processScalarRows(String metricId, MetricConfig config, List<Map<String, Object>> rows,
                                      Map<String, String> configuredLabels, boolean counter,
                                      Double displayValueOverride) {
+        if (counter) {
+            return processCounterRows(metricId, config, rows, configuredLabels, displayValueOverride);
+        }
+        // GAUGE — point-in-time; last row wins per label series.
         Double primaryValue = displayValueOverride;
         for (Map<String, Object> row : rows) {
             Double value = extractValue(row);
@@ -874,12 +878,40 @@ public class MetricService {
 
             List<Tag> tags = buildTags(metricId, config, row, configuredLabels);
             String labelKey = buildLabelKey(row, configuredLabels);
-
-            if (counter) processCounter(metricId, labelKey, tags, value);
-            else         processGauge(metricId, labelKey, tags, value);
+            processGauge(metricId, labelKey, tags, value);
 
             if (primaryValue == null) primaryValue = value;
         }
+        return primaryValue;
+    }
+
+    /**
+     * COUNTER: a counter's SQL yields the current cumulative total per label series. Rows that
+     * map to the same label key are summed into one cumulative value <em>before</em> the delta is
+     * computed. Previously each such row drove a separate delta against the shared last-seen
+     * value, so several independent groups collapsed onto one key (e.g. a GROUP BY whose grouping
+     * column is not selected → all rows share the empty key) incremented the counter by only the
+     * last row's total, silently discarding the rest (B5). Summing is order-independent and, for a
+     * cumulative counter, reconstitutes the intended series total. The single-row case is
+     * unchanged (sum of one value == that value).
+     */
+    private Double processCounterRows(String metricId, MetricConfig config, List<Map<String, Object>> rows,
+                                      Map<String, String> configuredLabels, Double displayValueOverride) {
+        Map<String, Double>    totalsByLabel = new LinkedHashMap<>();
+        Map<String, List<Tag>> tagsByLabel   = new LinkedHashMap<>();
+        Double primaryValue = displayValueOverride;
+
+        for (Map<String, Object> row : rows) {
+            Double value = extractValue(row);
+            if (value == null) continue;
+            String labelKey = buildLabelKey(row, configuredLabels);
+            totalsByLabel.merge(labelKey, value, Double::sum);
+            tagsByLabel.computeIfAbsent(labelKey, k -> buildTags(metricId, config, row, configuredLabels));
+            if (primaryValue == null) primaryValue = value;
+        }
+
+        totalsByLabel.forEach((labelKey, total) ->
+            processCounter(metricId, labelKey, tagsByLabel.get(labelKey), total));
         return primaryValue;
     }
 

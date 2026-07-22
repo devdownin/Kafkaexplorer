@@ -352,6 +352,33 @@ class MetricServiceTest {
         assertEquals(60.0, summary.totalAmount(), 0.0001, "10 + 20 + 30 recorded exactly once each");
     }
 
+    @Test
+    void counterSumsRowsSharingALabelKeyInsteadOfMergingDeltas() {
+        // Two rows with no distinct label column → same (empty) label key. Their cumulative
+        // totals must sum (4 + 6 = 10), not collapse to the last row's value (which the old
+        // per-row delta path produced: 4 + (6-4) = 6).
+        Mockito.when(flinkSqlService.executeSql(Mockito.any()))
+            .thenReturn(new QueryResult(
+                List.of("metric_value"),
+                List.of(Map.of("metric_value", 4.0), Map.of("metric_value", 6.0)),
+                10L,
+                null));
+
+        service.save(new MetricConfig(
+            null, "multi_counter", "COUNTER", "SELECT cnt AS metric_value FROM t", null, null, null,
+            null, null, null, List.of(), Map.of(), null, null, null, null, null, List.of()));
+        String id = service.getAllMetrics().stream()
+            .filter(m -> "multi_counter".equals(m.name()))
+            .findFirst().orElseThrow().id();
+
+        service.refreshMetrics();
+
+        var counter = meterRegistry.find("explorer_metric_counter").tag("metric_id", id).counter();
+        assertNotNull(counter);
+        assertEquals(10.0, counter.count(), 0.0001,
+            "rows sharing a label key must sum into one cumulative counter value");
+    }
+
     private static Map<String, Object> row(String labelValue, double metricValue) {
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("region", labelValue);
