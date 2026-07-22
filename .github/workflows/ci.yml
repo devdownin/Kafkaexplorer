@@ -53,6 +53,19 @@ jobs:
         java-version: '21'
         distribution: 'temurin'
         cache: maven
+    - name: Cache npm downloads
+      # The frontend build runs `npm install` inside Maven (frontend-maven-plugin);
+      # a warm ~/.npm serves the package tarballs locally and shields the build
+      # from transient registry failures (an npm ECONNRESET broke a previous run).
+      # src/main/webapp/node is the node/npm runtime the plugin downloads.
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.npm
+          src/main/webapp/node
+        key: npm-${{ runner.os }}-${{ hashFiles('src/main/webapp/package-lock.json') }}
+        restore-keys: |
+          npm-${{ runner.os }}-
     - name: Build & Test with Maven
       # verify runs the full lifecycle including tests — no separate `mvn test`
       # pass (the previous package + test combo ran the whole suite twice)
