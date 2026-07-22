@@ -36,13 +36,13 @@ const LiveStatusBar: React.FC<LiveStatusBarProps> = ({ connected, windowSize, la
       <div className="flex items-center gap-2">
         <span className="relative flex h-2.5 w-2.5">
           <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
-            connected ? 'bg-emerald-400' : 'bg-red-400'
+            connected ? 'bg-success' : 'bg-error'
           }`}></span>
           <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${
-            connected ? 'bg-emerald-500' : 'bg-red-500'
+            connected ? 'bg-success' : 'bg-error'
           }`}></span>
         </span>
-        <span className={`font-medium ${connected ? 'text-emerald-400' : 'text-red-400'}`}>
+        <span className={`font-medium ${connected ? 'text-success' : 'text-error'}`}>
           {connected ? 'Live' : 'Disconnected'}
         </span>
       </div>
@@ -50,20 +50,20 @@ const LiveStatusBar: React.FC<LiveStatusBarProps> = ({ connected, windowSize, la
       <div className="h-4 w-px bg-primary/20" />
 
       {/* Window size */}
-      <div className="flex items-center gap-1.5 text-slate-400">
+      <div className="flex items-center gap-1.5 text-on-surface-variant">
         <span className="material-symbols-outlined text-sm">data_array</span>
         <span>Window:</span>
-        <span className="font-mono font-semibold text-slate-200">{windowSize}</span>
+        <span className="font-mono font-semibold text-on-surface">{windowSize}</span>
         <span>messages</span>
       </div>
 
       <div className="h-4 w-px bg-primary/20" />
 
       {/* Last analysis */}
-      <div className="flex items-center gap-1.5 text-slate-400">
+      <div className="flex items-center gap-1.5 text-on-surface-variant">
         <span className="material-symbols-outlined text-sm">schedule</span>
         <span>Last analysis:</span>
-        <span className="font-mono font-semibold text-slate-200">{elapsed}</span>
+        <span className="font-mono font-semibold text-on-surface">{elapsed}</span>
       </div>
     </div>
   );

@@ -53,26 +53,26 @@ const MetricsHelp: React.FC = () => {
         <section className="lg:col-span-4 row-span-2 bg-[#182d2d] border border-primary/5 p-6 rounded flex flex-col">
           <h3 className="text-xs font-bold text-primary/60 tracking-[0.2em] uppercase mb-6">Indicateurs de Performance (SLA)</h3>
           <div className="space-y-6 flex-1">
-            <div className="p-4 bg-[#102222] border-l-2 border-emerald-500/50">
+            <div className="p-4 bg-[#102222] border-l-2 border-success/50">
               <div className="flex justify-between items-start mb-2">
-                <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">Disponibilité SQL</span>
-                <span className="material-symbols-outlined text-[18px] text-emerald-500">check_circle</span>
+                <span className="text-[10px] font-bold text-success uppercase tracking-widest">Disponibilité SQL</span>
+                <span className="material-symbols-outlined text-[18px] text-success">check_circle</span>
               </div>
               <p className="text-[24px] font-bold text-[#f5f8f8] leading-none mb-1">99.98%</p>
               <p className="text-[10px] text-[#b9cac9]">Ratio succès/échec du moteur de règles.</p>
             </div>
-            <div className="p-4 bg-[#102222] border-l-2 border-amber-500/50">
+            <div className="p-4 bg-[#102222] border-l-2 border-warning/50">
               <div className="flex justify-between items-start mb-2">
-                <span className="text-[10px] font-bold text-amber-500 uppercase tracking-widest">Latence Moyenne</span>
-                <span className="material-symbols-outlined text-[18px] text-amber-500">timer</span>
+                <span className="text-[10px] font-bold text-warning uppercase tracking-widest">Latence Moyenne</span>
+                <span className="material-symbols-outlined text-[18px] text-warning">timer</span>
               </div>
               <p className="text-[24px] font-bold text-[#f5f8f8] leading-none mb-1">14 ms</p>
               <p className="text-[10px] text-[#b9cac9]">Temps de scrape Prometheus Actuator.</p>
             </div>
-            <div className="p-4 bg-[#102222] border-l-2 border-red-500/50">
+            <div className="p-4 bg-[#102222] border-l-2 border-error/50">
               <div className="flex justify-between items-start mb-2">
-                <span className="text-[10px] font-bold text-red-500 uppercase tracking-widest">Taux d'erreur Technique</span>
-                <span className="material-symbols-outlined text-[18px] text-red-500">error</span>
+                <span className="text-[10px] font-bold text-error uppercase tracking-widest">Taux d'erreur Technique</span>
+                <span className="material-symbols-outlined text-[18px] text-error">error</span>
               </div>
               <p className="text-[24px] font-bold text-[#f5f8f8] leading-none mb-1">0.02 %</p>
               <p className="text-[10px] text-[#b9cac9]">Messages rejetés pour non-conformité SQL.</p>
@@ -99,9 +99,9 @@ const MetricsHelp: React.FC = () => {
             <div className="space-y-4">
               <div className="bg-[#182d2d] p-4 rounded border border-primary/5 font-mono text-[13px] text-[#25f4f4] relative">
                 <div className="absolute top-2 right-2 flex gap-1">
-                  <span className="w-2 h-2 rounded-full bg-red-500/40"></span>
-                  <span className="w-2 h-2 rounded-full bg-amber-500/40"></span>
-                  <span className="w-2 h-2 rounded-full bg-emerald-500/40"></span>
+                  <span className="w-2 h-2 rounded-full bg-error/40"></span>
+                  <span className="w-2 h-2 rounded-full bg-warning/40"></span>
+                  <span className="w-2 h-2 rounded-full bg-success/40"></span>
                 </div>
                 <span className="text-primary/50 block mb-2">// RAW_SQL Example</span>
                 <span className="text-primary">SELECT</span> COUNT(*) <span className="text-primary">AS</span> metric_value,<br/>
@@ -234,21 +234,21 @@ const MetricsHelp: React.FC = () => {
         </section>
 
         {/* 8. Dépannage */}
-        <section className="lg:col-span-12 p-8 border border-red-500/20 bg-red-500/5 rounded-lg">
-          <h3 className="text-xl font-bold flex items-center gap-3 text-red-500 uppercase tracking-tight mb-6">
+        <section className="lg:col-span-12 p-8 border border-error/20 bg-error/5 rounded-lg">
+          <h3 className="text-xl font-bold flex items-center gap-3 text-error uppercase tracking-tight mb-6">
             <span className="material-symbols-outlined">report</span> 08. Dépannage & Erreurs
           </h3>
           <div className="grid md:grid-cols-3 gap-8">
             <div>
-              <span className="font-bold block text-red-500 text-[12px] uppercase tracking-wider mb-2">"No rows returned"</span>
+              <span className="font-bold block text-error text-[12px] uppercase tracking-wider mb-2">"No rows returned"</span>
               <p className="text-[11px] text-[#b9cac9] leading-relaxed">Vérifiez vos filtres WHERE et assurez-vous que les topics contiennent des données sur la fenêtre de scan.</p>
             </div>
             <div>
-              <span className="font-bold block text-red-500 text-[12px] uppercase tracking-wider mb-2">"Pending Status"</span>
+              <span className="font-bold block text-error text-[12px] uppercase tracking-wider mb-2">"Pending Status"</span>
               <p className="text-[11px] text-[#b9cac9] leading-relaxed">Le processeur SQL est en attente de ressources. Augmentez l'intervalle si la requête est lourde.</p>
             </div>
             <div>
-              <span className="font-bold block text-red-500 text-[12px] uppercase tracking-wider mb-2">Latency Units</span>
+              <span className="font-bold block text-error text-[12px] uppercase tracking-wider mb-2">Latency Units</span>
               <p className="text-[11px] text-[#b9cac9] leading-relaxed">Les métriques de temps doivent être normalisées en millisecondes pour l'agrégation Grafana native.</p>
             </div>
           </div>
@@ -259,7 +259,7 @@ const MetricsHelp: React.FC = () => {
       <footer className="mt-16 flex flex-col md:flex-row justify-between items-center gap-6 border-t border-primary/5 pt-8">
         <div className="flex gap-4">
           <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span className="w-2 h-2 rounded-full bg-success animate-pulse"></span>
             <span className="text-[10px] font-bold text-[#b9cac9] uppercase tracking-widest">État Global : Opérationnel</span>
           </div>
           <div className="flex items-center gap-2">

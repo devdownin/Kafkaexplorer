@@ -206,8 +206,8 @@ const Config: React.FC = () => {
     });
   };
 
-  const inputClass = "w-full bg-primary/5 border border-primary/20 rounded-lg px-3 py-2.5 text-sm text-slate-100 font-mono placeholder:text-slate-600 focus:ring-1 focus:ring-primary outline-none";
-  const labelClass = "block text-[10px] uppercase font-bold tracking-wider text-slate-500 mb-1.5";
+  const inputClass = "w-full bg-primary/5 border border-primary/20 rounded-lg px-3 py-2.5 text-sm text-on-surface font-mono placeholder:text-outline focus:ring-1 focus:ring-primary outline-none";
+  const labelClass = "block text-[10px] uppercase font-bold tracking-wider text-on-surface0 mb-1.5";
 
   if (loading) return <LoadingSpinner />;
 
@@ -216,7 +216,7 @@ const Config: React.FC = () => {
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold">Configuration</h1>
-        <p className="text-slate-500 dark:text-slate-400 text-sm mt-1">
+        <p className="text-on-surface0 dark:text-on-surface-variant text-sm mt-1">
           Manage Kafka cluster connection and security settings.
         </p>
       </div>
@@ -224,21 +224,21 @@ const Config: React.FC = () => {
       {/* Connection Status Banner */}
       <div className={`rounded-xl border p-4 flex items-center gap-3 ${
         config.isConnected
-          ? 'bg-emerald-500/5 border-emerald-500/20'
-          : 'bg-slate-500/5 border-slate-500/20'
+          ? 'bg-success/5 border-success/20'
+          : 'bg-outline/5 border-outline-variant/20'
       }`}>
         <span className="relative flex h-3 w-3">
-          <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${config.isConnected ? 'bg-emerald-400' : 'bg-slate-500'}`} />
-          <span className={`relative inline-flex rounded-full h-3 w-3 ${config.isConnected ? 'bg-emerald-500' : 'bg-slate-500'}`} />
+          <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${config.isConnected ? 'bg-success' : 'bg-outline'}`} />
+          <span className={`relative inline-flex rounded-full h-3 w-3 ${config.isConnected ? 'bg-success' : 'bg-outline'}`} />
         </span>
         <div>
-          <p className={`text-sm font-bold ${config.isConnected ? 'text-emerald-400' : 'text-slate-400'}`}>
+          <p className={`text-sm font-bold ${config.isConnected ? 'text-success' : 'text-on-surface-variant'}`}>
             {config.isConnected ? 'Connected' : 'Not connected'}
           </p>
-          <p className="text-xs text-slate-500">{config.bootstrapServers}</p>
+          <p className="text-xs text-on-surface0">{config.bootstrapServers}</p>
         </div>
         {testResult !== null && (
-          <div className={`ml-auto flex items-center gap-1.5 text-xs font-bold ${testResult ? 'text-emerald-400' : 'text-red-400'}`}>
+          <div className={`ml-auto flex items-center gap-1.5 text-xs font-bold ${testResult ? 'text-success' : 'text-error'}`}>
             <span className="material-symbols-outlined text-sm">{testResult ? 'check_circle' : 'cancel'}</span>
             {testResult ? 'Connection successful' : 'Connection failed'}
           </div>
@@ -249,7 +249,7 @@ const Config: React.FC = () => {
       <div className="rounded-xl border border-primary/10 bg-primary/5 overflow-hidden">
         <div className="p-4 border-b border-primary/10 flex items-center gap-3">
           <span className="material-symbols-outlined text-primary">lan</span>
-          <h2 className="font-bold text-slate-100">Cluster Connection</h2>
+          <h2 className="font-bold text-on-surface">Cluster Connection</h2>
         </div>
         <div className="p-5 space-y-5">
           {/* Bootstrap Servers */}
@@ -262,7 +262,7 @@ const Config: React.FC = () => {
               placeholder="localhost:9092"
               className={inputClass}
             />
-            <p className="text-[10px] text-slate-500 mt-1">Comma-separated list of host:port pairs.</p>
+            <p className="text-[10px] text-on-surface0 mt-1">Comma-separated list of host:port pairs.</p>
           </div>
 
           {/* Security Mode */}
@@ -275,12 +275,12 @@ const Config: React.FC = () => {
                   onClick={() => set('mode', mode.value)}
                   className={`p-3 rounded-lg border text-left transition-all ${
                     config.mode === mode.value
-                      ? 'border-primary bg-primary/10 text-slate-100'
-                      : 'border-primary/10 bg-background-dark/30 text-slate-400 hover:border-primary/30'
+                      ? 'border-primary bg-primary/10 text-on-surface'
+                      : 'border-primary/10 bg-background-dark/30 text-on-surface-variant hover:border-primary/30'
                   }`}
                 >
                   <p className="text-xs font-bold">{mode.label}</p>
-                  <p className="text-[10px] text-slate-500 mt-0.5">{mode.description}</p>
+                  <p className="text-[10px] text-on-surface0 mt-0.5">{mode.description}</p>
                 </button>
               ))}
             </div>
@@ -293,7 +293,7 @@ const Config: React.FC = () => {
         <div className="rounded-xl border border-primary/10 bg-primary/5 overflow-hidden">
           <div className="p-4 border-b border-primary/10 flex items-center gap-3">
             <span className="material-symbols-outlined text-primary">lock</span>
-            <h2 className="font-bold text-slate-100">SSL / mTLS Settings</h2>
+            <h2 className="font-bold text-on-surface">SSL / mTLS Settings</h2>
           </div>
           <div className="p-5 grid grid-cols-2 gap-4">
             <div>
@@ -325,7 +325,7 @@ const Config: React.FC = () => {
         <div className="rounded-xl border border-primary/10 bg-primary/5 overflow-hidden">
           <div className="p-4 border-b border-primary/10 flex items-center gap-3">
             <span className="material-symbols-outlined text-primary">cloud</span>
-            <h2 className="font-bold text-slate-100">Confluent Cloud Settings</h2>
+            <h2 className="font-bold text-on-surface">Confluent Cloud Settings</h2>
           </div>
           <div className="p-5 grid grid-cols-2 gap-4">
             <div>
@@ -344,8 +344,8 @@ const Config: React.FC = () => {
         <div className="p-4 border-b border-primary/10 flex items-center gap-3">
           <span className="material-symbols-outlined text-primary">neurology</span>
           <div>
-            <h2 className="font-bold text-slate-100">Process Mining LLM</h2>
-            <p className="text-xs text-slate-500 mt-0.5">
+            <h2 className="font-bold text-on-surface">Process Mining LLM</h2>
+            <p className="text-xs text-on-surface0 mt-0.5">
               Applied at runtime. Use environment variables or `application.yml` for persistent configuration.
             </p>
           </div>
@@ -360,12 +360,12 @@ const Config: React.FC = () => {
                   onClick={() => applyLlmProvider(provider.value)}
                   className={`p-3 rounded-lg border text-left transition-all ${
                     config.llmProvider === provider.value
-                      ? 'border-primary bg-primary/10 text-slate-100'
-                      : 'border-primary/10 bg-background-dark/30 text-slate-400 hover:border-primary/30'
+                      ? 'border-primary bg-primary/10 text-on-surface'
+                      : 'border-primary/10 bg-background-dark/30 text-on-surface-variant hover:border-primary/30'
                   }`}
                 >
                   <p className="text-xs font-bold">{provider.label}</p>
-                  <p className="text-[10px] text-slate-500 mt-0.5">{provider.description}</p>
+                  <p className="text-[10px] text-on-surface0 mt-0.5">{provider.description}</p>
                 </button>
               ))}
             </div>
@@ -373,8 +373,8 @@ const Config: React.FC = () => {
 
           <div className={`rounded-lg border px-4 py-3 text-xs ${
             config.llmLocalDeployment
-              ? 'border-emerald-500/20 bg-emerald-500/5 text-emerald-300'
-              : 'border-primary/10 bg-background-dark/20 text-slate-400'
+              ? 'border-success/20 bg-success/5 text-success'
+              : 'border-primary/10 bg-background-dark/20 text-on-surface-variant'
           }`}>
             {config.llmLocalDeployment
               ? 'Local inference detected. Lightweight open-source models can be used for snapshot and live process mining.'
@@ -420,7 +420,7 @@ const Config: React.FC = () => {
                     ? 'Optional for local deployments' : 'Required'}
                 className={inputClass}
               />
-              <p className="text-[10px] text-slate-500 mt-1">
+              <p className="text-[10px] text-on-surface0 mt-1">
                 {config.llmApiKeyConfigured ? 'A key is currently configured in memory.' : 'No key configured in memory.'}
               </p>
             </div>
@@ -468,8 +468,8 @@ const Config: React.FC = () => {
                 className="mt-0.5"
               />
               <span>
-                <span className="block text-xs font-bold text-slate-200">Enrich audit with SpectraLLM RAG</span>
-                <span className="block text-[10px] text-slate-500 mt-0.5">
+                <span className="block text-xs font-bold text-on-surface">Enrich audit with SpectraLLM RAG</span>
+                <span className="block text-[10px] text-on-surface0 mt-0.5">
                   When enabled, the audit prompt is answered with hybrid retrieval over SpectraLLM's
                   ingested corpus. Leave off to ground the audit solely on the sampled Kafka messages.
                 </span>
@@ -487,7 +487,7 @@ const Config: React.FC = () => {
                 placeholder="Default collection"
                 className={inputClass}
               />
-              <p className="text-[10px] text-slate-500 mt-1">
+              <p className="text-[10px] text-on-surface0 mt-1">
                 Optional — the ChromaDB collection to retrieve from. Leave blank for SpectraLLM's default.
               </p>
             </div>
@@ -520,8 +520,8 @@ const Config: React.FC = () => {
           {llmTestResult && (
             <div className={`mt-3 rounded-lg border px-4 py-3 text-xs flex items-start gap-2 ${
               llmTestResult.ok
-                ? 'border-emerald-500/30 bg-emerald-500/5 text-emerald-300'
-                : 'border-red-500/30 bg-red-500/5 text-red-300'
+                ? 'border-success/30 bg-success/5 text-success'
+                : 'border-error/30 bg-error/5 text-error'
             }`}>
               <span className="material-symbols-outlined text-sm mt-0.5">
                 {llmTestResult.ok ? 'check_circle' : 'error'}
@@ -534,7 +534,7 @@ const Config: React.FC = () => {
 
       {/* Error */}
       {error && (
-        <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 flex items-center gap-2 text-red-400 text-sm">
+        <div className="rounded-lg border border-error/20 bg-error/5 p-3 flex items-center gap-2 text-error text-sm">
           <span className="material-symbols-outlined text-sm">warning</span>
           {error}
         </div>

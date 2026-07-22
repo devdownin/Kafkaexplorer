@@ -34,16 +34,16 @@ const MessageCard: React.FC<{
 
   if (!parsed) {
     return (
-      <div className="rounded-lg border border-primary/10 bg-background-dark/50 p-3 font-mono text-xs text-slate-300">
+      <div className="rounded-lg border border-primary/10 bg-background-dark/50 p-3 font-mono text-xs text-on-surface">
         {sample}
       </div>
     );
   }
 
   const fieldColors: Record<string, string> = {
-    added: 'bg-green-500/10 text-green-400',
-    removed: 'bg-red-500/10 text-red-400',
-    changed: side === 'A' ? 'bg-red-500/10 text-red-400' : 'bg-green-500/10 text-green-400',
+    added: 'bg-success/10 text-success',
+    removed: 'bg-error/10 text-error',
+    changed: side === 'A' ? 'bg-error/10 text-error' : 'bg-success/10 text-success',
     same: '',
   };
 
@@ -56,7 +56,7 @@ const MessageCard: React.FC<{
           const status = diff?.[k] ?? 'same';
           return (
             <div key={k} className={`flex justify-between px-1 rounded gap-3 ${fieldColors[status]}`}>
-              <span className="text-slate-500 shrink-0">{k}:</span>
+              <span className="text-on-surface0 shrink-0">{k}:</span>
               <span className="truncate text-right">{JSON.stringify(v)}</span>
             </div>
           );
@@ -140,33 +140,33 @@ const Compare: React.FC = () => {
       <section className="flex flex-col">
         <div className="flex flex-col border border-primary/20 rounded-xl overflow-hidden bg-background-dark/30">
           <div className="flex bg-primary/5 px-4 py-2.5 border-b border-primary/10 items-center justify-between">
-            <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400">Shared Filter Context (optional)</span>
+            <span className="text-[10px] font-mono uppercase tracking-widest text-on-surface-variant">Shared Filter Context (optional)</span>
             <div className="flex items-center gap-2">
-              <span className="text-slate-400 hover:text-primary cursor-pointer transition-all">
+              <span className="text-on-surface-variant hover:text-primary cursor-pointer transition-all">
                 <span className="material-symbols-outlined text-lg">format_align_left</span>
               </span>
             </div>
           </div>
           <textarea
-            className="w-full bg-transparent border-none focus:ring-0 font-mono text-sm p-4 h-16 text-primary resize-none placeholder:text-slate-600"
+            className="w-full bg-transparent border-none focus:ring-0 font-mono text-sm p-4 h-16 text-primary resize-none placeholder:text-outline"
             placeholder="-- Optional: filter applied to both topics&#10;SELECT * FROM TABLE WHERE event_type = 'ORDER_CREATED'"
           />
           <div className="flex justify-between items-center p-3 bg-primary/5 border-t border-primary/10">
             <div className="flex items-center gap-6">
               <label className="flex items-center gap-2 cursor-pointer">
-                <span className="text-[10px] uppercase text-slate-500 font-bold">Sync Scroll</span>
+                <span className="text-[10px] uppercase text-on-surface0 font-bold">Sync Scroll</span>
                 <button
                   onClick={() => setSyncCursors(!syncCursors)}
-                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${syncCursors ? 'bg-primary' : 'bg-slate-700'}`}
+                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${syncCursors ? 'bg-primary' : 'bg-surface-container-high'}`}
                 >
                   <span className={`inline-block h-3 w-3 transform rounded-full bg-background-dark transition-transform ${syncCursors ? 'translate-x-5' : 'translate-x-1'}`} />
                 </button>
               </label>
               <label className="flex items-center gap-2 cursor-pointer">
-                <span className="text-[10px] uppercase text-slate-500 font-bold">Diff Only</span>
+                <span className="text-[10px] uppercase text-on-surface0 font-bold">Diff Only</span>
                 <button
                   onClick={() => setShowDiffOnly(!showDiffOnly)}
-                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${showDiffOnly ? 'bg-primary' : 'bg-slate-700'}`}
+                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${showDiffOnly ? 'bg-primary' : 'bg-surface-container-high'}`}
                 >
                   <span className={`inline-block h-3 w-3 transform rounded-full bg-background-dark transition-transform ${showDiffOnly ? 'translate-x-5' : 'translate-x-1'}`} />
                 </button>
@@ -196,16 +196,16 @@ const Compare: React.FC = () => {
               <select
                 value={topicA}
                 onChange={e => setTopicA(e.target.value)}
-                className="bg-slate-900 border-none text-slate-100 font-bold p-0 focus:ring-0 text-sm cursor-pointer outline-none"
+                className="bg-surface-container-low border-none text-on-surface font-bold p-0 focus:ring-0 text-sm cursor-pointer outline-none"
               >
-                {topics.map(t => <option key={t} value={t} className="bg-slate-900 text-slate-100">{t}</option>)}
+                {topics.map(t => <option key={t} value={t} className="bg-surface-container-low text-on-surface">{t}</option>)}
               </select>
             </div>
-            <span className="text-xs text-slate-500">{samplesA.length} msgs</span>
+            <span className="text-xs text-on-surface0">{samplesA.length} msgs</span>
           </div>
           <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-2">
             {!hasResult && (
-              <div className="p-8 text-center text-slate-600 text-xs uppercase tracking-widest">Select topics and run compare</div>
+              <div className="p-8 text-center text-outline text-xs uppercase tracking-widest">Select topics and run compare</div>
             )}
             {displayA.map((s, i) => (
               <MessageCard key={i} sample={s} paired={samplesB[i]} side="A" />
@@ -221,16 +221,16 @@ const Compare: React.FC = () => {
               <select
                 value={topicB}
                 onChange={e => setTopicB(e.target.value)}
-                className="bg-slate-900 border-none text-slate-100 font-bold p-0 focus:ring-0 text-sm cursor-pointer outline-none"
+                className="bg-surface-container-low border-none text-on-surface font-bold p-0 focus:ring-0 text-sm cursor-pointer outline-none"
               >
-                {topics.map(t => <option key={t} value={t} className="bg-slate-900 text-slate-100">{t}</option>)}
+                {topics.map(t => <option key={t} value={t} className="bg-surface-container-low text-on-surface">{t}</option>)}
               </select>
             </div>
-            <span className="text-xs text-slate-500">{samplesB.length} msgs</span>
+            <span className="text-xs text-on-surface0">{samplesB.length} msgs</span>
           </div>
           <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-2">
             {!hasResult && (
-              <div className="p-8 text-center text-slate-600 text-xs uppercase tracking-widest">Select topics and run compare</div>
+              <div className="p-8 text-center text-outline text-xs uppercase tracking-widest">Select topics and run compare</div>
             )}
             {displayB.map((s, i) => (
               <MessageCard key={i} sample={s} paired={samplesA[i]} side="B" />
@@ -244,21 +244,21 @@ const Compare: React.FC = () => {
         <div className="flex gap-4">
           {hasResult ? (
             <>
-              <span className="text-slate-400">Messages compared: <b className="text-primary">{Math.min(samplesA.length, samplesB.length)}</b></span>
-              <span className="text-slate-400">Differences: <b className={diffCount > 0 ? 'text-amber-400' : 'text-emerald-400'}>{diffCount}</b></span>
+              <span className="text-on-surface-variant">Messages compared: <b className="text-primary">{Math.min(samplesA.length, samplesB.length)}</b></span>
+              <span className="text-on-surface-variant">Differences: <b className={diffCount > 0 ? 'text-warning' : 'text-success'}>{diffCount}</b></span>
             </>
           ) : (
-            <span className="text-slate-600">No comparison run yet</span>
+            <span className="text-outline">No comparison run yet</span>
           )}
         </div>
         <div className="flex gap-4 items-center">
           <div className="flex items-center gap-1.5">
-            <div className="w-2 h-2 rounded-full bg-green-500" />
-            <span className="text-slate-400 text-[10px]">Added / Higher</span>
+            <div className="w-2 h-2 rounded-full bg-success" />
+            <span className="text-on-surface-variant text-[10px]">Added / Higher</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <div className="w-2 h-2 rounded-full bg-red-500" />
-            <span className="text-slate-400 text-[10px]">Removed / Lower</span>
+            <div className="w-2 h-2 rounded-full bg-error" />
+            <span className="text-on-surface-variant text-[10px]">Removed / Lower</span>
           </div>
           {hasResult && (
             <button
@@ -270,7 +270,7 @@ const Compare: React.FC = () => {
                 a.href = url; a.download = `diff-${topicA}-vs-${topicB}.json`; a.click();
                 URL.revokeObjectURL(url);
               }}
-              className="flex items-center gap-1 border-l border-primary/20 pl-4 hover:text-primary text-slate-400 transition-colors"
+              className="flex items-center gap-1 border-l border-primary/20 pl-4 hover:text-primary text-on-surface-variant transition-colors"
             >
               <span className="material-symbols-outlined text-sm">download</span>
               <span>Export</span>

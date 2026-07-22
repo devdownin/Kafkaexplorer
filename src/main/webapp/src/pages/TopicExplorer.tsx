@@ -41,54 +41,54 @@ const JsonNode: React.FC<{
       className={`font-mono text-[11px] font-semibold transition-colors rounded px-0.5 -mx-0.5 ${
         isSelected
           ? 'text-primary bg-primary/20 line-through'
-          : 'text-amber-300 hover:text-primary hover:bg-primary/10 cursor-pointer'
+          : 'text-warning hover:text-primary hover:bg-primary/10 cursor-pointer'
       }`}
     >
       "{keyName}"
     </button>
   ) : keyName !== undefined ? (
-    <span className="text-amber-300 font-mono text-[11px]">"{keyName}"</span>
+    <span className="text-warning font-mono text-[11px]">"{keyName}"</span>
   ) : null;
 
   if (value === null) {
-    return <span>{keyEl && <>{keyEl}<span className="text-slate-500">: </span></>}<span className="text-slate-500 font-mono text-[11px]">null</span></span>;
+    return <span>{keyEl && <>{keyEl}<span className="text-on-surface0">: </span></>}<span className="text-on-surface0 font-mono text-[11px]">null</span></span>;
   }
   if (typeof value === 'boolean') {
-    return <span>{keyEl && <>{keyEl}<span className="text-slate-500">: </span></>}<span className="text-violet-400 font-mono text-[11px]">{String(value)}</span></span>;
+    return <span>{keyEl && <>{keyEl}<span className="text-on-surface0">: </span></>}<span className="text-secondary font-mono text-[11px]">{String(value)}</span></span>;
   }
   if (typeof value === 'number') {
-    return <span>{keyEl && <>{keyEl}<span className="text-slate-500">: </span></>}<span className="text-emerald-400 font-mono text-[11px]">{value}</span></span>;
+    return <span>{keyEl && <>{keyEl}<span className="text-on-surface0">: </span></>}<span className="text-success font-mono text-[11px]">{value}</span></span>;
   }
   if (typeof value === 'string') {
-    return <span>{keyEl && <>{keyEl}<span className="text-slate-500">: </span></>}<span className="text-sky-300 font-mono text-[11px]">"{value}"</span></span>;
+    return <span>{keyEl && <>{keyEl}<span className="text-on-surface0">: </span></>}<span className="text-primary font-mono text-[11px]">"{value}"</span></span>;
   }
   if (Array.isArray(value)) {
-    if (value.length === 0) return <span>{keyEl && <>{keyEl}<span className="text-slate-500">: </span></>}<span className="text-slate-400 font-mono text-[11px]">[]</span></span>;
+    if (value.length === 0) return <span>{keyEl && <>{keyEl}<span className="text-on-surface0">: </span></>}<span className="text-on-surface-variant font-mono text-[11px]">[]</span></span>;
     return (
       <span>
-        {keyEl && <>{keyEl}<span className="text-slate-500">: </span></>}
-        <span className="text-slate-400 font-mono text-[11px]">{'['}</span>
+        {keyEl && <>{keyEl}<span className="text-on-surface0">: </span></>}
+        <span className="text-on-surface-variant font-mono text-[11px]">{'['}</span>
         <div>
           {value.slice(0, 3).map((item, i) => (
             <div key={i} className="font-mono text-[11px]">
               {indent + '  '}
               <JsonNode value={item} depth={depth + 1} />
-              {i < Math.min(value.length, 3) - 1 && <span className="text-slate-500">,</span>}
+              {i < Math.min(value.length, 3) - 1 && <span className="text-on-surface0">,</span>}
             </div>
           ))}
-          {value.length > 3 && <div className="text-slate-500 font-mono text-[11px]">{indent}  ... ({value.length} items)</div>}
+          {value.length > 3 && <div className="text-on-surface0 font-mono text-[11px]">{indent}  ... ({value.length} items)</div>}
         </div>
-        <span className="text-slate-400 font-mono text-[11px]">{indent}{']'}</span>
+        <span className="text-on-surface-variant font-mono text-[11px]">{indent}{']'}</span>
       </span>
     );
   }
   if (typeof value === 'object') {
     const entries = Object.entries(value as Record<string, unknown>);
-    if (entries.length === 0) return <span>{keyEl && <>{keyEl}<span className="text-slate-500">: </span></>}<span className="text-slate-400 font-mono text-[11px]">{'{}'}</span></span>;
+    if (entries.length === 0) return <span>{keyEl && <>{keyEl}<span className="text-on-surface0">: </span></>}<span className="text-on-surface-variant font-mono text-[11px]">{'{}'}</span></span>;
     return (
       <span>
-        {keyEl && <>{keyEl}<span className="text-slate-500">: </span></>}
-        <span className="text-slate-400 font-mono text-[11px]">{'{'}</span>
+        {keyEl && <>{keyEl}<span className="text-on-surface0">: </span></>}
+        <span className="text-on-surface-variant font-mono text-[11px]">{'{'}</span>
         <div>
           {entries.map(([k, v], i) => {
             const childPath = fieldPath ? `${fieldPath}.${k}` : k;
@@ -103,16 +103,16 @@ const JsonNode: React.FC<{
                   onFieldClick={onFieldClick}
                   selectedFields={selectedFields}
                 />
-                {i < entries.length - 1 && <span className="text-slate-500">,</span>}
+                {i < entries.length - 1 && <span className="text-on-surface0">,</span>}
               </div>
             );
           })}
         </div>
-        <span className="text-slate-400 font-mono text-[11px]">{indent}{'}'}</span>
+        <span className="text-on-surface-variant font-mono text-[11px]">{indent}{'}'}</span>
       </span>
     );
   }
-  return <span className="text-slate-400 font-mono text-[11px]">{String(value)}</span>;
+  return <span className="text-on-surface-variant font-mono text-[11px]">{String(value)}</span>;
 };
 
 // ── Interactive XML renderer — recursive DOM-based, tracks full paths ─────
@@ -133,7 +133,7 @@ const XmlViewer: React.FC<{
   }, [xml]);
 
   if (!doc) {
-    return <span className="font-mono text-[11px] text-slate-300 whitespace-pre-wrap break-all leading-relaxed">{xml}</span>;
+    return <span className="font-mono text-[11px] text-on-surface whitespace-pre-wrap break-all leading-relaxed">{xml}</span>;
   }
 
   const renderElement = (el: Element, parentPath: string, depth: number): React.ReactNode => {
@@ -151,30 +151,30 @@ const XmlViewer: React.FC<{
         className={`transition-colors rounded px-0.5 -mx-0.5 ${
           isSelected
             ? 'text-primary bg-primary/20 line-through'
-            : 'text-emerald-400 hover:text-primary hover:bg-primary/10 cursor-pointer'
+            : 'text-success hover:text-primary hover:bg-primary/10 cursor-pointer'
         }`}
       >
         {tag}
       </button>
-    ) : <span className="text-emerald-400">{tag}</span>;
+    ) : <span className="text-success">{tag}</span>;
 
     if (isLeaf) {
       return (
         <div key={path} style={{ paddingLeft: `${indentPx}px` }} className="font-mono text-[11px]">
-          <span className="text-slate-500">{'<'}</span>{tagBtn}<span className="text-slate-500">{'>'}</span>
-          <span className="text-slate-300">{el.textContent?.trim()}</span>
-          <span className="text-slate-500">{`</${tag}>`}</span>
+          <span className="text-on-surface0">{'<'}</span>{tagBtn}<span className="text-on-surface0">{'>'}</span>
+          <span className="text-on-surface">{el.textContent?.trim()}</span>
+          <span className="text-on-surface0">{`</${tag}>`}</span>
         </div>
       );
     }
 
     return (
       <div key={path} style={{ paddingLeft: `${indentPx}px` }} className="font-mono text-[11px]">
-        <span className="text-slate-500">{'<'}</span>{tagBtn}<span className="text-slate-500">{'>'}</span>
+        <span className="text-on-surface0">{'<'}</span>{tagBtn}<span className="text-on-surface0">{'>'}</span>
         {childEls.map((child, i) => (
           <React.Fragment key={i}>{renderElement(child, path, depth + 1)}</React.Fragment>
         ))}
-        <div style={{ paddingLeft: 0 }}><span className="text-slate-500">{`</${tag}>`}</span></div>
+        <div style={{ paddingLeft: 0 }}><span className="text-on-surface0">{`</${tag}>`}</span></div>
       </div>
     );
   };
@@ -184,11 +184,11 @@ const XmlViewer: React.FC<{
 
   return (
     <div className="font-mono text-[11px] leading-relaxed">
-      <div><span className="text-slate-500">{'<'}</span><span className="text-emerald-400/50">{root.localName}</span><span className="text-slate-500">{'>'}</span></div>
+      <div><span className="text-on-surface0">{'<'}</span><span className="text-success/50">{root.localName}</span><span className="text-on-surface0">{'>'}</span></div>
       {rootChildren.map((child, i) => (
         <React.Fragment key={i}>{renderElement(child as Element, '', 0)}</React.Fragment>
       ))}
-      <div><span className="text-slate-500">{`</${root.localName}>`}</span></div>
+      <div><span className="text-on-surface0">{`</${root.localName}>`}</span></div>
     </div>
   );
 };
@@ -220,7 +220,7 @@ const SampleCard: React.FC<{
   return (
     <div className="border-b border-primary/5 last:border-b-0 group">
       <div className="flex items-start gap-3 p-4 hover:bg-primary/5 transition-colors">
-        <span className="text-[10px] font-mono text-slate-600 mt-0.5 w-6 shrink-0">{index + 1}</span>
+        <span className="text-[10px] font-mono text-outline mt-0.5 w-6 shrink-0">{index + 1}</span>
         <div className="flex-1 min-w-0 overflow-x-auto">
           {isJson && parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? (
             <div className={`leading-relaxed ${!expanded && needsCollapse ? 'max-h-24 overflow-hidden' : ''}`}>
@@ -236,7 +236,7 @@ const SampleCard: React.FC<{
               <XmlViewer xml={sample} onFieldClick={onFieldClick} selectedFields={selectedFields} />
             </div>
           ) : (
-            <pre className={`font-mono text-[11px] text-slate-300 whitespace-pre-wrap break-all leading-relaxed ${!expanded && needsCollapse ? 'max-h-24 overflow-hidden' : ''}`}>
+            <pre className={`font-mono text-[11px] text-on-surface whitespace-pre-wrap break-all leading-relaxed ${!expanded && needsCollapse ? 'max-h-24 overflow-hidden' : ''}`}>
               {formatted}
             </pre>
           )}
@@ -251,10 +251,10 @@ const SampleCard: React.FC<{
         </div>
         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
           {isJson && <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-primary/10 text-primary">JSON</span>}
-          {isXml && <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-500/10 text-emerald-400">XML</span>}
+          {isXml && <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-success/10 text-success">XML</span>}
           <button
             onClick={() => onCopy(formatted)}
-            className="p-1.5 text-slate-500 hover:text-primary hover:bg-primary/10 rounded transition-colors"
+            className="p-1.5 text-on-surface0 hover:text-primary hover:bg-primary/10 rounded transition-colors"
             title="Copy"
           >
             <span className="material-symbols-outlined text-base">content_copy</span>
@@ -319,14 +319,14 @@ const TopicExplorer: React.FC = () => {
     <div className="p-6 max-w-7xl mx-auto space-y-6">
       {/* Header */}
       <div className="flex flex-col gap-3">
-        <Link to="/" className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500 hover:text-primary uppercase tracking-widest transition-colors w-fit">
+        <Link to="/" className="flex items-center gap-1.5 text-[10px] font-bold text-on-surface0 hover:text-primary uppercase tracking-widest transition-colors w-fit">
           <span className="material-symbols-outlined text-sm">chevron_left</span> Dashboard
         </Link>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold font-mono text-slate-100">{data.topic.name}</h1>
+            <h1 className="text-2xl font-bold font-mono text-on-surface">{data.topic.name}</h1>
             {data.topic.name.toLowerCase().endsWith('.dlt') && (
-              <span className="px-2 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-400 text-[10px] font-bold uppercase">
+              <span className="px-2 py-0.5 rounded border border-warning/30 bg-warning/10 text-warning text-[10px] font-bold uppercase">
                 Dead Letter Topic
               </span>
             )}
@@ -347,21 +347,21 @@ const TopicExplorer: React.FC = () => {
       {/* Stats */}
       <div className="grid grid-cols-3 gap-4">
         <div className="rounded-xl border border-primary/10 bg-primary/5 p-5">
-          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Partitions</p>
-          <p className="text-3xl font-bold text-slate-100">{data.topic.partitions}</p>
+          <p className="text-[10px] font-bold text-on-surface0 uppercase tracking-widest mb-1">Partitions</p>
+          <p className="text-3xl font-bold text-on-surface">{data.topic.partitions}</p>
         </div>
         <div className="rounded-xl border border-primary/10 bg-primary/5 p-5">
-          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Messages (Approx)</p>
+          <p className="text-[10px] font-bold text-on-surface0 uppercase tracking-widest mb-1">Messages (Approx)</p>
           <p className="text-3xl font-bold text-primary">{data.topic.estimatedSize.toLocaleString()}</p>
         </div>
         <div className="rounded-xl border border-primary/10 bg-primary/5 p-5">
-          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Read Mode</p>
+          <p className="text-[10px] font-bold text-on-surface0 uppercase tracking-widest mb-1">Read Mode</p>
           <div className="flex gap-1 mt-1">
             {['earliest-offset', 'latest-offset'].map(mode => (
               <button
                 key={mode}
                 onClick={() => setReadMode(mode)}
-                className={`px-2 py-1 text-[10px] font-bold rounded transition-colors ${readMode === mode ? 'bg-primary/20 text-primary' : 'bg-slate-800 text-slate-500 hover:bg-slate-700'}`}
+                className={`px-2 py-1 text-[10px] font-bold rounded transition-colors ${readMode === mode ? 'bg-primary/20 text-primary' : 'bg-surface-container text-on-surface0 hover:bg-surface-container-high'}`}
               >
                 {mode === 'earliest-offset' ? 'EARLIEST' : 'LATEST'}
               </button>
@@ -384,7 +384,7 @@ const TopicExplorer: React.FC = () => {
             className={`flex items-center gap-2 px-4 py-2.5 text-sm font-bold uppercase tracking-wider border-b-2 -mb-px transition-colors ${
               activeTab === tab.key
                 ? 'border-primary text-primary'
-                : 'border-transparent text-slate-500 hover:text-slate-300'
+                : 'border-transparent text-on-surface0 hover:text-on-surface'
             }`}
           >
             <span className="material-symbols-outlined text-base">{tab.icon}</span>
@@ -398,21 +398,21 @@ const TopicExplorer: React.FC = () => {
         <div className="space-y-3">
           <div className="flex items-center gap-3">
             <div className="flex-1 flex items-center gap-2 bg-primary/5 border border-primary/20 rounded-lg px-3 py-2">
-              <span className="material-symbols-outlined text-slate-500 text-lg">search</span>
+              <span className="material-symbols-outlined text-on-surface0 text-lg">search</span>
               <input
                 type="text"
                 value={sampleFilter}
                 onChange={e => setSampleFilter(e.target.value)}
                 placeholder="Filter messages..."
-                className="flex-1 bg-transparent border-none focus:ring-0 text-sm text-slate-100 placeholder:text-slate-600 outline-none"
+                className="flex-1 bg-transparent border-none focus:ring-0 text-sm text-on-surface placeholder:text-outline outline-none"
               />
               {sampleFilter && (
-                <button onClick={() => setSampleFilter('')} className="text-slate-500 hover:text-slate-300">
+                <button onClick={() => setSampleFilter('')} className="text-on-surface0 hover:text-on-surface">
                   <span className="material-symbols-outlined text-base">close</span>
                 </button>
               )}
             </div>
-            <span className="text-xs text-slate-500 shrink-0">{filteredSamples.length} of {data.samples.length}</span>
+            <span className="text-xs text-on-surface0 shrink-0">{filteredSamples.length} of {data.samples.length}</span>
           </div>
 
           {/* Field selection bar */}
@@ -424,7 +424,7 @@ const TopicExplorer: React.FC = () => {
                   <button
                     key={f}
                     onClick={() => toggleField(f)}
-                    className="flex items-center gap-1 px-2 py-0.5 rounded bg-primary/20 text-primary text-[11px] font-mono font-bold hover:bg-red-500/20 hover:text-red-400 transition-colors"
+                    className="flex items-center gap-1 px-2 py-0.5 rounded bg-primary/20 text-primary text-[11px] font-mono font-bold hover:bg-error/20 hover:text-error transition-colors"
                     title="Remove"
                   >
                     {f}
@@ -434,7 +434,7 @@ const TopicExplorer: React.FC = () => {
               </div>
               <button
                 onClick={() => setSelectedFields([])}
-                className="text-[10px] text-slate-500 hover:text-slate-300 shrink-0"
+                className="text-[10px] text-on-surface0 hover:text-on-surface shrink-0"
               >
                 Clear all
               </button>
@@ -453,7 +453,7 @@ const TopicExplorer: React.FC = () => {
               />
             ))}
             {filteredSamples.length === 0 && (
-              <div className="p-16 text-center text-slate-600 space-y-2">
+              <div className="p-16 text-center text-outline space-y-2">
                 <span className="material-symbols-outlined text-4xl block opacity-30">search_off</span>
                 <p className="text-xs uppercase tracking-widest">
                   {sampleFilter ? 'No messages match your filter' : 'No messages in topic'}
@@ -468,10 +468,10 @@ const TopicExplorer: React.FC = () => {
       {activeTab === 'ddl' && (
         <div className="rounded-xl border border-primary/10 overflow-hidden">
           <div className="flex items-center justify-between px-4 py-2.5 border-b border-primary/10 bg-primary/5">
-            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Auto-Generated Definition</span>
+            <span className="text-[10px] font-bold text-on-surface0 uppercase tracking-widest">Auto-Generated Definition</span>
             <button
               onClick={() => copyToClipboard(data.ddl)}
-              className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-primary transition-colors"
+              className="flex items-center gap-1.5 text-xs text-on-surface0 hover:text-primary transition-colors"
             >
               <span className="material-symbols-outlined text-base">content_copy</span>
               Copy
@@ -494,7 +494,7 @@ const TopicExplorer: React.FC = () => {
         <div className="rounded-xl border border-primary/10 overflow-hidden">
           <table className="w-full text-sm">
             <thead>
-              <tr className="bg-primary/5 border-b border-primary/10 text-[10px] uppercase tracking-widest text-slate-500">
+              <tr className="bg-primary/5 border-b border-primary/10 text-[10px] uppercase tracking-widest text-on-surface0">
                 <th className="text-left px-5 py-3">Partition</th>
                 <th className="text-right px-5 py-3">Start Offset</th>
                 <th className="text-right px-5 py-3">End Offset</th>
@@ -509,9 +509,9 @@ const TopicExplorer: React.FC = () => {
                 const count = end - start;
                 return (
                   <tr key={partition} className="hover:bg-primary/5 transition-colors">
-                    <td className="px-5 py-3 font-mono text-slate-300">P{partition}</td>
-                    <td className="px-5 py-3 text-right font-mono text-slate-400">{start.toLocaleString()}</td>
-                    <td className="px-5 py-3 text-right font-mono text-slate-400">{end.toLocaleString()}</td>
+                    <td className="px-5 py-3 font-mono text-on-surface">P{partition}</td>
+                    <td className="px-5 py-3 text-right font-mono text-on-surface-variant">{start.toLocaleString()}</td>
+                    <td className="px-5 py-3 text-right font-mono text-on-surface-variant">{end.toLocaleString()}</td>
                     <td className="px-5 py-3 text-right">
                       <span className="font-mono font-bold text-primary">{count.toLocaleString()}</span>
                     </td>
@@ -521,7 +521,7 @@ const TopicExplorer: React.FC = () => {
             </tbody>
             <tfoot>
               <tr className="bg-primary/5 border-t border-primary/10">
-                <td colSpan={3} className="px-5 py-2.5 text-[10px] font-bold text-slate-500 uppercase tracking-widest">Total</td>
+                <td colSpan={3} className="px-5 py-2.5 text-[10px] font-bold text-on-surface0 uppercase tracking-widest">Total</td>
                 <td className="px-5 py-2.5 text-right font-mono font-bold text-primary text-sm">
                   {data.topic.estimatedSize.toLocaleString()}
                 </td>
@@ -537,14 +537,14 @@ const TopicExplorer: React.FC = () => {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-primary/5 border-b border-primary/10">
-                <th className="text-left px-5 py-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest">Field</th>
-                <th className="text-right px-5 py-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest">Type</th>
+                <th className="text-left px-5 py-3 text-[10px] font-bold text-on-surface0 uppercase tracking-widest">Field</th>
+                <th className="text-right px-5 py-3 text-[10px] font-bold text-on-surface0 uppercase tracking-widest">Type</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-primary/5">
               {Object.entries(data.schema).map(([field, type]) => (
                 <tr key={field} className="hover:bg-primary/5 transition-colors">
-                  <td className="px-5 py-3 font-medium text-slate-200">{field}</td>
+                  <td className="px-5 py-3 font-medium text-on-surface">{field}</td>
                   <td className="px-5 py-3 text-right font-mono text-[11px] text-primary/80 uppercase">{type}</td>
                 </tr>
               ))}

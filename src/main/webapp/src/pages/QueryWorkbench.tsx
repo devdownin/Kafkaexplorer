@@ -406,25 +406,25 @@ const QueryWorkbench: React.FC = () => {
             <div className="flex items-center justify-between p-4 border-b border-primary/10">
               <div>
                 <h2 className="text-sm font-bold">DDL Preview</h2>
-                <p className="text-[10px] text-slate-500 font-mono mt-0.5">{ddlPreviewTopic}</p>
+                <p className="text-[10px] text-on-surface0 font-mono mt-0.5">{ddlPreviewTopic}</p>
               </div>
-              <button onClick={() => setDdlPreviewTopic(null)} className="text-slate-500 hover:text-white transition-colors">
+              <button onClick={() => setDdlPreviewTopic(null)} className="text-on-surface0 hover:text-white transition-colors">
                 <span className="material-symbols-outlined">close</span>
               </button>
             </div>
             <div className="flex-1 overflow-auto p-4">
               {ddlPreviewLoading
-                ? <div className="flex items-center gap-2 text-slate-500 py-4"><span className="material-symbols-outlined animate-spin text-sm">refresh</span><span className="text-xs">Inferring schema…</span></div>
+                ? <div className="flex items-center gap-2 text-on-surface0 py-4"><span className="material-symbols-outlined animate-spin text-sm">refresh</span><span className="text-xs">Inferring schema…</span></div>
                 : ddlPreview
-                  ? <pre className="text-xs font-mono text-slate-300 whitespace-pre-wrap leading-relaxed">{ddlPreview}</pre>
-                  : <p className="text-xs text-slate-500">Failed to generate DDL</p>
+                  ? <pre className="text-xs font-mono text-on-surface whitespace-pre-wrap leading-relaxed">{ddlPreview}</pre>
+                  : <p className="text-xs text-on-surface0">Failed to generate DDL</p>
               }
             </div>
             <div className="p-4 border-t border-primary/10 flex items-center justify-between">
               <button onClick={() => { if (ddlPreview) { setSql(ddlPreview); setDdlPreviewTopic(null); toast('DDL inserted in editor', 'success'); } }} disabled={!ddlPreview}
                 className="text-xs font-bold text-primary border border-primary/30 px-3 py-1.5 rounded-lg hover:bg-primary/10 disabled:opacity-40 transition-colors">INSERT IN EDITOR</button>
               <button onClick={() => { if (ddlPreview) { navigator.clipboard.writeText(ddlPreview); toast('DDL copied', 'success'); } }} disabled={!ddlPreview}
-                className="flex items-center gap-1.5 text-xs text-slate-400 border border-primary/20 px-3 py-1.5 rounded-lg hover:bg-primary/5 disabled:opacity-40 transition-colors">
+                className="flex items-center gap-1.5 text-xs text-on-surface-variant border border-primary/20 px-3 py-1.5 rounded-lg hover:bg-primary/5 disabled:opacity-40 transition-colors">
                 <span className="material-symbols-outlined text-sm">content_copy</span>COPY
               </button>
             </div>
@@ -452,8 +452,8 @@ const QueryWorkbench: React.FC = () => {
 
         <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">Schema Browser</h2>
-            <button onClick={fetchSchema} disabled={schemaLoading} className="text-slate-500 hover:text-primary transition-colors disabled:opacity-50" title="Refresh">
+            <h2 className="text-xs font-semibold text-on-surface-variant uppercase tracking-widest">Schema Browser</h2>
+            <button onClick={fetchSchema} disabled={schemaLoading} className="text-on-surface0 hover:text-primary transition-colors disabled:opacity-50" title="Refresh">
               <span className={`material-symbols-outlined text-base ${schemaLoading ? 'animate-spin' : ''}`}>refresh</span>
             </button>
           </div>
@@ -463,20 +463,20 @@ const QueryWorkbench: React.FC = () => {
             <details className="group" open>
               <summary className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-primary/10 cursor-pointer list-none">
                 <span className="material-symbols-outlined text-sm text-primary group-open:rotate-90 transition-transform">chevron_right</span>
-                <span className="material-symbols-outlined text-base text-slate-400">grid_view</span>
+                <span className="material-symbols-outlined text-base text-on-surface-variant">grid_view</span>
                 <span className="text-sm font-medium">Flink Tables</span>
-                <span className="ml-auto text-[10px] bg-slate-800 px-1.5 py-0.5 rounded text-slate-400">{schema?.tables.length ?? 0}</span>
+                <span className="ml-auto text-[10px] bg-surface-container px-1.5 py-0.5 rounded text-on-surface-variant">{schema?.tables.length ?? 0}</span>
               </summary>
               <div className="pl-4 pt-1 space-y-0.5">
                 {schema?.tables.map(table => (
                   <div key={table}>
                     <div className="flex items-center py-1 px-2 rounded hover:bg-primary/5 transition-colors group/tbl">
                       <div onClick={() => toggleTable(table)} className="flex-1 flex items-center gap-1 min-w-0 cursor-pointer">
-                        <span className={`material-symbols-outlined text-xs text-slate-500 transition-transform duration-200 shrink-0 ${expandedTables[table] ? 'rotate-90' : ''}`}>chevron_right</span>
-                        <span className="text-xs text-slate-300 truncate font-mono">{table}</span>
+                        <span className={`material-symbols-outlined text-xs text-on-surface0 transition-transform duration-200 shrink-0 ${expandedTables[table] ? 'rotate-90' : ''}`}>chevron_right</span>
+                        <span className="text-xs text-on-surface truncate font-mono">{table}</span>
                       </div>
                       <button onClick={() => setSql(`SELECT * FROM ${table} LIMIT 50`)}
-                        className="opacity-0 group-hover/tbl:opacity-100 text-slate-600 hover:text-primary transition-all shrink-0 ml-1" title="SELECT from this table">
+                        className="opacity-0 group-hover/tbl:opacity-100 text-outline hover:text-primary transition-all shrink-0 ml-1" title="SELECT from this table">
                         <span className="material-symbols-outlined text-sm">play_arrow</span>
                       </button>
                     </div>
@@ -484,7 +484,7 @@ const QueryWorkbench: React.FC = () => {
                       <div className="ml-6 pl-3 border-l border-primary/20 py-1 space-y-1">
                         {Object.entries(tableSchemas[table]).map(([col, type]) => (
                           <div key={col} className="flex justify-between items-center text-[10px] py-0.5">
-                            <span className="text-slate-400 truncate pr-2 font-mono">{col}</span>
+                            <span className="text-on-surface-variant truncate pr-2 font-mono">{col}</span>
                             <span className="text-primary/60 font-mono uppercase shrink-0">{type}</span>
                           </div>
                         ))}
@@ -499,30 +499,30 @@ const QueryWorkbench: React.FC = () => {
             <details className="group" open>
               <summary className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-primary/10 cursor-pointer list-none">
                 <span className="material-symbols-outlined text-sm text-primary group-open:rotate-90 transition-transform">chevron_right</span>
-                <span className="material-symbols-outlined text-base text-slate-400">topic</span>
+                <span className="material-symbols-outlined text-base text-on-surface-variant">topic</span>
                 <span className="text-sm font-medium">Kafka Topics</span>
-                <span className="ml-auto text-[10px] bg-slate-800 px-1.5 py-0.5 rounded text-slate-400">{schema?.topics.length ?? 0}</span>
+                <span className="ml-auto text-[10px] bg-surface-container px-1.5 py-0.5 rounded text-on-surface-variant">{schema?.topics.length ?? 0}</span>
               </summary>
               <div className="pl-4 pt-1 space-y-0.5">
                 {schemaLoading ? (
-                  <div className="flex items-center gap-2 py-3 px-2 text-slate-500">
+                  <div className="flex items-center gap-2 py-3 px-2 text-on-surface0">
                     <span className="material-symbols-outlined text-sm animate-spin">refresh</span>
                     <span className="text-xs">Loading…</span>
                   </div>
                 ) : schema?.topics.length === 0 ? (
-                  <p className="text-[10px] text-slate-600 px-2 py-2">No topics with messages</p>
+                  <p className="text-[10px] text-outline px-2 py-2">No topics with messages</p>
                 ) : schema?.topics.map(topic => (
                   <div key={topic} className="flex items-center py-1 px-2 rounded hover:bg-primary/5 transition-colors group/topic">
                     <div onClick={() => setSql(`SELECT * FROM ${topic.replace(/[.\-]/g, '_')} LIMIT 50`)} className="flex-1 min-w-0 cursor-pointer">
-                      <span className="text-xs text-slate-400 hover:text-primary font-mono truncate block">{topic}</span>
+                      <span className="text-xs text-on-surface-variant hover:text-primary font-mono truncate block">{topic}</span>
                     </div>
                     <button onClick={e => { e.stopPropagation(); fetchDdlPreview(topic); }}
-                      className="opacity-0 group-hover/topic:opacity-100 text-slate-600 hover:text-primary transition-all shrink-0 ml-1" title="Preview DDL">
+                      className="opacity-0 group-hover/topic:opacity-100 text-outline hover:text-primary transition-all shrink-0 ml-1" title="Preview DDL">
                       <span className="material-symbols-outlined text-sm">code</span>
                     </button>
                   </div>
                 ))}
-                <p className="text-[10px] text-slate-600 px-2 pt-1">Only topics with messages shown</p>
+                <p className="text-[10px] text-outline px-2 pt-1">Only topics with messages shown</p>
               </div>
             </details>
 
@@ -530,9 +530,9 @@ const QueryWorkbench: React.FC = () => {
             <details className="group">
               <summary className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-primary/10 cursor-pointer list-none">
                 <span className="material-symbols-outlined text-sm text-primary group-open:rotate-90 transition-transform">chevron_right</span>
-                <span className="material-symbols-outlined text-base text-slate-400">bookmark</span>
+                <span className="material-symbols-outlined text-base text-on-surface-variant">bookmark</span>
                 <span className="text-sm font-medium">Saved Queries</span>
-                <span className="ml-auto text-[10px] bg-slate-800 px-1.5 py-0.5 rounded text-slate-400">{savedQueries.length}</span>
+                <span className="ml-auto text-[10px] bg-surface-container px-1.5 py-0.5 rounded text-on-surface-variant">{savedQueries.length}</span>
               </summary>
               <div className="pl-4 pt-2 space-y-1">
                 {/* Save current query */}
@@ -544,12 +544,12 @@ const QueryWorkbench: React.FC = () => {
                       onChange={e => setSaveInputName(e.target.value)}
                       onKeyDown={e => { if (e.key === 'Enter') saveQuery(); if (e.key === 'Escape') setSaveInputVisible(false); }}
                       placeholder={activeTab.name}
-                      className="flex-1 bg-background-dark border border-primary/30 rounded px-2 py-1 text-xs text-slate-200 focus:ring-1 focus:ring-primary outline-none"
+                      className="flex-1 bg-background-dark border border-primary/30 rounded px-2 py-1 text-xs text-on-surface focus:ring-1 focus:ring-primary outline-none"
                     />
                     <button onClick={saveQuery} className="text-primary hover:brightness-110">
                       <span className="material-symbols-outlined text-sm">check</span>
                     </button>
-                    <button onClick={() => setSaveInputVisible(false)} className="text-slate-600 hover:text-slate-300">
+                    <button onClick={() => setSaveInputVisible(false)} className="text-outline hover:text-on-surface">
                       <span className="material-symbols-outlined text-sm">close</span>
                     </button>
                   </div>
@@ -560,16 +560,16 @@ const QueryWorkbench: React.FC = () => {
                   </button>
                 )}
                 {savedQueries.length === 0 && !saveInputVisible && (
-                  <p className="text-[10px] text-slate-600 px-2 py-1">No saved queries yet</p>
+                  <p className="text-[10px] text-outline px-2 py-1">No saved queries yet</p>
                 )}
                 {savedQueries.map(q => (
                   <div key={q.id} className="flex items-center gap-1 py-1 px-2 rounded hover:bg-primary/5 transition-colors group/saved">
                     <div onClick={() => loadSavedQuery(q)} className="flex-1 min-w-0 cursor-pointer">
-                      <p className="text-xs text-slate-300 truncate font-medium">{q.name}</p>
-                      <p className="text-[10px] text-slate-600">{new Date(q.savedAt).toLocaleDateString()}</p>
+                      <p className="text-xs text-on-surface truncate font-medium">{q.name}</p>
+                      <p className="text-[10px] text-outline">{new Date(q.savedAt).toLocaleDateString()}</p>
                     </div>
                     <button onClick={() => deleteSavedQuery(q.id)}
-                      className="opacity-0 group-hover/saved:opacity-100 text-slate-600 hover:text-red-400 transition-all shrink-0" title="Delete">
+                      className="opacity-0 group-hover/saved:opacity-100 text-outline hover:text-error transition-all shrink-0" title="Delete">
                       <span className="material-symbols-outlined text-sm">delete</span>
                     </button>
                   </div>
@@ -586,8 +586,8 @@ const QueryWorkbench: React.FC = () => {
           <div className="flex-1 min-w-0">
             <p className="text-xs font-semibold truncate">dev_user_01</p>
             <div className="flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-              <span className="text-[10px] text-slate-400 uppercase">Connected</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-success"></span>
+              <span className="text-[10px] text-on-surface-variant uppercase">Connected</span>
             </div>
           </div>
         </div>
@@ -603,14 +603,14 @@ const QueryWorkbench: React.FC = () => {
             </div>
             <div className="h-6 w-px bg-primary/20" />
             <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-400">Mode:</span>
+              <span className="text-xs text-on-surface-variant">Mode:</span>
               <div className="flex bg-background-dark border border-primary/20 rounded overflow-hidden">
                 {([
                   { value: 'SYNC_READ', label: 'SYNC' },
                   { value: 'ASYNC_JOB', label: 'JOB' },
                 ] as const).map(mode => (
                   <button key={mode.value} onClick={() => setExecutionMode(mode.value)}
-                    className={`px-3 py-1 text-[10px] font-bold border-r last:border-r-0 border-primary/20 transition-colors ${executionMode === mode.value ? 'bg-primary/20 text-primary' : 'text-slate-500 hover:text-slate-300'}`}>
+                    className={`px-3 py-1 text-[10px] font-bold border-r last:border-r-0 border-primary/20 transition-colors ${executionMode === mode.value ? 'bg-primary/20 text-primary' : 'text-on-surface0 hover:text-on-surface'}`}>
                     {mode.label}
                   </button>
                 ))}
@@ -618,11 +618,11 @@ const QueryWorkbench: React.FC = () => {
             </div>
             {executionMode === 'SYNC_READ' && (
               <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-400">Offset:</span>
+                <span className="text-xs text-on-surface-variant">Offset:</span>
                 <div className="flex bg-background-dark border border-primary/20 rounded overflow-hidden">
                   {(['EARLIEST', 'LATEST'] as const).map(mode => (
                     <button key={mode} onClick={() => setOffsetMode(mode)}
-                      className={`px-2 py-1 text-[10px] font-bold border-r last:border-r-0 border-primary/20 transition-colors ${offsetMode === mode ? 'bg-primary/20 text-primary' : 'text-slate-500 hover:text-slate-300'}`}>
+                      className={`px-2 py-1 text-[10px] font-bold border-r last:border-r-0 border-primary/20 transition-colors ${offsetMode === mode ? 'bg-primary/20 text-primary' : 'text-on-surface0 hover:text-on-surface'}`}>
                       {mode}
                     </button>
                   ))}
@@ -633,29 +633,29 @@ const QueryWorkbench: React.FC = () => {
           <div className="flex items-center gap-2">
             <div className="relative">
               <button onClick={() => setShowHistory(h => !h)}
-                className="flex items-center gap-1.5 p-2 text-slate-500 hover:text-primary border border-primary/20 rounded-lg transition-colors" title="Query history">
+                className="flex items-center gap-1.5 p-2 text-on-surface0 hover:text-primary border border-primary/20 rounded-lg transition-colors" title="Query history">
                 <span className="material-symbols-outlined text-base">history</span>
                 {history.length > 0 && <span className="text-[9px] bg-primary text-background-dark font-bold px-1 rounded">{history.length}</span>}
               </button>
               {showHistory && (
                 <div className="absolute right-0 top-full mt-1 w-96 max-h-64 overflow-y-auto bg-background-dark border border-primary/20 rounded-xl shadow-2xl z-30">
                   <div className="px-3 py-2 border-b border-primary/10 flex items-center justify-between">
-                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Recent Queries</span>
-                    <button onClick={() => { setHistory([]); localStorage.removeItem('kse:query-history'); }} className="text-[10px] text-slate-600 hover:text-red-400">Clear</button>
+                    <span className="text-[10px] font-bold text-on-surface0 uppercase tracking-wider">Recent Queries</span>
+                    <button onClick={() => { setHistory([]); localStorage.removeItem('kse:query-history'); }} className="text-[10px] text-outline hover:text-error">Clear</button>
                   </div>
-                  {history.length === 0 ? <p className="p-4 text-xs text-slate-600">No history yet</p>
+                  {history.length === 0 ? <p className="p-4 text-xs text-outline">No history yet</p>
                     : history.map((h, i) => (
                       <button key={i} onClick={() => { setSql(h.sql); setShowHistory(false); }}
                         className="w-full text-left px-3 py-2 hover:bg-primary/10 border-b border-primary/5 last:border-0 transition-colors">
-                        <p className="font-mono text-xs text-slate-300 truncate">{h.sql.replace(/\s+/g, ' ')}</p>
-                        <p className="text-[10px] text-slate-600 mt-0.5">{new Date(h.ts).toLocaleString()}</p>
+                        <p className="font-mono text-xs text-on-surface truncate">{h.sql.replace(/\s+/g, ' ')}</p>
+                        <p className="text-[10px] text-outline mt-0.5">{new Date(h.ts).toLocaleString()}</p>
                       </button>
                     ))
                   }
                 </div>
               )}
             </div>
-            <span className="text-[10px] text-slate-600 hidden lg:block">Ctrl+Enter</span>
+            <span className="text-[10px] text-outline hidden lg:block">Ctrl+Enter</span>
             <button onClick={runQuery} disabled={executing}
               className="flex items-center gap-2 px-4 py-2 bg-primary text-background-dark rounded-lg text-xs font-bold hover:brightness-110 disabled:opacity-50 transition-all">
               {executing ? <span className="material-symbols-outlined text-sm animate-spin">refresh</span> : <span className="material-symbols-outlined text-sm">play_arrow</span>}
@@ -677,7 +677,7 @@ const QueryWorkbench: React.FC = () => {
                   <div
                     key={tab.id}
                     onClick={() => setActiveTabId(tab.id)}
-                    className={`group/tab flex items-center gap-1.5 px-3 py-1.5 border-r border-primary/10 cursor-pointer shrink-0 transition-colors ${tab.id === activeTabId ? 'bg-background-dark/40 text-primary border-b-2 border-b-primary' : 'text-slate-500 hover:text-slate-300 hover:bg-primary/5'}`}
+                    className={`group/tab flex items-center gap-1.5 px-3 py-1.5 border-r border-primary/10 cursor-pointer shrink-0 transition-colors ${tab.id === activeTabId ? 'bg-background-dark/40 text-primary border-b-2 border-b-primary' : 'text-on-surface0 hover:text-on-surface hover:bg-primary/5'}`}
                   >
                     {renamingTabId === tab.id ? (
                       <input
@@ -698,19 +698,19 @@ const QueryWorkbench: React.FC = () => {
                     )}
                     {tabs.length > 1 && (
                       <button onClick={e => closeTab(tab.id, e)}
-                        className="opacity-0 group-hover/tab:opacity-100 text-slate-600 hover:text-slate-300 transition-all">
+                        className="opacity-0 group-hover/tab:opacity-100 text-outline hover:text-on-surface transition-all">
                         <span className="material-symbols-outlined text-xs">close</span>
                       </button>
                     )}
                   </div>
                 ))}
-                <button onClick={addTab} className="px-2 py-1.5 text-slate-600 hover:text-primary transition-colors shrink-0" title="New tab">
+                <button onClick={addTab} className="px-2 py-1.5 text-outline hover:text-primary transition-colors shrink-0" title="New tab">
                   <span className="material-symbols-outlined text-sm">add</span>
                 </button>
                 {/* Format button pushed to the right */}
                 <div className="ml-auto px-3 flex items-center">
                   <button onClick={() => editorRef.current?.getAction('editor.action.formatDocument')?.run()}
-                    className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-primary transition-colors" title="Format SQL (Shift+Alt+F)">
+                    className="flex items-center gap-1 text-[10px] text-on-surface0 hover:text-primary transition-colors" title="Format SQL (Shift+Alt+F)">
                     <span className="material-symbols-outlined text-sm">auto_fix_high</span>
                     Format
                   </button>
@@ -741,11 +741,11 @@ const QueryWorkbench: React.FC = () => {
                 <span className="material-symbols-outlined text-primary">magic_button</span>
                 <h3 className="text-sm font-bold">Window Assistant</h3>
               </div>
-              <p className="text-xs text-slate-400 leading-relaxed">Generate windowing SQL for your streaming queries.</p>
+              <p className="text-xs text-on-surface-variant leading-relaxed">Generate windowing SQL for your streaming queries.</p>
               <div className="space-y-3">
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase">Window Type</label>
-                  <select value={windowType} onChange={e => setWindowType(e.target.value)} className="w-full bg-background-dark border border-primary/20 rounded px-3 py-2 text-xs text-slate-200 focus:ring-1 focus:ring-primary outline-none">
+                  <label className="text-[10px] font-bold text-on-surface0 uppercase">Window Type</label>
+                  <select value={windowType} onChange={e => setWindowType(e.target.value)} className="w-full bg-background-dark border border-primary/20 rounded px-3 py-2 text-xs text-on-surface focus:ring-1 focus:ring-primary outline-none">
                     <option>Tumbling (Non-overlapping)</option>
                     <option>Hopping (Overlapping)</option>
                     <option>Session (Inactivity based)</option>
@@ -753,12 +753,12 @@ const QueryWorkbench: React.FC = () => {
                 </div>
                 <div className="flex gap-2">
                   <div className="flex-1 space-y-1.5">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase">Size</label>
-                    <input type="number" value={windowSize} onChange={e => setWindowSize(parseInt(e.target.value))} className="w-full bg-background-dark border border-primary/20 rounded px-3 py-2 text-xs text-slate-200 focus:ring-1 focus:ring-primary outline-none" />
+                    <label className="text-[10px] font-bold text-on-surface0 uppercase">Size</label>
+                    <input type="number" value={windowSize} onChange={e => setWindowSize(parseInt(e.target.value))} className="w-full bg-background-dark border border-primary/20 rounded px-3 py-2 text-xs text-on-surface focus:ring-1 focus:ring-primary outline-none" />
                   </div>
                   <div className="w-20 space-y-1.5">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase">Unit</label>
-                    <select value={windowUnit} onChange={e => setWindowUnit(e.target.value)} className="w-full bg-background-dark border border-primary/20 rounded px-3 py-2 text-xs text-slate-200 outline-none">
+                    <label className="text-[10px] font-bold text-on-surface0 uppercase">Unit</label>
+                    <select value={windowUnit} onChange={e => setWindowUnit(e.target.value)} className="w-full bg-background-dark border border-primary/20 rounded px-3 py-2 text-xs text-on-surface outline-none">
                       <option>MIN</option><option>SEC</option><option>HOUR</option>
                     </select>
                   </div>
@@ -783,13 +783,13 @@ const QueryWorkbench: React.FC = () => {
               <div className="flex items-center gap-5">
                 <div className="flex items-center gap-1.5">
                   <span className="material-symbols-outlined text-sm text-primary">timer</span>
-                  <span className="text-[11px] text-slate-400">Execution: <span className="text-slate-100">{executing ? '...' : executionMs !== null ? formatMs(executionMs) : '—'}</span></span>
+                  <span className="text-[11px] text-on-surface-variant">Execution: <span className="text-on-surface">{executing ? '...' : executionMs !== null ? formatMs(executionMs) : '—'}</span></span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <span className="material-symbols-outlined text-sm text-primary">list_alt</span>
-                  <span className="text-[11px] text-slate-400">
-                    Rows: <span className={results?.rows.length === DEFAULT_LIMIT ? 'text-amber-400' : 'text-slate-100'}>{results?.rows.length ?? 0}</span>
-                    {results?.rows.length === DEFAULT_LIMIT && <span className="ml-1.5 text-[10px] text-amber-500 font-semibold" title="Result set may be truncated">⚠ limit reached</span>}
+                  <span className="text-[11px] text-on-surface-variant">
+                    Rows: <span className={results?.rows.length === DEFAULT_LIMIT ? 'text-warning' : 'text-on-surface'}>{results?.rows.length ?? 0}</span>
+                    {results?.rows.length === DEFAULT_LIMIT && <span className="ml-1.5 text-[10px] text-warning font-semibold" title="Result set may be truncated">⚠ limit reached</span>}
                   </span>
                 </div>
                 {(results?.engine || (executionMode === 'SYNC_READ' && (results || executing))) && (
@@ -798,11 +798,11 @@ const QueryWorkbench: React.FC = () => {
                       ? 'Kafka Direct: bounded scan over Kafka messages. Supports SELECT, WHERE, aggregates and TUMBLE windows. No multi-topic JOINs.'
                       : 'Flink: executed by the embedded Flink SQL engine (EXPLAIN / DDL).'
                   }>
-                    <span className="material-symbols-outlined text-sm text-slate-500">settings_ethernet</span>
+                    <span className="material-symbols-outlined text-sm text-on-surface0">settings_ethernet</span>
                     <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border uppercase ${
                       (results?.engine ?? 'KAFKA_DIRECT') === 'KAFKA_DIRECT'
-                        ? 'text-cyan-400 bg-cyan-500/10 border-cyan-500/20'
-                        : 'text-violet-400 bg-violet-500/10 border-violet-500/20'
+                        ? 'text-primary bg-primary/10 border-primary/20'
+                        : 'text-secondary bg-secondary/10 border-secondary/20'
                     }`}>
                       {results?.engine ?? 'Kafka Direct'}
                     </span>
@@ -812,20 +812,20 @@ const QueryWorkbench: React.FC = () => {
               <div className="flex items-center gap-3">
                 {results && !results.error && results.rows.length > 0 && (
                   <div className="flex items-center gap-1">
-                    <button onClick={() => exportResults('csv')} className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-primary transition-colors"><span className="material-symbols-outlined text-sm">download</span>CSV</button>
-                    <span className="text-slate-700">·</span>
-                    <button onClick={() => exportResults('json')} className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-primary transition-colors"><span className="material-symbols-outlined text-sm">download</span>JSON</button>
+                    <button onClick={() => exportResults('csv')} className="flex items-center gap-1 text-[10px] text-on-surface0 hover:text-primary transition-colors"><span className="material-symbols-outlined text-sm">download</span>CSV</button>
+                    <span className="text-outline">·</span>
+                    <button onClick={() => exportResults('json')} className="flex items-center gap-1 text-[10px] text-on-surface0 hover:text-primary transition-colors"><span className="material-symbols-outlined text-sm">download</span>JSON</button>
                   </div>
                 )}
-                <span className={`w-1.5 h-1.5 rounded-full ${executing ? 'bg-primary animate-pulse' : (results || submittedJob) ? 'bg-emerald-500' : 'bg-slate-600'}`} />
-                <span className="text-[10px] font-bold text-slate-400 uppercase">
+                <span className={`w-1.5 h-1.5 rounded-full ${executing ? 'bg-primary animate-pulse' : (results || submittedJob) ? 'bg-success' : 'bg-surface-container-highest'}`} />
+                <span className="text-[10px] font-bold text-on-surface-variant uppercase">
                   {executing ? 'RUNNING' : submittedJob ? 'JOB SUBMITTED' : results ? 'COMPLETE' : 'IDLE'}
                 </span>
               </div>
             </div>
 
             {validationError && (
-              <div className="mx-4 mt-3 flex items-center gap-2 px-3 py-2 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-400 text-xs shrink-0">
+              <div className="mx-4 mt-3 flex items-center gap-2 px-3 py-2 rounded-lg border border-warning/30 bg-warning/10 text-warning text-xs shrink-0">
                 <span className="material-symbols-outlined text-base">warning</span>
                 <span>{validationError}</span>
                 <button onClick={() => setValidationError(null)} className="ml-auto"><span className="material-symbols-outlined text-base">close</span></button>
@@ -835,53 +835,53 @@ const QueryWorkbench: React.FC = () => {
             <div className="flex-1 overflow-auto custom-scrollbar">
               {results?.error ? (
                 <div className="p-4">
-                  <div className="flex items-start gap-3 p-3 rounded-lg border border-red-500/30 bg-red-500/10">
-                    <span className="material-symbols-outlined text-red-400 text-base mt-0.5 shrink-0">error</span>
+                  <div className="flex items-start gap-3 p-3 rounded-lg border border-error/30 bg-error/10">
+                    <span className="material-symbols-outlined text-error text-base mt-0.5 shrink-0">error</span>
                     <div className="flex-1 min-w-0">
-                      <p className="text-red-400 font-mono text-sm break-words">{errorSummary}</p>
+                      <p className="text-error font-mono text-sm break-words">{errorSummary}</p>
                       {errorDetails && (
-                        <button onClick={() => setShowErrorDetails(s => !s)} className="text-[10px] text-slate-500 hover:text-slate-300 mt-1.5 transition-colors">
+                        <button onClick={() => setShowErrorDetails(s => !s)} className="text-[10px] text-on-surface0 hover:text-on-surface mt-1.5 transition-colors">
                           {showErrorDetails ? '▲ Hide details' : '▼ Show details'}
                         </button>
                       )}
                       {showErrorDetails && errorDetails && (
-                        <pre className="mt-2 text-[10px] text-slate-500 font-mono whitespace-pre-wrap overflow-x-auto leading-relaxed border-t border-red-500/20 pt-2">{errorDetails}</pre>
+                        <pre className="mt-2 text-[10px] text-on-surface0 font-mono whitespace-pre-wrap overflow-x-auto leading-relaxed border-t border-error/20 pt-2">{errorDetails}</pre>
                       )}
                     </div>
                     <button onClick={() => navigator.clipboard.writeText(results.error!).then(() => toast('Error copied', 'success'))}
-                      className="text-slate-600 hover:text-slate-300 shrink-0 transition-colors" title="Copy error">
+                      className="text-outline hover:text-on-surface shrink-0 transition-colors" title="Copy error">
                       <span className="material-symbols-outlined text-sm">content_copy</span>
                     </button>
                   </div>
                 </div>
               ) : submittedJob ? (
                 <div className="p-4">
-                  <div className="flex items-start gap-3 p-4 rounded-lg border border-emerald-500/30 bg-emerald-500/10">
-                    <span className="material-symbols-outlined text-emerald-400 text-base mt-0.5 shrink-0">rocket_launch</span>
+                  <div className="flex items-start gap-3 p-4 rounded-lg border border-success/30 bg-success/10">
+                    <span className="material-symbols-outlined text-success text-base mt-0.5 shrink-0">rocket_launch</span>
                     <div className="flex-1 min-w-0 space-y-2">
                       <div>
-                        <p className="text-emerald-300 font-semibold text-sm">Flink job submitted</p>
-                        <p className="text-xs text-slate-400">The SQL was accepted in asynchronous job mode and is now tracked by the dashboard.</p>
+                        <p className="text-success font-semibold text-sm">Flink job submitted</p>
+                        <p className="text-xs text-on-surface-variant">The SQL was accepted in asynchronous job mode and is now tracked by the dashboard.</p>
                       </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px] font-mono text-slate-300">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px] font-mono text-on-surface">
                         <div>
-                          <p className="text-slate-500 uppercase tracking-wider text-[10px]">Status</p>
+                          <p className="text-on-surface0 uppercase tracking-wider text-[10px]">Status</p>
                           <p>{submittedJob.status}</p>
                         </div>
                         <div>
-                          <p className="text-slate-500 uppercase tracking-wider text-[10px]">Type</p>
+                          <p className="text-on-surface0 uppercase tracking-wider text-[10px]">Type</p>
                           <p>{submittedJob.statementType.replace('_', ' ')}</p>
                         </div>
                         <div>
-                          <p className="text-slate-500 uppercase tracking-wider text-[10px]">Query ID</p>
+                          <p className="text-on-surface0 uppercase tracking-wider text-[10px]">Query ID</p>
                           <p className="break-all">{submittedJob.queryId}</p>
                         </div>
                         <div>
-                          <p className="text-slate-500 uppercase tracking-wider text-[10px]">Flink Job ID</p>
+                          <p className="text-on-surface0 uppercase tracking-wider text-[10px]">Flink Job ID</p>
                           <p className="break-all">{submittedJob.flinkJobId}</p>
                         </div>
                       </div>
-                      <pre className="text-[10px] text-slate-500 font-mono whitespace-pre-wrap overflow-x-auto leading-relaxed border-t border-emerald-500/20 pt-2">{submittedJob.sql}</pre>
+                      <pre className="text-[10px] text-on-surface0 font-mono whitespace-pre-wrap overflow-x-auto leading-relaxed border-t border-success/20 pt-2">{submittedJob.sql}</pre>
                     </div>
                   </div>
                 </div>
@@ -891,12 +891,12 @@ const QueryWorkbench: React.FC = () => {
                     <tr>
                       {results.columns.map(col => (
                         <th key={col} onClick={() => handleSortColumn(col)}
-                          className="px-4 py-2.5 border-b border-primary/10 text-[10px] font-bold text-slate-500 uppercase tracking-widest cursor-pointer hover:text-primary select-none transition-colors">
+                          className="px-4 py-2.5 border-b border-primary/10 text-[10px] font-bold text-on-surface0 uppercase tracking-widest cursor-pointer hover:text-primary select-none transition-colors">
                           <span className="flex items-center gap-1">
                             {col}
                             {sortCol === col
                               ? <span className="material-symbols-outlined text-[10px] text-primary">{sortDir === 'asc' ? 'arrow_upward' : 'arrow_downward'}</span>
-                              : <span className="material-symbols-outlined text-[10px] text-slate-700">unfold_more</span>}
+                              : <span className="material-symbols-outlined text-[10px] text-outline">unfold_more</span>}
                           </span>
                         </th>
                       ))}
@@ -907,7 +907,7 @@ const QueryWorkbench: React.FC = () => {
                       <tr key={i} className="hover:bg-primary/5 transition-colors">
                         {results.columns.map(col => (
                           <td key={col} onClick={() => copyCell(row[col])}
-                            className="px-4 py-2.5 text-xs font-mono text-slate-300 cursor-pointer hover:text-white transition-colors" title="Click to copy">
+                            className="px-4 py-2.5 text-xs font-mono text-on-surface cursor-pointer hover:text-white transition-colors" title="Click to copy">
                             {typeof row[col] === 'object' ? JSON.stringify(row[col]) : String(row[col] ?? '')}
                           </td>
                         ))}
@@ -916,7 +916,7 @@ const QueryWorkbench: React.FC = () => {
                   </tbody>
                 </table>
               ) : (
-                <div className="h-full flex flex-col items-center justify-center text-slate-600 space-y-2">
+                <div className="h-full flex flex-col items-center justify-center text-outline space-y-2">
                   <span className="material-symbols-outlined text-3xl opacity-20">terminal</span>
                   <p className="text-xs font-medium uppercase tracking-widest">
                     {executionMode === 'ASYNC_JOB' ? 'Submit a job to track it here' : 'Run a query to see results'}

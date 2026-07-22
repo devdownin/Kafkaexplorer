@@ -274,8 +274,8 @@ const Lineage: React.FC = () => {
           style={{ position: 'fixed', left: tooltip.x + 14, top: tooltip.y - 64, zIndex: 100, pointerEvents: 'none' }}
           className="bg-background-dark/95 border border-primary/30 rounded-lg px-3 py-2 shadow-2xl text-xs max-w-[220px]"
         >
-          <p className="font-mono font-bold text-slate-100 break-all leading-snug">{tooltip.node.label}</p>
-          <p className="text-slate-500 uppercase text-[10px] mt-0.5">{tooltip.node.type}</p>
+          <p className="font-mono font-bold text-on-surface break-all leading-snug">{tooltip.node.label}</p>
+          <p className="text-on-surface0 uppercase text-[10px] mt-0.5">{tooltip.node.type}</p>
           {tooltip.node.type === 'topic' && tooltip.node.messageCount !== undefined && (
             <p className="text-primary font-mono text-[10px] mt-0.5">
               {tooltip.node.messageCount.toLocaleString()} messages
@@ -290,15 +290,15 @@ const Lineage: React.FC = () => {
         {/* Search */}
         <div className="relative">
           <div className="flex items-center gap-2 bg-primary/5 border border-primary/20 rounded-lg px-2.5 py-1.5 focus-within:border-primary/40 transition-colors">
-            <span className="material-symbols-outlined text-slate-500 text-base shrink-0">search</span>
+            <span className="material-symbols-outlined text-on-surface0 text-base shrink-0">search</span>
             <input
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
               placeholder="Search nodes…"
-              className="bg-transparent outline-none text-xs text-slate-200 w-full placeholder:text-slate-600"
+              className="bg-transparent outline-none text-xs text-on-surface w-full placeholder:text-outline"
             />
             {searchTerm && (
-              <button onClick={() => setSearchTerm('')} className="text-slate-600 hover:text-slate-300">
+              <button onClick={() => setSearchTerm('')} className="text-outline hover:text-on-surface">
                 <span className="material-symbols-outlined text-sm">close</span>
               </button>
             )}
@@ -319,8 +319,8 @@ const Lineage: React.FC = () => {
                     className="w-full flex items-center gap-2 px-3 py-2 hover:bg-primary/10 transition-colors text-left"
                   >
                     <span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: cfg.color }} />
-                    <span className="text-xs font-mono text-slate-300 truncate">{n.label}</span>
-                    <span className="text-[9px] text-slate-600 shrink-0 ml-auto uppercase">{n.type}</span>
+                    <span className="text-xs font-mono text-on-surface truncate">{n.label}</span>
+                    <span className="text-[9px] text-outline shrink-0 ml-auto uppercase">{n.type}</span>
                   </button>
                 );
               })}
@@ -330,7 +330,7 @@ const Lineage: React.FC = () => {
 
         {/* Node type legend */}
         <div>
-          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Node Types</h3>
+          <h3 className="text-xs font-bold text-on-surface0 uppercase tracking-widest mb-2">Node Types</h3>
           <div className="space-y-1">
             {(['topic', 'table', 'view', 'query'] as const).map(type => {
               const count = data.nodes.filter(n => n.type === type).length;
@@ -338,7 +338,7 @@ const Lineage: React.FC = () => {
               return (
                 <div key={type} className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg bg-primary/5">
                   <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: cfg.color, opacity: 0.8 }} />
-                  <span className="capitalize text-slate-300 text-xs">{type}s</span>
+                  <span className="capitalize text-on-surface text-xs">{type}s</span>
                   <span className="ml-auto text-[10px] bg-primary/10 px-1.5 py-0.5 rounded text-primary font-mono">{count}</span>
                 </div>
               );
@@ -348,17 +348,17 @@ const Lineage: React.FC = () => {
 
         {/* Options */}
         <div className="border-t border-primary/10 pt-3 space-y-2.5">
-          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Options</h3>
+          <h3 className="text-xs font-bold text-on-surface0 uppercase tracking-widest mb-2">Options</h3>
 
           <label className="flex items-center justify-between cursor-pointer select-none group">
-            <span className="text-xs text-slate-400 group-hover:text-slate-200 transition-colors leading-none">
+            <span className="text-xs text-on-surface-variant group-hover:text-on-surface transition-colors leading-none">
               Connected only
             </span>
             <button
               role="switch"
               aria-checked={connectedOnly}
               onClick={() => setConnectedOnly(v => !v)}
-              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors shrink-0 ${connectedOnly ? 'bg-primary' : 'bg-slate-700'}`}
+              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors shrink-0 ${connectedOnly ? 'bg-primary' : 'bg-surface-container-high'}`}
             >
               <span className={`inline-block h-3 w-3 transform rounded-full bg-background-dark transition-transform ${connectedOnly ? 'translate-x-5' : 'translate-x-1'}`} />
             </button>
@@ -367,7 +367,7 @@ const Lineage: React.FC = () => {
           <button
             onClick={fetchLineage}
             disabled={loading}
-            className="flex items-center gap-1.5 w-full px-2.5 py-1.5 rounded-lg text-xs text-slate-400 hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-40"
+            className="flex items-center gap-1.5 w-full px-2.5 py-1.5 rounded-lg text-xs text-on-surface-variant hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-40"
           >
             <span className={`material-symbols-outlined text-sm ${loading ? 'animate-spin' : ''}`}>refresh</span>
             {loading ? 'Loading…' : 'Refresh graph'}
@@ -375,18 +375,18 @@ const Lineage: React.FC = () => {
         </div>
 
         {/* Stats */}
-        <div className="border-t border-primary/10 pt-3 text-xs text-slate-500 space-y-1">
-          <p className="font-bold text-slate-400 uppercase tracking-wider text-[10px]">Stats</p>
+        <div className="border-t border-primary/10 pt-3 text-xs text-on-surface0 space-y-1">
+          <p className="font-bold text-on-surface-variant uppercase tracking-wider text-[10px]">Stats</p>
           <p>{data.nodes.length} nodes · {data.edges.length} edges</p>
           {selectedNode && (
             <p className="text-primary truncate">
-              <span className="text-slate-600">Focus: </span>{selectedNode.label}
+              <span className="text-outline">Focus: </span>{selectedNode.label}
             </p>
           )}
         </div>
 
         {/* Controls hint */}
-        <div className="mt-auto text-[10px] text-slate-600 space-y-0.5 border-t border-primary/10 pt-3">
+        <div className="mt-auto text-[10px] text-outline space-y-0.5 border-t border-primary/10 pt-3">
           <p>Scroll to zoom</p>
           <p>Drag to pan</p>
           <p>Click node for details</p>
@@ -400,7 +400,7 @@ const Lineage: React.FC = () => {
         {/* Top badge */}
         <div className="absolute top-4 left-4 z-10 flex items-center gap-2 pointer-events-none">
           <div className="flex items-center gap-2 bg-background-dark/90 border border-primary/20 px-3 py-1.5 rounded-full text-xs">
-            <span className="text-slate-400">Lineage</span>
+            <span className="text-on-surface-variant">Lineage</span>
             <span className="text-primary/40">/</span>
             <span className="text-primary font-semibold">Dependency Graph</span>
             {connectedOnly && (
@@ -414,15 +414,15 @@ const Lineage: React.FC = () => {
         {/* Zoom controls */}
         <div className="absolute bottom-6 left-4 z-10 flex flex-col bg-background-dark border border-primary/20 rounded-xl overflow-hidden shadow-xl">
           <button onClick={() => setTransform(t => ({ ...t, scale: Math.min(4, t.scale * 1.25) }))}
-            className="p-2 hover:bg-primary/10 text-slate-400 hover:text-primary border-b border-primary/10 transition-colors">
+            className="p-2 hover:bg-primary/10 text-on-surface-variant hover:text-primary border-b border-primary/10 transition-colors">
             <span className="material-symbols-outlined text-lg">add</span>
           </button>
           <button onClick={() => setTransform(t => ({ ...t, scale: Math.max(0.15, t.scale * 0.8) }))}
-            className="p-2 hover:bg-primary/10 text-slate-400 hover:text-primary border-b border-primary/10 transition-colors">
+            className="p-2 hover:bg-primary/10 text-on-surface-variant hover:text-primary border-b border-primary/10 transition-colors">
             <span className="material-symbols-outlined text-lg">remove</span>
           </button>
           <button onClick={resetView} title="Reset view"
-            className="p-2 hover:bg-primary/10 text-slate-400 hover:text-primary transition-colors">
+            className="p-2 hover:bg-primary/10 text-on-surface-variant hover:text-primary transition-colors">
             <span className="material-symbols-outlined text-lg">center_focus_weak</span>
           </button>
         </div>
@@ -430,17 +430,17 @@ const Lineage: React.FC = () => {
         {/* Empty state */}
         {isEmpty && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 text-center z-10">
-            <span className="material-symbols-outlined text-6xl text-slate-700">account_tree</span>
+            <span className="material-symbols-outlined text-6xl text-outline">account_tree</span>
             <div>
-              <p className="text-slate-400 font-bold">No lineage data available</p>
-              <p className="text-slate-600 text-sm mt-1 max-w-xs">
+              <p className="text-on-surface-variant font-bold">No lineage data available</p>
+              <p className="text-outline text-sm mt-1 max-w-xs">
                 {connectedOnly
                   ? 'No connected topics found. Disable "Connected only" to see all topics.'
                   : 'Create Flink SQL tables and run INSERT INTO jobs to visualize the pipeline.'}
               </p>
             </div>
             {!connectedOnly && (
-              <div className="bg-primary/5 border border-primary/20 rounded-xl px-5 py-3 text-xs font-mono text-slate-400 text-left space-y-1 max-w-sm">
+              <div className="bg-primary/5 border border-primary/20 rounded-xl px-5 py-3 text-xs font-mono text-on-surface-variant text-left space-y-1 max-w-sm">
                 <p className="text-primary text-[10px] uppercase tracking-wider mb-2">Example</p>
                 <p>CREATE TABLE orders_raw (...);</p>
                 <p>INSERT INTO orders_out</p>
@@ -550,17 +550,17 @@ const Lineage: React.FC = () => {
                 {selectedNode.type}
               </span>
               <button onClick={() => { setSelectedNode(null); setDdl(null); }}
-                className="text-slate-500 hover:text-slate-300 transition-colors">
+                className="text-on-surface0 hover:text-on-surface transition-colors">
                 <span className="material-symbols-outlined text-lg">close</span>
               </button>
             </div>
-            <h2 className="text-base font-bold font-mono text-slate-100 break-all">{selectedNode.label}</h2>
+            <h2 className="text-base font-bold font-mono text-on-surface break-all">{selectedNode.label}</h2>
             {selectedNode.type === 'topic' && selectedNode.messageCount !== undefined && (
               <p className="text-[11px] text-primary font-mono mt-1">
                 {selectedNode.messageCount.toLocaleString()} messages
               </p>
             )}
-            <p className="text-[10px] text-slate-600 font-mono mt-0.5">ID: {selectedNode.id}</p>
+            <p className="text-[10px] text-outline font-mono mt-0.5">ID: {selectedNode.id}</p>
           </div>
 
           <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
@@ -568,7 +568,7 @@ const Lineage: React.FC = () => {
             {/* Writes to (outgoing) */}
             {data.edges.filter(e => e.from === selectedNode.id).length > 0 && (
               <section>
-                <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Writes to</h3>
+                <h3 className="text-[10px] font-bold text-on-surface0 uppercase tracking-widest mb-2">Writes to</h3>
                 <div className="space-y-1.5">
                   {data.edges.filter(e => e.from === selectedNode.id).map((e, i) => (
                     <button
@@ -580,10 +580,10 @@ const Lineage: React.FC = () => {
                       className="w-full flex items-center gap-2 text-xs bg-primary/5 rounded-lg px-3 py-2 hover:bg-primary/10 transition-colors text-left"
                     >
                       <span className="material-symbols-outlined text-primary text-sm">arrow_forward</span>
-                      <span className="font-mono text-slate-300 truncate">
+                      <span className="font-mono text-on-surface truncate">
                         {nodeById[e.to]?.label ?? e.to}
                       </span>
-                      {e.label && <span className="text-[9px] text-slate-600 shrink-0">({e.label})</span>}
+                      {e.label && <span className="text-[9px] text-outline shrink-0">({e.label})</span>}
                     </button>
                   ))}
                 </div>
@@ -593,7 +593,7 @@ const Lineage: React.FC = () => {
             {/* Reads from (incoming) */}
             {data.edges.filter(e => e.to === selectedNode.id).length > 0 && (
               <section>
-                <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Reads from</h3>
+                <h3 className="text-[10px] font-bold text-on-surface0 uppercase tracking-widest mb-2">Reads from</h3>
                 <div className="space-y-1.5">
                   {data.edges.filter(e => e.to === selectedNode.id).map((e, i) => (
                     <button
@@ -604,11 +604,11 @@ const Lineage: React.FC = () => {
                       }}
                       className="w-full flex items-center gap-2 text-xs bg-primary/5 rounded-lg px-3 py-2 hover:bg-primary/10 transition-colors text-left"
                     >
-                      <span className="material-symbols-outlined text-slate-500 text-sm">arrow_back</span>
-                      <span className="font-mono text-slate-400 truncate">
+                      <span className="material-symbols-outlined text-on-surface0 text-sm">arrow_back</span>
+                      <span className="font-mono text-on-surface-variant truncate">
                         {nodeById[e.from]?.label ?? e.from}
                       </span>
-                      {e.label && <span className="text-[9px] text-slate-600 shrink-0">({e.label})</span>}
+                      {e.label && <span className="text-[9px] text-outline shrink-0">({e.label})</span>}
                     </button>
                   ))}
                 </div>
@@ -616,7 +616,7 @@ const Lineage: React.FC = () => {
             )}
 
             {selectedEdges.length === 0 && (
-              <p className="text-xs text-slate-600">No connections</p>
+              <p className="text-xs text-outline">No connections</p>
             )}
           </div>
 
@@ -641,7 +641,7 @@ const Lineage: React.FC = () => {
               {loadingDdl ? 'Loading...' : 'View DDL'}
             </button>
             {ddl && (
-              <div className="rounded-lg border border-primary/10 bg-primary/5 p-3 font-mono text-[11px] text-slate-300 leading-relaxed max-h-48 overflow-y-auto custom-scrollbar whitespace-pre-wrap">
+              <div className="rounded-lg border border-primary/10 bg-primary/5 p-3 font-mono text-[11px] text-on-surface leading-relaxed max-h-48 overflow-y-auto custom-scrollbar whitespace-pre-wrap">
                 {ddl}
               </div>
             )}

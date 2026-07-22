@@ -13,22 +13,22 @@ interface AnomalyFeedProps {
 }
 
 const statusConfig: Record<AnomalyStatus, { bg: string; text: string; border: string; label: string }> = {
-  NEW: { bg: 'bg-cyan-500/15', text: 'text-cyan-400', border: 'border-cyan-500/30', label: 'NEW' },
-  RECURRENT: { bg: 'bg-amber-500/15', text: 'text-amber-400', border: 'border-amber-500/30', label: 'RECURRENT' },
-  RESOLVED: { bg: 'bg-slate-500/10', text: 'text-slate-500', border: 'border-slate-600/30', label: 'RESOLVED' },
+  NEW: { bg: 'bg-primary/15', text: 'text-primary', border: 'border-primary/30', label: 'NEW' },
+  RECURRENT: { bg: 'bg-warning/15', text: 'text-warning', border: 'border-warning/30', label: 'RECURRENT' },
+  RESOLVED: { bg: 'bg-outline/10', text: 'text-on-surface0', border: 'border-outline-variant/30', label: 'RESOLVED' },
 };
 
 const severityDot: Record<string, string> = {
-  CRITICAL: 'bg-red-500',
-  MAJOR: 'bg-amber-500',
-  MINOR: 'bg-slate-500',
+  CRITICAL: 'bg-error',
+  MAJOR: 'bg-warning',
+  MINOR: 'bg-outline',
 };
 
 const AnomalyFeed: React.FC<AnomalyFeedProps> = ({ anomalies }) => {
   if (!anomalies || anomalies.length === 0) {
     return (
-      <div className="flex items-center justify-center h-24 text-slate-500 text-sm">
-        <span className="material-symbols-outlined mr-2 text-emerald-500">check_circle</span>
+      <div className="flex items-center justify-center h-24 text-on-surface0 text-sm">
+        <span className="material-symbols-outlined mr-2 text-success">check_circle</span>
         No anomalies in current window
       </div>
     );
@@ -57,7 +57,7 @@ const AnomalyFeed: React.FC<AnomalyFeedProps> = ({ anomalies }) => {
           >
             {/* Severity dot */}
             <span className={`mt-1.5 flex-shrink-0 h-2 w-2 rounded-full ${
-              severityDot[anomaly.severity] ?? 'bg-slate-500'
+              severityDot[anomaly.severity] ?? 'bg-outline'
             }`} />
 
             {/* Content */}
@@ -66,17 +66,17 @@ const AnomalyFeed: React.FC<AnomalyFeedProps> = ({ anomalies }) => {
                 <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${sc.bg} ${sc.text} border ${sc.border}`}>
                   {sc.label}
                 </span>
-                <span className="text-xs font-mono text-slate-400">{anomaly.topic}</span>
-                <span className="text-xs text-slate-600">{anomaly.type}</span>
-                <span className="ml-auto text-[10px] text-slate-600">
+                <span className="text-xs font-mono text-on-surface-variant">{anomaly.topic}</span>
+                <span className="text-xs text-outline">{anomaly.type}</span>
+                <span className="ml-auto text-[10px] text-outline">
                   {new Date(anomaly.detectedAt).toLocaleTimeString()}
                 </span>
               </div>
-              <p className={`text-xs text-slate-300 ${isResolved ? 'line-through text-slate-500' : ''}`}>
+              <p className={`text-xs text-on-surface ${isResolved ? 'line-through text-on-surface0' : ''}`}>
                 {anomaly.description}
               </p>
               {anomaly.probableCause && !isResolved && (
-                <p className="text-[11px] text-slate-500 mt-0.5 truncate">
+                <p className="text-[11px] text-on-surface0 mt-0.5 truncate">
                   Cause: {anomaly.probableCause}
                 </p>
               )}

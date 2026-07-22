@@ -54,7 +54,7 @@ const MermaidRenderer: React.FC<MermaidRendererProps> = ({ chart }) => {
 
   if (!chart || chart.trim() === '') {
     return (
-      <div className="flex items-center justify-center h-40 text-slate-500 text-sm">
+      <div className="flex items-center justify-center h-40 text-on-surface0 text-sm">
         <span className="material-symbols-outlined mr-2">schema</span>
         No flowchart available yet
       </div>
@@ -63,8 +63,8 @@ const MermaidRenderer: React.FC<MermaidRendererProps> = ({ chart }) => {
 
   if (chart === 'NO_CHANGE') {
     return (
-      <div className="flex items-center justify-center h-16 text-slate-500 text-sm">
-        <span className="material-symbols-outlined mr-2 text-emerald-500">check_circle</span>
+      <div className="flex items-center justify-center h-16 text-on-surface0 text-sm">
+        <span className="material-symbols-outlined mr-2 text-success">check_circle</span>
         No structural changes detected in this window
       </div>
     );
@@ -73,11 +73,11 @@ const MermaidRenderer: React.FC<MermaidRendererProps> = ({ chart }) => {
   if (error) {
     return (
       <div className="space-y-2">
-        <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
-          <p className="text-xs font-bold text-red-400 mb-1">Mermaid render error</p>
-          <p className="text-xs text-red-300 font-mono">{error}</p>
+        <div className="bg-error/10 border border-error/30 rounded-lg p-3">
+          <p className="text-xs font-bold text-error mb-1">Mermaid render error</p>
+          <p className="text-xs text-error font-mono">{error}</p>
         </div>
-        <pre className="text-xs text-slate-500 font-mono p-3 bg-primary/5 rounded-lg overflow-auto max-h-48">
+        <pre className="text-xs text-on-surface0 font-mono p-3 bg-primary/5 rounded-lg overflow-auto max-h-48">
           {chart}
         </pre>
       </div>
@@ -87,7 +87,7 @@ const MermaidRenderer: React.FC<MermaidRendererProps> = ({ chart }) => {
   return (
     <div
       ref={containerRef}
-      className="w-full overflow-auto rounded-xl bg-slate-900/50 p-4 min-h-40 [&_svg]:max-w-full [&_svg]:mx-auto [&_svg]:block"
+      className="w-full overflow-auto rounded-xl bg-surface-container-low/50 p-4 min-h-40 [&_svg]:max-w-full [&_svg]:mx-auto [&_svg]:block"
     />
   );
 };

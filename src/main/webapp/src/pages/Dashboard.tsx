@@ -4,6 +4,11 @@ import axios from 'axios';
 import { useToast } from '../components/Toast';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorBanner from '../components/ErrorBanner';
+import {
+  PageHeader, Stat, Card, Badge, Button, EmptyState,
+  Table, TableHead, TableBody, TableRow, Th, Td,
+  Input, Select, type BadgeTone,
+} from '../components/ui';
 
 const PAGE_SIZES = [10, 25, 50, 100];
 const DASHBOARD_REFRESH_MS = 5000;
@@ -66,14 +71,13 @@ const Dashboard: React.FC = () => {
   const isTerminalStatus = (status: string) =>
     ['FINISHED', 'FAILED', 'CANCELED', 'CANCELLED'].includes(status.toUpperCase());
 
-  const getJobBadgeClass = (status: string) => {
+  const getJobBadgeTone = (status: string): BadgeTone => {
     const upper = status.toUpperCase();
-    if (['RUNNING'].includes(upper)) return 'bg-primary/20 text-primary';
-    if (['CANCELLING', 'CANCEL_REQUESTED'].includes(upper)) return 'bg-amber-500/15 text-amber-300';
-    if (['FINISHED'].includes(upper)) return 'bg-emerald-500/15 text-emerald-300';
-    if (['FAILED'].includes(upper)) return 'bg-red-500/15 text-red-300';
-    if (['CANCELED', 'CANCELLED'].includes(upper)) return 'bg-slate-600/40 text-slate-300';
-    return 'bg-slate-600/40 text-slate-300';
+    if (upper === 'RUNNING') return 'primary';
+    if (['CANCELLING', 'CANCEL_REQUESTED'].includes(upper)) return 'warning';
+    if (upper === 'FINISHED') return 'success';
+    if (upper === 'FAILED') return 'error';
+    return 'neutral';
   };
 
   const fetchData = async (silent = false) => {
@@ -174,14 +178,18 @@ const Dashboard: React.FC = () => {
     setPage(0);
   };
 
-  const SortIcon = ({ k }: { k: SortKey }) =>
-    sortKey !== k ? (
-      <span className="material-symbols-outlined text-sm opacity-30">unfold_more</span>
-    ) : sortDir === 'asc' ? (
-      <span className="material-symbols-outlined text-sm text-primary">arrow_upward</span>
-    ) : (
-      <span className="material-symbols-outlined text-sm text-primary">arrow_downward</span>
-    );
+  const SortButton = ({ k, children, className }: { k: SortKey; children: React.ReactNode; className?: string }) => (
+    <button onClick={() => toggleSort(k)} className={`flex items-center gap-1 hover:text-on-surface transition-colors ${className ?? ''}`}>
+      {children}
+      {sortKey !== k ? (
+        <span className="material-symbols-outlined text-[15px] opacity-30">unfold_more</span>
+      ) : sortDir === 'asc' ? (
+        <span className="material-symbols-outlined text-[15px] text-primary">arrow_upward</span>
+      ) : (
+        <span className="material-symbols-outlined text-[15px] text-primary">arrow_downward</span>
+      )}
+    </button>
+  );
 
   // Page number list (show max 7 buttons)
   const pageNumbers = (() => {
@@ -198,12 +206,6 @@ const Dashboard: React.FC = () => {
                    : 'No change since last visit';
 
   const activeJobCount = data.jobs.length;
-  const kpis = [
-    { label: 'Total Topics', value: data.topics.length.toString(), icon: 'format_list_bulleted', color: topicDiff !== 0 ? 'text-primary' : 'text-slate-500', trend: topicTrend },
-    { label: 'Message Count', value: formatCount(data.totalMessages), icon: 'bolt', color: 'text-primary', trend: data.totalMessages > 0 ? 'Active Ingest' : 'No Activity' },
-    { label: 'Flink Tables', value: data.tables.length.toString(), icon: 'database', color: 'text-slate-400', trend: data.tables.length > 0 ? `${data.tables.length} registered` : 'None registered' },
-    { label: 'Active Jobs', value: activeJobCount.toString(), icon: 'sync', color: data.health ? 'text-emerald-500' : 'text-red-500', trend: data.health ? '100% Health' : 'Degraded' },
-  ];
 
   function formatLastMessage(ts: number | null | undefined): string {
     if (!ts) return '—';
@@ -222,278 +224,252 @@ const Dashboard: React.FC = () => {
     return num.toString();
   }
 
+  const stateBadge = (state: string) =>
+    state === 'empty' ? <Badge tone="neutral">Empty</Badge>
+    : state === 'dlt' ? <Badge tone="warning" dot>DLT</Badge>
+    : <Badge tone="success" dot>Healthy</Badge>;
+
+  const pagerBtn = 'inline-flex items-center justify-center w-8 h-8 rounded-md border border-outline-variant text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high disabled:opacity-30 disabled:cursor-not-allowed transition-colors';
+
   return (
-    <div className="flex-1 overflow-y-auto p-6 space-y-6">
+    <div className="p-4 md:p-6 space-y-6">
+      <PageHeader
+        title="Dashboard"
+        description="Live overview of your Kafka cluster — topics, throughput and running Flink jobs."
+        actions={
+          <Button variant="secondary" icon="refresh" onClick={() => fetchData()}>Refresh</Button>
+        }
+      />
+
       {/* KPI Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {kpis.map((kpi) => (
-          <div key={kpi.label} className="bg-white dark:bg-primary/5 border border-slate-200 dark:border-primary/10 rounded-xl p-5">
-            <p className="text-slate-500 dark:text-slate-400 text-sm font-medium">{kpi.label}</p>
-            <h3 className="text-3xl font-bold mt-1">{kpi.value}</h3>
-            <div className={`mt-2 flex items-center text-xs font-medium ${kpi.color}`}>
-              <span className="material-symbols-outlined text-xs mr-1">{kpi.icon}</span> {kpi.trend}
-            </div>
-          </div>
-        ))}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <Stat
+          label="Total Topics" icon="format_list_bulleted"
+          tone={topicDiff !== 0 ? 'primary' : 'none'}
+          value={data.topics.length.toLocaleString()}
+          hint={<span className={topicDiff !== 0 ? 'text-primary' : ''}>{topicTrend}</span>}
+        />
+        <Stat
+          label="Message Count" icon="bolt" tone="primary"
+          value={formatCount(data.totalMessages)}
+          hint={data.totalMessages > 0 ? 'Active ingest' : 'No activity'}
+        />
+        <Stat
+          label="Flink Tables" icon="database"
+          value={data.tables.length.toLocaleString()}
+          hint={data.tables.length > 0 ? `${data.tables.length} registered` : 'None registered'}
+        />
+        <Stat
+          label="Active Jobs" icon="sync" tone={data.health ? 'success' : 'error'}
+          value={activeJobCount.toLocaleString()}
+          hint={
+            <span className={`inline-flex items-center gap-1.5 ${data.health ? 'text-success' : 'text-error'}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${data.health ? 'bg-success' : 'bg-error'}`} />
+              {data.health ? 'Healthy' : 'Degraded'}
+            </span>
+          }
+        />
       </div>
 
-      {/* Topics — full width */}
-      <div className="space-y-3">
-        {/* Toolbar */}
-        <div className="flex items-center justify-between gap-4">
-          <h2 className="text-xl font-bold flex items-center gap-2 shrink-0">
-            <span className="material-symbols-outlined text-primary">format_list_bulleted</span>
+      {/* Topics */}
+      <section className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-[15px] font-semibold text-on-surface flex items-center gap-2 shrink-0">
             Topics
-            <span className="text-sm font-normal text-slate-500">({filteredTopics.length})</span>
+            <span className="text-[12px] font-normal text-on-surface-variant tabular-nums">({filteredTopics.length})</span>
           </h2>
-          <div className="flex items-center gap-2 flex-1 justify-end">
-            {/* Search */}
-            <div className="flex items-center gap-2 bg-background-dark border border-primary/20 rounded-lg px-3 py-1.5 flex-1 max-w-xs focus-within:border-primary/40 transition-colors">
-              <span className="material-symbols-outlined text-slate-400 text-base">search</span>
-              <input
-                className="bg-transparent border-none focus:ring-0 text-sm w-full p-0 outline-none placeholder:text-slate-600"
-                placeholder="Filter topics..."
-                type="text"
+          <div className="flex flex-wrap items-center gap-3 justify-end">
+            <div className="relative w-full max-w-xs sm:w-64">
+              <span aria-hidden="true" className="material-symbols-outlined text-on-surface-variant text-[18px] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none">search</span>
+              <Input
+                className="pl-9 pr-8 h-9"
+                placeholder="Filter topics…"
+                aria-label="Filter topics"
                 value={searchTerm}
                 onChange={e => handleSearch(e.target.value)}
               />
               {searchTerm && (
-                <button onClick={() => handleSearch('')} className="text-slate-500 hover:text-slate-300">
-                  <span className="material-symbols-outlined text-base">close</span>
+                <button onClick={() => handleSearch('')} aria-label="Clear filter" className="absolute right-2 top-1/2 -translate-y-1/2 text-outline hover:text-on-surface">
+                  <span className="material-symbols-outlined text-[16px]">close</span>
                 </button>
               )}
             </div>
-            {/* Switches */}
+
             <div className="flex items-center gap-3 shrink-0">
               {([
                 { label: 'Hide empty', value: hideEmpty, set: setHideEmpty },
                 { label: 'Hide DLT',   value: hideDlt,   set: setHideDlt   },
               ] as const).map(sw => (
                 <label key={sw.label} className="flex items-center gap-1.5 cursor-pointer select-none group">
-                  <span className="text-[10px] font-bold uppercase text-slate-500 group-hover:text-slate-300 transition-colors whitespace-nowrap">
+                  <span className="text-[11px] font-medium text-on-surface-variant group-hover:text-on-surface transition-colors whitespace-nowrap">
                     {sw.label}
                   </span>
                   <button
                     role="switch"
                     aria-checked={sw.value}
+                    aria-label={sw.label}
                     onClick={() => { sw.set(!sw.value); setPage(0); }}
-                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${sw.value ? 'bg-primary' : 'bg-slate-700'}`}
+                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${sw.value ? 'bg-primary' : 'bg-surface-container-highest'}`}
                   >
-                    <span className={`inline-block h-3 w-3 transform rounded-full bg-background-dark transition-transform ${sw.value ? 'translate-x-5' : 'translate-x-1'}`} />
+                    <span className={`inline-block h-3.5 w-3.5 transform rounded-full transition-transform ${sw.value ? 'translate-x-[18px] bg-on-primary' : 'translate-x-1 bg-on-surface-variant'}`} />
                   </button>
                 </label>
               ))}
             </div>
 
-            {/* Page size */}
-            <div className="flex items-center gap-1.5 text-xs text-slate-500">
+            <div className="flex items-center gap-1.5 text-[12px] text-on-surface-variant">
               <span>Show</span>
-              <select
+              <Select
+                aria-label="Rows per page"
                 value={pageSize}
                 onChange={e => { setPageSize(Number(e.target.value)); setPage(0); }}
-                className="bg-background-dark border border-primary/20 rounded-lg px-2 py-1.5 text-slate-200 text-xs outline-none focus:border-primary/40"
+                className="h-9 w-auto"
               >
                 {PAGE_SIZES.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-              <span>per page</span>
+              </Select>
             </div>
           </div>
         </div>
 
-        {/* Table */}
-        <div className="bg-primary/5 border border-primary/10 rounded-xl overflow-hidden">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-primary/10 text-[10px] font-bold text-slate-500 uppercase tracking-wider border-b border-primary/10">
-                <th className="px-4 py-3 w-1/2">
-                  <button onClick={() => toggleSort('name')} className="flex items-center gap-1 hover:text-slate-200 transition-colors">
-                    Topic Name <SortIcon k="name" />
-                  </button>
-                </th>
-                <th className="px-4 py-3">
-                  <button onClick={() => toggleSort('size')} className="flex items-center gap-1 hover:text-slate-200 transition-colors">
-                    Messages <SortIcon k="size" />
-                  </button>
-                </th>
-                <th className="px-4 py-3">
-                  <button onClick={() => toggleSort('state')} className="flex items-center gap-1 hover:text-slate-200 transition-colors">
-                    State <SortIcon k="state" />
-                  </button>
-                </th>
-                <th className="px-4 py-3">
-                  <button onClick={() => toggleSort('lastMessage')} className="flex items-center gap-1 hover:text-slate-200 transition-colors">
-                    Last Message <SortIcon k="lastMessage" />
-                  </button>
-                </th>
-                <th className="px-4 py-3 text-right">Actions</th>
+        <Table>
+          <TableHead>
+            <tr>
+              <Th className="w-1/2"><SortButton k="name">Topic Name</SortButton></Th>
+              <Th><SortButton k="size">Messages</SortButton></Th>
+              <Th><SortButton k="state">State</SortButton></Th>
+              <Th><SortButton k="lastMessage">Last Message</SortButton></Th>
+              <Th className="text-right">Actions</Th>
+            </tr>
+          </TableHead>
+          <TableBody>
+            {pagedTopics.map(topic => (
+              <TableRow
+                key={topic}
+                className="group cursor-pointer"
+                onDoubleClick={() => navigate(`/topic/${topic}`)}
+              >
+                <Td className="font-mono font-medium text-on-surface">{topic}</Td>
+                <Td className="text-on-surface-variant tabular-nums">{(data.topicSizes[topic] ?? 0).toLocaleString()}</Td>
+                <Td>{stateBadge(getState(topic))}</Td>
+                <Td className="text-on-surface-variant tabular-nums" title={data.topicLastMessages?.[topic] ? new Date(data.topicLastMessages[topic]!).toLocaleString() : undefined}>
+                  {formatLastMessage(data.topicLastMessages?.[topic])}
+                </Td>
+                <Td className="text-right">
+                  <Link to={`/topic/${topic}`} className="inline-flex text-on-surface-variant hover:text-primary transition-colors" title="Explore topic" aria-label={`Explore ${topic}`}>
+                    <span className="material-symbols-outlined text-[19px]">visibility</span>
+                  </Link>
+                </Td>
+              </TableRow>
+            ))}
+            {pagedTopics.length === 0 && (
+              <tr>
+                <td colSpan={5}>
+                  <EmptyState
+                    icon="search_off"
+                    title={searchTerm ? 'No matching topics' : 'No topics found'}
+                    description={searchTerm ? `Nothing matches “${searchTerm}”.` : 'This cluster has no topics yet.'}
+                  />
+                </td>
               </tr>
-            </thead>
-            <tbody className="text-sm divide-y divide-primary/5">
-              {pagedTopics.map(topic => (
-                <tr key={topic}
-                  className="hover:bg-primary/5 transition-colors group cursor-pointer"
-                  onDoubleClick={() => navigate(`/topic/${topic}`)}
-                >
-                  <td className="px-4 py-3 font-mono font-medium text-slate-200">{topic}</td>
-                  <td className="px-4 py-3 text-slate-400 tabular-nums">
-                    {(data.topicSizes[topic] ?? 0).toLocaleString()}
-                  </td>
-                  <td className="px-4 py-3">
-                    {getState(topic) === 'empty' && (
-                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-500/20 text-slate-400 uppercase">Empty</span>
-                    )}
-                    {getState(topic) === 'dlt' && (
-                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-400 uppercase">DLT</span>
-                    )}
-                    {getState(topic) === 'healthy' && (
-                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 uppercase">Healthy</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-slate-400 text-xs tabular-nums" title={data.topicLastMessages?.[topic] ? new Date(data.topicLastMessages[topic]!).toLocaleString() : undefined}>
-                    {formatLastMessage(data.topicLastMessages?.[topic])}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <Link to={`/topic/${topic}`} className="text-slate-500 hover:text-primary transition-colors" title="Explore topic">
-                      <span className="material-symbols-outlined text-lg">visibility</span>
-                    </Link>
-                  </td>
-                </tr>
-              ))}
-              {pagedTopics.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="px-4 py-12 text-center text-slate-600 text-sm">
-                    {searchTerm ? `No topics match "${searchTerm}"` : 'No topics found'}
-                  </td>
-                </tr>
+            )}
+          </TableBody>
+        </Table>
+
+        {/* Pagination */}
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <p className="text-[12px] text-on-surface-variant tabular-nums">
+            {filteredTopics.length === 0
+              ? 'No results'
+              : `${page * pageSize + 1}–${Math.min((page + 1) * pageSize, filteredTopics.length)} of ${filteredTopics.length}`}
+          </p>
+          <div className="flex items-center gap-1">
+            <button onClick={() => setPage(0)} disabled={page === 0} className={pagerBtn} title="First page" aria-label="First page">
+              <span className="material-symbols-outlined text-[18px]">first_page</span>
+            </button>
+            <button onClick={() => setPage(p => p - 1)} disabled={page === 0} className={pagerBtn} aria-label="Previous page">
+              <span className="material-symbols-outlined text-[18px]">chevron_left</span>
+            </button>
+            <div className="flex items-center gap-1 mx-1">
+              {pageNumbers.map((n, i) =>
+                n < 0 ? (
+                  <span key={`ellipsis-${i}`} className="w-8 text-center text-outline text-[12px]">…</span>
+                ) : (
+                  <button
+                    key={n}
+                    onClick={() => setPage(n)}
+                    aria-label={`Page ${n + 1}`}
+                    aria-current={n === page ? 'page' : undefined}
+                    className={`w-8 h-8 text-[12px] rounded-md transition-colors tabular-nums ${
+                      n === page
+                        ? 'bg-primary text-on-primary font-semibold'
+                        : 'border border-outline-variant text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'
+                    }`}
+                  >
+                    {n + 1}
+                  </button>
+                )
               )}
-            </tbody>
-          </table>
-
-          {/* Pagination footer */}
-          <div className="px-4 py-3 bg-primary/5 border-t border-primary/10 flex items-center justify-between">
-            <p className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">
-              {filteredTopics.length === 0
-                ? 'No results'
-                : `${page * pageSize + 1}–${Math.min((page + 1) * pageSize, filteredTopics.length)} of ${filteredTopics.length}`}
-            </p>
-
-            <div className="flex items-center gap-1">
-              {/* First */}
-              <button
-                onClick={() => setPage(0)}
-                disabled={page === 0}
-                className="p-1 rounded border border-primary/10 text-slate-500 hover:text-primary hover:border-primary/30 disabled:opacity-25 disabled:cursor-not-allowed transition-colors"
-                title="First page"
-              >
-                <span className="material-symbols-outlined text-sm">first_page</span>
-              </button>
-              {/* Prev */}
-              <button
-                onClick={() => setPage(p => p - 1)}
-                disabled={page === 0}
-                className="p-1 rounded border border-primary/10 text-slate-500 hover:text-primary hover:border-primary/30 disabled:opacity-25 disabled:cursor-not-allowed transition-colors"
-              >
-                <span className="material-symbols-outlined text-sm">chevron_left</span>
-              </button>
-
-              {/* Page numbers */}
-              <div className="flex items-center gap-1 mx-1">
-                {pageNumbers.map((n, i) =>
-                  n < 0 ? (
-                    <span key={`ellipsis-${i}`} className="w-7 text-center text-slate-600 text-xs">…</span>
-                  ) : (
-                    <button
-                      key={n}
-                      onClick={() => setPage(n)}
-                      className={`w-7 h-7 text-xs rounded transition-colors ${
-                        n === page
-                          ? 'bg-primary text-background-dark font-bold'
-                          : 'border border-primary/10 text-slate-400 hover:text-primary hover:border-primary/30'
-                      }`}
-                    >
-                      {n + 1}
-                    </button>
-                  )
-                )}
-              </div>
-
-              {/* Next */}
-              <button
-                onClick={() => setPage(p => p + 1)}
-                disabled={page >= totalPages - 1}
-                className="p-1 rounded border border-primary/10 text-slate-500 hover:text-primary hover:border-primary/30 disabled:opacity-25 disabled:cursor-not-allowed transition-colors"
-              >
-                <span className="material-symbols-outlined text-sm">chevron_right</span>
-              </button>
-              {/* Last */}
-              <button
-                onClick={() => setPage(totalPages - 1)}
-                disabled={page >= totalPages - 1}
-                className="p-1 rounded border border-primary/10 text-slate-500 hover:text-primary hover:border-primary/30 disabled:opacity-25 disabled:cursor-not-allowed transition-colors"
-                title="Last page"
-              >
-                <span className="material-symbols-outlined text-sm">last_page</span>
-              </button>
             </div>
+            <button onClick={() => setPage(p => p + 1)} disabled={page >= totalPages - 1} className={pagerBtn} aria-label="Next page">
+              <span className="material-symbols-outlined text-[18px]">chevron_right</span>
+            </button>
+            <button onClick={() => setPage(totalPages - 1)} disabled={page >= totalPages - 1} className={pagerBtn} title="Last page" aria-label="Last page">
+              <span className="material-symbols-outlined text-[18px]">last_page</span>
+            </button>
           </div>
         </div>
-      </div>
+      </section>
 
-      {/* Flink Jobs — below topics */}
-      <div className="space-y-3">
-        <h2 className="text-xl font-bold flex items-center gap-2">
-          <span className="material-symbols-outlined text-primary">data_usage</span>
+      {/* Flink Jobs */}
+      <section className="space-y-3">
+        <h2 className="text-[15px] font-semibold text-on-surface flex items-center gap-2">
           Flink SQL Jobs
-          <span className="text-sm font-normal text-slate-500">({data.jobs.length})</span>
+          <span className="text-[12px] font-normal text-on-surface-variant tabular-nums">({data.jobs.length})</span>
         </h2>
         {data.jobs.length === 0 ? (
-          <div className="p-10 border border-dashed border-primary/10 rounded-xl flex flex-col items-center text-center text-slate-600">
-            <span className="material-symbols-outlined text-3xl mb-2 opacity-30">cloud_off</span>
-            <p className="text-xs font-medium uppercase tracking-widest">No active jobs</p>
-          </div>
+          <Card padding="none">
+            <EmptyState icon="cloud_off" title="No active jobs" description="Long-running Flink SQL statements will appear here while they execute." />
+          </Card>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {data.jobs.map(job => (
-              <div key={job.queryId} className="bg-primary/5 border border-primary/10 rounded-xl p-4 flex flex-col gap-3">
+              <Card key={job.queryId} padding="none" className="p-4 flex flex-col gap-3">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
-                    <p className="text-[10px] uppercase tracking-wider text-slate-500">{job.statementType.replace('_', ' ')}</p>
-                    <p className="text-xs font-mono text-slate-300 line-clamp-2">{job.sql}</p>
-                    <p className="text-[10px] text-slate-600 font-mono mt-0.5">Query: {job.queryId.substring(0, 16)}</p>
-                    <p className="text-[10px] text-slate-600 font-mono">Flink: {job.flinkJobId.substring(0, 16)}</p>
+                    <p className="text-[11px] uppercase tracking-[0.05em] text-on-surface-variant">{job.statementType.replace('_', ' ')}</p>
+                    <p className="text-[12px] font-mono text-on-surface line-clamp-2 mt-0.5">{job.sql}</p>
+                    <p className="text-[11px] text-outline font-mono mt-1">Query: {job.queryId.substring(0, 16)}</p>
+                    <p className="text-[11px] text-outline font-mono">Flink: {job.flinkJobId.substring(0, 16)}</p>
                   </div>
-                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase shrink-0 ${getJobBadgeClass(job.status)}`}>
-                    {job.status}
-                  </span>
+                  <Badge tone={getJobBadgeTone(job.status)} dot>{job.status}</Badge>
                 </div>
-                <div className="grid grid-cols-2 gap-2 text-[10px] text-slate-500 font-mono">
+                <div className="grid grid-cols-2 gap-2 text-[11px] text-on-surface-variant font-mono">
                   <div>
-                    <p className="uppercase tracking-wider text-slate-600">Started</p>
+                    <p className="uppercase tracking-[0.05em] text-outline">Started</p>
                     <p>{formatJobTime(job.startedAt)}</p>
                   </div>
                   <div>
-                    <p className="uppercase tracking-wider text-slate-600">Ended</p>
+                    <p className="uppercase tracking-[0.05em] text-outline">Ended</p>
                     <p>{formatJobTime(job.endedAt)}</p>
                   </div>
                 </div>
                 {job.cancelRequested && (
-                  <p className="text-[10px] text-amber-300 font-mono">Cancellation requested</p>
+                  <p className="text-[11px] text-warning font-mono">Cancellation requested</p>
                 )}
-                <button
+                <Button
+                  variant="danger" size="sm" className="w-full"
                   onClick={() => killJob(job.queryId)}
+                  loading={killingJob === job.queryId}
                   disabled={killingJob === job.queryId || isTerminalStatus(job.status)}
-                  className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 disabled:opacity-50 transition-colors text-xs font-bold uppercase tracking-wider w-full"
+                  icon={killingJob === job.queryId ? undefined : 'cancel'}
                 >
-                  {killingJob === job.queryId
-                    ? <span className="material-symbols-outlined text-sm animate-spin">refresh</span>
-                    : <span className="material-symbols-outlined text-sm">cancel</span>}
-                  {killingJob === job.queryId ? 'Killing...' : 'Kill Job'}
-                </button>
-              </div>
+                  {killingJob === job.queryId ? 'Killing…' : 'Kill Job'}
+                </Button>
+              </Card>
             ))}
           </div>
         )}
-      </div>
+      </section>
     </div>
   );
 };
