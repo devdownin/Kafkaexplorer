@@ -21,9 +21,11 @@ jobs:
     runs-on: ubuntu-latest
 
     services:
-      # Kafka 4.2 in KRaft mode (single combined broker+controller node, no Zookeeper)
+      # Kafka 4.2 in KRaft mode (single combined broker+controller node, no Zookeeper).
+      # The GraalVM-native image boots in ~1s vs ~15s for the JVM one and takes the
+      # exact same env-var configuration.
       kafka:
-        image: apache/kafka:4.2.0
+        image: apache/kafka-native:4.2.0
         ports:
           - 9092:9092
         env:
@@ -51,10 +53,10 @@ jobs:
         java-version: '21'
         distribution: 'temurin'
         cache: maven
-    - name: Build with Maven
-      run: mvn -B package --file pom.xml
-    - name: Run Tests
-      run: mvn test
+    - name: Build & Test with Maven
+      # verify runs the full lifecycle including tests — no separate `mvn test`
+      # pass (the previous package + test combo ran the whole suite twice)
+      run: mvn -B verify --file pom.xml
 
   deploy:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'

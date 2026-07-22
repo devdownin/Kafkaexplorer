@@ -27,8 +27,10 @@ import org.apache.kafka.clients.admin.DescribeConfigsResult;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.DescribeFeaturesResult;
+import org.apache.kafka.clients.admin.DescribeMetadataQuorumOptions;
 import org.apache.kafka.clients.admin.FeatureMetadata;
 import org.apache.kafka.clients.admin.FinalizedVersionRange;
+import org.apache.kafka.clients.admin.QuorumInfo;
 import org.apache.kafka.clients.admin.SupportedVersionRange;
 import org.springframework.stereotype.Service;
 import io.confluent.kafka.schemaregistry.client.CachedSchemaRegistryClient;
@@ -304,6 +306,22 @@ public class KafkaAdminService {
                 log.debug("Failed to retrieve feature metadata (possibly older Kafka version)", e);
             }
 
+            // KRaft controller quorum (KIP-595) — unavailable on Zookeeper-based clusters
+            try {
+                QuorumInfo quorum = adminClient
+                        .describeMetadataQuorum(new DescribeMetadataQuorumOptions().timeoutMs(5000))
+                        .quorumInfo().get(5, TimeUnit.SECONDS);
+                Map<String, Object> kraftQuorum = new LinkedHashMap<>();
+                kraftQuorum.put("leaderId", quorum.leaderId());
+                kraftQuorum.put("leaderEpoch", quorum.leaderEpoch());
+                kraftQuorum.put("highWatermark", quorum.highWatermark());
+                kraftQuorum.put("voters", toReplicaStates(quorum.voters(), quorum));
+                kraftQuorum.put("observers", toReplicaStates(quorum.observers(), quorum));
+                details.put("kraftQuorum", kraftQuorum);
+            } catch (Exception e) {
+                log.debug("Failed to describe metadata quorum (Zookeeper-based cluster?)", e);
+            }
+
             // Topic stats
             List<String> topicNames = new ArrayList<>(
                 adminClient.listTopics(new ListTopicsOptions().listInternal(false)).names().get(5, TimeUnit.SECONDS)
@@ -354,6 +372,24 @@ public class KafkaAdminService {
             details.put("error", e.getMessage());
         }
         return details;
+    }
+
+    /** Flattens raft replica states for the cluster-details payload, with lag vs the quorum high watermark. */
+    private static List<Map<String, Object>> toReplicaStates(List<QuorumInfo.ReplicaState> replicas, QuorumInfo quorum) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (QuorumInfo.ReplicaState replica : replicas) {
+            Map<String, Object> state = new LinkedHashMap<>();
+            state.put("replicaId", replica.replicaId());
+            state.put("isLeader", replica.replicaId() == quorum.leaderId());
+            state.put("logEndOffset", replica.logEndOffset());
+            state.put("lag", Math.max(0L, quorum.highWatermark() - replica.logEndOffset()));
+            state.put("lastFetchTimestampMs",
+                    replica.lastFetchTimestamp().isPresent() ? replica.lastFetchTimestamp().getAsLong() : null);
+            state.put("lastCaughtUpTimestampMs",
+                    replica.lastCaughtUpTimestamp().isPresent() ? replica.lastCaughtUpTimestamp().getAsLong() : null);
+            out.add(state);
+        }
+        return out;
     }
 
     /** Cached (30s TTL) for the same reason as {@link #getTopicsSize}: consumer + seek + poll per call. */
