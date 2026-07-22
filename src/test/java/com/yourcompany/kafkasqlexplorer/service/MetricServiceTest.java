@@ -12,6 +12,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -349,6 +350,41 @@ class MetricServiceTest {
         assertNotNull(summary);
         assertEquals(3, summary.count(), "only the newly appended observation should be recorded");
         assertEquals(60.0, summary.totalAmount(), 0.0001, "10 + 20 + 30 recorded exactly once each");
+    }
+
+    private static Map<String, Object> row(String labelValue, double metricValue) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("region", labelValue);
+        row.put("metric_value", metricValue);
+        return row;
+    }
+
+    @Test
+    void staleLabelSeriesArePrunedWhenALabelValueStopsAppearing() {
+        // Cycle 1 returns two label series (us, eu); cycle 2 drops eu.
+        Mockito.when(flinkSqlService.executeSql(Mockito.any()))
+            .thenReturn(
+                new QueryResult(List.of("region", "metric_value"),
+                    List.of(row("us", 1.0), row("eu", 2.0)), 10L, null),
+                new QueryResult(List.of("region", "metric_value"),
+                    List.of(row("us", 3.0)), 10L, null));
+
+        service.save(new MetricConfig(
+            null, "by_region", "GAUGE", "SELECT region, COUNT(*) AS metric_value FROM t GROUP BY region",
+            null, null, null, null, null, null, List.of(), Map.of(), null, null, null, null, null, List.of()));
+        String id = service.getAllMetrics().stream()
+            .filter(m -> "by_region".equals(m.name()))
+            .findFirst().orElseThrow().id();
+
+        service.refreshMetrics();
+        assertFalse(meterRegistry.find("explorer_metric_gauge").tag("metric_id", id).tag("region", "eu").gauges().isEmpty());
+        assertFalse(meterRegistry.find("explorer_metric_gauge").tag("metric_id", id).tag("region", "us").gauges().isEmpty());
+
+        service.refreshMetrics();
+        assertTrue(meterRegistry.find("explorer_metric_gauge").tag("metric_id", id).tag("region", "eu").gauges().isEmpty(),
+            "series for a label value that stopped appearing must be pruned");
+        assertFalse(meterRegistry.find("explorer_metric_gauge").tag("metric_id", id).tag("region", "us").gauges().isEmpty(),
+            "series still present in the latest cycle must be kept");
     }
 
     @Test

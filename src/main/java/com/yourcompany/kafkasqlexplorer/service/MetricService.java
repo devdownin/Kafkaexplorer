@@ -16,6 +16,7 @@ import com.yourcompany.kafkasqlexplorer.domain.QueryResult;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.DistributionSummary;
 import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.Meter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tag;
 import jakarta.annotation.PostConstruct;
@@ -116,6 +117,8 @@ public class MetricService {
     // ── Micrometer instruments per type ──────────────────────────────────────
     /** GAUGE:     metricId → (labelKey → holder)  */
     private final Map<String, Map<String, AtomicReference<Double>>> gaugeHolders = new ConcurrentHashMap<>();
+    /** GAUGE:     metricId → (labelKey → registered Gauge) — kept so a stale series can be removed. */
+    private final Map<String, Map<String, Gauge>>                   gaugeMeters   = new ConcurrentHashMap<>();
     /** COUNTER:   metricId → (labelKey → Counter) */
     private final Map<String, Map<String, Counter>>                  counterMeters = new ConcurrentHashMap<>();
     /** COUNTER:   metricId → (labelKey → lastSeenValue) for delta computation */
@@ -335,6 +338,7 @@ public class MetricService {
      */
     private void purgeMeters(String id) {
         gaugeHolders.remove(id);
+        gaugeMeters.remove(id);
         lastCounterValues.remove(id);
         counterMeters.remove(id);
         distributionMeters.remove(id);
@@ -807,10 +811,56 @@ public class MetricService {
             : processScalarRows(metricId, config, rows, configuredLabels,
                                  type.equals("COUNTER"), displayValueOverride);
 
+        pruneStaleSeries(metricId, liveLabelKeys(rows, configuredLabels));
+
         if (primaryValue != null) {
             updateHistory(metricId, primaryValue);
             updateMetricState(metricId, primaryValue, null, summary);
         }
+    }
+
+    /** The set of label series produced by this cycle's rows (rows without a numeric value are ignored). */
+    private Set<String> liveLabelKeys(List<Map<String, Object>> rows, Map<String, String> configuredLabels) {
+        Set<String> keys = new HashSet<>();
+        for (Map<String, Object> row : rows) {
+            if (extractValue(row) == null) continue;
+            keys.add(buildLabelKey(row, configuredLabels));
+        }
+        return keys;
+    }
+
+    /**
+     * Drop Micrometer series (and their internal state) whose label key did not appear in the
+     * latest successful refresh. Without this, a GROUP BY value that stops occurring — or a label
+     * sourced from the latest Kafka message that keeps changing — leaves a series registered
+     * forever, frozen at its last value and inflating cardinality (B4). Only invoked with the live
+     * key set of a non-empty successful cycle, so a transiently empty/errored cycle prunes nothing.
+     */
+    private void pruneStaleSeries(String metricId, Set<String> liveKeys) {
+        if (liveKeys.isEmpty()) return;   // no successful rows this cycle — keep existing series
+
+        removeStaleMeters(gaugeMeters.get(metricId), liveKeys);
+        retainLiveKeys(gaugeHolders.get(metricId), liveKeys);
+
+        removeStaleMeters(counterMeters.get(metricId), liveKeys);
+        retainLiveKeys(lastCounterValues.get(metricId), liveKeys);
+
+        removeStaleMeters(distributionMeters.get(metricId), liveKeys);
+        retainLiveKeys(distributionRecordedCounts.get(metricId), liveKeys);
+    }
+
+    private void removeStaleMeters(Map<String, ? extends Meter> series, Set<String> liveKeys) {
+        if (series == null) return;
+        for (String key : new ArrayList<>(series.keySet())) {
+            if (!liveKeys.contains(key)) {
+                Meter meter = series.remove(key);
+                if (meter != null) meterRegistry.remove(meter);
+            }
+        }
+    }
+
+    private void retainLiveKeys(Map<String, ?> state, Set<String> liveKeys) {
+        if (state != null) state.keySet().retainAll(liveKeys);
     }
 
     /** GAUGE / COUNTER: each row is idempotent (set) or delta-tracked, so re-scans are safe. */
@@ -896,10 +946,11 @@ public class MetricService {
             .computeIfAbsent(metricId, k -> new ConcurrentHashMap<>())
             .computeIfAbsent(labelKey, k -> {
                 AtomicReference<Double> ref = new AtomicReference<>(0.0);
-                Gauge.builder("explorer_metric_gauge", ref, AtomicReference::get)
+                Gauge gauge = Gauge.builder("explorer_metric_gauge", ref, AtomicReference::get)
                     .description("Flink SQL gauge metric")
                     .tags(tags)
                     .register(meterRegistry);
+                gaugeMeters.computeIfAbsent(metricId, x -> new ConcurrentHashMap<>()).put(labelKey, gauge);
                 return ref;
             })
             .set(value);
