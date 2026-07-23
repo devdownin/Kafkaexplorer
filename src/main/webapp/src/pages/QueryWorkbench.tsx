@@ -5,7 +5,7 @@ import type { editor, languages } from 'monaco-editor';
 import '../monaco-setup';
 import axios from 'axios';
 import { useToast } from '../components/Toast';
-import { Button, Badge, Input, Select, EmptyState, useConfirm, cn, useVirtualRows } from '../components/ui';
+import { Button, Badge, Input, Select, EmptyState, useConfirm, cn, useVirtualRows, ScrollList } from '../components/ui';
 import { describeQueryError, type QueryErrorLocation } from './queryError';
 
 /** Contrôle segmenté compact (mode d'exécution, offset). */
@@ -568,7 +568,7 @@ const QueryWorkbench: React.FC = () => {
                 <span className="text-sm font-medium">Flink Tables</span>
                 <span className="ml-auto text-[10px] bg-surface-container-highest px-1.5 py-0.5 rounded-full text-on-surface-variant tabular-nums">{schema?.tables.length ?? 0}</span>
               </summary>
-              <div className="pl-4 pt-1 space-y-0.5">
+              <ScrollList count={schema?.tables.length ?? 0} className="pl-4 pt-1 space-y-0.5">
                 {schema?.tables.map(table => (
                   <div key={table}>
                     <div className="flex items-center py-1 px-2 rounded hover:bg-primary/5 transition-colors group/tbl">
@@ -593,7 +593,7 @@ const QueryWorkbench: React.FC = () => {
                     )}
                   </div>
                 ))}
-              </div>
+              </ScrollList>
             </details>
 
             {/* Kafka Topics */}
@@ -612,17 +612,21 @@ const QueryWorkbench: React.FC = () => {
                   </div>
                 ) : schema?.topics.length === 0 ? (
                   <p className="text-[10px] text-outline px-2 py-2">No topics with messages</p>
-                ) : schema?.topics.map(topic => (
-                  <div key={topic} className="flex items-center py-1 px-2 rounded hover:bg-primary/5 transition-colors group/topic">
-                    <div onClick={() => setSql(`SELECT * FROM ${topic.replace(/[.-]/g, '_')} LIMIT 50`)} className="flex-1 min-w-0 cursor-pointer">
-                      <span className="text-xs text-on-surface-variant hover:text-primary font-mono truncate block">{topic}</span>
-                    </div>
-                    <button onClick={e => { e.stopPropagation(); fetchDdlPreview(topic); }}
-                      className="opacity-0 group-hover/topic:opacity-100 text-outline hover:text-primary transition-all shrink-0 ml-1" title="Preview DDL">
-                      <span className="material-symbols-outlined text-sm">code</span>
-                    </button>
-                  </div>
-                ))}
+                ) : (
+                  <ScrollList count={schema?.topics.length ?? 0} className="space-y-0.5">
+                    {schema?.topics.map(topic => (
+                      <div key={topic} className="flex items-center py-1 px-2 rounded hover:bg-primary/5 transition-colors group/topic">
+                        <div onClick={() => setSql(`SELECT * FROM ${topic.replace(/[.-]/g, '_')} LIMIT 50`)} className="flex-1 min-w-0 cursor-pointer">
+                          <span className="text-xs text-on-surface-variant hover:text-primary font-mono truncate block">{topic}</span>
+                        </div>
+                        <button onClick={e => { e.stopPropagation(); fetchDdlPreview(topic); }}
+                          className="opacity-0 group-hover/topic:opacity-100 text-outline hover:text-primary transition-all shrink-0 ml-1" title="Preview DDL">
+                          <span className="material-symbols-outlined text-sm">code</span>
+                        </button>
+                      </div>
+                    ))}
+                  </ScrollList>
+                )}
                 <p className="text-[10px] text-outline px-2 pt-1">Only topics with messages shown</p>
               </div>
             </details>
@@ -664,18 +668,20 @@ const QueryWorkbench: React.FC = () => {
                 {savedQueries.length === 0 && !saveInputVisible && (
                   <p className="text-[11px] text-outline px-2 py-1">No saved queries yet</p>
                 )}
-                {savedQueries.map(q => (
-                  <div key={q.id} className="flex items-center gap-1 py-1 px-2 rounded hover:bg-primary/5 transition-colors group/saved">
-                    <div onClick={() => loadSavedQuery(q)} className="flex-1 min-w-0 cursor-pointer">
-                      <p className="text-xs text-on-surface truncate font-medium">{q.name}</p>
-                      <p className="text-[10px] text-outline">{new Date(q.savedAt).toLocaleDateString()}</p>
+                <ScrollList count={savedQueries.length} className="space-y-1">
+                  {savedQueries.map(q => (
+                    <div key={q.id} className="flex items-center gap-1 py-1 px-2 rounded hover:bg-primary/5 transition-colors group/saved">
+                      <div onClick={() => loadSavedQuery(q)} className="flex-1 min-w-0 cursor-pointer">
+                        <p className="text-xs text-on-surface truncate font-medium">{q.name}</p>
+                        <p className="text-[10px] text-outline">{new Date(q.savedAt).toLocaleDateString()}</p>
+                      </div>
+                      <button onClick={() => deleteSavedQuery(q.id)}
+                        className="opacity-0 group-hover/saved:opacity-100 text-outline hover:text-error transition-all shrink-0" title="Delete">
+                        <span className="material-symbols-outlined text-sm">delete</span>
+                      </button>
                     </div>
-                    <button onClick={() => deleteSavedQuery(q.id)}
-                      className="opacity-0 group-hover/saved:opacity-100 text-outline hover:text-error transition-all shrink-0" title="Delete">
-                      <span className="material-symbols-outlined text-sm">delete</span>
-                    </button>
-                  </div>
-                ))}
+                  ))}
+                </ScrollList>
               </div>
             </details>
           </div>
