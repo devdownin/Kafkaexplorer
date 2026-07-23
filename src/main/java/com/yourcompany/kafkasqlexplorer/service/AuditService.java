@@ -123,6 +123,11 @@ public class AuditService {
     protected void runAuditAsync(String auditId, AuditOptions options) {
         try {
             List<String> topics = kafkaAdminService.listTopics();
+            // Optional prefix filter: audit only topics whose name starts with it.
+            String prefix = options.normalizedPrefix();
+            if (prefix != null) {
+                topics = topics.stream().filter(t -> t.startsWith(prefix)).toList();
+            }
             Map<String, Long> topicSizes = kafkaAdminService.getTopicsSize(topics);
 
             // Parallelize topic auditing on a bounded pool (not the shared commonPool). Each topic

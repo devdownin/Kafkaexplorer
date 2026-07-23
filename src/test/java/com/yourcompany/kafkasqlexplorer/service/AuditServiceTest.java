@@ -164,4 +164,29 @@ class AuditServiceTest {
                 .filter(t -> "demo.test.1".equals(t.name())).findFirst().orElseThrow();
         assertEquals(HealthStatus.HEALTHY, ok.healthStatus());
     }
+
+    @Test
+    void auditRestrictsToTopicsMatchingThePrefix() throws Exception {
+        when(kafkaAdminService.listTopics())
+                .thenReturn(List.of("orders.created", "orders.shipped", "payments.done"));
+        when(kafkaAdminService.getTopicsSize(any()))
+                .thenReturn(Map.of("orders.created", 10L, "orders.shipped", 5L, "payments.done", 7L));
+        when(schemaInferenceService.detectFormat(anyString())).thenReturn(MessageFormat.JSON);
+        when(schemaInferenceService.inferSchema(anyString(), any())).thenReturn(Map.of("id", "STRING"));
+        when(flinkSqlService.listTables()).thenReturn(Collections.emptyList());
+        when(ddlGeneratorService.generateDdl(anyString(), any(), any()))
+                .thenReturn("CREATE TABLE t (id STRING) WITH ('connector'='blackhole')");
+        when(flinkSqlService.executeSql(any(QueryRequest.class)))
+                .thenReturn(new QueryResult(List.of("EXPR$0"), List.of(Map.of("EXPR$0", 10L)), 10, null));
+
+        AuditOptions opts = new AuditOptions(true, true, true, true, true, "orders.");
+        auditService.runAuditAsync("pref", opts);
+
+        AuditReport report = auditService.getAuditReport("pref");
+        assertEquals(AuditStatus.COMPLETED, report.status());
+        assertEquals(2, report.totalTopics(), "only the two orders.* topics should be audited");
+        assertTrue(report.topicAudits().stream().allMatch(t -> t.name().startsWith("orders.")),
+                "no topic outside the prefix should appear");
+        assertTrue(report.topicAudits().stream().noneMatch(t -> "payments.done".equals(t.name())));
+    }
 }
