@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import {
-  PageHeader, Button, Stat, Badge, EmptyState, Card,
+  PageHeader, Button, Stat, Badge, EmptyState, Card, Input,
   Table, TableHead, TableBody, TableRow, Th, Td, type BadgeTone,
 } from '../components/ui';
 
@@ -70,6 +70,8 @@ const Audit: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'topics' | 'flows'>('topics');
   const [options, setOptions] = useState<AuditOptions>(ALL_CHECKED);
+  // Restreint l'audit aux topics dont le nom commence par ce préfixe (vide = tous).
+  const [topicPrefix, setTopicPrefix] = useState('');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const stopPolling = () => {
@@ -99,7 +101,7 @@ const Audit: React.FC = () => {
     setError(null);
     setReport(null);
     try {
-      const res = await axios.post<string>('/api/audit/start', options);
+      const res = await axios.post<string>('/api/audit/start', { ...options, topicPrefix: topicPrefix.trim() || null });
       const auditId = res.data;
       pollRef.current = setInterval(() => pollStatus(auditId), 2000);
     } catch {
@@ -150,6 +152,34 @@ const Audit: React.FC = () => {
             >None</button>
           </div>
         </div>
+        {/* Topic prefix filter */}
+        <div className="mb-4">
+          <label htmlFor="audit-topic-prefix" className="text-[11px] uppercase font-medium tracking-[0.05em] text-on-surface-variant">
+            Topic prefix <span className="normal-case tracking-normal text-outline">(optional)</span>
+          </label>
+          <div className="relative mt-1.5 max-w-sm">
+            <span aria-hidden="true" className="material-symbols-outlined text-on-surface-variant text-[18px] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none">filter_list</span>
+            <Input
+              id="audit-topic-prefix"
+              className="pl-9 pr-8 h-9 font-mono"
+              placeholder="e.g. orders."
+              value={topicPrefix}
+              onChange={e => setTopicPrefix(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && !loading) startAudit(); }}
+            />
+            {topicPrefix && (
+              <button onClick={() => setTopicPrefix('')} aria-label="Clear prefix" className="absolute right-2 top-1/2 -translate-y-1/2 text-outline hover:text-on-surface">
+                <span className="material-symbols-outlined text-[16px]">close</span>
+              </button>
+            )}
+          </div>
+          <p className="text-[11px] text-on-surface-variant mt-1">
+            {topicPrefix.trim()
+              ? <>Only topics starting with <span className="font-mono text-on-surface">{topicPrefix.trim()}</span> will be audited.</>
+              : 'Leave empty to audit every topic in the cluster.'}
+          </p>
+        </div>
+
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
           {CHECK_LABELS.map(({ key, label, description, icon }) => (
             <label
@@ -257,7 +287,7 @@ const Audit: React.FC = () => {
 
           {/* Topics Table */}
           {activeTab === 'topics' && (
-            <Table>
+            <Table rowCount={report.topicAudits.length}>
               <TableHead>
                 <tr>
                   <Th>Topic</Th>

@@ -56,6 +56,16 @@
 .custom-scrollbar::-webkit-scrollbar-thumb { background: #2a303b; border-radius: 8px; }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #3a4250; }
 
+/* En-tête collant des tables défilantes (composant Table, rowCount > seuil).
+   Fond opaque (surface-container-high) pour que les lignes ne transparaissent
+   pas sous l'en-tête pendant le défilement. */
+.kse-scroll-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background-color: #191d24;
+}
+
 /* ═══ Scène de fond : lueur indigo très discrète en haut ═══ */
 .bg-scene::before {
   content: '';

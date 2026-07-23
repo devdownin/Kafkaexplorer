@@ -5,7 +5,8 @@ import type { editor, languages } from 'monaco-editor';
 import '../monaco-setup';
 import axios from 'axios';
 import { useToast } from '../components/Toast';
-import { Button, Badge, Input, Select, EmptyState, useConfirm, cn, useVirtualRows } from '../components/ui';
+import { Button, Badge, Input, Select, EmptyState, useConfirm, cn, useVirtualRows, ScrollList } from '../components/ui';
+import { describeQueryError, type QueryErrorLocation } from './queryError';
 
 /** Contrôle segmenté compact (mode d'exécution, offset). */
 function Segmented<T extends string>({ value, onChange, options, ariaLabel }: {
@@ -247,11 +248,46 @@ const QueryWorkbench: React.FC = () => {
     });
   }, [results?.rows, sortCol, sortDir]);
 
-  const [errorSummary, errorDetails] = useMemo(() => {
-    if (!results?.error) return [null, null];
-    const idx = results.error.indexOf('\n');
-    return idx === -1 ? [results.error, null] : [results.error.substring(0, idx), results.error.substring(idx + 1)];
-  }, [results?.error]);
+  // Erreur classée (titre lisible + piste + position) — voir queryError.ts.
+  const queryError = useMemo(
+    () => (results?.error ? describeQueryError(results.error) : null),
+    [results?.error],
+  );
+
+  // Place le curseur sur la position fautive et la révèle dans l'éditeur.
+  const jumpToError = useCallback((loc: QueryErrorLocation) => {
+    const ed = editorRef.current;
+    if (!ed) return;
+    ed.focus();
+    ed.setPosition({ lineNumber: loc.line, column: loc.column });
+    ed.revealPositionInCenter({ lineNumber: loc.line, column: loc.column });
+  }, []);
+
+  // Souligne la position fautive dans Monaco (marqueur d'erreur natif) quand le
+  // moteur a renvoyé une ligne/colonne. Effacé dès qu'il n'y a plus d'erreur.
+  useEffect(() => {
+    if (!monaco || !editorRef.current) return;
+    const model = editorRef.current.getModel();
+    if (!model) return;
+    const loc = queryError?.location;
+    monaco.editor.setModelMarkers(model, 'kse-sql-error', loc ? [{
+      severity: monaco.MarkerSeverity.Error,
+      message: queryError?.hint ? `${queryError.title}\n${queryError.hint}` : (queryError?.title ?? 'SQL error'),
+      startLineNumber: loc.line,
+      startColumn: loc.column,
+      endLineNumber: loc.line,
+      endColumn: loc.column + 1,
+    }] : []);
+  }, [monaco, queryError]);
+
+  // Efface le marqueur dès que l'utilisateur édite le SQL : il pointerait
+  // sinon une position devenue obsolète.
+  useEffect(() => {
+    if (!monaco || !editorRef.current) return;
+    const model = editorRef.current.getModel();
+    if (model) monaco.editor.setModelMarkers(model, 'kse-sql-error', []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- se déclenche à chaque édition du SQL
+  }, [sql]);
 
   // ── Virtualisation de la grille de résultats ────────────────────────────────
   const resultsScrollRef = useRef<HTMLDivElement>(null);
@@ -532,7 +568,7 @@ const QueryWorkbench: React.FC = () => {
                 <span className="text-sm font-medium">Flink Tables</span>
                 <span className="ml-auto text-[10px] bg-surface-container-highest px-1.5 py-0.5 rounded-full text-on-surface-variant tabular-nums">{schema?.tables.length ?? 0}</span>
               </summary>
-              <div className="pl-4 pt-1 space-y-0.5">
+              <ScrollList count={schema?.tables.length ?? 0} className="pl-4 pt-1 space-y-0.5">
                 {schema?.tables.map(table => (
                   <div key={table}>
                     <div className="flex items-center py-1 px-2 rounded hover:bg-primary/5 transition-colors group/tbl">
@@ -557,7 +593,7 @@ const QueryWorkbench: React.FC = () => {
                     )}
                   </div>
                 ))}
-              </div>
+              </ScrollList>
             </details>
 
             {/* Kafka Topics */}
@@ -576,17 +612,21 @@ const QueryWorkbench: React.FC = () => {
                   </div>
                 ) : schema?.topics.length === 0 ? (
                   <p className="text-[10px] text-outline px-2 py-2">No topics with messages</p>
-                ) : schema?.topics.map(topic => (
-                  <div key={topic} className="flex items-center py-1 px-2 rounded hover:bg-primary/5 transition-colors group/topic">
-                    <div onClick={() => setSql(`SELECT * FROM ${topic.replace(/[.-]/g, '_')} LIMIT 50`)} className="flex-1 min-w-0 cursor-pointer">
-                      <span className="text-xs text-on-surface-variant hover:text-primary font-mono truncate block">{topic}</span>
-                    </div>
-                    <button onClick={e => { e.stopPropagation(); fetchDdlPreview(topic); }}
-                      className="opacity-0 group-hover/topic:opacity-100 text-outline hover:text-primary transition-all shrink-0 ml-1" title="Preview DDL">
-                      <span className="material-symbols-outlined text-sm">code</span>
-                    </button>
-                  </div>
-                ))}
+                ) : (
+                  <ScrollList count={schema?.topics.length ?? 0} className="space-y-0.5">
+                    {schema?.topics.map(topic => (
+                      <div key={topic} className="flex items-center py-1 px-2 rounded hover:bg-primary/5 transition-colors group/topic">
+                        <div onClick={() => setSql(`SELECT * FROM ${topic.replace(/[.-]/g, '_')} LIMIT 50`)} className="flex-1 min-w-0 cursor-pointer">
+                          <span className="text-xs text-on-surface-variant hover:text-primary font-mono truncate block">{topic}</span>
+                        </div>
+                        <button onClick={e => { e.stopPropagation(); fetchDdlPreview(topic); }}
+                          className="opacity-0 group-hover/topic:opacity-100 text-outline hover:text-primary transition-all shrink-0 ml-1" title="Preview DDL">
+                          <span className="material-symbols-outlined text-sm">code</span>
+                        </button>
+                      </div>
+                    ))}
+                  </ScrollList>
+                )}
                 <p className="text-[10px] text-outline px-2 pt-1">Only topics with messages shown</p>
               </div>
             </details>
@@ -628,18 +668,20 @@ const QueryWorkbench: React.FC = () => {
                 {savedQueries.length === 0 && !saveInputVisible && (
                   <p className="text-[11px] text-outline px-2 py-1">No saved queries yet</p>
                 )}
-                {savedQueries.map(q => (
-                  <div key={q.id} className="flex items-center gap-1 py-1 px-2 rounded hover:bg-primary/5 transition-colors group/saved">
-                    <div onClick={() => loadSavedQuery(q)} className="flex-1 min-w-0 cursor-pointer">
-                      <p className="text-xs text-on-surface truncate font-medium">{q.name}</p>
-                      <p className="text-[10px] text-outline">{new Date(q.savedAt).toLocaleDateString()}</p>
+                <ScrollList count={savedQueries.length} className="space-y-1">
+                  {savedQueries.map(q => (
+                    <div key={q.id} className="flex items-center gap-1 py-1 px-2 rounded hover:bg-primary/5 transition-colors group/saved">
+                      <div onClick={() => loadSavedQuery(q)} className="flex-1 min-w-0 cursor-pointer">
+                        <p className="text-xs text-on-surface truncate font-medium">{q.name}</p>
+                        <p className="text-[10px] text-outline">{new Date(q.savedAt).toLocaleDateString()}</p>
+                      </div>
+                      <button onClick={() => deleteSavedQuery(q.id)}
+                        className="opacity-0 group-hover/saved:opacity-100 text-outline hover:text-error transition-all shrink-0" title="Delete">
+                        <span className="material-symbols-outlined text-sm">delete</span>
+                      </button>
                     </div>
-                    <button onClick={() => deleteSavedQuery(q.id)}
-                      className="opacity-0 group-hover/saved:opacity-100 text-outline hover:text-error transition-all shrink-0" title="Delete">
-                      <span className="material-symbols-outlined text-sm">delete</span>
-                    </button>
-                  </div>
-                ))}
+                  ))}
+                </ScrollList>
               </div>
             </details>
           </div>
@@ -879,22 +921,34 @@ const QueryWorkbench: React.FC = () => {
             )}
 
             <div ref={resultsScrollRef} className="flex-1 overflow-auto custom-scrollbar">
-              {results?.error ? (
+              {queryError ? (
                 <div className="p-4">
-                  <div className="flex items-start gap-3 p-3 rounded-lg border border-error/30 bg-error/10">
+                  <div className="flex items-start gap-3 p-3 rounded-lg border border-error/30 bg-error/10" role="alert">
                     <span className="material-symbols-outlined text-error text-base mt-0.5 shrink-0">error</span>
                     <div className="flex-1 min-w-0">
-                      <p className="text-error font-mono text-sm break-words">{errorSummary}</p>
-                      {errorDetails && (
-                        <button onClick={() => setShowErrorDetails(s => !s)} className="text-[10px] text-on-surface-variant hover:text-on-surface mt-1.5 transition-colors">
-                          {showErrorDetails ? '▲ Hide details' : '▼ Show details'}
-                        </button>
+                      <p className="text-error font-semibold text-sm break-words">{queryError.title}</p>
+                      {queryError.hint && (
+                        <p className="text-on-surface-variant text-[12px] mt-1 leading-relaxed">{queryError.hint}</p>
                       )}
-                      {showErrorDetails && errorDetails && (
-                        <pre className="mt-2 text-[10px] text-on-surface-variant font-mono whitespace-pre-wrap overflow-x-auto leading-relaxed border-t border-error/20 pt-2">{errorDetails}</pre>
+                      <div className="flex items-center flex-wrap gap-x-4 gap-y-1 mt-2">
+                        {queryError.location && (
+                          <button
+                            onClick={() => jumpToError(queryError.location!)}
+                            className="inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
+                          >
+                            <span className="material-symbols-outlined text-[14px]">my_location</span>
+                            Jump to line {queryError.location.line}:{queryError.location.column}
+                          </button>
+                        )}
+                        <button onClick={() => setShowErrorDetails(s => !s)} className="text-[11px] text-on-surface-variant hover:text-on-surface transition-colors">
+                          {showErrorDetails ? '▲ Hide raw error' : '▼ Show raw error'}
+                        </button>
+                      </div>
+                      {showErrorDetails && (
+                        <pre className="mt-2 text-[10px] text-on-surface-variant font-mono whitespace-pre-wrap overflow-x-auto leading-relaxed border-t border-error/20 pt-2">{queryError.raw}</pre>
                       )}
                     </div>
-                    <button onClick={() => navigator.clipboard.writeText(results.error!).then(() => toast('Error copied', 'success'))}
+                    <button onClick={() => navigator.clipboard.writeText(results!.error!).then(() => toast('Error copied', 'success'))}
                       className="text-outline hover:text-on-surface shrink-0 transition-colors" title="Copy error">
                       <span className="material-symbols-outlined text-sm">content_copy</span>
                     </button>

@@ -14,16 +14,40 @@ import { cn } from './cn';
 export interface TableProps extends HTMLAttributes<HTMLTableElement> {
   /** Conteneur scrollable horizontal (activé par défaut). */
   scrollContainerClassName?: string;
+  /**
+   * Nombre de lignes du corps. Au-delà de `scrollThreshold`, le conteneur
+   * plafonne sa hauteur (`maxBodyHeight`) et défile verticalement avec un
+   * en-tête collant. Laisser indéfini pour une table non bornée.
+   */
+  rowCount?: number;
+  /** Seuil de lignes déclenchant le défilement vertical (défaut 25). */
+  scrollThreshold?: number;
+  /** Hauteur max du corps défilant (défaut '30rem'). */
+  maxBodyHeight?: number | string;
   children: ReactNode;
 }
 
-export const Table: FC<TableProps> = ({ className, scrollContainerClassName, children, ...props }) => (
-  <div className={cn('bg-surface-container rounded-xl ring-1 ring-white/[0.045] overflow-x-auto', scrollContainerClassName)}>
-    <table className={cn('w-full text-left border-collapse', className)} {...props}>
-      {children}
-    </table>
-  </div>
-);
+export const Table: FC<TableProps> = ({
+  className, scrollContainerClassName, rowCount, scrollThreshold = 25, maxBodyHeight = '30rem', children, ...props
+}) => {
+  const scroll = rowCount != null && rowCount > scrollThreshold;
+  const maxHeight = typeof maxBodyHeight === 'number' ? `${maxBodyHeight}px` : maxBodyHeight;
+  return (
+    <div
+      className={cn(
+        'bg-surface-container rounded-xl ring-1 ring-white/[0.045]',
+        // `kse-scroll-table` rend l'en-tête collant (voir index.css) quand on borne la hauteur.
+        scroll ? 'overflow-auto custom-scrollbar kse-scroll-table' : 'overflow-x-auto',
+        scrollContainerClassName,
+      )}
+      style={scroll ? { maxHeight } : undefined}
+    >
+      <table className={cn('w-full text-left border-collapse', className)} {...props}>
+        {children}
+      </table>
+    </div>
+  );
+};
 
 export const TableHead: FC<HTMLAttributes<HTMLTableSectionElement>> = ({ className, children, ...props }) => (
   <thead className={cn('bg-surface-container-high/60', className)} {...props}>

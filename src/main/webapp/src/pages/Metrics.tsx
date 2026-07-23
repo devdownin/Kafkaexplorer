@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import Editor, { useMonaco } from '@monaco-editor/react';
@@ -6,6 +6,7 @@ import '../monaco-setup';
 import { AreaChart, Area, ResponsiveContainer, ReferenceLine, Tooltip, YAxis } from 'recharts';
 import { useToast } from '../components/Toast';
 import { PageHeader, Button, Stat, Select, EmptyState, CardSkeleton, useConfirm } from '../components/ui';
+import { describeQueryError } from './queryError';
 
 interface MetricConfig {
   id: string;
@@ -422,8 +423,9 @@ const MetricCard: React.FC<{
           )}
         </div>
         {metric.errorMessage && (
+          // Titre lisible (voir queryError.ts) ; le message brut reste dans le tooltip.
           <p className="text-[10px] text-error mt-1 line-clamp-2" title={metric.errorMessage}>
-            <span className="material-symbols-outlined text-[11px] align-middle">error</span>{' '}{metric.errorMessage}
+            <span className="material-symbols-outlined text-[11px] align-middle">error</span>{' '}{describeQueryError(metric.errorMessage).title}
           </p>
         )}
       </div>
@@ -629,6 +631,11 @@ const Metrics: React.FC = () => {
   const [saving, setSaving]             = useState(false);
   const [previewing, setPreviewing]     = useState(false);
   const [previewResult, setPreviewResult] = useState<{ value?: unknown; rows?: unknown[]; error?: string; summary?: Record<string, unknown> } | null>(null);
+  // Erreur de prévisualisation classée (titre lisible + piste) — voir queryError.ts.
+  const previewError = useMemo(
+    () => (previewResult?.error ? describeQueryError(previewResult.error) : null),
+    [previewResult?.error],
+  );
   const [templates, setTemplates]       = useState<MetricTemplateDescriptor[]>([]);
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
   const [filterType, setFilterType]     = useState<string>('all');
@@ -1437,11 +1444,16 @@ const Metrics: React.FC = () => {
                       ? 'border-error/20 bg-error/5 text-error'
                       : 'border-success/20 bg-success/5 text-success'
                   }`}>
-                    {previewResult.error ? (
-                      <span className="flex items-center gap-2">
-                        <span className="material-symbols-outlined text-sm">error</span>
-                        {previewResult.error}
-                      </span>
+                    {previewError ? (
+                      <div className="flex items-start gap-2" title={previewError.raw}>
+                        <span className="material-symbols-outlined text-sm mt-0.5 shrink-0">error</span>
+                        <span className="min-w-0">
+                          <span className="font-semibold">{previewError.title}</span>
+                          {previewError.hint && (
+                            <span className="block font-sans text-error/80 mt-0.5 leading-relaxed">{previewError.hint}</span>
+                          )}
+                        </span>
+                      </div>
                     ) : (
                       <div className="space-y-1.5">
                         <span className="flex items-center gap-2">
