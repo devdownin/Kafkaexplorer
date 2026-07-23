@@ -98,6 +98,29 @@ describe('Table primitives', () => {
     // header row + 5 body rows, each a flex row of shimmer blocks
     expect(container.querySelectorAll('.skeleton-shimmer').length).toBeGreaterThanOrEqual(5 * 3);
   });
+
+  it('stays unbounded when rowCount is at or below the threshold', () => {
+    const { container } = render(
+      <Table rowCount={25} scrollThreshold={25}>
+        <TableBody><TableRow><Td>x</Td></TableRow></TableBody>
+      </Table>,
+    );
+    const wrapper = container.firstElementChild as HTMLElement;
+    expect(wrapper.className).not.toContain('kse-scroll-table');
+    expect(wrapper.style.maxHeight).toBe('');
+  });
+
+  it('caps height with a sticky-header scroll container past the threshold', () => {
+    const { container } = render(
+      <Table rowCount={26} scrollThreshold={25} maxBodyHeight={400}>
+        <TableBody><TableRow><Td>x</Td></TableRow></TableBody>
+      </Table>,
+    );
+    const wrapper = container.firstElementChild as HTMLElement;
+    expect(wrapper.className).toContain('kse-scroll-table');
+    expect(wrapper.className).toContain('overflow-auto');
+    expect(wrapper.style.maxHeight).toBe('400px');
+  });
 });
 
 describe('EmptyState', () => {

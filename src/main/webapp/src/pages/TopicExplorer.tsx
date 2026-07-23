@@ -5,7 +5,7 @@ import Editor from '@monaco-editor/react';
 import '../monaco-setup';
 import { useToast } from '../components/Toast';
 import ErrorBanner from '../components/ErrorBanner';
-import { Button, Badge, Stat, Input, EmptyState, StatGridSkeleton, TableSkeleton } from '../components/ui';
+import { Button, Badge, Stat, Input, EmptyState, StatGridSkeleton, TableSkeleton, Table } from '../components/ui';
 
 interface TopicDetail {
   topic: {
@@ -497,8 +497,7 @@ const TopicExplorer: React.FC = () => {
 
       {/* Partitions Tab */}
       {activeTab === 'partitions' && (
-        <div className="rounded-xl bg-surface-container ring-1 ring-white/[0.045] overflow-hidden">
-          <table className="w-full text-sm">
+        <Table rowCount={Object.keys(data.topic.maxOffsets).length} className="text-sm">
             <thead>
               <tr className="bg-surface-container-high/60 border-b border-outline-variant/60 text-[10px] uppercase tracking-widest text-on-surface-variant">
                 <th className="text-left px-5 py-3">Partition</th>
@@ -533,14 +532,12 @@ const TopicExplorer: React.FC = () => {
                 </td>
               </tr>
             </tfoot>
-          </table>
-        </div>
+        </Table>
       )}
 
       {/* Schema Tab */}
       {activeTab === 'schema' && (
-        <div className="rounded-xl bg-surface-container ring-1 ring-white/[0.045] overflow-hidden">
-          <table className="w-full text-sm">
+        <Table rowCount={Object.entries(data.schema).length} className="text-sm">
             <thead>
               <tr className="bg-surface-container-high/60 border-b border-outline-variant/60">
                 <th className="text-left px-5 py-3 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Field</th>
@@ -555,8 +552,7 @@ const TopicExplorer: React.FC = () => {
                 </tr>
               ))}
             </tbody>
-          </table>
-        </div>
+        </Table>
       )}
     </div>
   );

@@ -257,7 +257,7 @@ const Audit: React.FC = () => {
 
           {/* Topics Table */}
           {activeTab === 'topics' && (
-            <Table>
+            <Table rowCount={report.topicAudits.length}>
               <TableHead>
                 <tr>
                   <Th>Topic</Th>
