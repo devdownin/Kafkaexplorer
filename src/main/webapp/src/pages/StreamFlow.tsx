@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { Button, EmptyState } from '../components/ui';
+import { describeApiError, type QueryErrorInfo } from './queryError';
 
 interface FlowNode {
   id: string;
@@ -39,7 +40,7 @@ const StreamFlow: React.FC = () => {
   const [timeLimitMinutes, setTimeLimitMinutes] = useState(5);
   const [useRegex, setUseRegex]             = useState(false);
   const [loading, setLoading]               = useState(false);
-  const [error, setError]                   = useState<string | null>(null);
+  const [error, setError]                   = useState<QueryErrorInfo | null>(null);
   const [nodes, setNodes]                   = useState<FlowNode[]>([]);
   const [edges, setEdges]                   = useState<FlowEdge[]>([]);
   const [hasResult, setHasResult]           = useState(false);
@@ -116,8 +117,10 @@ const StreamFlow: React.FC = () => {
       setNodes(parsedNodes);
       setEdges(parsedEdges);
       setHasResult(true);
-    } catch {
-      setError('Failed to trace stream flow. Ensure the message key exists in the target topics.');
+    } catch (err) {
+      // Surface the real backend cause when there is one; otherwise fall back to
+      // the actionable hint about the message key.
+      setError(describeApiError(err, 'Failed to trace stream flow — ensure the message key exists in the target topics.'));
     } finally {
       setLoading(false);
     }
@@ -303,9 +306,12 @@ const StreamFlow: React.FC = () => {
 
         {/* Error */}
         {error && (
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 bg-error/10 border border-error/20 text-error text-xs px-4 py-2 rounded-lg flex items-center gap-2">
-            <span className="material-symbols-outlined text-sm">warning</span>
-            {error}
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 max-w-md bg-error/10 border border-error/20 text-error text-xs px-4 py-2 rounded-lg flex items-start gap-2" role="alert" title={error.raw}>
+            <span className="material-symbols-outlined text-sm mt-0.5 shrink-0">warning</span>
+            <span className="min-w-0">
+              <span className="font-semibold">{error.title}</span>
+              {error.hint && <span className="block text-error/80 mt-0.5 leading-relaxed">{error.hint}</span>}
+            </span>
           </div>
         )}
 

@@ -129,3 +129,60 @@ export function describeQueryError(rawInput: string | null | undefined): QueryEr
   // ── Repli générique ─────────────────────────────────────────────────────
   return { title: firstLine(unwrapped), location, raw };
 }
+
+/**
+ * Extrait le message le plus parlant d'une erreur d'appel API (axios ou autre),
+ * sans importer axios (duck-typing → module pur et testable). Ordre de
+ * préférence : corps `message`/`error` renvoyé par le backend → statut HTTP →
+ * message d'exception → repli.
+ */
+export function extractApiErrorMessage(error: unknown, fallback = 'Request failed'): string {
+  if (typeof error === 'string' && error.trim()) return error;
+  const e = error as {
+    response?: { data?: unknown; status?: number; statusText?: string };
+    code?: string;
+    message?: string;
+  } | null | undefined;
+
+  const data = e?.response?.data;
+  if (typeof data === 'string' && data.trim()) return data;
+  if (data && typeof data === 'object') {
+    const rec = data as Record<string, unknown>;
+    if (typeof rec.message === 'string' && rec.message.trim()) return rec.message;
+    if (typeof rec.error === 'string' && rec.error.trim()) return rec.error;
+  }
+
+  const status = e?.response?.status;
+  if (status) return `Server responded ${status}${e?.response?.statusText ? ` ${e.response.statusText}` : ''}`;
+
+  if (typeof e?.message === 'string' && e.message.trim()) return e.message;
+  return fallback;
+}
+
+/**
+ * Décrit une erreur d'appel API pour l'affichage : gère d'abord les pannes de
+ * transport (serveur injoignable, requête interrompue) qui n'ont pas de corps
+ * de réponse, puis délègue le reste à `describeQueryError` — les familles
+ * SQL-spécifiques ne se déclenchent que sur des sous-chaînes SQL, donc une
+ * erreur non-SQL n'est jamais mal étiquetée « Syntax error ».
+ */
+export function describeApiError(error: unknown, fallback = 'Request failed'): QueryErrorInfo {
+  const e = error as { response?: unknown; code?: string; message?: string } | null | undefined;
+  if (e && typeof e === 'object' && !e.response) {
+    if (e.code === 'ECONNABORTED' || /timeout/i.test(e.message ?? '')) {
+      return {
+        title: 'Request timed out',
+        hint: 'The server took too long to respond. Try again, or narrow the request.',
+        raw: e.message ?? fallback,
+      };
+    }
+    if (e.code === 'ERR_NETWORK' || e.message === 'Network Error') {
+      return {
+        title: 'Cannot reach the server',
+        hint: 'The backend may be offline or unreachable. Check that the app server is running.',
+        raw: e.message ?? fallback,
+      };
+    }
+  }
+  return describeQueryError(extractApiErrorMessage(error, fallback));
+}

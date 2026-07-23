@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { describeQueryError, parseSqlLocation } from './queryError';
+import { describeQueryError, parseSqlLocation, extractApiErrorMessage, describeApiError } from './queryError';
 
 describe('parseSqlLocation', () => {
   it('extracts a line/column pair from a Calcite message', () => {
@@ -67,5 +67,42 @@ describe('describeQueryError', () => {
     const info = describeQueryError('');
     expect(info.title).toBe('Query failed');
     expect(info.raw).toBe('');
+  });
+});
+
+describe('extractApiErrorMessage', () => {
+  it('prefers the backend response body message', () => {
+    const err = { response: { data: { message: 'Column \'x\' not found' }, status: 400 } };
+    expect(extractApiErrorMessage(err)).toBe("Column 'x' not found");
+  });
+  it('falls back to the response error field, then to HTTP status', () => {
+    expect(extractApiErrorMessage({ response: { data: { error: 'boom' } } })).toBe('boom');
+    expect(extractApiErrorMessage({ response: { status: 503, statusText: 'Service Unavailable' } }))
+      .toBe('Server responded 503 Service Unavailable');
+  });
+  it('uses the exception message and finally the fallback', () => {
+    expect(extractApiErrorMessage({ message: 'kaboom' })).toBe('kaboom');
+    expect(extractApiErrorMessage({}, 'nothing useful')).toBe('nothing useful');
+  });
+});
+
+describe('describeApiError', () => {
+  it('classifies a network failure with no response', () => {
+    const info = describeApiError({ code: 'ERR_NETWORK', message: 'Network Error' });
+    expect(info.title).toBe('Cannot reach the server');
+    expect(info.hint).toMatch(/offline|unreachable/i);
+  });
+  it('classifies an aborted (timeout) request', () => {
+    const info = describeApiError({ code: 'ECONNABORTED', message: 'timeout of 10000ms exceeded' });
+    expect(info.title).toBe('Request timed out');
+  });
+  it('delegates a server-provided SQL message to the SQL classifier', () => {
+    const info = describeApiError({ response: { data: { message: "Object 'orders' not found" }, status: 400 } });
+    expect(info.title).toContain('orders');
+    expect(info.title.toLowerCase()).toContain('unknown table');
+  });
+  it('uses the fallback when the error is opaque', () => {
+    const info = describeApiError({}, 'Failed to trace stream flow.');
+    expect(info.title).toBe('Failed to trace stream flow.');
   });
 });
