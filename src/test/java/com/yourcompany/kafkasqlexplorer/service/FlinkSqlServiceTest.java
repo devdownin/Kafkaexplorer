@@ -12,7 +12,6 @@ import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 import org.apache.flink.types.Row;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
@@ -42,8 +41,9 @@ import static org.mockito.Mockito.*;
  * used only when the planner path is disabled or fails. Tests that exercise it mock
  * {@code listTopics()} and {@code getEarliestRecords()} / {@code getRecentRecords()}.
  *
- * <p>A few tests annotated {@code @Disabled("KAFKA_DIRECT")} were written against the old
- * bypass; they can be re-enabled/re-baselined now that the Flink SELECT path is restored.
+ * <p>The tests that were once annotated {@code @Disabled("KAFKA_DIRECT")} — written against
+ * the old bypass, when SELECT could not resolve in-memory views — are enabled again now that
+ * the Flink SELECT path is restored.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class FlinkSqlServiceTest {
@@ -145,9 +145,6 @@ class FlinkSqlServiceTest {
     // Basic SQL execution
     // ──────────────────────────────────────────────────────────────────────────────
 
-    @Disabled("KAFKA_DIRECT: SELECT from in-memory Flink views is not supported. " +
-              "kafkaDirectSelect() resolves tables via kafkaAdminService.listTopics() only. " +
-              "Restore this test if a real Flink SELECT path is introduced.")
     @Test
     void basicSelectReturnsAllRowsAndColumns() {
         QueryResult result = execute("SELECT order_id, amount, state FROM orders");
@@ -157,7 +154,6 @@ class FlinkSqlServiceTest {
         assertEquals(4, result.rows().size());
     }
 
-    @Disabled("KAFKA_DIRECT: SELECT from in-memory Flink view 'orders' not supported. See basicSelectReturnsAllRowsAndColumns.")
     @Test
     void selectStarReturnsAllColumns() {
         QueryResult result = execute("SELECT * FROM orders");
@@ -167,7 +163,6 @@ class FlinkSqlServiceTest {
         assertEquals(4, result.rows().size());
     }
 
-    @Disabled("KAFKA_DIRECT: SELECT from in-memory Flink view 'orders' not supported. See basicSelectReturnsAllRowsAndColumns.")
     @Test
     void whereClauseFiltersRows() {
         QueryResult result = execute("SELECT order_id, state FROM orders WHERE state = 'RECEIVED'");
@@ -177,7 +172,6 @@ class FlinkSqlServiceTest {
         assertEquals("ORD-001", result.rows().get(0).get("order_id"));
     }
 
-    @Disabled("KAFKA_DIRECT: SELECT from in-memory Flink view 'orders' not supported. See basicSelectReturnsAllRowsAndColumns.")
     @Test
     void whereWithNumericThresholdFiltersCorrectly() {
         QueryResult result = execute("SELECT order_id FROM orders WHERE amount > 500.0");
@@ -189,7 +183,6 @@ class FlinkSqlServiceTest {
         assertTrue(ids.containsAll(List.of("ORD-001", "ORD-003")));
     }
 
-    @Disabled("KAFKA_DIRECT: SELECT from in-memory Flink view 'orders' not supported. See basicSelectReturnsAllRowsAndColumns.")
     @Test
     void columnAliasAndExpressionWork() {
         QueryResult result = execute(
@@ -203,8 +196,6 @@ class FlinkSqlServiceTest {
         assertTrue(row.containsKey("amount_with_tax"), "Computed alias must be present");
     }
 
-    @Disabled("KAFKA_DIRECT: multi-topic JOINs are not supported in bounded scan mode. " +
-              "kafkaDirectSelect() handles a single FROM topic only.")
     @Test
     void innerJoinBetweenTwoInMemoryTables() {
         QueryResult result = execute(
@@ -221,7 +212,6 @@ class FlinkSqlServiceTest {
                         () -> fail("ORD-001 not found in join result"));
     }
 
-    @Disabled("KAFKA_DIRECT: SELECT from in-memory Flink view 'orders' not supported. See basicSelectReturnsAllRowsAndColumns.")
     @Test
     void maxRowsLimitIsRespected() {
         QueryResult result = service.executeSql(
@@ -292,7 +282,6 @@ class FlinkSqlServiceTest {
     // Double-quoted identifier normalization
     // ──────────────────────────────────────────────────────────────────────────────
 
-    @Disabled("KAFKA_DIRECT: SELECT from in-memory Flink view 'orders' not supported. See basicSelectReturnsAllRowsAndColumns.")
     @Test
     void doubleQuotedTableIdentifierIsNormalizedToBacktick() {
         // Standard SQL uses double quotes for identifiers; Flink uses backticks.
@@ -301,7 +290,6 @@ class FlinkSqlServiceTest {
         assertEquals(1, result.rows().size());
     }
 
-    @Disabled("KAFKA_DIRECT: SELECT from in-memory Flink view 'orders' not supported. See basicSelectReturnsAllRowsAndColumns.")
     @Test
     void singleQuoteStringLiteralContainingDoubleQuoteIsPreserved() {
         // A string literal must NOT have its content altered during identifier normalization.
@@ -438,8 +426,6 @@ class FlinkSqlServiceTest {
     // XmlExtract UDF
     // ──────────────────────────────────────────────────────────────────────────────
 
-    @Disabled("KAFKA_DIRECT: SELECT from in-memory Flink view 'xml_messages' not supported. " +
-              "XmlExtract UDF integration with KAFKA_DIRECT requires a real Kafka topic containing XML payloads.")
     @Test
     void xmlExtractUdfIsRegisteredAndParsesXml() {
         QueryResult result = execute(
@@ -452,7 +438,6 @@ class FlinkSqlServiceTest {
         assertTrue(customers.contains("Bob"),   "XmlExtract must find 'Bob'");
     }
 
-    @Disabled("KAFKA_DIRECT: SELECT from in-memory Flink view 'xml_messages' not supported. See xmlExtractUdfIsRegisteredAndParsesXml.")
     @Test
     void xmlExtractReturnsNullForMissingPath() {
         QueryResult result = execute(
