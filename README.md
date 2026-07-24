@@ -77,7 +77,7 @@ Process Mining works with the LLM you already have — **Anthropic Claude**, any
 
 ## 🛠️ Under the hood
 
-A single Spring Boot 3.5 JAR embedding Apache Flink 2.3 as the SQL engine, with a React 19 + Tailwind frontend. Kafka clients 4.2 (compatible with brokers 2.1+), Avro via Confluent Schema Registry, Prometheus metrics on `/actuator/prometheus`. SQL is whitelisted (`SELECT` / `EXPLAIN` / `CREATE TABLE` only), XML parsing is XXE-hardened, and credentials are redacted from any DDL shown in the UI.
+A single Spring Boot 4.1 JAR embedding Apache Flink 2.3 as the SQL engine, with a React 19 + Tailwind frontend. Kafka clients 4.2 (compatible with brokers 2.1+), Avro via Confluent Schema Registry, Prometheus metrics on `/actuator/prometheus`. SQL is whitelisted (`SELECT` / `EXPLAIN` / `CREATE TABLE` only), XML parsing is XXE-hardened, and credentials are redacted from any DDL shown in the UI.
 
 Architecture deep-dive: **[docs/architecture.md](docs/architecture.md)**
 

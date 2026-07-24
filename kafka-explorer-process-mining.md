@@ -6,7 +6,7 @@
 ## CONTEXTE PROJET
 
 Tu travailles sur **Kafka Explorer**, une application existante composée de :
-- **Backend** : Spring Boot 3 / Java 21
+- **Backend** : Spring Boot 4 / Java 21
 - **Frontend** : React
 - **Infrastructure** : Apache Kafka (consumer existant)
 
