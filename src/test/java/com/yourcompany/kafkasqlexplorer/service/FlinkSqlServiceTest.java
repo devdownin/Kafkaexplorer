@@ -71,7 +71,7 @@ class FlinkSqlServiceTest {
 
         FlinkRuntimeCoordinator runtimeCoordinator = new FlinkRuntimeCoordinator(tableEnv);
         SqlQueryValidator validator = new SqlQueryValidator(config, tableEnv, runtimeCoordinator);
-        FlinkJobStore flinkJobStore = new FlinkJobStore(new ObjectMapper(), config);
+        FlinkJobStore flinkJobStore = new FlinkJobStore(config);
         service = new FlinkSqlService(tableEnv, runtimeCoordinator, config, validator,
                 kafkaAdminService, schemaInferenceService, ddlGeneratorService, flinkJobStore);
 
