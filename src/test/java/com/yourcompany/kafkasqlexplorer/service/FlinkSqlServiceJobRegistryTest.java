@@ -47,7 +47,7 @@ class FlinkSqlServiceJobRegistryTest {
         config.setDefaultQueryTimeoutMs(10_000);
         storePath = Files.createTempFile("flink-job-store-", ".json");
         config.setFlinkJobStorePath(storePath.toString());
-        flinkJobStore = new FlinkJobStore(new ObjectMapper(), config);
+        flinkJobStore = new FlinkJobStore(config);
 
         // Mocking FlinkRuntimeCoordinator to execute actions immediately
         FlinkRuntimeCoordinator runtimeCoordinator = mock(FlinkRuntimeCoordinator.class);
@@ -172,7 +172,7 @@ class FlinkSqlServiceJobRegistryTest {
 
         FlinkJobSummary summary = spyService.submitJob(QueryRequest.sql("INSERT INTO job_sink SELECT * FROM job_source", null, null, null));
 
-        FlinkJobStore reloadedStore = new FlinkJobStore(new ObjectMapper(), configFor(storePath));
+        FlinkJobStore reloadedStore = new FlinkJobStore(configFor(storePath));
         FlinkManagedJobDetails persisted = reloadedStore.findById(summary.queryId()).orElseThrow();
 
         assertEquals(summary.queryId(), persisted.queryId());

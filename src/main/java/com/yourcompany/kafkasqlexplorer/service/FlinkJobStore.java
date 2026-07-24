@@ -33,8 +33,8 @@ public class FlinkJobStore {
     private final long retentionMs;
     private final Map<String, FlinkManagedJobDetails> jobs = new ConcurrentHashMap<>();
 
-    public FlinkJobStore(ObjectMapper objectMapper, ExplorerConfig explorerConfig) {
-        this.objectMapper = objectMapper;
+    public FlinkJobStore(ExplorerConfig explorerConfig) {
+        this.objectMapper = new ObjectMapper();
         this.storePath = Path.of(explorerConfig.getFlinkJobStorePath()).toAbsolutePath().normalize();
         this.retentionMs = Duration.ofHours(explorerConfig.getFlinkJobRetentionHours()).toMillis();
         load();
