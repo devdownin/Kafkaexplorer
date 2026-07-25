@@ -4,8 +4,10 @@ package com.yourcompany.kafkasqlexplorer.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yourcompany.kafkasqlexplorer.config.ClaudeConfig;
+import com.yourcompany.kafkasqlexplorer.config.ProcessMiningConfig;
 import com.yourcompany.kafkasqlexplorer.domain.FieldProfileResult;
-import com.yourcompany.kafkasqlexplorer.domain.KafkaMessage;
+import com.yourcompany.kafkasqlexplorer.domain.PayloadDigest;
+import com.yourcompany.kafkasqlexplorer.domain.PayloadShape;
 import com.yourcompany.kafkasqlexplorer.domain.SnapshotConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,8 +15,10 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Service
 public class FieldProfilingService {
@@ -23,17 +27,32 @@ public class FieldProfilingService {
 
     private final KafkaSnapshotReader snapshotReader;
     private final ClaudeConfig claudeConfig;
+    private final ProcessMiningConfig processMiningConfig;
+    private final PayloadDigestService payloadDigestService;
     private final LlmClient llmClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @org.springframework.beans.factory.annotation.Autowired
-    public FieldProfilingService(KafkaSnapshotReader snapshotReader, ClaudeConfig claudeConfig) {
-        this(snapshotReader, claudeConfig, LlmClientFactory.create(claudeConfig));
+    public FieldProfilingService(KafkaSnapshotReader snapshotReader, ClaudeConfig claudeConfig,
+                                  ProcessMiningConfig processMiningConfig,
+                                  PayloadDigestService payloadDigestService) {
+        this(snapshotReader, claudeConfig, processMiningConfig, payloadDigestService,
+            LlmClientFactory.create(claudeConfig));
     }
 
+    /** Test seam: defaults the ingestion tuning so unit tests only have to supply an LlmClient. */
     public FieldProfilingService(KafkaSnapshotReader snapshotReader, ClaudeConfig claudeConfig, LlmClient llmClient) {
+        this(snapshotReader, claudeConfig, new ProcessMiningConfig(),
+            new PayloadDigestService(new ProcessMiningConfig()), llmClient);
+    }
+
+    public FieldProfilingService(KafkaSnapshotReader snapshotReader, ClaudeConfig claudeConfig,
+                                  ProcessMiningConfig processMiningConfig,
+                                  PayloadDigestService payloadDigestService, LlmClient llmClient) {
         this.snapshotReader = snapshotReader;
         this.claudeConfig = claudeConfig;
+        this.processMiningConfig = processMiningConfig;
+        this.payloadDigestService = payloadDigestService;
         this.llmClient = llmClient;
     }
 
@@ -47,17 +66,20 @@ public class FieldProfilingService {
             );
         }
 
-        // 1. Read samples — 50 messages per topic
+        // 1. Read samples — 50 messages per topic, digested on the fly. Profiling only needs
+        //    paths and example values, so a 1 MB document contributes its leaf paths and a
+        //    bounded set of samples instead of a megabyte of prompt.
         SnapshotConfig samplingConfig = SnapshotConfig.latestN(50);
-        List<KafkaMessage> messages = snapshotReader.read(topics, samplingConfig);
+        List<PayloadDigest> digests = snapshotReader.readDigested(
+            topics, samplingConfig, null, processMiningConfig.getMaxShapePaths());
 
-        // 2. Group messages by topic
-        Map<String, List<KafkaMessage>> byTopic = new LinkedHashMap<>();
+        // 2. Group by topic
+        Map<String, List<PayloadDigest>> byTopic = new LinkedHashMap<>();
         for (String topic : topics) {
             byTopic.put(topic, new ArrayList<>());
         }
-        for (KafkaMessage msg : messages) {
-            byTopic.computeIfAbsent(msg.topic(), k -> new ArrayList<>()).add(msg);
+        for (PayloadDigest digest : digests) {
+            byTopic.computeIfAbsent(digest.topic(), k -> new ArrayList<>()).add(digest);
         }
 
         // 3. Build user prompt
@@ -85,29 +107,89 @@ public class FieldProfilingService {
         return parseProfileResult(rawResponse);
     }
 
-    private String buildProfilingPrompt(List<String> topics, Map<String, List<KafkaMessage>> byTopic) {
+    /**
+     * Builds the profiling prompt from digests: the structure of each topic (leaf paths, array
+     * cardinalities) plus a few example values per path. That is exactly what role inference
+     * needs, and it stays bounded whatever the payload size.
+     */
+    private String buildProfilingPrompt(List<String> topics, Map<String, List<PayloadDigest>> byTopic) {
         StringBuilder sb = new StringBuilder();
         sb.append("## TOPICS À ANALYSER\n");
         for (String topic : topics) {
             sb.append("- ").append(topic).append("\n");
         }
-        sb.append("\n## ÉCHANTILLONS DE MESSAGES (50 par topic)\n");
+        sb.append("""
 
-        for (Map.Entry<String, List<KafkaMessage>> entry : byTopic.entrySet()) {
-            sb.append("\n### Topic: ").append(entry.getKey()).append("\n");
-            sb.append("[\n");
-            List<KafkaMessage> msgs = entry.getValue().stream().limit(50).toList();
-            for (int i = 0; i < msgs.size(); i++) {
-                KafkaMessage msg = msgs.get(i);
-                sb.append("  {\"key\": ");
-                appendJsonString(sb, msg.key());
-                sb.append(", \"value\": ");
-                appendJsonString(sb, msg.value());
-                sb.append(", \"timestamp\": ").append(msg.timestamp()).append("}");
-                if (i < msgs.size() - 1) sb.append(",");
-                sb.append("\n");
+## CHAMPS OBSERVÉS PAR TOPIC
+Les payloads ne sont pas fournis bruts : pour chaque topic tu reçois les structures
+observées (chemins des feuilles, index de tableau réduits à []) puis, pour chaque chemin,
+quelques valeurs d'exemple. Les chemins sont en notation pointée ; réponds en JSONPath
+($.chemin).
+""");
+
+        int perTopicBudget = Math.max(4_000,
+            processMiningConfig.getPromptCharBudget() / Math.max(1, byTopic.size()));
+
+        for (Map.Entry<String, List<PayloadDigest>> entry : byTopic.entrySet()) {
+            List<PayloadDigest> digests = entry.getValue();
+            long maxBytes = digests.stream().mapToLong(PayloadDigest::payloadBytes).max().orElse(0);
+            String format = digests.isEmpty() ? "?" : digests.get(0).format();
+
+            sb.append("\n### Topic: ").append(entry.getKey())
+              .append(" — ").append(digests.size()).append(" message(s) échantillonné(s), format ")
+              .append(format).append(", payload max ").append(maxBytes).append(" octets\n");
+
+            if (digests.isEmpty()) {
+                sb.append("(aucun message)\n");
+                continue;
             }
-            sb.append("]\n");
+
+            Set<String> shapeIds = new LinkedHashSet<>();
+            Map<String, Integer> arrayCounts = new LinkedHashMap<>();
+            Map<String, Set<String>> valuesByPath = new LinkedHashMap<>();
+            for (PayloadDigest digest : digests) {
+                if (digest.shapeId() != null) {
+                    shapeIds.add(digest.shapeId());
+                }
+                digest.arrayCounts().forEach((path, count) -> arrayCounts.merge(path, count, Math::max));
+                collectValues(valuesByPath, digest.fields());
+                collectValues(valuesByPath, digest.sample());
+                if (digest.preview() != null) {
+                    valuesByPath.computeIfAbsent("(payload brut)", k -> new LinkedHashSet<>())
+                        .add(digest.preview());
+                }
+            }
+
+            List<PayloadShape> shapes = payloadDigestService.shapesFor(shapeIds);
+            if (!shapes.isEmpty()) {
+                sb.append("#### Structures (").append(shapes.size()).append(")\n");
+                for (PayloadShape shape : shapes) {
+                    sb.append(shape.toPromptBlock(processMiningConfig.getMaxShapePathsInPrompt()));
+                }
+            }
+
+            sb.append("#### Valeurs d'exemple par chemin\n");
+            int budgetStart = sb.length();
+            for (Map.Entry<String, Set<String>> field : valuesByPath.entrySet()) {
+                if (sb.length() - budgetStart > perTopicBudget) {
+                    sb.append("  … (chemins suivants omis, budget atteint)\n");
+                    break;
+                }
+                sb.append("  ").append(field.getKey()).append(" = [");
+                boolean first = true;
+                for (String value : field.getValue()) {
+                    if (!first) sb.append(", ");
+                    appendJsonString(sb, value);
+                    first = false;
+                }
+                sb.append("]\n");
+            }
+
+            if (!arrayCounts.isEmpty()) {
+                sb.append("#### Cardinalité des tableaux\n");
+                arrayCounts.forEach((path, count) ->
+                    sb.append("  ").append(path).append(" -> ").append(count).append(" élément(s) max\n"));
+            }
         }
 
         sb.append("""
@@ -178,13 +260,43 @@ Réponds avec ce JSON exact (camelCase, sans markdown) :
         return claudeConfig.isApiKeyRequired() && !claudeConfig.isApiKeyConfigured();
     }
 
+    /** Keeps up to 4 distinct example values per path — enough to infer a role, bounded in size. */
+    private void collectValues(Map<String, Set<String>> valuesByPath, Map<String, String> values) {
+        if (values == null) {
+            return;
+        }
+        values.forEach((path, value) -> {
+            Set<String> examples = valuesByPath.computeIfAbsent(path, k -> new LinkedHashSet<>());
+            if (examples.size() < 4) {
+                examples.add(value);
+            }
+        });
+    }
+
     private void appendJsonString(StringBuilder sb, String value) {
         if (value == null) {
             sb.append("null");
-        } else {
-            sb.append("\"").append(value.replace("\\", "\\\\").replace("\"", "\\\"")
-                .replace("\n", "\\n").replace("\r", "\\r")).append("\"");
+            return;
         }
+        sb.append('"');
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            switch (c) {
+                case '"' -> sb.append("\\\"");
+                case '\\' -> sb.append("\\\\");
+                case '\n' -> sb.append("\\n");
+                case '\r' -> sb.append("\\r");
+                case '\t' -> sb.append("\\t");
+                default -> {
+                    if (c < 0x20) {
+                        sb.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        sb.append(c);
+                    }
+                }
+            }
+        }
+        sb.append('"');
     }
 
 

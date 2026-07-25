@@ -46,6 +46,31 @@ explorer:
   # is still present in the running Flink version).
   flink-select-enabled: true
 
+# Process Mining ingestion tuning. Defaults target "complex" payloads — JSON documents around
+# 1 MB with ~10 levels of nesting — which are never buffered nor prompted verbatim: each record
+# is digested (structure + mapped fields + a bounded value sample) as it arrives.
+process-mining:
+  # Live consumer fetch sizing. max-partition-fetch-bytes MUST exceed the largest expected
+  # record, otherwise Kafka falls back to one record per fetch round trip.
+  max-poll-records: 100
+  max-partition-fetch-bytes: 8388608    # 8 MB
+  fetch-max-bytes: 33554432             # 32 MB
+  # Payload digestion
+  max-payload-bytes: 4194304            # bytes actually parsed; beyond this the digest is partial
+  max-depth: 12                         # deeper subtrees are skipped by the parser, not walked
+  max-parse-events: 400000              # per-payload work budget
+  array-sample-size: 2                  # array elements descended into (cardinality is still exact)
+  max-shape-paths: 250                  # leaf paths kept per payload structure
+  max-sample-fields: 40                 # non-mapped scalar values kept per message
+  max-value-chars: 160
+  preview-chars: 400
+  shape-cache-size: 200
+  max-window-digest-bytes: 33554432     # heap the buffered digests of one session may use
+  # Prompt budgeting
+  max-shape-paths-in-prompt: 80
+  max-messages-per-topic-in-prompt: 60
+  prompt-char-budget: 120000            # ~30k tokens for the message section
+
 management:
   endpoints:
     web:
