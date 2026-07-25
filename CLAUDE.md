@@ -27,6 +27,16 @@ mvn test -Dtest=AuditServiceTest
 mvn clean package -DskipTests
 ```
 
+A Maven wrapper is checked in (`./mvnw`, Maven 3.9.9, `distributionType=only-script` so there is no wrapper JAR in the tree). Both CI workflows build through it.
+
+#### When `packages.confluent.io` is blocked
+
+`io.confluent:kafka-avro-serializer` and `io.confluent:kafka-schema-registry-client` are published **only** on `packages.confluent.io` — they are not on Maven Central. Behind a proxy that blocks that host, Maven cannot even *collect* the dependency graph (`flink-avro-confluent-registry` pulls the schema-registry client transitively), so it downloads nothing and every Maven goal fails before compiling a single file.
+
+`./verify-offline.sh` gives back a local compile-and-test loop in that situation: it resolves dependencies from a temporary Confluent-free pom, generates stubs for the five Confluent types the code touches, compiles main + test with `javac`, and runs the suite with the JUnit console launcher. It accepts extra ConsoleLauncher arguments, e.g. `./verify-offline.sh --select-class=com.yourcompany.kafkasqlexplorer.service.LineageServiceTest`.
+
+Two things to know: Avro / Schema Registry paths run against the stubs, not the real Confluent client, so those results are indicative only; and the launcher must be started as `java -cp … org.junit.platform.console.ConsoleLauncher`, never `java -jar`. With `-jar` the system classpath holds only the launcher, Flink's job-graph deserialization cannot find `flink-table-runtime`, every SELECT fails to submit, the planner circuit breaker trips, and a dozen `FlinkSqlServiceTest` cases fail for no real reason. CI remains the authority — it builds against the real Confluent jars.
+
 ### Frontend (React / Vite)
 
 ```bash
@@ -166,7 +176,7 @@ Tests use JUnit 5 + Mockito. Unit tests mock Kafka and Flink — no broker neede
 
 `AuditServiceTest` overrides `persistAuditHistory()` to skip real Kafka writes.
 
-`FlinkSqlServiceTest` and `FlinkDdlValidationTest` **pass on Flink 2.3**. Before the migration these suites were broken (SELECT was routed to `kafkaDirectSelect()`, so tests against in-memory `createTemporaryView()` tables failed with "Table not found"; DDL validation hit a Calcite `SqlParserException`). With the Flink planner path restored (the `THREAD_PROVIDERS` fix, see above), SELECT resolves in-memory views through Flink and the whole suite is green. A handful of Flink-native SELECT tests remain `@Disabled("KAFKA_DIRECT")` — they document the old bypass path and can be re-enabled/re-baselined against the restored planner.
+`FlinkSqlServiceTest` and `FlinkDdlValidationTest` **pass on Flink 2.3**. Before the migration these suites were broken (SELECT was routed to `kafkaDirectSelect()`, so tests against in-memory `createTemporaryView()` tables failed with "Table not found"; DDL validation hit a Calcite `SqlParserException`). With the Flink planner path restored (the `THREAD_PROVIDERS` fix, see above), SELECT resolves in-memory views through Flink and the whole suite is green. The Flink-native SELECT tests that were once `@Disabled("KAFKA_DIRECT")` (in-memory views, multi-topic JOIN, the `XmlExtract` UDF) are enabled again — they run against the restored planner, so the suite has no skipped tests.
 
 Test classes are in `src/test/java/com/yourcompany/kafkasqlexplorer/`.
 

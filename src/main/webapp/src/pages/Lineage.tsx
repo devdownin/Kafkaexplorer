@@ -39,34 +39,57 @@ function formatMsgCount(n: number): string {
   return String(n);
 }
 
+/** Columns used to grid-wrap nodes that have no edge at all. */
+const ORPHAN_COLS = 6;
+const ORPHAN_GAP = 60;
+
 function computeLayout(nodes: LineageNode[], edges: LineageEdge[]): Record<string, { x: number; y: number }> {
   if (nodes.length === 0) return {};
 
-  const inDegree: Record<string, number> = {};
-  nodes.forEach(n => { inDegree[n.id] = 0; });
-  edges.forEach(e => { inDegree[e.to] = (inDegree[e.to] ?? 0) + 1; });
+  // Adjacency built once — filtering `edges` inside the traversal made this O(nodes × edges).
+  const known = new Set(nodes.map(n => n.id));
+  const adjacency = new Map<string, string[]>();
+  const inDegree = new Map<string, number>();
+  const touched = new Set<string>();
+  nodes.forEach(n => { adjacency.set(n.id, []); inDegree.set(n.id, 0); });
+  edges.forEach(e => {
+    if (!known.has(e.from) || !known.has(e.to)) return;
+    adjacency.get(e.from)!.push(e.to);
+    inDegree.set(e.to, (inDegree.get(e.to) ?? 0) + 1);
+    touched.add(e.from);
+    touched.add(e.to);
+  });
+
+  // Wired nodes get the layered DAG treatment; the rest are gridded below, so a cluster
+  // with no edges (e.g. every Kafka topic when nothing is wired) cannot stretch the graph
+  // into one column thousands of pixels tall.
+  const connected = nodes.filter(n => touched.has(n.id));
+  const isolated = nodes.filter(n => !touched.has(n.id));
 
   const layers: string[][] = [];
   const visited = new Set<string>();
-  let queue = nodes.filter(n => inDegree[n.id] === 0).map(n => n.id);
-  if (queue.length === 0) queue = [nodes[0].id];
+  let queue = connected.filter(n => (inDegree.get(n.id) ?? 0) === 0).map(n => n.id);
+  if (queue.length === 0 && connected.length > 0) queue = [connected[0].id];
 
   while (queue.length > 0) {
     const layer: string[] = [];
     const next: string[] = [];
     for (const id of queue) {
-      if (!visited.has(id)) {
-        visited.add(id);
-        layer.push(id);
-        edges.filter(e => e.from === id).forEach(e => { if (!visited.has(e.to)) next.push(e.to); });
+      if (visited.has(id)) continue;
+      visited.add(id);
+      layer.push(id);
+      for (const to of adjacency.get(id) ?? []) {
+        if (!visited.has(to)) next.push(to);
       }
     }
     if (layer.length) layers.push(layer);
     queue = next;
   }
-  nodes.forEach(n => { if (!visited.has(n.id)) layers.push([n.id]); });
+  // Nodes only reachable through a cycle share one trailing column instead of one each.
+  const leftover = connected.filter(n => !visited.has(n.id)).map(n => n.id);
+  if (leftover.length) layers.push(leftover);
 
-  const maxRows = Math.max(1, ...layers.map(l => l.length));
+  const maxRows = layers.reduce((m, l) => Math.max(m, l.length), 1);
   const positions: Record<string, { x: number; y: number }> = {};
   layers.forEach((layer, col) => {
     const totalH = layer.length * NODE_H + (layer.length - 1) * ROW_GAP;
@@ -75,6 +98,18 @@ function computeLayout(nodes: LineageNode[], edges: LineageEdge[]): Record<strin
       positions[id] = { x: col * (NODE_W + COL_GAP) + 60, y: startY + row * (NODE_H + ROW_GAP) };
     });
   });
+
+  if (isolated.length > 0) {
+    const gridTop = layers.length > 0
+      ? maxRows * (NODE_H + ROW_GAP) + 40 + ROW_GAP
+      : 40;
+    isolated.forEach((n, i) => {
+      positions[n.id] = {
+        x: (i % ORPHAN_COLS) * (NODE_W + ORPHAN_GAP) + 60,
+        y: gridTop + Math.floor(i / ORPHAN_COLS) * (NODE_H + ORPHAN_GAP),
+      };
+    });
+  }
   return positions;
 }
 
@@ -160,39 +195,72 @@ const Lineage: React.FC = () => {
 
   // ── Data fetching ───────────────────────────────────────────────────────────
 
+  // Tracks the newest in-flight request so a slow earlier response cannot overwrite it
+  // (toggling "Connected only" twice quickly used to be enough to land stale data).
+  const requestSeq = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
+
   const fetchLineage = useCallback(async () => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const seq = ++requestSeq.current;
+
     setLoading(true);
     try {
-      const res = await axios.get<LineageData>(`/api/lineage?connectedOnly=${connectedOnly}`);
+      const res = await axios.get<LineageData>(
+        `/api/lineage?connectedOnly=${connectedOnly}`,
+        { signal: controller.signal }
+      );
+      if (seq !== requestSeq.current) return;
       const d = res.data;
       setData({ nodes: d.nodes ?? [], edges: d.edges ?? [] });
       // Clear selection if node no longer exists
       setSelectedNode(prev =>
         prev && (d.nodes ?? []).some(n => n.id === prev.id) ? prev : null
       );
-    } catch {
+    } catch (err) {
+      if (axios.isCancel(err) || seq !== requestSeq.current) return;
       toast('Failed to load lineage graph', 'error');
     } finally {
-      setLoading(false);
+      if (seq === requestSeq.current) setLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- toast is stable
   }, [connectedOnly]);
 
-  useEffect(() => { fetchLineage(); }, [fetchLineage]);
+  useEffect(() => {
+    fetchLineage();
+    return () => abortRef.current?.abort();
+  }, [fetchLineage]);
 
   // ── Wheel zoom ──────────────────────────────────────────────────────────────
+
+  /** Scales around a fixed point in viewport coordinates, so that point stays put. */
+  const zoomAround = useCallback((factor: number, px: number, py: number) => {
+    setTransform(t => {
+      const scale = Math.max(0.15, Math.min(4, t.scale * factor));
+      const k = scale / t.scale;
+      return { scale, x: px - (px - t.x) * k, y: py - (py - t.y) * k };
+    });
+  }, []);
+
+  /** Zoom buttons keep the centre of the canvas anchored. */
+  const zoomFromCenter = useCallback((factor: number) => {
+    const rect = svgRef.current?.getBoundingClientRect();
+    zoomAround(factor, (rect?.width ?? 0) / 2, (rect?.height ?? 0) / 2);
+  }, [zoomAround]);
 
   useEffect(() => {
     const el = svgRef.current;
     if (!el) return;
     const handler = (e: WheelEvent) => {
       e.preventDefault();
-      const factor = e.deltaY > 0 ? 0.9 : 1.1;
-      setTransform(t => ({ ...t, scale: Math.max(0.15, Math.min(4, t.scale * factor)) }));
+      const rect = el.getBoundingClientRect();
+      zoomAround(e.deltaY > 0 ? 0.9 : 1.1, e.clientX - rect.left, e.clientY - rect.top);
     };
     el.addEventListener('wheel', handler, { passive: false });
     return () => el.removeEventListener('wheel', handler);
-  }, []);
+  }, [zoomAround]);
 
   // ── Derived state ───────────────────────────────────────────────────────────
 
@@ -222,9 +290,22 @@ const Lineage: React.FC = () => {
     return data.nodes.filter(n => n.label.toLowerCase().includes(lower)).slice(0, 8);
   }, [searchTerm, data.nodes]);
 
-  const selectedEdges = selectedNode
-    ? data.edges.filter(e => e.from === selectedNode.id || e.to === selectedNode.id)
-    : [];
+  /** Edges touching the selection, split by direction — memoized: the inspector and the
+   *  canvas together read these on every render. */
+  const outgoingEdges = useMemo(
+    () => (selectedNode ? data.edges.filter(e => e.from === selectedNode.id) : []),
+    [selectedNode, data.edges]
+  );
+  const incomingEdges = useMemo(
+    () => (selectedNode ? data.edges.filter(e => e.to === selectedNode.id) : []),
+    [selectedNode, data.edges]
+  );
+  const selectedEdges = useMemo(
+    () => [...outgoingEdges, ...incomingEdges],
+    [outgoingEdges, incomingEdges]
+  );
+  /** Membership test for the edge loop — `Array.includes` there made rendering O(edges²). */
+  const selectedEdgeSet = useMemo(() => new Set(selectedEdges), [selectedEdges]);
 
   // ── Center canvas on a node ─────────────────────────────────────────────────
 
@@ -412,11 +493,11 @@ const Lineage: React.FC = () => {
 
         {/* Zoom controls */}
         <div className="absolute bottom-6 left-4 z-10 flex flex-col bg-surface-container border border-outline-variant rounded-xl overflow-hidden shadow-xl">
-          <button onClick={() => setTransform(t => ({ ...t, scale: Math.min(4, t.scale * 1.25) }))}
+          <button onClick={() => zoomFromCenter(1.25)}
             className="p-2 hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface border-b border-outline-variant/60 transition-colors">
             <span className="material-symbols-outlined text-lg">add</span>
           </button>
-          <button onClick={() => setTransform(t => ({ ...t, scale: Math.max(0.15, t.scale * 0.8) }))}
+          <button onClick={() => zoomFromCenter(0.8)}
             className="p-2 hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface border-b border-outline-variant/60 transition-colors">
             <span className="material-symbols-outlined text-lg">remove</span>
           </button>
@@ -475,7 +556,7 @@ const Lineage: React.FC = () => {
                 const t = positions[edge.to];
                 if (!s || !t) return null;
 
-                const hi = selectedEdges.includes(edge);
+                const hi = selectedEdgeSet.has(edge);
                 // Dim edge when a node is selected but this edge is not connected to it
                 const dim = neighborIds !== null && !hi;
 
@@ -563,11 +644,11 @@ const Lineage: React.FC = () => {
           <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
 
             {/* Writes to (outgoing) */}
-            {data.edges.filter(e => e.from === selectedNode.id).length > 0 && (
+            {outgoingEdges.length > 0 && (
               <section>
                 <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-2">Writes to</h3>
                 <div className="space-y-1.5">
-                  {data.edges.filter(e => e.from === selectedNode.id).map((e, i) => (
+                  {outgoingEdges.map((e, i) => (
                     <button
                       key={i}
                       onClick={() => {
@@ -588,11 +669,11 @@ const Lineage: React.FC = () => {
             )}
 
             {/* Reads from (incoming) */}
-            {data.edges.filter(e => e.to === selectedNode.id).length > 0 && (
+            {incomingEdges.length > 0 && (
               <section>
                 <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-2">Reads from</h3>
                 <div className="space-y-1.5">
-                  {data.edges.filter(e => e.to === selectedNode.id).map((e, i) => (
+                  {incomingEdges.map((e, i) => (
                     <button
                       key={i}
                       onClick={() => {
@@ -617,6 +698,10 @@ const Lineage: React.FC = () => {
             )}
           </div>
 
+          {/* Only Flink objects have DDL. Topic and query nodes carry a prefixed id
+              ("topic_orders", "query_<uuid>") that is not a table name, so the endpoint
+              could never resolve them — the footer is hidden entirely for those. */}
+          {(selectedNode.type === 'table' || selectedNode.type === 'view') && (
           <div className="p-4 border-t border-outline-variant/60 space-y-3">
             <Button
               variant="outline" className="w-full"
@@ -624,7 +709,10 @@ const Lineage: React.FC = () => {
               onClick={async () => {
                 setLoadingDdl(true); setDdl(null);
                 try {
-                  const res = await axios.get<string>(`/api/lineage/ddl/${selectedNode.id}`, { responseType: 'text' });
+                  const res = await axios.get<string>(
+                    `/api/lineage/ddl/${encodeURIComponent(selectedNode.label)}`,
+                    { responseType: 'text' }
+                  );
                   setDdl(res.data);
                 } catch {
                   setDdl('-- Failed to load DDL');
@@ -641,6 +729,7 @@ const Lineage: React.FC = () => {
               </div>
             )}
           </div>
+          )}
         </aside>
       )}
     </div>
