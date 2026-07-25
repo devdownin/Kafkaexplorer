@@ -8,12 +8,12 @@ import org.apache.flink.types.Row;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 /**
  * Builds a dependency graph of the current SQL environment.
@@ -34,6 +34,13 @@ public class LineageService {
     private static final Pattern FROM_PATTERN   = Pattern.compile("(?i)FROM\\s+([^\\s,;()\\n]+)", Pattern.MULTILINE);
     private static final Pattern JOIN_PATTERN   = Pattern.compile("(?i)JOIN\\s+([^\\s,;()\\n]+)", Pattern.MULTILINE);
     private static final Pattern INSERT_PATTERN = Pattern.compile("(?i)INSERT\\s+INTO\\s+([^\\s(]+)");
+
+    /** Shape a Flink table/view name must have before it can be spliced into SHOW CREATE. */
+    private static final Pattern IDENTIFIER_PATTERN = Pattern.compile("[a-zA-Z_][a-zA-Z0-9_$]*");
+
+    private static final Pattern LINE_COMMENT  = Pattern.compile("--[^\\n]*");
+    private static final Pattern BLOCK_COMMENT = Pattern.compile("/\\*.*?\\*/", Pattern.DOTALL);
+    private static final Pattern STRING_LITERAL = Pattern.compile("'(?:[^']|'')*'");
 
     /** Tokens captured by FROM/JOIN that are NOT table identifiers. */
     private static final Set<String> SQL_KEYWORDS = Set.of(
@@ -57,46 +64,56 @@ public class LineageService {
         return getLineage(false);
     }
 
+    /**
+     * Builds the graph. Cached (see {@code explorer.cache-expire-seconds}, 30s by default)
+     * because a cold build runs one {@code SHOW CREATE} statement per table and per view,
+     * each taking the Flink runtime read lock.
+     *
+     * <p>Only external calls go through the cache — the no-arg {@link #getLineage()} overload
+     * invokes this method directly on {@code this}, which bypasses the Spring proxy.
+     */
+    @Cacheable(value = "lineage", key = "#connectedOnly")
     public Map<String, Object> getLineage(boolean connectedOnly) {
-        List<Map<String, Object>> nodes = new ArrayList<>();
+        // Keyed by node id so a topic backing several tables yields a single node.
+        Map<String, Map<String, Object>> nodesById = new LinkedHashMap<>();
         List<Map<String, String>> edges = new ArrayList<>();
-        Set<String> processedTables = new HashSet<>();
 
         // 1. Active INSERT INTO jobs
         flinkSqlService.getActiveJobsDetails().forEach((id, info) -> {
             String sql = info.sql();
-            if (sql.toUpperCase().contains("INSERT INTO")) {
+            if (sql.toUpperCase(Locale.ROOT).contains("INSERT INTO")) {
                 String target = extractInsertTarget(sql);
                 Set<String> sources = extractSources(sql);
-                String queryNodeId = "query_" + id.substring(0, 8);
-                nodes.add(mkNode(queryNodeId, "INSERT", "query"));
+                String queryNodeId = "query_" + id;
+                putNode(nodesById, mkNode(queryNodeId, "INSERT", "query"));
                 sources.forEach(src -> edges.add(mkEdge(src, queryNodeId, "reads")));
                 if (target != null) edges.add(mkEdge(queryNodeId, target, "writes"));
             }
         });
 
-        // 2. Flink tables — find backing Kafka topic via DDL 'topic' property
+        // 2. Flink tables and views. listTables() returns BOTH, so the view names decide the
+        //    node type — and spare us a SHOW CREATE TABLE that would fail on every view.
+        Set<String> viewNames = new LinkedHashSet<>(
+            Arrays.asList(runtimeCoordinator.runRead("lineage-list-views", () -> tableEnv.listViews())));
+
         for (String tableName : runtimeCoordinator.runRead("lineage-list-tables", () -> tableEnv.listTables())) {
-            nodes.add(mkNode(tableName, tableName, "table"));
-            processedTables.add(tableName);
+            if (viewNames.contains(tableName)) continue;   // handled as a view below
+            putNode(nodesById, mkNode(tableName, tableName, "table"));
             String ddl = getDdl(tableName, "TABLE");
             if (ddl != null) {
                 Matcher m = TOPIC_PATTERN.matcher(ddl);
                 if (m.find()) {
                     String topicName = m.group(1);
                     String topicId   = "topic_" + topicName;
-                    nodes.add(mkTopicNode(topicId, topicName, 0L));
+                    putNode(nodesById, mkTopicNode(topicId, topicName, 0L));
                     edges.add(mkEdge(topicId, tableName, "source"));
                 }
             }
         }
 
         // 3. Flink views
-        for (String viewName : runtimeCoordinator.runRead("lineage-list-views", () -> tableEnv.listViews())) {
-            if (!processedTables.contains(viewName)) {
-                nodes.add(mkNode(viewName, viewName, "view"));
-                processedTables.add(viewName);
-            }
+        for (String viewName : viewNames) {
+            putNode(nodesById, mkNode(viewName, viewName, "view"));
             String ddl = getDdl(viewName, "VIEW");
             if (ddl != null) {
                 extractSources(ddl).forEach(src -> edges.add(mkEdge(src, viewName, "depends")));
@@ -111,43 +128,49 @@ public class LineageService {
                 ? Collections.emptyMap()
                 : kafkaAdminService.getTopicsSize(kafkaTopics);
 
-            // Patch messageCount onto already-present topic nodes
-            for (int i = 0; i < nodes.size(); i++) {
-                Map<String, Object> n = nodes.get(i);
-                if ("topic".equals(n.get("type"))) {
-                    String label = (String) n.get("label");
-                    Map<String, Object> patched = new LinkedHashMap<>(n);
-                    patched.put("messageCount", sizes.getOrDefault(label, 0L));
-                    nodes.set(i, patched);
-                }
-            }
-
-            // Add remaining Kafka topics not yet in the graph
-            Set<String> existingTopicLabels = nodes.stream()
+            // Patch messageCount onto already-present topic nodes (in place — they are ours).
+            nodesById.values().stream()
                 .filter(n -> "topic".equals(n.get("type")))
-                .map(n -> (String) n.get("label"))
-                .collect(Collectors.toSet());
+                .forEach(n -> n.put("messageCount", sizes.getOrDefault((String) n.get("label"), 0L)));
 
             for (String topic : kafkaTopics) {
-                if (!existingTopicLabels.contains(topic)) {
-                    nodes.add(mkTopicNode("topic_" + topic, topic, sizes.getOrDefault(topic, 0L)));
-                }
+                putNode(nodesById, mkTopicNode("topic_" + topic, topic, sizes.getOrDefault(topic, 0L)));
             }
         } catch (Exception e) {
             log.debug("Could not enrich lineage with Kafka topics: {}", e.getMessage());
         }
 
-        // 5. Connected-only filter: drop nodes that appear in no edge
+        // 5. Drop edges whose endpoints are not real nodes. Regex source extraction also picks
+        //    up CTE names and aliases; such edges are unrenderable and would otherwise inflate
+        //    the edge count and keep unrelated nodes alive under connectedOnly.
+        edges.removeIf(e -> !nodesById.containsKey(e.get("from")) || !nodesById.containsKey(e.get("to")));
+
+        List<Map<String, Object>> nodes = new ArrayList<>(nodesById.values());
+
+        // 6. Connected-only filter: drop nodes that appear in no edge
         if (connectedOnly) {
             Set<String> wired = new HashSet<>();
             edges.forEach(e -> { wired.add(e.get("from")); wired.add(e.get("to")); });
             nodes.removeIf(n -> !wired.contains(n.get("id")));
         }
 
-        return Map.of("nodes", nodes, "edges", edges);
+        // The result is shared by every caller for the cache TTL — hand out read-only lists.
+        return Map.of(
+            "nodes", Collections.unmodifiableList(nodes),
+            "edges", Collections.unmodifiableList(edges));
     }
 
+    /**
+     * Returns the DDL of a table or view, masked of credentials.
+     *
+     * <p>{@code name} reaches us straight from the URL and is concatenated into a
+     * {@code SHOW CREATE} statement, so it is checked against the objects actually registered
+     * in the Flink environment — this endpoint does not go through {@link SqlQueryValidator}.
+     */
     public String getDdlForNode(String name) {
+        if (name == null || !IDENTIFIER_PATTERN.matcher(name).matches() || !isKnownObject(name)) {
+            return "-- DDL not available for: " + name;
+        }
         String ddl = getDdl(name, "TABLE");
         if (ddl == null) ddl = getDdl(name, "VIEW");
         if (ddl != null) {
@@ -155,6 +178,26 @@ public class LineageService {
             return DdlGeneratorService.maskSensitiveProperties(ddl);
         }
         return "-- DDL not available for: " + name;
+    }
+
+    /** True when the name is a table or view registered in the current Flink environment. */
+    private boolean isKnownObject(String name) {
+        try {
+            for (String t : runtimeCoordinator.runRead("lineage-list-tables", () -> tableEnv.listTables())) {
+                if (t.equals(name)) return true;
+            }
+            for (String v : runtimeCoordinator.runRead("lineage-list-views", () -> tableEnv.listViews())) {
+                if (v.equals(name)) return true;
+            }
+        } catch (Exception e) {
+            log.debug("Could not list Flink objects while validating '{}': {}", name, e.getMessage());
+        }
+        return false;
+    }
+
+    /** Adds a node unless one with the same id is already present. */
+    private static void putNode(Map<String, Map<String, Object>> nodesById, Map<String, Object> node) {
+        nodesById.putIfAbsent((String) node.get("id"), node);
     }
 
     // ── Node / edge builders ──────────────────────────────────────────────────
@@ -184,12 +227,27 @@ public class LineageService {
     }
 
     private Set<String> extractSources(String sql) {
+        String scrubbed = scrubForIdentifierScan(sql);
         Set<String> sources = new HashSet<>();
-        Matcher fm = FROM_PATTERN.matcher(sql);
+        Matcher fm = FROM_PATTERN.matcher(scrubbed);
         while (fm.find()) addIfValidIdentifier(sources, fm.group(1));
-        Matcher jm = JOIN_PATTERN.matcher(sql);
+        Matcher jm = JOIN_PATTERN.matcher(scrubbed);
         while (jm.find()) addIfValidIdentifier(sources, jm.group(1));
         return sources;
+    }
+
+    /**
+     * Removes comments and blanks out string literals so a commented-out or quoted
+     * {@code FROM x} cannot be mistaken for a real dependency. Literals are replaced by an
+     * empty pair of quotes rather than deleted, to keep the surrounding tokens apart.
+     *
+     * <p>Only for the FROM/JOIN scan — never run this over DDL before matching the
+     * {@code 'topic' = '...'} property, which lives inside string literals.
+     */
+    private static String scrubForIdentifierScan(String sql) {
+        String out = BLOCK_COMMENT.matcher(sql).replaceAll(" ");
+        out = LINE_COMMENT.matcher(out).replaceAll(" ");
+        return STRING_LITERAL.matcher(out).replaceAll("''");
     }
 
     /**
