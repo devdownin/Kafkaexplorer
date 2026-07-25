@@ -30,6 +30,14 @@ public class ExplorerConfig {
      * newly created topic shows up quickly in the workbench and auto-registration.
      */
     private int cacheExpireSeconds = 30;
+    /** Hits returned by one topic-search pass before it stops and hands back a cursor. */
+    private int searchMaxHits = 100;
+    /** Records read by one topic-search pass before it stops and hands back a cursor. */
+    private int searchMaxScan = 20000;
+    /** Wall-clock budget for one topic-search pass. */
+    private int searchTimeoutMs = 10000;
+    /** Message values longer than this are truncated in search results and samples. */
+    private int searchMaxValueChars = 8000;
     private String flinkJobStorePath = "data/flink-jobs.json";
     private long flinkJobRetentionHours = 24;
 
@@ -127,6 +135,38 @@ public class ExplorerConfig {
 
     public void setCacheExpireSeconds(int cacheExpireSeconds) {
         this.cacheExpireSeconds = cacheExpireSeconds;
+    }
+
+    public int getSearchMaxHits() {
+        return searchMaxHits;
+    }
+
+    public void setSearchMaxHits(int searchMaxHits) {
+        this.searchMaxHits = searchMaxHits;
+    }
+
+    public int getSearchMaxScan() {
+        return searchMaxScan;
+    }
+
+    public void setSearchMaxScan(int searchMaxScan) {
+        this.searchMaxScan = searchMaxScan;
+    }
+
+    public int getSearchTimeoutMs() {
+        return searchTimeoutMs;
+    }
+
+    public void setSearchTimeoutMs(int searchTimeoutMs) {
+        this.searchTimeoutMs = searchTimeoutMs;
+    }
+
+    public int getSearchMaxValueChars() {
+        return searchMaxValueChars;
+    }
+
+    public void setSearchMaxValueChars(int searchMaxValueChars) {
+        this.searchMaxValueChars = searchMaxValueChars;
     }
 
     public String getFlinkJobStorePath() {

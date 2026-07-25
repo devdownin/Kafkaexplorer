@@ -450,6 +450,55 @@ class FlinkSqlServiceTest {
     }
 
     // ──────────────────────────────────────────────────────────────────────────────
+    // WHERE clauses the direct engine cannot apply
+    // ──────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    void supportedWhereClauseProducesNoWarning() {
+        assertTrue(service.unsupportedWhereFragments(
+            "SELECT * FROM orders WHERE status = 'NEW' AND region = 'EU' LIMIT 10").isEmpty());
+    }
+
+    @Test
+    void noWhereClauseProducesNoWarning() {
+        assertTrue(service.unsupportedWhereFragments("SELECT * FROM orders LIMIT 10").isEmpty());
+    }
+
+    @Test
+    void comparisonOperatorIsReportedAsIgnored() {
+        List<String> warnings = service.unsupportedWhereFragments(
+            "SELECT * FROM orders WHERE amount > 100 LIMIT 10");
+
+        assertEquals(1, warnings.size(), "a predicate that is silently dropped must be reported");
+        assertTrue(warnings.get(0).contains("amount > 100"), warnings.get(0));
+    }
+
+    @Test
+    void orIsReportedBecauseConditionsAreCombinedWithAnd() {
+        List<String> warnings = service.unsupportedWhereFragments(
+            "SELECT * FROM orders WHERE status = 'NEW' OR status = 'SHIPPED'");
+
+        assertEquals(1, warnings.size(), "OR is evaluated as AND, so the result would be wrong");
+        assertTrue(warnings.get(0).contains("OR"), warnings.get(0));
+    }
+
+    @Test
+    void likeIsReportedAsIgnored() {
+        List<String> warnings = service.unsupportedWhereFragments(
+            "SELECT * FROM orders WHERE customer LIKE 'ACME%'");
+
+        assertEquals(1, warnings.size());
+        assertTrue(warnings.get(0).contains("LIKE"), warnings.get(0));
+    }
+
+    @Test
+    void groupByAfterASupportedWhereIsNotMistakenForAnIgnoredPredicate() {
+        assertTrue(service.unsupportedWhereFragments(
+            "SELECT status, COUNT(*) AS metric_value FROM orders WHERE region = 'EU' "
+                + "GROUP BY status").isEmpty());
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────────
     // Helpers
     // ──────────────────────────────────────────────────────────────────────────────
 

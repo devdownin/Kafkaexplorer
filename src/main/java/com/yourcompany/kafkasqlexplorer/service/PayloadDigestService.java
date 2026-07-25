@@ -407,7 +407,7 @@ public class PayloadDigestService {
     }
 
     /** {@code $.order['items'][0].sku} → {@code order.items[].sku}. */
-    static String normalizePath(String rawPath) {
+    public static String normalizePath(String rawPath) {
         String path = rawPath.trim();
         if (path.startsWith("$")) {
             path = path.substring(1);

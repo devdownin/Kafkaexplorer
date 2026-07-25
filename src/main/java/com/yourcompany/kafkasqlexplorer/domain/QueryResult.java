@@ -12,15 +12,31 @@ public record QueryResult(
     String error,
     boolean tableRegistered,
     /** Execution engine used: "KAFKA_DIRECT" for bounded SELECT reads, "FLINK" for EXPLAIN/DDL. Null on error paths. */
-    String engine
+    String engine,
+    /**
+     * Non-fatal caveats about the result — most importantly, predicates the direct engine could
+     * not apply. Silently returning unfiltered rows for a WHERE it does not understand makes the
+     * result look precise when it is not, so the caveat travels with the data.
+     */
+    List<String> warnings
 ) {
-    /** Backwards-compatible constructor (no tableRegistered, no engine). */
+    /** Backwards-compatible constructor (no tableRegistered, no engine, no warnings). */
     public QueryResult(List<String> columns, List<Map<String, Object>> rows, long durationMs, String error) {
-        this(columns, rows, durationMs, error, false, null);
+        this(columns, rows, durationMs, error, false, null, List.of());
     }
 
-    /** Backwards-compatible constructor (no engine). */
+    /** Backwards-compatible constructor (no engine, no warnings). */
     public QueryResult(List<String> columns, List<Map<String, Object>> rows, long durationMs, String error, boolean tableRegistered) {
-        this(columns, rows, durationMs, error, tableRegistered, null);
+        this(columns, rows, durationMs, error, tableRegistered, null, List.of());
+    }
+
+    /** Backwards-compatible constructor (no warnings). */
+    public QueryResult(List<String> columns, List<Map<String, Object>> rows, long durationMs, String error, boolean tableRegistered, String engine) {
+        this(columns, rows, durationMs, error, tableRegistered, engine, List.of());
+    }
+
+    public QueryResult withWarnings(List<String> newWarnings) {
+        return new QueryResult(columns, rows, durationMs, error, tableRegistered, engine,
+            newWarnings == null ? List.of() : List.copyOf(newWarnings));
     }
 }

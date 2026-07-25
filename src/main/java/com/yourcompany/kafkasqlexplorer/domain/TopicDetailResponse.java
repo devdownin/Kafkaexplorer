@@ -10,5 +10,6 @@ public record TopicDetailResponse(
     MessageFormat format,
     Map<String, String> schema,
     String ddl,
-    List<String> samples
+    /** Carries the record coordinates (partition, offset, timestamp, key, headers), not just values. */
+    List<TopicMessage> samples
 ) {}

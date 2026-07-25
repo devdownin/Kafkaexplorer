@@ -838,6 +838,7 @@ public class FlinkSqlService {
         // Parse selected columns and WHERE conditions from SQL (needed to size the fetch)
         List<String> requestedCols = isAggregate ? Collections.emptyList() : extractSelectedColumns(sql);
         Map<String, String> whereConds = extractSimpleWhere(sql);
+        List<String> whereWarnings = unsupportedWhereFragments(sql);
 
         // For aggregates, read all available messages. For plain projections, a small
         // overshoot over the limit is enough — but when a WHERE clause filters rows,
@@ -900,7 +901,8 @@ public class FlinkSqlService {
                 return p.length > 1 ? p[1].trim() : p[0].trim();
             }).collect(Collectors.toList());
         log.debug("[KafkaDirect] topic='{}' rows={} readMode={}", topic, rows.size(), readMode);
-        return new QueryResult(columns, rows, System.currentTimeMillis() - startTime, null, false, "KAFKA_DIRECT");
+        return new QueryResult(columns, rows, System.currentTimeMillis() - startTime, null, false, "KAFKA_DIRECT")
+            .withWarnings(whereWarnings);
     }
 
     /**
@@ -988,7 +990,10 @@ public class FlinkSqlService {
                              : new ArrayList<>(resultRows.get(0).keySet());
         log.debug("[KafkaDirect/Agg] inputRows={} groups={} cols={}",
                  inputRows.size(), resultRows.size(), columns);
-        return new QueryResult(columns, resultRows, System.currentTimeMillis() - startTime, null, false, "KAFKA_DIRECT");
+        // Aggregates are computed over rows the caller already filtered, but the caveat about
+        // predicates that were never applied still belongs on this result.
+        return new QueryResult(columns, resultRows, System.currentTimeMillis() - startTime, null, false, "KAFKA_DIRECT")
+            .withWarnings(unsupportedWhereFragments(sql));
     }
 
     /**
@@ -1069,6 +1074,7 @@ public class FlinkSqlService {
         }
 
         Map<String, String> whereConds = extractSimpleWhere(sql);
+        List<String> whereWarnings = unsupportedWhereFragments(sql);
 
         // Bucket messages by tumbling window
         Map<Long, List<Map<String, Object>>> windows = new LinkedHashMap<>();
@@ -1109,7 +1115,8 @@ public class FlinkSqlService {
             : new ArrayList<>(resultRows.get(0).keySet());
         log.debug("[KafkaDirect/Window] topic='{}' timeCol='{}' intervalMs={} windows={} rows={}",
                  topic, timeCol, intervalMs, windows.size(), resultRows.size());
-        return new QueryResult(columns, resultRows, System.currentTimeMillis() - startTime, null, false, "KAFKA_DIRECT");
+        return new QueryResult(columns, resultRows, System.currentTimeMillis() - startTime, null, false, "KAFKA_DIRECT")
+            .withWarnings(whereWarnings);
     }
 
     /**
@@ -1201,6 +1208,11 @@ public class FlinkSqlService {
             .collect(Collectors.toList());
     }
 
+    /** WHERE body, stopping before the clauses that follow it — otherwise GROUP BY looks unsupported. */
+    private static final Pattern WHERE_WARNING_BLOCK = Pattern.compile(
+        "(?i)\\bWHERE\\s+(.+?)(?:\\bGROUP\\s+BY\\b|\\bORDER\\s+BY\\b|\\bHAVING\\b|\\bLIMIT\\b|;|$)",
+        Pattern.DOTALL);
+
     private Map<String, String> extractSimpleWhere(String sql) {
         Map<String, String> conditions = new LinkedHashMap<>();
         Pattern whereBlock = Pattern.compile("(?i)\\bWHERE\\s+(.+?)(?:\\bLIMIT\\b|;|$)", Pattern.DOTALL);
@@ -1216,6 +1228,32 @@ public class FlinkSqlService {
             conditions.put(cm.group(1), cm.group(2));
         }
         return conditions;
+    }
+
+    /**
+     * Predicates the direct engine silently drops. {@link #extractSimpleWhere} only understands
+     * {@code column = 'value'} joined by AND; anything else — a comparison, LIKE, IN, OR, NOT —
+     * never matches its pattern, so the rows come back unfiltered and the result looks precise
+     * when it is not. Surfacing what was ignored is the difference between a narrow engine and a
+     * wrong answer.
+     */
+    List<String> unsupportedWhereFragments(String sql) {
+        Matcher wm = WHERE_WARNING_BLOCK.matcher(sql);
+        if (!wm.find()) {
+            return List.of();
+        }
+        String remainder = wm.group(1)
+            .replaceAll("(?i)`?[\\w.]+`?\\s*=\\s*'[^']*'", " ")   // supported conditions
+            .replaceAll("(?i)\\bAND\\b", " ")                     // supported combinator
+            .replaceAll("[()]", " ")
+            .replaceAll("\\s+", " ")
+            .trim();
+        if (remainder.isEmpty()) {
+            return List.of();
+        }
+        return List.of("The direct engine applied only the \"column = 'value'\" conditions of this "
+            + "WHERE clause. Ignored: \"" + remainder + "\" — rows that do not satisfy it may appear "
+            + "in the result.");
     }
 
     private boolean matchesWhereConditions(Map<String, Object> row, Map<String, String> conditions) {
