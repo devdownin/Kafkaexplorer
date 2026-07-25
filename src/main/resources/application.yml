@@ -38,6 +38,12 @@ explorer:
   audit-query-timeout-ms: 5000
   inference-sample-size: 10
   inference-poll-timeout-ms: 2000
+  # Topic search (POST /api/topic/{name}/search). A pass stops at the first budget it hits and
+  # returns a cursor, so the UI can show partial results and resume instead of blocking.
+  search-max-hits: 100
+  search-max-scan: 20000
+  search-timeout-ms: 10000
+  search-max-value-chars: 8000
   flink-job-store-path: data/flink-jobs.json
   flink-job-retention-hours: 24
   # SELECT execution: true = try the real Flink planner first and fall back to the in-process

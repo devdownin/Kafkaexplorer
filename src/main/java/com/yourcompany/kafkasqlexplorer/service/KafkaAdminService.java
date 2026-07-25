@@ -118,7 +118,8 @@ public class KafkaAdminService {
         return configs;
     }
 
-    private String deserializeValue(String topic, byte[] value) {
+    /** Public so the topic search can decode records with the same Avro / UTF-8 rules as sampling. */
+    public String deserializeValue(String topic, byte[] value) {
         if (value == null) return null;
         // Check for Confluent Avro magic byte (0x00)
         if (value.length > 5 && value[0] == 0) {

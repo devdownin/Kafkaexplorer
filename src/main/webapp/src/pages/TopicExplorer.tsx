@@ -5,7 +5,14 @@ import Editor from '@monaco-editor/react';
 import '../monaco-setup';
 import { useToast } from '../components/Toast';
 import ErrorBanner from '../components/ErrorBanner';
-import { Button, Badge, Stat, Input, EmptyState, StatGridSkeleton, TableSkeleton, Table } from '../components/ui';
+import { Button, Badge, Stat, EmptyState, StatGridSkeleton, TableSkeleton, Table } from '../components/ui';
+import TopicSearchPanel, {
+  emptyCriteria,
+  splitOnMatches,
+  type TopicMessage,
+  type TopicSearchCriteria,
+  type TopicSearchResponse,
+} from '../components/topic/TopicSearchPanel';
 
 interface TopicDetail {
   topic: {
@@ -18,7 +25,7 @@ interface TopicDetail {
   format: string;
   schema: Record<string, string>;
   ddl: string;
-  samples: string[];
+  samples: TopicMessage[];
 }
 
 // ── Interactive JSON renderer ─────────────────────────────────────────────
@@ -197,19 +204,47 @@ const XmlViewer: React.FC<{
   );
 };
 
-// ── SampleCard ─────────────────────────────────────────────────────────────
-const SampleCard: React.FC<{
-  sample: string;
+/** Renders text with every occurrence of `highlight` marked. Odd indexes are the matches. */
+const Highlighted: React.FC<{ text: string; highlight: string; caseSensitive: boolean }> = ({
+  text, highlight, caseSensitive,
+}) => {
+  if (!highlight) return <>{text}</>;
+  const parts = splitOnMatches(text, highlight, caseSensitive);
+  return (
+    <>
+      {parts.map((part, i) => (i % 2 === 1
+        ? <mark key={i} className="bg-warning/40 text-on-surface rounded-sm">{part}</mark>
+        : <React.Fragment key={i}>{part}</React.Fragment>
+      ))}
+    </>
+  );
+};
+
+const formatTimestamp = (ms: number): string => {
+  if (!ms || ms < 0) return '—';
+  return new Date(ms).toISOString().replace('T', ' ').replace('Z', '');
+};
+
+// ── MessageCard ────────────────────────────────────────────────────────────
+const MessageCard: React.FC<{
+  message: TopicMessage;
   index: number;
   onCopy: (s: string) => void;
   onFieldClick?: (field: string) => void;
   selectedFields?: string[];
-}> = ({ sample, index, onCopy, onFieldClick, selectedFields }) => {
+  highlight?: string;
+  caseSensitive?: boolean;
+}> = ({ message, index, onCopy, onFieldClick, selectedFields, highlight, caseSensitive }) => {
+  const sample = message.value ?? '';
   const [expanded, setExpanded] = useState(index < 3);
+  // Raw view is what highlighting can mark up, so a card opens raw as soon as there is
+  // something to highlight — the user should see *why* the record matched.
+  const [raw, setRaw] = useState(Boolean(highlight));
   // Cards are keyed by list position, so when filtering shifts a different message into this slot
   // the instance is reused — reset the expand state to the default for the new content instead of
   // bleeding the previous message's state.
   useEffect(() => { setExpanded(index < 3); }, [sample, index]);
+  useEffect(() => { setRaw(Boolean(highlight)); }, [highlight, sample]);
 
   let parsed: unknown = null;
   let isJson = false;
@@ -229,10 +264,35 @@ const SampleCard: React.FC<{
 
   return (
     <div className="border-b border-outline-variant/40 last:border-b-0 group">
-      <div className="flex items-start gap-3 p-4 hover:bg-surface-container-high/40 transition-colors">
-        <span className="text-[10px] font-mono text-outline mt-0.5 w-6 shrink-0">{index + 1}</span>
+      {/* Record coordinates: without them a hit is a wall of text with no location */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 pt-2.5 text-[10px] font-mono text-on-surface-variant">
+        <span className="text-outline">#{index + 1}</span>
+        <span title="Partition">p{message.partition}</span>
+        <span title="Offset">@{message.offset.toLocaleString()}</span>
+        <span title="Record timestamp">{formatTimestamp(message.timestamp)}</span>
+        {message.key !== null && message.key !== undefined && (
+          <span className="text-primary truncate max-w-[16rem]" title={`Key: ${message.key}`}>
+            key={message.key}
+          </span>
+        )}
+        {message.headers && Object.keys(message.headers).length > 0 && (
+          <span title={Object.entries(message.headers).map(([k, v]) => `${k}: ${v}`).join('\n')}>
+            {Object.keys(message.headers).length} header{Object.keys(message.headers).length > 1 ? 's' : ''}
+          </span>
+        )}
+        {message.truncated && (
+          <span className="text-warning" title={`Value truncated (${message.valueBytes} chars)`}>
+            truncated
+          </span>
+        )}
+      </div>
+      <div className="flex items-start gap-3 px-4 pb-4 pt-1 hover:bg-surface-container-high/40 transition-colors">
         <div className="flex-1 min-w-0 overflow-x-auto">
-          {isJson && parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? (
+          {raw ? (
+            <pre className={`font-mono text-[11px] text-on-surface whitespace-pre-wrap break-all leading-relaxed ${!expanded && needsCollapse ? 'max-h-24 overflow-hidden' : ''}`}>
+              <Highlighted text={formatted} highlight={highlight ?? ''} caseSensitive={Boolean(caseSensitive)} />
+            </pre>
+          ) : isJson && parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? (
             <div className={`leading-relaxed ${!expanded && needsCollapse ? 'max-h-24 overflow-hidden' : ''}`}>
               <JsonNode
                 value={parsed}
@@ -259,9 +319,19 @@ const SampleCard: React.FC<{
             </button>
           )}
         </div>
-        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity shrink-0">
           {isJson && <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-primary/10 text-primary">JSON</span>}
           {isXml && <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-success/10 text-success">XML</span>}
+          {(isJson || isXml) && (
+            <button
+              onClick={() => setRaw(!raw)}
+              className="p-1.5 text-on-surface-variant hover:text-primary hover:bg-primary/10 rounded transition-colors"
+              title={raw ? 'Structured view' : 'Raw view'}
+              aria-pressed={raw}
+            >
+              <span className="material-symbols-outlined text-base">{raw ? 'account_tree' : 'data_object'}</span>
+            </button>
+          )}
           <button
             onClick={() => onCopy(formatted)}
             className="p-1.5 text-on-surface-variant hover:text-primary hover:bg-primary/10 rounded transition-colors"
@@ -282,9 +352,17 @@ const TopicExplorer: React.FC = () => {
   const [data, setData] = useState<TopicDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [readMode, setReadMode] = useState('earliest-offset');
-  const [sampleFilter, setSampleFilter] = useState('');
   const [activeTab, setActiveTab] = useState<'samples' | 'ddl' | 'schema' | 'partitions'>('samples');
   const [selectedFields, setSelectedFields] = useState<string[]>([]);
+
+  // Server-side search state. `hits` accumulates across passes so "continue scanning"
+  // appends instead of replacing what the user is already reading.
+  const [criteria, setCriteria] = useState<TopicSearchCriteria>(emptyCriteria);
+  const [searchResult, setSearchResult] = useState<TopicSearchResponse | null>(null);
+  const [hits, setHits] = useState<TopicMessage[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [searchActive, setSearchActive] = useState(false);
 
   const toggleField = (field: string) => {
     setSelectedFields(prev =>
@@ -318,6 +396,50 @@ const TopicExplorer: React.FC = () => {
     }
   };
 
+  const runSearch = async (resume: boolean) => {
+    setSearching(true);
+    setSearchError(null);
+    try {
+      const body = {
+        mode: criteria.mode,
+        query: criteria.query,
+        caseSensitive: criteria.caseSensitive,
+        searchKey: criteria.searchKey,
+        field: criteria.mode === 'FIELD' ? criteria.field : null,
+        operator: criteria.mode === 'FIELD' ? criteria.operator : null,
+        value: criteria.mode === 'FIELD' ? criteria.value : null,
+        from: criteria.sinceMinutes > 0 ? 'TIMESTAMP' : 'EARLIEST',
+        sinceMinutes: criteria.sinceMinutes > 0 ? criteria.sinceMinutes : null,
+        // Resuming continues exactly where the previous pass stopped.
+        cursor: resume ? searchResult?.nextCursor ?? null : null,
+      };
+      const response = await axios.post<TopicSearchResponse>(
+        `/api/topic/${encodeURIComponent(name ?? '')}/search`, body);
+      setSearchResult(response.data);
+      setHits(prev => resume ? [...prev, ...response.data.hits] : response.data.hits);
+      setSearchActive(true);
+    } catch (e) {
+      const message = axios.isAxiosError(e)
+        ? (e.response?.data as { message?: string } | undefined)?.message ?? e.message
+        : 'Search failed';
+      setSearchError(message);
+      if (!resume) {
+        setHits([]);
+        setSearchResult(null);
+      }
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const clearSearch = () => {
+    setSearchActive(false);
+    setSearchResult(null);
+    setHits([]);
+    setSearchError(null);
+    setCriteria(emptyCriteria);
+  };
+
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
     toast('Copied to clipboard', 'success');
@@ -337,9 +459,10 @@ const TopicExplorer: React.FC = () => {
   );
   if (!data) return <ErrorBanner message="Failed to load topic" onRetry={fetchTopicDetails} />;
 
-  const filteredSamples = data.samples.filter(s =>
-    !sampleFilter || s.toLowerCase().includes(sampleFilter.toLowerCase())
-  );
+  // The list shows search hits when a search is active, the sampled messages otherwise.
+  const displayedMessages = searchActive ? hits : data.samples;
+  // Only a plain text search maps to a literal that can be marked up in the raw view.
+  const highlight = searchActive && criteria.mode === 'CONTAINS' ? criteria.query : '';
 
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-6">
@@ -386,7 +509,7 @@ const TopicExplorer: React.FC = () => {
       {/* Tabs */}
       <div className="flex gap-1 border-b border-outline-variant/60 overflow-x-auto">
         {([
-          { key: 'samples', label: `Messages (${data.samples.length})`, icon: 'mail' },
+          { key: 'samples', label: `Messages (${searchActive ? hits.length : data.samples.length})`, icon: 'mail' },
           { key: 'ddl', label: 'Flink DDL', icon: 'code' },
           { key: 'schema', label: `Schema (${Object.keys(data.schema).length} fields)`, icon: 'list_alt' },
           { key: 'partitions', label: `Partitions (${data.topic.partitions})`, icon: 'device_hub' },
@@ -409,24 +532,19 @@ const TopicExplorer: React.FC = () => {
       {/* Samples Tab */}
       {activeTab === 'samples' && (
         <div className="space-y-3">
-          <div className="flex items-center gap-3">
-            <div className="relative flex-1">
-              <span aria-hidden="true" className="material-symbols-outlined text-on-surface-variant text-[18px] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none">search</span>
-              <Input
-                value={sampleFilter}
-                onChange={e => setSampleFilter(e.target.value)}
-                placeholder="Filter messages…"
-                aria-label="Filter messages"
-                className="pl-9 pr-8"
-              />
-              {sampleFilter && (
-                <button onClick={() => setSampleFilter('')} aria-label="Clear filter" className="absolute right-2 top-1/2 -translate-y-1/2 text-outline hover:text-on-surface">
-                  <span className="material-symbols-outlined text-[16px]">close</span>
-                </button>
-              )}
-            </div>
-            <span className="text-[12px] text-on-surface-variant shrink-0 tabular-nums">{filteredSamples.length} of {data.samples.length}</span>
-          </div>
+          <TopicSearchPanel
+            schemaPaths={Object.keys(data.schema)}
+            criteria={criteria}
+            onChange={setCriteria}
+            onSearch={() => runSearch(false)}
+            onLoadMore={() => runSearch(true)}
+            onClear={clearSearch}
+            searching={searching}
+            active={searchActive}
+            result={searchResult}
+            error={searchError}
+            loadedHits={hits.length}
+          />
 
           {/* Field selection bar */}
           {selectedFields.length > 0 && (
@@ -455,21 +573,25 @@ const TopicExplorer: React.FC = () => {
           )}
 
           <div className="rounded-xl bg-surface-container ring-1 ring-white/[0.045] overflow-hidden">
-            {filteredSamples.map((sample, i) => (
-              <SampleCard
-                key={i}
-                sample={sample}
+            {displayedMessages.map((message, i) => (
+              <MessageCard
+                key={`${message.partition}-${message.offset}-${i}`}
+                message={message}
                 index={i}
                 onCopy={copyToClipboard}
                 onFieldClick={toggleField}
                 selectedFields={selectedFields}
+                highlight={highlight}
+                caseSensitive={criteria.caseSensitive}
               />
             ))}
-            {filteredSamples.length === 0 && (
+            {displayedMessages.length === 0 && (
               <EmptyState
                 icon="search_off"
-                title={sampleFilter ? 'No matching messages' : 'No messages in topic'}
-                description={sampleFilter ? `Nothing matches “${sampleFilter}”.` : undefined}
+                title={searchActive ? 'No matching messages' : 'No messages in topic'}
+                description={searchActive
+                  ? 'Nothing matched in the range that was scanned. Widen the range, or continue scanning.'
+                  : undefined}
               />
             )}
           </div>
