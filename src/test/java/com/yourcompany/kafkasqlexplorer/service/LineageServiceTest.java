@@ -217,7 +217,7 @@ class LineageServiceTest {
      * Stubs one wired topic (backing table1) and one orphan topic.
      * Kept to a single getLineage() call per test: the DDL iterator mock is one-shot.
      */
-    private void stubWiredAndOrphanTopics() {
+    private void stubWiredAndOrphanTopics() throws Exception {
         when(tableEnv.listTables()).thenReturn(new String[]{"table1"});
         when(tableEnv.listViews()).thenReturn(new String[]{});
         mockDdl("SHOW CREATE TABLE table1", "CREATE TABLE table1 (...) WITH ('topic' = 'wired')");
@@ -227,7 +227,7 @@ class LineageServiceTest {
     }
 
     @Test
-    void unfilteredGraphKeepsOrphanTopics() {
+    void unfilteredGraphKeepsOrphanTopics() throws Exception {
         stubWiredAndOrphanTopics();
 
         List<Map<String, Object>> nodes = nodesOf(lineageService.getLineage(false));
@@ -239,7 +239,7 @@ class LineageServiceTest {
     }
 
     @Test
-    void connectedOnlyDropsUnwiredNodes() {
+    void connectedOnlyDropsUnwiredNodes() throws Exception {
         stubWiredAndOrphanTopics();
 
         List<Map<String, Object>> nodes = nodesOf(lineageService.getLineage(true));
