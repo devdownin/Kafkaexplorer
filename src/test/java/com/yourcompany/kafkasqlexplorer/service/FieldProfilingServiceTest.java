@@ -3,14 +3,16 @@
 package com.yourcompany.kafkasqlexplorer.service;
 
 import com.yourcompany.kafkasqlexplorer.config.ClaudeConfig;
+import com.yourcompany.kafkasqlexplorer.config.ProcessMiningConfig;
 import com.yourcompany.kafkasqlexplorer.domain.FieldProfileResult;
-import com.yourcompany.kafkasqlexplorer.domain.KafkaMessage;
+import com.yourcompany.kafkasqlexplorer.domain.PayloadDigest;
 import com.yourcompany.kafkasqlexplorer.domain.SnapshotConfig;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -18,9 +20,18 @@ import static org.mockito.Mockito.*;
 
 class FieldProfilingServiceTest {
 
+    private static final PayloadDigestService DIGEST_SERVICE =
+        new PayloadDigestService(new ProcessMiningConfig());
+
     private KafkaSnapshotReader snapshotReader;
     private ClaudeConfig claudeConfig;
     private FieldProfilingService fieldProfilingService;
+
+    /** Digests a raw payload the way the snapshot reader does, so tests exercise the real format. */
+    private static PayloadDigest digestOf(String topic, String key, String value) {
+        return DIGEST_SERVICE.digest(topic, 0, 1L, 1000L, key,
+            value.getBytes(StandardCharsets.UTF_8), Set.of());
+    }
 
     @BeforeEach
     void setUp() {
@@ -35,7 +46,7 @@ class FieldProfilingServiceTest {
     void testProfileWithMissingApiKeyAnthropic() {
         claudeConfig.setProvider(ClaudeConfig.Provider.ANTHROPIC);
         claudeConfig.setApiKey("");
-        fieldProfilingService = new FieldProfilingService(snapshotReader, claudeConfig);
+        fieldProfilingService = new FieldProfilingService(snapshotReader, claudeConfig, mock(LlmClient.class));
 
         FieldProfileResult result = fieldProfilingService.profile(List.of("topic1"), SnapshotConfig.latestN(10));
 
@@ -49,8 +60,8 @@ class FieldProfilingServiceTest {
         LlmClient llmClient = mock(LlmClient.class);
         fieldProfilingService = new FieldProfilingService(snapshotReader, claudeConfig, llmClient);
 
-        when(snapshotReader.read(anyList(), any())).thenReturn(List.of(
-            new KafkaMessage("topic1", 0, 1L, 1000L, "key1", "{\"id\":1}")
+        when(snapshotReader.readDigested(anyList(), any(), any(), anyInt())).thenReturn(List.of(
+            digestOf("topic1", "key1", "{\"id\":1}")
         ));
         when(llmClient.generate(anyString(), anyString())).thenReturn("{\"topics\": [], \"warnings\": []}");
 
@@ -65,8 +76,8 @@ class FieldProfilingServiceTest {
         LlmClient llmClient = mock(LlmClient.class);
         fieldProfilingService = new FieldProfilingService(snapshotReader, claudeConfig, llmClient);
 
-        when(snapshotReader.read(anyList(), any())).thenReturn(List.of(
-            new KafkaMessage("topic1", 0, 1L, 1000L, "key1", "{\"id\":1}")
+        when(snapshotReader.readDigested(anyList(), any(), any(), anyInt())).thenReturn(List.of(
+            digestOf("topic1", "key1", "{\"id\":1}")
         ));
 
         when(llmClient.generate(anyString(), anyString())).thenReturn("{\"topics\": [], \"warnings\": []}");
@@ -82,8 +93,8 @@ class FieldProfilingServiceTest {
         LlmClient llmClient = mock(LlmClient.class);
         fieldProfilingService = new FieldProfilingService(snapshotReader, claudeConfig, llmClient);
 
-        when(snapshotReader.read(anyList(), any())).thenReturn(List.of(
-            new KafkaMessage("topic1", 0, 1L, 1000L, "key1", "{\"id\":1}")
+        when(snapshotReader.readDigested(anyList(), any(), any(), anyInt())).thenReturn(List.of(
+            digestOf("topic1", "key1", "{\"id\":1}")
         ));
 
         when(llmClient.generate(anyString(), anyString())).thenReturn("""

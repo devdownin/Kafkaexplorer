@@ -6,7 +6,7 @@ import SchemaValidationPanel, {
 } from '../components/processmining/SchemaValidationPanel';
 import MermaidRenderer from '../components/processmining/MermaidRenderer';
 import AnomalyTable, { AnomalyReport } from '../components/processmining/AnomalyTable';
-import LiveStatusBar from '../components/processmining/LiveStatusBar';
+import LiveStatusBar, { LiveWindowStats } from '../components/processmining/LiveStatusBar';
 import AnomalyFeed, { LiveAnomaly } from '../components/processmining/AnomalyFeed';
 import { PageHeader, Button } from '../components/ui';
 
@@ -143,6 +143,7 @@ const ProcessMining: React.FC = () => {
   const [liveFlowchart, setLiveFlowchart] = useState<string | null>(null);
   const [liveAnomalies, setLiveAnomalies] = useState<LiveAnomaly[]>([]);
   const [liveWindowSize, setLiveWindowSize] = useState(0);
+  const [liveStats, setLiveStats] = useState<LiveWindowStats | null>(null);
   const [liveLastUpdate, setLiveLastUpdate] = useState<number | null>(null);
   const [liveComments, setLiveComments] = useState<string | null>(null);
   const [liveSources, setLiveSources] = useState<RagSource[]>([]);
@@ -352,8 +353,9 @@ const ProcessMining: React.FC = () => {
 
     es.addEventListener('WINDOW_STATS', (e) => {
       try {
-        const stats = JSON.parse(e.data);
+        const stats: LiveWindowStats = JSON.parse(e.data);
         setLiveWindowSize(stats.windowSize ?? 0);
+        setLiveStats(stats);
         setLiveLastUpdate(Date.now());
       } catch {
         // ignore
@@ -646,6 +648,7 @@ const ProcessMining: React.FC = () => {
                   <LiveStatusBar
                     connected={liveConnected}
                     windowSize={liveWindowSize}
+                    stats={liveStats}
                     lastUpdate={liveLastUpdate}
                   />
                 </div>

@@ -3,7 +3,10 @@
 package com.yourcompany.kafkasqlexplorer.service;
 
 import com.yourcompany.kafkasqlexplorer.config.KafkaConfig;
+import com.yourcompany.kafkasqlexplorer.config.ProcessMiningConfig;
+import com.yourcompany.kafkasqlexplorer.domain.FieldMapping;
 import com.yourcompany.kafkasqlexplorer.domain.KafkaMessage;
+import com.yourcompany.kafkasqlexplorer.domain.PayloadDigest;
 import com.yourcompany.kafkasqlexplorer.domain.SnapshotConfig;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -11,6 +14,7 @@ import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.consumer.OffsetAndTimestamp;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,10 +23,13 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 @Component
 public class KafkaSnapshotReader {
@@ -31,19 +38,61 @@ public class KafkaSnapshotReader {
 
     private final KafkaConfig kafkaConfig;
     private final KafkaAdminService kafkaAdminService;
+    private final ProcessMiningConfig processMiningConfig;
+    private final PayloadDigestService payloadDigestService;
 
-    public KafkaSnapshotReader(KafkaConfig kafkaConfig, KafkaAdminService kafkaAdminService) {
+    public KafkaSnapshotReader(KafkaConfig kafkaConfig, KafkaAdminService kafkaAdminService,
+                                ProcessMiningConfig processMiningConfig,
+                                PayloadDigestService payloadDigestService) {
         this.kafkaConfig = kafkaConfig;
         this.kafkaAdminService = kafkaAdminService;
+        this.processMiningConfig = processMiningConfig;
+        this.payloadDigestService = payloadDigestService;
     }
 
+    /** Reads raw messages. Callers that only need structure and a few fields should prefer
+     *  {@link #readDigested} — this one holds every payload in memory as a String. */
     public List<KafkaMessage> read(List<String> topics, SnapshotConfig config) {
-        String groupId = "snapshot-reader-" + UUID.randomUUID();
-        Properties props = buildConsumerProperties(groupId, config);
-
-        KafkaConsumer<String, String> consumer = null;
         List<KafkaMessage> messages = new ArrayList<>();
+        consume(topics, config, StringDeserializer.class, (ConsumerRecord<String, String> record) ->
+            messages.add(new KafkaMessage(
+                record.topic(), record.partition(), record.offset(), record.timestamp(),
+                record.key(), record.value())));
+        messages.sort((a, b) -> Long.compare(a.timestamp(), b.timestamp()));
+        return messages;
+    }
 
+    /**
+     * Reads and digests in one pass: each payload is summarized as it arrives and the raw bytes
+     * are released immediately, so a snapshot of MB-sized documents costs a bounded amount of
+     * heap regardless of how many messages are sampled.
+     *
+     * @param sampleFieldLimit how many non-mapped scalar values to keep per message — profiling
+     *                         wants a wide view, live analysis a narrow one
+     */
+    public List<PayloadDigest> readDigested(List<String> topics, SnapshotConfig config,
+                                             FieldMapping fieldMapping, int sampleFieldLimit) {
+        List<PayloadDigest> digests = new ArrayList<>();
+        Map<String, Set<String>> pathsByTopic = new LinkedHashMap<>();
+
+        consume(topics, config, ByteArrayDeserializer.class, (ConsumerRecord<String, byte[]> record) -> {
+            Set<String> mapped = pathsByTopic.computeIfAbsent(record.topic(),
+                topic -> payloadDigestService.mappedPaths(fieldMapping, topic));
+            digests.add(payloadDigestService.digest(
+                record.topic(), record.partition(), record.offset(), record.timestamp(),
+                record.key(), record.value(), mapped, sampleFieldLimit));
+        });
+
+        digests.sort((a, b) -> Long.compare(a.timestamp(), b.timestamp()));
+        return digests;
+    }
+
+    private <V> void consume(List<String> topics, SnapshotConfig config,
+                              Class<?> valueDeserializer, Consumer<ConsumerRecord<String, V>> handler) {
+        String groupId = "snapshot-reader-" + UUID.randomUUID();
+        Properties props = buildConsumerProperties(groupId, config, valueDeserializer);
+
+        KafkaConsumer<String, V> consumer = null;
         try {
             consumer = new KafkaConsumer<>(props);
 
@@ -72,24 +121,16 @@ public class KafkaSnapshotReader {
 
             while (!allTopicsReachedLimit(collectedByTopic, maxMessagesPerTopic)
                 && System.currentTimeMillis() < deadline) {
-                ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(500));
+                ConsumerRecords<String, V> records = consumer.poll(Duration.ofMillis(500));
                 if (records.isEmpty()) {
                     break;
                 }
-                for (ConsumerRecord<String, String> record : records) {
+                for (ConsumerRecord<String, V> record : records) {
                     int currentCount = collectedByTopic.getOrDefault(record.topic(), 0);
                     if (currentCount >= maxMessagesPerTopic) {
                         continue;
                     }
-
-                    messages.add(new KafkaMessage(
-                        record.topic(),
-                        record.partition(),
-                        record.offset(),
-                        record.timestamp(),
-                        record.key(),
-                        record.value()
-                    ));
+                    handler.accept(record);
                     collectedByTopic.put(record.topic(), currentCount + 1);
                 }
             }
@@ -105,13 +146,10 @@ public class KafkaSnapshotReader {
                 }
             }
         }
-
-        // Sort by timestamp ascending
-        messages.sort((a, b) -> Long.compare(a.timestamp(), b.timestamp()));
-        return messages;
     }
 
-    private Properties buildConsumerProperties(String groupId, SnapshotConfig config) {
+    private Properties buildConsumerProperties(String groupId, SnapshotConfig config,
+                                                Class<?> valueDeserializer) {
         Properties props = new Properties();
         // Copy base Kafka properties
         kafkaConfig.getKafkaProperties().forEach(props::put);
@@ -119,8 +157,14 @@ public class KafkaSnapshotReader {
         props.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);
         props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
-        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, valueDeserializer.getName());
         props.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, String.valueOf(Math.min(Math.max(config.maxMessages(), 1) * 10, 1000)));
+        // Records at or above max.partition.fetch.bytes (1 MB by default) are fetched one per
+        // round trip; MB-sized payloads need a bigger fetch to batch normally.
+        props.put(ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG,
+            String.valueOf(processMiningConfig.getMaxPartitionFetchBytes()));
+        props.put(ConsumerConfig.FETCH_MAX_BYTES_CONFIG,
+            String.valueOf(processMiningConfig.getFetchMaxBytes()));
 
         String offsetReset = switch (config.mode()) {
             case "EARLIEST" -> "earliest";
@@ -132,8 +176,8 @@ public class KafkaSnapshotReader {
         return props;
     }
 
-    private void seekToLatestN(KafkaConsumer<String, String> consumer,
-                                List<TopicPartition> partitions, int n) {
+    private <V> void seekToLatestN(KafkaConsumer<String, V> consumer,
+                                    List<TopicPartition> partitions, int n) {
         consumer.seekToEnd(partitions);
         Map<String, Long> partitionsPerTopic = partitions.stream()
             .collect(java.util.stream.Collectors.groupingBy(TopicPartition::topic, java.util.stream.Collectors.counting()));
@@ -148,8 +192,8 @@ public class KafkaSnapshotReader {
         }
     }
 
-    private void seekToTimestamp(KafkaConsumer<String, String> consumer,
-                                  List<TopicPartition> partitions, Long fromTimestamp) {
+    private <V> void seekToTimestamp(KafkaConsumer<String, V> consumer,
+                                      List<TopicPartition> partitions, Long fromTimestamp) {
         if (fromTimestamp == null) {
             consumer.seekToBeginning(partitions);
             return;
