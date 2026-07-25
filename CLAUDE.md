@@ -27,6 +27,16 @@ mvn test -Dtest=AuditServiceTest
 mvn clean package -DskipTests
 ```
 
+A Maven wrapper is checked in (`./mvnw`, Maven 3.9.9, `distributionType=only-script` so there is no wrapper JAR in the tree). Both CI workflows build through it.
+
+#### When `packages.confluent.io` is blocked
+
+`io.confluent:kafka-avro-serializer` and `io.confluent:kafka-schema-registry-client` are published **only** on `packages.confluent.io` — they are not on Maven Central. Behind a proxy that blocks that host, Maven cannot even *collect* the dependency graph (`flink-avro-confluent-registry` pulls the schema-registry client transitively), so it downloads nothing and every Maven goal fails before compiling a single file.
+
+`./verify-offline.sh` gives back a local compile-and-test loop in that situation: it resolves dependencies from a temporary Confluent-free pom, generates stubs for the five Confluent types the code touches, compiles main + test with `javac`, and runs the suite with the JUnit console launcher. It accepts extra ConsoleLauncher arguments, e.g. `./verify-offline.sh --select-class=com.yourcompany.kafkasqlexplorer.service.LineageServiceTest`.
+
+Two things to know: Avro / Schema Registry paths run against the stubs, not the real Confluent client, so those results are indicative only; and the launcher must be started as `java -cp … org.junit.platform.console.ConsoleLauncher`, never `java -jar`. With `-jar` the system classpath holds only the launcher, Flink's job-graph deserialization cannot find `flink-table-runtime`, every SELECT fails to submit, the planner circuit breaker trips, and a dozen `FlinkSqlServiceTest` cases fail for no real reason. CI remains the authority — it builds against the real Confluent jars.
+
 ### Frontend (React / Vite)
 
 ```bash
