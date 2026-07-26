@@ -70,7 +70,12 @@ public class NamingConventionService {
                 steps.add(new FlowAudit.StepInfo(topic.name(), topic.messageCount(), throughput, null)); // Latency is calculated later
             }
 
-            double healthScore = steps.get(steps.size() - 1).throughputPercentage();
+            // Score is a 0..1 ratio, NOT a percentage: how much of the first step's volume still
+            // reaches the last one. It used to be stored as the raw 0..100 throughput percentage,
+            // which the UI then multiplied by 100 again and rendered as "10000%".
+            // A fan-out (last step larger than the first) is clamped to 1.0 rather than >100%.
+            double lastThroughput = steps.get(steps.size() - 1).throughputPercentage();
+            double healthScore = Math.min(1.0, Math.max(0.0, lastThroughput / 100.0));
             flows.add(new FlowAudit(entry.getKey(), steps, healthScore));
         }
 
