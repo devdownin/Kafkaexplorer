@@ -5,6 +5,7 @@ package com.yourcompany.kafkasqlexplorer.web;
 import com.yourcompany.kafkasqlexplorer.domain.AuditOptions;
 import com.yourcompany.kafkasqlexplorer.domain.AuditReport;
 import com.yourcompany.kafkasqlexplorer.service.AuditService;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -25,9 +26,17 @@ public class AuditController {
         this.auditService = auditService;
     }
 
+    /**
+     * Starts a run and returns its id. When one is already in flight, answers 409 with **that**
+     * run's id so the caller attaches to it: the audit executor is single-threaded, so accepting
+     * the request would only queue another full cluster scan behind the current one.
+     */
     @PostMapping("/start")
-    public String startAudit(@RequestBody(required = false) AuditOptions options) {
-        return auditService.startAudit(options != null ? options : AuditOptions.all());
+    public ResponseEntity<String> startAudit(@RequestBody(required = false) AuditOptions options) {
+        AuditService.AuditStart start = auditService.startAudit(options != null ? options : AuditOptions.all());
+        return start.started()
+            ? ResponseEntity.ok(start.auditId())
+            : ResponseEntity.status(HttpStatus.CONFLICT).body(start.auditId());
     }
 
     /**

@@ -111,7 +111,10 @@ parser/       JSON, XML, and Avro (via Confluent Schema Registry) schema inferen
   - The in-flight `RUNNING` report is republished after every topic with `phase` / `topicsCompleted` / `topicsTotal`, which is what drives the Audit page's progress bar. `globalStats` also carries `startedAt`, `durationMs` and `options`.
   - Flow latency memoizes `topic → Map<id, first timestamp>` for the run: a topic in the middle of a flow is both a source and a target and was otherwise fetched twice.
   - `FlowAudit.overallHealthScore` is a **0..1 ratio**, not a percentage (the UI multiplies by 100).
-- `AuditController` — `@RestController` under `/api/audit` only: `start`, `status/{id}` (404 on an unknown id), `last` (204 when no run yet). Do **not** add a `GET /audit` mapping — `/audit` is a client-side route and a controller mapping on it shadows `SpaController`, producing a circular-view-path 500 on a page refresh (there is no template engine).
+  - **Severity is graded**: `HealthStatus` is `HEALTHY < WARNING < CRITICAL` (`max`/`atLeast` helpers), and every finding is a `TopicIssue(message, severity)` — a topic takes the worst severity among its issues. CRITICAL = the audit failed, unparseable payloads, `COUNT(*)` returning 0 on a non-empty topic; WARNING = duplicates (often legitimate), a degraded measurement. `AuditReport` carries `criticalTopicsCount` + `warningTopicsCount`, and `globalStats.healthScore` (0..1, critical −1 / warning −½) is computed server-side so it is frozen into the persisted report. Reports already in `internal.audit.history` still contain the retired `UNHEALTHY` value — a future history reader must tolerate it.
+  - **One run at a time**: `startAudit` returns `AuditStart(auditId, started)` and refuses to queue a second scan behind the single-threaded executor; the controller answers 409 with the in-flight id and the UI attaches to it. The slot is released in a `finally` — a failed run must not block every later start.
+  - `totalMessages` sums the per-topic counts actually reported, not `topicSizes`, so the KPI and the table column agree when exact counts ran.
+- `AuditController` — `@RestController` under `/api/audit` only: `start` (409 + in-flight id when one is running), `status/{id}` (404 on an unknown id), `last` (204 when no run yet). Do **not** add a `GET /audit` mapping — `/audit` is a client-side route and a controller mapping on it shadows `SpaController`, producing a circular-view-path 500 on a page refresh (there is no template engine).
 - `LineageService` — builds dependency graph (topics → tables → views → jobs) by regex-parsing DDL/SQL; uses `TableEnvironment` (not `StreamTableEnvironment`) — Flink 2.x uses the unified API
 - `StreamFlowService` — traces messages across topics using JSONPath / XPath expressions
 - `SqlQueryValidator` — whitelist-based guard: only `SELECT`, `EXPLAIN`, and `CREATE TABLE` are allowed
@@ -197,10 +200,11 @@ Test classes are in `src/test/java/com/yourcompany/kafkasqlexplorer/`.
 
 `AUDIT-FEATURE-REVIEW.md` is a later, narrower review of the **Cluster Audit feature itself**
 (`AuditService`, `AuditController`, `NamingConventionService`, `MessageFieldExtractorService`,
-`Audit.tsx`) — bugs B1–B9, optimisations O1–O3, ergonomics E1–E8, all fixed, plus a "constaté, non
-traité" section listing what was deliberately left open (binary `HealthStatus`, the write-only
-`internal.audit.history` topic, no cancellation, the premature-empty-poll behaviour of
-`KafkaAdminService.getEarliestRecords`).
+`Audit.tsx`) — bugs B1–B9, optimisations O1–O3, ergonomics E1–E8 and a second lot S1–S3 (graded
+severity, one run at a time, consistent `totalMessages`), all fixed, plus a "constaté, non traité"
+section listing what was deliberately left open (the write-only `internal.audit.history` topic, no
+cancellation of a running audit, duplicates scanned from EARLIEST, no global time budget, the
+premature-empty-poll behaviour of `KafkaAdminService.getEarliestRecords`).
 
 `AUDIT.md` at the repository root documents a full bug & optimisation audit. All critical (C1–C4), major (M1–M8), minor and optimisation findings listed there have been fixed on this codebase — the report describes the *pre-fix* state and the corrective decisions (useful context before refactoring `AuditService`, `KafkaLiveConsumer`, `MetricService` or the direct SELECT engine).
 

@@ -263,25 +263,75 @@ Aucun moyen de sortir un rapport de l'écran (pour un ticket, une revue, un diff
 
 ---
 
-## 4. Constaté, non traité
+## 4. Second lot — sévérité graduée
+
+### S1 — `HealthStatus` n'est plus binaire ✅
+
+Un topic avec 1 doublon sur 10 000 messages et un topic dont l'audit a complètement échoué
+portaient le même `UNHEALTHY`. Sur un cluster réel, le KPI « Unhealthy Topics » et le score de
+santé devenaient donc du bruit : tout est rouge, rien ne hiérarchise. L'UI prévoyait déjà
+`WARNING` et `CRITICAL` — constantes mortes dans `HEALTH_TONE`.
+
+`HealthStatus` devient `HEALTHY < WARNING < CRITICAL`, et chaque constat porte sa propre sévérité
+via un nouveau record `TopicIssue(message, severity)` — les issues étaient de simples chaînes, donc
+l'UI les peignait toutes en rouge. Un topic prend la **pire** sévérité de ses constats.
+
+| Constat | Sévérité | Pourquoi |
+|---|---|---|
+| L'audit du topic a échoué | `CRITICAL` | Aucun verdict du tout, le pire résultat possible |
+| Messages illisibles dans l'échantillon | `CRITICAL` | Données malformées, les consommateurs casseront dessus |
+| `COUNT(*)` renvoie 0 alors que Kafka a des messages | `CRITICAL` | Incohérence réelle |
+| Doublons détectés | `WARNING` | Souvent légitime (mises à jour clefées par entité) |
+| Comptage exact indisponible | `WARNING` | C'est la mesure qui est dégradée, pas la donnée |
+
+`AuditReport.unhealthyTopicsCount` est remplacé par `criticalTopicsCount` + `warningTopicsCount`, et
+`globalStats.healthScore` (ratio 0..1) est désormais calculé côté serveur — donc figé dans le
+rapport persisté — avec une pondération : un CRITICAL coûte 1 point, un WARNING un demi.
+
+Côté UI : la tuile devient « Needs Attention » avec le détail critique/warning, les chips de constat
+sont colorées par sévérité, et le filtre santé propose *Needs attention / Critical only /
+Warning only / Healthy only*.
+
+> ⚠️ Les rapports déjà écrits dans `internal.audit.history` contiennent `"UNHEALTHY"`, qui n'existe
+> plus dans l'enum. Sans conséquence aujourd'hui — rien ne relit ce topic — mais le futur lecteur
+> d'historique (voir ci-dessous) devra tolérer cette valeur héritée.
+
+### S2 — Un seul audit à la fois ✅
+
+`startAudit` empilait les runs sur un exécuteur mono-thread : cliquer cinq fois enchaînait cinq
+scans complets du cluster, sans annulation possible. Un `AtomicReference` porte désormais le run en
+vol ; `POST /api/audit/start` répond **409 avec l'id du run en cours**, et l'UI s'y rattache au lieu
+d'afficher une erreur ou de mettre un second scan en file. Le créneau est libéré dans un `finally`,
+sinon un run en échec aurait bloqué tous les suivants pour la durée du processus.
+
+### S3 — `totalMessages` cohérent avec la colonne ✅
+
+Le KPI sommait `topicSizes` (estimation par offsets) pendant que la colonne par topic affichait les
+comptages exacts Flink. Il somme maintenant les `TopicAudit.messageCount` réellement rapportés, donc
+les deux chiffres de l'écran viennent de la même source.
+
+Au passage, un bug de test latent : le mock Flink de `testAuditProcess` filtrait sur `demo.test.1`
+alors que le SQL généré porte le nom de table `demo_test_1` — les deux topics recevaient donc le
+même comptage et l'assertion passait pour de mauvaises raisons.
+
+---
+
+## 5. Constaté, non traité
 
 Ces points sont réels mais dépassent le périmètre d'une correction de la fonctionnalité Audit ;
 ils sont listés pour décision.
 
-* **`HealthStatus` est binaire.** Un topic avec 1 doublon sur 10 000 messages et un topic dont
-  l'audit a complètement échoué portent le même `UNHEALTHY`. L'UI prévoyait déjà `WARNING` et
-  `CRITICAL` (constantes mortes dans `HEALTH_TONE`) : la sévérité graduée semble avoir été prévue
-  puis abandonnée. Ajouter `WARNING` à l'enum toucherait `TopicAudit`, l'agrégat
-  `unhealthyTopicsCount` et le score global.
 * **`internal.audit.history` reste en écriture seule.** `GET /api/audit/last` ne sert que les runs
   du processus courant ; après un redémarrage, l'historique persisté dans Kafka n'est toujours pas
   relu. Un vrai écran d'historique (liste des runs, comparaison de deux rapports) demanderait un
   lecteur du topic au démarrage, sur le modèle de `MetricService`.
-* **Aucune annulation.** `startAudit` empile les runs sur un exécuteur mono-thread : cliquer cinq
-  fois enchaîne cinq scans complets, sans moyen d'interrompre.
-* **`totalMessages` est l'estimation par offsets**, même quand `checkExactCount` est actif et que
-  la colonne par topic affiche des comptages exacts. Les deux chiffres de l'écran ne viennent pas
-  de la même source.
+* **Toujours aucune annulation.** S2 empêche d'empiler des runs, mais il n'existe pas de moyen
+  d'interrompre celui qui tourne — il faut attendre la fin du scan.
+* **La détection de doublons lit depuis EARLIEST** alors que tout le reste échantillonne les
+  messages récents. Sur un topic avec rétention, elle juge les 10 000 plus vieux messages
+  survivants, pas forcément ce qu'un opérateur attend.
+* **Pas de budget global sur l'audit.** Un `COUNT(*)` Flink par topic à 5 s de timeout, sur
+  4 threads : un cluster de 2 000 topics peut occuper 40 minutes.
 * **`KafkaAdminService.getEarliestRecords` / `getRecordsWithPredicate` s'arrêtent au premier
   `poll()` vide.** Sur un broker lent ou une partition dont les métadonnées ne sont pas encore
   résolues, le scan peut se terminer prématurément et sous-estimer les doublons. Le correctif

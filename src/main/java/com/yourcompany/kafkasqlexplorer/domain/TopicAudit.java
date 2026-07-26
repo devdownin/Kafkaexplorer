@@ -4,6 +4,9 @@ package com.yourcompany.kafkasqlexplorer.domain;
 
 import java.util.List;
 
+/**
+ * @param healthStatus the worst severity among {@code issues}, HEALTHY when there are none
+ */
 public record TopicAudit(
     String name,
     long messageCount,
@@ -11,5 +14,5 @@ public record TopicAudit(
     int poisonMessageCount,
     long duplicateCount,
     HealthStatus healthStatus,
-    List<String> issues
+    List<TopicIssue> issues
 ) {}

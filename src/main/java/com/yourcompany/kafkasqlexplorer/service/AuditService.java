@@ -22,6 +22,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 /**
@@ -71,6 +72,13 @@ public class AuditService {
     private volatile String lastAuditId = null;
 
     /**
+     * Id of the run currently in flight, {@code null} when idle. {@link #startAudit} refuses to
+     * queue a second one: the audit executor is single-threaded, so clicking "Run new audit"
+     * five times used to line up five full cluster scans with no way to cancel them.
+     */
+    private final AtomicReference<String> runningAuditId = new AtomicReference<>();
+
+    /**
      * Dedicated executor for background audit runs. Spring's {@code @Async} cannot be used
      * here: {@code startAudit()} would self-invoke the async method, bypassing the proxy and
      * running the whole audit synchronously on the HTTP thread.
@@ -114,18 +122,36 @@ public class AuditService {
         this.explorerConfig = explorerConfig;
     }
 
-    public String startAudit(AuditOptions options) {
+    /**
+     * Outcome of a start request.
+     *
+     * @param auditId the run to follow — the newly started one, or the one already in flight
+     * @param started false when a run was already in progress and this request started nothing
+     */
+    public record AuditStart(String auditId, boolean started) {}
+
+    public AuditStart startAudit(AuditOptions options) {
         String auditId = UUID.randomUUID().toString();
+        if (!runningAuditId.compareAndSet(null, auditId)) {
+            // Hand back the in-flight run so the caller can attach to it instead of queueing.
+            String inFlight = runningAuditId.get();
+            if (inFlight != null) return new AuditStart(inFlight, false);
+            // The run finished between the CAS and the read — retry once, now unambiguously idle.
+            if (!runningAuditId.compareAndSet(null, auditId)) {
+                return new AuditStart(runningAuditId.get(), false);
+            }
+        }
+
         lastAuditId = auditId;
         Map<String, Object> pending = new LinkedHashMap<>();
         pending.put("phase", "starting");
         pending.put("startedAt", System.currentTimeMillis());
         pending.put("options", describeOptions(options));
-        storeReport(new AuditReport(auditId, AuditStatus.RUNNING, 0, 0, 0,
+        storeReport(new AuditReport(auditId, AuditStatus.RUNNING, 0, 0, 0, 0,
             Collections.emptyList(), Collections.emptyList(), pending));
 
         auditExecutor.submit(() -> runAuditAsync(auditId, options));
-        return auditId;
+        return new AuditStart(auditId, true);
     }
 
     public AuditReport getAuditReport(String auditId) {
@@ -173,7 +199,7 @@ public class AuditService {
             publishProgress(auditId, options, startedAt, "topics", 0, totalTopics);
 
             // Parallelize topic auditing on a bounded pool (not the shared commonPool). Each topic
-            // is isolated (auditTopicSafe) so one topic's failure degrades that topic to UNHEALTHY
+            // is isolated (auditTopicSafe) so one topic's failure degrades that topic to CRITICAL
             // rather than aborting the whole cluster audit via CompletableFuture.join().
             List<CompletableFuture<TopicAudit>> futures = topics.stream()
                 .map(topic -> CompletableFuture
@@ -189,8 +215,11 @@ public class AuditService {
                 .map(CompletableFuture::join)
                 .collect(Collectors.toList());
 
-            long unhealthyCount = topicAudits.stream()
-                .filter(a -> HealthStatus.UNHEALTHY.equals(a.healthStatus()))
+            int criticalCount = (int) topicAudits.stream()
+                .filter(a -> a.healthStatus() == HealthStatus.CRITICAL)
+                .count();
+            int warningCount = (int) topicAudits.stream()
+                .filter(a -> a.healthStatus() == HealthStatus.WARNING)
                 .count();
 
             List<FlowAudit> flowAudits = Collections.emptyList();
@@ -199,13 +228,16 @@ public class AuditService {
                 flowAudits = identifyAndAuditFlows(topicAudits);
             }
 
-            long totalMessages = topicSizes.values().stream().mapToLong(Long::longValue).sum();
+            // Sum what the table actually shows. Using topicSizes here meant the KPI stayed on the
+            // offset estimate while the per-topic column showed the exact Flink counts.
+            long totalMessages = topicAudits.stream().mapToLong(TopicAudit::messageCount).sum();
 
             Map<String, Object> globalStats = new LinkedHashMap<>();
             globalStats.put("timestamp", System.currentTimeMillis());
             globalStats.put("startedAt", startedAt);
             globalStats.put("durationMs", System.currentTimeMillis() - startedAt);
             globalStats.put("options", describeOptions(options));
+            globalStats.put("healthScore", healthScore(totalTopics, criticalCount, warningCount));
             List<String> scopeNotes = scopeNotes(options, topicAudits);
             if (!scopeNotes.isEmpty()) globalStats.put("scopeNotes", scopeNotes);
 
@@ -230,7 +262,8 @@ public class AuditService {
                 AuditStatus.COMPLETED,
                 topics.size(),
                 totalMessages,
-                (int) unhealthyCount,
+                criticalCount,
+                warningCount,
                 topicAudits,
                 flowAudits,
                 globalStats
@@ -249,9 +282,24 @@ public class AuditService {
             failure.put("startedAt", startedAt);
             failure.put("durationMs", System.currentTimeMillis() - startedAt);
             failure.put("options", describeOptions(options));
-            storeReport(new AuditReport(auditId, AuditStatus.FAILED, 0, 0, 0,
+            storeReport(new AuditReport(auditId, AuditStatus.FAILED, 0, 0, 0, 0,
                 Collections.emptyList(), Collections.emptyList(), failure));
+        } finally {
+            // Release the slot whatever happened, otherwise a single failed run would block every
+            // subsequent start for the lifetime of the process.
+            runningAuditId.compareAndSet(auditId, null);
         }
+    }
+
+    /**
+     * Cluster health as a 0..1 ratio. A CRITICAL topic costs a full point, a WARNING half of one —
+     * the previous "unhealthy vs total" ratio treated a single duplicate key and an unreadable
+     * topic as the same loss.
+     */
+    private static double healthScore(int totalTopics, int criticalCount, int warningCount) {
+        if (totalTopics <= 0) return 1.0;
+        double penalty = (criticalCount + 0.5 * warningCount) / totalTopics;
+        return Math.max(0.0, Math.min(1.0, 1.0 - penalty));
     }
 
     /** Replaces the in-flight RUNNING report so a poll returns real progress. */
@@ -265,7 +313,7 @@ public class AuditService {
         stats.put("topicsTotal", total);
         stats.put("startedAt", startedAt);
         stats.put("options", describeOptions(options));
-        storeReport(new AuditReport(auditId, AuditStatus.RUNNING, total, 0, 0,
+        storeReport(new AuditReport(auditId, AuditStatus.RUNNING, total, 0, 0, 0,
             Collections.emptyList(), Collections.emptyList(), stats));
     }
 
@@ -290,18 +338,19 @@ public class AuditService {
                 + " messages of each pair of consecutive topics on a shared \"id\" field.");
         }
         long degraded = topicAudits.stream()
-            .filter(t -> t.issues().stream().anyMatch(i -> i.startsWith("Audit failed")))
+            .filter(t -> t.issues().stream().anyMatch(i -> i.message().startsWith("Audit failed")))
             .count();
         if (degraded > 0) {
-            notes.add(degraded + " topic(s) could not be audited and are reported as UNHEALTHY.");
+            notes.add(degraded + " topic(s) could not be audited and are reported as CRITICAL.");
         }
         return notes;
     }
 
     /**
      * Isolates a single topic's audit: any failure (Kafka sampling error, schema inference, …) is
-     * turned into a degraded UNHEALTHY {@link TopicAudit} carrying the reason, so one bad topic
-     * never fails the whole cluster audit.
+     * turned into a degraded CRITICAL {@link TopicAudit} carrying the reason, so one bad topic
+     * never fails the whole cluster audit. CRITICAL and not WARNING: no verdict at all is the
+     * worst outcome an audit can produce for a topic.
      */
     private TopicAudit auditTopicSafe(String topicName, long approximateCount, AuditOptions options) {
         try {
@@ -310,14 +359,14 @@ public class AuditService {
             String reason = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
             log.warn("Audit failed for topic '{}': {}", topicName, reason);
             return new TopicAudit(topicName, approximateCount, MessageFormat.AUTO, 0, 0L,
-                HealthStatus.UNHEALTHY, List.of("Audit failed: " + reason));
+                HealthStatus.CRITICAL, List.of(TopicIssue.critical("Audit failed: " + reason)));
         }
     }
 
     private TopicAudit auditTopic(String topicName, long approximateCount, AuditOptions options) {
         MessageFormat format = MessageFormat.AUTO;
         Map<String, String> schema = Collections.emptyMap();
-        List<String> issues = new ArrayList<>();
+        List<TopicIssue> issues = new ArrayList<>();
 
         // One sample serves format detection, schema inference and the poison check. Each of the
         // three used to open its own KafkaConsumer (describeTopics + assign + seek + poll) to read
@@ -342,7 +391,9 @@ public class AuditService {
             ExactCount counted = getExactCount(topicName, approximateCount);
             exactCount = counted.value();
             if (counted.error() != null) {
-                issues.add("Exact count unavailable (" + counted.error() + ") — showing the offset estimate.");
+                // The topic's data is fine; it is the measurement that is degraded.
+                issues.add(TopicIssue.warning(
+                    "Exact count unavailable (" + counted.error() + ") — showing the offset estimate."));
             }
         }
 
@@ -358,18 +409,24 @@ public class AuditService {
         }
 
         if (poisonCount > 0) {
-            issues.add("Detected " + poisonCount + " malformed message(s) out of "
-                + samples.size() + " sampled.");
+            // Unparseable payloads in the topic itself — consumers downstream will break on them.
+            issues.add(TopicIssue.critical("Detected " + poisonCount + " malformed message(s) out of "
+                + samples.size() + " sampled."));
         }
         if (options.checkExactCount() && approximateCount > 0 && exactCount == 0) {
-            issues.add("Flink SQL returned 0 rows despite Kafka having messages.");
+            issues.add(TopicIssue.critical("Flink SQL returned 0 rows despite Kafka having messages."));
         }
         if (duplicateScan.duplicateKeys() > 0) {
-            issues.add("Detected " + duplicateScan.duplicateKeys() + " duplicate value(s) of '"
-                + duplicateScan.keyField() + "' over the first " + duplicateScan.scanned() + " message(s).");
+            // Duplicates are frequently legitimate (updates keyed by entity id), so they are a
+            // signal to look at, not a defect on their own.
+            issues.add(TopicIssue.warning("Detected " + duplicateScan.duplicateKeys()
+                + " duplicate value(s) of '" + duplicateScan.keyField()
+                + "' over the first " + duplicateScan.scanned() + " message(s)."));
         }
 
-        HealthStatus status = issues.isEmpty() ? HealthStatus.HEALTHY : HealthStatus.UNHEALTHY;
+        HealthStatus status = issues.stream()
+            .map(TopicIssue::severity)
+            .reduce(HealthStatus.HEALTHY, HealthStatus::max);
 
         return new TopicAudit(topicName, exactCount, format, poisonCount,
             duplicateScan.duplicateKeys(), status, issues);

@@ -6,9 +6,23 @@ import {
   Table, TableHead, TableBody, TableRow, Th, Td, type BadgeTone,
 } from '../components/ui';
 
+type Severity = 'HEALTHY' | 'WARNING' | 'CRITICAL';
+
 const HEALTH_TONE: Record<string, BadgeTone> = {
-  HEALTHY: 'success', UNHEALTHY: 'error', WARNING: 'warning', CRITICAL: 'error', UNKNOWN: 'neutral',
+  HEALTHY: 'success', WARNING: 'warning', CRITICAL: 'error',
 };
+
+/** Chip styling per issue severity — every issue used to be painted error-red. */
+const ISSUE_STYLE: Record<Severity, string> = {
+  HEALTHY: 'bg-surface-container-high text-on-surface-variant border-outline-variant',
+  WARNING: 'bg-warning/10 text-warning border-warning/25',
+  CRITICAL: 'bg-error/10 text-error border-error/25',
+};
+
+interface TopicIssue {
+  message: string;
+  severity: Severity;
+}
 
 interface TopicAudit {
   name: string;
@@ -16,8 +30,8 @@ interface TopicAudit {
   format: string;
   poisonMessageCount: number;
   duplicateCount: number;
-  healthStatus: string;
-  issues: string[];
+  healthStatus: Severity;
+  issues: TopicIssue[];
 }
 
 interface StepInfo {
@@ -49,6 +63,8 @@ interface GlobalStats {
   topicsTotal?: number;
   error?: string;
   errorType?: string;
+  /** Ratio 0..1 : un topic CRITICAL coûte 1 point, un WARNING un demi-point. */
+  healthScore?: number;
   scopeNotes?: string[];
   metadataVersionWarning?: string;
   laggingFeatures?: LaggingFeature[];
@@ -60,7 +76,8 @@ interface AuditReport {
   status: 'RUNNING' | 'COMPLETED' | 'FAILED';
   totalTopics: number;
   totalMessages: number;
-  unhealthyTopicsCount: number;
+  criticalTopicsCount: number;
+  warningTopicsCount: number;
   topicAudits: TopicAudit[];
   flowAudits: FlowAudit[];
   globalStats: GlobalStats;
@@ -93,7 +110,15 @@ const NONE_CHECKED: AuditOptions = {
 };
 
 type SortKey = 'name' | 'messageCount' | 'poisonMessageCount' | 'duplicateCount';
-type HealthFilter = 'all' | 'unhealthy' | 'healthy';
+type HealthFilter = 'all' | 'critical' | 'warning' | 'attention' | 'healthy';
+
+const HEALTH_FILTERS: { value: HealthFilter; label: string; match: (s: Severity) => boolean }[] = [
+  { value: 'all',       label: 'All health states', match: () => true },
+  { value: 'attention', label: 'Needs attention',   match: s => s !== 'HEALTHY' },
+  { value: 'critical',  label: 'Critical only',     match: s => s === 'CRITICAL' },
+  { value: 'warning',   label: 'Warning only',      match: s => s === 'WARNING' },
+  { value: 'healthy',   label: 'Healthy only',      match: s => s === 'HEALTHY' },
+];
 
 const compactNum = (n: number) => {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
@@ -112,6 +137,8 @@ const Audit: React.FC = () => {
   const [report, setReport] = useState<AuditReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Message informatif (pas une erreur) — ex. rattachement à un audit déjà en cours. */
+  const [notice, setNotice] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'topics' | 'flows'>('topics');
   const [options, setOptions] = useState<AuditOptions>(ALL_CHECKED);
   // Restreint l'audit aux topics dont le nom commence par ce préfixe (vide = tous).
@@ -148,16 +175,28 @@ const Audit: React.FC = () => {
     }
   }, [stopPolling]);
 
+  const attachTo = useCallback((auditId: string) => {
+    stopPolling();
+    void pollStatus(auditId);
+    pollRef.current = setInterval(() => pollStatus(auditId), 2000);
+  }, [pollStatus, stopPolling]);
+
   const startAudit = async () => {
     setLoading(true);
     setError(null);
+    setNotice(null);
     setReport(null);
     try {
       const res = await axios.post<string>('/api/audit/start', { ...options, topicPrefix: topicPrefix.trim() || null });
-      const auditId = res.data;
-      void pollStatus(auditId);
-      pollRef.current = setInterval(() => pollStatus(auditId), 2000);
-    } catch {
+      attachTo(res.data);
+    } catch (e) {
+      // 409 = a run is already in flight and the body carries its id. Following it beats both
+      // queueing a second full cluster scan and showing the operator an error.
+      if (axios.isAxiosError(e) && e.response?.status === 409 && typeof e.response.data === 'string') {
+        setNotice('An audit was already running — following that one instead of queueing a second scan.');
+        attachTo(e.response.data);
+        return;
+      }
       setLoading(false);
       setError('Failed to start audit.');
     }
@@ -186,8 +225,10 @@ const Audit: React.FC = () => {
   const stats = report?.globalStats ?? {};
   const failed = report?.status === 'FAILED';
 
+  // Pondéré côté serveur (CRITICAL = 1 point, WARNING = 0,5) et persisté avec le rapport.
   const healthScore = report && report.status === 'COMPLETED' && report.totalTopics > 0
-    ? Math.round(((report.totalTopics - report.unhealthyTopicsCount) / report.totalTopics) * 100)
+      && typeof stats.healthScore === 'number'
+    ? Math.round(stats.healthScore * 100)
     : null;
 
   const progressPct = stats.topicsTotal
@@ -197,11 +238,10 @@ const Audit: React.FC = () => {
   const visibleTopics = useMemo(() => {
     if (!report) return [];
     const needle = topicFilter.trim().toLowerCase();
+    const matchHealth = HEALTH_FILTERS.find(f => f.value === healthFilter)?.match ?? (() => true);
     const rows = report.topicAudits.filter(t => {
       if (needle && !t.name.toLowerCase().includes(needle)) return false;
-      if (healthFilter === 'unhealthy') return t.healthStatus !== 'HEALTHY';
-      if (healthFilter === 'healthy') return t.healthStatus === 'HEALTHY';
-      return true;
+      return matchHealth(t.healthStatus);
     });
     const direction = sortDesc ? -1 : 1;
     return [...rows].sort((a, b) => {
@@ -371,6 +411,14 @@ const Audit: React.FC = () => {
         </div>
       )}
 
+      {/* Notice — informatif, surtout pas rendu en rouge comme une erreur */}
+      {notice && (
+        <div className="rounded-xl border border-outline-variant bg-surface-container p-4 flex items-center gap-3 text-on-surface-variant text-[13px]" role="status">
+          <span className="material-symbols-outlined text-[20px]">info</span>
+          {notice}
+        </div>
+      )}
+
       {/* Failed run — never render the KPI grid for one: an aborted audit used to show
           "0 topics / 100% health", i.e. a perfect cluster. */}
       {failed && (
@@ -436,13 +484,21 @@ const Audit: React.FC = () => {
             <Stat label="Total Topics" icon="format_list_bulleted" value={report.totalTopics.toLocaleString()} />
             <Stat label="Total Messages" icon="bolt" tone="primary"
               value={<span title={report.totalMessages.toLocaleString()}>{compactNum(report.totalMessages)}</span>} />
-            <Stat label="Unhealthy Topics" icon="warning"
-              tone={report.unhealthyTopicsCount > 0 ? 'error' : 'success'}
-              value={report.unhealthyTopicsCount.toLocaleString()} />
+            <Stat label="Needs Attention" icon="warning"
+              tone={report.criticalTopicsCount > 0 ? 'error' : report.warningTopicsCount > 0 ? 'warning' : 'success'}
+              value={(report.criticalTopicsCount + report.warningTopicsCount).toLocaleString()}
+              hint={
+                report.criticalTopicsCount + report.warningTopicsCount > 0
+                  ? <span className="inline-flex gap-2">
+                      <span className="text-error">{report.criticalTopicsCount} critical</span>
+                      <span className="text-warning">{report.warningTopicsCount} warning</span>
+                    </span>
+                  : 'No finding'
+              } />
             <Stat label="Health Score" icon="health_metrics"
               tone={healthScore == null ? 'none' : healthScore >= 80 ? 'success' : healthScore >= 50 ? 'warning' : 'error'}
               value={healthScore == null ? '—' : `${healthScore}%`}
-              hint={healthScore == null ? 'No topic in scope' : undefined} />
+              hint={healthScore == null ? 'No topic in scope' : 'Critical −1, warning −½'} />
           </div>
 
           {/* KRaft upgrade completeness — set when metadata.version lags broker support */}
@@ -525,9 +581,9 @@ const Audit: React.FC = () => {
                   value={healthFilter}
                   onChange={e => setHealthFilter(e.target.value as HealthFilter)}
                 >
-                  <option value="all">All health states</option>
-                  <option value="unhealthy">Unhealthy only</option>
-                  <option value="healthy">Healthy only</option>
+                  {HEALTH_FILTERS.map(f => (
+                    <option key={f.value} value={f.value}>{f.label}</option>
+                  ))}
                 </Select>
                 <span className="text-[11px] text-on-surface-variant tabular-nums">
                   {visibleTopics.length} of {report.topicAudits.length} topics
@@ -584,7 +640,13 @@ const Audit: React.FC = () => {
                         {t.issues.length > 0 ? (
                           <div className="flex flex-wrap gap-1">
                             {t.issues.map((issue, i) => (
-                              <span key={i} className="text-[11px] bg-error/10 text-error px-1.5 py-0.5 rounded border border-error/25">{issue}</span>
+                              <span
+                                key={i}
+                                title={issue.severity}
+                                className={`text-[11px] px-1.5 py-0.5 rounded border ${ISSUE_STYLE[issue.severity]}`}
+                              >
+                                {issue.message}
+                              </span>
                             ))}
                           </div>
                         ) : (
