@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { Field, Input, NumberInput, Select } from '../ui';
 
 export interface SnapshotConfig {
   mode: 'EARLIEST' | 'LATEST_N' | 'TIMESTAMP';
@@ -131,40 +132,25 @@ const TopicSelectorPanel: React.FC<TopicSelectorPanelProps> = ({ onStart, loadin
 
       {/* Depth config */}
       <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="block text-xs font-medium text-on-surface-variant mb-1.5">Sampling Mode</label>
-          <select
-            value={mode}
-            onChange={e => setMode(e.target.value as SnapshotConfig['mode'])}
-            className="w-full bg-surface-container-low border border-outline-variant rounded-md px-3 py-2 text-sm text-on-surface focus:border-primary/50 outline-none"
-          >
-            <option value="LATEST_N">Latest N messages</option>
-            <option value="EARLIEST">From beginning</option>
-            <option value="TIMESTAMP">From timestamp</option>
-          </select>
-        </div>
-        <div>
-          <label className="block text-xs font-medium text-on-surface-variant mb-1.5">
-            {mode === 'TIMESTAMP' ? 'From timestamp' : 'Max messages per topic'}
-          </label>
-          {mode === 'TIMESTAMP' ? (
-            <input
-              type="datetime-local"
-              value={fromTimestamp}
-              onChange={e => setFromTimestamp(e.target.value)}
-              className="w-full bg-surface-container-low border border-outline-variant rounded-md px-3 py-2 text-sm text-on-surface focus:border-primary/50 outline-none"
-            />
-          ) : (
-            <input
-              type="number"
-              min={10}
-              max={10000}
-              value={maxMessages}
-              onChange={e => setMaxMessages(parseInt(e.target.value, 10) || 500)}
-              className="w-full bg-surface-container-low border border-outline-variant rounded-md px-3 py-2 text-sm text-on-surface focus:border-primary/50 outline-none"
-            />
+        <Field label="Sampling Mode">
+          {p => (
+            <Select {...p} value={mode} onChange={e => setMode(e.target.value as SnapshotConfig['mode'])}>
+              <option value="LATEST_N">Latest N messages</option>
+              <option value="EARLIEST">From beginning</option>
+              <option value="TIMESTAMP">From timestamp</option>
+            </Select>
           )}
-        </div>
+        </Field>
+        <Field label={mode === 'TIMESTAMP' ? 'From timestamp' : 'Max messages per topic'}>
+          {p => (mode === 'TIMESTAMP' ? (
+            <Input {...p} type="datetime-local" value={fromTimestamp}
+              onChange={e => setFromTimestamp(e.target.value)} />
+          ) : (
+            // `parseInt(v) || 500` renvoyait au défaut dès que le champ était vidé pour ressaisir.
+            <NumberInput {...p} min={10} max={10000} fallback={500}
+              value={maxMessages} onChange={setMaxMessages} />
+          ))}
+        </Field>
       </div>
 
       <button

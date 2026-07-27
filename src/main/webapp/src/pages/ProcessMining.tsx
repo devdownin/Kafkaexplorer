@@ -8,7 +8,7 @@ import MermaidRenderer from '../components/processmining/MermaidRenderer';
 import AnomalyTable, { AnomalyReport } from '../components/processmining/AnomalyTable';
 import LiveStatusBar, { LiveWindowStats } from '../components/processmining/LiveStatusBar';
 import AnomalyFeed, { LiveAnomaly } from '../components/processmining/AnomalyFeed';
-import { PageHeader, Button } from '../components/ui';
+import { PageHeader, Button, Field, Textarea } from '../components/ui';
 
 // ---- Types ----
 
@@ -611,18 +611,17 @@ const ProcessMining: React.FC = () => {
                   })}
                 </div>
 
-                <div>
-                  <label className="block text-[10px] uppercase font-bold tracking-wider text-on-surface-variant mb-1.5">
-                    Custom audit instruction
-                  </label>
-                  <textarea
-                    value={customAuditPrompt}
-                    onChange={e => setCustomAuditPrompt(e.target.value)}
-                    rows={2}
-                    placeholder="e.g. Flag any order whose amount changes between the received and validated topics."
-                    className="w-full bg-surface-container-low border border-outline-variant rounded-md px-3 py-2 text-sm text-on-surface placeholder:text-outline focus:border-primary/60 outline-none resize-y"
-                  />
-                </div>
+                <Field label="Custom audit instruction">
+                  {p => (
+                    <Textarea
+                      {...p}
+                      value={customAuditPrompt}
+                      onChange={e => setCustomAuditPrompt(e.target.value)}
+                      rows={2}
+                      placeholder="e.g. Flag any order whose amount changes between the received and validated topics."
+                    />
+                  )}
+                </Field>
               </div>
             )}
 
