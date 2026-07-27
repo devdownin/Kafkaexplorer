@@ -58,6 +58,11 @@ public class SqlQueryValidator {
             }
         } catch (Exception e) {
             if (e instanceof IllegalArgumentException) throw (IllegalArgumentException) e;
+            // A parse error never depends on the catalog, so reporting it here costs no Kafka round
+            // trip and gives the editor its line/column immediately.
+            if (SqlErrorClassifier.isSyntaxError(e)) {
+                throw new IllegalArgumentException(SqlErrorClassifier.explain(e), e);
+            }
             // EXPLAIN fails for tables not registered in Flink (e.g. Kafka topics with dotted names
             // or tables referenced before auto-registration). This is expected — actual execution handles it.
             log.debug("SQL validation via EXPLAIN skipped (table not resolvable): {}", e.getMessage());

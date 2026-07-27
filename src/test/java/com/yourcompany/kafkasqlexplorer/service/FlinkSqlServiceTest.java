@@ -499,6 +499,220 @@ class FlinkSqlServiceTest {
     }
 
     // ──────────────────────────────────────────────────────────────────────────────
+    // An invalid query is reported, not quietly served by the direct reader
+    //
+    // The direct reader only regex-matches the table name out of the FROM clause, so before
+    // these fixes a typo came back as a page of rows and the query looked like it worked.
+    // ──────────────────────────────────────────────────────────────────────────────
+
+    /** Registers 'strict.mode.topic' as a 2-row datagen table, with Kafka records behind it. */
+    private void stubRegisteredTopicWithRecords() throws Exception {
+        doReturn(List.of("strict.mode.topic")).when(kafkaAdminService).listTopics();
+        doReturn(MessageFormat.JSON).when(schemaInferenceService).detectFormat("strict.mode.topic");
+        doReturn(Map.of("event_id", "STRING", "payload", "STRING"))
+                .when(schemaInferenceService).inferSchema(anyString(), any());
+        doReturn("CREATE TABLE strict_mode_topic (" +
+                "  event_id STRING, payload STRING" +
+                ") WITH ('connector'='datagen','number-of-rows'='2')")
+                .when(ddlGeneratorService).generateDdl(anyString(), any(), any());
+        // If the direct reader were to take over, it would happily return these.
+        doReturn(List.of(
+                new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                        "strict.mode.topic", 0, 0L, null, "{\"event_id\":\"E1\",\"payload\":\"p1\"}"),
+                new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                        "strict.mode.topic", 0, 1L, null, "{\"event_id\":\"E2\",\"payload\":\"p2\"}")
+        )).when(kafkaAdminService).getRecentRecords(eq("strict.mode.topic"), anyInt());
+    }
+
+    @Test
+    void anUnknownColumnIsReportedInsteadOfFallingBackToRowsOfNulls() throws Exception {
+        stubRegisteredTopicWithRecords();
+
+        QueryResult result = execute("SELECT nonexistent_col FROM strict_mode_topic");
+
+        assertHasError(result);
+        assertTrue(result.rows().isEmpty(), "A rejected query must not return rows, got: " + result.rows());
+        assertTrue(result.error().toLowerCase().contains("nonexistent_col"),
+                "The error must name the offending column, got: " + result.error());
+    }
+
+    @Test
+    void aSyntaxErrorIsReportedWithItsPosition() throws Exception {
+        stubRegisteredTopicWithRecords();
+
+        QueryResult result = execute("SELECT event_id, FROM strict_mode_topic");
+
+        assertHasError(result);
+        assertTrue(result.rows().isEmpty(), "A malformed query must not return rows, got: " + result.rows());
+        assertTrue(result.error().matches("(?s).*line \\d+, column \\d+.*"),
+                "The error must carry a line/column so the editor can point at it, got: " + result.error());
+    }
+
+    @Test
+    void repeatedTyposDoNotTripTheSelectCircuitBreaker() throws Exception {
+        stubRegisteredTopicWithRecords();
+
+        // One more than FLINK_SELECT_FAILURE_THRESHOLD. If user errors counted, the planner
+        // would be disabled for the rest of the process and every later SELECT would silently
+        // downgrade to the direct reader.
+        for (int i = 0; i < 4; i++) {
+            assertHasError(execute("SELECT nonexistent_col FROM strict_mode_topic"));
+        }
+
+        QueryResult valid = execute("SELECT event_id, payload FROM strict_mode_topic");
+
+        assertNoError(valid);
+        assertEquals("FLINK", valid.engine(), "The Flink planner must still be in use after user typos");
+    }
+
+    @Test
+    void anUnregisteredButExistingTopicStillFallsBackToTheDirectReader() throws Exception {
+        // Schema inference finds nothing (empty topic), so auto-registration is deliberately
+        // skipped and the planner is *expected* to report the table as unknown. That is our
+        // doing, not a typo — the direct reader must still serve the query.
+        doReturn(List.of("no.schema.topic")).when(kafkaAdminService).listTopics();
+        doReturn(MessageFormat.JSON).when(schemaInferenceService).detectFormat("no.schema.topic");
+        doReturn(Map.<String, String>of()).when(schemaInferenceService).inferSchema(anyString(), any());
+        doReturn(List.of(
+                new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                        "no.schema.topic", 0, 0L, null, "{\"id\":\"A\"}"),
+                new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                        "no.schema.topic", 0, 1L, null, "{\"id\":\"B\"}")
+        )).when(kafkaAdminService).getRecentRecords(eq("no.schema.topic"), anyInt());
+
+        QueryResult result = execute("SELECT id FROM no_schema_topic");
+
+        assertNoError(result);
+        assertEquals(2, result.rows().size(), "The direct reader must still serve an unregistered topic");
+        verify(ddlGeneratorService, never()).generateDdl(anyString(), any(), any());
+    }
+
+    @Test
+    void aTrulyMissingTableIsReportedRatherThanScannedForNothing() throws Exception {
+        doReturn(List.of("some.other.topic")).when(kafkaAdminService).listTopics();
+
+        QueryResult result = execute("SELECT id FROM totally_absent_table");
+
+        assertHasError(result);
+        assertTrue(result.error().toLowerCase().contains("totally_absent_table"),
+                "The error must name the table the user asked for, got: " + result.error());
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────────
+    // Windowed reads on the direct engine: approximate, and say so
+    // ──────────────────────────────────────────────────────────────────────────────
+
+    /** Puts timestamped records behind 'win.topic' and forces the direct reader. */
+    private void stubWindowTopic() throws Exception {
+        doReturn(List.of("win.topic")).when(kafkaAdminService).listTopics();
+        // Empty schema → auto-registration is skipped, so the query lands on the direct reader.
+        doReturn(MessageFormat.JSON).when(schemaInferenceService).detectFormat(anyString());
+        doReturn(Map.<String, String>of()).when(schemaInferenceService).inferSchema(anyString(), any());
+        doReturn(List.of(
+                new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                        "win.topic", 0, 0L, null, "{\"id\":\"a\",\"event_time\":\"2026-01-01T00:00:00Z\"}"),
+                new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                        "win.topic", 0, 1L, null, "{\"id\":\"b\",\"event_time\":\"2026-01-01T00:07:00Z\"}")
+        )).when(kafkaAdminService).getRecentRecords(eq("win.topic"), anyInt());
+    }
+
+    @Test
+    void aTumblingWindowRunsOnTheDirectReaderWithoutCaveats() throws Exception {
+        stubWindowTopic();
+
+        QueryResult result = execute("SELECT window_start, window_end, COUNT(*) AS c FROM TABLE("
+                + "TUMBLE(TABLE win_topic, DESCRIPTOR(event_time), INTERVAL '5' MINUTE)) "
+                + "GROUP BY window_start, window_end");
+
+        assertNoError(result);
+        assertEquals(2, result.rows().size(), "two records 7 minutes apart fall in two 5-minute buckets");
+        assertTrue(result.warnings().isEmpty(), "TUMBLE is emulated exactly, got: " + result.warnings());
+    }
+
+    @Test
+    void aHoppingWindowIsApproximatedAndTheResultSaysSo() throws Exception {
+        stubWindowTopic();
+
+        // Before: the caller routed HOP here and a TUMBLE-only regex rejected it with
+        // "Cannot parse TUMBLE syntax", which explained neither the cause nor the fix.
+        QueryResult result = execute("SELECT window_start, window_end, COUNT(*) AS c FROM TABLE("
+                + "HOP(TABLE win_topic, DESCRIPTOR(event_time), INTERVAL '1' MINUTE, INTERVAL '5' MINUTE)) "
+                + "GROUP BY window_start, window_end");
+
+        assertNoError(result);
+        assertFalse(result.rows().isEmpty());
+        assertTrue(result.warnings().stream().anyMatch(w -> w.contains("HOP")),
+                "the approximation must travel with the rows, got: " + result.warnings());
+    }
+
+    @Test
+    void aSessionWindowWithAPartitionKeyStillParses() throws Exception {
+        stubWindowTopic();
+
+        // The PARTITION BY clause sits between the table and the descriptor — the regex has to
+        // step over it rather than fail to match.
+        QueryResult result = execute("SELECT window_start, window_end, COUNT(*) AS c FROM TABLE("
+                + "SESSION(TABLE win_topic PARTITION BY id, DESCRIPTOR(event_time), INTERVAL '5' MINUTE)) "
+                + "GROUP BY window_start, window_end");
+
+        assertNoError(result);
+        assertTrue(result.warnings().stream().anyMatch(w -> w.contains("SESSION")),
+                "expected the approximation caveat, got: " + result.warnings());
+    }
+
+    @Test
+    void theBucketWidthOfAHopIsItsSizeNotItsSlide() throws Exception {
+        stubWindowTopic();
+
+        // HOP(slide, size): with a 1-hour size both records land in one bucket, whereas reading
+        // the slide (1 minute) as the width would produce two.
+        QueryResult result = execute("SELECT window_start, window_end, COUNT(*) AS c FROM TABLE("
+                + "HOP(TABLE win_topic, DESCRIPTOR(event_time), INTERVAL '1' MINUTE, INTERVAL '1' HOUR)) "
+                + "GROUP BY window_start, window_end");
+
+        assertNoError(result);
+        assertEquals(1, result.rows().size(), "both records belong to the same 1-hour bucket");
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────────
+    // Client-supplied query id (what makes "stop this query" possible)
+    // ──────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    void aWellFormedClientQueryIdIsKeptSoTheClientCanCancelWithIt() {
+        String clientId = "3f2504e0-4f89-11d3-9a0c-0305e82c3301";
+
+        assertEquals(clientId, FlinkSqlService.resolveQueryId(clientId));
+    }
+
+    @Test
+    void aMissingOrJunkQueryIdIsReplacedByAGeneratedOne() {
+        // The id becomes a job-store key and lands in log lines, so it must not carry free text.
+        for (String junk : new String[] { null, "", "short", "has spaces", "../../etc/passwd",
+                                          "a".repeat(65), "quote'injection" }) {
+            String resolved = FlinkSqlService.resolveQueryId(junk);
+
+            assertNotEquals(junk, resolved);
+            assertDoesNotThrow(() -> java.util.UUID.fromString(resolved),
+                    "fallback must be a plain UUID, got: " + resolved);
+        }
+    }
+
+    @Test
+    void anExplicitQueryIdSurvivesIntoTheJobRegistry() throws Exception {
+        stubRegisteredTopicWithRecords();
+        String clientId = "11111111-2222-3333-4444-555555555555";
+
+        QueryResult result = service.executeSql(
+                new QueryRequest("SELECT event_id FROM strict_mode_topic", null, 50, 10_000L, null, clientId));
+
+        assertNoError(result);
+        // The registry is what POST /api/query/cancel/{queryId} looks the run up in; a bounded
+        // datagen job may already have finished, so we only assert the id was never rewritten.
+        assertEquals(clientId, FlinkSqlService.resolveQueryId(clientId));
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────────
     // Helpers
     // ──────────────────────────────────────────────────────────────────────────────
 

@@ -78,6 +78,35 @@ public class FlinkSqlService {
      * Kafka reader. Reset on process restart.
      */
     private static final int FLINK_SELECT_FAILURE_THRESHOLD = 3;
+
+    /**
+     * Shape a client-supplied query id must have to be trusted as a job key. Anything else is
+     * replaced by a server-generated one — the id ends up in the job store and in log lines, so
+     * it must not carry arbitrary text.
+     */
+    private static final Pattern CLIENT_QUERY_ID = Pattern.compile("[A-Za-z0-9_-]{8,64}");
+
+    /**
+     * A windowed table function call. The table may carry a {@code PARTITION BY} (SESSION), and the
+     * trailing group collects every INTERVAL argument: HOP takes (slide, size) and CUMULATE takes
+     * (step, max), so the bucket width is always the last one.
+     */
+    private static final Pattern WINDOW_CALL = Pattern.compile(
+        "(?i)\\b(TUMBLE|HOP|CUMULATE|SESSION)\\s*\\(\\s*TABLE\\s+(\\w[\\w.]*)"
+            + "(?:\\s+PARTITION\\s+BY\\s+[^,]+)?\\s*,\\s*DESCRIPTOR\\s*\\(\\s*(\\w+)\\s*\\)"
+            + "((?:\\s*,\\s*INTERVAL\\s+'\\d+'\\s+\\w+)+)\\s*\\)");
+
+    /** First table named after FROM — backticked, quoted or bare. */
+    private static final Pattern FROM_TABLE = Pattern.compile("(?i)\\bFROM\\s+[`\"]?([\\w.\\-]+)[`\"]?");
+
+    /** One INTERVAL argument of a window call. Flink accepts both MINUTE and MINUTES. */
+    private static final Pattern WINDOW_INTERVAL = Pattern.compile(
+        "(?i)INTERVAL\\s+'(\\d+)'\\s+(MINUTE|HOUR|SECOND|DAY)S?");
+
+    /** "Object 'x' not found" / "Table 'x' not found" — the planner's way of saying it has no such table. */
+    private static final Pattern UNKNOWN_OBJECT = Pattern.compile(
+        "(?:object|table)\\s+['\"][^'\"]*['\"]\\s+not found|does not exist", Pattern.CASE_INSENSITIVE);
+
     private final java.util.concurrent.atomic.AtomicInteger flinkSelectFailures = new java.util.concurrent.atomic.AtomicInteger(0);
     private volatile boolean flinkSelectDisabled = false;
 
@@ -235,27 +264,47 @@ public class FlinkSqlService {
     }
 
     /**
+     * @param error                  non-null when a matching Kafka topic was found but registering
+     *                               it as a Flink table failed; the query stops there.
+     * @param registered             a table was created, so the UI should refresh its schema browser.
+     * @param deferredToDirectReader the Kafka topic exists but was deliberately left unregistered,
+     *                               so the Flink planner is expected to report it as unknown.
+     *                               Without this flag that "not found" reads as a user typo and the
+     *                               query would be rejected instead of falling back to the direct
+     *                               reader that was meant to serve it.
+     */
+    private record AutoRegResult(String error, boolean registered, boolean deferredToDirectReader) {
+        static AutoRegResult skip()          { return new AutoRegResult(null,  false, false); }
+        static AutoRegResult tableCreated()  { return new AutoRegResult(null,  true,  false); }
+        static AutoRegResult fail(String e)  { return new AutoRegResult(e,     false, false); }
+        static AutoRegResult deferToDirect() { return new AutoRegResult(null,  false, true);  }
+    }
+
+    /**
+     * The table a SELECT actually reads from.
+     *
+     * <p>Matching on FROM alone is wrong for a windowed query: {@code FROM TABLE(TUMBLE(TABLE
+     * orders, …))} yields the keyword {@code TABLE}, so no topic ever matched, the table was never
+     * registered, and the planner's resulting "Object 'orders' not found" looked exactly like a
+     * typo. The window call is therefore consulted first — it carries the real name.
+     */
+    private String extractPrimaryTable(String sql) {
+        Matcher window = WINDOW_CALL.matcher(sql);
+        if (window.find()) return window.group(2);
+        Matcher from = FROM_TABLE.matcher(sql);
+        return from.find() ? from.group(1) : null;
+    }
+
+    /**
      * Before executing a SELECT, checks if the referenced table is already registered in Flink.
      * If not, looks for a Kafka topic whose sanitized name (dots/hyphens → underscores) matches,
      * infers its schema, generates the DDL and registers it automatically.
-     *
-     * @return null on success (or when no registration is needed), or an error message if
-     *         a matching Kafka topic was found but table registration failed.
      */
-    private record AutoRegResult(String error, boolean registered) {
-        static AutoRegResult skip()          { return new AutoRegResult(null,  false); }
-        static AutoRegResult tableCreated()  { return new AutoRegResult(null,  true);  }
-        static AutoRegResult fail(String e)  { return new AutoRegResult(e,     false); }
-    }
-
     private AutoRegResult autoRegisterTableIfNeeded(String sql) {
         if (!sql.trim().toUpperCase().startsWith("SELECT")) return AutoRegResult.skip();
-        // Extract first table name after FROM (handles backtick and unquoted identifiers)
-        Pattern pattern = Pattern.compile("(?i)\\bFROM\\s+[`\"]?([\\w.\\-]+)[`\"]?");
-        Matcher matcher = pattern.matcher(sql);
-        if (!matcher.find()) return AutoRegResult.skip();
+        String rawTableRef = extractPrimaryTable(sql);
+        if (rawTableRef == null) return AutoRegResult.skip();
 
-        String rawTableRef = matcher.group(1);
         String flinkTableName = DdlGeneratorService.toTableName(rawTableRef);
 
         if (listTables().contains(flinkTableName)) return AutoRegResult.skip();
@@ -282,7 +331,7 @@ public class FlinkSqlService {
                 // No schema could be inferred (empty topic or unreadable messages).
                 // Skip Flink registration — KAFKA_DIRECT will read the topic directly.
                 log.info("Skipping auto-registration for '{}': schema inference returned empty (topic may be empty)", matchingTopic);
-                return AutoRegResult.skip();
+                return AutoRegResult.deferToDirect();
             }
             String ddl = ddlGeneratorService.generateDdl(matchingTopic, schema, format);
             if (ddl == null || !ddl.startsWith("CREATE TABLE")) {
@@ -482,7 +531,7 @@ public class FlinkSqlService {
 
     public QueryResult executeSql(QueryRequest request) {
         long startTime = System.currentTimeMillis();
-        String queryId = UUID.randomUUID().toString();
+        String queryId = resolveQueryId(request.queryId());
         // Normalize double-quoted identifiers to backticks before any parsing/validation
         String originalSql = normalizeIdentifierQuotes(request.sql().trim());
         // Strip comments before keyword checks — a query like "-- comment\nSELECT ..."
@@ -516,8 +565,9 @@ public class FlinkSqlService {
             if (sqlToExecute.trim().toUpperCase().startsWith("SELECT")) {
                 // Prefer the real Flink planner when enabled and not tripped by the circuit breaker.
                 // The FlinkRelMetadataQuery NPE that historically forced the bypass is version
-                // dependent, so on any planner failure we fall back to the in-process direct Kafka
-                // reader and the query still succeeds.
+                // dependent, so on an *engine* failure we fall back to the in-process direct Kafka
+                // reader and the query still succeeds. A failure caused by the statement itself is
+                // returned instead — see the no-fallback note below.
                 if (explorerConfig.isFlinkSelectEnabled() && !flinkSelectDisabled) {
                     try {
                         QueryResult flinkResult = executeViaFlinkPlanner(queryId, sqlToExecute, "SELECT", limit, timeout, startTime);
@@ -531,9 +581,15 @@ public class FlinkSqlService {
                             flinkSelectFailures.set(0);
                             log.warn("Flink SELECT timed out — falling back to direct Kafka read for this query");
                         } else {
+                            QueryResult rejected = rejectIfUserError(
+                                flinkResult.error(), sqlToExecute, startTime, autoReg.deferredToDirectReader());
+                            if (rejected != null) return rejected;
                             recordFlinkSelectFailure(flinkResult.error());
                         }
                     } catch (Throwable t) {
+                        QueryResult rejected = rejectIfUserError(
+                            SqlErrorClassifier.explain(t), sqlToExecute, startTime, autoReg.deferredToDirectReader());
+                        if (rejected != null) return rejected;
                         recordFlinkSelectFailure(t.toString());
                     }
                 }
@@ -547,8 +603,44 @@ public class FlinkSqlService {
         } catch (Exception e) {
             log.error("Flink SQL execution error — query='{}' error='{}'", request.sql(), e.getMessage(), e);
             long duration = System.currentTimeMillis() - startTime;
-            return new QueryResult(Collections.emptyList(), Collections.emptyList(), duration, e.getMessage());
+            return new QueryResult(Collections.emptyList(), Collections.emptyList(), duration,
+                SqlErrorClassifier.explain(e));
         }
+    }
+
+    /**
+     * Uses the caller's query id when it is well-formed, otherwise mints one.
+     *
+     * <p>A synchronous run only learns a server-generated id from its own response, by which time
+     * the query is over — so cancelling one requires the caller to have named it beforehand.
+     */
+    static String resolveQueryId(String requested) {
+        return requested != null && CLIENT_QUERY_ID.matcher(requested).matches()
+            ? requested
+            : UUID.randomUUID().toString();
+    }
+
+    /**
+     * Returns a failed {@link QueryResult} when the planner rejected the statement itself, or null
+     * when the failure looks like an engine fault the direct reader can work around.
+     *
+     * <p>Falling back on a user error is actively harmful: the direct reader only regex-matches the
+     * table name out of the FROM clause, so {@code SELECT id, FROM orders} or a misspelled column
+     * comes back as a page of rows and the query looks like it worked. The planner already said
+     * precisely what is wrong, with a line and column — that answer is the useful one, and it does
+     * not count toward the circuit breaker either, or three typos would disable the Flink planner
+     * for the rest of the process.
+     */
+    private QueryResult rejectIfUserError(String rawError, String sql, long startTime, boolean deferredToDirectReader) {
+        SqlErrorClassifier.Classification classification = SqlErrorClassifier.classify(rawError);
+        if (!classification.isUserError()) return null;
+        // The topic exists, we chose not to register it, and the planner is only saying so.
+        // That is our doing, not the user's — the direct reader is the intended path here.
+        if (deferredToDirectReader && UNKNOWN_OBJECT.matcher(classification.message()).find()) return null;
+        log.debug("Rejecting invalid SELECT without falling back — query='{}' error='{}'", sql, classification.message());
+        flinkSelectFailures.set(0);
+        return new QueryResult(Collections.emptyList(), Collections.emptyList(),
+            System.currentTimeMillis() - startTime, classification.message(), false, "FLINK");
     }
 
     private QueryResult withRegisteredFlag(QueryResult qr) {
@@ -679,7 +771,11 @@ public class FlinkSqlService {
             log.error("Flink SQL execution error — query='{}' error='{}'", finalSql, e.getMessage(), e);
             cancelJobInternal(result);
             long duration = System.currentTimeMillis() - startTime;
-            return new QueryResult(Collections.emptyList(), Collections.emptyList(), duration, e.getMessage());
+            // explain() flattens the cause chain and is never blank. e.getMessage() alone is null
+            // for a bare NullPointerException, which left error() null — the caller then read the
+            // crash as a successful run of zero rows.
+            return new QueryResult(Collections.emptyList(), Collections.emptyList(), duration,
+                SqlErrorClassifier.explain(e));
         }
     }
 
@@ -997,38 +1093,68 @@ public class FlinkSqlService {
     }
 
     /**
-     * Emulates Flink TUMBLE (and HOP/SESSION as TUMBLE fallback) window aggregations over
-     * Kafka messages fetched directly, without using the Flink planner.
+     * Emulates Flink windowed aggregations over Kafka messages fetched directly, without the
+     * Flink planner.
      *
      * Supported syntax:
      *   SELECT window_start, window_end, AGG(...) AS alias
-     *   FROM TABLE(TUMBLE(TABLE <topic>, DESCRIPTOR(<time_col>), INTERVAL '<n>' MINUTE|HOUR|SECOND|DAY))
+     *   FROM TABLE(TUMBLE(TABLE &lt;topic&gt;, DESCRIPTOR(&lt;time_col&gt;), INTERVAL '&lt;n&gt;' MINUTE|HOUR|SECOND|DAY))
      *   [WHERE ...] GROUP BY window_start, window_end
      *
+     * <p>HOP, CUMULATE and SESSION parse too but are <em>approximated</em> as tumbling windows of
+     * the same size — this reader buckets by timestamp and emulates neither overlap nor inactivity
+     * gaps. The approximation is reported in {@link QueryResult#warnings()} rather than left for
+     * the reader to discover: only the Flink planner gives those windows their real semantics.
+     * They previously reached this method (the caller routes them here) and died on a TUMBLE-only
+     * regex with "Cannot parse TUMBLE syntax", which described neither the cause nor the fix.
+     *
      * Time column resolution order:
-     *   1. Parsed from the message field named <time_col> (ISO-8601 string or epoch millis/seconds)
+     *   1. Parsed from the message field named &lt;time_col&gt; (ISO-8601 string or epoch millis/seconds)
      *   2. Kafka record timestamp (fallback)
      */
     private QueryResult kafkaWindowSelect(String sql, String readMode, int limit, long startTime) {
-        // Parse TUMBLE parameters: TABLE(<tableName>, DESCRIPTOR(<timeCol>), INTERVAL '<n>' <unit>)
-        Matcher tumble = Pattern.compile(
-            "(?i)TUMBLE\\s*\\(\\s*TABLE\\s+(\\w[\\w.]*)\\s*,\\s*DESCRIPTOR\\s*\\(\\s*(\\w+)\\s*\\)\\s*," +
-            "\\s*INTERVAL\\s+'(\\d+)'\\s+(MINUTE|HOUR|SECOND|DAY)S?\\s*\\)")
-            .matcher(sql);
-        if (!tumble.find()) {
+        Matcher window = WINDOW_CALL.matcher(sql);
+        if (!window.find()) {
             return new QueryResult(Collections.emptyList(), Collections.emptyList(),
                 System.currentTimeMillis() - startTime,
-                "Cannot parse TUMBLE syntax. Expected: TABLE(TUMBLE(TABLE <name>, DESCRIPTOR(<time_col>), INTERVAL '<n>' MINUTE))");
+                "Cannot parse the window function. Expected: "
+                    + "TABLE(TUMBLE(TABLE <name>, DESCRIPTOR(<time_col>), INTERVAL '<n>' MINUTE))");
         }
-        String tableName   = tumble.group(1);
-        String timeCol     = tumble.group(2);
-        long   intervalMs  = switch (tumble.group(4).toUpperCase()) {
-            case "SECOND" -> Long.parseLong(tumble.group(3)) * 1_000L;
-            case "MINUTE" -> Long.parseLong(tumble.group(3)) * 60_000L;
-            case "HOUR"   -> Long.parseLong(tumble.group(3)) * 3_600_000L;
-            case "DAY"    -> Long.parseLong(tumble.group(3)) * 86_400_000L;
-            default       -> Long.parseLong(tumble.group(3)) * 60_000L;
-        };
+        String windowFn    = window.group(1).toUpperCase(Locale.ROOT);
+        String tableName   = window.group(2);
+        String timeCol     = window.group(3);
+
+        // HOP(slide, size) and CUMULATE(step, max) carry two intervals; the bucket width is the
+        // last one. TUMBLE and SESSION carry a single one.
+        List<Long> parsed = new ArrayList<>();
+        List<String> rendered = new ArrayList<>();
+        Matcher scan = WINDOW_INTERVAL.matcher(window.group(4));
+        while (scan.find()) {
+            long amount = Long.parseLong(scan.group(1));
+            String unit = scan.group(2).toUpperCase(Locale.ROOT);
+            parsed.add(amount * switch (unit) {
+                case "SECOND" -> 1_000L;
+                case "HOUR"   -> 3_600_000L;
+                case "DAY"    -> 86_400_000L;
+                default       -> 60_000L;
+            });
+            rendered.add(amount + " " + unit.toLowerCase(Locale.ROOT) + (amount > 1 ? "s" : ""));
+        }
+        if (parsed.isEmpty()) {
+            return new QueryResult(Collections.emptyList(), Collections.emptyList(),
+                System.currentTimeMillis() - startTime,
+                "The window function carries no INTERVAL the direct engine understands "
+                    + "(expected MINUTE, HOUR, SECOND or DAY).");
+        }
+        long intervalMs = parsed.get(parsed.size() - 1);
+
+        List<String> windowWarnings = new ArrayList<>();
+        if (!"TUMBLE".equals(windowFn)) {
+            windowWarnings.add("The direct engine approximated " + windowFn + " as a tumbling window of "
+                + rendered.get(rendered.size() - 1) + ": it buckets by timestamp and emulates neither "
+                + "overlapping windows nor inactivity gaps. Only the Flink engine gives " + windowFn
+                + " its real semantics.");
+        }
 
         // Resolve Kafka topic
         String flinkTableName = DdlGeneratorService.toTableName(tableName);
@@ -1115,8 +1241,11 @@ public class FlinkSqlService {
             : new ArrayList<>(resultRows.get(0).keySet());
         log.debug("[KafkaDirect/Window] topic='{}' timeCol='{}' intervalMs={} windows={} rows={}",
                  topic, timeCol, intervalMs, windows.size(), resultRows.size());
+        // The HOP/SESSION approximation travels with the rows, alongside any ignored predicate.
+        List<String> allWarnings = new ArrayList<>(windowWarnings);
+        allWarnings.addAll(whereWarnings);
         return new QueryResult(columns, resultRows, System.currentTimeMillis() - startTime, null, false, "KAFKA_DIRECT")
-            .withWarnings(whereWarnings);
+            .withWarnings(allWarnings);
     }
 
     /**
