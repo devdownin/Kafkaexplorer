@@ -63,6 +63,12 @@ interface GlobalStats {
   topicsTotal?: number;
   error?: string;
   errorType?: string;
+  /** Le run a été arrêté sur demande : le rapport est partiel. */
+  cancelled?: boolean;
+  /** Arrêt demandé, pas encore effectif (l'annulation est coopérative). */
+  cancelling?: boolean;
+  /** Topics qui étaient dans le périmètre avant l'annulation. */
+  topicsInScope?: number;
   /** Ratio 0..1 : un topic CRITICAL coûte 1 point, un WARNING un demi-point. */
   healthScore?: number;
   scopeNotes?: string[];
@@ -73,7 +79,7 @@ interface GlobalStats {
 
 interface AuditReport {
   auditId: string;
-  status: 'RUNNING' | 'COMPLETED' | 'FAILED';
+  status: 'RUNNING' | 'COMPLETED' | 'CANCELLED' | 'FAILED';
   totalTopics: number;
   totalMessages: number;
   criticalTopicsCount: number;
@@ -139,6 +145,7 @@ const Audit: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   /** Message informatif (pas une erreur) — ex. rattachement à un audit déjà en cours. */
   const [notice, setNotice] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
   const [activeTab, setActiveTab] = useState<'topics' | 'flows'>('topics');
   const [options, setOptions] = useState<AuditOptions>(ALL_CHECKED);
   // Restreint l'audit aux topics dont le nom commence par ce préfixe (vide = tous).
@@ -202,6 +209,28 @@ const Audit: React.FC = () => {
     }
   };
 
+  /**
+   * Demande l'arrêt du run en cours. L'annulation est coopérative côté serveur : on ne coupe pas
+   * le polling ici, c'est lui qui verra passer le statut CANCELLED et le rapport partiel.
+   */
+  const cancelAudit = async () => {
+    if (!report || report.status !== 'RUNNING') return;
+    setCancelling(true);
+    try {
+      await axios.post(`/api/audit/${report.auditId}/cancel`);
+      setNotice('Stop requested — the audit finishes the topics already in flight.');
+    } catch (e) {
+      // 409 = le run vient de se terminer entre l'affichage du bouton et le clic.
+      if (axios.isAxiosError(e) && e.response?.status === 409) {
+        setNotice('The audit had already finished.');
+      } else {
+        setError('Failed to cancel the audit.');
+      }
+    } finally {
+      setCancelling(false);
+    }
+  };
+
   // Restaure le dernier rapport du serveur : un rafraîchissement de page ne doit pas
   // obliger à relancer un scan complet du cluster.
   useEffect(() => {
@@ -224,9 +253,13 @@ const Audit: React.FC = () => {
 
   const stats = report?.globalStats ?? {};
   const failed = report?.status === 'FAILED';
+  const wasCancelled = report?.status === 'CANCELLED';
+  // Un run annulé a produit de vrais résultats sur les topics déjà traités : on les affiche,
+  // avec un bandeau qui dit que le rapport est partiel.
+  const hasReport = report?.status === 'COMPLETED' || wasCancelled;
 
   // Pondéré côté serveur (CRITICAL = 1 point, WARNING = 0,5) et persisté avec le rapport.
-  const healthScore = report && report.status === 'COMPLETED' && report.totalTopics > 0
+  const healthScore = report && hasReport && report.totalTopics > 0
       && typeof stats.healthScore === 'number'
     ? Math.round(stats.healthScore * 100)
     : null;
@@ -279,7 +312,7 @@ const Audit: React.FC = () => {
         description="Deep health scan of topics, schemas, and stream flows."
         actions={
           <div className="flex items-center gap-2">
-            {report && report.status !== 'RUNNING' && (
+            {report && hasReport && (
               <Button variant="secondary" icon="download" onClick={exportReport}>Export JSON</Button>
             )}
             <Button
@@ -373,12 +406,16 @@ const Audit: React.FC = () => {
           <span className="material-symbols-outlined text-primary text-[30px] animate-pulse">radar</span>
           <div className="flex-1">
             <p className="text-[13px] font-semibold text-primary">
-              {stats.phase === 'flows' ? 'Correlating stream flows…' : 'Scanning cluster…'}
+              {stats.cancelling ? 'Stopping…'
+                : stats.phase === 'flows' ? 'Correlating stream flows…'
+                : 'Scanning cluster…'}
             </p>
             <p className="text-[12px] text-on-surface-variant mt-1">
-              {progressPct !== null
-                ? `${stats.topicsCompleted} of ${stats.topicsTotal} topics audited`
-                : 'Listing topics and reading offsets…'}
+              {stats.cancelling
+                ? 'Finishing the topics already in flight; the partial report will be kept.'
+                : progressPct !== null
+                  ? `${stats.topicsCompleted} of ${stats.topicsTotal} topics audited`
+                  : 'Listing topics and reading offsets…'}
             </p>
             <div
               className="mt-3 h-1.5 bg-primary/15 rounded-full overflow-hidden"
@@ -394,6 +431,17 @@ const Audit: React.FC = () => {
               />
             </div>
           </div>
+          {report?.status === 'RUNNING' && (
+            <Button
+              variant="outline"
+              icon="stop_circle"
+              onClick={cancelAudit}
+              loading={cancelling}
+              disabled={cancelling || stats.cancelling}
+            >
+              {stats.cancelling ? 'Stopping…' : 'Stop'}
+            </Button>
+          )}
         </Card>
       )}
 
@@ -443,8 +491,23 @@ const Audit: React.FC = () => {
       )}
 
       {/* Report */}
-      {report && report.status === 'COMPLETED' && (
+      {report && hasReport && (
         <>
+          {/* Rapport partiel : rien ici ne doit se lire comme un verdict sur tout le cluster. */}
+          {wasCancelled && (
+            <div className="rounded-xl border border-warning/25 bg-warning/10 p-4 flex items-start gap-3 text-[13px]" role="status">
+              <span aria-hidden="true" className="material-symbols-outlined text-[20px] text-warning shrink-0">stop_circle</span>
+              <div>
+                <span className="text-[11px] font-bold text-warning uppercase tracking-widest">Partial report — run stopped</span>
+                <p className="text-on-surface mt-1 leading-relaxed">
+                  {stats.topicsInScope != null
+                    ? <>Audited {report.totalTopics.toLocaleString()} of {stats.topicsInScope.toLocaleString()} topic(s) in scope. The figures below cover only those.</>
+                    : <>The figures below cover only the topics audited before the stop.</>}
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Run recap — what was scanned, when, and for how long */}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-on-surface-variant">
             {stats.timestamp && (

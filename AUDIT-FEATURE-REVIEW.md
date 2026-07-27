@@ -314,6 +314,32 @@ Au passage, un bug de test latent : le mock Flink de `testAuditProcess` filtrait
 alors que le SQL généré porte le nom de table `demo_test_1` — les deux topics recevaient donc le
 même comptage et l'assertion passait pour de mauvaises raisons.
 
+### S4 — Annulation d'un audit en cours ✅
+
+S2 empêchait d'empiler des runs, mais rien ne permettait d'interrompre celui qui tournait : sur un
+cluster de 2 000 topics avec comptage exact, il fallait attendre les quarante minutes.
+
+`POST /api/audit/{id}/cancel` lève un drapeau sur le run en vol (202), répond 409 s'il est déjà
+terminé et 404 sur un id inconnu — annuler un rapport déjà complet n'est pas un succès silencieux.
+
+L'annulation est **coopérative**, et c'est délibéré. Interrompre le thread abandonnerait un
+KafkaConsumer ou un job Flink en plein vol ; le travail d'un topic est déjà borné (boucle de
+`poll` à 500 ms, timeout de requête à 5 s), donc le run s'arrête au bout d'un topic au pire. Le
+drapeau est testé **à l'intérieur de chaque tâche** du pool : tous les topics sont soumis d'emblée,
+donc annuler ne peut pas les dépiler — les topics en file coûtent alors zéro. La phase de flows,
+qui relit deux topics par étape, est sautée entièrement.
+
+Le rapport n'est pas jeté : les topics déjà audités sont conservés, avec le statut `CANCELLED`,
+`globalStats.cancelled` / `topicsInScope`, et une note de portée en tête qui dit combien de topics
+sur combien ont été couverts. `totalTopics` compte ce qui a été audité — pas le périmètre initial —
+pour que le KPI corresponde à la table qu'il surplombe, et `healthScore` est calculé sur ce même
+sous-ensemble : un run stoppé après 10 topics sur 2 000 ne doit surtout pas se lire comme
+« 1 990 topics en bonne santé ».
+
+Côté UI : un bouton « Stop » dans la carte de progression, l'état intermédiaire « Stopping… »
+alimenté par `cancelling: true` dans le rapport en vol (l'arrêt n'est pas instantané, l'écran ne
+doit pas paraître figé), et un bandeau au-dessus du rapport partiel.
+
 ---
 
 ## 5. Constaté, non traité
@@ -325,8 +351,6 @@ ils sont listés pour décision.
   du processus courant ; après un redémarrage, l'historique persisté dans Kafka n'est toujours pas
   relu. Un vrai écran d'historique (liste des runs, comparaison de deux rapports) demanderait un
   lecteur du topic au démarrage, sur le modèle de `MetricService`.
-* **Toujours aucune annulation.** S2 empêche d'empiler des runs, mais il n'existe pas de moyen
-  d'interrompre celui qui tourne — il faut attendre la fin du scan.
 * **La détection de doublons lit depuis EARLIEST** alors que tout le reste échantillonne les
   messages récents. Sur un topic avec rétention, elle juge les 10 000 plus vieux messages
   survivants, pas forcément ce qu'un opérateur attend.
