@@ -340,6 +340,49 @@ Côté UI : un bouton « Stop » dans la carte de progression, l'état interméd
 alimenté par `cancelling: true` dans le rapport en vol (l'arrêt n'est pas instantané, l'écran ne
 doit pas paraître figé), et un bandeau au-dessus du rapport partiel.
 
+### S5 — Écran d'historique : `internal.audit.history` n'est plus en écriture seule ✅
+
+`AuditService` écrivait chaque rapport dans `internal.audit.history` depuis toujours, et **personne
+ne le relisait** : fonctionnalité écrite, jamais branchée. `GET /api/audit/last` ne sert que les
+runs du processus courant, donc un redémarrage perdait tout l'historique.
+
+`AuditHistoryService` relit le topic. Deux endpoints :
+
+* `GET /api/audit/history` — liste des runs passés, du plus récent au plus ancien ;
+* `GET /api/audit/history/{id}` — le rapport archivé d'un run.
+
+**Lecture bornée, et qui le dit.** Le topic est append-only et un rapport contient une entrée par
+topic : la lecture se limite à `explorer.audit-history-max-records` (200 par défaut) enregistrements
+depuis la fin, et la réponse porte `recordsScanned` / `exhausted`. Une liste qui affiche
+silencieusement « les 20 derniers runs » alors qu'il en existe 500 invite à conclure que le cluster
+n'avait jamais été audité avant — le même travers que B8.
+
+**Résumés extraits de l'arbre JSON**, pas désérialisés en `AuditReport`. C'est bien moins coûteux
+(un rapport de 2 000 topics fait des centaines de kilo-octets, on n'en veut que huit champs), et
+surtout ça résiste aux enregistrements écrits par une version antérieure.
+
+**Les rapports antérieurs à la sévérité graduée sont un vrai cas.** Ils contiennent `"UNHEALTHY"`,
+`unhealthyTopicsCount` et des `issues` en chaînes de caractères : la forme actuelle ne peut pas les
+désérialiser. Trois options ont été écartées :
+
+* mapper `UNHEALTHY` → `CRITICAL` surestime (l'ancienne échelle couvrait aussi les doublons) ;
+* mapper vers `WARNING` sous-estime (elle couvrait aussi les topics illisibles) ;
+* `@JsonEnumDefaultValue` vers `HEALTHY` transforme un défaut en cluster sain.
+
+L'ancienne échelle **n'a pas enregistré la distinction**, donc aucune conversion n'est honnête. La
+liste marque ces runs `legacy: true`, place l'ancien compteur sous « critical » avec un `—` explicite
+en colonne warning, et le bouton « Open » est désactivé avec la raison en `title`. Le détail renvoie
+le JSON **tel que stocké** (`JsonNode`), ce qui ne perd rien.
+
+**Comparaison** : chaque ligne affiche le delta de score de santé par rapport au run précédent dans
+le temps (▲/▼), ce qui répond à la question qui motive un historique. Un diff complet topic par
+topic entre deux rapports reste à faire.
+
+Côté robustesse : un enregistrement illisible est sauté avec un avertissement au lieu de faire
+échouer la liste, un topic absent est signalé comme tel (et non comme « aucun audit »), et la boucle
+de `poll` tolère deux polls vides consécutifs — un poll vide ne signifie pas épuisé, c'est la leçon
+déjà tirée sur la restauration des métriques.
+
 ---
 
 ## 5. Constaté, non traité
@@ -347,10 +390,6 @@ doit pas paraître figé), et un bandeau au-dessus du rapport partiel.
 Ces points sont réels mais dépassent le périmètre d'une correction de la fonctionnalité Audit ;
 ils sont listés pour décision.
 
-* **`internal.audit.history` reste en écriture seule.** `GET /api/audit/last` ne sert que les runs
-  du processus courant ; après un redémarrage, l'historique persisté dans Kafka n'est toujours pas
-  relu. Un vrai écran d'historique (liste des runs, comparaison de deux rapports) demanderait un
-  lecteur du topic au démarrage, sur le modèle de `MetricService`.
 * **La détection de doublons lit depuis EARLIEST** alors que tout le reste échantillonne les
   messages récents. Sur un topic avec rétention, elle juge les 10 000 plus vieux messages
   survivants, pas forcément ce qu'un opérateur attend.

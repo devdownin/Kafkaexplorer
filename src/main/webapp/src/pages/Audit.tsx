@@ -89,6 +89,28 @@ interface AuditReport {
   globalStats: GlobalStats;
 }
 
+interface AuditRunSummary {
+  auditId: string;
+  status: string;
+  timestamp: number;
+  durationMs: number | null;
+  totalTopics: number;
+  totalMessages: number;
+  criticalTopicsCount: number;
+  warningTopicsCount: number;
+  healthScore: number | null;
+  topicPrefix: string | null;
+  /** Enregistré avant la sévérité graduée : forme illisible par la vue actuelle. */
+  legacy: boolean;
+}
+
+interface AuditHistory {
+  runs: AuditRunSummary[];
+  recordsScanned: number;
+  exhausted: boolean;
+  warnings: string[];
+}
+
 interface AuditOptions {
   checkSchema: boolean;
   checkPoisonMessages: boolean;
@@ -126,6 +148,10 @@ const HEALTH_FILTERS: { value: HealthFilter; label: string; match: (s: Severity)
   { value: 'healthy',   label: 'Healthy only',      match: s => s === 'HEALTHY' },
 ];
 
+const STATUS_TONE: Record<string, BadgeTone> = {
+  COMPLETED: 'success', CANCELLED: 'warning', FAILED: 'error',
+};
+
 const compactNum = (n: number) => {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
   if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
@@ -146,6 +172,9 @@ const Audit: React.FC = () => {
   /** Message informatif (pas une erreur) — ex. rattachement à un audit déjà en cours. */
   const [notice, setNotice] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [history, setHistory] = useState<AuditHistory | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [loadingRunId, setLoadingRunId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'topics' | 'flows'>('topics');
   const [options, setOptions] = useState<AuditOptions>(ALL_CHECKED);
   // Restreint l'audit aux topics dont le nom commence par ce préfixe (vide = tous).
@@ -209,6 +238,35 @@ const Audit: React.FC = () => {
     }
   };
 
+  const fetchHistory = useCallback(async () => {
+    try {
+      const res = await axios.get<AuditHistory>('/api/audit/history');
+      setHistory(res.data);
+    } catch {
+      setHistory({ runs: [], recordsScanned: 0, exhausted: true, warnings: ['Failed to read audit history.'] });
+    }
+  }, []);
+
+  /** Charge un rapport archivé dans la vue courante, sans relancer de scan. */
+  const loadHistoricalRun = async (run: AuditRunSummary) => {
+    setLoadingRunId(run.auditId);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await axios.get<AuditReport>(`/api/audit/history/${encodeURIComponent(run.auditId)}`);
+      stopPolling();
+      setLoading(false);
+      setReport(res.data);
+      setNotice(`Showing the archived run from ${new Date(run.timestamp).toLocaleString()}.`);
+    } catch (e) {
+      setError(axios.isAxiosError(e) && e.response?.status === 404
+        ? 'That run is no longer within the history scan window.'
+        : 'Failed to load the archived report.');
+    } finally {
+      setLoadingRunId(null);
+    }
+  };
+
   /**
    * Demande l'arrêt du run en cours. L'annulation est coopérative côté serveur : on ne coupe pas
    * le polling ici, c'est lui qui verra passer le statut CANCELLED et le rapport partiel.
@@ -250,6 +308,13 @@ const Audit: React.FC = () => {
   }, [pollStatus]);
 
   useEffect(() => () => stopPolling(), [stopPolling]);
+
+  // L'historique vient de Kafka : il survit à un redémarrage, contrairement à /last. Rechargé
+  // quand un run se termine, puisqu'il vient d'y ajouter une ligne.
+  useEffect(() => { void fetchHistory(); }, [fetchHistory]);
+  useEffect(() => {
+    if (report && report.status !== 'RUNNING') void fetchHistory();
+  }, [report?.auditId, report?.status, fetchHistory]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const stats = report?.globalStats ?? {};
   const failed = report?.status === 'FAILED';
@@ -476,6 +541,125 @@ const Audit: React.FC = () => {
             )}
           </div>
         </div>
+      )}
+
+      {/* Historique — relu depuis internal.audit.history, donc survit à un redémarrage */}
+      {history && history.runs.length > 0 && (
+        <Card padding="md">
+          <button
+            type="button"
+            onClick={() => setHistoryOpen(o => !o)}
+            aria-expanded={historyOpen}
+            className="w-full flex items-center justify-between gap-3 text-left"
+          >
+            <span className="flex items-center gap-2">
+              <span aria-hidden="true" className="material-symbols-outlined text-[18px] text-on-surface-variant">history</span>
+              <span className="text-[11px] uppercase font-medium tracking-[0.05em] text-on-surface-variant">
+                Past runs ({history.runs.length})
+              </span>
+            </span>
+            <span aria-hidden="true" className="material-symbols-outlined text-[18px] text-on-surface-variant">
+              {historyOpen ? 'expand_less' : 'expand_more'}
+            </span>
+          </button>
+
+          {historyOpen && (
+            <div className="mt-3 space-y-3">
+              <Table rowCount={history.runs.length}>
+                <TableHead>
+                  <tr>
+                    <Th>Run</Th>
+                    <Th className="text-right">Topics</Th>
+                    <Th className="text-right">Critical</Th>
+                    <Th className="text-right">Warning</Th>
+                    <Th className="text-right">Health</Th>
+                    <Th className="text-right">Duration</Th>
+                    <Th />
+                  </tr>
+                </TableHead>
+                <TableBody>
+                  {history.runs.map((run, i) => {
+                    // Comparaison avec le run précédent dans le temps (l'élément suivant, la
+                    // liste étant du plus récent au plus ancien) : c'est la question qui compte,
+                    // « est-ce que ça s'améliore ? ».
+                    const previous = history.runs[i + 1];
+                    const deltaHealth = previous && run.healthScore != null && previous.healthScore != null
+                      ? run.healthScore - previous.healthScore
+                      : null;
+                    return (
+                      <TableRow key={run.auditId}>
+                        <Td>
+                          <div className="flex items-center gap-2">
+                            <Badge tone={STATUS_TONE[run.status] ?? 'neutral'} dot>{run.status}</Badge>
+                            <span className="text-on-surface">{new Date(run.timestamp).toLocaleString()}</span>
+                            {run.topicPrefix && (
+                              <span className="font-mono text-[11px] text-on-surface-variant">{run.topicPrefix}*</span>
+                            )}
+                            {run.legacy && (
+                              <span
+                                title="Recorded before graded severity — its shape cannot be loaded into this view"
+                                className="text-[10px] uppercase tracking-wider text-outline border border-outline-variant rounded px-1"
+                              >legacy</span>
+                            )}
+                          </div>
+                        </Td>
+                        <Td className="text-right font-mono tabular-nums" title={run.totalTopics.toLocaleString()}>
+                          {compactNum(run.totalTopics)}
+                        </Td>
+                        <Td className={`text-right font-mono tabular-nums ${run.criticalTopicsCount > 0 ? 'text-error' : 'text-on-surface-variant'}`}>
+                          {run.criticalTopicsCount}
+                        </Td>
+                        <Td className={`text-right font-mono tabular-nums ${run.warningTopicsCount > 0 ? 'text-warning' : 'text-on-surface-variant'}`}>
+                          {run.legacy ? <span className="text-outline" title="The old scale recorded no warnings">—</span> : run.warningTopicsCount}
+                        </Td>
+                        <Td className="text-right font-mono tabular-nums">
+                          {run.healthScore == null ? <span className="text-outline">—</span> : (
+                            <span className="inline-flex items-center gap-1">
+                              {Math.round(run.healthScore * 100)}%
+                              {deltaHealth != null && Math.abs(deltaHealth) >= 0.005 && (
+                                <span className={deltaHealth > 0 ? 'text-success' : 'text-error'}>
+                                  {deltaHealth > 0 ? '▲' : '▼'}{Math.abs(Math.round(deltaHealth * 100))}
+                                </span>
+                              )}
+                            </span>
+                          )}
+                        </Td>
+                        <Td className="text-right font-mono tabular-nums text-on-surface-variant">
+                          {run.durationMs == null ? '—' : formatDuration(run.durationMs)}
+                        </Td>
+                        <Td className="text-right">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            icon="open_in_new"
+                            loading={loadingRunId === run.auditId}
+                            disabled={run.legacy || loadingRunId != null}
+                            title={run.legacy
+                              ? 'Recorded before graded severity — cannot be shown in this view'
+                              : 'Show this run'}
+                            onClick={() => loadHistoricalRun(run)}
+                          >
+                            Open
+                          </Button>
+                        </Td>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+
+              {/* La lecture est bornée : le dire, sinon la liste passe pour exhaustive. */}
+              <p className="text-[11px] text-on-surface-variant">
+                {history.exhausted
+                  ? `All ${history.runs.length} run(s) stored in the history topic.`
+                  : `Showing the most recent runs from the last ${history.recordsScanned} record(s) read — older runs are stored but not listed.`}
+              </p>
+              {history.warnings.map(w => (
+                <p key={w} className="text-[11px] text-warning">{w}</p>
+              ))}
+            </div>
+          )}
+        </Card>
       )}
 
       {/* Empty State */}

@@ -30,7 +30,7 @@ public class WebConfig implements WebMvcConfigurer {
     public CacheManager cacheManager(ExplorerConfig explorerConfig) {
         CaffeineCacheManager cacheManager = new CaffeineCacheManager(
                 "kafkaTopics", "topicDescriptor", "topicSizes", "topicLastMessages", "clusterDetails",
-                "lineage");
+                "lineage", "auditHistory");
         cacheManager.setCaffeine(Caffeine.newBuilder()
                 .expireAfterWrite(explorerConfig.getCacheExpireSeconds(), TimeUnit.SECONDS)
                 .maximumSize(100));

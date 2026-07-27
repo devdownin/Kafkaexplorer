@@ -33,6 +33,8 @@ kafka:
 explorer:
   cluster-name: KRAFT 4.2
   audit-history-topic: internal.audit.history
+  # Records read from the end of the history topic when listing past runs (bounded scan).
+  audit-history-max-records: 200
   default-max-rows: 50
   default-query-timeout-ms: 10000
   audit-query-timeout-ms: 5000

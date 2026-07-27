@@ -11,6 +11,12 @@ public class ExplorerConfig {
 
     private String clusterName = "DOCKER CLUSTER";
     private String auditHistoryTopic = "internal.audit.history";
+    /**
+     * Records read from the end of the audit-history topic when listing past runs. The topic is
+     * append-only and a report holds one entry per topic, so the read is bounded and the response
+     * states whether older runs exist beyond it.
+     */
+    private int auditHistoryMaxRecords = 200;
     private String metricsConfigTopic = "internal.metrics.config";
     private int defaultMaxRows = 50;
     private long defaultQueryTimeoutMs = 10000;
@@ -55,6 +61,14 @@ public class ExplorerConfig {
 
     public void setAuditHistoryTopic(String auditHistoryTopic) {
         this.auditHistoryTopic = auditHistoryTopic;
+    }
+
+    public int getAuditHistoryMaxRecords() {
+        return auditHistoryMaxRecords;
+    }
+
+    public void setAuditHistoryMaxRecords(int auditHistoryMaxRecords) {
+        this.auditHistoryMaxRecords = auditHistoryMaxRecords;
     }
 
     public String getMetricsConfigTopic() {
