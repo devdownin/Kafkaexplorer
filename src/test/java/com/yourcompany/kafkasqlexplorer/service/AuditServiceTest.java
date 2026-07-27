@@ -247,7 +247,7 @@ class AuditServiceTest {
     void duplicateDetectionFallsBackToTheKafkaRecordKey() throws Exception {
         when(kafkaAdminService.listTopics()).thenReturn(List.of("orders.created"));
         when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("orders.created", 3L));
-        when(kafkaAdminService.getEarliestRecords(eq("orders.created"), anyInt())).thenReturn(List.of(
+        when(kafkaAdminService.getRecentRecords(eq("orders.created"), anyInt())).thenReturn(List.of(
                 record("orders.created", 0, "k1", "not json"),
                 record("orders.created", 1, "k1", "not json"),
                 record("orders.created", 2, "k2", "not json")));
@@ -259,8 +259,8 @@ class AuditServiceTest {
         assertEquals(1, audit.duplicateCount(), "k1 appears twice");
         assertTrue(audit.issues().stream().anyMatch(i -> i.message().contains("Kafka record key")),
                 "the issue must name the key the scan grouped on: " + audit.issues());
-        assertTrue(audit.issues().stream().anyMatch(i -> i.message().contains("first 3 message")),
-                "the issue must state how many messages back the verdict: " + audit.issues());
+        assertTrue(audit.issues().stream().anyMatch(i -> i.message().contains("last 3 message")),
+                "the issue must state which end of the topic and how many messages: " + audit.issues());
         assertEquals(HealthStatus.WARNING, audit.healthStatus(),
                 "duplicates are a signal to look at, not a defect on their own");
     }
@@ -322,7 +322,7 @@ class AuditServiceTest {
                 .thenReturn(List.of("{\"id\":\"1\"}"));
         when(kafkaAdminService.getSampleMessages(eq("a.clean"), anyInt()))
                 .thenReturn(List.of("{\"id\":\"1\"}"));
-        when(kafkaAdminService.getEarliestRecords(eq("a.warning"), anyInt())).thenReturn(List.of(
+        when(kafkaAdminService.getRecentRecords(eq("a.warning"), anyInt())).thenReturn(List.of(
                 record("a.warning", 0, "k1", "{}"), record("a.warning", 1, "k1", "{}")));
 
         auditService.runAuditAsync("sev", new AuditOptions(false, true, true, false, false, null));
@@ -343,7 +343,7 @@ class AuditServiceTest {
         when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("mixed.topic", 5L));
         when(kafkaAdminService.getSampleMessages(eq("mixed.topic"), anyInt()))
                 .thenReturn(List.of("{\"id\":\"1\"}", "{\"id\":"));
-        when(kafkaAdminService.getEarliestRecords(eq("mixed.topic"), anyInt())).thenReturn(List.of(
+        when(kafkaAdminService.getRecentRecords(eq("mixed.topic"), anyInt())).thenReturn(List.of(
                 record("mixed.topic", 0, "k1", "{}"), record("mixed.topic", 1, "k1", "{}")));
 
         auditService.runAuditAsync("mixed", new AuditOptions(false, true, true, false, false, null));
@@ -445,7 +445,7 @@ class AuditServiceTest {
         assertEquals(true, report.globalStats().get("cancelled"));
         @SuppressWarnings("unchecked")
         List<String> notes = (List<String>) report.globalStats().get("scopeNotes");
-        assertTrue(notes.get(0).startsWith("Run cancelled after"),
+        assertTrue(notes.get(0).startsWith("Stopped after"),
                 "a partial report must lead with the fact that it is partial: " + notes);
     }
 
@@ -477,6 +477,95 @@ class AuditServiceTest {
         auditService.runAuditAsync("done", AuditOptions.all());
         assertEquals(AuditService.CancelResult.ALREADY_FINISHED, auditService.cancelAudit("done"),
                 "cancelling a finished run is not a silent success");
+    }
+
+    @Test
+    void duplicatesAreScannedFromTheEndOfTheTopicByDefault() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders.created"));
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("orders.created", 3L));
+        when(kafkaAdminService.getRecentRecords(eq("orders.created"), anyInt())).thenReturn(List.of(
+                record("orders.created", 0, "k1", "{}"), record("orders.created", 1, "k1", "{}")));
+
+        auditService.runAuditAsync("recent", new AuditOptions(false, false, true, false, false, null));
+
+        // Every other check samples recent messages; scanning from the start judged the oldest
+        // surviving records, which on a topic with retention answers a different question.
+        verify(kafkaAdminService).getRecentRecords(eq("orders.created"), anyInt());
+        verify(kafkaAdminService, never()).getEarliestRecords(anyString(), anyInt());
+        @SuppressWarnings("unchecked")
+        List<String> notes = (List<String>) auditService.getAuditReport("recent").globalStats().get("scopeNotes");
+        assertTrue(notes.stream().anyMatch(n -> n.contains("from the end of each topic")),
+                "the scope note must say which end was read: " + notes);
+    }
+
+    @Test
+    void duplicateScanCanBePointedAtTheStartOfTheTopic() throws Exception {
+        explorerConfig.setAuditDuplicateScanFrom("EARLIEST");
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders.created"));
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("orders.created", 3L));
+        when(kafkaAdminService.getEarliestRecords(eq("orders.created"), anyInt())).thenReturn(List.of(
+                record("orders.created", 0, "k1", "{}"), record("orders.created", 1, "k1", "{}")));
+
+        auditService.runAuditAsync("earliest", new AuditOptions(false, false, true, false, false, null));
+
+        verify(kafkaAdminService).getEarliestRecords(eq("orders.created"), anyInt());
+        TopicAudit audit = auditService.getAuditReport("earliest").topicAudits().get(0);
+        assertTrue(audit.issues().stream().anyMatch(i -> i.message().contains("first 2 message")),
+                "the wording must follow the end actually read: " + audit.issues());
+    }
+
+    @Test
+    void aRunThatOutlivesItsTimeBudgetStopsAndSaysSo() throws Exception {
+        // Budget of 1 ms: the deadline is already past by the time the first topic is picked up,
+        // so every topic is skipped and the run reports why rather than grinding on.
+        explorerConfig.setAuditMaxDurationMs(1);
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("a.one", "a.two", "a.three"));
+        when(kafkaAdminService.getTopicsSize(any()))
+                .thenReturn(Map.of("a.one", 1L, "a.two", 1L, "a.three", 1L));
+
+        AuditService.AuditStart start = auditService.startAudit(AuditOptions.all());
+        AuditReport report = awaitTerminal(start.auditId());
+
+        assertEquals(AuditStatus.CANCELLED, report.status());
+        assertEquals("TIME_BUDGET", report.globalStats().get("stopReason"));
+        assertEquals(3, report.globalStats().get("topicsInScope"));
+        @SuppressWarnings("unchecked")
+        List<String> notes = (List<String>) report.globalStats().get("scopeNotes");
+        assertTrue(notes.get(0).contains("time budget was exhausted"),
+                "the report must distinguish a budget stop from a cancellation: " + notes);
+    }
+
+    @Test
+    void aCancellationIsReportedAsRequestedNotAsATimeout() throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        when(kafkaAdminService.listTopics()).thenAnswer(invocation -> {
+            started.countDown();
+            release.await(5, TimeUnit.SECONDS);
+            return List.of("a.one");
+        });
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("a.one", 1L));
+
+        AuditService.AuditStart start = auditService.startAudit(AuditOptions.all());
+        assertTrue(started.await(5, TimeUnit.SECONDS));
+        auditService.cancelAudit(start.auditId());
+        release.countDown();
+
+        AuditReport report = awaitTerminal(start.auditId());
+        assertEquals("REQUESTED", report.globalStats().get("stopReason"));
+    }
+
+    @Test
+    void aRunWithNoBudgetIsNotStoppedEarly() throws Exception {
+        explorerConfig.setAuditMaxDurationMs(0); // 0 disables the budget
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("a.one"));
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("a.one", 1L));
+
+        auditService.runAuditAsync("nobudget", new AuditOptions(false, false, false, false, false, null));
+
+        AuditReport report = auditService.getAuditReport("nobudget");
+        assertEquals(AuditStatus.COMPLETED, report.status());
+        assertNull(report.globalStats().get("stopReason"));
     }
 
     /** Polls until the run leaves RUNNING, so the assertions do not race the audit thread. */

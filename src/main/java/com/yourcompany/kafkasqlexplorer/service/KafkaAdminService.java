@@ -647,21 +647,7 @@ public class KafkaAdminService {
                     .map(p -> new TopicPartition(topicName, p.partition())).toList();
             consumer.assign(partitions);
             consumer.seekToBeginning(partitions);
-            int count = 0;
-            boolean moreRecords = true;
-            while (count < maxMessages && moreRecords) {
-                org.apache.kafka.clients.consumer.ConsumerRecords<byte[], byte[]> polled = consumer.poll(java.time.Duration.ofMillis(500));
-                if (polled.isEmpty()) moreRecords = false;
-                for (org.apache.kafka.clients.consumer.ConsumerRecord<byte[], byte[]> record : polled) {
-                    String value = deserializeValue(record.topic(), record.value());
-                    String key = record.key() != null ? new String(record.key(), StandardCharsets.UTF_8) : null;
-                    records.add(new org.apache.kafka.clients.consumer.ConsumerRecord<>(
-                        record.topic(), record.partition(), record.offset(), record.timestamp(), record.timestampType(),
-                        -1, -1, key, value, record.headers(), record.leaderEpoch()));
-                    count++;
-                    if (count >= maxMessages) break;
-                }
-            }
+            records.addAll(drain(consumer, partitions, maxMessages));
         } catch (Exception e) {
             log.error("Error fetching earliest records for topic {}", topicName, e);
         }
@@ -728,24 +714,81 @@ public class KafkaAdminService {
                 }
             }
 
-            int count = 0;
-            boolean moreRecords = true;
-            while (count < maxMessages && moreRecords) {
-                org.apache.kafka.clients.consumer.ConsumerRecords<byte[], byte[]> polled = consumer.poll(java.time.Duration.ofMillis(500));
-                if (polled.isEmpty()) moreRecords = false;
-                for (org.apache.kafka.clients.consumer.ConsumerRecord<byte[], byte[]> record : polled) {
-                    String value = deserializeValue(record.topic(), record.value());
-                    String key = record.key() != null ? new String(record.key(), StandardCharsets.UTF_8) : null;
-                    records.add(new org.apache.kafka.clients.consumer.ConsumerRecord<>(
-                        record.topic(), record.partition(), record.offset(), record.timestamp(), record.timestampType(),
-                        -1, -1, key, value, record.headers(), record.leaderEpoch()));
-                    count++;
-                    if (count >= maxMessages) break;
-                }
-            }
+            records.addAll(drain(consumer, partitions, maxMessages));
         } catch (Exception e) {
             log.error("Error fetching records for topic {}", topicName, e);
         }
         return records;
+    }
+
+    /** Poll timeout of the record-drain loop. */
+    private static final java.time.Duration DRAIN_POLL_TIMEOUT = java.time.Duration.ofMillis(500);
+    /**
+     * Consecutive empty polls tolerated before giving up on a partition set that still has
+     * uncaught-up offsets. Only a safety net — the loop normally stops on the end offsets.
+     */
+    private static final int DRAIN_MAX_EMPTY_POLLS = 3;
+    /**
+     * Wall-clock budget for one drain. A constant rather than an {@code ExplorerConfig} property:
+     * this service is constructed with only {@code KafkaConfig} in a dozen tests, and the value
+     * only exists to stop a slow or unhealthy broker from pinning the calling thread — callers
+     * already bound how much they ask for.
+     */
+    private static final long DRAIN_BUDGET_MS = 20_000;
+
+    /**
+     * Reads up to {@code maxMessages} from the already-assigned and already-seeked partitions.
+     *
+     * <p>Termination is driven by the <strong>end offsets</strong>, not by an empty poll. Both
+     * callers used to stop at the first {@code poll()} that returned nothing, which is a lie about
+     * the topic: the first poll of a fresh consumer very often comes back empty while metadata is
+     * still being resolved or the fetch is in flight. The audit's duplicate detection then judged a
+     * topic on a handful of records — or none at all — and reported a confident zero.
+     *
+     * <p>A wall-clock budget and a cap on consecutive empty polls keep a slow or unhealthy broker
+     * from pinning the calling thread. Callers see a short result and, in the audit's case, report
+     * the count they actually scanned.
+     */
+    private List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> drain(
+            KafkaConsumer<byte[], byte[]> consumer, List<TopicPartition> partitions, int maxMessages) {
+        List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records = new ArrayList<>();
+        Map<TopicPartition, Long> endOffsets = consumer.endOffsets(partitions);
+        long deadline = System.nanoTime()
+                + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(DRAIN_BUDGET_MS);
+        int emptyPolls = 0;
+
+        while (records.size() < maxMessages) {
+            if (!hasUnreadOffsets(consumer, partitions, endOffsets)) break; // caught up: really done
+            if (System.nanoTime() >= deadline) {
+                log.debug("Record scan budget spent after {} record(s)", records.size());
+                break;
+            }
+            org.apache.kafka.clients.consumer.ConsumerRecords<byte[], byte[]> polled = consumer.poll(DRAIN_POLL_TIMEOUT);
+            if (polled.isEmpty()) {
+                if (++emptyPolls >= DRAIN_MAX_EMPTY_POLLS) break;
+                continue;
+            }
+            emptyPolls = 0;
+            for (org.apache.kafka.clients.consumer.ConsumerRecord<byte[], byte[]> record : polled) {
+                String value = deserializeValue(record.topic(), record.value());
+                String key = record.key() != null ? new String(record.key(), StandardCharsets.UTF_8) : null;
+                records.add(new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                    record.topic(), record.partition(), record.offset(), record.timestamp(), record.timestampType(),
+                    -1, -1, key, value, record.headers(), record.leaderEpoch()));
+                if (records.size() >= maxMessages) break;
+            }
+        }
+        return records;
+    }
+
+    /** True while at least one assigned partition still has records before its end offset. */
+    private static boolean hasUnreadOffsets(KafkaConsumer<byte[], byte[]> consumer,
+                                            List<TopicPartition> partitions,
+                                            Map<TopicPartition, Long> endOffsets) {
+        for (TopicPartition tp : partitions) {
+            Long end = endOffsets.get(tp);
+            if (end != null && consumer.position(tp) < end) return true;
+        }
+        return false;
     }
 }

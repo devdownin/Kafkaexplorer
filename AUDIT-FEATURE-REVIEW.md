@@ -383,6 +383,59 @@ Côté robustesse : un enregistrement illisible est sauté avec un avertissement
 de `poll` tolère deux polls vides consécutifs — un poll vide ne signifie pas épuisé, c'est la leçon
 déjà tirée sur la restauration des métriques.
 
+### S6 — Les scans de messages s'arrêtaient au premier `poll()` vide ✅
+
+`KafkaAdminService.getEarliestRecords` et `getRecordsWithPredicate` partageaient la même boucle :
+
+```java
+if (polled.isEmpty()) moreRecords = false;
+```
+
+Un `poll()` vide ne veut **pas** dire que le topic est épuisé. Sur un consommateur neuf, le premier
+poll revient très souvent vide pendant que les métadonnées se résolvent ou que le fetch est en vol.
+La détection de doublons jugeait donc un topic sur une poignée d'enregistrements — parfois zéro — et
+rapportait un « 0 duplicate » confiant. Le même défaut affectait le Topic Explorer, le Stream Flow
+et le Process Mining, qui partagent ces méthodes.
+
+**Correction** : une boucle unique `drain()`, dont la terminaison est pilotée par les **offsets de
+fin** (`position(tp) < endOffset`), pas par un poll vide. Un plafond de polls vides consécutifs (3)
+et un budget de 20 s restent en filet de sécurité contre un broker lent, et le nombre réellement lu
+est déjà rapporté par l'audit — donc une lecture courte se voit au lieu de mentir.
+
+Le budget est une constante et non une propriété `ExplorerConfig` : ce service est construit avec le
+seul `KafkaConfig` dans une douzaine de tests, et la valeur n'existe que pour empêcher un broker
+malade d'immobiliser le thread appelant — les appelants bornent déjà ce qu'ils demandent.
+
+### S7 — Budget de temps global sur un run ✅
+
+Un `COUNT(*)` Flink par topic à 5 s de timeout sur 4 workers : un cluster de 2 000 topics peut
+occuper quarante minutes, sans que rien ne le borne.
+
+`explorer.audit-max-duration-ms` (30 min par défaut, `0` désactive) borne le run. Le mécanisme
+réutilise celui de l'annulation (S4) : au-delà de l'échéance, les topics restants sont sautés, la
+phase de flows est abandonnée, et le rapport partiel est conservé avec le statut `CANCELLED`.
+
+`globalStats.stopReason` distingue `REQUESTED` d'un `TIME_BUDGET` — « annulé » sans préciser par qui
+serait trompeur. La note de portée et le bandeau UI le disent, et le bandeau pointe la propriété à
+augmenter plutôt que de laisser lire un rapport tronqué.
+
+> **Compromis assumé** : le défaut est *actif* à 30 minutes. Un cluster qui mettait 40 minutes
+> obtiendra désormais un rapport partiel — mais un rapport partiel **qui l'annonce**, ce qui était le
+> vrai problème. Mettre le défaut à `0` aurait livré la capacité sans la rendre effective.
+
+### S8 — Doublons scannés depuis la fin du topic ✅
+
+`detectDuplicates` lisait les 10 000 **premiers** messages, alors que la détection de poison et la
+latence de flow échantillonnent les messages **récents**. Sur un topic avec rétention, cela jugeait
+les plus vieux enregistrements survivants : intéressant pour un historique, mais rarement la
+question que pose un opérateur (« est-ce que mon producteur duplique *en ce moment* ? »).
+
+**Correction** : lecture depuis la fin par défaut, cohérente avec le reste.
+`explorer.audit-duplicate-scan-from: EARLIEST` restaure l'ancien comportement. Le libellé de l'issue
+et la note de portée suivent le bout du topic réellement lu (« over the last N » / « from the end
+of each topic ») — un message qui dirait « first » sur une lecture de fin serait pire que pas de
+message du tout.
+
 ---
 
 ## 5. Constaté, non traité
@@ -390,16 +443,9 @@ déjà tirée sur la restauration des métriques.
 Ces points sont réels mais dépassent le périmètre d'une correction de la fonctionnalité Audit ;
 ils sont listés pour décision.
 
-* **La détection de doublons lit depuis EARLIEST** alors que tout le reste échantillonne les
-  messages récents. Sur un topic avec rétention, elle juge les 10 000 plus vieux messages
-  survivants, pas forcément ce qu'un opérateur attend.
-* **Pas de budget global sur l'audit.** Un `COUNT(*)` Flink par topic à 5 s de timeout, sur
-  4 threads : un cluster de 2 000 topics peut occuper 40 minutes.
-* **`KafkaAdminService.getEarliestRecords` / `getRecordsWithPredicate` s'arrêtent au premier
-  `poll()` vide.** Sur un broker lent ou une partition dont les métadonnées ne sont pas encore
-  résolues, le scan peut se terminer prématurément et sous-estimer les doublons. Le correctif
-  (compter les polls vides consécutifs, ou boucler jusqu'aux offsets de fin) touche un service
-  partagé par le Topic Explorer, le Stream Flow et le Process Mining.
+* **Pas de diff topic par topic entre deux rapports.** L'historique (S5) affiche le delta de score
+  de santé d'un run au suivant, ce qui répond à « est-ce que ça s'améliore ? ». Savoir *quels* topics
+  se sont dégradés demanderait de charger deux rapports complets et de les comparer ligne à ligne.
 * **Pas d'authentification.** `POST /api/audit/start` reste déclenchable par n'importe qui sur le
   réseau, et un audit est une opération coûteuse pour le cluster. C'est la posture assumée du
   projet (cf. « Security Notes » dans `CLAUDE.md`), rappelée ici parce que la suppression du

@@ -85,6 +85,9 @@ public class AuditService {
         }
     }
 
+    /** Why a run stopped short of its scope. */
+    private enum StopReason { REQUESTED, TIME_BUDGET }
+
     private final AtomicReference<RunHandle> currentRun = new AtomicReference<>();
 
     /**
@@ -227,6 +230,16 @@ public class AuditService {
         AtomicBoolean cancelled = handle != null && handle.auditId().equals(auditId)
             ? handle.cancelled()
             : new AtomicBoolean(false);
+        long budgetMs = explorerConfig.getAuditMaxDurationMs();
+        long deadlineNanos = budgetMs > 0
+            ? System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(budgetMs)
+            : Long.MAX_VALUE;
+        // One predicate for both ways a run can end early, so every checkpoint honours both.
+        java.util.function.Supplier<StopReason> stopReason = () -> {
+            if (cancelled.get()) return StopReason.REQUESTED;
+            if (System.nanoTime() >= deadlineNanos) return StopReason.TIME_BUDGET;
+            return null;
+        };
         try {
             List<String> topics = kafkaAdminService.listTopics();
             // Optional prefix filter: audit only topics whose name starts with it.
@@ -247,7 +260,7 @@ public class AuditService {
                 .map(topic -> CompletableFuture
                     // Every topic is submitted up front, so cancelling cannot un-queue them:
                     // the check has to happen inside the task. Queued topics then cost nothing.
-                    .supplyAsync(() -> cancelled.get()
+                    .supplyAsync(() -> stopReason.get() != null
                             ? null
                             : auditTopicSafe(topic, topicSizes.getOrDefault(topic, 0L), options),
                         topicAuditExecutor)
@@ -272,7 +285,7 @@ public class AuditService {
             // Flow correlation re-reads two topics per step; there is no point paying for it on a
             // run the operator has already stopped.
             List<FlowAudit> flowAudits = Collections.emptyList();
-            if (options.checkFlows() && !cancelled.get()) {
+            if (options.checkFlows() && stopReason.get() == null) {
                 publishProgress(auditId, options, startedAt, "flows", totalTopics, totalTopics);
                 flowAudits = identifyAndAuditFlows(topicAudits);
             }
@@ -281,7 +294,8 @@ public class AuditService {
             // offset estimate while the per-topic column showed the exact Flink counts.
             long totalMessages = topicAudits.stream().mapToLong(TopicAudit::messageCount).sum();
 
-            boolean wasCancelled = cancelled.get();
+            StopReason stopped = stopReason.get();
+            boolean wasCancelled = stopped != null;
             int auditedTopics = topicAudits.size();
 
             Map<String, Object> globalStats = new LinkedHashMap<>();
@@ -295,9 +309,13 @@ public class AuditService {
             List<String> scopeNotes = scopeNotes(options, topicAudits);
             if (wasCancelled) {
                 globalStats.put("cancelled", true);
+                globalStats.put("stopReason", stopped.name());
                 globalStats.put("topicsInScope", totalTopics);
-                scopeNotes.add(0, "Run cancelled after " + auditedTopics + " of " + totalTopics
-                    + " topic(s) — the remaining topics were not audited.");
+                String why = stopped == StopReason.TIME_BUDGET
+                    ? "the " + formatBudget(budgetMs) + " time budget was exhausted"
+                    : "the run was cancelled";
+                scopeNotes.add(0, "Stopped after " + auditedTopics + " of " + totalTopics
+                    + " topic(s) — " + why + ", the remaining topics were not audited.");
             }
             if (!scopeNotes.isEmpty()) globalStats.put("scopeNotes", scopeNotes);
 
@@ -353,6 +371,12 @@ public class AuditService {
         }
     }
 
+    /** "30m" / "90s" — used in the scope note explaining why a run stopped. */
+    private static String formatBudget(long budgetMs) {
+        long seconds = budgetMs / 1000;
+        return seconds % 60 == 0 && seconds >= 60 ? (seconds / 60) + "m" : seconds + "s";
+    }
+
     /**
      * Cluster health as a 0..1 ratio. A CRITICAL topic costs a full point, a WARNING half of one —
      * the previous "unhealthy vs total" ratio treated a single duplicate key and an unreadable
@@ -393,7 +417,8 @@ public class AuditService {
         List<String> notes = new ArrayList<>();
         if (options.checkDuplicates()) {
             notes.add("Duplicate detection scans at most " + DUPLICATE_SCAN_MAX_MESSAGES
-                + " messages from the start of each topic — larger topics are only partially covered.");
+                + " messages from the " + (scansDuplicatesFromEarliest() ? "start" : "end")
+                + " of each topic — larger topics are only partially covered.");
         }
         if (options.checkPoisonMessages()) {
             notes.add("Poison-message detection parses a sample of " + POISON_SAMPLE_SIZE
@@ -487,7 +512,8 @@ public class AuditService {
             // signal to look at, not a defect on their own.
             issues.add(TopicIssue.warning("Detected " + duplicateScan.duplicateKeys()
                 + " duplicate value(s) of '" + duplicateScan.keyField()
-                + "' over the first " + duplicateScan.scanned() + " message(s)."));
+                + "' over the " + (scansDuplicatesFromEarliest() ? "first " : "last ")
+                + duplicateScan.scanned() + " message(s)."));
         }
 
         HealthStatus status = issues.stream()
@@ -600,8 +626,13 @@ public class AuditService {
     private DuplicateScan detectDuplicates(String topicName, Map<String, String> schema) {
         String keyField = namingConventionService.findKeyField(schema);
 
-        List<ConsumerRecord<String, String>> records =
-            kafkaAdminService.getEarliestRecords(topicName, DUPLICATE_SCAN_MAX_MESSAGES);
+        // Recent by default: every other check samples recent messages, and on a topic with
+        // retention the oldest surviving records are rarely what an operator is asking about.
+        // `explorer.audit-duplicate-scan-from: EARLIEST` restores the previous behaviour.
+        boolean fromEarliest = scansDuplicatesFromEarliest();
+        List<ConsumerRecord<String, String>> records = fromEarliest
+            ? kafkaAdminService.getEarliestRecords(topicName, DUPLICATE_SCAN_MAX_MESSAGES)
+            : kafkaAdminService.getRecentRecords(topicName, DUPLICATE_SCAN_MAX_MESSAGES);
         if (records.isEmpty()) return DuplicateScan.skipped();
 
         Map<String, Integer> keyCounts = new HashMap<>();
@@ -626,6 +657,10 @@ public class AuditService {
 
         long duplicates = keyCounts.values().stream().filter(count -> count > 1).count();
         return new DuplicateScan(duplicates, keyField != null ? keyField : "Kafka record key", scanned);
+    }
+
+    private boolean scansDuplicatesFromEarliest() {
+        return "EARLIEST".equalsIgnoreCase(explorerConfig.getAuditDuplicateScanFrom());
     }
 
     /**

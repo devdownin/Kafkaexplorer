@@ -38,6 +38,12 @@ explorer:
   default-max-rows: 50
   default-query-timeout-ms: 10000
   audit-query-timeout-ms: 5000
+  # Wall-clock budget for one full audit run; 0 disables it. Past the budget the run stops like a
+  # cancellation and the report says how far it got — a 2 000-topic cluster with exact counts can
+  # legitimately need longer, so raise it (or set 0) rather than reading a truncated report.
+  audit-max-duration-ms: 1800000
+  # Which end of each topic duplicate detection reads: LATEST (default) or EARLIEST.
+  audit-duplicate-scan-from: LATEST
   inference-sample-size: 10
   inference-poll-timeout-ms: 2000
   # Topic search (POST /api/topic/{name}/search). A pass stops at the first budget it hits and

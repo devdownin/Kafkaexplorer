@@ -67,8 +67,10 @@ interface GlobalStats {
   cancelled?: boolean;
   /** Arrêt demandé, pas encore effectif (l'annulation est coopérative). */
   cancelling?: boolean;
-  /** Topics qui étaient dans le périmètre avant l'annulation. */
+  /** Topics qui étaient dans le périmètre avant l'arrêt. */
   topicsInScope?: number;
+  /** Pourquoi le run s'est arrêté avant la fin de son périmètre. */
+  stopReason?: 'REQUESTED' | 'TIME_BUDGET';
   /** Ratio 0..1 : un topic CRITICAL coûte 1 point, un WARNING un demi-point. */
   healthScore?: number;
   scopeNotes?: string[];
@@ -682,11 +684,16 @@ const Audit: React.FC = () => {
             <div className="rounded-xl border border-warning/25 bg-warning/10 p-4 flex items-start gap-3 text-[13px]" role="status">
               <span aria-hidden="true" className="material-symbols-outlined text-[20px] text-warning shrink-0">stop_circle</span>
               <div>
-                <span className="text-[11px] font-bold text-warning uppercase tracking-widest">Partial report — run stopped</span>
+                <span className="text-[11px] font-bold text-warning uppercase tracking-widest">
+                  {stats.stopReason === 'TIME_BUDGET' ? 'Partial report — time budget exhausted' : 'Partial report — run stopped'}
+                </span>
                 <p className="text-on-surface mt-1 leading-relaxed">
                   {stats.topicsInScope != null
                     ? <>Audited {report.totalTopics.toLocaleString()} of {stats.topicsInScope.toLocaleString()} topic(s) in scope. The figures below cover only those.</>
                     : <>The figures below cover only the topics audited before the stop.</>}
+                  {stats.stopReason === 'TIME_BUDGET' && (
+                    <> Raise <span className="font-mono text-[12px]">explorer.audit-max-duration-ms</span> (or narrow the topic prefix) to cover the whole cluster.</>
+                  )}
                 </p>
               </div>
             </div>

@@ -21,6 +21,21 @@ public class ExplorerConfig {
     private int defaultMaxRows = 50;
     private long defaultQueryTimeoutMs = 10000;
     private long auditQueryTimeoutMs = 5000;
+    /**
+     * Wall-clock budget for one full audit run, 0 to disable. A cluster of 2 000 topics with exact
+     * counts enabled runs one Flink {@code COUNT(*)} per topic at {@code auditQueryTimeoutMs} each
+     * on four workers, so it can legitimately occupy forty minutes. Past the budget the run stops
+     * like a cancellation and reports how far it got — a partial report that says so beats an
+     * operator watching a progress bar for an hour.
+     */
+    private long auditMaxDurationMs = 1_800_000;
+    /**
+     * Where duplicate detection reads from: LATEST (the most recent messages, the default) or
+     * EARLIEST. Everything else in the audit samples recent messages; scanning from the start of
+     * the topic judged the oldest surviving records, which on a topic with retention is rarely
+     * what an operator is asking about.
+     */
+    private String auditDuplicateScanFrom = "LATEST";
     private int inferenceSampleSize = 10;
     private long inferencePollTimeoutMs = 2000;
     private boolean allowCrossJoin = false;
@@ -101,6 +116,22 @@ public class ExplorerConfig {
 
     public void setAuditQueryTimeoutMs(long auditQueryTimeoutMs) {
         this.auditQueryTimeoutMs = auditQueryTimeoutMs;
+    }
+
+    public long getAuditMaxDurationMs() {
+        return auditMaxDurationMs;
+    }
+
+    public void setAuditMaxDurationMs(long auditMaxDurationMs) {
+        this.auditMaxDurationMs = auditMaxDurationMs;
+    }
+
+    public String getAuditDuplicateScanFrom() {
+        return auditDuplicateScanFrom;
+    }
+
+    public void setAuditDuplicateScanFrom(String auditDuplicateScanFrom) {
+        this.auditDuplicateScanFrom = auditDuplicateScanFrom;
     }
 
     public int getInferenceSampleSize() {
