@@ -9,8 +9,13 @@ import {
   Button, Badge, Input, Select, Field, NumberInput, EmptyState, useConfirm, cn,
   useVirtualRows, ScrollList,
 } from '../components/ui';
-import { describeQueryError, describeApiError, type QueryErrorInfo, type QueryErrorLocation } from './queryError';
+import {
+  describeQueryError, describeApiError, offsetLocation,
+  type QueryErrorInfo, type QueryErrorLocation,
+} from './queryError';
 import { resolveScope, toTableName } from './sqlScope';
+import { buildWindowSql, windowCaveat, guessTimeColumn, type WindowKind, type WindowUnit } from './windowSql';
+import { toCsv, toJson } from './resultExport';
 
 /** Contrôle segmenté compact (mode d'exécution, offset). */
 function Segmented<T extends string>({ value, onChange, options, ariaLabel }: {
@@ -320,6 +325,12 @@ const QueryWorkbench: React.FC = () => {
   // sinon on ne le connaîtrait qu'une fois la requête terminée — trop tard pour l'annuler.
   const abortRef = useRef<AbortController | null>(null);
   const runningQueryIdRef = useRef<string | null>(null);
+  // Origine du fragment exécuté dans le document, quand seule la sélection a été lancée.
+  // Les positions d'erreur du moteur sont relatives à ce fragment ; sans ce décalage, le
+  // marqueur Monaco et le « jump to line » pointeraient le haut du document.
+  const [runOrigin, setRunOrigin] = useState<QueryErrorLocation | null>(null);
+  // Reflète la présence d'une sélection non vide, pour libeller le bouton en conséquence.
+  const [hasSelection, setHasSelection] = useState(false);
   const [executionMode, setExecutionMode] = useState<ExecutionMode>('SYNC_READ');
   const [offsetMode, setOffsetMode] = useState<'EARLIEST' | 'LATEST'>('EARLIEST');
   const [panelError, setPanelError] = useState<QueryErrorInfo | null>(null);
@@ -341,10 +352,12 @@ const QueryWorkbench: React.FC = () => {
   // Une requête rejetée avant exécution (mode, validateur backend) passe par le même
   // panneau que l'échec d'exécution : même titre lisible, même piste, même marqueur
   // Monaco. Un rejet pré-vol l'emporte, puisqu'il n'y a alors aucun résultat.
-  const queryError = useMemo(
-    () => panelError ?? (results?.error ? describeQueryError(results.error) : null),
-    [panelError, results?.error],
-  );
+  const queryError = useMemo(() => {
+    const info = panelError ?? (results?.error ? describeQueryError(results.error) : null);
+    if (!info) return null;
+    // Ramène la position dans le repère du document quand seule la sélection a été exécutée.
+    return { ...info, location: offsetLocation(info.location, runOrigin ?? undefined) };
+  }, [panelError, results?.error, runOrigin]);
 
   // Le résultat bute sur son propre plafond → il est probablement incomplet.
   const truncated = !!results && !results.error && results.rows.length >= resultLimit;
@@ -379,6 +392,7 @@ const QueryWorkbench: React.FC = () => {
   // ils pointeraient sinon une position et une requête devenues obsolètes.
   useEffect(() => {
     setPanelError(null);
+    setRunOrigin(null);
     if (!monaco || !editorRef.current) return;
     const model = editorRef.current.getModel();
     if (model) monaco.editor.setModelMarkers(model, 'kse-sql-error', []);
@@ -429,9 +443,12 @@ const QueryWorkbench: React.FC = () => {
   };
 
   // ── Window assistant ──────────────────────────────────────────────────────────
-  const [windowType, setWindowType] = useState('Tumbling (Non-overlapping)');
+  const [windowType, setWindowType] = useState<WindowKind>('TUMBLE');
   const [windowSize, setWindowSize] = useState(5);
-  const [windowUnit, setWindowUnit] = useState('MIN');
+  const [windowSlide, setWindowSlide] = useState(1);
+  const [windowUnit, setWindowUnit] = useState<WindowUnit>('MINUTE');
+  const [windowTimeCol, setWindowTimeCol] = useState('');
+  const [windowPartitionBy, setWindowPartitionBy] = useState('');
 
   // ── Resize: split pane (vertical) + sidebar (horizontal) ─────────────────────
   const containerRef = useRef<HTMLDivElement>(null);
@@ -519,7 +536,22 @@ const QueryWorkbench: React.FC = () => {
 
   const runQuery = async () => {
     setPanelError(null);
-    const statementType = detectStatementType(sql);
+
+    // N'exécuter que la sélection quand il y en a une — habitude universelle des éditeurs SQL,
+    // et le seul moyen de lancer une requête parmi plusieurs dans le même onglet. L'onglet
+    // garde son contenu entier ; seule la portion envoyée change.
+    const editor = editorRef.current;
+    const selection = editor?.getSelection();
+    const selected = selection && !selection.isEmpty()
+      ? editor?.getModel()?.getValueInRange(selection) ?? ''
+      : '';
+    const runningSelection = selected.trim().length > 0;
+    const sqlToRun = runningSelection ? selected : sql;
+    setRunOrigin(runningSelection && selection
+      ? { line: selection.startLineNumber, column: selection.startColumn }
+      : null);
+
+    const statementType = detectStatementType(sqlToRun);
 
     if (executionMode === 'SYNC_READ' && statementType === 'INSERT') {
       setResults(null); setSubmittedJob(null);
@@ -541,7 +573,7 @@ const QueryWorkbench: React.FC = () => {
     }
 
     try {
-      const vRes = await axios.post<{ valid: boolean; error?: string }>('/api/query/validate', { sql });
+      const vRes = await axios.post<{ valid: boolean; error?: string }>('/api/query/validate', { sql: sqlToRun });
       if (!vRes.data.valid) {
         // Rejet avant exécution : le backend renvoie déjà le texte du parser (avec sa
         // ligne/colonne quand il en a une), on le classe comme n'importe quelle erreur.
@@ -559,27 +591,27 @@ const QueryWorkbench: React.FC = () => {
     abortRef.current = controller;
     try {
       if (executionMode === 'ASYNC_JOB') {
-        const response = await axios.post<FlinkJobSubmission>('/api/query/jobs', { sql },
+        const response = await axios.post<FlinkJobSubmission>('/api/query/jobs', { sql: sqlToRun },
           { signal: controller.signal });
         setExecutionMs(Date.now() - start);
         setSubmittedJob(response.data);
         setResults(null);
-        saveToHistory(sql);
+        saveToHistory(sqlToRun);
         toast(`Streaming job submitted: ${response.data.status}`, 'success');
       } else {
         const readMode = offsetMode === 'LATEST' ? 'latest-offset' : 'earliest-offset';
         const limit = maxRows;
         const response = await axios.post<QueryResult>('/api/query/run-sync',
-          { sql, readMode, maxRows: limit, queryId }, { signal: controller.signal });
+          { sql: sqlToRun, readMode, maxRows: limit, queryId }, { signal: controller.signal });
         setExecutionMs(Date.now() - start);
         setResultLimit(limit);
         setResults(response.data);
         if (!response.data.error) {
-          saveToHistory(sql);
+          saveToHistory(sqlToRun);
           // Refresh the schema browser when:
           // 1. The user explicitly ran a CREATE TABLE statement.
           // 2. The backend auto-registered a Flink table during query execution.
-          const strippedForCheck = sql.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, '').trim();
+          const strippedForCheck = sqlToRun.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, '').trim();
           if (strippedForCheck.toUpperCase().startsWith('CREATE TABLE') || response.data.tableRegistered) {
             fetchSchema();
           }
@@ -637,13 +669,9 @@ const QueryWorkbench: React.FC = () => {
 
   const exportResults = (format: 'csv' | 'json') => {
     if (!results?.rows.length) return;
-    let content: string, mime: string, ext: string;
-    if (format === 'json') { content = JSON.stringify(results.rows, null, 2); mime = 'application/json'; ext = 'json'; }
-    else {
-      const header = results.columns.join(',');
-      const rows = results.rows.map(r => results.columns.map(c => JSON.stringify(r[c] ?? '')).join(','));
-      content = [header, ...rows].join('\n'); mime = 'text/csv'; ext = 'csv';
-    }
+    const [content, mime, ext] = format === 'json'
+      ? [toJson(results.rows), 'application/json', 'json']
+      : [toCsv(results.columns, results.rows), 'text/csv', 'csv'];
     const blob = new Blob([content], { type: mime });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -652,15 +680,47 @@ const QueryWorkbench: React.FC = () => {
     toast(`Exported as ${ext.toUpperCase()}`, 'success');
   };
 
+  /** Table visée par l'assistant : celle que la requête cite, sinon la première du catalogue. */
+  const windowTable = useMemo(
+    () => resolveScope(sql, [...(schema?.tables ?? []), ...(schema?.topics ?? [])])[0]
+      ?? schema?.tables[0] ?? 'source_table',
+    [sql, schema],
+  );
+
+  // Pré-remplit la colonne temporelle depuis le schéma chargé, tant que l'utilisateur n'a rien
+  // saisi. L'assistant écrivait `event_time` en dur — un nom que la plupart des topics n'ont pas.
+  const guessedTimeCol = useMemo(
+    () => guessTimeColumn(tableSchemas[toTableName(windowTable)]),
+    [tableSchemas, windowTable],
+  );
+  const effectiveTimeCol = windowTimeCol.trim() || guessedTimeCol || 'event_time';
+
+  const windowSpec = useMemo(() => ({
+    kind: windowType,
+    table: windowTable,
+    timeColumn: effectiveTimeCol,
+    size: windowSize,
+    unit: windowUnit,
+    slide: windowSlide,
+    partitionBy: windowPartitionBy,
+  }), [windowType, windowTable, effectiveTimeCol, windowSize, windowUnit, windowSlide, windowPartitionBy]);
+
+  /**
+   * Insère la requête générée à la position du curseur (en remplaçant la sélection).
+   * Elle écrasait auparavant tout l'onglet — le travail en cours était perdu sans confirmation.
+   */
   const applyWindowLogic = () => {
-    const unitMap: Record<string, string> = { MIN: 'MINUTES', SEC: 'SECONDS', HOUR: 'HOURS' };
-    const unit = unitMap[windowUnit] || 'MINUTES';
-    const fromMatch = sql.match(/\bFROM\s+`?([\w.\\-]+)`?/i);
-    const tableInEditor = fromMatch?.[1];
-    const tableName = tableInEditor || schema?.tables[0] || 'source_table';
-    const newSql = `-- Window: ${windowType}, Size: ${windowSize} ${unit}\nSELECT\n  window_start,\n  window_end,\n  COUNT(*) AS event_count\nFROM TABLE(\n  TUMBLE(TABLE ${tableName}, DESCRIPTOR(event_time), INTERVAL '${windowSize}' ${unit})\n)\nGROUP BY window_start, window_end;`;
-    setSql(newSql);
-    toast('Window logic applied to editor', 'success');
+    const generated = buildWindowSql(windowSpec);
+    const editor = editorRef.current;
+    const selection = editor?.getSelection();
+    if (!editor || !selection) {
+      setSql(sql ? `${sql}\n\n${generated}` : generated);
+      toast('Window query appended', 'success');
+      return;
+    }
+    editor.executeEdits('window-assistant', [{ range: selection, text: generated }]);
+    editor.focus();
+    toast(selection.isEmpty() ? 'Window query inserted at cursor' : 'Window query replaced the selection', 'success');
   };
 
   const formatMs = (ms: number) => ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
@@ -946,7 +1006,9 @@ const QueryWorkbench: React.FC = () => {
               loading={executing}
               icon={executing ? undefined : 'play_arrow'}
             >
-              {executing ? 'Running…' : executionMode === 'ASYNC_JOB' ? 'Submit job' : 'Run query'}
+              {executing ? 'Running…'
+                : executionMode === 'ASYNC_JOB' ? 'Submit job'
+                : hasSelection ? 'Run selection' : 'Run query'}
             </Button>
           </div>
         </header>
@@ -1012,7 +1074,11 @@ const QueryWorkbench: React.FC = () => {
                   theme="vs-dark"
                   value={sql}
                   onChange={val => setSql(val || '')}
-                  onMount={editor => { editorRef.current = editor; }}
+                  onMount={editor => {
+                    editorRef.current = editor;
+                    // Le bouton doit annoncer ce qu'il va exécuter — tout l'onglet ou la sélection.
+                    editor.onDidChangeCursorSelection(e => setHasSelection(!e.selection.isEmpty()));
+                  }}
                   options={{
                     fontSize: 14, fontFamily: 'JetBrains Mono', minimap: { enabled: false },
                     padding: { top: 16 }, scrollBeyondLastLine: false, automaticLayout: true,
@@ -1029,37 +1095,78 @@ const QueryWorkbench: React.FC = () => {
                 <span className="material-symbols-outlined text-primary text-[20px]">magic_button</span>
                 <h3 className="text-[14px] font-semibold text-on-surface">Window Assistant</h3>
               </div>
-              <p className="text-[12px] text-on-surface-variant leading-relaxed">Generate windowing SQL for your streaming queries.</p>
+              <p className="text-[12px] text-on-surface-variant leading-relaxed">
+                Builds a windowed aggregation over <span className="font-mono text-on-surface">{windowTable}</span>.
+              </p>
               <div className="space-y-3">
                 <Field label="Window type">
                   {p => (
-                    <Select {...p} value={windowType} onChange={e => setWindowType(e.target.value)}>
-                      <option>Tumbling (Non-overlapping)</option>
-                      <option>Hopping (Overlapping)</option>
-                      <option>Session (Inactivity based)</option>
+                    <Select {...p} value={windowType} onChange={e => setWindowType(e.target.value as WindowKind)}>
+                      <option value="TUMBLE">Tumbling (Non-overlapping)</option>
+                      <option value="HOP">Hopping (Overlapping)</option>
+                      <option value="SESSION">Session (Inactivity based)</option>
                     </Select>
                   )}
                 </Field>
-                <div className="flex gap-2">
-                  <Field label="Size" className="flex-1">
-                    {/* parseInt(e.target.value) donnait NaN dès que le champ était vidé. */}
-                    {p => (
-                      <NumberInput {...p} min={1} fallback={5}
+                <Field
+                  label={windowType === 'SESSION' ? 'Inactivity gap' : 'Size'}
+                  className="flex-1"
+                >
+                  {p => (
+                    <div className="flex gap-2">
+                      {/* parseInt(e.target.value) donnait NaN dès que le champ était vidé. */}
+                      <NumberInput {...p} min={1} fallback={5} className="flex-1"
                         value={windowSize} onChange={setWindowSize} />
-                    )}
-                  </Field>
-                  <Field label="Unit" className="w-24">
-                    {p => (
-                      <Select {...p} value={windowUnit} onChange={e => setWindowUnit(e.target.value)}>
-                        <option>MIN</option><option>SEC</option><option>HOUR</option>
+                      <Select aria-label="Time unit" className="w-28"
+                        value={windowUnit} onChange={e => setWindowUnit(e.target.value as WindowUnit)}>
+                        <option value="SECOND">SECOND</option>
+                        <option value="MINUTE">MINUTE</option>
+                        <option value="HOUR">HOUR</option>
                       </Select>
+                    </div>
+                  )}
+                </Field>
+                {windowType === 'HOP' && (
+                  <Field label="Slide" description="How far each window advances. Must be smaller than the size to overlap.">
+                    {p => (
+                      <NumberInput {...p} min={1} fallback={1}
+                        value={windowSlide} onChange={setWindowSlide} />
                     )}
                   </Field>
-                </div>
-                <div className="p-3 bg-primary/5 border border-primary/20 rounded-lg">
-                  <p className="text-[11px] text-on-surface-variant leading-snug"><span className="font-semibold text-primary">Tip:</span> Tumbling windows are ideal for periodic metrics like “Orders per 5 min”.</p>
-                </div>
-                <Button variant="secondary" className="w-full" icon="bolt" onClick={applyWindowLogic}>Apply to editor</Button>
+                )}
+                <Field
+                  label="Time column"
+                  description={guessedTimeCol
+                    ? `Detected “${guessedTimeCol}” in the table schema.`
+                    : 'Expand the table in the sidebar to detect one automatically.'}
+                >
+                  {p => (
+                    <Input {...p} value={windowTimeCol} placeholder={effectiveTimeCol}
+                      onChange={e => setWindowTimeCol(e.target.value)} />
+                  )}
+                </Field>
+                {windowType === 'SESSION' && (
+                  <Field label="Partition by" description="Required by Flink for SESSION windows.">
+                    {p => (
+                      <Input {...p} value={windowPartitionBy} placeholder="user_id"
+                        onChange={e => setWindowPartitionBy(e.target.value)} />
+                    )}
+                  </Field>
+                )}
+                {windowCaveat(windowSpec) ? (
+                  <div className="p-3 bg-warning/10 border border-warning/30 rounded-lg">
+                    <p className="text-[11px] text-on-surface-variant leading-snug">
+                      <span className="font-semibold text-warning">Heads up:</span> {windowCaveat(windowSpec)}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="p-3 bg-primary/5 border border-primary/20 rounded-lg">
+                    <p className="text-[11px] text-on-surface-variant leading-snug"><span className="font-semibold text-primary">Tip:</span> Tumbling windows are ideal for periodic metrics like “Orders per 5 min”.</p>
+                  </div>
+                )}
+                <Button variant="secondary" className="w-full" icon="bolt" onClick={applyWindowLogic}>
+                  Insert at cursor
+                </Button>
               </div>
             </div>
           </div>

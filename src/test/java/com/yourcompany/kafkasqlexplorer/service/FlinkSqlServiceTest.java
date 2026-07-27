@@ -599,6 +599,82 @@ class FlinkSqlServiceTest {
     }
 
     // ──────────────────────────────────────────────────────────────────────────────
+    // Windowed reads on the direct engine: approximate, and say so
+    // ──────────────────────────────────────────────────────────────────────────────
+
+    /** Puts timestamped records behind 'win.topic' and forces the direct reader. */
+    private void stubWindowTopic() throws Exception {
+        doReturn(List.of("win.topic")).when(kafkaAdminService).listTopics();
+        // Empty schema → auto-registration is skipped, so the query lands on the direct reader.
+        doReturn(MessageFormat.JSON).when(schemaInferenceService).detectFormat(anyString());
+        doReturn(Map.<String, String>of()).when(schemaInferenceService).inferSchema(anyString(), any());
+        doReturn(List.of(
+                new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                        "win.topic", 0, 0L, null, "{\"id\":\"a\",\"event_time\":\"2026-01-01T00:00:00Z\"}"),
+                new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                        "win.topic", 0, 1L, null, "{\"id\":\"b\",\"event_time\":\"2026-01-01T00:07:00Z\"}")
+        )).when(kafkaAdminService).getRecentRecords(eq("win.topic"), anyInt());
+    }
+
+    @Test
+    void aTumblingWindowRunsOnTheDirectReaderWithoutCaveats() throws Exception {
+        stubWindowTopic();
+
+        QueryResult result = execute("SELECT window_start, window_end, COUNT(*) AS c FROM TABLE("
+                + "TUMBLE(TABLE win_topic, DESCRIPTOR(event_time), INTERVAL '5' MINUTE)) "
+                + "GROUP BY window_start, window_end");
+
+        assertNoError(result);
+        assertEquals(2, result.rows().size(), "two records 7 minutes apart fall in two 5-minute buckets");
+        assertTrue(result.warnings().isEmpty(), "TUMBLE is emulated exactly, got: " + result.warnings());
+    }
+
+    @Test
+    void aHoppingWindowIsApproximatedAndTheResultSaysSo() throws Exception {
+        stubWindowTopic();
+
+        // Before: the caller routed HOP here and a TUMBLE-only regex rejected it with
+        // "Cannot parse TUMBLE syntax", which explained neither the cause nor the fix.
+        QueryResult result = execute("SELECT window_start, window_end, COUNT(*) AS c FROM TABLE("
+                + "HOP(TABLE win_topic, DESCRIPTOR(event_time), INTERVAL '1' MINUTE, INTERVAL '5' MINUTE)) "
+                + "GROUP BY window_start, window_end");
+
+        assertNoError(result);
+        assertFalse(result.rows().isEmpty());
+        assertTrue(result.warnings().stream().anyMatch(w -> w.contains("HOP")),
+                "the approximation must travel with the rows, got: " + result.warnings());
+    }
+
+    @Test
+    void aSessionWindowWithAPartitionKeyStillParses() throws Exception {
+        stubWindowTopic();
+
+        // The PARTITION BY clause sits between the table and the descriptor — the regex has to
+        // step over it rather than fail to match.
+        QueryResult result = execute("SELECT window_start, window_end, COUNT(*) AS c FROM TABLE("
+                + "SESSION(TABLE win_topic PARTITION BY id, DESCRIPTOR(event_time), INTERVAL '5' MINUTE)) "
+                + "GROUP BY window_start, window_end");
+
+        assertNoError(result);
+        assertTrue(result.warnings().stream().anyMatch(w -> w.contains("SESSION")),
+                "expected the approximation caveat, got: " + result.warnings());
+    }
+
+    @Test
+    void theBucketWidthOfAHopIsItsSizeNotItsSlide() throws Exception {
+        stubWindowTopic();
+
+        // HOP(slide, size): with a 1-hour size both records land in one bucket, whereas reading
+        // the slide (1 minute) as the width would produce two.
+        QueryResult result = execute("SELECT window_start, window_end, COUNT(*) AS c FROM TABLE("
+                + "HOP(TABLE win_topic, DESCRIPTOR(event_time), INTERVAL '1' MINUTE, INTERVAL '1' HOUR)) "
+                + "GROUP BY window_start, window_end");
+
+        assertNoError(result);
+        assertEquals(1, result.rows().size(), "both records belong to the same 1-hour bucket");
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────────
     // Client-supplied query id (what makes "stop this query" possible)
     // ──────────────────────────────────────────────────────────────────────────────
 

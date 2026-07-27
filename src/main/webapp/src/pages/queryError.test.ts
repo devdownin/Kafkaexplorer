@@ -1,5 +1,33 @@
 import { describe, it, expect } from 'vitest';
-import { describeQueryError, parseSqlLocation, extractApiErrorMessage, describeApiError } from './queryError';
+import {
+  describeQueryError, parseSqlLocation, extractApiErrorMessage, describeApiError, offsetLocation,
+} from './queryError';
+
+describe('offsetLocation', () => {
+  it('leaves the position alone when the whole document was run', () => {
+    expect(offsetLocation({ line: 3, column: 7 }, undefined)).toEqual({ line: 3, column: 7 });
+  });
+
+  it('shifts both line and column on the first line of a selection', () => {
+    // Sélection démarrée en 5:10 ; le moteur signale 1:3 dans le fragment.
+    expect(offsetLocation({ line: 1, column: 3 }, { line: 5, column: 10 }))
+      .toEqual({ line: 5, column: 12 });
+  });
+
+  it('shifts only the line beyond the first, which starts at column 1 again', () => {
+    expect(offsetLocation({ line: 2, column: 4 }, { line: 5, column: 10 }))
+      .toEqual({ line: 6, column: 4 });
+  });
+
+  it('is identity for a selection starting at the top of the document', () => {
+    expect(offsetLocation({ line: 2, column: 4 }, { line: 1, column: 1 }))
+      .toEqual({ line: 2, column: 4 });
+  });
+
+  it('passes through an absent position', () => {
+    expect(offsetLocation(undefined, { line: 5, column: 10 })).toBeUndefined();
+  });
+});
 
 describe('parseSqlLocation', () => {
   it('extracts a line/column pair from a Calcite message', () => {

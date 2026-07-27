@@ -48,6 +48,26 @@ function firstLine(message: string): string {
   return candidate.length > MAX_TITLE_CHARS ? `${candidate.slice(0, MAX_TITLE_CHARS)}…` : candidate;
 }
 
+/**
+ * Reporte une position rapportée dans un fragment exécuté vers les coordonnées du document.
+ *
+ * Quand on n'exécute que la sélection, le moteur numérote les lignes depuis le début de ce
+ * fragment. Sans ce décalage, « line 1, column 3 » soulignerait la première ligne du document
+ * au lieu de la première ligne de la sélection. Seule la première ligne du fragment subit aussi
+ * un décalage de colonne : les suivantes commencent bien en colonne 1.
+ */
+export function offsetLocation(
+  location: QueryErrorLocation | undefined,
+  origin: QueryErrorLocation | undefined,
+): QueryErrorLocation | undefined {
+  if (!location) return undefined;
+  if (!origin) return location;
+  return {
+    line: origin.line + location.line - 1,
+    column: location.line === 1 ? origin.column + location.column - 1 : location.column,
+  };
+}
+
 export function describeQueryError(rawInput: string | null | undefined): QueryErrorInfo {
   const raw = (rawInput ?? '').trim();
   const location = parseSqlLocation(raw);
