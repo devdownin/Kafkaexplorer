@@ -50,6 +50,20 @@ public class AuditController {
     }
 
     /**
+     * Asks the run to stop. 404 for an unknown id, 409 when it already finished — cancelling a
+     * report that is on screen and complete is a no-op the caller should hear about, not a
+     * silent success. Cancellation is cooperative: 202 means "asked", not "stopped".
+     */
+    @PostMapping("/{id}/cancel")
+    public ResponseEntity<String> cancelAudit(@PathVariable String id) {
+        return switch (auditService.cancelAudit(id)) {
+            case CANCELLING -> ResponseEntity.accepted().body(id);
+            case ALREADY_FINISHED -> ResponseEntity.status(HttpStatus.CONFLICT).body("Audit already finished");
+            case NOT_FOUND -> ResponseEntity.notFound().build();
+        };
+    }
+
+    /**
      * Most recent report of this process, so reloading the Audit page restores the last run
      * instead of forcing a fresh full-cluster scan. 204 when no audit has run yet.
      */

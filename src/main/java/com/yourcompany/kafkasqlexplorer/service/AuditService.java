@@ -21,6 +21,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
@@ -72,11 +73,19 @@ public class AuditService {
     private volatile String lastAuditId = null;
 
     /**
-     * Id of the run currently in flight, {@code null} when idle. {@link #startAudit} refuses to
-     * queue a second one: the audit executor is single-threaded, so clicking "Run new audit"
-     * five times used to line up five full cluster scans with no way to cancel them.
+     * The run currently in flight, {@code null} when idle. {@link #startAudit} refuses to queue a
+     * second one: the audit executor is single-threaded, so clicking "Run new audit" five times
+     * used to line up five full cluster scans.
+     *
+     * @param cancelled raised by {@link #cancelAudit}; the run polls it between topics
      */
-    private final AtomicReference<String> runningAuditId = new AtomicReference<>();
+    private record RunHandle(String auditId, AtomicBoolean cancelled) {
+        RunHandle(String auditId) {
+            this(auditId, new AtomicBoolean(false));
+        }
+    }
+
+    private final AtomicReference<RunHandle> currentRun = new AtomicReference<>();
 
     /**
      * Dedicated executor for background audit runs. Spring's {@code @Async} cannot be used
@@ -132,13 +141,15 @@ public class AuditService {
 
     public AuditStart startAudit(AuditOptions options) {
         String auditId = UUID.randomUUID().toString();
-        if (!runningAuditId.compareAndSet(null, auditId)) {
+        RunHandle handle = new RunHandle(auditId);
+        if (!currentRun.compareAndSet(null, handle)) {
             // Hand back the in-flight run so the caller can attach to it instead of queueing.
-            String inFlight = runningAuditId.get();
-            if (inFlight != null) return new AuditStart(inFlight, false);
+            RunHandle inFlight = currentRun.get();
+            if (inFlight != null) return new AuditStart(inFlight.auditId(), false);
             // The run finished between the CAS and the read — retry once, now unambiguously idle.
-            if (!runningAuditId.compareAndSet(null, auditId)) {
-                return new AuditStart(runningAuditId.get(), false);
+            if (!currentRun.compareAndSet(null, handle)) {
+                RunHandle other = currentRun.get();
+                return new AuditStart(other != null ? other.auditId() : auditId, false);
             }
         }
 
@@ -152,6 +163,32 @@ public class AuditService {
 
         auditExecutor.submit(() -> runAuditAsync(auditId, options));
         return new AuditStart(auditId, true);
+    }
+
+    /** Outcome of a cancel request. */
+    public enum CancelResult {
+        /** The stop flag is raised; the run winds down at its next checkpoint. */
+        CANCELLING,
+        /** The run had already finished (or failed) — nothing to stop. */
+        ALREADY_FINISHED,
+        /** No run with that id is known. */
+        NOT_FOUND,
+    }
+
+    /**
+     * Asks the run to stop. Cancellation is <strong>cooperative</strong>: the audit polls the flag
+     * between topics and between phases, so the run ends within roughly one topic's work rather
+     * than instantly. Interrupting mid-topic would abandon a KafkaConsumer or a Flink job
+     * mid-flight; a topic's work is already bounded (a 500 ms poll loop, a 5 s query timeout).
+     */
+    public CancelResult cancelAudit(String auditId) {
+        RunHandle handle = currentRun.get();
+        if (handle != null && handle.auditId().equals(auditId)) {
+            handle.cancelled().set(true);
+            log.info("Cancellation requested for audit {}", auditId);
+            return CancelResult.CANCELLING;
+        }
+        return auditRuns.containsKey(auditId) ? CancelResult.ALREADY_FINISHED : CancelResult.NOT_FOUND;
     }
 
     public AuditReport getAuditReport(String auditId) {
@@ -185,6 +222,11 @@ public class AuditService {
      */
     protected void runAuditAsync(String auditId, AuditOptions options) {
         long startedAt = System.currentTimeMillis();
+        // A direct call (tests) has no handle registered; such a run is simply never cancelled.
+        RunHandle handle = currentRun.get();
+        AtomicBoolean cancelled = handle != null && handle.auditId().equals(auditId)
+            ? handle.cancelled()
+            : new AtomicBoolean(false);
         try {
             List<String> topics = kafkaAdminService.listTopics();
             // Optional prefix filter: audit only topics whose name starts with it.
@@ -203,7 +245,11 @@ public class AuditService {
             // rather than aborting the whole cluster audit via CompletableFuture.join().
             List<CompletableFuture<TopicAudit>> futures = topics.stream()
                 .map(topic -> CompletableFuture
-                    .supplyAsync(() -> auditTopicSafe(topic, topicSizes.getOrDefault(topic, 0L), options),
+                    // Every topic is submitted up front, so cancelling cannot un-queue them:
+                    // the check has to happen inside the task. Queued topics then cost nothing.
+                    .supplyAsync(() -> cancelled.get()
+                            ? null
+                            : auditTopicSafe(topic, topicSizes.getOrDefault(topic, 0L), options),
                         topicAuditExecutor)
                     // Publish progress as topics land so the UI can show a real bar instead of a
                     // decorative one — a full-cluster audit runs for minutes with no other signal.
@@ -213,6 +259,7 @@ public class AuditService {
 
             List<TopicAudit> topicAudits = futures.stream()
                 .map(CompletableFuture::join)
+                .filter(Objects::nonNull) // skipped after cancellation
                 .collect(Collectors.toList());
 
             int criticalCount = (int) topicAudits.stream()
@@ -222,8 +269,10 @@ public class AuditService {
                 .filter(a -> a.healthStatus() == HealthStatus.WARNING)
                 .count();
 
+            // Flow correlation re-reads two topics per step; there is no point paying for it on a
+            // run the operator has already stopped.
             List<FlowAudit> flowAudits = Collections.emptyList();
-            if (options.checkFlows()) {
+            if (options.checkFlows() && !cancelled.get()) {
                 publishProgress(auditId, options, startedAt, "flows", totalTopics, totalTopics);
                 flowAudits = identifyAndAuditFlows(topicAudits);
             }
@@ -232,13 +281,24 @@ public class AuditService {
             // offset estimate while the per-topic column showed the exact Flink counts.
             long totalMessages = topicAudits.stream().mapToLong(TopicAudit::messageCount).sum();
 
+            boolean wasCancelled = cancelled.get();
+            int auditedTopics = topicAudits.size();
+
             Map<String, Object> globalStats = new LinkedHashMap<>();
             globalStats.put("timestamp", System.currentTimeMillis());
             globalStats.put("startedAt", startedAt);
             globalStats.put("durationMs", System.currentTimeMillis() - startedAt);
             globalStats.put("options", describeOptions(options));
-            globalStats.put("healthScore", healthScore(totalTopics, criticalCount, warningCount));
+            // Scored over the topics actually audited, not the ones that were in scope: a run
+            // stopped after 10 of 2 000 topics must not read as "1 990 topics are healthy".
+            globalStats.put("healthScore", healthScore(auditedTopics, criticalCount, warningCount));
             List<String> scopeNotes = scopeNotes(options, topicAudits);
+            if (wasCancelled) {
+                globalStats.put("cancelled", true);
+                globalStats.put("topicsInScope", totalTopics);
+                scopeNotes.add(0, "Run cancelled after " + auditedTopics + " of " + totalTopics
+                    + " topic(s) — the remaining topics were not audited.");
+            }
             if (!scopeNotes.isEmpty()) globalStats.put("scopeNotes", scopeNotes);
 
             // KRaft upgrade completeness: features finalized below what the brokers support.
@@ -259,8 +319,10 @@ public class AuditService {
 
             AuditReport finalReport = new AuditReport(
                 auditId,
-                AuditStatus.COMPLETED,
-                topics.size(),
+                wasCancelled ? AuditStatus.CANCELLED : AuditStatus.COMPLETED,
+                // totalTopics is what was audited, so the KPI matches the table it sits above;
+                // globalStats.topicsInScope keeps the original figure for a cancelled run.
+                auditedTopics,
                 totalMessages,
                 criticalCount,
                 warningCount,
@@ -287,7 +349,7 @@ public class AuditService {
         } finally {
             // Release the slot whatever happened, otherwise a single failed run would block every
             // subsequent start for the lifetime of the process.
-            runningAuditId.compareAndSet(auditId, null);
+            if (handle != null) currentRun.compareAndSet(handle, null);
         }
     }
 
@@ -307,11 +369,15 @@ public class AuditService {
                                  String phase, int done, int total) {
         AuditReport current = auditRuns.get(auditId);
         if (current != null && current.status() != AuditStatus.RUNNING) return; // finished/replaced
+        RunHandle handle = currentRun.get();
+        boolean cancelling = handle != null && handle.auditId().equals(auditId) && handle.cancelled().get();
         Map<String, Object> stats = new LinkedHashMap<>();
         stats.put("phase", phase);
         stats.put("topicsCompleted", done);
         stats.put("topicsTotal", total);
         stats.put("startedAt", startedAt);
+        // Cancellation is cooperative, so the UI needs to say "stopping" rather than look frozen.
+        if (cancelling) stats.put("cancelling", true);
         stats.put("options", describeOptions(options));
         storeReport(new AuditReport(auditId, AuditStatus.RUNNING, total, 0, 0, 0,
             Collections.emptyList(), Collections.emptyList(), stats));

@@ -10,6 +10,8 @@ import org.mockito.Mockito;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -370,9 +372,9 @@ class AuditServiceTest {
     @Test
     void aSecondStartAttachesToTheRunInFlightInsteadOfQueueingOne() throws Exception {
         // listTopics blocks until released, so the first run is still in flight during the second start.
-        java.util.concurrent.CountDownLatch hold = new java.util.concurrent.CountDownLatch(1);
+        CountDownLatch hold = new CountDownLatch(1);
         when(kafkaAdminService.listTopics()).thenAnswer(invocation -> {
-            hold.await(5, java.util.concurrent.TimeUnit.SECONDS);
+            hold.await(5, TimeUnit.SECONDS);
             return Collections.emptyList();
         });
 
@@ -399,6 +401,92 @@ class AuditServiceTest {
 
         assertTrue(auditService.startAudit(AuditOptions.all()).started(),
                 "a failed run must not block every subsequent start");
+    }
+
+    /** Worker count of AuditService's per-topic pool — topics beyond this are queued. */
+    private static final int TOPIC_POOL_SIZE = 4;
+
+    @Test
+    void cancellingARunStopsItAndKeepsWhatWasAlreadyAudited() throws Exception {
+        // More topics than the pool has workers, so some are genuinely queued rather than started.
+        // Every worker blocks in getSampleMessages until the test releases them, so at most
+        // TOPIC_POOL_SIZE topics can be in flight when the cancellation lands; the queued ones
+        // then hit the flag and are skipped. Sizing this below the pool made the test racy —
+        // all topics started before the cancel and none was ever skipped.
+        int topicCount = TOPIC_POOL_SIZE * 3;
+        List<String> topicNames = java.util.stream.IntStream.range(0, topicCount)
+                .mapToObj(i -> "a.topic" + i).toList();
+        CountDownLatch aTopicStarted = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        when(kafkaAdminService.listTopics()).thenReturn(topicNames);
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(
+                topicNames.stream().collect(java.util.stream.Collectors.toMap(t -> t, t -> 1L)));
+        when(kafkaAdminService.getSampleMessages(anyString(), anyInt())).thenAnswer(invocation -> {
+            aTopicStarted.countDown();
+            release.await(5, TimeUnit.SECONDS);
+            return List.of("{\"id\":\"1\"}");
+        });
+
+        AuditService.AuditStart start = auditService.startAudit(
+                new AuditOptions(false, true, false, false, false, null));
+        assertTrue(aTopicStarted.await(5, TimeUnit.SECONDS), "the run should have reached a topic");
+
+        assertEquals(AuditService.CancelResult.CANCELLING, auditService.cancelAudit(start.auditId()));
+        release.countDown();
+
+        AuditReport report = awaitTerminal(start.auditId());
+        int audited = report.topicAudits().size();
+        assertEquals(AuditStatus.CANCELLED, report.status());
+        assertTrue(audited >= 1 && audited <= TOPIC_POOL_SIZE,
+                "only the topics already in flight should have been audited, got " + audited);
+        assertEquals(audited, report.totalTopics(),
+                "totalTopics must count what was audited, not what was in scope");
+        assertEquals(topicCount, report.globalStats().get("topicsInScope"));
+        assertEquals(true, report.globalStats().get("cancelled"));
+        @SuppressWarnings("unchecked")
+        List<String> notes = (List<String>) report.globalStats().get("scopeNotes");
+        assertTrue(notes.get(0).startsWith("Run cancelled after"),
+                "a partial report must lead with the fact that it is partial: " + notes);
+    }
+
+    @Test
+    void cancellingReleasesTheSlotSoANewRunCanStart() throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        when(kafkaAdminService.listTopics()).thenAnswer(invocation -> {
+            started.countDown();
+            release.await(5, TimeUnit.SECONDS);
+            return Collections.emptyList();
+        });
+
+        AuditService.AuditStart first = auditService.startAudit(AuditOptions.all());
+        assertTrue(started.await(5, TimeUnit.SECONDS));
+        auditService.cancelAudit(first.auditId());
+        release.countDown();
+        awaitTerminal(first.auditId());
+
+        assertTrue(auditService.startAudit(AuditOptions.all()).started(),
+                "a cancelled run must not hold the slot");
+    }
+
+    @Test
+    void cancellingReportsWhyItDidNothing() throws Exception {
+        assertEquals(AuditService.CancelResult.NOT_FOUND, auditService.cancelAudit("never-existed"));
+
+        when(kafkaAdminService.listTopics()).thenReturn(Collections.emptyList());
+        auditService.runAuditAsync("done", AuditOptions.all());
+        assertEquals(AuditService.CancelResult.ALREADY_FINISHED, auditService.cancelAudit("done"),
+                "cancelling a finished run is not a silent success");
+    }
+
+    /** Polls until the run leaves RUNNING, so the assertions do not race the audit thread. */
+    private AuditReport awaitTerminal(String auditId) throws InterruptedException {
+        for (int i = 0; i < 200; i++) {
+            AuditReport report = auditService.getAuditReport(auditId);
+            if (report != null && report.status() != AuditStatus.RUNNING) return report;
+            Thread.sleep(20);
+        }
+        throw new AssertionError("audit " + auditId + " never reached a terminal state");
     }
 
     private static TopicAudit topic(AuditReport report, String name) {
