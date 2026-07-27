@@ -105,7 +105,16 @@ parser/       JSON, XML, and Avro (via Confluent Schema Registry) schema inferen
 - `MessageMatcher` — the predicate behind a search, built once per request. CONTAINS / REGEX work on the raw value (no parsing); FIELD walks the payload with a streaming parser, pruning any subtree whose path can no longer reach the target, and compares with EQ / NEQ / CONTAINS / REGEX / GT / GTE / LT / LTE / EXISTS. Paths use dot notation with `[]` for "any array element" (JSONPath is accepted and normalized via `PayloadDigestService.normalizePath`). A malformed payload simply doesn't match — one bad record must not fail a scan.
 - `SchemaInferenceService` — samples messages and delegates to `JsonSchemaInferrer` / `XmlSchemaInferrer` / `AvroSchemaInferrer` (inferred column order is deterministic — `LinkedHashMap`)
 - `DdlGeneratorService` — auto-generates Flink `CREATE TABLE` DDL from inferred schemas. `maskSensitiveProperties()` (static) redacts credentials (`*password*`, `*secret*`, `sasl.jaas.config`) and MUST be applied to any DDL returned to the UI (`/api/topic/{name}`, `/api/topic/{name}/ddl`, `/api/query/ddl-preview`, lineage `SHOW CREATE TABLE`); internal table registration uses the unmasked DDL.
-- `AuditService` — cluster health checks run on a dedicated single-thread executor (`startAudit` submits explicitly — do NOT reintroduce `@Async`, the self-invocation bypasses the Spring proxy and blocks the HTTP thread); per-topic audits fan out on a bounded 4-thread pool. Exact counts go through the direct SELECT engine (`COUNT(*) AS metric_value`, first numeric value of the row); duplicate detection and flow latency are computed **in-process** over fetched messages (key extraction via `MessageFieldExtractorService`) because the direct engine supports neither subqueries nor JOINs. Reports persist to `internal.audit.history` via a shared lazy producer. Cluster-level findings go into `globalStats`: `getLaggingFeatures()` (KafkaAdminService, `describeFeatures`) compares finalized vs supported feature versions, and a lagging `metadata.version` adds a `metadataVersionWarning` (incomplete KRaft rolling upgrade — surfaced as a banner on the Audit page).
+- `AuditService` — cluster health checks run on a dedicated single-thread executor (`startAudit` submits explicitly — do NOT reintroduce `@Async`, the self-invocation bypasses the Spring proxy and blocks the HTTP thread); per-topic audits fan out on a bounded 4-thread pool. Exact counts go through the direct SELECT engine (`COUNT(*) AS metric_value`, first numeric value of the row); duplicate detection and flow latency are computed **in-process** over fetched messages (key extraction via `MessageFieldExtractorService`) because the direct engine supports neither subqueries nor JOINs. Reports persist to `internal.audit.history` via a shared lazy producer. Retention is bounded (`MAX_RETAINED_RUNS` = 20) — the runs map used to grow forever. Cluster-level findings go into `globalStats`: `getLaggingFeatures()` (KafkaAdminService, `describeFeatures`) compares finalized vs supported feature versions, and a lagging `metadata.version` adds a `metadataVersionWarning` (incomplete KRaft rolling upgrade — surfaced as a banner on the Audit page).
+  - **One sample per topic**: format detection, schema inference and the poison check share a single `getSampleMessages()` call, fed to the `detectFormat(topic, samples)` / `inferSchema(topic, format, samples)` overloads. Each used to open its own KafkaConsumer for the same ten messages — keep the sample threaded through when touching `auditTopic`.
+  - **No check degrades to a silent zero.** Poison detection *parses* (a truncated `{"id":` is poison, first-character checks are not enough) and falls back to the sample's dominant format when schema inference is off; duplicate detection falls back to the Kafka record key when the schema has no id-like field; an exact count that errors reports the reason as a topic issue instead of quietly returning the offset estimate. `globalStats.scopeNotes` states the bounds of each scan (10 000 messages for duplicates, 10 for poison, 1 000 for latency).
+  - The in-flight `RUNNING` report is republished after every topic with `phase` / `topicsCompleted` / `topicsTotal`, which is what drives the Audit page's progress bar. `globalStats` also carries `startedAt`, `durationMs` and `options`.
+  - Flow latency memoizes `topic → Map<id, first timestamp>` for the run: a topic in the middle of a flow is both a source and a target and was otherwise fetched twice.
+  - `FlowAudit.overallHealthScore` is a **0..1 ratio**, not a percentage (the UI multiplies by 100).
+  - **Severity is graded**: `HealthStatus` is `HEALTHY < WARNING < CRITICAL` (`max`/`atLeast` helpers), and every finding is a `TopicIssue(message, severity)` — a topic takes the worst severity among its issues. CRITICAL = the audit failed, unparseable payloads, `COUNT(*)` returning 0 on a non-empty topic; WARNING = duplicates (often legitimate), a degraded measurement. `AuditReport` carries `criticalTopicsCount` + `warningTopicsCount`, and `globalStats.healthScore` (0..1, critical −1 / warning −½) is computed server-side so it is frozen into the persisted report. Reports already in `internal.audit.history` still contain the retired `UNHEALTHY` value — a future history reader must tolerate it.
+  - **One run at a time**: `startAudit` returns `AuditStart(auditId, started)` and refuses to queue a second scan behind the single-threaded executor; the controller answers 409 with the in-flight id and the UI attaches to it. The slot is released in a `finally` — a failed run must not block every later start.
+  - `totalMessages` sums the per-topic counts actually reported, not `topicSizes`, so the KPI and the table column agree when exact counts ran.
+- `AuditController` — `@RestController` under `/api/audit` only: `start` (409 + in-flight id when one is running), `status/{id}` (404 on an unknown id), `last` (204 when no run yet). Do **not** add a `GET /audit` mapping — `/audit` is a client-side route and a controller mapping on it shadows `SpaController`, producing a circular-view-path 500 on a page refresh (there is no template engine).
 - `LineageService` — builds dependency graph (topics → tables → views → jobs) by regex-parsing DDL/SQL; uses `TableEnvironment` (not `StreamTableEnvironment`) — Flink 2.x uses the unified API
 - `StreamFlowService` — traces messages across topics using JSONPath / XPath expressions
 - `SqlQueryValidator` — whitelist-based guard: only `SELECT`, `EXPLAIN`, and `CREATE TABLE` are allowed
@@ -136,7 +145,15 @@ The SPA lives in `src/main/webapp/src/`. Stack: React 19 + TypeScript + Vite + T
 
 **Command palette** — `CommandPalette` (⌘K / Ctrl+K, wired in `Layout`) is the single global search over quick actions, pages, Kafka topics and Flink tables, fully keyboard-driven.
 
-**Design-system library** — `components/ui/` (`import { … } from '../components/ui'`), built on the `tailwind.config.js` + `index.css` tokens; prefer it for any new surface: `Button`, `Card`/`CardHeader`, `Badge`, `EmptyState`, `PageHeader`, `Stat`, `Field`/`Input`/`Select`/`Textarea`, `Table` (+ `Th`/`Td`/…), the `Skeleton` family, `Spinner`/`ProgressBar`, `ConfirmProvider`/`useConfirm` (async confirm dialogs), `useVirtualRows` (row virtualization), and `cn()` (clsx + tailwind-merge). Other shared components: `Toast`/`ToastProvider`, `ErrorBanner`, `LoadingSpinner`.
+**Design-system library** — `components/ui/` (`import { … } from '../components/ui'`), built on the `tailwind.config.js` + `index.css` tokens; prefer it for any new surface: `Button`, `Card`/`CardHeader`, `Badge`, `EmptyState`, `PageHeader`, `Stat`, `Field`/`Input`/`Select`/`Textarea`, `Combobox`/`TopicInput`/`NumberInput`/`PasswordInput`, `Table` (+ `Th`/`Td`/…), the `Skeleton` family, `Spinner`/`ProgressBar`, `ConfirmProvider`/`useConfirm` (async confirm dialogs), `useVirtualRows` (row virtualization), and `cn()` (clsx + tailwind-merge). Other shared components: `Toast`/`ToastProvider`, `ErrorBanner`, `LoadingSpinner`.
+
+**Form conventions** — build every form out of these; hand-rolled `<input className="…">` blocks drift from the tokens and skip the accessibility wiring.
+- `Field` owns the label ↔ control ↔ error/description `aria` plumbing and renders its child through a render prop (`{p => <Input {...p} />}`). Pass an explicit `id` when the form needs to focus the first invalid control after validation.
+- **Validate every field at once**, into a `Partial<Record<field, string>>` handed to each `Field error=…`, and focus the first offender — not one message at a time in a banner at the bottom of the page.
+- `NumberInput` keeps the raw string while typing and only coerces on blur. Never `parseInt(e.target.value) || fallback` on change: clearing the field snaps it to the fallback mid-typing, and `0` is falsy so a leading zero does too.
+- `TopicInput` suggests topic (or Flink table) names from `catalogStore`, which `Layout` fills from its existing `/api/dashboard` poll — no extra request. Free text stays valid: a topic can exist before the 30s cache shows it.
+- `PasswordInput` adds a reveal toggle and `autoComplete="new-password"`. Secrets typed blind fail at connection time with nothing to diagnose.
+- Wrap in a real `<form onSubmit>` so Enter submits from any field. `Button` defaults to `type="button"` for that reason — submit buttons declare `type="submit"` explicitly.
 
 **Routes / pages** (`pages/`):
 - `Dashboard` (`/`) — topic list with filtering
@@ -146,7 +163,7 @@ The SPA lives in `src/main/webapp/src/`. Stack: React 19 + TypeScript + Vite + T
 - `StreamFlow` (`/stream-flow`) — message tracing across topics
 - `Lineage` (`/lineage`) — interactive dependency graph (custom SVG; no external graph lib)
 - `Metrics` (`/metrics`) + `MetricsHelp` (`/metrics/help`) — Prometheus metric config, live values and Recharts charts
-- `Audit` (`/audit`) — cluster health dashboard
+- `Audit` (`/audit`) — cluster health dashboard. Restores the last run from `/api/audit/last` on mount (a refresh must not force a fresh full-cluster scan) and re-attaches to the poller if it is still `RUNNING`. Topics table has a text filter, a health filter and sortable numeric columns; compacted numbers (`1.2K`) always carry the exact value in `title`. A `FAILED` run renders an error banner, never the KPI grid — it used to show "0 topics / 100% health".
 - `Cluster` (`/cluster`) — broker details and configuration (`/api/cluster`)
 - `Config` (`/config`, nav "Settings") — Kafka connection and application settings UI
 - `Help` (`/help`) — documentation / quick-start guide
@@ -154,7 +171,7 @@ The SPA lives in `src/main/webapp/src/`. Stack: React 19 + TypeScript + Vite + T
 
 The live status bar (`components/processmining/LiveStatusBar.tsx`) renders the `WINDOW_STATS` ingestion counters — volume read, distinct payload structures, messages dropped to backpressure, unparsed payloads — so an operator can see that big payloads are being sampled rather than silently lost.
 
-**Tests** — Vitest + `@testing-library/react` on jsdom (`src/test/setup.ts`): `navigation.test.ts`, `components/ui/ui.test.tsx`, `ConfirmDialog.test.tsx`, `useVirtualRows.test.ts`. Run with `npm test`.
+**Tests** — Vitest + `@testing-library/react` on jsdom (`src/test/setup.ts`): `navigation.test.ts`, `components/ui/ui.test.tsx`, `forms.test.tsx`, `ConfirmDialog.test.tsx`, `ScrollList.test.tsx`, `useVirtualRows.test.ts`, `pages/queryError.test.ts`, `components/topic/topicSearch.test.ts`. Run with `npm test`.
 
 Dev server proxy: Vite forwards `/api/*` to `http://localhost:8080` (configured in `vite.config.ts`).
 
@@ -188,6 +205,14 @@ Tests use JUnit 5 + Mockito. Unit tests mock Kafka and Flink — no broker neede
 Test classes are in `src/test/java/com/yourcompany/kafkasqlexplorer/`.
 
 ## Audit (2026-07)
+
+`AUDIT-FEATURE-REVIEW.md` is a later, narrower review of the **Cluster Audit feature itself**
+(`AuditService`, `AuditController`, `NamingConventionService`, `MessageFieldExtractorService`,
+`Audit.tsx`) — bugs B1–B9, optimisations O1–O3, ergonomics E1–E8 and a second lot S1–S3 (graded
+severity, one run at a time, consistent `totalMessages`), all fixed, plus a "constaté, non traité"
+section listing what was deliberately left open (the write-only `internal.audit.history` topic, no
+cancellation of a running audit, duplicates scanned from EARLIEST, no global time budget, the
+premature-empty-poll behaviour of `KafkaAdminService.getEarliestRecords`).
 
 `AUDIT.md` at the repository root documents a full bug & optimisation audit. All critical (C1–C4), major (M1–M8), minor and optimisation findings listed there have been fixed on this codebase — the report describes the *pre-fix* state and the corrective decisions (useful context before refactoring `AuditService`, `KafkaLiveConsumer`, `MetricService` or the direct SELECT engine).
 

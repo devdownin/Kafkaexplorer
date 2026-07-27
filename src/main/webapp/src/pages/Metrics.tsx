@@ -5,7 +5,11 @@ import Editor, { useMonaco } from '@monaco-editor/react';
 import '../monaco-setup';
 import { AreaChart, Area, ResponsiveContainer, ReferenceLine, Tooltip, YAxis } from 'recharts';
 import { useToast } from '../components/Toast';
-import { PageHeader, Button, Stat, Select, EmptyState, CardSkeleton, useConfirm } from '../components/ui';
+import { useCatalog } from '../catalogStore';
+import {
+  PageHeader, Button, Stat, Select, EmptyState, CardSkeleton, TopicInput,
+  Field, Input, Textarea, useConfirm,
+} from '../components/ui';
 import { describeQueryError } from './queryError';
 
 interface MetricConfig {
@@ -518,22 +522,28 @@ const ParamSql: React.FC<{
   label: string; hint?: string; value: string; placeholder: string;
   onChange: (v: string) => void;
 }> = ({ label, hint, value, placeholder, onChange }) => (
-  <div className="space-y-1.5">
-    <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">{label}</label>
-    {hint && <p className="text-[10px] text-outline leading-relaxed">{hint}</p>}
-    <textarea value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} rows={4} spellCheck={false}
-      className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-[12px] font-mono text-on-surface placeholder:text-outline focus:border-primary/60 outline-none resize-y" />
-  </div>
+  <Field label={label} description={hint}>
+    {p => (
+      <Textarea
+        {...p}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        rows={4}
+        spellCheck={false}
+        className="font-mono text-[12px]"
+      />
+    )}
+  </Field>
 );
 
-const ParamText: React.FC<{
+/** Étiquette Prometheus libre : un nom de topic, donc suggéré depuis le catalogue. */
+const ParamTopic: React.FC<{
   label: string; value: string; placeholder: string; onChange: (v: string) => void;
 }> = ({ label, value, placeholder, onChange }) => (
-  <div className="space-y-1.5">
-    <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">{label}</label>
-    <input type="text" value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
-      className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-[12px] font-mono text-on-surface placeholder:text-outline focus:border-primary/60 outline-none" />
-  </div>
+  <Field label={label}>
+    {p => <TopicInput {...p} value={value} onChange={onChange} placeholder={placeholder} />}
+  </Field>
 );
 
 const TemplateParamsEditor: React.FC<{
@@ -555,18 +565,18 @@ const TemplateParamsEditor: React.FC<{
           <ParamSql label="Right query — metric_value" value={p('rightSql')} onChange={v => setParam('rightSql', v)}
             hint="Compared against the left query."
             placeholder={`SELECT COUNT(*) AS metric_value\nFROM other_table`} />
-          <div className="space-y-1.5">
-            <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">Operation</label>
-            <select value={p('operation') || 'LEFT_MINUS_RIGHT'} onChange={e => setParam('operation', e.target.value)}
-              className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm text-on-surface focus:border-primary/60 outline-none">
-              {DELTA_OPERATIONS.map(o => (
-                <option key={o.value} value={o.value} className="bg-[#12151a] text-on-surface">{o.label}</option>
-              ))}
-            </select>
-          </div>
+          <Field label="Operation">
+            {f => (
+              <Select {...f} value={p('operation') || 'LEFT_MINUS_RIGHT'} onChange={e => setParam('operation', e.target.value)}>
+                {DELTA_OPERATIONS.map(o => (
+                  <option key={o.value} value={o.value} className="bg-[#12151a] text-on-surface">{o.label}</option>
+                ))}
+              </Select>
+            )}
+          </Field>
           <div className="grid grid-cols-2 gap-3">
-            <ParamText label="Left topic (label)"  value={p('leftTopic')}  onChange={v => setParam('leftTopic', v)}  placeholder="optional" />
-            <ParamText label="Right topic (label)" value={p('rightTopic')} onChange={v => setParam('rightTopic', v)} placeholder="optional" />
+            <ParamTopic label="Left topic (label)"  value={p('leftTopic')}  onChange={v => setParam('leftTopic', v)}  placeholder="optional" />
+            <ParamTopic label="Right topic (label)" value={p('rightTopic')} onChange={v => setParam('rightTopic', v)} placeholder="optional" />
           </div>
         </>
       ) : (
@@ -578,23 +588,25 @@ const TemplateParamsEditor: React.FC<{
             hint="Downstream events, matched on match_key; latency = target − source."
             placeholder={`SELECT order_id AS match_key,\n       processed_at AS event_time\nFROM target_table`} />
           <div className="grid grid-cols-2 gap-3">
-            <ParamText label="Source topic (label)" value={p('sourceTopic')} onChange={v => setParam('sourceTopic', v)} placeholder="optional" />
-            <ParamText label="Target topic (label)" value={p('targetTopic')} onChange={v => setParam('targetTopic', v)} placeholder="optional" />
+            <ParamTopic label="Source topic (label)" value={p('sourceTopic')} onChange={v => setParam('sourceTopic', v)} placeholder="optional" />
+            <ParamTopic label="Target topic (label)" value={p('targetTopic')} onChange={v => setParam('targetTopic', v)} placeholder="optional" />
           </div>
         </>
       )}
 
-      <div className="space-y-1.5 border-t border-outline-variant/60 pt-4">
-        <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">Execution Mode</label>
-        <select value={executionMode || 'TEMPLATE_BOUNDED_SCAN'} onChange={e => setExecutionMode(e.target.value)}
-          className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm text-on-surface focus:border-primary/60 outline-none">
-          {EXECUTION_MODES.map(m => (
-            <option key={m.value} value={m.value} className="bg-[#12151a] text-on-surface">{m.label}</option>
-          ))}
-        </select>
-        <p className="text-[10px] text-outline">
-          {EXECUTION_MODES.find(m => m.value === (executionMode || 'TEMPLATE_BOUNDED_SCAN'))?.note}
-        </p>
+      <div className="border-t border-outline-variant/60 pt-4">
+        <Field
+          label="Execution Mode"
+          description={EXECUTION_MODES.find(m => m.value === (executionMode || 'TEMPLATE_BOUNDED_SCAN'))?.note}
+        >
+          {f => (
+            <Select {...f} value={executionMode || 'TEMPLATE_BOUNDED_SCAN'} onChange={e => setExecutionMode(e.target.value)}>
+              {EXECUTION_MODES.map(m => (
+                <option key={m.value} value={m.value} className="bg-[#12151a] text-on-surface">{m.label}</option>
+              ))}
+            </Select>
+          )}
+        </Field>
       </div>
     </div>
   );
@@ -621,7 +633,9 @@ const Metrics: React.FC = () => {
   const navigate = useNavigate();
   const [metrics, setMetrics]           = useState<MetricConfig[]>([]);
   const [metadata, setMetadata]         = useState<Record<string, string[]>>({});
-  const [topics, setTopics]             = useState<string[]>([]);
+  // Le catalogue partagé (alimenté par le sondage /api/dashboard de Layout) évite une
+  // seconde requête vers le même endpoint et reste rafraîchi toutes les 30 s.
+  const { topics } = useCatalog();
   const [bootstrapServers, setBootstrapServers] = useState<string>('localhost:9092');
   const [loading, setLoading]           = useState(true);
   const [isModalOpen, setIsModalOpen]   = useState(false);
@@ -661,7 +675,6 @@ const Metrics: React.FC = () => {
   useEffect(() => {
     fetchMetrics();
     axios.get<Record<string, string[]>>('/api/metrics/metadata').then(r => setMetadata(r.data)).catch(() => { toast('Failed to load table metadata', 'error'); });
-    axios.get<{ topics: string[] }>('/api/dashboard').then(r => setTopics(r.data.topics ?? [])).catch(() => {});
     axios.get<{ bootstrapServers: string }>('/api/config').then(r => {
       if (r.data.bootstrapServers) setBootstrapServers(r.data.bootstrapServers);
     }).catch(() => {});
@@ -1080,7 +1093,12 @@ const Metrics: React.FC = () => {
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 glass-overlay"
           role="dialog" aria-modal="true" onClick={() => setIsModalOpen(false)}>
-          <div className="bg-surface-container border border-outline-variant rounded-2xl w-full max-w-5xl max-h-[92vh] overflow-hidden flex flex-col shadow-2xl"
+          {/* Un vrai <form> : Entrée depuis les champs du panneau de gauche enregistre.
+              Tous les boutons internes déclarent type="button", seul « Save » soumet. */}
+          <form
+            noValidate
+            onSubmit={e => { e.preventDefault(); if (!hasBlockingErrors) void handleSave(); }}
+            className="bg-surface-container border border-outline-variant rounded-2xl w-full max-w-5xl max-h-[92vh] overflow-hidden flex flex-col shadow-2xl"
             onClick={e => e.stopPropagation()}>
 
             {/* Modal header */}
@@ -1088,7 +1106,7 @@ const Metrics: React.FC = () => {
               <h2 className="text-[16px] font-semibold text-on-surface">
                 {editingMetric.id ? 'Edit Metric' : 'New SQL Metric'}
               </h2>
-              <button onClick={() => setIsModalOpen(false)} aria-label="Close"
+              <button type="button" onClick={() => setIsModalOpen(false)} aria-label="Close"
                 className="p-1.5 rounded-md text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors">
                 <span className="material-symbols-outlined text-[20px]">close</span>
               </button>
@@ -1103,7 +1121,9 @@ const Metrics: React.FC = () => {
                 {/* Name */}
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
-                    <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">Metric Name *</label>
+                    <label htmlFor="metric-name" className="block text-[12px] font-medium text-on-surface-variant">
+                      Metric Name<span aria-hidden="true" className="text-error ml-0.5">*</span>
+                    </label>
                     {nameIsAuto ? (
                       <span className="flex items-center gap-0.5 text-[9px] text-primary/70 font-bold uppercase tracking-wider">
                         <span className="material-symbols-outlined text-[11px]">auto_awesome</span>auto
@@ -1122,98 +1142,103 @@ const Metrics: React.FC = () => {
                       </button>
                     )}
                   </div>
-                  <input type="text" value={editingMetric.name ?? ''}
+                  <Input
+                    id="metric-name"
+                    value={editingMetric.name ?? ''}
                     onChange={e => { setNameIsAuto(false); setEditingMetric(m => ({ ...m, name: e.target.value })); }}
                     placeholder="e.g. gauge_orders_topic"
-                    className={`w-full bg-primary/5 border rounded-lg px-3 py-2 text-sm font-mono text-on-surface placeholder:text-outline focus:ring-1 outline-none ${
-                      nameValidation.some(v => v.level === 'error')
-                        ? 'border-error/50 focus:border-error'
-                        : 'border-primary/20 focus:ring-primary'
-                    }`} />
-                  {nameValidation.map((m, i) => (
-                    <p key={i} className={`text-[10px] flex items-start gap-1 ${HINT_COLORS[m.level]}`}>
-                      <span className="material-symbols-outlined text-[11px] shrink-0 mt-px">{HINT_ICONS[m.level]}</span>
-                      {m.text}
-                    </p>
-                  ))}
+                    autoComplete="off"
+                    spellCheck={false}
+                    invalid={nameValidation.some(v => v.level === 'error')}
+                    aria-describedby={nameValidation.length > 0 ? 'metric-name-hints' : undefined}
+                    className="bg-primary/5 font-mono"
+                  />
+                  {nameValidation.length > 0 && (
+                    <div id="metric-name-hints">
+                      {nameValidation.map((m, i) => (
+                        <p key={i}
+                          role={m.level === 'error' ? 'alert' : undefined}
+                          className={`text-[10px] flex items-start gap-1 ${HINT_COLORS[m.level]}`}>
+                          <span aria-hidden="true" className="material-symbols-outlined text-[11px] shrink-0 mt-px">{HINT_ICONS[m.level]}</span>
+                          {m.text}
+                        </p>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {/* Metric source / template */}
                 {templates.length > 0 && (
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">Metric Source</label>
-                    <select value={templateType} onChange={e => onTemplateTypeChange(e.target.value)}
-                      className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm text-on-surface focus:border-primary/60 outline-none">
-                      <option value={RAW_SQL} className="bg-[#12151a] text-on-surface">Raw SQL</option>
-                      {templates.map(t => (
-                        <option key={t.type} value={t.type} className="bg-[#12151a] text-on-surface">{t.label}</option>
-                      ))}
-                    </select>
-                    {isTemplate && currentDescriptor && (
-                      <p className="text-[10px] text-outline leading-relaxed">{currentDescriptor.description}</p>
+                  <Field
+                    label="Metric Source"
+                    description={isTemplate && currentDescriptor ? currentDescriptor.description : undefined}
+                  >
+                    {f => (
+                      <Select {...f} value={templateType} onChange={e => onTemplateTypeChange(e.target.value)}>
+                        <option value={RAW_SQL} className="bg-[#12151a] text-on-surface">Raw SQL</option>
+                        {templates.map(t => (
+                          <option key={t.type} value={t.type} className="bg-[#12151a] text-on-surface">{t.label}</option>
+                        ))}
+                      </Select>
                     )}
-                  </div>
+                  </Field>
                 )}
 
                 {/* Type */}
-                <div className="space-y-1.5">
-                  <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">Type</label>
-                  <select value={editingMetric.type ?? 'GAUGE'}
-                    onChange={e => {
-                      const newType = e.target.value;
-                      setEditingMetric(m => ({
-                        ...m,
-                        type: newType,
-                        name: nameIsAuto ? buildAutoName(newType, selectedTopic) : m.name,
-                      }));
-                    }}
-                    className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm text-on-surface focus:border-primary/60 outline-none">
-                    {[
-                      { value: 'GAUGE',     label: 'GAUGE — point-in-time value' },
-                      { value: 'COUNTER',   label: 'COUNTER — cumulative total' },
-                      { value: 'HISTOGRAM', label: 'HISTOGRAM — bucket distribution' },
-                      { value: 'SUMMARY',   label: 'SUMMARY — quantile observations' },
-                    ].filter(o => allowedTypes.includes(o.value)).map(o => (
-                      <option key={o.value} value={o.value} className="bg-[#12151a] text-on-surface">{o.label}</option>
-                    ))}
-                  </select>
-                  <p className="text-[10px] text-outline">
-                    {{ GAUGE: '→ explorer_metric_gauge{…}', COUNTER: '→ explorer_metric_counter_total{…}',
-                       HISTOGRAM: '→ explorer_metric_histogram_bucket{le=…} — auto-bucketed over metric_value', SUMMARY: '→ explorer_metric_summary{quantile=0.95,…}',
-                    }[editingMetric.type ?? 'GAUGE']}
-                  </p>
-                </div>
+                <Field
+                  label="Type"
+                  description={{ GAUGE: '→ explorer_metric_gauge{…}', COUNTER: '→ explorer_metric_counter_total{…}',
+                    HISTOGRAM: '→ explorer_metric_histogram_bucket{le=…} — auto-bucketed over metric_value',
+                    SUMMARY: '→ explorer_metric_summary{quantile=0.95,…}',
+                  }[editingMetric.type ?? 'GAUGE']}
+                >
+                  {f => (
+                    <Select
+                      {...f}
+                      value={editingMetric.type ?? 'GAUGE'}
+                      onChange={e => {
+                        const newType = e.target.value;
+                        setEditingMetric(m => ({
+                          ...m,
+                          type: newType,
+                          name: nameIsAuto ? buildAutoName(newType, selectedTopic) : m.name,
+                        }));
+                      }}
+                    >
+                      {[
+                        { value: 'GAUGE',     label: 'GAUGE — point-in-time value' },
+                        { value: 'COUNTER',   label: 'COUNTER — cumulative total' },
+                        { value: 'HISTOGRAM', label: 'HISTOGRAM — bucket distribution' },
+                        { value: 'SUMMARY',   label: 'SUMMARY — quantile observations' },
+                      ].filter(o => allowedTypes.includes(o.value)).map(o => (
+                        <option key={o.value} value={o.value} className="bg-[#12151a] text-on-surface">{o.label}</option>
+                      ))}
+                    </Select>
+                  )}
+                </Field>
 
-                {/* Topic selector */}
-                <div className="space-y-1.5">
-                  <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">
-                    Kafka Topic
-                    <span className="ml-1 text-outline font-normal normal-case">— used in SQL templates &amp; DDL</span>
-                  </label>
-                  {topics.length > 0 ? (
-                    <select value={selectedTopic} onChange={e => onTopicChange(e.target.value)}
-                      className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm font-mono text-on-surface focus:border-primary/60 outline-none">
-                      <option value="" className="bg-[#12151a] text-on-surface-variant">— select a topic —</option>
-                      {topics.map(t => <option key={t} value={t} className="bg-[#12151a] text-on-surface">{t}</option>)}
-                    </select>
-                  ) : (
-                    <input type="text" value={selectedTopic}
-                      onChange={e => onTopicChange(e.target.value)}
-                      placeholder="my_topic (type manually)"
-                      className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm font-mono text-on-surface placeholder:text-outline focus:border-primary/60 outline-none" />
+                {/* Topic selector — un combobox unique remplace le couple select/champ libre :
+                    la liste locale peut être vide alors que le catalogue partagé est rempli, et
+                    un <select> interdisait de saisir un topic créé à l'instant. */}
+                <Field
+                  label={<>Kafka Topic <span className="text-outline font-normal">— used in SQL templates &amp; DDL</span></>}
+                  description={selectedTopic ? `Table: ${topicToTable(selectedTopic)}` : undefined}
+                >
+                  {f => (
+                    <TopicInput
+                      {...f}
+                      value={selectedTopic}
+                      onChange={onTopicChange}
+                      placeholder="my_topic"
+                    />
                   )}
-                  {selectedTopic && (
-                    <p className="text-[10px] text-outline">
-                      Table: <span className="text-primary font-mono">{topicToTable(selectedTopic)}</span>
-                    </p>
-                  )}
-                </div>
+                </Field>
 
                 {/* Prometheus labels from latest Kafka message */}
                 <div className="space-y-2 rounded-xl border border-outline-variant/60 bg-primary/5 p-3">
                   <div className="flex items-start justify-between gap-2">
                     <div>
-                      <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">Prometheus Labels</label>
+                      <span className="block text-[12px] font-medium text-on-surface-variant">Prometheus Labels</span>
                       <p className="text-[10px] text-outline mt-1 leading-relaxed">
                         Select fields from the latest message on this topic. Their current values will be exported as labels on each metric refresh.
                       </p>
@@ -1294,40 +1319,56 @@ const Metrics: React.FC = () => {
                 </div>
 
                 {/* Description */}
-                <div className="space-y-1.5">
-                  <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">Description</label>
-                  <textarea value={editingMetric.description ?? ''}
-                    onChange={e => setEditingMetric(m => ({ ...m, description: e.target.value }))}
-                    placeholder="What does this metric track?" rows={2}
-                    className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm text-on-surface placeholder:text-outline focus:border-primary/60 outline-none resize-none" />
-                </div>
+                <Field label="Description">
+                  {f => (
+                    <Textarea
+                      {...f}
+                      value={editingMetric.description ?? ''}
+                      onChange={e => setEditingMetric(m => ({ ...m, description: e.target.value }))}
+                      placeholder="What does this metric track?"
+                      rows={2}
+                      className="resize-none"
+                    />
+                  )}
+                </Field>
 
-                {/* Thresholds */}
+                {/* Thresholds — vides par défaut : ce sont des seuils optionnels, pas des nombres
+                    avec une valeur de repli, d'où l'Input natif plutôt que NumberInput. */}
                 <div className="space-y-1.5">
                   <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] uppercase font-bold text-warning/80 tracking-wider">⚠ Warning</label>
-                      <input type="number" value={editingMetric.warningThreshold ?? ''}
-                        onChange={e => setEditingMetric(m => ({ ...m, warningThreshold: e.target.value ? parseFloat(e.target.value) : null }))}
-                        className={`w-full bg-warning/5 border rounded-lg px-3 py-2 text-sm text-on-surface focus:ring-1 outline-none ${
-                          thresholdValidation.length > 0 ? 'border-error/40' : 'border-warning/20 focus:ring-warning'
-                        }`} />
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] uppercase font-bold text-error/80 tracking-wider">🔴 Critical</label>
-                      <input type="number" value={editingMetric.criticalThreshold ?? ''}
-                        onChange={e => setEditingMetric(m => ({ ...m, criticalThreshold: e.target.value ? parseFloat(e.target.value) : null }))}
-                        className={`w-full bg-error/5 border rounded-lg px-3 py-2 text-sm text-on-surface focus:ring-1 outline-none ${
-                          thresholdValidation.length > 0 ? 'border-error/40' : 'border-error/20 focus:border-error'
-                        }`} />
-                    </div>
+                    <Field label="⚠ Warning">
+                      {f => (
+                        <Input {...f} type="number" inputMode="decimal"
+                          value={editingMetric.warningThreshold ?? ''}
+                          invalid={thresholdValidation.length > 0}
+                          aria-describedby={thresholdHints.length > 0 ? 'metric-threshold-hints' : undefined}
+                          onChange={e => setEditingMetric(m => ({ ...m, warningThreshold: e.target.value ? parseFloat(e.target.value) : null }))}
+                          className="bg-warning/5" />
+                      )}
+                    </Field>
+                    <Field label="🔴 Critical">
+                      {f => (
+                        <Input {...f} type="number" inputMode="decimal"
+                          value={editingMetric.criticalThreshold ?? ''}
+                          invalid={thresholdValidation.length > 0}
+                          aria-describedby={thresholdHints.length > 0 ? 'metric-threshold-hints' : undefined}
+                          onChange={e => setEditingMetric(m => ({ ...m, criticalThreshold: e.target.value ? parseFloat(e.target.value) : null }))}
+                          className="bg-error/5" />
+                      )}
+                    </Field>
                   </div>
-                  {thresholdHints.map((m, i) => (
-                    <p key={i} className={`text-[10px] flex items-start gap-1 ${HINT_COLORS[m.level]}`}>
-                      <span className="material-symbols-outlined text-[11px] shrink-0 mt-px">{HINT_ICONS[m.level]}</span>
-                      {m.text}
-                    </p>
-                  ))}
+                  {thresholdHints.length > 0 && (
+                    <div id="metric-threshold-hints">
+                      {thresholdHints.map((m, i) => (
+                        <p key={i}
+                          role={m.level === 'error' ? 'alert' : undefined}
+                          className={`text-[10px] flex items-start gap-1 ${HINT_COLORS[m.level]}`}>
+                          <span aria-hidden="true" className="material-symbols-outlined text-[11px] shrink-0 mt-px">{HINT_ICONS[m.level]}</span>
+                          {m.text}
+                        </p>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {/* SQL templates (raw SQL mode only) */}
@@ -1340,7 +1381,7 @@ const Metrics: React.FC = () => {
                         <p className={`text-[10px] font-bold uppercase tracking-wider mb-1.5 ${group.color}`}>{group.group}</p>
                         <div className="space-y-1">
                           {group.items.map(t => (
-                            <button key={t.label}
+                            <button key={t.label} type="button"
                               onClick={() => { setEditingMetric(m => ({ ...m, sql: t.sql })); setPreviewResult(null); setEditorTab('metric'); }}
                               className="w-full text-left text-xs px-3 py-1.5 rounded-lg text-on-surface-variant hover:text-primary hover:bg-primary/10 transition-colors font-mono">
                               {t.label}
@@ -1360,7 +1401,7 @@ const Metrics: React.FC = () => {
                 {/* Tabs */}
                 <div className="flex items-center border-b border-outline-variant/60 bg-primary/5 px-4 gap-1">
                   {(['metric', 'ddl'] as const).map(tab => (
-                    <button key={tab} onClick={() => setEditorTab(tab)}
+                    <button key={tab} type="button" onClick={() => setEditorTab(tab)}
                       className={`px-4 py-2.5 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 ${
                         editorTab === tab
                           ? 'border-primary text-primary'
@@ -1500,12 +1541,12 @@ const Metrics: React.FC = () => {
                 </span>
               )}
               <Button variant="ghost" onClick={() => setIsModalOpen(false)}>Cancel</Button>
-              <Button variant="primary" icon={saving ? undefined : 'save'} loading={saving}
-                onClick={handleSave} disabled={saving || hasBlockingErrors}>
+              <Button type="submit" variant="primary" icon={saving ? undefined : 'save'} loading={saving}
+                disabled={saving || hasBlockingErrors}>
                 {saving ? 'Saving…' : 'Save & Activate'}
               </Button>
             </div>
-          </div>
+          </form>
         </div>
       )}
     </div>

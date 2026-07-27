@@ -2,6 +2,7 @@ package com.yourcompany.kafkasqlexplorer.service;
 
 import com.yourcompany.kafkasqlexplorer.config.ExplorerConfig;
 import com.yourcompany.kafkasqlexplorer.domain.*;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -47,9 +48,10 @@ class AuditServiceTest {
     @Test
     void testStartAudit() throws Exception {
         when(kafkaAdminService.listTopics()).thenReturn(Collections.emptyList());
-        String auditId = auditService.startAudit(AuditOptions.all());
-        assertNotNull(auditId);
-        AuditReport report = auditService.getAuditReport(auditId);
+        AuditService.AuditStart start = auditService.startAudit(AuditOptions.all());
+        assertTrue(start.started(), "the first start must be accepted");
+        assertNotNull(start.auditId());
+        AuditReport report = auditService.getAuditReport(start.auditId());
         assertNotNull(report);
         // It might be COMPLETED already if it runs very fast even if async
         assertTrue(List.of(AuditStatus.RUNNING, AuditStatus.COMPLETED).contains(report.status()));
@@ -60,8 +62,8 @@ class AuditServiceTest {
         String auditId = "test-audit";
         when(kafkaAdminService.listTopics()).thenReturn(List.of("demo.test.1", "demo.test.2"));
         when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("demo.test.1", 100L, "demo.test.2", 80L));
-        when(schemaInferenceService.detectFormat(anyString())).thenReturn(MessageFormat.JSON);
-        when(schemaInferenceService.inferSchema(anyString(), any())).thenReturn(Map.of("id", "STRING"));
+        when(schemaInferenceService.detectFormat(anyString(), any())).thenReturn(MessageFormat.JSON);
+        when(schemaInferenceService.inferSchema(anyString(), any(), any())).thenReturn(Map.of("id", "STRING"));
         when(flinkSqlService.listTables()).thenReturn(Collections.emptyList());
         // Without this stub, generateDdl() returns null → QueryRequest.sql() = null → NPE in mock answer
         when(ddlGeneratorService.generateDdl(anyString(), any(), any()))
@@ -75,7 +77,7 @@ class AuditServiceTest {
         when(flinkSqlService.executeSql(any(QueryRequest.class))).thenAnswer(invocation -> {
             QueryRequest req = invocation.getArgument(0);
             if (req.sql().contains("COUNT(*)")) {
-                if (req.sql().contains("demo.test.1")) return count1;
+                if (req.sql().contains("demo_test_1")) return count1;
                 return count2;
             }
             if (req.sql().contains("AVG")) return latency;
@@ -138,10 +140,10 @@ class AuditServiceTest {
     void auditIsolatesAFailingTopic() throws Exception {
         when(kafkaAdminService.listTopics()).thenReturn(List.of("demo.test.1", "demo.test.2"));
         when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("demo.test.1", 100L, "demo.test.2", 80L));
-        when(schemaInferenceService.detectFormat(anyString())).thenReturn(MessageFormat.JSON);
-        when(schemaInferenceService.inferSchema(eq("demo.test.1"), any())).thenReturn(Map.of("id", "STRING"));
+        when(schemaInferenceService.detectFormat(anyString(), any())).thenReturn(MessageFormat.JSON);
+        when(schemaInferenceService.inferSchema(eq("demo.test.1"), any(), any())).thenReturn(Map.of("id", "STRING"));
         // One topic blows up during audit — it must not abort the whole run.
-        when(schemaInferenceService.inferSchema(eq("demo.test.2"), any())).thenThrow(new RuntimeException("boom"));
+        when(schemaInferenceService.inferSchema(eq("demo.test.2"), any(), any())).thenThrow(new RuntimeException("boom"));
         when(flinkSqlService.listTables()).thenReturn(Collections.emptyList());
         when(ddlGeneratorService.generateDdl(anyString(), any(), any()))
                 .thenReturn("CREATE TABLE demo_test_1 (id STRING) WITH ('connector'='blackhole')");
@@ -156,8 +158,9 @@ class AuditServiceTest {
 
         TopicAudit failed = report.topicAudits().stream()
                 .filter(t -> "demo.test.2".equals(t.name())).findFirst().orElseThrow();
-        assertEquals(HealthStatus.UNHEALTHY, failed.healthStatus());
-        assertTrue(failed.issues().stream().anyMatch(s -> s.contains("Audit failed")),
+        assertEquals(HealthStatus.CRITICAL, failed.healthStatus(),
+                "a topic that could not be audited is the worst case, not a mere warning");
+        assertTrue(failed.issues().stream().anyMatch(i -> i.message().contains("Audit failed")),
                 "the degraded topic should carry the failure reason");
 
         TopicAudit ok = report.topicAudits().stream()
@@ -171,8 +174,8 @@ class AuditServiceTest {
                 .thenReturn(List.of("orders.created", "orders.shipped", "payments.done"));
         when(kafkaAdminService.getTopicsSize(any()))
                 .thenReturn(Map.of("orders.created", 10L, "orders.shipped", 5L, "payments.done", 7L));
-        when(schemaInferenceService.detectFormat(anyString())).thenReturn(MessageFormat.JSON);
-        when(schemaInferenceService.inferSchema(anyString(), any())).thenReturn(Map.of("id", "STRING"));
+        when(schemaInferenceService.detectFormat(anyString(), any())).thenReturn(MessageFormat.JSON);
+        when(schemaInferenceService.inferSchema(anyString(), any(), any())).thenReturn(Map.of("id", "STRING"));
         when(flinkSqlService.listTables()).thenReturn(Collections.emptyList());
         when(ddlGeneratorService.generateDdl(anyString(), any(), any()))
                 .thenReturn("CREATE TABLE t (id STRING) WITH ('connector'='blackhole')");
@@ -188,5 +191,222 @@ class AuditServiceTest {
         assertTrue(report.topicAudits().stream().allMatch(t -> t.name().startsWith("orders.")),
                 "no topic outside the prefix should appear");
         assertTrue(report.topicAudits().stream().noneMatch(t -> "payments.done".equals(t.name())));
+    }
+
+    @Test
+    void aFailedRunAlwaysCarriesAReadableError() throws Exception {
+        // getMessage() is null on plenty of exceptions; the report must still say something.
+        when(kafkaAdminService.listTopics()).thenThrow(new NullPointerException());
+
+        auditService.runAuditAsync("boom", AuditOptions.all());
+
+        AuditReport report = auditService.getAuditReport("boom");
+        assertEquals(AuditStatus.FAILED, report.status());
+        assertNotNull(report.globalStats().get("error"), "a failed run must report an error");
+        assertEquals("NullPointerException", report.globalStats().get("errorType"));
+    }
+
+    @Test
+    void oneSampleServesFormatDetectionSchemaInferenceAndPoisonCheck() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders.created"));
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("orders.created", 3L));
+        when(kafkaAdminService.getSampleMessages(eq("orders.created"), anyInt()))
+                .thenReturn(List.of("{\"id\":\"1\"}", "{\"id\":\"2\"}"));
+        when(schemaInferenceService.detectFormat(anyString(), any())).thenReturn(MessageFormat.JSON);
+        when(schemaInferenceService.inferSchema(anyString(), any(), any())).thenReturn(Map.of("id", "STRING"));
+        when(flinkSqlService.listTables()).thenReturn(List.of("orders_created"));
+
+        // Schema + poison checks only, so no Flink count and no duplicate scan interfere.
+        auditService.runAuditAsync("sample", new AuditOptions(true, true, false, false, false, null));
+
+        assertEquals(AuditStatus.COMPLETED, auditService.getAuditReport("sample").status());
+        // Previously: detectFormat, inferSchema and the poison check each opened their own consumer.
+        verify(kafkaAdminService, times(1)).getSampleMessages(eq("orders.created"), anyInt());
+    }
+
+    @Test
+    void poisonDetectionCatchesTruncatedJsonAndRunsWithoutSchemaInference() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders.created"));
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("orders.created", 3L));
+        // Third payload starts with '{' but does not parse — the old first-character check passed it.
+        when(kafkaAdminService.getSampleMessages(eq("orders.created"), anyInt()))
+                .thenReturn(List.of("{\"id\":\"1\"}", "{\"id\":\"2\"}", "{\"id\":"));
+
+        // checkSchema is OFF: the format used to stay AUTO and the check found nothing at all.
+        auditService.runAuditAsync("poison", new AuditOptions(false, true, false, false, false, null));
+
+        TopicAudit audit = auditService.getAuditReport("poison").topicAudits().get(0);
+        assertEquals(1, audit.poisonMessageCount(), "the truncated JSON payload is poison");
+        assertEquals(HealthStatus.CRITICAL, audit.healthStatus(), "unparseable payloads are critical");
+        verifyNoInteractions(schemaInferenceService);
+    }
+
+    @Test
+    void duplicateDetectionFallsBackToTheKafkaRecordKey() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders.created"));
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("orders.created", 3L));
+        when(kafkaAdminService.getEarliestRecords(eq("orders.created"), anyInt())).thenReturn(List.of(
+                record("orders.created", 0, "k1", "not json"),
+                record("orders.created", 1, "k1", "not json"),
+                record("orders.created", 2, "k2", "not json")));
+
+        // No schema pass → no id-like field. The scan used to give up and report a clean 0.
+        auditService.runAuditAsync("dupes", new AuditOptions(false, false, true, false, false, null));
+
+        TopicAudit audit = auditService.getAuditReport("dupes").topicAudits().get(0);
+        assertEquals(1, audit.duplicateCount(), "k1 appears twice");
+        assertTrue(audit.issues().stream().anyMatch(i -> i.message().contains("Kafka record key")),
+                "the issue must name the key the scan grouped on: " + audit.issues());
+        assertTrue(audit.issues().stream().anyMatch(i -> i.message().contains("first 3 message")),
+                "the issue must state how many messages back the verdict: " + audit.issues());
+        assertEquals(HealthStatus.WARNING, audit.healthStatus(),
+                "duplicates are a signal to look at, not a defect on their own");
+    }
+
+    @Test
+    void anExactCountThatCouldNotRunIsReportedRatherThanHidden() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders.created"));
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("orders.created", 42L));
+        when(flinkSqlService.executeSql(any(QueryRequest.class)))
+                .thenReturn(new QueryResult(List.of(), List.of(), 0, "Table 'orders_created' not found"));
+
+        auditService.runAuditAsync("count", new AuditOptions(false, false, false, false, true, null));
+
+        TopicAudit audit = auditService.getAuditReport("count").topicAudits().get(0);
+        assertEquals(42L, audit.messageCount(), "falls back to the offset estimate");
+        assertTrue(audit.issues().stream().anyMatch(i -> i.message().startsWith("Exact count unavailable")),
+                "the silent fallback must be visible: " + audit.issues());
+        assertEquals(HealthStatus.WARNING, audit.healthStatus(),
+                "a degraded measurement is not bad data");
+    }
+
+    @Test
+    void aCompletedReportStatesItsScopeAndTiming() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(Collections.emptyList());
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(Collections.emptyMap());
+
+        auditService.runAuditAsync("scope", AuditOptions.all());
+
+        Map<String, Object> stats = auditService.getAuditReport("scope").globalStats();
+        assertNotNull(stats.get("durationMs"));
+        assertNotNull(stats.get("startedAt"));
+        assertNotNull(stats.get("options"));
+        @SuppressWarnings("unchecked")
+        List<String> notes = (List<String>) stats.get("scopeNotes");
+        assertNotNull(notes, "bounded scans must declare their bounds");
+        assertTrue(notes.stream().anyMatch(n -> n.contains("10000")),
+                "the duplicate-scan cap must be stated: " + notes);
+    }
+
+    @Test
+    void onlyTheLastRunsAreRetained() {
+        when(kafkaAdminService.getLaggingFeatures()).thenReturn(Collections.emptyList());
+        for (int i = 0; i < 25; i++) {
+            auditService.runAuditAsync("run-" + i, AuditOptions.all());
+        }
+        assertNull(auditService.getAuditReport("run-0"), "the oldest runs must be evicted");
+        assertNotNull(auditService.getAuditReport("run-24"), "the newest run must be retained");
+    }
+
+    @Test
+    void severityIsGradedAndAggregatedPerSeverity() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("a.critical", "a.warning", "a.clean"));
+        when(kafkaAdminService.getTopicsSize(any()))
+                .thenReturn(Map.of("a.critical", 5L, "a.warning", 5L, "a.clean", 5L));
+        // a.critical: an unparseable payload. a.warning: duplicate record keys. a.clean: neither.
+        when(kafkaAdminService.getSampleMessages(eq("a.critical"), anyInt()))
+                .thenReturn(List.of("{\"id\":\"1\"}", "{\"id\":"));
+        when(kafkaAdminService.getSampleMessages(eq("a.warning"), anyInt()))
+                .thenReturn(List.of("{\"id\":\"1\"}"));
+        when(kafkaAdminService.getSampleMessages(eq("a.clean"), anyInt()))
+                .thenReturn(List.of("{\"id\":\"1\"}"));
+        when(kafkaAdminService.getEarliestRecords(eq("a.warning"), anyInt())).thenReturn(List.of(
+                record("a.warning", 0, "k1", "{}"), record("a.warning", 1, "k1", "{}")));
+
+        auditService.runAuditAsync("sev", new AuditOptions(false, true, true, false, false, null));
+
+        AuditReport report = auditService.getAuditReport("sev");
+        assertEquals(HealthStatus.CRITICAL, topic(report, "a.critical").healthStatus());
+        assertEquals(HealthStatus.WARNING, topic(report, "a.warning").healthStatus());
+        assertEquals(HealthStatus.HEALTHY, topic(report, "a.clean").healthStatus());
+        assertEquals(1, report.criticalTopicsCount());
+        assertEquals(1, report.warningTopicsCount());
+        // 1 critical + half a warning over 3 topics → 1 - 1.5/3 = 0.5
+        assertEquals(0.5, (double) report.globalStats().get("healthScore"), 1e-9);
+    }
+
+    @Test
+    void aTopicTakesTheWorstSeverityAmongItsIssues() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("mixed.topic"));
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("mixed.topic", 5L));
+        when(kafkaAdminService.getSampleMessages(eq("mixed.topic"), anyInt()))
+                .thenReturn(List.of("{\"id\":\"1\"}", "{\"id\":"));
+        when(kafkaAdminService.getEarliestRecords(eq("mixed.topic"), anyInt())).thenReturn(List.of(
+                record("mixed.topic", 0, "k1", "{}"), record("mixed.topic", 1, "k1", "{}")));
+
+        auditService.runAuditAsync("mixed", new AuditOptions(false, true, true, false, false, null));
+
+        TopicAudit audit = auditService.getAuditReport("mixed").topicAudits().get(0);
+        assertEquals(2, audit.issues().size(), "one warning (duplicates) and one critical (poison)");
+        assertEquals(HealthStatus.CRITICAL, audit.healthStatus(), "the worst severity wins");
+    }
+
+    @Test
+    void totalMessagesMatchesTheCountsShownPerTopic() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders.created"));
+        // Offsets say 100, but the exact Flink count says 42 — the KPI must follow the column.
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("orders.created", 100L));
+        when(flinkSqlService.executeSql(any(QueryRequest.class)))
+                .thenReturn(new QueryResult(List.of("EXPR$0"), List.of(Map.of("EXPR$0", 42L)), 10, null));
+
+        auditService.runAuditAsync("totals", new AuditOptions(false, false, false, false, true, null));
+
+        AuditReport report = auditService.getAuditReport("totals");
+        assertEquals(42L, report.topicAudits().get(0).messageCount());
+        assertEquals(42L, report.totalMessages(),
+                "the KPI used to stay on the offset estimate while the column showed the exact count");
+    }
+
+    @Test
+    void aSecondStartAttachesToTheRunInFlightInsteadOfQueueingOne() throws Exception {
+        // listTopics blocks until released, so the first run is still in flight during the second start.
+        java.util.concurrent.CountDownLatch hold = new java.util.concurrent.CountDownLatch(1);
+        when(kafkaAdminService.listTopics()).thenAnswer(invocation -> {
+            hold.await(5, java.util.concurrent.TimeUnit.SECONDS);
+            return Collections.emptyList();
+        });
+
+        AuditService.AuditStart first = auditService.startAudit(AuditOptions.all());
+        AuditService.AuditStart second = auditService.startAudit(AuditOptions.all());
+
+        assertTrue(first.started());
+        assertFalse(second.started(), "a second full cluster scan must not be queued");
+        assertEquals(first.auditId(), second.auditId(), "the caller is handed the run in flight");
+        hold.countDown();
+    }
+
+    @Test
+    void theRunSlotIsReleasedEvenWhenTheRunFails() throws Exception {
+        when(kafkaAdminService.listTopics()).thenThrow(new RuntimeException("broker down"));
+
+        AuditService.AuditStart first = auditService.startAudit(AuditOptions.all());
+        // Wait for the failing run to finish so the slot is released.
+        for (int i = 0; i < 100; i++) {
+            AuditReport report = auditService.getAuditReport(first.auditId());
+            if (report != null && report.status() == AuditStatus.FAILED) break;
+            Thread.sleep(20);
+        }
+
+        assertTrue(auditService.startAudit(AuditOptions.all()).started(),
+                "a failed run must not block every subsequent start");
+    }
+
+    private static TopicAudit topic(AuditReport report, String name) {
+        return report.topicAudits().stream()
+                .filter(t -> name.equals(t.name())).findFirst().orElseThrow();
+    }
+
+    private static ConsumerRecord<String, String> record(String topic, long offset, String key, String value) {
+        return new ConsumerRecord<>(topic, 0, offset, key, value);
     }
 }

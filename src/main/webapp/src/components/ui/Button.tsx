@@ -36,6 +36,10 @@ const SIZES: Record<ButtonSize, string> = {
 /**
  * Bouton du design system. Toujours arrondi (8 px), transitions 150 ms,
  * focus clavier visible via le style global :focus-visible.
+ *
+ * `type` vaut `button` par défaut : un `<button>` sans type soumet le `<form>` qui l'entoure,
+ * ce qui transforme n'importe quel bouton secondaire en soumission accidentelle. Les boutons
+ * de soumission déclarent `type="submit"` explicitement.
  */
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button({
   variant = 'primary',
@@ -45,11 +49,13 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
   className,
   children,
   disabled,
+  type = 'button',
   ...props
 }, ref) {
   return (
     <button
       ref={ref}
+      type={type}
       className={cn(
         'inline-flex items-center justify-center rounded-md font-medium transition-all duration-150 select-none disabled:cursor-not-allowed',
         VARIANTS[variant],

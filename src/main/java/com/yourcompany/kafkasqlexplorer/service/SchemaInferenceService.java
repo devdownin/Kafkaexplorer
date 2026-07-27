@@ -33,11 +33,23 @@ public class SchemaInferenceService {
     }
 
     public Map<String, String> inferSchema(String topicName, MessageFormat format) {
+        return inferSchema(topicName, format, null);
+    }
+
+    /**
+     * Same as {@link #inferSchema(String, MessageFormat)} but reuses an already-fetched sample.
+     * Callers that need several passes over the same topic (the cluster audit runs format
+     * detection, schema inference and poison detection back to back) would otherwise open one
+     * KafkaConsumer per pass to read the exact same ten messages.
+     *
+     * @param samples pre-fetched message values, or {@code null} to sample the topic
+     */
+    public Map<String, String> inferSchema(String topicName, MessageFormat format, List<String> samples) {
         if (format == MessageFormat.AVRO) {
             return avroInferrer.infer(topicName);
         }
 
-        List<String> samples = getSampleMessages(topicName);
+        if (samples == null) samples = getSampleMessages(topicName);
         if (samples.isEmpty()) return Collections.emptyMap();
 
         Map<String, String> mergedSchema = new LinkedHashMap<>();
@@ -82,11 +94,20 @@ public class SchemaInferenceService {
     }
 
     public MessageFormat detectFormat(String topicName) {
+        return detectFormat(topicName, null);
+    }
+
+    /**
+     * Same as {@link #detectFormat(String)} but reuses an already-fetched sample.
+     *
+     * @param samples pre-fetched message values, or {@code null} to sample the topic
+     */
+    public MessageFormat detectFormat(String topicName, List<String> samples) {
         // Special check for Avro: if it has a schema in the registry, it's probably Avro
         Map<String, String> avroSchema = avroInferrer.infer(topicName);
         if (!avroSchema.isEmpty()) return MessageFormat.AVRO;
 
-        List<String> samples = getSampleMessages(topicName);
+        if (samples == null) samples = getSampleMessages(topicName);
         if (samples.isEmpty()) return MessageFormat.AUTO;
 
         for (String sample : samples) {
@@ -97,7 +118,11 @@ public class SchemaInferenceService {
         return MessageFormat.AUTO;
     }
 
-    private List<String> getSampleMessages(String topicName) {
+    /**
+     * Reads one sample of the topic, sized by {@code explorer.inference-sample-size}. Public so a
+     * caller running several inference passes can fetch once and feed the sample-taking overloads.
+     */
+    public List<String> getSampleMessages(String topicName) {
         // Delegate to KafkaAdminService which reads from ALL partitions, not just partition 0.
         // This prevents empty schema inference when messages are distributed across partitions.
         return kafkaAdminService.getSampleMessages(topicName, explorerConfig.getInferenceSampleSize());

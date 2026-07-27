@@ -5,7 +5,10 @@ import type { editor, languages } from 'monaco-editor';
 import '../monaco-setup';
 import axios from 'axios';
 import { useToast } from '../components/Toast';
-import { Button, Badge, Input, Select, EmptyState, useConfirm, cn, useVirtualRows, ScrollList } from '../components/ui';
+import {
+  Button, Badge, Input, Select, Field, NumberInput, EmptyState, useConfirm, cn,
+  useVirtualRows, ScrollList,
+} from '../components/ui';
 import { describeQueryError, type QueryErrorLocation } from './queryError';
 
 /** Contrôle segmenté compact (mode d'exécution, offset). */
@@ -837,25 +840,30 @@ const QueryWorkbench: React.FC = () => {
               </div>
               <p className="text-[12px] text-on-surface-variant leading-relaxed">Generate windowing SQL for your streaming queries.</p>
               <div className="space-y-3">
-                <div className="space-y-1.5">
-                  <label className="block text-[12px] font-medium text-on-surface-variant">Window type</label>
-                  <Select value={windowType} onChange={e => setWindowType(e.target.value)}>
-                    <option>Tumbling (Non-overlapping)</option>
-                    <option>Hopping (Overlapping)</option>
-                    <option>Session (Inactivity based)</option>
-                  </Select>
-                </div>
-                <div className="flex gap-2">
-                  <div className="flex-1 space-y-1.5">
-                    <label className="block text-[12px] font-medium text-on-surface-variant">Size</label>
-                    <Input type="number" value={windowSize} onChange={e => setWindowSize(parseInt(e.target.value))} />
-                  </div>
-                  <div className="w-24 space-y-1.5">
-                    <label className="block text-[12px] font-medium text-on-surface-variant">Unit</label>
-                    <Select value={windowUnit} onChange={e => setWindowUnit(e.target.value)}>
-                      <option>MIN</option><option>SEC</option><option>HOUR</option>
+                <Field label="Window type">
+                  {p => (
+                    <Select {...p} value={windowType} onChange={e => setWindowType(e.target.value)}>
+                      <option>Tumbling (Non-overlapping)</option>
+                      <option>Hopping (Overlapping)</option>
+                      <option>Session (Inactivity based)</option>
                     </Select>
-                  </div>
+                  )}
+                </Field>
+                <div className="flex gap-2">
+                  <Field label="Size" className="flex-1">
+                    {/* parseInt(e.target.value) donnait NaN dès que le champ était vidé. */}
+                    {p => (
+                      <NumberInput {...p} min={1} fallback={5}
+                        value={windowSize} onChange={setWindowSize} />
+                    )}
+                  </Field>
+                  <Field label="Unit" className="w-24">
+                    {p => (
+                      <Select {...p} value={windowUnit} onChange={e => setWindowUnit(e.target.value)}>
+                        <option>MIN</option><option>SEC</option><option>HOUR</option>
+                      </Select>
+                    )}
+                  </Field>
                 </div>
                 <div className="p-3 bg-primary/5 border border-primary/20 rounded-lg">
                   <p className="text-[11px] text-on-surface-variant leading-snug"><span className="font-semibold text-primary">Tip:</span> Tumbling windows are ideal for periodic metrics like “Orders per 5 min”.</p>
