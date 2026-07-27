@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import axios from 'axios';
-import { Button, EmptyState } from '../components/ui';
+import { Button, EmptyState, Field, Input, NumberInput, TopicInput } from '../components/ui';
 import { describeApiError, type QueryErrorInfo } from './queryError';
 
 interface FlowNode {
@@ -32,10 +32,45 @@ function formatTs(tsStr: string | undefined): string {
   return new Date(ts).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 }
 
+type FormErrors = { messageKey?: string; searchPath?: string };
+
+/**
+ * Validation de surface d'un JSONPath / XPath, côté client.
+ *
+ * Un chemin invalide déclenchait un scan de tous les topics pour finir sur zéro résultat, sans
+ * rien qui distingue « mauvaise syntaxe » de « clé absente ». On ne réimplémente pas les deux
+ * grammaires : on n'attrape que les fautes de frappe manifestes.
+ */
+function validateSearchPath(path: string): string | undefined {
+  const trimmed = path.trim();
+  if (!trimmed) return undefined;
+  const looksJsonPath = trimmed.startsWith('$');
+  const looksXPath = trimmed.startsWith('/');
+  if (!looksJsonPath && !looksXPath) {
+    return 'Expected a JSONPath ($.field) or an XPath (/root/field).';
+  }
+  const brackets = [...trimmed].reduce((depth, char) => {
+    if (char === '[') return depth + 1;
+    if (char === ']') return depth - 1;
+    return depth;
+  }, 0);
+  if (brackets !== 0) return 'Unbalanced brackets.';
+  if (looksJsonPath && /\.\./.test(trimmed.slice(1).replace(/\.\.(?=[a-zA-Z_*])/g, ''))) {
+    return 'Empty path segment ("..").';
+  }
+  if (looksXPath && trimmed.includes('//') && !trimmed.startsWith('//')) {
+    return 'Empty path segment ("//").';
+  }
+  return undefined;
+}
+
 const StreamFlow: React.FC = () => {
   const [messageKey, setMessageKey]         = useState('');
   const [searchPath, setSearchPath]         = useState('');
-  const [targetTopics, setTargetTopics]     = useState('');
+  /** Topics cibles saisis un par un, au lieu d'un textarea libre « un par ligne ». */
+  const [selectedTopics, setSelectedTopics] = useState<string[]>([]);
+  const [topicDraft, setTopicDraft]         = useState('');
+  const [fieldErrors, setFieldErrors]       = useState<FormErrors>({});
   const [maxMessages, setMaxMessages]       = useState(50);
   const [timeLimitMinutes, setTimeLimitMinutes] = useState(5);
   const [useRegex, setUseRegex]             = useState(false);
@@ -82,17 +117,35 @@ const StreamFlow: React.FC = () => {
     e.currentTarget.style.cursor = 'grab';
   }, []);
 
+  const clearFieldError = (key: keyof FormErrors) =>
+    setFieldErrors(prev => (prev[key] ? { ...prev, [key]: undefined } : prev));
+
+  /** Valide le brouillon puis l'ajoute à la liste ; ignore les doublons et les vides. */
+  const addTopic = () => {
+    const topic = topicDraft.trim();
+    if (!topic) return;
+    setSelectedTopics(list => (list.includes(topic) ? list : [...list, topic]));
+    setTopicDraft('');
+  };
+
   const handleRun = async () => {
-    if (!messageKey.trim()) return;
+    const errors: FormErrors = {};
+    if (!messageKey.trim()) errors.messageKey = 'A message key is required.';
+    const pathError = validateSearchPath(searchPath);
+    if (pathError) errors.searchPath = pathError;
+    setFieldErrors(errors);
+    if (Object.keys(errors).length > 0) return;
+
     setLoading(true);
     setError(null);
     setTransform({ x: 40, y: 40, scale: 1 });
     try {
-      // Bug fix: split on commas AND newlines
-      const parsedTopics = targetTopics
-        .split(/[,\n]/)
-        .map(t => t.trim())
-        .filter(Boolean);
+      // Un topic encore dans le champ de saisie compte : on ne le perd pas parce que
+      // l'utilisateur a cliqué « Trace » sans valider par Entrée.
+      const pending = topicDraft.trim();
+      const parsedTopics = pending && !selectedTopics.includes(pending)
+        ? [...selectedTopics, pending]
+        : selectedTopics;
 
       const res = await axios.post<StreamFlowResponse>('/api/stream-flow', {
         messageKey: messageKey.trim(),
@@ -179,7 +232,14 @@ const StreamFlow: React.FC = () => {
     <div className="flex h-full overflow-hidden">
 
       {/* ── Config Panel ── */}
-      <aside className="w-72 border-r border-outline-variant/60 bg-surface-container-low p-5 flex flex-col gap-5 shrink-0 overflow-y-auto">
+      {/* Un vrai <form> : Entrée depuis n'importe quel champ lance la trace, au lieu d'un
+          onKeyDown bricolé sur le seul champ « Message Key ». */}
+      <form
+        noValidate
+        onSubmit={e => { e.preventDefault(); void handleRun(); }}
+        aria-label="Stream flow tracer"
+        className="w-72 border-r border-outline-variant/60 bg-surface-container-low p-5 flex flex-col gap-5 shrink-0 overflow-y-auto"
+      >
         <div>
           <h3 className="text-xs font-bold text-on-surface-variant uppercase tracking-widest mb-4">Stream Flow Tracer</h3>
           <p className="text-xs text-on-surface-variant">Trace a message key across Kafka topics to visualize the data flow pipeline.</p>
@@ -187,49 +247,82 @@ const StreamFlow: React.FC = () => {
 
         <div className="space-y-4">
           {/* Message Key */}
-          <div className="space-y-1.5">
-            <label className="text-[12px] font-medium text-on-surface-variant">Message Key *</label>
-            <input
-              type="text"
-              value={messageKey}
-              onChange={e => setMessageKey(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && !loading && messageKey.trim()) handleRun(); }}
-              placeholder="e.g. order_88219"
-              className="w-full bg-surface-container-low border border-outline-variant rounded-md px-3 py-2 text-sm font-mono text-on-surface placeholder:text-outline focus:border-primary/60 outline-none"
-            />
-          </div>
+          <Field label="Message Key" required error={fieldErrors.messageKey}>
+            {p => (
+              <Input
+                {...p}
+                className="font-mono"
+                value={messageKey}
+                onChange={e => { setMessageKey(e.target.value); clearFieldError('messageKey'); }}
+                placeholder="e.g. order_88219"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            )}
+          </Field>
 
           {/* Search Path */}
-          <div className="space-y-1.5">
-            <label className="text-[12px] font-medium text-on-surface-variant">Search Path (JSONPath / XPath)</label>
-            <input
-              type="text"
-              value={searchPath}
-              onChange={e => setSearchPath(e.target.value)}
-              placeholder="e.g. $.orderId"
-              className="w-full bg-surface-container-low border border-outline-variant rounded-md px-3 py-2 text-sm font-mono text-on-surface placeholder:text-outline focus:border-primary/60 outline-none"
-            />
-          </div>
+          <Field
+            label="Search Path (JSONPath / XPath)"
+            error={fieldErrors.searchPath}
+            description="Leave empty to match the raw Kafka record key."
+          >
+            {p => (
+              <Input
+                {...p}
+                className="font-mono"
+                value={searchPath}
+                onChange={e => { setSearchPath(e.target.value); clearFieldError('searchPath'); }}
+                placeholder="e.g. $.orderId"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            )}
+          </Field>
 
-          {/* Target Topics */}
+          {/* Target Topics — suggérés depuis le catalogue, ajoutés un par un */}
           <div className="space-y-1.5">
-            <label className="text-[12px] font-medium text-on-surface-variant">Target Topics</label>
-            <textarea
-              value={targetTopics}
-              onChange={e => setTargetTopics(e.target.value)}
-              placeholder={"orders_raw\norders_processed\n..."}
-              rows={3}
-              className="w-full bg-surface-container-low border border-outline-variant rounded-md px-3 py-2 text-sm font-mono text-on-surface placeholder:text-outline focus:border-primary/60 outline-none resize-none"
+            <span className="block text-[12px] font-medium text-on-surface-variant">Target Topics</span>
+            <TopicInput
+              aria-label="Add a target topic"
+              value={topicDraft}
+              onChange={setTopicDraft}
+              onEnter={addTopic}
+              placeholder="Type or pick a topic…"
             />
-            <p className="text-[10px] text-on-surface-variant">One per line or comma-separated. Empty = scan all topics.</p>
+            {selectedTopics.length > 0 && (
+              <ul className="flex flex-wrap gap-1 pt-1">
+                {selectedTopics.map(topic => (
+                  <li key={topic}>
+                    <span className="inline-flex items-center gap-1 rounded-md border border-outline-variant bg-surface-container-high px-1.5 py-0.5 text-[11px] font-mono text-on-surface">
+                      {topic}
+                      <button
+                        type="button"
+                        onClick={() => setSelectedTopics(list => list.filter(t => t !== topic))}
+                        aria-label={`Remove ${topic}`}
+                        className="text-outline hover:text-error"
+                      >
+                        <span aria-hidden="true" className="material-symbols-outlined text-[13px] align-middle">close</span>
+                      </button>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="text-[10px] text-on-surface-variant">
+              {selectedTopics.length === 0
+                ? 'None selected — every topic will be scanned.'
+                : `${selectedTopics.length} topic(s) will be scanned.`}
+            </p>
           </div>
 
           {/* Max Messages */}
           <div className="space-y-1.5">
-            <label className="text-[12px] font-medium text-on-surface-variant">
+            <label htmlFor="sf-max-messages" className="text-[12px] font-medium text-on-surface-variant">
               Max Messages / Topic: <span className="text-primary">{maxMessages}</span>
             </label>
             <input
+              id="sf-max-messages"
               type="range" min={10} max={500} step={10} value={maxMessages}
               onChange={e => setMaxMessages(Number(e.target.value))}
               className="w-full accent-primary"
@@ -237,19 +330,18 @@ const StreamFlow: React.FC = () => {
           </div>
 
           {/* Time Limit */}
-          <div className="space-y-1.5">
-            <label className="text-[12px] font-medium text-on-surface-variant">Time Limit (minutes)</label>
-            <input
-              type="number" min={1} max={60} value={timeLimitMinutes}
-              onChange={e => setTimeLimitMinutes(Number(e.target.value))}
-              className="w-full bg-surface-container-low border border-outline-variant rounded-md px-3 py-2 text-sm text-on-surface focus:border-primary/60 outline-none"
-            />
-          </div>
+          <Field label="Time Limit (minutes)">
+            {p => (
+              <NumberInput {...p} min={1} max={60} fallback={5}
+                value={timeLimitMinutes} onChange={setTimeLimitMinutes} />
+            )}
+          </Field>
 
           {/* Use Regex */}
           <div className="flex items-center justify-between">
             <span className="text-[12px] font-medium text-on-surface-variant">Use Regex</span>
             <button
+              type="button"
               role="switch" aria-checked={useRegex} aria-label="Use Regex"
               onClick={() => setUseRegex(!useRegex)}
               className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${useRegex ? 'bg-primary' : 'bg-surface-container-highest'}`}
@@ -260,16 +352,16 @@ const StreamFlow: React.FC = () => {
         </div>
 
         <Button
+          type="submit"
           variant="primary"
           className="mt-auto w-full"
           icon={loading ? undefined : 'route'}
           loading={loading}
-          onClick={handleRun}
           disabled={loading || !messageKey.trim()}
         >
           {loading ? 'Tracing…' : 'Trace Flow'}
         </Button>
-      </aside>
+      </form>
 
       {/* ── Graph Area ── */}
       <main className="flex-1 relative bg-background-dark overflow-hidden flex flex-col">

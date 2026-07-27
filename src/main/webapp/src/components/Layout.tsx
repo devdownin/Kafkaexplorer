@@ -4,6 +4,7 @@ import axios from 'axios';
 import Sidebar from './Sidebar';
 import Header from './Header';
 import CommandPalette from './CommandPalette';
+import { setCatalog } from '../catalogStore';
 
 const DESKTOP_QUERY = '(min-width: 768px)';
 
@@ -35,6 +36,9 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
         setHealthy(response.data.health);
         setSearchTopics(response.data.topics ?? []);
         setSearchTables(response.data.tables ?? []);
+        // Partage la même liste avec les formulaires (autocomplétion des noms de topics),
+        // sans requête supplémentaire.
+        setCatalog(response.data.topics ?? [], response.data.tables ?? []);
         if (response.data.clusterName) setClusterName(response.data.clusterName);
       } catch {
         setHealthy(false);

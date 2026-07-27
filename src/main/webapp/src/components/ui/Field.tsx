@@ -73,6 +73,11 @@ export interface FieldProps {
   error?: ReactNode;
   /** Champ requis : astérisque accessible sur le label. */
   required?: boolean;
+  /**
+   * Identifiant explicite du contrôle. À défaut, un id est généré. Utile quand un formulaire
+   * doit cibler le champ de l'extérieur — focaliser la première erreur après validation.
+   */
+  id?: string;
   className?: string;
   /** Un contrôle unique (Input, Select, Textarea…) recevant id/aria via render prop. */
   children: (props: { id: string; invalid: boolean; 'aria-describedby'?: string }) => ReactNode;
@@ -82,8 +87,9 @@ export interface FieldProps {
  * Enveloppe de champ de formulaire : label cliquable, description ou erreur
  * inline, liaison aria automatique (label ↔ contrôle ↔ description).
  */
-export function Field({ label, description, error, required, className, children }: FieldProps) {
-  const id = useId();
+export function Field({ label, description, error, required, id: providedId, className, children }: FieldProps) {
+  const generatedId = useId();
+  const id = providedId ?? generatedId;
   const descId = description || error ? `${id}-desc` : undefined;
   const invalid = Boolean(error);
   return (

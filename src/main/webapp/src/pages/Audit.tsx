@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import axios from 'axios';
 import {
   PageHeader, Button, Stat, Badge, EmptyState, Card, Input, Select,
-  Table, TableHead, TableBody, TableRow, Th, Td, type BadgeTone,
+  Table, TableHead, TableBody, TableRow, Th, Td, TopicInput, type BadgeTone,
 } from '../components/ui';
 
 type Severity = 'HEALTHY' | 'WARNING' | 'CRITICAL';
@@ -312,22 +312,16 @@ const Audit: React.FC = () => {
           <label htmlFor="audit-topic-prefix" className="text-[11px] uppercase font-medium tracking-[0.05em] text-on-surface-variant">
             Topic prefix <span className="normal-case tracking-normal text-outline">(optional)</span>
           </label>
-          <div className="relative mt-1.5 max-w-sm">
-            <span aria-hidden="true" className="material-symbols-outlined text-on-surface-variant text-[18px] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none">filter_list</span>
-            <Input
-              id="audit-topic-prefix"
-              className="pl-9 pr-8 h-9 font-mono"
-              placeholder="e.g. orders."
-              value={topicPrefix}
-              onChange={e => setTopicPrefix(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && !loading && !noneSelected) startAudit(); }}
-            />
-            {topicPrefix && (
-              <button onClick={() => setTopicPrefix('')} aria-label="Clear prefix" className="absolute right-2 top-1/2 -translate-y-1/2 text-outline hover:text-on-surface">
-                <span className="material-symbols-outlined text-[16px]">close</span>
-              </button>
-            )}
-          </div>
+          {/* Suggère les topics existants : un préfixe qui ne correspond à rien produisait
+              un rapport vide sans expliquer pourquoi. */}
+          <TopicInput
+            id="audit-topic-prefix"
+            className="mt-1.5 max-w-sm"
+            placeholder="e.g. orders."
+            value={topicPrefix}
+            onChange={setTopicPrefix}
+            onEnter={() => { if (!loading && !noneSelected) startAudit(); }}
+          />
           <p className="text-[11px] text-on-surface-variant mt-1">
             {topicPrefix.trim()
               ? <>Only topics starting with <span className="font-mono text-on-surface">{topicPrefix.trim()}</span> will be audited.</>

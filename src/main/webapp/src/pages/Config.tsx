@@ -1,6 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import axios from 'axios';
-import { PageHeader, Button, CardSkeleton } from '../components/ui';
+import {
+  PageHeader, Button, CardSkeleton, Field, Input, NumberInput, PasswordInput,
+} from '../components/ui';
 
 interface ClusterConfig {
   bootstrapServers: string;
@@ -35,6 +37,37 @@ const MODES = [
   { value: 'CONFLUENT_CLOUD', label: 'Confluent Cloud', description: 'SASL/SSL with API keys' },
 ];
 
+/** Champs pouvant porter une erreur de validation. */
+type ValidatedField =
+  | 'bootstrapServers' | 'truststorePath' | 'keystorePath'
+  | 'confluentKey' | 'confluentSecret'
+  | 'llmModel' | 'llmBaseUrl' | 'llmApiKey'
+  | 'llmMaxTokens' | 'llmSnapshotWindowSize' | 'llmSnapshotWindowTimeoutSeconds';
+
+type FieldErrors = Partial<Record<ValidatedField, string>>;
+
+/** Ids DOM stables : la validation focalise le premier champ fautif. */
+const fieldIds: Record<ValidatedField, string> = {
+  bootstrapServers: 'cfg-bootstrap-servers',
+  truststorePath: 'cfg-truststore-path',
+  keystorePath: 'cfg-keystore-path',
+  confluentKey: 'cfg-confluent-key',
+  confluentSecret: 'cfg-confluent-secret',
+  llmModel: 'cfg-llm-model',
+  llmBaseUrl: 'cfg-llm-base-url',
+  llmApiKey: 'cfg-llm-api-key',
+  llmMaxTokens: 'cfg-llm-max-tokens',
+  llmSnapshotWindowSize: 'cfg-llm-window-size',
+  llmSnapshotWindowTimeoutSeconds: 'cfg-llm-window-timeout',
+};
+
+/** Ordre d'apparition à l'écran — détermine quel champ reçoit le focus en cas d'erreurs. */
+const FIELD_ORDER: ValidatedField[] = [
+  'bootstrapServers', 'truststorePath', 'keystorePath', 'confluentKey', 'confluentSecret',
+  'llmModel', 'llmBaseUrl', 'llmApiKey',
+  'llmMaxTokens', 'llmSnapshotWindowSize', 'llmSnapshotWindowTimeoutSeconds',
+];
+
 const LLM_PROVIDERS = [
   { value: 'ANTHROPIC', label: 'Anthropic', description: 'Hosted Claude models' },
   { value: 'OPENAI_COMPATIBLE', label: 'OpenAI-compatible', description: 'vLLM, LM Studio or compatible gateways' },
@@ -59,14 +92,22 @@ const Config: React.FC = () => {
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [testResult, setTestResult] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [errors, setErrors] = useState<FieldErrors>({});
   const [llmTesting, setLlmTesting] = useState(false);
   const [llmTestResult, setLlmTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  /** Dernier état persisté, pour savoir si le formulaire a été modifié. */
+  const savedRef = useRef<string>('');
+  const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
     const fetchConfig = async () => {
       try {
         const res = await axios.get<ClusterConfig>('/api/config');
-        setConfig(prev => ({ ...prev, ...res.data }));
+        setConfig(prev => {
+          const next = { ...prev, ...res.data };
+          savedRef.current = JSON.stringify(next);
+          return next;
+        });
       } catch {
         // Backend may not expose REST config yet - use defaults
       } finally {
@@ -76,15 +117,31 @@ const Config: React.FC = () => {
     fetchConfig();
   }, []);
 
+  useEffect(() => {
+    setDirty(savedRef.current !== '' && JSON.stringify(config) !== savedRef.current);
+  }, [config]);
+
+  // Un rechargement ou une fermeture d'onglet avec des réglages non enregistrés perdait tout
+  // sans un mot. La navigation interne (react-router) n'est pas couverte par cet événement.
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty]);
+
   const handleSave = async () => {
-    const validationErr = validateConfig();
-    if (validationErr) { setError(validationErr); return; }
+    if (!checkBeforeSubmit()) return;
     setSaving(true);
     setError(null);
     setSaveSuccess(false);
     try {
       const res = await axios.post<ClusterConfig>('/api/config', config);
-      setConfig(prev => ({ ...prev, ...res.data }));
+      setConfig(prev => {
+        const next = { ...prev, ...res.data };
+        savedRef.current = JSON.stringify(next);
+        return next;
+      });
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
     } catch {
@@ -95,8 +152,7 @@ const Config: React.FC = () => {
   };
 
   const handleTestConnection = async () => {
-    const validationErr = validateConfig();
-    if (validationErr) { setError(validationErr); return; }
+    if (!checkBeforeSubmit()) return;
     setTesting(true);
     setTestResult(null);
     try {
@@ -111,8 +167,7 @@ const Config: React.FC = () => {
   };
 
   const handleTestLlm = async () => {
-    const validationErr = validateConfig();
-    if (validationErr) { setError(validationErr); return; }
+    if (!checkBeforeSubmit()) return;
     setLlmTesting(true);
     setLlmTestResult(null);
     setError(null);
@@ -129,49 +184,84 @@ const Config: React.FC = () => {
     }
   };
 
-  const validateConfig = (): string | null => {
+  /**
+   * Toutes les erreurs d'un coup, indexées par champ.
+   *
+   * La version précédente renvoyait la **première** erreur sous forme de chaîne, affichée dans un
+   * bandeau en bas d'une page qui défile : on en corrigeait une, on cliquait Save, on obtenait la
+   * suivante, et le champ fautif n'était ni signalé ni focalisé.
+   */
+  const validateConfig = (): FieldErrors => {
+    const errors: FieldErrors = {};
     const servers = config.bootstrapServers?.trim() ?? '';
-    if (!servers) return 'Bootstrap servers are required.';
-    const parts = servers.split(',').map(s => s.trim()).filter(Boolean);
-    for (const part of parts) {
-      if (!/^[^\s:]+:\d{1,5}$/.test(part)) {
-        return `Invalid format: "${part}". Expected host:port (e.g. localhost:9092).`;
+    if (!servers) {
+      errors.bootstrapServers = 'Bootstrap servers are required.';
+    } else {
+      const invalid = servers.split(',').map(s => s.trim()).filter(Boolean)
+        .find(part => !/^[^\s:]+:\d{1,5}$/.test(part));
+      if (invalid) {
+        errors.bootstrapServers = `Invalid entry "${invalid}". Expected host:port (e.g. localhost:9092).`;
       }
     }
     if (config.mode === 'CONFLUENT_CLOUD') {
-      if (!config.confluentKey?.trim()) return 'API Key is required for Confluent Cloud.';
-      if (!config.confluentSecret?.trim()) return 'API Secret is required for Confluent Cloud.';
+      if (!config.confluentKey?.trim()) errors.confluentKey = 'API Key is required for Confluent Cloud.';
+      if (!config.confluentSecret?.trim()) errors.confluentSecret = 'API Secret is required for Confluent Cloud.';
     }
     if (config.mode === 'SSL') {
-      if (!config.truststorePath?.trim()) return 'Truststore path is required for SSL.';
-      if (!config.keystorePath?.trim()) return 'Keystore path is required for SSL.';
+      if (!config.truststorePath?.trim()) errors.truststorePath = 'Truststore path is required for SSL.';
+      if (!config.keystorePath?.trim()) errors.keystorePath = 'Keystore path is required for SSL.';
     }
     // SpectraLLM picks its own served model, so the model field is optional for it.
     if (config.llmProvider !== 'SPECTRA' && !config.llmModel?.trim()) {
-      return 'An LLM model is required for process mining.';
+      errors.llmModel = 'A model is required for process mining.';
     }
     if (config.llmProvider !== 'OLLAMA' && !config.llmBaseUrl?.trim()) {
-      return 'An LLM base URL is required for hosted, OpenAI-compatible or SpectraLLM providers.';
+      errors.llmBaseUrl = 'A base URL is required for hosted, OpenAI-compatible or SpectraLLM providers.';
     }
     if (config.llmProvider === 'ANTHROPIC'
       && !config.llmApiKeyConfigured
       && !config.llmApiKey?.trim()) {
-      return 'An Anthropic API key is required when the provider is Anthropic.';
+      errors.llmApiKey = 'An API key is required when the provider is Anthropic.';
     }
     if (!Number.isFinite(config.llmMaxTokens) || config.llmMaxTokens < 256) {
-      return 'LLM max tokens must be at least 256.';
+      errors.llmMaxTokens = 'Must be at least 256.';
     }
     if (!Number.isFinite(config.llmSnapshotWindowSize) || config.llmSnapshotWindowSize < 10) {
-      return 'Live analysis window size must be at least 10 messages.';
+      errors.llmSnapshotWindowSize = 'Must be at least 10 messages.';
     }
     if (!Number.isFinite(config.llmSnapshotWindowTimeoutSeconds) || config.llmSnapshotWindowTimeoutSeconds < 5) {
-      return 'Live analysis timeout must be at least 5 seconds.';
+      errors.llmSnapshotWindowTimeoutSeconds = 'Must be at least 5 seconds.';
     }
-    return null;
+    return errors;
   };
 
-  const set = (key: keyof ClusterConfig, value: string) => setConfig(prev => ({ ...prev, [key]: value }));
-  const setNumber = (key: keyof ClusterConfig, value: number) => setConfig(prev => ({ ...prev, [key]: value }));
+  /**
+   * Valide, publie les erreurs et focalise le premier champ fautif.
+   * @returns true quand le formulaire peut partir
+   */
+  const checkBeforeSubmit = (): boolean => {
+    const found = validateConfig();
+    setErrors(found);
+    const firstInvalid = FIELD_ORDER.find(key => found[key]);
+    if (!firstInvalid) return true;
+    // Le champ peut être dans une section masquée par le mode courant — d'où le garde-fou.
+    document.getElementById(fieldIds[firstInvalid])?.focus();
+    return false;
+  };
+
+  const set = (key: keyof ClusterConfig, value: string) => {
+    setConfig(prev => ({ ...prev, [key]: value }));
+    clearError(key);
+  };
+  const setNumber = (key: keyof ClusterConfig, value: number) => {
+    setConfig(prev => ({ ...prev, [key]: value }));
+    clearError(key);
+  };
+
+  /** Une erreur disparaît dès qu'on retouche le champ — la revalidation a lieu au submit. */
+  const clearError = (key: keyof ClusterConfig) => {
+    setErrors(prev => (prev[key as ValidatedField] ? { ...prev, [key]: undefined } : prev));
+  };
 
   const applyLlmProvider = (provider: ClusterConfig['llmProvider']) => {
     setConfig(prev => {
@@ -206,8 +296,7 @@ const Config: React.FC = () => {
     });
   };
 
-  const inputClass = "w-full bg-surface-container-low border border-outline-variant rounded-md px-3 py-2.5 text-[13px] text-on-surface font-mono placeholder:text-outline focus:border-primary/60 outline-none transition-colors";
-  const labelClass = "block text-[12px] font-medium text-on-surface-variant mb-1.5";
+  const errorCount = useMemo(() => Object.values(errors).filter(Boolean).length, [errors]);
 
   if (loading) return (
     <div className="p-4 md:p-6 max-w-3xl space-y-6">
@@ -219,7 +308,12 @@ const Config: React.FC = () => {
   );
 
   return (
-    <div className="p-4 md:p-6 max-w-3xl space-y-6">
+    <form
+      className="p-4 md:p-6 max-w-3xl space-y-6"
+      noValidate
+      // Un vrai <form> : Entrée depuis n'importe quel champ enregistre, au lieu de ne rien faire.
+      onSubmit={e => { e.preventDefault(); void handleSave(); }}
+    >
       <PageHeader
         title="Configuration"
         description="Manage Kafka cluster connection, security and process-mining LLM settings."
@@ -257,25 +351,35 @@ const Config: React.FC = () => {
         </div>
         <div className="p-5 space-y-5">
           {/* Bootstrap Servers */}
-          <div>
-            <label className={labelClass}>Bootstrap Servers</label>
-            <input
-              type="text"
-              value={config.bootstrapServers}
-              onChange={e => set('bootstrapServers', e.target.value)}
-              placeholder="localhost:9092"
-              className={inputClass}
-            />
-            <p className="text-[10px] text-on-surface-variant mt-1">Comma-separated list of host:port pairs.</p>
-          </div>
+          <Field
+            label="Bootstrap Servers"
+            required
+            id={fieldIds.bootstrapServers}
+            error={errors.bootstrapServers}
+            description="Comma-separated list of host:port pairs."
+          >
+            {p => (
+              <Input
+                {...p}
+                className="font-mono"
+                value={config.bootstrapServers}
+                onChange={e => set('bootstrapServers', e.target.value)}
+                placeholder="localhost:9092"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            )}
+          </Field>
 
           {/* Security Mode */}
-          <div>
-            <label className={labelClass}>Security Mode</label>
+          <fieldset>
+            <legend className="block text-[12px] font-medium text-on-surface-variant mb-1.5">Security Mode</legend>
             <div className="grid grid-cols-3 gap-3">
               {MODES.map(mode => (
                 <button
                   key={mode.value}
+                  type="button"
+                  aria-pressed={config.mode === mode.value}
                   onClick={() => set('mode', mode.value)}
                   className={`p-3 rounded-lg border text-left transition-all ${
                     config.mode === mode.value
@@ -288,7 +392,7 @@ const Config: React.FC = () => {
                 </button>
               ))}
             </div>
-          </div>
+          </fieldset>
         </div>
       </div>
 
@@ -300,26 +404,38 @@ const Config: React.FC = () => {
             <h2 className="font-bold text-on-surface">SSL / mTLS Settings</h2>
           </div>
           <div className="p-5 grid grid-cols-2 gap-4">
-            <div>
-              <label className={labelClass}>Truststore Path</label>
-              <input type="text" value={config.truststorePath ?? ''} onChange={e => set('truststorePath', e.target.value)} placeholder="/path/to/truststore.jks" className={inputClass} />
-            </div>
-            <div>
-              <label className={labelClass}>Truststore Password</label>
-              <input type="password" value={config.truststorePassword ?? ''} onChange={e => set('truststorePassword', e.target.value)} className={inputClass} />
-            </div>
-            <div>
-              <label className={labelClass}>Keystore Path</label>
-              <input type="text" value={config.keystorePath ?? ''} onChange={e => set('keystorePath', e.target.value)} placeholder="/path/to/keystore.jks" className={inputClass} />
-            </div>
-            <div>
-              <label className={labelClass}>Keystore Password</label>
-              <input type="password" value={config.keystorePassword ?? ''} onChange={e => set('keystorePassword', e.target.value)} className={inputClass} />
-            </div>
-            <div>
-              <label className={labelClass}>Key Password</label>
-              <input type="password" value={config.keyPassword ?? ''} onChange={e => set('keyPassword', e.target.value)} className={inputClass} />
-            </div>
+            <Field label="Truststore Path" required id={fieldIds.truststorePath} error={errors.truststorePath}>
+              {p => (
+                <Input {...p} className="font-mono" value={config.truststorePath ?? ''}
+                  onChange={e => set('truststorePath', e.target.value)}
+                  placeholder="/path/to/truststore.jks" autoComplete="off" spellCheck={false} />
+              )}
+            </Field>
+            <Field label="Truststore Password">
+              {p => (
+                <PasswordInput {...p} value={config.truststorePassword ?? ''}
+                  onChange={e => set('truststorePassword', e.target.value)} />
+              )}
+            </Field>
+            <Field label="Keystore Path" required id={fieldIds.keystorePath} error={errors.keystorePath}>
+              {p => (
+                <Input {...p} className="font-mono" value={config.keystorePath ?? ''}
+                  onChange={e => set('keystorePath', e.target.value)}
+                  placeholder="/path/to/keystore.jks" autoComplete="off" spellCheck={false} />
+              )}
+            </Field>
+            <Field label="Keystore Password">
+              {p => (
+                <PasswordInput {...p} value={config.keystorePassword ?? ''}
+                  onChange={e => set('keystorePassword', e.target.value)} />
+              )}
+            </Field>
+            <Field label="Key Password">
+              {p => (
+                <PasswordInput {...p} value={config.keyPassword ?? ''}
+                  onChange={e => set('keyPassword', e.target.value)} />
+              )}
+            </Field>
           </div>
         </div>
       )}
@@ -332,14 +448,20 @@ const Config: React.FC = () => {
             <h2 className="font-bold text-on-surface">Confluent Cloud Settings</h2>
           </div>
           <div className="p-5 grid grid-cols-2 gap-4">
-            <div>
-              <label className={labelClass}>API Key</label>
-              <input type="text" value={config.confluentKey ?? ''} onChange={e => set('confluentKey', e.target.value)} placeholder="YOUR_API_KEY" className={inputClass} />
-            </div>
-            <div>
-              <label className={labelClass}>API Secret</label>
-              <input type="password" value={config.confluentSecret ?? ''} onChange={e => set('confluentSecret', e.target.value)} placeholder="YOUR_API_SECRET" className={inputClass} />
-            </div>
+            <Field label="API Key" required id={fieldIds.confluentKey} error={errors.confluentKey}>
+              {p => (
+                <Input {...p} className="font-mono" value={config.confluentKey ?? ''}
+                  onChange={e => set('confluentKey', e.target.value)}
+                  placeholder="YOUR_API_KEY" autoComplete="off" spellCheck={false} />
+              )}
+            </Field>
+            <Field label="API Secret" required id={fieldIds.confluentSecret} error={errors.confluentSecret}>
+              {p => (
+                <PasswordInput {...p} value={config.confluentSecret ?? ''}
+                  onChange={e => set('confluentSecret', e.target.value)}
+                  placeholder="YOUR_API_SECRET" />
+              )}
+            </Field>
           </div>
         </div>
       )}
@@ -355,13 +477,15 @@ const Config: React.FC = () => {
           </div>
         </div>
         <div className="p-5 space-y-5">
-          <div>
-            <label className={labelClass}>Provider</label>
+          <fieldset>
+            <legend className="block text-[12px] font-medium text-on-surface-variant mb-1.5">Provider</legend>
             <div className="grid grid-cols-3 gap-3">
               {LLM_PROVIDERS.map(provider => (
                 <button
                   key={provider.value}
-                  onClick={() => applyLlmProvider(provider.value)}
+                  type="button"
+                  aria-pressed={config.llmProvider === provider.value}
+                  onClick={() => { applyLlmProvider(provider.value); setErrors({}); }}
                   className={`p-3 rounded-lg border text-left transition-all ${
                     config.llmProvider === provider.value
                       ? 'border-primary bg-primary/10 text-on-surface'
@@ -373,7 +497,7 @@ const Config: React.FC = () => {
                 </button>
               ))}
             </div>
-          </div>
+          </fieldset>
 
           <div className={`rounded-lg border px-4 py-3 text-xs ${
             config.llmLocalDeployment
@@ -386,81 +510,91 @@ const Config: React.FC = () => {
           </div>
 
           <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className={labelClass}>Model</label>
-              <input
-                type="text"
-                value={config.llmModel}
-                onChange={e => set('llmModel', e.target.value)}
-                placeholder={
-                  config.llmProvider === 'OLLAMA' ? 'qwen3:4b'
-                  : config.llmProvider === 'SPECTRA' ? 'Served by SpectraLLM (ignored)'
-                  : 'model name'}
-                disabled={config.llmProvider === 'SPECTRA'}
-                className={inputClass}
-              />
-            </div>
-            <div>
-              <label className={labelClass}>Base URL</label>
-              <input
-                type="text"
-                value={config.llmBaseUrl}
-                onChange={e => set('llmBaseUrl', e.target.value)}
-                placeholder={
-                  config.llmProvider === 'OLLAMA' ? 'http://localhost:11434/v1'
-                  : config.llmProvider === 'SPECTRA' ? 'http://localhost:8080'
-                  : 'https://...'}
-                className={inputClass}
-              />
-            </div>
-            <div>
-              <label className={labelClass}>API Key</label>
-              <input
-                type="password"
-                value={config.llmApiKey ?? ''}
-                onChange={e => set('llmApiKey', e.target.value)}
-                placeholder={
-                  config.llmProvider === 'OLLAMA' || config.llmProvider === 'SPECTRA'
-                    ? 'Optional for local deployments' : 'Required'}
-                className={inputClass}
-              />
-              <p className="text-[10px] text-on-surface-variant mt-1">
-                {config.llmApiKeyConfigured ? 'A key is currently configured in memory.' : 'No key configured in memory.'}
-              </p>
-            </div>
-            <div>
-              <label className={labelClass}>Max Tokens</label>
-              <input
-                type="number"
-                min={256}
-                max={32768}
-                value={config.llmMaxTokens}
-                onChange={e => setNumber('llmMaxTokens', parseInt(e.target.value, 10) || 4096)}
-                className={inputClass}
-              />
-            </div>
-            <div>
-              <label className={labelClass}>Live Window Size</label>
-              <input
-                type="number"
-                min={10}
-                max={5000}
-                value={config.llmSnapshotWindowSize}
-                onChange={e => setNumber('llmSnapshotWindowSize', parseInt(e.target.value, 10) || 100)}
-                className={inputClass}
-              />
-            </div>
-            <div>
-              <label className={labelClass}>Live Window Timeout (s)</label>
-              <input
-                type="number"
-                min={5}
-                max={600}
-                value={config.llmSnapshotWindowTimeoutSeconds}
-                onChange={e => setNumber('llmSnapshotWindowTimeoutSeconds', parseInt(e.target.value, 10) || 30)}
-                className={inputClass}
-              />
-            </div>
+            <Field
+              label="Model"
+              required={config.llmProvider !== 'SPECTRA'}
+              id={fieldIds.llmModel}
+              error={errors.llmModel}
+              description={config.llmProvider === 'SPECTRA' ? 'Served by SpectraLLM — not sent per request.' : undefined}
+            >
+              {p => (
+                <Input
+                  {...p}
+                  className="font-mono"
+                  value={config.llmModel}
+                  onChange={e => set('llmModel', e.target.value)}
+                  placeholder={
+                    config.llmProvider === 'OLLAMA' ? 'qwen3:4b'
+                    : config.llmProvider === 'SPECTRA' ? 'Served by SpectraLLM (ignored)'
+                    : 'model name'}
+                  disabled={config.llmProvider === 'SPECTRA'}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              )}
+            </Field>
+            <Field
+              label="Base URL"
+              required={config.llmProvider !== 'OLLAMA'}
+              id={fieldIds.llmBaseUrl}
+              error={errors.llmBaseUrl}
+            >
+              {p => (
+                <Input
+                  {...p}
+                  className="font-mono"
+                  value={config.llmBaseUrl}
+                  onChange={e => set('llmBaseUrl', e.target.value)}
+                  placeholder={
+                    config.llmProvider === 'OLLAMA' ? 'http://localhost:11434/v1'
+                    : config.llmProvider === 'SPECTRA' ? 'http://localhost:8080'
+                    : 'https://...'}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              )}
+            </Field>
+            <Field
+              label="API Key"
+              required={config.llmProvider === 'ANTHROPIC' && !config.llmApiKeyConfigured}
+              id={fieldIds.llmApiKey}
+              error={errors.llmApiKey}
+              description={config.llmApiKeyConfigured
+                ? 'A key is currently configured in memory — leave blank to keep it.'
+                : 'No key configured in memory.'}
+            >
+              {p => (
+                <PasswordInput
+                  {...p}
+                  value={config.llmApiKey ?? ''}
+                  onChange={e => set('llmApiKey', e.target.value)}
+                  placeholder={
+                    config.llmProvider === 'OLLAMA' || config.llmProvider === 'SPECTRA'
+                      ? 'Optional for local deployments' : 'sk-…'}
+                />
+              )}
+            </Field>
+            <Field label="Max Tokens" id={fieldIds.llmMaxTokens} error={errors.llmMaxTokens} description="256 – 32768">
+              {p => (
+                <NumberInput {...p} min={256} max={32768} fallback={4096}
+                  value={config.llmMaxTokens}
+                  onChange={v => setNumber('llmMaxTokens', v)} />
+              )}
+            </Field>
+            <Field label="Live Window Size" id={fieldIds.llmSnapshotWindowSize} error={errors.llmSnapshotWindowSize} description="Messages per analysis window (10 – 5000)">
+              {p => (
+                <NumberInput {...p} min={10} max={5000} fallback={100}
+                  value={config.llmSnapshotWindowSize}
+                  onChange={v => setNumber('llmSnapshotWindowSize', v)} />
+              )}
+            </Field>
+            <Field label="Live Window Timeout (s)" id={fieldIds.llmSnapshotWindowTimeoutSeconds} error={errors.llmSnapshotWindowTimeoutSeconds} description="Flush the window after this delay (5 – 600)">
+              {p => (
+                <NumberInput {...p} min={5} max={600} fallback={30}
+                  value={config.llmSnapshotWindowTimeoutSeconds}
+                  onChange={v => setNumber('llmSnapshotWindowTimeoutSeconds', v)} />
+              )}
+            </Field>
           </div>
 
           {config.llmProvider === 'SPECTRA' && (
@@ -482,34 +616,28 @@ const Config: React.FC = () => {
           )}
 
           {config.llmProvider === 'SPECTRA' && config.llmUseRag && (
-            <div className="mt-3">
-              <label className={labelClass}>SpectraLLM Collection</label>
-              <input
-                type="text"
-                value={config.llmCollection ?? ''}
-                onChange={e => set('llmCollection', e.target.value)}
-                placeholder="Default collection"
-                className={inputClass}
-              />
-              <p className="text-[10px] text-on-surface-variant mt-1">
-                Optional — the ChromaDB collection to retrieve from. Leave blank for SpectraLLM's default.
-              </p>
-            </div>
+            <Field
+              label="SpectraLLM Collection"
+              className="mt-3"
+              description="Optional — the ChromaDB collection to retrieve from. Leave blank for SpectraLLM's default."
+            >
+              {p => (
+                <Input {...p} className="font-mono" value={config.llmCollection ?? ''}
+                  onChange={e => set('llmCollection', e.target.value)}
+                  placeholder="Default collection" autoComplete="off" spellCheck={false} />
+              )}
+            </Field>
           )}
 
           <div className="mt-4 flex flex-wrap items-end gap-4">
-            <div className="w-40">
-              <label className={labelClass}>Request Timeout (s)</label>
-              <input
-                type="number"
-                min={5}
-                max={600}
-                value={config.llmRequestTimeoutSeconds ?? 60}
-                onChange={e => setNumber('llmRequestTimeoutSeconds', parseInt(e.target.value, 10) || 60)}
-                className={inputClass}
-              />
-            </div>
-            <Button variant="outline" icon={llmTesting ? undefined : 'network_check'} loading={llmTesting} onClick={handleTestLlm} disabled={llmTesting}>
+            <Field label="Request Timeout (s)" className="w-40">
+              {p => (
+                <NumberInput {...p} min={5} max={600} fallback={60}
+                  value={config.llmRequestTimeoutSeconds ?? 60}
+                  onChange={v => setNumber('llmRequestTimeoutSeconds', v)} />
+              )}
+            </Field>
+            <Button type="button" variant="outline" icon={llmTesting ? undefined : 'network_check'} loading={llmTesting} onClick={handleTestLlm} disabled={llmTesting}>
               {llmTesting ? 'Testing LLM…' : 'Test LLM'}
             </Button>
           </div>
@@ -537,16 +665,35 @@ const Config: React.FC = () => {
         </div>
       )}
 
+      {/* Récapitulatif : les détails sont sur les champs, ceci ne fait que compter et orienter. */}
+      {errorCount > 0 && (
+        <div className="rounded-lg border border-error/25 bg-error/10 p-3 flex items-center gap-2 text-error text-[13px]" role="alert">
+          <span className="material-symbols-outlined text-[18px]">error</span>
+          {errorCount === 1 ? '1 field needs attention.' : `${errorCount} fields need attention.`}
+        </div>
+      )}
+
       {/* Actions */}
       <div className="flex items-center justify-between pt-2">
-        <Button variant="outline" icon={testing ? undefined : 'wifi_tethering'} loading={testing} onClick={handleTestConnection} disabled={testing || saving}>
+        <Button type="button" variant="outline" icon={testing ? undefined : 'wifi_tethering'} loading={testing} onClick={handleTestConnection} disabled={testing || saving}>
           {testing ? 'Testing…' : 'Test connection'}
         </Button>
-        <Button variant="primary" icon={saving ? undefined : saveSuccess ? 'check_circle' : 'save'} loading={saving} onClick={handleSave} disabled={saving || testing}>
-          {saving ? 'Saving…' : saveSuccess ? 'Saved!' : 'Save configuration'}
-        </Button>
+        <div className="flex items-center gap-3">
+          {dirty && !saving && (
+            <span className="text-[12px] text-on-surface-variant">Unsaved changes</span>
+          )}
+          <Button
+            type="submit"
+            variant="primary"
+            icon={saving ? undefined : saveSuccess ? 'check_circle' : 'save'}
+            loading={saving}
+            disabled={saving || testing}
+          >
+            {saving ? 'Saving…' : saveSuccess ? 'Saved!' : 'Save configuration'}
+          </Button>
+        </div>
       </div>
-    </div>
+    </form>
   );
 };
 

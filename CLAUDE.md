@@ -145,7 +145,15 @@ The SPA lives in `src/main/webapp/src/`. Stack: React 19 + TypeScript + Vite + T
 
 **Command palette** — `CommandPalette` (⌘K / Ctrl+K, wired in `Layout`) is the single global search over quick actions, pages, Kafka topics and Flink tables, fully keyboard-driven.
 
-**Design-system library** — `components/ui/` (`import { … } from '../components/ui'`), built on the `tailwind.config.js` + `index.css` tokens; prefer it for any new surface: `Button`, `Card`/`CardHeader`, `Badge`, `EmptyState`, `PageHeader`, `Stat`, `Field`/`Input`/`Select`/`Textarea`, `Table` (+ `Th`/`Td`/…), the `Skeleton` family, `Spinner`/`ProgressBar`, `ConfirmProvider`/`useConfirm` (async confirm dialogs), `useVirtualRows` (row virtualization), and `cn()` (clsx + tailwind-merge). Other shared components: `Toast`/`ToastProvider`, `ErrorBanner`, `LoadingSpinner`.
+**Design-system library** — `components/ui/` (`import { … } from '../components/ui'`), built on the `tailwind.config.js` + `index.css` tokens; prefer it for any new surface: `Button`, `Card`/`CardHeader`, `Badge`, `EmptyState`, `PageHeader`, `Stat`, `Field`/`Input`/`Select`/`Textarea`, `Combobox`/`TopicInput`/`NumberInput`/`PasswordInput`, `Table` (+ `Th`/`Td`/…), the `Skeleton` family, `Spinner`/`ProgressBar`, `ConfirmProvider`/`useConfirm` (async confirm dialogs), `useVirtualRows` (row virtualization), and `cn()` (clsx + tailwind-merge). Other shared components: `Toast`/`ToastProvider`, `ErrorBanner`, `LoadingSpinner`.
+
+**Form conventions** — build every form out of these; hand-rolled `<input className="…">` blocks drift from the tokens and skip the accessibility wiring.
+- `Field` owns the label ↔ control ↔ error/description `aria` plumbing and renders its child through a render prop (`{p => <Input {...p} />}`). Pass an explicit `id` when the form needs to focus the first invalid control after validation.
+- **Validate every field at once**, into a `Partial<Record<field, string>>` handed to each `Field error=…`, and focus the first offender — not one message at a time in a banner at the bottom of the page.
+- `NumberInput` keeps the raw string while typing and only coerces on blur. Never `parseInt(e.target.value) || fallback` on change: clearing the field snaps it to the fallback mid-typing, and `0` is falsy so a leading zero does too.
+- `TopicInput` suggests topic (or Flink table) names from `catalogStore`, which `Layout` fills from its existing `/api/dashboard` poll — no extra request. Free text stays valid: a topic can exist before the 30s cache shows it.
+- `PasswordInput` adds a reveal toggle and `autoComplete="new-password"`. Secrets typed blind fail at connection time with nothing to diagnose.
+- Wrap in a real `<form onSubmit>` so Enter submits from any field. `Button` defaults to `type="button"` for that reason — submit buttons declare `type="submit"` explicitly.
 
 **Routes / pages** (`pages/`):
 - `Dashboard` (`/`) — topic list with filtering
@@ -163,7 +171,7 @@ The SPA lives in `src/main/webapp/src/`. Stack: React 19 + TypeScript + Vite + T
 
 The live status bar (`components/processmining/LiveStatusBar.tsx`) renders the `WINDOW_STATS` ingestion counters — volume read, distinct payload structures, messages dropped to backpressure, unparsed payloads — so an operator can see that big payloads are being sampled rather than silently lost.
 
-**Tests** — Vitest + `@testing-library/react` on jsdom (`src/test/setup.ts`): `navigation.test.ts`, `components/ui/ui.test.tsx`, `ConfirmDialog.test.tsx`, `useVirtualRows.test.ts`. Run with `npm test`.
+**Tests** — Vitest + `@testing-library/react` on jsdom (`src/test/setup.ts`): `navigation.test.ts`, `components/ui/ui.test.tsx`, `forms.test.tsx`, `ConfirmDialog.test.tsx`, `ScrollList.test.tsx`, `useVirtualRows.test.ts`, `pages/queryError.test.ts`, `components/topic/topicSearch.test.ts`. Run with `npm test`.
 
 Dev server proxy: Vite forwards `/api/*` to `http://localhost:8080` (configured in `vite.config.ts`).
 

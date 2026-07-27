@@ -5,7 +5,7 @@ import Editor, { useMonaco } from '@monaco-editor/react';
 import '../monaco-setup';
 import { AreaChart, Area, ResponsiveContainer, ReferenceLine, Tooltip, YAxis } from 'recharts';
 import { useToast } from '../components/Toast';
-import { PageHeader, Button, Stat, Select, EmptyState, CardSkeleton, useConfirm } from '../components/ui';
+import { PageHeader, Button, Stat, Select, EmptyState, CardSkeleton, TopicInput, useConfirm } from '../components/ui';
 import { describeQueryError } from './queryError';
 
 interface MetricConfig {
@@ -1197,10 +1197,14 @@ const Metrics: React.FC = () => {
                       {topics.map(t => <option key={t} value={t} className="bg-[#12151a] text-on-surface">{t}</option>)}
                     </select>
                   ) : (
-                    <input type="text" value={selectedTopic}
-                      onChange={e => onTopicChange(e.target.value)}
-                      placeholder="my_topic (type manually)"
-                      className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm font-mono text-on-surface placeholder:text-outline focus:border-primary/60 outline-none" />
+                    // Le catalogue partagé alimente les suggestions même quand la liste
+                    // locale est vide ; la saisie libre reste possible.
+                    <TopicInput
+                      aria-label="Kafka topic"
+                      value={selectedTopic}
+                      onChange={onTopicChange}
+                      placeholder="my_topic"
+                    />
                   )}
                   {selectedTopic && (
                     <p className="text-[10px] text-outline">
