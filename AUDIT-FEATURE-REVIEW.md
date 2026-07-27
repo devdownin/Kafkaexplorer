@@ -340,6 +340,130 @@ Côté UI : un bouton « Stop » dans la carte de progression, l'état interméd
 alimenté par `cancelling: true` dans le rapport en vol (l'arrêt n'est pas instantané, l'écran ne
 doit pas paraître figé), et un bandeau au-dessus du rapport partiel.
 
+### S5 — Écran d'historique : `internal.audit.history` n'est plus en écriture seule ✅
+
+`AuditService` écrivait chaque rapport dans `internal.audit.history` depuis toujours, et **personne
+ne le relisait** : fonctionnalité écrite, jamais branchée. `GET /api/audit/last` ne sert que les
+runs du processus courant, donc un redémarrage perdait tout l'historique.
+
+`AuditHistoryService` relit le topic. Deux endpoints :
+
+* `GET /api/audit/history` — liste des runs passés, du plus récent au plus ancien ;
+* `GET /api/audit/history/{id}` — le rapport archivé d'un run.
+
+**Lecture bornée, et qui le dit.** Le topic est append-only et un rapport contient une entrée par
+topic : la lecture se limite à `explorer.audit-history-max-records` (200 par défaut) enregistrements
+depuis la fin, et la réponse porte `recordsScanned` / `exhausted`. Une liste qui affiche
+silencieusement « les 20 derniers runs » alors qu'il en existe 500 invite à conclure que le cluster
+n'avait jamais été audité avant — le même travers que B8.
+
+**Résumés extraits de l'arbre JSON**, pas désérialisés en `AuditReport`. C'est bien moins coûteux
+(un rapport de 2 000 topics fait des centaines de kilo-octets, on n'en veut que huit champs), et
+surtout ça résiste aux enregistrements écrits par une version antérieure.
+
+**Les rapports antérieurs à la sévérité graduée sont un vrai cas.** Ils contiennent `"UNHEALTHY"`,
+`unhealthyTopicsCount` et des `issues` en chaînes de caractères : la forme actuelle ne peut pas les
+désérialiser. Trois options ont été écartées :
+
+* mapper `UNHEALTHY` → `CRITICAL` surestime (l'ancienne échelle couvrait aussi les doublons) ;
+* mapper vers `WARNING` sous-estime (elle couvrait aussi les topics illisibles) ;
+* `@JsonEnumDefaultValue` vers `HEALTHY` transforme un défaut en cluster sain.
+
+L'ancienne échelle **n'a pas enregistré la distinction**, donc aucune conversion n'est honnête. La
+liste marque ces runs `legacy: true`, place l'ancien compteur sous « critical » avec un `—` explicite
+en colonne warning, et le bouton « Open » est désactivé avec la raison en `title`. Le détail renvoie
+le JSON **tel que stocké** (`JsonNode`), ce qui ne perd rien.
+
+**Comparaison** : chaque ligne affiche le delta de score de santé par rapport au run précédent dans
+le temps (▲/▼), ce qui répond à la question qui motive un historique. Un diff complet topic par
+topic entre deux rapports reste à faire.
+
+Côté robustesse : un enregistrement illisible est sauté avec un avertissement au lieu de faire
+échouer la liste, un topic absent est signalé comme tel (et non comme « aucun audit »), et la boucle
+de `poll` tolère deux polls vides consécutifs — un poll vide ne signifie pas épuisé, c'est la leçon
+déjà tirée sur la restauration des métriques.
+
+### S6 — Les scans de messages s'arrêtaient au premier `poll()` vide ✅
+
+`KafkaAdminService.getEarliestRecords` et `getRecordsWithPredicate` partageaient la même boucle :
+
+```java
+if (polled.isEmpty()) moreRecords = false;
+```
+
+Un `poll()` vide ne veut **pas** dire que le topic est épuisé. Sur un consommateur neuf, le premier
+poll revient très souvent vide pendant que les métadonnées se résolvent ou que le fetch est en vol.
+La détection de doublons jugeait donc un topic sur une poignée d'enregistrements — parfois zéro — et
+rapportait un « 0 duplicate » confiant. Le même défaut affectait le Topic Explorer, le Stream Flow
+et le Process Mining, qui partagent ces méthodes.
+
+**Correction** : une boucle unique `drain()`, dont la terminaison est pilotée par les **offsets de
+fin** (`position(tp) < endOffset`), pas par un poll vide. Un plafond de polls vides consécutifs (3)
+et un budget de 20 s restent en filet de sécurité contre un broker lent, et le nombre réellement lu
+est déjà rapporté par l'audit — donc une lecture courte se voit au lieu de mentir.
+
+Le budget est une constante et non une propriété `ExplorerConfig` : ce service est construit avec le
+seul `KafkaConfig` dans une douzaine de tests, et la valeur n'existe que pour empêcher un broker
+malade d'immobiliser le thread appelant — les appelants bornent déjà ce qu'ils demandent.
+
+### S7 — Budget de temps global sur un run ✅
+
+Un `COUNT(*)` Flink par topic à 5 s de timeout sur 4 workers : un cluster de 2 000 topics peut
+occuper quarante minutes, sans que rien ne le borne.
+
+`explorer.audit-max-duration-ms` (30 min par défaut, `0` désactive) borne le run. Le mécanisme
+réutilise celui de l'annulation (S4) : au-delà de l'échéance, les topics restants sont sautés, la
+phase de flows est abandonnée, et le rapport partiel est conservé avec le statut `CANCELLED`.
+
+`globalStats.stopReason` distingue `REQUESTED` d'un `TIME_BUDGET` — « annulé » sans préciser par qui
+serait trompeur. La note de portée et le bandeau UI le disent, et le bandeau pointe la propriété à
+augmenter plutôt que de laisser lire un rapport tronqué.
+
+> **Compromis assumé** : le défaut est *actif* à 30 minutes. Un cluster qui mettait 40 minutes
+> obtiendra désormais un rapport partiel — mais un rapport partiel **qui l'annonce**, ce qui était le
+> vrai problème. Mettre le défaut à `0` aurait livré la capacité sans la rendre effective.
+
+### S8 — Doublons scannés depuis la fin du topic ✅
+
+`detectDuplicates` lisait les 10 000 **premiers** messages, alors que la détection de poison et la
+latence de flow échantillonnent les messages **récents**. Sur un topic avec rétention, cela jugeait
+les plus vieux enregistrements survivants : intéressant pour un historique, mais rarement la
+question que pose un opérateur (« est-ce que mon producteur duplique *en ce moment* ? »).
+
+**Correction** : lecture depuis la fin par défaut, cohérente avec le reste.
+`explorer.audit-duplicate-scan-from: EARLIEST` restaure l'ancien comportement. Le libellé de l'issue
+et la note de portée suivent le bout du topic réellement lu (« over the last N » / « from the end
+of each topic ») — un message qui dirait « first » sur une lecture de fin serait pire que pas de
+message du tout.
+
+### S9 — Diff topic par topic entre deux runs ✅
+
+L'historique (S5) donne le delta de score de santé d'un run au suivant, ce qui répond à « est-ce que
+ça s'améliore ? ». La suite — **quels** topics ont bougé — est ce sur quoi un opérateur agit.
+
+`GET /api/audit/compare?from=…&to=…` produit un `AuditDiff`. Chaque topic est classé `REGRESSED` /
+`IMPROVED` / `ADDED` / `REMOVED` / `ISSUES_CHANGED`, avec les constats **apparus** et **résolus**.
+Le tri met les régressions en tête. Sur la page, un bouton « Diff » par ligne d'historique compare
+le run à celui qui le précède.
+
+Trois décisions :
+
+* **Seuls les topics dont la santé a bougé sont listés**, les autres sont comptés. Sur un cluster de
+  2 000 topics, tout lister noierait la poignée qui compte. Un volume de messages qui change n'est
+  pas un constat : il change sur tout topic vivant.
+* **Refus de comparer contre l'ancienne échelle binaire** (409, avec la raison). `UNHEALTHY` ne
+  permet pas de décider d'un sens de variation — même raisonnement que pour l'ouverture d'un rapport
+  legacy (S5). Répondre quand même serait une supposition déguisée en résultat.
+* **Avertissement quand les deux runs n'avaient pas les mêmes checks actifs.** Comparer un run
+  « schéma seul » à un run complet se lirait comme une amélioration massive alors que seul le
+  périmètre a changé.
+
+Les rapports sont résolus d'abord en mémoire, puis dans le topic d'historique, et comparés comme
+arbres JSON dans les deux cas : un seul chemin de code, et pas de désérialisation d'anciens formats.
+
+Reste ouvert : la comparaison de deux runs **arbitraires** est supportée par l'API mais l'UI ne
+propose que « avec le précédent ».
+
 ---
 
 ## 5. Constaté, non traité
@@ -347,20 +471,6 @@ doit pas paraître figé), et un bandeau au-dessus du rapport partiel.
 Ces points sont réels mais dépassent le périmètre d'une correction de la fonctionnalité Audit ;
 ils sont listés pour décision.
 
-* **`internal.audit.history` reste en écriture seule.** `GET /api/audit/last` ne sert que les runs
-  du processus courant ; après un redémarrage, l'historique persisté dans Kafka n'est toujours pas
-  relu. Un vrai écran d'historique (liste des runs, comparaison de deux rapports) demanderait un
-  lecteur du topic au démarrage, sur le modèle de `MetricService`.
-* **La détection de doublons lit depuis EARLIEST** alors que tout le reste échantillonne les
-  messages récents. Sur un topic avec rétention, elle juge les 10 000 plus vieux messages
-  survivants, pas forcément ce qu'un opérateur attend.
-* **Pas de budget global sur l'audit.** Un `COUNT(*)` Flink par topic à 5 s de timeout, sur
-  4 threads : un cluster de 2 000 topics peut occuper 40 minutes.
-* **`KafkaAdminService.getEarliestRecords` / `getRecordsWithPredicate` s'arrêtent au premier
-  `poll()` vide.** Sur un broker lent ou une partition dont les métadonnées ne sont pas encore
-  résolues, le scan peut se terminer prématurément et sous-estimer les doublons. Le correctif
-  (compter les polls vides consécutifs, ou boucler jusqu'aux offsets de fin) touche un service
-  partagé par le Topic Explorer, le Stream Flow et le Process Mining.
 * **Pas d'authentification.** `POST /api/audit/start` reste déclenchable par n'importe qui sur le
   réseau, et un audit est une opération coûteuse pour le cluster. C'est la posture assumée du
   projet (cf. « Security Notes » dans `CLAUDE.md`), rappelée ici parce que la suppression du

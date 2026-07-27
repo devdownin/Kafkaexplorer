@@ -2,8 +2,13 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.yourcompany.kafkasqlexplorer.web;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.yourcompany.kafkasqlexplorer.domain.AuditDiff;
+import com.yourcompany.kafkasqlexplorer.domain.AuditHistory;
 import com.yourcompany.kafkasqlexplorer.domain.AuditOptions;
 import com.yourcompany.kafkasqlexplorer.domain.AuditReport;
+import com.yourcompany.kafkasqlexplorer.service.AuditDiffService;
+import com.yourcompany.kafkasqlexplorer.service.AuditHistoryService;
 import com.yourcompany.kafkasqlexplorer.service.AuditService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -21,9 +26,15 @@ import org.springframework.web.bind.annotation.*;
 public class AuditController {
 
     private final AuditService auditService;
+    private final AuditHistoryService auditHistoryService;
+    private final AuditDiffService auditDiffService;
 
-    public AuditController(AuditService auditService) {
+    public AuditController(AuditService auditService,
+                           AuditHistoryService auditHistoryService,
+                           AuditDiffService auditDiffService) {
         this.auditService = auditService;
+        this.auditHistoryService = auditHistoryService;
+        this.auditDiffService = auditDiffService;
     }
 
     /**
@@ -71,5 +82,41 @@ public class AuditController {
     public ResponseEntity<AuditReport> getLastAudit() {
         AuditReport report = auditService.getLastAuditReport();
         return report != null ? ResponseEntity.ok(report) : ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Past runs read back from {@code internal.audit.history}, newest first. Unlike {@code /last}
+     * this survives a restart. The response carries the scan bounds — the read is capped, so
+     * "these are the runs" would otherwise be a claim it cannot make.
+     */
+    @GetMapping("/history")
+    public AuditHistory getHistory() {
+        return auditHistoryService.listHistory();
+    }
+
+    /**
+     * The stored report for one past run, as recorded. Returned as raw JSON rather than an
+     * {@code AuditReport}: records written before graded severity have a shape the current type
+     * cannot deserialize, and handing back what was stored beats failing or guessing.
+     */
+    @GetMapping("/history/{id}")
+    public ResponseEntity<JsonNode> getHistoricalReport(@PathVariable String id) {
+        JsonNode report = auditHistoryService.findReport(id);
+        return report != null ? ResponseEntity.ok(report) : ResponseEntity.notFound().build();
+    }
+
+    /**
+     * Topic-by-topic comparison of two runs. 404 when either is out of reach, 409 when one of them
+     * predates graded severity — the retired binary scale cannot say whether a topic improved or
+     * regressed, and answering anyway would be a guess dressed as a result.
+     */
+    @GetMapping("/compare")
+    public ResponseEntity<?> compare(@RequestParam String from, @RequestParam String to) {
+        AuditDiffService.DiffResult result = auditDiffService.compare(from, to);
+        if (result.diff() != null) return ResponseEntity.ok(result.diff());
+        HttpStatus status = result.error() == AuditDiffService.DiffError.LEGACY_SHAPE
+            ? HttpStatus.CONFLICT
+            : HttpStatus.NOT_FOUND;
+        return ResponseEntity.status(status).body(result.message());
     }
 }
