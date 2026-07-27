@@ -436,6 +436,34 @@ et la note de portée suivent le bout du topic réellement lu (« over the last 
 of each topic ») — un message qui dirait « first » sur une lecture de fin serait pire que pas de
 message du tout.
 
+### S9 — Diff topic par topic entre deux runs ✅
+
+L'historique (S5) donne le delta de score de santé d'un run au suivant, ce qui répond à « est-ce que
+ça s'améliore ? ». La suite — **quels** topics ont bougé — est ce sur quoi un opérateur agit.
+
+`GET /api/audit/compare?from=…&to=…` produit un `AuditDiff`. Chaque topic est classé `REGRESSED` /
+`IMPROVED` / `ADDED` / `REMOVED` / `ISSUES_CHANGED`, avec les constats **apparus** et **résolus**.
+Le tri met les régressions en tête. Sur la page, un bouton « Diff » par ligne d'historique compare
+le run à celui qui le précède.
+
+Trois décisions :
+
+* **Seuls les topics dont la santé a bougé sont listés**, les autres sont comptés. Sur un cluster de
+  2 000 topics, tout lister noierait la poignée qui compte. Un volume de messages qui change n'est
+  pas un constat : il change sur tout topic vivant.
+* **Refus de comparer contre l'ancienne échelle binaire** (409, avec la raison). `UNHEALTHY` ne
+  permet pas de décider d'un sens de variation — même raisonnement que pour l'ouverture d'un rapport
+  legacy (S5). Répondre quand même serait une supposition déguisée en résultat.
+* **Avertissement quand les deux runs n'avaient pas les mêmes checks actifs.** Comparer un run
+  « schéma seul » à un run complet se lirait comme une amélioration massive alors que seul le
+  périmètre a changé.
+
+Les rapports sont résolus d'abord en mémoire, puis dans le topic d'historique, et comparés comme
+arbres JSON dans les deux cas : un seul chemin de code, et pas de désérialisation d'anciens formats.
+
+Reste ouvert : la comparaison de deux runs **arbitraires** est supportée par l'API mais l'UI ne
+propose que « avec le précédent ».
+
 ---
 
 ## 5. Constaté, non traité
@@ -443,9 +471,6 @@ message du tout.
 Ces points sont réels mais dépassent le périmètre d'une correction de la fonctionnalité Audit ;
 ils sont listés pour décision.
 
-* **Pas de diff topic par topic entre deux rapports.** L'historique (S5) affiche le delta de score
-  de santé d'un run au suivant, ce qui répond à « est-ce que ça s'améliore ? ». Savoir *quels* topics
-  se sont dégradés demanderait de charger deux rapports complets et de les comparer ligne à ligne.
 * **Pas d'authentification.** `POST /api/audit/start` reste déclenchable par n'importe qui sur le
   réseau, et un audit est une opération coûteuse pour le cluster. C'est la posture assumée du
   projet (cf. « Security Notes » dans `CLAUDE.md`), rappelée ici parce que la suppression du

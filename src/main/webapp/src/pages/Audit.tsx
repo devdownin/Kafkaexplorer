@@ -113,6 +113,47 @@ interface AuditHistory {
   warnings: string[];
 }
 
+type ChangeKind = 'ADDED' | 'REMOVED' | 'REGRESSED' | 'IMPROVED' | 'ISSUES_CHANGED';
+
+interface TopicDiff {
+  name: string;
+  change: ChangeKind;
+  fromStatus: Severity | null;
+  toStatus: Severity | null;
+  fromMessageCount: number;
+  toMessageCount: number;
+  fromDuplicateCount: number;
+  toDuplicateCount: number;
+  fromPoisonCount: number;
+  toPoisonCount: number;
+  newIssues: string[];
+  resolvedIssues: string[];
+}
+
+interface AuditDiff {
+  fromAuditId: string;
+  toAuditId: string;
+  fromTimestamp: number;
+  toTimestamp: number;
+  added: number;
+  removed: number;
+  regressed: number;
+  improved: number;
+  issuesChanged: number;
+  unchanged: number;
+  healthScoreDelta: number | null;
+  topics: TopicDiff[];
+  warnings: string[];
+}
+
+const CHANGE_META: Record<ChangeKind, { label: string; tone: BadgeTone; icon: string }> = {
+  REGRESSED:      { label: 'Regressed', tone: 'error',   icon: 'trending_down' },
+  ADDED:          { label: 'New',       tone: 'primary', icon: 'add_circle' },
+  ISSUES_CHANGED: { label: 'Changed',   tone: 'warning', icon: 'swap_horiz' },
+  REMOVED:        { label: 'Gone',      tone: 'neutral', icon: 'remove_circle' },
+  IMPROVED:       { label: 'Improved',  tone: 'success', icon: 'trending_up' },
+};
+
 interface AuditOptions {
   checkSchema: boolean;
   checkPoisonMessages: boolean;
@@ -177,6 +218,8 @@ const Audit: React.FC = () => {
   const [history, setHistory] = useState<AuditHistory | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [loadingRunId, setLoadingRunId] = useState<string | null>(null);
+  const [diff, setDiff] = useState<AuditDiff | null>(null);
+  const [diffingRunId, setDiffingRunId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'topics' | 'flows'>('topics');
   const [options, setOptions] = useState<AuditOptions>(ALL_CHECKED);
   // Restreint l'audit aux topics dont le nom commence par ce préfixe (vide = tous).
@@ -266,6 +309,27 @@ const Audit: React.FC = () => {
         : 'Failed to load the archived report.');
     } finally {
       setLoadingRunId(null);
+    }
+  };
+
+  /** Compare un run à celui qui le précède dans le temps. */
+  const compareWithPrevious = async (run: AuditRunSummary, previous: AuditRunSummary) => {
+    setDiffingRunId(run.auditId);
+    setError(null);
+    setDiff(null);
+    try {
+      const res = await axios.get<AuditDiff>('/api/audit/compare', {
+        params: { from: previous.auditId, to: run.auditId },
+      });
+      setDiff(res.data);
+    } catch (e) {
+      // 409 = une des deux exécutions précède la sévérité graduée ; le backend explique pourquoi
+      // il refuse plutôt que d'inventer un sens de variation.
+      setError(axios.isAxiosError(e) && typeof e.response?.data === 'string'
+        ? e.response.data
+        : 'Failed to compare the two runs.');
+    } finally {
+      setDiffingRunId(null);
     }
   };
 
@@ -629,7 +693,22 @@ const Audit: React.FC = () => {
                         <Td className="text-right font-mono tabular-nums text-on-surface-variant">
                           {run.durationMs == null ? '—' : formatDuration(run.durationMs)}
                         </Td>
-                        <Td className="text-right">
+                        <Td className="text-right whitespace-nowrap">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            icon="difference"
+                            loading={diffingRunId === run.auditId}
+                            disabled={!previous || run.legacy || previous.legacy || diffingRunId != null}
+                            title={!previous
+                              ? 'No earlier run to compare against'
+                              : run.legacy || previous.legacy
+                                ? 'One of the two runs predates graded severity — not comparable'
+                                : 'Compare with the previous run'}
+                            onClick={() => previous && compareWithPrevious(run, previous)}
+                          >
+                            Diff
+                          </Button>
                           <Button
                             size="sm"
                             variant="ghost"
@@ -659,6 +738,101 @@ const Audit: React.FC = () => {
               {history.warnings.map(w => (
                 <p key={w} className="text-[11px] text-warning">{w}</p>
               ))}
+            </div>
+          )}
+        </Card>
+      )}
+
+      {/* Diff entre deux runs — quels topics ont bougé, pas seulement de combien le score */}
+      {diff && (
+        <Card padding="md">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <span className="text-[11px] uppercase font-medium tracking-[0.05em] text-on-surface-variant">
+                Comparison
+              </span>
+              <p className="text-[12px] text-on-surface mt-1">
+                {new Date(diff.fromTimestamp).toLocaleString()}
+                <span aria-hidden="true" className="material-symbols-outlined text-[14px] align-middle mx-1 text-outline">arrow_forward</span>
+                {new Date(diff.toTimestamp).toLocaleString()}
+                {diff.healthScoreDelta != null && (
+                  <span className={`ml-2 font-medium ${diff.healthScoreDelta >= 0 ? 'text-success' : 'text-error'}`}>
+                    {diff.healthScoreDelta >= 0 ? '+' : ''}{Math.round(diff.healthScoreDelta * 100)} pts health
+                  </span>
+                )}
+              </p>
+            </div>
+            <Button size="sm" variant="ghost" icon="close" aria-label="Close comparison" onClick={() => setDiff(null)} />
+          </div>
+
+          <div className="flex flex-wrap gap-x-4 gap-y-1 mt-3 text-[12px]">
+            <span className="text-error">{diff.regressed} regressed</span>
+            <span className="text-success">{diff.improved} improved</span>
+            <span className="text-primary">{diff.added} new</span>
+            <span className="text-on-surface-variant">{diff.removed} gone</span>
+            <span className="text-warning">{diff.issuesChanged} changed</span>
+            <span className="text-outline">{diff.unchanged} unchanged</span>
+          </div>
+
+          {diff.warnings.map(w => (
+            <p key={w} className="text-[11px] text-warning mt-2">{w}</p>
+          ))}
+
+          {diff.topics.length === 0 ? (
+            <p className="text-[12px] text-on-surface-variant mt-3">
+              No topic changed health between these two runs.
+            </p>
+          ) : (
+            <div className="mt-3">
+              <Table rowCount={diff.topics.length}>
+                <TableHead>
+                  <tr>
+                    <Th>Topic</Th>
+                    <Th className="text-center">Change</Th>
+                    <Th className="text-center">Health</Th>
+                    <Th>Findings</Th>
+                  </tr>
+                </TableHead>
+                <TableBody>
+                  {diff.topics.map(t => {
+                    const meta = CHANGE_META[t.change];
+                    return (
+                      <TableRow key={t.name}>
+                        <Td className="font-mono font-medium">
+                          <Link to={`/topic/${encodeURIComponent(t.name)}`} className="text-on-surface hover:text-primary hover:underline">
+                            {t.name}
+                          </Link>
+                        </Td>
+                        <Td className="text-center">
+                          <Badge tone={meta.tone}>{meta.label}</Badge>
+                        </Td>
+                        <Td className="text-center whitespace-nowrap">
+                          {t.fromStatus && <Badge tone={HEALTH_TONE[t.fromStatus] ?? 'neutral'}>{t.fromStatus}</Badge>}
+                          {t.fromStatus && t.toStatus && (
+                            <span aria-hidden="true" className="material-symbols-outlined text-[14px] align-middle mx-1 text-outline">arrow_forward</span>
+                          )}
+                          {t.toStatus && <Badge tone={HEALTH_TONE[t.toStatus] ?? 'neutral'}>{t.toStatus}</Badge>}
+                        </Td>
+                        <Td>
+                          <div className="flex flex-wrap gap-1">
+                            {t.newIssues.map(issue => (
+                              <span key={`new-${issue}`} className="text-[11px] px-1.5 py-0.5 rounded border bg-error/10 text-error border-error/25"
+                                title="Present in the later run only">+ {issue}</span>
+                            ))}
+                            {t.resolvedIssues.map(issue => (
+                              <span key={`old-${issue}`} className="text-[11px] px-1.5 py-0.5 rounded border bg-success/10 text-success border-success/25 line-through"
+                                title="Present in the baseline run only">− {issue}</span>
+                            ))}
+                            {t.newIssues.length === 0 && t.resolvedIssues.length === 0 && (
+                              <span className="text-outline">—</span>
+                            )}
+                          </div>
+                        </Td>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
             </div>
           )}
         </Card>
