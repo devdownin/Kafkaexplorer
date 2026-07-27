@@ -9,7 +9,7 @@ import {
   Button, Badge, Input, Select, Field, NumberInput, EmptyState, useConfirm, cn,
   useVirtualRows, ScrollList,
 } from '../components/ui';
-import { describeQueryError, type QueryErrorLocation } from './queryError';
+import { describeQueryError, describeApiError, type QueryErrorInfo, type QueryErrorLocation } from './queryError';
 
 /** Contrôle segmenté compact (mode d'exécution, offset). */
 function Segmented<T extends string>({ value, onChange, options, ariaLabel }: {
@@ -236,11 +236,11 @@ const QueryWorkbench: React.FC = () => {
   const [executionMs, setExecutionMs] = useState<number | null>(null);
   const [executionMode, setExecutionMode] = useState<ExecutionMode>('SYNC_READ');
   const [offsetMode, setOffsetMode] = useState<'EARLIEST' | 'LATEST'>('EARLIEST');
-  const [validationError, setValidationError] = useState<string | null>(null);
+  const [panelError, setPanelError] = useState<QueryErrorInfo | null>(null);
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [showErrorDetails, setShowErrorDetails] = useState(false);
-  useEffect(() => { setShowErrorDetails(false); }, [results]);
+  useEffect(() => { setShowErrorDetails(false); }, [results, panelError]);
 
   const sortedRows = useMemo(() => {
     if (!results?.rows || !sortCol) return results?.rows ?? [];
@@ -252,9 +252,12 @@ const QueryWorkbench: React.FC = () => {
   }, [results?.rows, sortCol, sortDir]);
 
   // Erreur classée (titre lisible + piste + position) — voir queryError.ts.
+  // Une requête rejetée avant exécution (mode, validateur backend) passe par le même
+  // panneau que l'échec d'exécution : même titre lisible, même piste, même marqueur
+  // Monaco. Un rejet pré-vol l'emporte, puisqu'il n'y a alors aucun résultat.
   const queryError = useMemo(
-    () => (results?.error ? describeQueryError(results.error) : null),
-    [results?.error],
+    () => panelError ?? (results?.error ? describeQueryError(results.error) : null),
+    [panelError, results?.error],
   );
 
   // Place le curseur sur la position fautive et la révèle dans l'éditeur.
@@ -283,9 +286,10 @@ const QueryWorkbench: React.FC = () => {
     }] : []);
   }, [monaco, queryError]);
 
-  // Efface le marqueur dès que l'utilisateur édite le SQL : il pointerait
-  // sinon une position devenue obsolète.
+  // Efface le marqueur et le rejet pré-vol dès que l'utilisateur édite le SQL :
+  // ils pointeraient sinon une position et une requête devenues obsolètes.
   useEffect(() => {
+    setPanelError(null);
     if (!monaco || !editorRef.current) return;
     const model = editorRef.current.getModel();
     if (model) monaco.editor.setModelMarkers(model, 'kse-sql-error', []);
@@ -398,21 +402,37 @@ const QueryWorkbench: React.FC = () => {
   };
 
   const runQuery = async () => {
-    setValidationError(null);
+    setPanelError(null);
     const statementType = detectStatementType(sql);
 
     if (executionMode === 'SYNC_READ' && statementType === 'INSERT') {
-      setValidationError('INSERT INTO must be submitted in Flink Job mode.');
+      setResults(null); setSubmittedJob(null);
+      setPanelError({
+        title: 'INSERT INTO cannot run in Read mode',
+        hint: 'Switch the execution mode to Flink Job — Read mode returns rows, so it only accepts SELECT, EXPLAIN and CREATE TABLE.',
+        raw: 'INSERT INTO must be submitted in Flink Job mode.',
+      });
       return;
     }
     if (executionMode === 'ASYNC_JOB' && statementType !== 'INSERT') {
-      setValidationError('Flink Job mode only accepts INSERT INTO statements.');
+      setResults(null); setSubmittedJob(null);
+      setPanelError({
+        title: 'Flink Job mode only accepts INSERT INTO',
+        hint: `This statement is ${statementType || 'not an INSERT'}. Switch back to Read mode to run it and see the rows.`,
+        raw: 'Flink Job mode only accepts INSERT INTO statements.',
+      });
       return;
     }
 
     try {
       const vRes = await axios.post<{ valid: boolean; error?: string }>('/api/query/validate', { sql });
-      if (!vRes.data.valid) { setValidationError(vRes.data.error ?? 'SQL validation failed'); return; }
+      if (!vRes.data.valid) {
+        // Rejet avant exécution : le backend renvoie déjà le texte du parser (avec sa
+        // ligne/colonne quand il en a une), on le classe comme n'importe quelle erreur.
+        setResults(null); setSubmittedJob(null);
+        setPanelError(describeQueryError(vRes.data.error ?? 'SQL validation failed'));
+        return;
+      }
     } catch { /* let execution handle it */ }
 
     setExecuting(true); setResults(null); setSubmittedJob(null); setSortCol(null);
@@ -443,12 +463,14 @@ const QueryWorkbench: React.FC = () => {
       }
     } catch (error) {
       setExecutionMs(Date.now() - start);
-      const message = axios.isAxiosError(error)
-        ? String(error.response?.data?.message ?? error.response?.data?.error ?? 'Query execution failed')
-        : 'Query execution failed';
-      setResults({ queryId: '', columns: [], rows: [], error: message });
+      // describeApiError couvre aussi ce que le corps de réponse ne dit pas : backend
+      // injoignable, requête interrompue. Sans lui, une panne de transport s'affichait
+      // « Query execution failed », qui n'apprend rien.
+      const info = describeApiError(error, 'Query execution failed');
+      setResults(null);
       setSubmittedJob(null);
-      toast(message, 'error');
+      setPanelError(info);
+      toast(info.title, 'error');
     } finally { setExecuting(false); }
   };
   runQueryRef.current = runQuery;
@@ -914,19 +936,11 @@ const QueryWorkbench: React.FC = () => {
                     <button onClick={() => exportResults('json')} className="flex items-center gap-1 text-[11px] text-on-surface-variant hover:text-on-surface transition-colors"><span className="material-symbols-outlined text-[16px]">download</span>JSON</button>
                   </div>
                 )}
-                <Badge tone={executing ? 'primary' : (results?.error ? 'error' : (results || submittedJob) ? 'success' : 'neutral')} dot>
-                  {executing ? 'Running' : submittedJob ? 'Job submitted' : results?.error ? 'Error' : results ? 'Complete' : 'Idle'}
+                <Badge tone={executing ? 'primary' : (queryError ? 'error' : (results || submittedJob) ? 'success' : 'neutral')} dot>
+                  {executing ? 'Running' : queryError ? 'Error' : submittedJob ? 'Job submitted' : results ? 'Complete' : 'Idle'}
                 </Badge>
               </div>
             </div>
-
-            {validationError && (
-              <div className="mx-4 mt-3 flex items-center gap-2 px-3 py-2 rounded-lg border border-warning/30 bg-warning/10 text-warning text-[12px] shrink-0" role="alert">
-                <span className="material-symbols-outlined text-[18px]">warning</span>
-                <span>{validationError}</span>
-                <button onClick={() => setValidationError(null)} aria-label="Dismiss" className="ml-auto"><span className="material-symbols-outlined text-[18px]">close</span></button>
-              </div>
-            )}
 
             <div ref={resultsScrollRef} className="flex-1 overflow-auto custom-scrollbar">
               {queryError ? (
@@ -956,7 +970,7 @@ const QueryWorkbench: React.FC = () => {
                         <pre className="mt-2 text-[10px] text-on-surface-variant font-mono whitespace-pre-wrap overflow-x-auto leading-relaxed border-t border-error/20 pt-2">{queryError.raw}</pre>
                       )}
                     </div>
-                    <button onClick={() => navigator.clipboard.writeText(results!.error!).then(() => toast('Error copied', 'success'))}
+                    <button onClick={() => navigator.clipboard.writeText(queryError.raw || queryError.title).then(() => toast('Error copied', 'success'))}
                       className="text-outline hover:text-on-surface shrink-0 transition-colors" title="Copy error">
                       <span className="material-symbols-outlined text-sm">content_copy</span>
                     </button>

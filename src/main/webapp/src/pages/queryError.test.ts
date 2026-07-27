@@ -57,10 +57,51 @@ describe('describeQueryError', () => {
     expect(info.hint).toMatch(/SELECT/);
   });
 
+  it('names an unknown function', () => {
+    const info = describeQueryError("No match found for function signature TO_TIMSTAMP(<CHARACTER>)");
+    expect(info.title).toContain('TO_TIMSTAMP');
+    expect(info.title.toLowerCase()).toContain('unknown function');
+  });
+
+  it('recognises a type mismatch and suggests a cast', () => {
+    const info = describeQueryError("Cannot apply '>' to arguments of type '<VARCHAR> > <INTEGER>'");
+    expect(info.title).toBe('Incompatible types');
+    expect(info.hint).toMatch(/CAST/);
+  });
+
+  it('recognises a column missing from GROUP BY', () => {
+    const info = describeQueryError("Expression 'status' is not being grouped");
+    expect(info.title).toContain('status');
+    expect(info.hint).toMatch(/GROUP BY/);
+  });
+
+  it('handles the "does not exist" phrasing for a missing table', () => {
+    const info = describeQueryError("Table (or view) 'orders' does not exist");
+    expect(info.title).toContain('orders');
+    expect(info.title.toLowerCase()).toContain('unknown table');
+  });
+
   it('falls back to the first non-empty line for unknown errors', () => {
     const info = describeQueryError('\n\nSomething entirely unexpected happened\n\tat foo');
     expect(info.title).toBe('Something entirely unexpected happened');
     expect(info.hint).toBeUndefined();
+  });
+
+  it('bounds the fallback title but keeps the full text in raw', () => {
+    // Le backend chaîne désormais les causes : le titre ne doit pas devenir un pavé.
+    const raw = `Failed to execute: ${'x'.repeat(500)}`;
+    const info = describeQueryError(raw);
+    expect(info.title.length).toBeLessThanOrEqual(181);
+    expect(info.title.endsWith('…')).toBe(true);
+    expect(info.raw).toBe(raw);
+  });
+
+  it('classifies a chained backend message by its innermost cause', () => {
+    // SqlErrorClassifier.explain() aplatit la chaîne en "wrapper: cause".
+    const info = describeQueryError(
+      'Failed to execute query: SQL parse failed. Encountered "FORM" at line 4, column 3.');
+    expect(info.title).toBe('Syntax error');
+    expect(info.location).toEqual({ line: 4, column: 3 });
   });
 
   it('degrades gracefully on empty input', () => {

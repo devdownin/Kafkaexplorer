@@ -35,13 +35,17 @@ export function parseSqlLocation(message: string): QueryErrorLocation | undefine
   return { line, column };
 }
 
-/** Première ligne non vide — repli quand aucune famille ne matche. */
+/** Longueur max d'un titre : le backend chaîne désormais les causes, le brut peut être long. */
+const MAX_TITLE_CHARS = 180;
+
+/** Première ligne non vide, bornée — repli quand aucune famille ne matche. */
 function firstLine(message: string): string {
+  let candidate = message.trim();
   for (const line of message.split('\n')) {
     const t = line.trim();
-    if (t) return t;
+    if (t) { candidate = t; break; }
   }
-  return message.trim();
+  return candidate.length > MAX_TITLE_CHARS ? `${candidate.slice(0, MAX_TITLE_CHARS)}…` : candidate;
 }
 
 export function describeQueryError(rawInput: string | null | undefined): QueryErrorInfo {
@@ -85,7 +89,8 @@ export function describeQueryError(rawInput: string | null | undefined): QueryEr
 
   // ── Table / objet introuvable ───────────────────────────────────────────
   const tableMatch = /(?:Object|Table)\s+'([^']+)'\s+not found/i.exec(unwrapped)
-    ?? /(?:Object|Table)\s+"([^"]+)"\s+not found/i.exec(unwrapped);
+    ?? /(?:Object|Table)\s+"([^"]+)"\s+not found/i.exec(unwrapped)
+    ?? /Table\s+\(or view\)\s+'([^']+)'\s+does not exist/i.exec(unwrapped);
   if (tableMatch) {
     return {
       title: `Unknown table “${tableMatch[1]}”`,
@@ -113,6 +118,35 @@ export function describeQueryError(rawInput: string | null | undefined): QueryEr
       hint: location
         ? `Check for a typo, a missing keyword, comma or quote near line ${location.line}:${location.column}.`
         : 'Check for a typo, a missing keyword, comma or quote.',
+      location, raw,
+    };
+  }
+
+  // ── Fonction inconnue ───────────────────────────────────────────────────
+  const functionMatch = /No match found for function signature\s+([A-Za-z_][\w]*)/i.exec(unwrapped);
+  if (functionMatch) {
+    return {
+      title: `Unknown function “${functionMatch[1]}”`,
+      hint: 'Check the spelling and the argument types — the query runs on Flink SQL, whose built-in functions differ from those of other SQL dialects.',
+      location, raw,
+    };
+  }
+
+  // ── Types incompatibles ─────────────────────────────────────────────────
+  if (/cannot apply\s+'|incompatible types|argument type mismatch|cannot be cast to/i.test(unwrapped)) {
+    return {
+      title: 'Incompatible types',
+      hint: 'An operator or function got a type it cannot handle. Cast the column explicitly, e.g. CAST(amount AS DOUBLE).',
+      location, raw,
+    };
+  }
+
+  // ── GROUP BY manquant ───────────────────────────────────────────────────
+  const groupingMatch = /Expression\s+'([^']+)'\s+is not being grouped/i.exec(unwrapped);
+  if (groupingMatch) {
+    return {
+      title: `“${groupingMatch[1]}” must be grouped or aggregated`,
+      hint: 'Every selected column that is not aggregated has to appear in the GROUP BY clause.',
       location, raw,
     };
   }

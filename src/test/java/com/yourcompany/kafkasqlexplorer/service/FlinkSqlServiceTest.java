@@ -499,6 +499,106 @@ class FlinkSqlServiceTest {
     }
 
     // ──────────────────────────────────────────────────────────────────────────────
+    // An invalid query is reported, not quietly served by the direct reader
+    //
+    // The direct reader only regex-matches the table name out of the FROM clause, so before
+    // these fixes a typo came back as a page of rows and the query looked like it worked.
+    // ──────────────────────────────────────────────────────────────────────────────
+
+    /** Registers 'strict.mode.topic' as a 2-row datagen table, with Kafka records behind it. */
+    private void stubRegisteredTopicWithRecords() throws Exception {
+        doReturn(List.of("strict.mode.topic")).when(kafkaAdminService).listTopics();
+        doReturn(MessageFormat.JSON).when(schemaInferenceService).detectFormat("strict.mode.topic");
+        doReturn(Map.of("event_id", "STRING", "payload", "STRING"))
+                .when(schemaInferenceService).inferSchema(anyString(), any());
+        doReturn("CREATE TABLE strict_mode_topic (" +
+                "  event_id STRING, payload STRING" +
+                ") WITH ('connector'='datagen','number-of-rows'='2')")
+                .when(ddlGeneratorService).generateDdl(anyString(), any(), any());
+        // If the direct reader were to take over, it would happily return these.
+        doReturn(List.of(
+                new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                        "strict.mode.topic", 0, 0L, null, "{\"event_id\":\"E1\",\"payload\":\"p1\"}"),
+                new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                        "strict.mode.topic", 0, 1L, null, "{\"event_id\":\"E2\",\"payload\":\"p2\"}")
+        )).when(kafkaAdminService).getRecentRecords(eq("strict.mode.topic"), anyInt());
+    }
+
+    @Test
+    void anUnknownColumnIsReportedInsteadOfFallingBackToRowsOfNulls() throws Exception {
+        stubRegisteredTopicWithRecords();
+
+        QueryResult result = execute("SELECT nonexistent_col FROM strict_mode_topic");
+
+        assertHasError(result);
+        assertTrue(result.rows().isEmpty(), "A rejected query must not return rows, got: " + result.rows());
+        assertTrue(result.error().toLowerCase().contains("nonexistent_col"),
+                "The error must name the offending column, got: " + result.error());
+    }
+
+    @Test
+    void aSyntaxErrorIsReportedWithItsPosition() throws Exception {
+        stubRegisteredTopicWithRecords();
+
+        QueryResult result = execute("SELECT event_id, FROM strict_mode_topic");
+
+        assertHasError(result);
+        assertTrue(result.rows().isEmpty(), "A malformed query must not return rows, got: " + result.rows());
+        assertTrue(result.error().matches("(?s).*line \\d+, column \\d+.*"),
+                "The error must carry a line/column so the editor can point at it, got: " + result.error());
+    }
+
+    @Test
+    void repeatedTyposDoNotTripTheSelectCircuitBreaker() throws Exception {
+        stubRegisteredTopicWithRecords();
+
+        // One more than FLINK_SELECT_FAILURE_THRESHOLD. If user errors counted, the planner
+        // would be disabled for the rest of the process and every later SELECT would silently
+        // downgrade to the direct reader.
+        for (int i = 0; i < 4; i++) {
+            assertHasError(execute("SELECT nonexistent_col FROM strict_mode_topic"));
+        }
+
+        QueryResult valid = execute("SELECT event_id, payload FROM strict_mode_topic");
+
+        assertNoError(valid);
+        assertEquals("FLINK", valid.engine(), "The Flink planner must still be in use after user typos");
+    }
+
+    @Test
+    void anUnregisteredButExistingTopicStillFallsBackToTheDirectReader() throws Exception {
+        // Schema inference finds nothing (empty topic), so auto-registration is deliberately
+        // skipped and the planner is *expected* to report the table as unknown. That is our
+        // doing, not a typo — the direct reader must still serve the query.
+        doReturn(List.of("no.schema.topic")).when(kafkaAdminService).listTopics();
+        doReturn(MessageFormat.JSON).when(schemaInferenceService).detectFormat("no.schema.topic");
+        doReturn(Map.<String, String>of()).when(schemaInferenceService).inferSchema(anyString(), any());
+        doReturn(List.of(
+                new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                        "no.schema.topic", 0, 0L, null, "{\"id\":\"A\"}"),
+                new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                        "no.schema.topic", 0, 1L, null, "{\"id\":\"B\"}")
+        )).when(kafkaAdminService).getRecentRecords(eq("no.schema.topic"), anyInt());
+
+        QueryResult result = execute("SELECT id FROM no_schema_topic");
+
+        assertNoError(result);
+        assertEquals(2, result.rows().size(), "The direct reader must still serve an unregistered topic");
+        verify(ddlGeneratorService, never()).generateDdl(anyString(), any(), any());
+    }
+
+    @Test
+    void aTrulyMissingTableIsReportedRatherThanScannedForNothing() throws Exception {
+        doReturn(List.of("some.other.topic")).when(kafkaAdminService).listTopics();
+
+        QueryResult result = execute("SELECT id FROM totally_absent_table");
+
+        assertHasError(result);
+        assertTrue(result.error().toLowerCase().contains("totally_absent_table"),
+                "The error must name the table the user asked for, got: " + result.error());
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────────
     // Helpers
     // ──────────────────────────────────────────────────────────────────────────────
 

@@ -78,6 +78,11 @@ public class FlinkSqlService {
      * Kafka reader. Reset on process restart.
      */
     private static final int FLINK_SELECT_FAILURE_THRESHOLD = 3;
+
+    /** "Object 'x' not found" / "Table 'x' not found" — the planner's way of saying it has no such table. */
+    private static final Pattern UNKNOWN_OBJECT = Pattern.compile(
+        "(?:object|table)\\s+['\"][^'\"]*['\"]\\s+not found|does not exist", Pattern.CASE_INSENSITIVE);
+
     private final java.util.concurrent.atomic.AtomicInteger flinkSelectFailures = new java.util.concurrent.atomic.AtomicInteger(0);
     private volatile boolean flinkSelectDisabled = false;
 
@@ -235,19 +240,27 @@ public class FlinkSqlService {
     }
 
     /**
+     * @param error                  non-null when a matching Kafka topic was found but registering
+     *                               it as a Flink table failed; the query stops there.
+     * @param registered             a table was created, so the UI should refresh its schema browser.
+     * @param deferredToDirectReader the Kafka topic exists but was deliberately left unregistered,
+     *                               so the Flink planner is expected to report it as unknown.
+     *                               Without this flag that "not found" reads as a user typo and the
+     *                               query would be rejected instead of falling back to the direct
+     *                               reader that was meant to serve it.
+     */
+    private record AutoRegResult(String error, boolean registered, boolean deferredToDirectReader) {
+        static AutoRegResult skip()          { return new AutoRegResult(null,  false, false); }
+        static AutoRegResult tableCreated()  { return new AutoRegResult(null,  true,  false); }
+        static AutoRegResult fail(String e)  { return new AutoRegResult(e,     false, false); }
+        static AutoRegResult deferToDirect() { return new AutoRegResult(null,  false, true);  }
+    }
+
+    /**
      * Before executing a SELECT, checks if the referenced table is already registered in Flink.
      * If not, looks for a Kafka topic whose sanitized name (dots/hyphens → underscores) matches,
      * infers its schema, generates the DDL and registers it automatically.
-     *
-     * @return null on success (or when no registration is needed), or an error message if
-     *         a matching Kafka topic was found but table registration failed.
      */
-    private record AutoRegResult(String error, boolean registered) {
-        static AutoRegResult skip()          { return new AutoRegResult(null,  false); }
-        static AutoRegResult tableCreated()  { return new AutoRegResult(null,  true);  }
-        static AutoRegResult fail(String e)  { return new AutoRegResult(e,     false); }
-    }
-
     private AutoRegResult autoRegisterTableIfNeeded(String sql) {
         if (!sql.trim().toUpperCase().startsWith("SELECT")) return AutoRegResult.skip();
         // Extract first table name after FROM (handles backtick and unquoted identifiers)
@@ -282,7 +295,7 @@ public class FlinkSqlService {
                 // No schema could be inferred (empty topic or unreadable messages).
                 // Skip Flink registration — KAFKA_DIRECT will read the topic directly.
                 log.info("Skipping auto-registration for '{}': schema inference returned empty (topic may be empty)", matchingTopic);
-                return AutoRegResult.skip();
+                return AutoRegResult.deferToDirect();
             }
             String ddl = ddlGeneratorService.generateDdl(matchingTopic, schema, format);
             if (ddl == null || !ddl.startsWith("CREATE TABLE")) {
@@ -516,8 +529,9 @@ public class FlinkSqlService {
             if (sqlToExecute.trim().toUpperCase().startsWith("SELECT")) {
                 // Prefer the real Flink planner when enabled and not tripped by the circuit breaker.
                 // The FlinkRelMetadataQuery NPE that historically forced the bypass is version
-                // dependent, so on any planner failure we fall back to the in-process direct Kafka
-                // reader and the query still succeeds.
+                // dependent, so on an *engine* failure we fall back to the in-process direct Kafka
+                // reader and the query still succeeds. A failure caused by the statement itself is
+                // returned instead — see the no-fallback note below.
                 if (explorerConfig.isFlinkSelectEnabled() && !flinkSelectDisabled) {
                     try {
                         QueryResult flinkResult = executeViaFlinkPlanner(queryId, sqlToExecute, "SELECT", limit, timeout, startTime);
@@ -531,9 +545,15 @@ public class FlinkSqlService {
                             flinkSelectFailures.set(0);
                             log.warn("Flink SELECT timed out — falling back to direct Kafka read for this query");
                         } else {
+                            QueryResult rejected = rejectIfUserError(
+                                flinkResult.error(), sqlToExecute, startTime, autoReg.deferredToDirectReader());
+                            if (rejected != null) return rejected;
                             recordFlinkSelectFailure(flinkResult.error());
                         }
                     } catch (Throwable t) {
+                        QueryResult rejected = rejectIfUserError(
+                            SqlErrorClassifier.explain(t), sqlToExecute, startTime, autoReg.deferredToDirectReader());
+                        if (rejected != null) return rejected;
                         recordFlinkSelectFailure(t.toString());
                     }
                 }
@@ -547,8 +567,32 @@ public class FlinkSqlService {
         } catch (Exception e) {
             log.error("Flink SQL execution error — query='{}' error='{}'", request.sql(), e.getMessage(), e);
             long duration = System.currentTimeMillis() - startTime;
-            return new QueryResult(Collections.emptyList(), Collections.emptyList(), duration, e.getMessage());
+            return new QueryResult(Collections.emptyList(), Collections.emptyList(), duration,
+                SqlErrorClassifier.explain(e));
         }
+    }
+
+    /**
+     * Returns a failed {@link QueryResult} when the planner rejected the statement itself, or null
+     * when the failure looks like an engine fault the direct reader can work around.
+     *
+     * <p>Falling back on a user error is actively harmful: the direct reader only regex-matches the
+     * table name out of the FROM clause, so {@code SELECT id, FROM orders} or a misspelled column
+     * comes back as a page of rows and the query looks like it worked. The planner already said
+     * precisely what is wrong, with a line and column — that answer is the useful one, and it does
+     * not count toward the circuit breaker either, or three typos would disable the Flink planner
+     * for the rest of the process.
+     */
+    private QueryResult rejectIfUserError(String rawError, String sql, long startTime, boolean deferredToDirectReader) {
+        SqlErrorClassifier.Classification classification = SqlErrorClassifier.classify(rawError);
+        if (!classification.isUserError()) return null;
+        // The topic exists, we chose not to register it, and the planner is only saying so.
+        // That is our doing, not the user's — the direct reader is the intended path here.
+        if (deferredToDirectReader && UNKNOWN_OBJECT.matcher(classification.message()).find()) return null;
+        log.debug("Rejecting invalid SELECT without falling back — query='{}' error='{}'", sql, classification.message());
+        flinkSelectFailures.set(0);
+        return new QueryResult(Collections.emptyList(), Collections.emptyList(),
+            System.currentTimeMillis() - startTime, classification.message(), false, "FLINK");
     }
 
     private QueryResult withRegisteredFlag(QueryResult qr) {
@@ -679,7 +723,11 @@ public class FlinkSqlService {
             log.error("Flink SQL execution error — query='{}' error='{}'", finalSql, e.getMessage(), e);
             cancelJobInternal(result);
             long duration = System.currentTimeMillis() - startTime;
-            return new QueryResult(Collections.emptyList(), Collections.emptyList(), duration, e.getMessage());
+            // explain() flattens the cause chain and is never blank. e.getMessage() alone is null
+            // for a bare NullPointerException, which left error() null — the caller then read the
+            // crash as a successful run of zero rows.
+            return new QueryResult(Collections.emptyList(), Collections.emptyList(), duration,
+                SqlErrorClassifier.explain(e));
         }
     }
 
