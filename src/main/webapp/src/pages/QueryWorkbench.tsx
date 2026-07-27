@@ -10,6 +10,7 @@ import {
   useVirtualRows, ScrollList,
 } from '../components/ui';
 import { describeQueryError, describeApiError, type QueryErrorInfo, type QueryErrorLocation } from './queryError';
+import { resolveScope, toTableName } from './sqlScope';
 
 /** Contrôle segmenté compact (mode d'exécution, offset). */
 function Segmented<T extends string>({ value, onChange, options, ariaLabel }: {
@@ -35,7 +36,19 @@ function Segmented<T extends string>({ value, onChange, options, ariaLabel }: {
 }
 
 interface SchemaInfo { topics: string[]; tables: string[]; health: boolean; }
-interface QueryResult { queryId: string; columns: string[]; rows: Record<string, unknown>[]; error: string | null; tableRegistered?: boolean; engine?: string; }
+interface QueryResult {
+  columns: string[];
+  rows: Record<string, unknown>[];
+  error: string | null;
+  tableRegistered?: boolean;
+  engine?: string;
+  /**
+   * Caveats the engine attached to an otherwise successful result — above all, WHERE predicates
+   * the direct reader could not apply. It reports them precisely so the UI does not present an
+   * unfiltered scan as a filtered one.
+   */
+  warnings?: string[];
+}
 interface FlinkJobSubmission {
   queryId: string;
   flinkJobId: string;
@@ -50,7 +63,11 @@ interface Tab { id: string; name: string; sql: string; }
 interface SavedQuery { id: string; name: string; sql: string; savedAt: number; }
 type ExecutionMode = 'SYNC_READ' | 'ASYNC_JOB';
 
+/** Choix de plafond de lignes. La valeur part au backend en `maxRows` — voir runQuery. */
+const ROW_LIMITS = [50, 100, 500, 1000, 5000] as const;
 const DEFAULT_LIMIT = 50;
+const TABS_STORAGE_KEY = 'kse:tabs';
+const DEFAULT_SQL = "SELECT\n  window_start, window_end, product_id,\n  SUM(quantity) AS total_sales\nFROM orders_stream\nWINDOW TUMBLING (SIZE 5 MINUTES)\nGROUP BY\n  window_start, window_end, product_id\nEMIT CHANGES;";
 // Au-delà de ce nombre de lignes, la grille passe en rendu virtualisé (seules
 // les lignes visibles sont montées). En-deçà, on garde le rendu classique —
 // aucun changement d'apparence ni de comportement pour le cas courant.
@@ -61,6 +78,47 @@ const VIRTUALIZE_THRESHOLD = 200;
 const EST_ROW_HEIGHT = 37;
 let tabCounter = 1;
 const newTab = (sql = ''): Tab => ({ id: String(++tabCounter), name: `Query ${tabCounter}`, sql });
+
+/**
+ * Restaure les onglets du dernier passage. Les requêtes sauvegardées et l'historique
+ * survivaient déjà à un rechargement, pas les onglets : le travail en cours était perdu,
+ * et un garde-fou `beforeunload` se contentait d'en avertir. On les persiste, ce qui rend
+ * cet avertissement inutile.
+ *
+ * Un `?sql=` dans l'URL ouvre un onglet supplémentaire au lieu d'écraser le premier —
+ * arriver depuis TopicExplorer ne doit pas effacer ce qui était en cours.
+ */
+function restoreTabs(urlSql: string | null): { tabs: Tab[]; activeTabId: string } {
+  let tabs: Tab[] = [];
+  let activeTabId = '';
+  try {
+    const parsed = JSON.parse(localStorage.getItem(TABS_STORAGE_KEY) || 'null');
+    const stored: unknown = parsed?.tabs;
+    if (Array.isArray(stored)) {
+      tabs = stored.filter((t): t is Tab =>
+        !!t && typeof t.id === 'string' && typeof t.name === 'string' && typeof t.sql === 'string');
+      activeTabId = typeof parsed.activeTabId === 'string' ? parsed.activeTabId : '';
+    }
+  } catch { /* stockage corrompu ou indisponible — on repart d'un onglet neuf */ }
+
+  if (!tabs.length) {
+    tabs = [{ id: '1', name: 'Query 1', sql: urlSql ? decodeURIComponent(urlSql) : DEFAULT_SQL }];
+    return { tabs, activeTabId: '1' };
+  }
+
+  // Les ids restaurés viennent d'un compteur d'une session précédente : on le repositionne
+  // au-dessus, sinon le prochain « + » recréerait un id déjà pris.
+  tabCounter = Math.max(tabCounter, ...tabs.map(t => Number(t.id) || 0));
+
+  if (urlSql) {
+    const fromUrl = newTab(decodeURIComponent(urlSql));
+    return { tabs: [...tabs, fromUrl], activeTabId: fromUrl.id };
+  }
+  return {
+    tabs,
+    activeTabId: tabs.some(t => t.id === activeTabId) ? activeTabId : tabs[0].id,
+  };
+}
 const detectStatementType = (sql: string) => {
   const stripped = sql.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, '').trim().toUpperCase();
   if (stripped.startsWith('INSERT INTO')) return 'INSERT';
@@ -86,12 +144,19 @@ const QueryWorkbench: React.FC = () => {
   useEffect(() => { tableSchemasRef.current = tableSchemas; }, [tableSchemas]);
 
   // ── Tabs ──────────────────────────────────────────────────────────────────────
-  const defaultSql = "SELECT\n  window_start, window_end, product_id,\n  SUM(quantity) AS total_sales\nFROM orders_stream\nWINDOW TUMBLING (SIZE 5 MINUTES)\nGROUP BY\n  window_start, window_end, product_id\nEMIT CHANGES;";
-  const urlSql = new URLSearchParams(location.search).get('sql');
-  const [tabs, setTabs] = useState<Tab[]>([{ id: '1', name: 'Query 1', sql: urlSql ? decodeURIComponent(urlSql) : defaultSql }]);
-  const [activeTabId, setActiveTabId] = useState('1');
+  // Une seule restauration, au premier rendu : relire le stockage à chaque rendu
+  // ressusciterait les onglets fermés.
+  const [restored] = useState(() => restoreTabs(new URLSearchParams(location.search).get('sql')));
+  const [tabs, setTabs] = useState<Tab[]>(restored.tabs);
+  const [activeTabId, setActiveTabId] = useState(restored.activeTabId);
   const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
   const [renamingName, setRenamingName] = useState('');
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(TABS_STORAGE_KEY, JSON.stringify({ tabs, activeTabId }));
+    } catch { /* quota dépassé : l'édition en cours reste valide, seule la reprise est perdue */ }
+  }, [tabs, activeTabId]);
 
   const activeTab = tabs.find(t => t.id === activeTabId) ?? tabs[0];
   const sql = activeTab.sql;
@@ -191,9 +256,20 @@ const QueryWorkbench: React.FC = () => {
         schemaRef.current?.tables.forEach(table => suggestions.push({
           label: table, kind: monaco.languages.CompletionItemKind.Class, insertText: table, range, detail: 'Flink Table',
         }));
-        Object.entries(tableSchemasRef.current).forEach(([tableName, cols]) =>
-          Object.entries(cols).forEach(([col, type]) => suggestions.push({
-            label: col, kind: monaco.languages.CompletionItemKind.Field, insertText: col, range, detail: type, documentation: `${tableName}.${col}`,
+        // Colonnes : limitées aux tables que la requête cite réellement. Proposer celles de
+        // toutes les tables chargées noyait les bonnes au milieu de dizaines d'inutiles.
+        // Tant qu'aucune table n'est citée (curseur dans le SELECT avant le FROM), on retombe
+        // sur tout ce qui est connu plutôt que de ne rien proposer.
+        const loaded = tableSchemasRef.current;
+        const scope = resolveScope(_model.getValue(), Object.keys(loaded));
+        const scoped = scope.filter(t => loaded[t]);
+        const columnSources = scoped.length ? scoped : Object.keys(loaded);
+        columnSources.forEach(tableName =>
+          Object.entries(loaded[tableName] ?? {}).forEach(([col, type]) => suggestions.push({
+            label: col, kind: monaco.languages.CompletionItemKind.Field, insertText: col, range, detail: type,
+            documentation: `${tableName}.${col}`,
+            // Les colonnes en portée passent devant les mots-clés, triés par défaut sur le label.
+            sortText: scoped.length ? `0_${col}` : `1_${col}`,
           }))
         );
         ['TUMBLE', 'HOP', 'SESSION', 'CUMULATE', 'DESCRIPTOR', 'PROCTIME', 'ROWTIME',
@@ -234,6 +310,16 @@ const QueryWorkbench: React.FC = () => {
   const [submittedJob, setSubmittedJob] = useState<FlinkJobSubmission | null>(null);
   const [executing, setExecuting] = useState(false);
   const [executionMs, setExecutionMs] = useState<number | null>(null);
+  // Plafond de lignes réellement envoyé au backend. Il était figé à 50 côté serveur
+  // (`explorer.default-max-rows`) et deviné côté UI par une constante du même nom.
+  const [maxRows, setMaxRows] = useState<number>(DEFAULT_LIMIT);
+  // Le plafond de la requête qui a produit `results` — c'est lui qui dit si le résultat
+  // est tronqué, pas la valeur courante du sélecteur (que l'utilisateur a pu changer depuis).
+  const [resultLimit, setResultLimit] = useState<number>(DEFAULT_LIMIT);
+  // Annulation : le run en cours et son AbortController. L'id est généré par le client,
+  // sinon on ne le connaîtrait qu'une fois la requête terminée — trop tard pour l'annuler.
+  const abortRef = useRef<AbortController | null>(null);
+  const runningQueryIdRef = useRef<string | null>(null);
   const [executionMode, setExecutionMode] = useState<ExecutionMode>('SYNC_READ');
   const [offsetMode, setOffsetMode] = useState<'EARLIEST' | 'LATEST'>('EARLIEST');
   const [panelError, setPanelError] = useState<QueryErrorInfo | null>(null);
@@ -259,6 +345,9 @@ const QueryWorkbench: React.FC = () => {
     () => panelError ?? (results?.error ? describeQueryError(results.error) : null),
     [panelError, results?.error],
   );
+
+  // Le résultat bute sur son propre plafond → il est probablement incomplet.
+  const truncated = !!results && !results.error && results.rows.length >= resultLimit;
 
   // Place le curseur sur la position fautive et la révèle dans l'éditeur.
   const jumpToError = useCallback((loc: QueryErrorLocation) => {
@@ -371,15 +460,9 @@ const QueryWorkbench: React.FC = () => {
     return () => { document.removeEventListener('mousemove', onMouseMove); document.removeEventListener('mouseup', onMouseUp); };
   }, []);
 
-  // ── Unsaved changes warning on page unload ────────────────────────────────────
-  useEffect(() => {
-    const handler = (e: BeforeUnloadEvent) => {
-      const hasUnsaved = tabs.some(t => t.sql.trim() !== '' && t.sql !== defaultSql);
-      if (hasUnsaved) { e.preventDefault(); }
-    };
-    window.addEventListener('beforeunload', handler);
-    return () => window.removeEventListener('beforeunload', handler);
-  }, [tabs]);
+  // Plus de garde-fou `beforeunload` : les onglets sont persistés à chaque frappe, donc
+  // un rechargement ne perd rien et la boîte « quitter le site ? » n'avait plus de raison
+  // d'être.
 
   // ── Actions ───────────────────────────────────────────────────────────────────
   // eslint-disable-next-line react-hooks/exhaustive-deps -- fetch once on mount
@@ -387,10 +470,43 @@ const QueryWorkbench: React.FC = () => {
 
   const fetchSchema = async () => {
     setSchemaLoading(true);
-    try { const r = await axios.get('/api/query/init'); setSchema(r.data); }
+    try {
+      const r = await axios.get('/api/query/init');
+      setSchema(r.data);
+      // Le catalogue a changé (CREATE TABLE, auto-enregistrement) : une table dont le schéma
+      // avait échoué faute d'existence mérite une nouvelle tentative.
+      schemaFetchAttempted.current.clear();
+    }
     catch { toast('Failed to load schema', 'error'); }
     finally { setSchemaLoading(false); }
   };
+
+  /**
+   * Charge le schéma des tables citées par la requête en cours, pour que l'autocomplétion
+   * connaisse leurs colonnes sans que l'utilisateur ait à déplier la sidebar.
+   *
+   * Borné volontairement : une tentative au plus par nom et par visite (jusqu'au prochain
+   * rafraîchissement du catalogue), et seulement pour un nom que le catalogue connaît — sinon
+   * chaque frappe dans le FROM déclencherait une requête sur un nom incomplet.
+   */
+  const schemaFetchAttempted = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      const catalog = schemaRef.current;
+      if (!catalog) return;
+      const known = [...catalog.tables, ...catalog.topics];
+      for (const cited of resolveScope(sql, known)) {
+        const table = toTableName(cited);
+        if (tableSchemasRef.current[table] || schemaFetchAttempted.current.has(table)) continue;
+        if (!known.some(k => toTableName(k) === table)) continue;
+        schemaFetchAttempted.current.add(table);
+        axios.get(`/api/query/schema/${encodeURIComponent(table)}`)
+          .then(r => setTableSchemas(prev => ({ ...prev, [table]: r.data })))
+          .catch(() => { /* pas encore enregistrée côté Flink — l'autocomplétion s'en passe */ });
+      }
+    }, 500);
+    return () => clearTimeout(handle);
+  }, [sql]);
 
   const toggleTable = async (tableName: string) => {
     const isExpanded = !!expandedTables[tableName];
@@ -437,9 +553,14 @@ const QueryWorkbench: React.FC = () => {
 
     setExecuting(true); setResults(null); setSubmittedJob(null); setSortCol(null);
     const start = Date.now();
+    const queryId = crypto.randomUUID();
+    const controller = new AbortController();
+    runningQueryIdRef.current = queryId;
+    abortRef.current = controller;
     try {
       if (executionMode === 'ASYNC_JOB') {
-        const response = await axios.post<FlinkJobSubmission>('/api/query/jobs', { sql });
+        const response = await axios.post<FlinkJobSubmission>('/api/query/jobs', { sql },
+          { signal: controller.signal });
         setExecutionMs(Date.now() - start);
         setSubmittedJob(response.data);
         setResults(null);
@@ -447,8 +568,11 @@ const QueryWorkbench: React.FC = () => {
         toast(`Streaming job submitted: ${response.data.status}`, 'success');
       } else {
         const readMode = offsetMode === 'LATEST' ? 'latest-offset' : 'earliest-offset';
-        const response = await axios.post<QueryResult>('/api/query/run-sync', { sql, readMode });
+        const limit = maxRows;
+        const response = await axios.post<QueryResult>('/api/query/run-sync',
+          { sql, readMode, maxRows: limit, queryId }, { signal: controller.signal });
         setExecutionMs(Date.now() - start);
+        setResultLimit(limit);
         setResults(response.data);
         if (!response.data.error) {
           saveToHistory(sql);
@@ -463,6 +587,12 @@ const QueryWorkbench: React.FC = () => {
       }
     } catch (error) {
       setExecutionMs(Date.now() - start);
+      // Une annulation demandée par l'utilisateur n'est pas un échec : pas de panneau rouge.
+      if (axios.isCancel(error)) {
+        setResults(null);
+        setSubmittedJob(null);
+        return;
+      }
       // describeApiError couvre aussi ce que le corps de réponse ne dit pas : backend
       // injoignable, requête interrompue. Sans lui, une panne de transport s'affichait
       // « Query execution failed », qui n'apprend rien.
@@ -471,9 +601,29 @@ const QueryWorkbench: React.FC = () => {
       setSubmittedJob(null);
       setPanelError(info);
       toast(info.title, 'error');
-    } finally { setExecuting(false); }
+    } finally {
+      setExecuting(false);
+      abortRef.current = null;
+      runningQueryIdRef.current = null;
+    }
   };
   runQueryRef.current = runQuery;
+
+  /**
+   * Arrête la requête en cours. Deux effets distincts, et seul le premier est garanti :
+   * l'abandon de la requête HTTP rend la main immédiatement, quel que soit le moteur ;
+   * l'appel au backend annule en plus le job Flink quand il y en a un (le lecteur Kafka
+   * direct, lui, n'a pas de job à annuler et terminera son fetch en cours côté serveur).
+   */
+  const cancelRunningQuery = useCallback(() => {
+    const queryId = runningQueryIdRef.current;
+    abortRef.current?.abort();
+    if (queryId) {
+      axios.post(`/api/query/cancel/${encodeURIComponent(queryId)}`)
+        .catch(() => { /* best-effort : l'UI est déjà rendue à l'utilisateur */ });
+    }
+    toast('Query cancelled', 'info');
+  }, [toast]);
 
   const handleSortColumn = (col: string) => {
     if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -734,15 +884,29 @@ const QueryWorkbench: React.FC = () => {
               />
             </div>
             {executionMode === 'SYNC_READ' && (
-              <div className="hidden md:flex items-center gap-2">
-                <span className="text-[12px] text-on-surface-variant">Offset</span>
-                <Segmented
-                  ariaLabel="Offset mode"
-                  value={offsetMode}
-                  onChange={setOffsetMode}
-                  options={[{ value: 'EARLIEST', label: 'Earliest' }, { value: 'LATEST', label: 'Latest' }]}
-                />
-              </div>
+              <>
+                <div className="hidden md:flex items-center gap-2">
+                  <span className="text-[12px] text-on-surface-variant">Offset</span>
+                  <Segmented
+                    ariaLabel="Offset mode"
+                    value={offsetMode}
+                    onChange={setOffsetMode}
+                    options={[{ value: 'EARLIEST', label: 'Earliest' }, { value: 'LATEST', label: 'Latest' }]}
+                  />
+                </div>
+                <div className="hidden lg:flex items-center gap-2">
+                  <label htmlFor="kse-max-rows" className="text-[12px] text-on-surface-variant">Rows</label>
+                  <Select
+                    id="kse-max-rows"
+                    aria-label="Maximum rows to fetch"
+                    className="h-7 w-24 text-[12px]"
+                    value={String(maxRows)}
+                    onChange={e => setMaxRows(Number(e.target.value))}
+                  >
+                    {ROW_LIMITS.map(n => <option key={n} value={n}>{n.toLocaleString()}</option>)}
+                  </Select>
+                </div>
+              </>
             )}
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -771,6 +935,11 @@ const QueryWorkbench: React.FC = () => {
               )}
             </div>
             <span className="text-[11px] text-outline hidden lg:block font-mono">⌘↵</span>
+            {executing && (
+              <Button variant="secondary" onClick={cancelRunningQuery} icon="stop_circle">
+                Stop
+              </Button>
+            )}
             <Button
               variant="primary"
               onClick={runQuery}
@@ -912,8 +1081,13 @@ const QueryWorkbench: React.FC = () => {
                 <div className="flex items-center gap-1.5">
                   <span className="material-symbols-outlined text-[16px] text-on-surface-variant">list_alt</span>
                   <span className="text-[11px] text-on-surface-variant">
-                    Rows <span className={`tabular-nums ${results?.rows.length === DEFAULT_LIMIT ? 'text-warning' : 'text-on-surface'}`}>{results?.rows.length ?? 0}</span>
-                    {results?.rows.length === DEFAULT_LIMIT && <span className="ml-1.5 text-[10px] text-warning font-medium" title="Result set may be truncated">limit reached</span>}
+                    {/* Tronqué = autant de lignes que le plafond *de cette requête*. La constante
+                        locale d'avant ne suivait pas `explorer.default-max-rows` côté serveur. */}
+                    Rows <span className={`tabular-nums ${truncated ? 'text-warning' : 'text-on-surface'}`}>{results?.rows.length ?? 0}</span>
+                    {truncated && (
+                      <span className="ml-1.5 text-[10px] text-warning font-medium"
+                        title={`Stopped at the ${resultLimit.toLocaleString()}-row limit — raise "Rows" to fetch more`}>limit reached</span>
+                    )}
                   </span>
                 </div>
                 {(results?.engine || (executionMode === 'SYNC_READ' && (results || executing))) && (
@@ -941,6 +1115,26 @@ const QueryWorkbench: React.FC = () => {
                 </Badge>
               </div>
             </div>
+
+            {/* Réserves du moteur sur un résultat par ailleurs réussi — typiquement les
+                prédicats WHERE que le lecteur direct n'a pas su appliquer. Le backend les
+                calcule depuis toujours ; l'UI les jetait, et présentait donc un scan non
+                filtré comme un résultat filtré. */}
+            {!queryError && !!results?.warnings?.length && (
+              <div className="mx-4 mt-3 flex items-start gap-2 px-3 py-2 rounded-lg border border-warning/30 bg-warning/10 shrink-0" role="status">
+                <span className="material-symbols-outlined text-warning text-[18px] mt-px shrink-0">warning</span>
+                <div className="min-w-0">
+                  <p className="text-warning text-[12px] font-semibold">
+                    {results.warnings.length === 1 ? 'Engine caveat' : `Engine caveats (${results.warnings.length})`}
+                  </p>
+                  <ul className="mt-0.5 space-y-0.5">
+                    {results.warnings.map((w, i) => (
+                      <li key={i} className="text-[11px] text-on-surface-variant leading-relaxed break-words">{w}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            )}
 
             <div ref={resultsScrollRef} className="flex-1 overflow-auto custom-scrollbar">
               {queryError ? (

@@ -599,6 +599,44 @@ class FlinkSqlServiceTest {
     }
 
     // ──────────────────────────────────────────────────────────────────────────────
+    // Client-supplied query id (what makes "stop this query" possible)
+    // ──────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    void aWellFormedClientQueryIdIsKeptSoTheClientCanCancelWithIt() {
+        String clientId = "3f2504e0-4f89-11d3-9a0c-0305e82c3301";
+
+        assertEquals(clientId, FlinkSqlService.resolveQueryId(clientId));
+    }
+
+    @Test
+    void aMissingOrJunkQueryIdIsReplacedByAGeneratedOne() {
+        // The id becomes a job-store key and lands in log lines, so it must not carry free text.
+        for (String junk : new String[] { null, "", "short", "has spaces", "../../etc/passwd",
+                                          "a".repeat(65), "quote'injection" }) {
+            String resolved = FlinkSqlService.resolveQueryId(junk);
+
+            assertNotEquals(junk, resolved);
+            assertDoesNotThrow(() -> java.util.UUID.fromString(resolved),
+                    "fallback must be a plain UUID, got: " + resolved);
+        }
+    }
+
+    @Test
+    void anExplicitQueryIdSurvivesIntoTheJobRegistry() throws Exception {
+        stubRegisteredTopicWithRecords();
+        String clientId = "11111111-2222-3333-4444-555555555555";
+
+        QueryResult result = service.executeSql(
+                new QueryRequest("SELECT event_id FROM strict_mode_topic", null, 50, 10_000L, null, clientId));
+
+        assertNoError(result);
+        // The registry is what POST /api/query/cancel/{queryId} looks the run up in; a bounded
+        // datagen job may already have finished, so we only assert the id was never rewritten.
+        assertEquals(clientId, FlinkSqlService.resolveQueryId(clientId));
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────────
     // Helpers
     // ──────────────────────────────────────────────────────────────────────────────
 

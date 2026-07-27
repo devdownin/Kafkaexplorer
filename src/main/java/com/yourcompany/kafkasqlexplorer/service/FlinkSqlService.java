@@ -79,6 +79,13 @@ public class FlinkSqlService {
      */
     private static final int FLINK_SELECT_FAILURE_THRESHOLD = 3;
 
+    /**
+     * Shape a client-supplied query id must have to be trusted as a job key. Anything else is
+     * replaced by a server-generated one — the id ends up in the job store and in log lines, so
+     * it must not carry arbitrary text.
+     */
+    private static final Pattern CLIENT_QUERY_ID = Pattern.compile("[A-Za-z0-9_-]{8,64}");
+
     /** "Object 'x' not found" / "Table 'x' not found" — the planner's way of saying it has no such table. */
     private static final Pattern UNKNOWN_OBJECT = Pattern.compile(
         "(?:object|table)\\s+['\"][^'\"]*['\"]\\s+not found|does not exist", Pattern.CASE_INSENSITIVE);
@@ -495,7 +502,7 @@ public class FlinkSqlService {
 
     public QueryResult executeSql(QueryRequest request) {
         long startTime = System.currentTimeMillis();
-        String queryId = UUID.randomUUID().toString();
+        String queryId = resolveQueryId(request.queryId());
         // Normalize double-quoted identifiers to backticks before any parsing/validation
         String originalSql = normalizeIdentifierQuotes(request.sql().trim());
         // Strip comments before keyword checks — a query like "-- comment\nSELECT ..."
@@ -570,6 +577,18 @@ public class FlinkSqlService {
             return new QueryResult(Collections.emptyList(), Collections.emptyList(), duration,
                 SqlErrorClassifier.explain(e));
         }
+    }
+
+    /**
+     * Uses the caller's query id when it is well-formed, otherwise mints one.
+     *
+     * <p>A synchronous run only learns a server-generated id from its own response, by which time
+     * the query is over — so cancelling one requires the caller to have named it beforehand.
+     */
+    static String resolveQueryId(String requested) {
+        return requested != null && CLIENT_QUERY_ID.matcher(requested).matches()
+            ? requested
+            : UUID.randomUUID().toString();
     }
 
     /**
