@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  buildLayout, buildTraceQuery, clampScale, describeCoverage, describeSearchScope, fitTransform,
+  analyzeChain, buildLayout, buildTraceQuery, clampScale, describeChainInsight, describeCoverage,
+  describeSearchScope, fitTransform, formatDwell,
   formatLatency, formatRelativeTime, hitsToRows, HISTORY_KEY, HIT_EXPORT_COLUMNS, parseFlowResponse,
   parseTraceParams, pushTraceHistory, readTraceHistory, searchScopeOf, traceToJson,
   validateSearchPath, zoomAt,
@@ -340,6 +341,87 @@ describe('formatting', () => {
     expect(formatLatency(120)).toBe('+120 ms');
     expect(formatLatency(1500)).toBe('+1.5 s');
     expect(formatLatency(120_000)).toBe('+2 min');
+  });
+
+  /** Rendre `—` masquait la seule information qui explique un ordre de chaîne douteux. */
+  it('shows a hop that goes backwards instead of hiding it', () => {
+    expect(formatLatency(-40)).toBe('-40 ms');
+    expect(formatLatency(-1500)).toBe('-1.5 s');
+  });
+
+  it('renders the dwell time inside a topic, and nothing for an instant one', () => {
+    expect(formatDwell(0)).toBe('');
+    expect(formatDwell(-5)).toBe('');
+    expect(formatDwell(2500)).toBe('2.5 s');
+  });
+});
+
+describe('analyzeChain', () => {
+  const hop = (topic: string, latency: number | null, occurrences = 1, dwell = 0): FlowHit => ({
+    topic, occurrences, firstTimestamp: 1_000, lastTimestamp: 1_000 + dwell,
+    firstPartition: 0, firstOffset: 1, firstKey: null, preview: null,
+    latencyFromPreviousMs: latency,
+  });
+
+  it('is empty for an empty chain', () => {
+    expect(analyzeChain([])).toEqual({
+      totalElapsedMs: null, slowestHopTopic: null, slowestHopMs: null,
+      repeatedTopics: [], clockSkewTopics: [], lastTopic: null,
+    });
+  });
+
+  it('names the slowest hop once there is something to compare', () => {
+    const chain = [hop('a', null), hop('b', 100), hop('c', 4000)];
+    const insight = analyzeChain(chain);
+
+    expect(insight.slowestHopTopic).toBe('c');
+    expect(insight.slowestHopMs).toBe(4000);
+    expect(insight.lastTopic).toBe('c');
+  });
+
+  /** Sur un seul saut, « le plus lent » est aussi le seul : le signaler ne dit rien. */
+  it('does not call a lone hop the slowest', () => {
+    expect(analyzeChain([hop('a', null), hop('b', 4000)]).slowestHopTopic).toBeNull();
+  });
+
+  it('reports repeated sightings and capped counts', () => {
+    const capped: FlowHit = { ...hop('c', 10), occurrences: 1, occurrencesCapped: true };
+    const insight = analyzeChain([hop('a', null), hop('b', 5, 3), capped]);
+
+    expect(insight.repeatedTopics).toEqual(['b', 'c']);
+  });
+
+  it('flags a hop that goes backwards as clock skew', () => {
+    const insight = analyzeChain([hop('a', null), hop('b', -20)]);
+
+    expect(insight.clockSkewTopics).toEqual(['b']);
+    expect(insight.slowestHopTopic).toBeNull();
+  });
+
+  it('measures the chain end to end from the first sightings', () => {
+    const chain = [
+      { ...hop('a', null), firstTimestamp: 1_000 },
+      { ...hop('b', 500), firstTimestamp: 1_500 },
+      { ...hop('c', 2_000), firstTimestamp: 3_500 },
+    ];
+    expect(analyzeChain(chain).totalElapsedMs).toBe(2_500);
+    expect(analyzeChain([hop('a', null)]).totalElapsedMs).toBeNull();
+  });
+});
+
+describe('describeChainInsight', () => {
+  it('turns the findings into short phrases, and says nothing when there is nothing', () => {
+    expect(describeChainInsight(analyzeChain([]))).toEqual([]);
+
+    const notes = describeChainInsight({
+      totalElapsedMs: 2_500, slowestHopTopic: 'billing', slowestHopMs: 2_000,
+      repeatedTopics: ['orders'], clockSkewTopics: ['audit'], lastTopic: 'audit',
+    });
+
+    expect(notes[0]).toBe('End to end 2.5 s');
+    expect(notes[1]).toContain('slowest hop into billing');
+    expect(notes[2]).toContain('1 topic saw the key more than once');
+    expect(notes[3]).toContain('clock skew');
   });
 });
 

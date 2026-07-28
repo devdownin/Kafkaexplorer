@@ -9,8 +9,9 @@ import { useToast } from '../components/Toast';
 import { describeApiError, type QueryErrorInfo } from './queryError';
 import { toCsv } from './resultExport';
 import {
-  buildLayout, buildTraceQuery, clampScale, describeCoverage, describeSearchScope, fitTransform,
-  formatAbsoluteTime, formatLatency, formatRelativeTime, hitsToRows, HIT_EXPORT_COLUMNS,
+  analyzeChain, buildLayout, buildTraceQuery, clampScale, describeChainInsight, describeCoverage,
+  describeSearchScope, fitTransform, formatAbsoluteTime, formatDwell, formatLatency,
+  formatRelativeTime, hitsToRows, HIT_EXPORT_COLUMNS,
   parseFlowResponse, parseTraceParams, pushTraceHistory, readTraceHistory, traceToJson,
   validateSearchPath, zoomAt,
   type FlowHit, type FormErrors, type ParsedFlow, type TraceHistoryEntry,
@@ -275,6 +276,8 @@ const StreamFlow: React.FC = () => {
 
   const coverage = describeCoverage(stats);
   const hitByTopic = useMemo(() => new Map(hits.map(h => [h.topic, h])), [hits]);
+  const insight = useMemo(() => analyzeChain(hits), [hits]);
+  const insightNotes = useMemo(() => describeChainInsight(insight), [insight]);
   const scopeHint = describeSearchScope(searchPath, searchHeaders);
 
   return (
@@ -603,16 +606,25 @@ const StreamFlow: React.FC = () => {
                   const x1 = s.x + nodeW, y1 = s.y + nodeH / 2;
                   const x2 = t.x,          y2 = t.y + nodeH / 2;
                   const mx = (x1 + x2) / 2;
+                  // Le saut le plus lent et un saut qui remonte le temps se lisent sur le graphe,
+                  // pas seulement dans le tableau : c'est là que l'œil se pose en premier.
+                  const slowest = insight.slowestHopTopic === edge.target;
+                  const skewed = insight.clockSkewTopics.includes(edge.target);
+                  const stroke = skewed ? '#f2b8b5' : slowest ? '#ffd479' : '#a3adff';
                   return (
                     <g key={`${edge.source}->${edge.target}-${i}`}>
                       <path
                         d={`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`}
-                        fill="none" stroke="#a3adff" strokeWidth="2" opacity="0.5"
+                        fill="none" stroke={stroke} strokeWidth={slowest || skewed ? 3 : 2}
+                        strokeDasharray={skewed ? '6 4' : undefined}
+                        opacity={slowest || skewed ? 0.9 : 0.5}
                         markerEnd="url(#sf-arrow)"
                       />
                       {edge.label && (
-                        <text x={mx} y={Math.min(y1, y2) - 8} textAnchor="middle" fill="#9aa3b2" fontSize="10">
-                          {edge.label}
+                        <text x={mx} y={Math.min(y1, y2) - 8} textAnchor="middle"
+                          fill={slowest || skewed ? stroke : '#9aa3b2'} fontSize="10"
+                          fontWeight={slowest || skewed ? 'bold' : undefined}>
+                          {edge.label}{skewed ? ' ⚠' : ''}
                         </text>
                       )}
                     </g>
@@ -699,6 +711,18 @@ const StreamFlow: React.FC = () => {
 
             {detailsOpen && (
               <div className="p-4 space-y-4">
+                {insightNotes.length > 0 && (
+                  <p className="text-[11px] text-on-surface-variant flex flex-wrap items-center gap-x-1.5 gap-y-1">
+                    <span aria-hidden="true" className="material-symbols-outlined text-[14px] text-primary">insights</span>
+                    {insightNotes.map((note, i) => (
+                      <React.Fragment key={note}>
+                        {i > 0 && <span className="text-outline">·</span>}
+                        <span>{note}</span>
+                      </React.Fragment>
+                    ))}
+                  </p>
+                )}
+
                 {warnings.length > 0 && (
                   <ul className="space-y-1.5" aria-label="Scan warnings">
                     {warnings.map((warning, i) => (
@@ -741,13 +765,37 @@ const StreamFlow: React.FC = () => {
                             </Link>
                           </Td>
                           <Td title={hit.occurrencesCapped ? 'More matches exist than the scan kept for this topic' : undefined}>
-                            {hit.occurrences}{hit.occurrencesCapped ? '+' : ''}
+                            <span className={hit.occurrences > 1 || hit.occurrencesCapped ? 'text-warning' : ''}>
+                              {hit.occurrences}{hit.occurrencesCapped ? '+' : ''}
+                            </span>
+                            {/* Une clé vue plusieurs fois peut être une reprise, une mise à jour
+                                compactée ou un doublon : on montre l'étalement, on ne conclut pas. */}
+                            {formatDwell(hit.lastTimestamp - hit.firstTimestamp) && (
+                              <span className="text-outline"> over {formatDwell(hit.lastTimestamp - hit.firstTimestamp)}</span>
+                            )}
                           </Td>
                           <Td title={formatAbsoluteTime(hit.firstTimestamp)}>
                             {formatRelativeTime(hit.firstTimestamp) || '—'}
                           </Td>
                           <Td className={hit.latencyFromPreviousMs === null ? 'text-outline' : ''}>
-                            {formatLatency(hit.latencyFromPreviousMs)}
+                            <span className="inline-flex items-center gap-1.5">
+                              <span className={
+                                insight.clockSkewTopics.includes(hit.topic) ? 'text-error'
+                                  : insight.slowestHopTopic === hit.topic ? 'text-warning' : ''
+                              }>
+                                {formatLatency(hit.latencyFromPreviousMs)}
+                              </span>
+                              {insight.clockSkewTopics.includes(hit.topic) && (
+                                <Badge tone="error" title="This hop goes backwards in time: the producers' clocks disagree.">
+                                  clock skew
+                                </Badge>
+                              )}
+                              {insight.slowestHopTopic === hit.topic && (
+                                <Badge tone="warning" title="Longest delay between two sightings in this chain.">
+                                  slowest hop
+                                </Badge>
+                              )}
+                            </span>
                           </Td>
                           <Td className="font-mono text-[11px] text-on-surface-variant">
                             {hit.firstPartition} / {hit.firstOffset}

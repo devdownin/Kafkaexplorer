@@ -494,13 +494,21 @@ export function formatAbsoluteTime(ts: number | undefined): string {
 }
 
 /** Latence d'un saut. `null` = premier topic de la chaîne. */
+/**
+ * Latence d'un saut. `null` = premier topic de la chaîne.
+ *
+ * Une valeur **négative** est rendue telle quelle : elle signale que les horloges des
+ * producteurs divergent (les timestamps Kafka sont posés à la production). L'afficher en `—`
+ * revenait à masquer la seule information qui explique un ordre de chaîne douteux.
+ */
 export function formatLatency(ms: number | null | undefined): string {
   if (ms === null || ms === undefined) return '—';
-  if (ms < 0) return '—';
-  if (ms < 1000) return `+${ms} ms`;
-  if (ms < 60_000) return `+${(ms / 1000).toFixed(1)} s`;
-  if (ms < 3_600_000) return `+${Math.floor(ms / 60_000)} min`;
-  return `+${(ms / 3_600_000).toFixed(1)} h`;
+  const sign = ms < 0 ? '-' : '+';
+  const abs = Math.abs(ms);
+  if (abs < 1000) return `${sign}${abs} ms`;
+  if (abs < 60_000) return `${sign}${(abs / 1000).toFixed(1)} s`;
+  if (abs < 3_600_000) return `${sign}${Math.floor(abs / 60_000)} min`;
+  return `${sign}${(abs / 3_600_000).toFixed(1)} h`;
 }
 
 export function formatDuration(ms: number): string {
@@ -527,4 +535,80 @@ export function describeCoverage(stats: FlowStats | null): string {
   if (stats.topicsSkipped > 0) parts.push(`${stats.topicsSkipped} skipped (time budget)`);
   if (stats.topicsFailed > 0) parts.push(`${stats.topicsFailed} unreadable`);
   return parts.join(' · ');
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Lecture de la chaîne : ce qui mérite le regard
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/** Durée pendant laquelle la clé a continué d'apparaître dans un même topic. */
+export function formatDwell(ms: number): string {
+  if (ms <= 0) return '';
+  return formatDuration(ms);
+}
+
+export interface ChainInsight {
+  /** Du premier au dernier topic de la chaîne ; null en dessous de deux sauts. */
+  totalElapsedMs: number | null;
+  /** Topic d'arrivée du saut le plus long, et sa durée. Null s'il n'y a qu'un saut. */
+  slowestHopTopic: string | null;
+  slowestHopMs: number | null;
+  /** Topics où la clé apparaît plusieurs fois — reprise, mise à jour compactée, doublon. */
+  repeatedTopics: string[];
+  /** Topics dont le saut entrant remonte le temps : horloges producteurs désaccordées. */
+  clockSkewTopics: string[];
+  /** Dernier topic de la chaîne : là où la trace s'arrête, dans la fenêtre scannée. */
+  lastTopic: string | null;
+}
+
+/**
+ * Ce que les sauts disent déjà mais que personne ne lit dans un tableau : le saut le plus lent,
+ * les topics qui ont vu la clé plusieurs fois, ceux dont l'horloge diverge.
+ *
+ * Rien n'est déduit au-delà des données — en particulier, le dernier topic n'est pas présenté
+ * comme un « cul-de-sac » : dans une chaîne complète, c'est simplement la destination.
+ */
+export function analyzeChain(hits: FlowHit[]): ChainInsight {
+  const empty: ChainInsight = {
+    totalElapsedMs: null, slowestHopTopic: null, slowestHopMs: null,
+    repeatedTopics: [], clockSkewTopics: [], lastTopic: null,
+  };
+  if (hits.length === 0) return empty;
+
+  const hops = hits.filter(h => h.latencyFromPreviousMs !== null && h.latencyFromPreviousMs !== undefined);
+  // Le saut le plus lent n'a de sens qu'à partir de deux sauts : sur une chaîne à un seul saut,
+  // « le plus lent » est aussi le seul, et le signaler ne dit rien.
+  const positive = hops.filter(h => (h.latencyFromPreviousMs ?? 0) > 0);
+  const slowest = hops.length >= 2 && positive.length > 0
+    ? positive.reduce((max, h) => ((h.latencyFromPreviousMs ?? 0) > (max.latencyFromPreviousMs ?? 0) ? h : max))
+    : null;
+
+  return {
+    totalElapsedMs: hits.length >= 2
+      ? hits[hits.length - 1].firstTimestamp - hits[0].firstTimestamp
+      : null,
+    slowestHopTopic: slowest ? slowest.topic : null,
+    slowestHopMs: slowest ? slowest.latencyFromPreviousMs ?? null : null,
+    repeatedTopics: hits.filter(h => h.occurrences > 1 || h.occurrencesCapped).map(h => h.topic),
+    clockSkewTopics: hits.filter(h => (h.latencyFromPreviousMs ?? 0) < 0).map(h => h.topic),
+    lastTopic: hits[hits.length - 1].topic,
+  };
+}
+
+/** Les mêmes constats, en phrases courtes destinées au bandeau au-dessus du tableau. */
+export function describeChainInsight(insight: ChainInsight): string[] {
+  const notes: string[] = [];
+  if (insight.totalElapsedMs !== null) {
+    notes.push(`End to end ${formatLatency(insight.totalElapsedMs).replace(/^\+/, '')}`);
+  }
+  if (insight.slowestHopTopic && insight.slowestHopMs !== null) {
+    notes.push(`slowest hop into ${insight.slowestHopTopic} (${formatLatency(insight.slowestHopMs)})`);
+  }
+  if (insight.repeatedTopics.length > 0) {
+    notes.push(`${insight.repeatedTopics.length} topic${insight.repeatedTopics.length > 1 ? 's' : ''} saw the key more than once`);
+  }
+  if (insight.clockSkewTopics.length > 0) {
+    notes.push('clock skew between producers — the order is not reliable to the millisecond');
+  }
+  return notes;
 }
