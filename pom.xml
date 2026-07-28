@@ -24,6 +24,12 @@
 		<flink.version>2.3.0</flink.version>
 		<kafka.version>4.2.0</kafka.version>
 		<confluent.version>8.3.0</confluent.version>
+		<!--
+			Surefire's own default, declared explicitly so `${skipTests}` always resolves:
+			the frontend test execution reads it to mirror -DskipTests, and an undefined
+			property there would reach the plugin as the literal string.
+		-->
+		<skipTests>false</skipTests>
 	</properties>
 	<repositories>
 		<repository>
@@ -273,6 +279,40 @@
 								</goals>
 								<configuration>
 									<arguments>run build</arguments>
+								</configuration>
+							</execution>
+							<!--
+								The frontend checks were previously reachable only by hand: `mvn verify`
+								ran `npm run build` (tsc + vite) and nothing else, so ESLint and the
+								Vitest suite never ran in CI and a broken pure module (queryError,
+								sqlScope, windowSql, resultExport) went green.
+
+								Bound to `verify` rather than `test` on purpose: it keeps
+								`mvn test -Dtest=SomeJavaTest` a Java-only, fast loop, and `mvn package
+								-DskipTests` never reaches this phase — so the release workflow, which
+								packages with -DskipTests, is unaffected. `mvn verify` is the complete
+								gate, and it is what CI runs.
+							-->
+							<execution>
+								<id>npm run lint</id>
+								<phase>verify</phase>
+								<goals>
+									<goal>npm</goal>
+								</goals>
+								<configuration>
+									<arguments>run lint</arguments>
+								</configuration>
+							</execution>
+							<execution>
+								<id>npm test</id>
+								<phase>verify</phase>
+								<goals>
+									<goal>npm</goal>
+								</goals>
+								<configuration>
+									<arguments>test</arguments>
+									<!-- Honours -DskipTests like the Java suite does. -->
+									<skip>${skipTests}</skip>
 								</configuration>
 							</execution>
 						</executions>

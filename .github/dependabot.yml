@@ -8,3 +8,23 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+
+  # The frontend was unwatched: only the Maven tree and the workflow actions were.
+  # React, Vite, Monaco, axios and the rest of src/main/webapp therefore never got a
+  # security or version bump, even though they ship inside the published jar and image.
+  #
+  # Minor and patch updates are grouped into a single pull request — an ungrouped npm
+  # tree this size opens well over a dozen a week, and that volume is how bumps stop
+  # being read. Majors stay separate, since those are the ones that need a human.
+  - package-ecosystem: "npm"
+    directory: "/src/main/webapp"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      frontend:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"

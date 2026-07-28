@@ -17,17 +17,34 @@ mvn clean package
 # Run the app
 ./mvnw spring-boot:run
 
-# Run all tests
+# The complete gate: Java tests + frontend ESLint + frontend Vitest. This is what CI runs.
+mvn verify
+
+# Run the Java tests only — stays a fast backend loop, no npm involved
 mvn test
 
 # Run a single test class
 mvn test -Dtest=AuditServiceTest
 
-# Build without tests
+# Build without tests (never reaches the verify phase, so the frontend checks are skipped too)
 mvn clean package -DskipTests
 ```
 
+**`mvn verify` is the only command that runs everything.** `npm run lint` and `npm test` are bound to the
+`verify` phase of the `build-frontend` profile — deliberately not to `test`, which keeps
+`mvn test -Dtest=SomeClass` a Java-only loop and leaves `mvn package -DskipTests` (what
+`release.yml` uses) untouched, since `package` runs before `verify`. The Vitest execution also reads
+`${skipTests}`, so `mvn verify -DskipTests` skips both suites. Before this wiring, `mvn verify` ran
+`npm run build` (tsc + vite) and nothing else: ESLint and the 169 Vitest cases never ran in CI, and a
+broken pure module (`queryError`, `sqlScope`, `windowSql`, `resultExport`) went green.
+
 A Maven wrapper is checked in (`./mvnw`, Maven 3.9.9, `distributionType=only-script` so there is no wrapper JAR in the tree). Both CI workflows build through it.
+
+`ci.yml` triggers on `push` to **main only**, plus `pull_request`. Listing feature branches under `push` as well built every commit twice once its PR existed — the `push` and `pull_request` events both fired, and the `concurrency` guard cannot collapse them because `github.ref` differs (`refs/heads/<branch>` vs `refs/pull/<n>/merge`), putting them in separate groups. Branch work is covered by its PR; `workflow_dispatch` builds a branch before one is opened.
+
+Every job carries a `timeout-minutes` (the GitHub default is 360, so a wedged test would burn six hours of runner), and a failed build uploads `target/surefire-reports/` as an artifact — a run that is green locally but red here is expected from time to time, since CI resolves the real `io.confluent` jars while the local offline harness uses stubs.
+
+`release.yml` runs `./mvnw -B clean verify -P build-frontend`, **not** `package -DskipTests`. A tag can be pushed at any commit and nothing verified that commit had ever been green, so a release could ship code no suite had run against; the `docker` job inherits the gate through `needs: build`. Note that the image is rebuilt from source by the multi-stage `Dockerfile` (`-P !build-frontend -DskipTests`, the frontend having been built in its own stage), so the `upload-artifact`/`download-artifact` jar hand-off between the two jobs feeds nothing — `needs: build` is what actually matters there.
 
 #### When `packages.confluent.io` is blocked
 
@@ -51,7 +68,7 @@ npm test             # Vitest (jsdom + @testing-library/react); test:watch for w
 
 ### Docker
 
-All bundled compose stacks run **Kafka 4.2 in KRaft mode** (`apache/kafka:4.2.0`, single combined broker+controller node — no Zookeeper anywhere, including CI and `docker-compose.release.yml`).
+All bundled compose stacks run **Kafka 4.2 in KRaft mode** (`apache/kafka:4.2.0`, single combined broker+controller node — no Zookeeper anywhere, `docker-compose.release.yml` included). CI runs no broker of its own: `KafkaClusterIntegrationTest` starts one through Testcontainers (`apache/kafka-native:4.2.0`), which is also why it works on a developer machine. Prefer that over a workflow-level `services:` block if a new test needs a broker.
 
 ```bash
 # Kafka 4.2 (KRaft) + Schema Registry + app + demo topics (recommended)
