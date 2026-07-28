@@ -81,6 +81,52 @@ Un unique JAR Spring Boot 4.1 embarquant Apache Flink 2.3 comme moteur SQL, avec
 
 Plongée dans l'architecture : **[docs/architecture.md](docs/architecture.md)**
 
+## 🏗️ Build et Développement
+
+Il y a plusieurs façons de builder et de travailler sur le projet, selon vos besoins.
+
+### 1. Build de production Docker (Recommandé)
+Le projet utilise un build Docker "multi-stage" optimisé qui sépare le front et le back pour une meilleure mise en cache, puis package le tout dans un JRE ultra-léger :
+```bash
+docker build -t kafka-sql-explorer:latest .
+```
+
+### 2. Environnement de Développement (Hot-Reload)
+Pour développer avec rechargement à chaud (Hot Module Replacement pour le frontend via Vite et rechargement de classe pour le backend via Spring Boot DevTools) :
+```bash
+docker-compose -f docker-compose-dev.yml up --build
+```
+- Le **frontend** sera accessible sur `http://localhost:5173`
+- Le **backend** API sera sur `http://localhost:8080` (proxyfié automatiquement par le front)
+
+### 3. Build standard (localement)
+Si vous souhaitez compiler l'intégralité du projet localement (sans Docker pour la compilation), Maven s'occupera de tout via un profil activé par défaut (téléchargement de Node, build du React, et packaging Spring Boot) :
+```bash
+./mvnw clean package
+```
+## 🏗️ Build et Développement
+
+Il y a plusieurs façons de builder et de travailler sur le projet, selon vos besoins.
+
+### 1. Build de production Docker (Recommandé)
+Le projet utilise un build Docker "multi-stage" optimisé qui sépare le front et le back pour une meilleure mise en cache, puis package le tout dans un JRE ultra-léger :
+```bash
+docker build -t kafka-sql-explorer:latest .
+```
+
+### 2. Environnement de Développement (Hot-Reload)
+Pour développer avec rechargement à chaud (Hot Module Replacement pour le frontend via Vite et rechargement de classe pour le backend via Spring Boot DevTools) :
+```bash
+docker-compose -f docker-compose-dev.yml up --build
+```
+- Le **frontend** sera accessible sur `http://localhost:5173`
+- Le **backend** API sera sur `http://localhost:8080` (proxyfié automatiquement par le front)
+
+### 3. Build standard (localement)
+Si vous souhaitez compiler l'intégralité du projet localement (sans Docker pour la compilation), Maven s'occupera de tout via un profil activé par défaut (téléchargement de Node, build du React, et packaging Spring Boot) :
+```bash
+./mvnw clean package
+```
 ## 🤝 Contribuer
 
 Les contributions sont bienvenues — le code est volontairement très commenté pour servir aussi de ressource d'apprentissage sur l'intégration Flink SQL + Spring Boot, et `mvn test` / `npm test` couvrent les services cœur.

@@ -32,15 +32,32 @@ Thank you for your interest in Kafka SQL Explorer! We welcome contributions from
 - Maven 3.8+
 
 ### Running the Project Locally
-1. Start the Kafka cluster:
+
+**1. Using the Development Docker Compose (Hot Reloading)**
+This is the recommended approach for full-stack development. It starts Kafka, a Vite dev server for the frontend, and a Spring Boot dev server for the backend.
+```bash
+docker-compose -f docker-compose-dev.yml up --build
+```
+- Frontend UI: `http://localhost:5173`
+- Backend API: `http://localhost:8080`
+
+**2. Standard Maven Run**
+If you prefer running just the backend manually:
+1. Start the Kafka cluster only:
    ```bash
-   docker-compose up -d
+   docker-compose up -d kafka
    ```
 2. Run the application:
    ```bash
-   mvn spring-boot:run
+   ./mvnw spring-boot:run
    ```
 3. Access the UI at `http://localhost:8080`.
+
+**3. Building a Production Docker Image**
+The project uses a multi-stage Dockerfile that builds both frontend and backend natively inside Docker:
+```bash
+docker build -t kafka-sql-explorer:latest .
+```
 
 ### Running Tests
 ```bash

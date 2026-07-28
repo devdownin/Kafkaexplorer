@@ -71,7 +71,7 @@ jobs:
     - name: Build & Test with Maven
       # verify runs the full lifecycle including tests — no separate `mvn test`
       # pass (the previous package + test combo ran the whole suite twice)
-      run: ./mvnw -B verify --file pom.xml
+      run: ./mvnw -B verify -P build-frontend --file pom.xml
 
   deploy:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
