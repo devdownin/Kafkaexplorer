@@ -881,6 +881,82 @@ export function describeContinuation(continuation: TraceContinuation): string {
     : `Continue on the ${pending} topic${pending > 1 ? 's' : ''} never read`;
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * Tri du tableau de preuves
+ * ────────────────────────────────────────────────────────────────────────── */
+
+export type HitSortKey = 'chain' | 'topic' | 'occurrences' | 'firstTimestamp' | 'latency';
+
+/**
+ * Trie les sauts sans jamais perdre leur rang dans la chaîne — celui-ci vient de `hopNumber`,
+ * pas de la position dans le tableau. `chain` est l'ordre naturel (par première apparition) et
+ * reste le défaut : c'est le sens même de la trace, et on n'y renonce que sur demande.
+ *
+ * Un saut sans latence (le premier de la chaîne) se range **toujours en dernier**, dans les deux
+ * sens : demander « le saut le plus lent » et voir un tiret en tête ne répondrait pas à la question.
+ */
+export function sortHits(hits: FlowHit[], key: HitSortKey, desc: boolean): FlowHit[] {
+  if (key === 'chain') return desc ? [...hits].reverse() : hits;
+  const direction = desc ? -1 : 1;
+
+  return [...hits].sort((a, b) => {
+    if (key === 'topic') return a.topic.localeCompare(b.topic) * direction;
+
+    const left = key === 'occurrences' ? a.occurrences
+      : key === 'firstTimestamp' ? a.firstTimestamp
+        : a.latencyFromPreviousMs;
+    const right = key === 'occurrences' ? b.occurrences
+      : key === 'firstTimestamp' ? b.firstTimestamp
+        : b.latencyFromPreviousMs;
+
+    const leftMissing = left === null || left === undefined;
+    const rightMissing = right === null || right === undefined;
+    if (leftMissing || rightMissing) {
+      if (leftMissing && rightMissing) return a.topic.localeCompare(b.topic);
+      return leftMissing ? 1 : -1;
+    }
+    // Égalité départagée par le nom : deux exécutions sur les mêmes données trient pareil.
+    return left === right ? a.topic.localeCompare(b.topic) : (left - right) * direction;
+  });
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Hauteur du panneau de preuves
+ * ────────────────────────────────────────────────────────────────────────── */
+
+export const EVIDENCE_KEY = 'kse:flow-evidence';
+export const MIN_EVIDENCE_PCT = 15;
+export const MAX_EVIDENCE_PCT = 75;
+export const DEFAULT_EVIDENCE_PCT = 45;
+
+/** Le graphe et le tableau ne doivent jamais pouvoir se réduire à rien l'un l'autre. */
+export function clampEvidencePct(pct: number): number {
+  if (!Number.isFinite(pct)) return DEFAULT_EVIDENCE_PCT;
+  return Math.min(MAX_EVIDENCE_PCT, Math.max(MIN_EVIDENCE_PCT, Math.round(pct)));
+}
+
+/**
+ * Le partage entre graphe et preuves était figé à 45 % : sur une chaîne de quinze sauts, le
+ * tableau défilait dans une lucarne pendant que le graphe gardait la moitié de l'écran pour
+ * quatre nœuds. Il se règle, et le réglage suit l'utilisateur.
+ */
+export function readEvidencePct(): number {
+  try {
+    const raw = localStorage.getItem(EVIDENCE_KEY);
+    return raw === null ? DEFAULT_EVIDENCE_PCT : clampEvidencePct(Number(raw));
+  } catch {
+    return DEFAULT_EVIDENCE_PCT;
+  }
+}
+
+export function writeEvidencePct(pct: number): void {
+  try {
+    localStorage.setItem(EVIDENCE_KEY, String(clampEvidencePct(pct)));
+  } catch {
+    // Confort d'affichage : un stockage indisponible ne bloque rien.
+  }
+}
+
 /** Une relance proposée quand la trace n'a rien trouvé : un critère élargi, et ce qu'il change. */
 export interface TraceSuggestion {
   id: string;

@@ -15,11 +15,12 @@ import {
   describeCoverage, describeProgress, describeSearchScope, expandTopicPatterns, filterHits,
   fitTransform, formatAbsoluteTime, formatDwell, formatLatency, formatRelativeTime, hitsToRows,
   HIT_EXPORT_COLUMNS, isNodeVisible, parseFlowResponse, parseSseBuffer, parseTopicList,
-  parseTraceParams, progressRatio, pushTraceHistory, readPanelOpen, readTraceHistory,
-  sameCriterion, slowestDivergence, suggestWidenings, traceToJson, validateSearchPath,
-  writePanelOpen, zoomAt,
-  type FlowHit, type FormErrors, type ParsedFlow, type TraceContinuation, type TraceHistoryEntry,
-  type TraceParams, type TraceProgress, type Transform,
+  clampEvidencePct, MAX_EVIDENCE_PCT, MIN_EVIDENCE_PCT,
+  parseTraceParams, progressRatio, pushTraceHistory, readEvidencePct, readPanelOpen,
+  readTraceHistory, sameCriterion, slowestDivergence, sortHits, suggestWidenings, traceToJson,
+  validateSearchPath, writeEvidencePct, writePanelOpen, zoomAt,
+  type FlowHit, type FormErrors, type HitSortKey, type ParsedFlow, type TraceContinuation,
+  type TraceHistoryEntry, type TraceParams, type TraceProgress, type Transform,
 } from './streamFlow';
 
 /** Filet de sécurité côté client : le backend borne déjà la trace (explorer.stream-flow-timeout-ms). */
@@ -78,11 +79,18 @@ const StreamFlow: React.FC = () => {
   const [loading, setLoading]               = useState(false);
   const [error, setError]                   = useState<QueryErrorInfo | null>(null);
   const [notice, setNotice]                 = useState<string | null>(null);
+  /** Annonce vocale d'une trace terminée — la barre de progression disparaît sans rien dire. */
+  const [completionMessage, setCompletionMessage] = useState('');
   const [flow, setFlow]                     = useState<ParsedFlow>(EMPTY_FLOW);
   const [hasResult, setHasResult]           = useState(false);
   const [selectedTopic, setSelectedTopic]   = useState<string | null>(null);
   const [detailsOpen, setDetailsOpen]       = useState(true);
   const [hitFilter, setHitFilter]           = useState('');
+  /** Tri du tableau de preuves. `chain` — l'ordre des sauts — est le sens même de la trace. */
+  const [sortKey, setSortKey]               = useState<HitSortKey>('chain');
+  const [sortDesc, setSortDesc]             = useState(false);
+  /** Partage graphe / preuves, en pourcentage de hauteur, réglable et mémorisé. */
+  const [evidencePct, setEvidencePct]       = useState(() => readEvidencePct());
   const [history, setHistory]               = useState<TraceHistoryEntry[]>(() => readTraceHistory());
   const [historyOpen, setHistoryOpen]       = useState(false);
   const [progress, setProgress]             = useState<TraceProgress | null>(null);
@@ -104,6 +112,8 @@ const StreamFlow: React.FC = () => {
 
   const messageKeyRef = useRef<HTMLInputElement>(null);
   const searchPathRef = useRef<HTMLInputElement>(null);
+  /** Zone graphe + preuves : sa hauteur sert de référence au glissé du séparateur. */
+  const mainRef       = useRef<HTMLElement>(null);
   /** Requête en vol — annulable, une trace peut légitimement durer une minute. */
   const abortRef      = useRef<AbortController | null>(null);
   /** Numéro de la trace en cours : ce qui arrive d'une passe abandonnée est ignoré. */
@@ -241,6 +251,41 @@ const StreamFlow: React.FC = () => {
     document.getElementById(`sf-hit-${selectedTopic}`)?.scrollIntoView({ block: 'nearest' });
   }, [selectedTopic, detailsOpen]);
 
+  /**
+   * Glissé du séparateur : la hauteur suit le pointeur, et n'est écrite qu'au relâché — un
+   * `localStorage.setItem` par image de glissement serait du gaspillage pur.
+   */
+  const evidencePctRef = useRef(evidencePct);
+  const applyEvidencePct = useCallback((pct: number) => {
+    const next = clampEvidencePct(pct);
+    evidencePctRef.current = next;
+    setEvidencePct(next);
+  }, []);
+
+  const onDividerPointerDown = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    const box = mainRef.current?.getBoundingClientRect();
+    if (!box || box.height === 0) return;
+    const move = (event: PointerEvent) =>
+      applyEvidencePct(((box.bottom - event.clientY) / box.height) * 100);
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      writeEvidencePct(evidencePctRef.current);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }, [applyEvidencePct]);
+
+  /** Le séparateur se règle aussi au clavier : c'est un `separator` ARIA, pas une poignée souris. */
+  const onDividerKeyDown = (e: React.KeyboardEvent) => {
+    const step = e.key === 'ArrowUp' ? 5 : e.key === 'ArrowDown' ? -5 : 0;
+    if (step === 0) return;
+    e.preventDefault();
+    applyEvidencePct(evidencePctRef.current + step);
+    writeEvidencePct(evidencePctRef.current);
+  };
+
   const clearFieldError = (key: keyof FormErrors) =>
     setFieldErrors(prev => (prev[key] ? { ...prev, [key]: undefined } : prev));
 
@@ -291,6 +336,7 @@ const StreamFlow: React.FC = () => {
     setLoading(true);
     setError(null);
     setNotice(null);
+    setCompletionMessage('');
     setProgress(null);
     setSelectedTopic(null);
     setHitFilter('');
@@ -332,6 +378,10 @@ const StreamFlow: React.FC = () => {
       // depuis le bouton de partage.
       navigate({ search: buildTraceQuery(params2) }, { replace: true });
       setHistory(pushTraceHistory({ ...params2, ranAt: Date.now(), topicsFound: parsed.nodes.length }));
+      setCompletionMessage(parsed.nodes.length === 0
+        ? `Trace complete: ${params2.messageKey} was not found in what was scanned.`
+        : `Trace complete: ${parsed.nodes.length} topic${parsed.nodes.length > 1 ? 's' : ''}, `
+          + `${parsed.stats?.matches ?? parsed.hits.length} match(es).`);
     };
 
     try {
@@ -388,14 +438,18 @@ const StreamFlow: React.FC = () => {
       if (axios.isCancel(err) || (err as { name?: string })?.name === 'AbortError'
         || (err as { code?: string })?.code === 'ERR_CANCELED') {
         // Arrêter tôt est le but de la trace streamée : on garde ce qui a été trouvé.
-        setNotice(lastProgress
+        const stopped = lastProgress
           ? `Stopped after ${lastProgress.topicsCompleted} of ${lastProgress.topicsInScope} topics — showing what was found by then.`
-          : 'Trace cancelled — nothing was changed on the cluster.');
+          : 'Trace cancelled — nothing was changed on the cluster.';
+        setNotice(stopped);
+        setCompletionMessage(stopped);
         if (lastFlow) setHasResult(true);
       } else {
         // Surface the real backend cause when there is one (invalid regex, malformed
         // search path, unreachable broker); otherwise fall back to a generic hint.
-        setError(describeApiError(err, 'Failed to trace stream flow.'));
+        const failure = describeApiError(err, 'Failed to trace stream flow.');
+        setError(failure);
+        setCompletionMessage(`Trace failed: ${failure.title}`);
         // The previous graph described a different search: keeping it on screen next to a
         // fresh error would present stale coverage as the result of this run.
         setFlow(EMPTY_FLOW);
@@ -523,9 +577,24 @@ const StreamFlow: React.FC = () => {
   const insight = useMemo(() => analyzeChain(hits), [hits]);
   const insightNotes = useMemo(() => describeChainInsight(insight), [insight]);
   const scopeHint = describeSearchScope(searchPath, searchHeaders, exactKey);
-  /** Rang du saut dans la chaîne — conservé même quand le tableau est filtré. */
+  /** Rang du saut dans la chaîne — conservé quel que soit le filtre ou le tri du tableau. */
   const hopNumber = useMemo(() => new Map(hits.map((h, i) => [h.topic, i + 1])), [hits]);
-  const shownHits = useMemo(() => filterHits(hits, hitFilter), [hits, hitFilter]);
+  const shownHits = useMemo(
+    () => sortHits(filterHits(hits, hitFilter), sortKey, sortDesc),
+    [hits, hitFilter, sortKey, sortDesc]);
+
+  const toggleSort = (key: HitSortKey) => {
+    if (key === sortKey) {
+      setSortDesc(desc => !desc);
+    } else {
+      setSortKey(key);
+      // Un tri numérique s'ouvre décroissant : « le plus lent », « le plus vu » d'abord.
+      setSortDesc(key !== 'chain' && key !== 'topic');
+    }
+  };
+
+  const sortIcon = (key: HitSortKey) =>
+    (key !== sortKey ? 'unfold_more' : sortDesc ? 'arrow_downward' : 'arrow_upward');
   /** Le formulaire a bougé depuis la trace affichée : le graphe ne répond plus à ce qu'on lit. */
   const stale = hasResult && !loading && ranParams !== null
     && !sameCriterion(ranParams, currentParams());
@@ -753,13 +822,24 @@ const StreamFlow: React.FC = () => {
             </Field>
           )}
 
-          {/* Max Messages */}
+          {/* Max Messages — le curseur pour balayer, le champ pour viser : 750 se tapait
+              autrement en visant un pixel sur une piste de dix pas. */}
           <div className="space-y-1.5">
-            <label htmlFor="sf-max-messages" className="text-[12px] font-medium text-on-surface-variant">
-              Max Messages / Topic: <span className="text-primary">{maxMessages}</span>
-            </label>
+            <div className="flex items-end justify-between gap-2">
+              <label htmlFor="sf-max-messages" className="text-[12px] font-medium text-on-surface-variant">
+                Max Messages / Topic
+              </label>
+              <NumberInput
+                id="sf-max-messages-value"
+                aria-label="Max messages per topic"
+                className="h-7 w-20 text-[12px]"
+                min={10} max={1000} fallback={100}
+                value={maxMessages} onChange={setMaxMessages}
+              />
+            </div>
             <input
               id="sf-max-messages"
+              aria-label="Max messages per topic (slider)"
               type="range" min={10} max={1000} step={10} value={maxMessages}
               onChange={e => setMaxMessages(Number(e.target.value))}
               className="w-full accent-primary"
@@ -807,7 +887,11 @@ const StreamFlow: React.FC = () => {
       )}
 
       {/* ── Graph Area ── */}
-      <main className="flex-1 relative bg-background-dark overflow-hidden flex flex-col min-w-0">
+      <main ref={mainRef} className="flex-1 relative bg-background-dark overflow-hidden flex flex-col min-w-0">
+
+        {/* Ce qu'une trace terminée a donné, annoncé une fois : la barre de progression est un
+            `status` tant qu'elle tourne, mais sa disparition ne dit rien à qui ne voit pas l'écran. */}
+        <p className="sr-only" role="status" aria-live="polite">{completionMessage}</p>
 
         <div className="relative flex-1 min-h-0">
 
@@ -1186,7 +1270,28 @@ const StreamFlow: React.FC = () => {
 
         {/* ── Coverage, warnings & evidence ── */}
         {hasResult && (
-          <section className="border-t border-outline-variant/60 bg-surface-container-low shrink-0 max-h-[45%] overflow-y-auto">
+          <>
+          {/* Séparateur réglable : le partage était figé à 45 %, si bien qu'une chaîne de quinze
+              sauts défilait dans une lucarne pendant que quatre nœuds gardaient la moitié haute. */}
+          {detailsOpen && (
+            <div
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label="Resize the evidence panel"
+              aria-valuenow={evidencePct}
+              aria-valuemin={MIN_EVIDENCE_PCT}
+              aria-valuemax={MAX_EVIDENCE_PCT}
+              tabIndex={0}
+              onPointerDown={onDividerPointerDown}
+              onKeyDown={onDividerKeyDown}
+              className="h-1.5 shrink-0 cursor-row-resize bg-outline-variant/40 hover:bg-primary/50 focus-visible:bg-primary/60 transition-colors"
+              style={{ touchAction: 'none' }}
+            />
+          )}
+          <section
+            className="border-t border-outline-variant/60 bg-surface-container-low shrink-0 overflow-y-auto"
+            style={detailsOpen ? { height: `${evidencePct}%` } : undefined}
+          >
             <div className="flex items-center gap-3 px-4 py-2 sticky top-0 bg-surface-container-low z-10 border-b border-outline-variant/40">
               <button
                 type="button"
@@ -1323,11 +1428,28 @@ const StreamFlow: React.FC = () => {
                   <Table rowCount={shownHits.length} scrollThreshold={12} maxBodyHeight="18rem">
                     <TableHead>
                       <tr>
-                        <Th>#</Th>
-                        <Th>Topic</Th>
-                        <Th>Matches</Th>
-                        <Th>First seen</Th>
-                        <Th>Δ from previous</Th>
+                        {/* Colonnes triables : sur une chaîne longue, « le saut le plus lent » se
+                            cherchait à l'œil. Le rang dans la chaîne, lui, ne bouge jamais. */}
+                        {([
+                          ['chain', '#'],
+                          ['topic', 'Topic'],
+                          ['occurrences', 'Matches'],
+                          ['firstTimestamp', 'First seen'],
+                          ['latency', 'Δ from previous'],
+                        ] as [HitSortKey, string][]).map(([key, label]) => (
+                          <Th key={key} aria-sort={sortKey === key ? (sortDesc ? 'descending' : 'ascending') : 'none'}>
+                            <button
+                              type="button"
+                              onClick={() => toggleSort(key)}
+                              className="inline-flex items-center gap-1 hover:text-on-surface uppercase tracking-[0.05em]"
+                            >
+                              {label}
+                              <span aria-hidden="true" className="material-symbols-outlined text-[13px]">
+                                {sortIcon(key)}
+                              </span>
+                            </button>
+                          </Th>
+                        ))}
                         <Th>Partition / Offset</Th>
                         <Th>Preview</Th>
                       </tr>
@@ -1410,6 +1532,7 @@ const StreamFlow: React.FC = () => {
               </div>
             )}
           </section>
+          </>
         )}
       </main>
     </div>

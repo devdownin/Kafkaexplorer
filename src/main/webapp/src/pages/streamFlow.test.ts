@@ -4,7 +4,8 @@ import {
   buildTraceQuery, centerOn, clampScale, compareFlows, describeChainInsight, describeComparison,
   describeContinuation, describeCoverage, describeProgress, describeSearchScope, expandTopicPatterns,
   filterHits, fitTransform, formatDwell, isNodeVisible, parseSseBuffer, parseTopicList,
-  progressRatio, slowestDivergence,
+  progressRatio, slowestDivergence, sortHits, clampEvidencePct, readEvidencePct,
+  writeEvidencePct, EVIDENCE_KEY, MIN_EVIDENCE_PCT, MAX_EVIDENCE_PCT, DEFAULT_EVIDENCE_PCT,
   formatLatency, formatRelativeTime, hitsToRows, HISTORY_KEY, HIT_EXPORT_COLUMNS, PANEL_KEY,
   parseFlowResponse, parseTraceParams, pushTraceHistory, readPanelOpen, readTraceHistory,
   sameCriterion, searchScopeOf, suggestWidenings, traceToJson, validateSearchPath, writePanelOpen,
@@ -650,6 +651,67 @@ describe('suggestWidenings', () => {
       caseSensitive: true, topics: ['a', 'b'],
     };
     expect(suggestWidenings(everything)).toHaveLength(4);
+  });
+});
+
+describe('sortHits', () => {
+  const hit = (topic: string, occurrences: number, first: number, latency: number | null): FlowHit => ({
+    topic, occurrences, firstTimestamp: first, lastTimestamp: first, firstPartition: 0,
+    firstOffset: 1, firstKey: null, preview: null, latencyFromPreviousMs: latency,
+  });
+  const hits = [
+    hit('orders', 3, 1_000, null),
+    hit('billing', 1, 1_200, 200),
+    hit('audit', 2, 1_900, 700),
+  ];
+
+  it('leaves the chain order alone by default, and reverses it on demand', () => {
+    expect(sortHits(hits, 'chain', false)).toBe(hits);
+    expect(sortHits(hits, 'chain', true).map(h => h.topic)).toEqual(['audit', 'billing', 'orders']);
+  });
+
+  it('sorts by occurrences, by first sighting and by name', () => {
+    expect(sortHits(hits, 'occurrences', true).map(h => h.topic)).toEqual(['orders', 'audit', 'billing']);
+    expect(sortHits(hits, 'firstTimestamp', false).map(h => h.topic)).toEqual(['orders', 'billing', 'audit']);
+    expect(sortHits(hits, 'topic', false).map(h => h.topic)).toEqual(['audit', 'billing', 'orders']);
+  });
+
+  /** Demander « le saut le plus lent » et lire un tiret en tête ne répondrait pas à la question. */
+  it('keeps a hop with no latency last, whichever way the column is sorted', () => {
+    expect(sortHits(hits, 'latency', true).map(h => h.topic)).toEqual(['audit', 'billing', 'orders']);
+    expect(sortHits(hits, 'latency', false).map(h => h.topic)).toEqual(['billing', 'audit', 'orders']);
+  });
+
+  it('does not mutate the array it was given', () => {
+    const original = [...hits];
+    sortHits(hits, 'occurrences', true);
+    expect(hits).toEqual(original);
+  });
+
+  it('breaks ties by name so two runs sort the same way', () => {
+    const tied = [hit('zulu', 1, 5, 10), hit('alpha', 1, 5, 10)];
+    expect(sortHits(tied, 'occurrences', false).map(h => h.topic)).toEqual(['alpha', 'zulu']);
+  });
+});
+
+describe('evidence panel height', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('keeps both panes usable', () => {
+    expect(clampEvidencePct(0)).toBe(MIN_EVIDENCE_PCT);
+    expect(clampEvidencePct(99)).toBe(MAX_EVIDENCE_PCT);
+    expect(clampEvidencePct(50)).toBe(50);
+    expect(clampEvidencePct(Number.NaN)).toBe(DEFAULT_EVIDENCE_PCT);
+  });
+
+  it('remembers the split, and clamps whatever was stored', () => {
+    expect(readEvidencePct()).toBe(DEFAULT_EVIDENCE_PCT);
+    writeEvidencePct(60);
+    expect(readEvidencePct()).toBe(60);
+    localStorage.setItem(EVIDENCE_KEY, '5');
+    expect(readEvidencePct()).toBe(MIN_EVIDENCE_PCT);
+    localStorage.setItem(EVIDENCE_KEY, 'huge');
+    expect(readEvidencePct()).toBe(DEFAULT_EVIDENCE_PCT);
   });
 });
 

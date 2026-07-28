@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FC } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { NAV_ITEMS, CONFIG_ITEM, HELP_ITEM } from '../navigation';
+import { buildTraceLinkForKey } from '../pages/streamFlow';
 
 interface CommandPaletteProps {
   open: boolean;
@@ -61,6 +62,23 @@ const CommandPalette: FC<CommandPaletteProps> = ({ open, onClose, topics, tables
       group: 'Pages',
       run: () => go(item.path),
     }));
+    const typed = query.trim();
+    // Ce que l'opérateur tape dans la palette est très souvent un identifiant — une commande, une
+    // clé de corrélation — et pas un nom de page. Tant qu'il ne désigne pas un topic connu, on
+    // propose de le tracer : la palette devient le point d'entrée d'une enquête, depuis n'importe
+    // quel écran, au lieu d'un raccourci vers un formulaire vide à remplir.
+    if (typed && !topics.includes(typed)) {
+      actions.unshift({
+        id: 'act-trace-key',
+        label: `Trace "${typed}" across topics`,
+        hint: 'Stream Flow',
+        icon: 'route',
+        group: 'Actions',
+        keywords: `${typed} trace key flow`,
+        run: () => go(buildTraceLinkForKey(typed)),
+      });
+    }
+
     const q = query.toLowerCase().trim();
     // Les topics/tables ne s'affichent qu'à la recherche (trop nombreux sinon).
     const topicCmds: Command[] = q
