@@ -353,6 +353,41 @@ export function buildTraceQuery(params: TraceParams): string {
   return encoded ? `?${encoded}` : '';
 }
 
+/**
+ * Deux critères désignent-ils la même trace ?
+ *
+ * Comparé sur la signature URL, donc avec les mêmes règles de défaut que le lien partagé : un
+ * champ modifié dans le formulaire après coup rend le graphe affiché caduc, et l'écran doit le
+ * dire — sans quoi on lit le résultat d'une recherche pour celui d'une autre.
+ */
+export function sameCriterion(a: TraceParams, b: TraceParams): boolean {
+  return buildTraceQuery(a) === buildTraceQuery(b);
+}
+
+export const PANEL_KEY = 'kse:flow-panel';
+
+/**
+ * Le panneau de critères occupe un tiers de la largeur, et une trace se lit dans le graphe : son
+ * état de repli suit l'utilisateur d'une visite à l'autre plutôt que de se rouvrir à chaque fois.
+ */
+export function readPanelOpen(fallback: boolean): boolean {
+  try {
+    const raw = localStorage.getItem(PANEL_KEY);
+    // Une valeur inconnue retombe sur le défaut : un stockage abîmé ne doit pas décider de la mise en page.
+    return raw === '1' ? true : raw === '0' ? false : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export function writePanelOpen(open: boolean): void {
+  try {
+    localStorage.setItem(PANEL_KEY, open ? '1' : '0');
+  } catch {
+    // Quota ou mode privé : le repli reste un confort, jamais un blocage.
+  }
+}
+
 export const HISTORY_KEY = 'kse:flow-history';
 const HISTORY_MAX = 10;
 
@@ -385,6 +420,55 @@ export function pushTraceHistory(entry: TraceHistoryEntry): TraceHistoryEntry[] 
     // idem : on renvoie la liste calculée même si le stockage refuse.
   }
   return next;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Rebond vers le Topic Explorer
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Query string ouvrant le Topic Explorer sur *la même* recherche.
+ *
+ * Depuis un saut, la question suivante est toujours « montre-moi le message » : sans ce lien il
+ * fallait rouvrir le topic et ressaisir le critère à la main, dans un formulaire qui ne présente
+ * pas les mêmes champs (mode, opérateur, cible) — une transcription à refaire à chaque saut, et
+ * une occasion de chercher autre chose que ce que la trace a trouvé.
+ *
+ * Le Topic Explorer n'expose ni XPath ni JSONPath : dans ces deux cas le chemin est **abandonné**
+ * au profit d'une recherche texte sur tout le payload. Elle ramène un sur-ensemble de ce que la
+ * trace a vu, ce qui est honnête ; prétendre appliquer le chemin ne le serait pas.
+ */
+export function buildTopicSearchQuery(params: TraceParams): string {
+  const query = new URLSearchParams();
+  const key = params.messageKey.trim();
+  const path = params.searchPath.trim();
+  const operator = params.useRegex ? 'REGEX' : 'CONTAINS';
+  const scope = searchScopeOf(path);
+
+  if (params.exactKey) {
+    query.set('mode', 'KEY');
+    query.set('op', 'EQ');
+    query.set('value', key);
+    query.set('keyPartitioning', '1');
+  } else if (scope === 'HEADER') {
+    query.set('mode', 'HEADER');
+    query.set('field', path.slice(HEADER_PREFIX.length).trim());
+    query.set('op', operator);
+    query.set('value', key);
+  } else if (scope === 'FIELD') {
+    query.set('mode', 'FIELD');
+    query.set('field', path);
+    query.set('op', operator);
+    query.set('value', key);
+  } else {
+    query.set('mode', params.useRegex ? 'REGEX' : 'CONTAINS');
+    query.set('q', key);
+    if (params.searchHeaders) query.set('headers', '1');
+  }
+  if (params.caseSensitive) query.set('case', '1');
+  // La fenêtre de la trace se transpose en « depuis N minutes » ; sans fenêtre, le topic entier.
+  if (params.windowMode === 'window') query.set('since', String(params.timeLimitMinutes));
+  return `?${query.toString()}`;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -558,6 +642,38 @@ export function zoomAt(current: Transform, factor: number, px: number, py: numbe
   };
 }
 
+/** Un nœud est-il entièrement dans la vue au transform courant ? */
+export function isNodeVisible(
+  layout: FlowLayout, viewport: Viewport, transform: Transform, nodeId: string,
+): boolean {
+  const pos = layout.positions[nodeId];
+  if (!pos) return false;
+  const x = pos.x * transform.scale + transform.x;
+  const y = pos.y * transform.scale + transform.y;
+  return x >= 0 && y >= 0
+    && x + layout.nodeW * transform.scale <= viewport.width
+    && y + layout.nodeH * transform.scale <= viewport.height;
+}
+
+/**
+ * Amène un nœud au centre de la vue **à échelle constante**.
+ *
+ * Sélectionner une ligne du tableau mettait le nœud en surbrillance là où il était — hors écran
+ * sur une chaîne un peu longue, la sélection n'avait alors aucun effet visible. Recadrer tout le
+ * graphe (`fitTransform`) répondrait à une autre question : on veut voir *ce* saut, pas l'ensemble.
+ */
+export function centerOn(
+  layout: FlowLayout, viewport: Viewport, nodeId: string, scale: number,
+): Transform | null {
+  const pos = layout.positions[nodeId];
+  if (!pos) return null;
+  return {
+    scale,
+    x: viewport.width / 2 - (pos.x + layout.nodeW / 2) * scale,
+    y: viewport.height / 2 - (pos.y + layout.nodeH / 2) * scale,
+  };
+}
+
 /** Âge relatif d'un timestamp Kafka, ou heure absolue au-delà d'une journée. */
 export function formatRelativeTime(ts: number | undefined, now = Date.now()): string {
   if (!ts || ts <= 0) return '';
@@ -619,6 +735,90 @@ export function describeCoverage(stats: FlowStats | null): string {
   if (stats.topicsSkipped > 0) parts.push(`${stats.topicsSkipped} skipped (time budget)`);
   if (stats.topicsFailed > 0) parts.push(`${stats.topicsFailed} unreadable`);
   return parts.join(' · ');
+}
+
+/**
+ * Filtre du tableau de preuves : nom du topic, clé du record ou aperçu du payload.
+ *
+ * Une trace sur tout un cluster peut ramener quarante sauts ; sans filtre, retrouver celui qu'on
+ * cherche se fait à la molette.
+ */
+export function filterHits(hits: FlowHit[], query: string): FlowHit[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return hits;
+  return hits.filter(hit =>
+    hit.topic.toLowerCase().includes(needle)
+    || (hit.firstKey ?? '').toLowerCase().includes(needle)
+    || (hit.preview ?? '').toLowerCase().includes(needle));
+}
+
+/** Une relance proposée quand la trace n'a rien trouvé : un critère élargi, et ce qu'il change. */
+export interface TraceSuggestion {
+  id: string;
+  label: string;
+  /** Ce que la relance change, en clair : un bouton qui va rescanner le cluster doit s'annoncer. */
+  hint: string;
+  params: TraceParams;
+}
+
+/**
+ * « Élargissez la fenêtre, montez le plafond, vérifiez le chemin » : le conseil était juste et
+ * demandait quand même de remonter dans le formulaire, de retrouver le bon champ et de relancer.
+ * Chaque piste devient un bouton qui relance la trace avec ce seul paramètre changé, de la plus
+ * probable (le chemin ne s'applique pas au payload) à la plus coûteuse (relire tout le cluster).
+ */
+export function suggestWidenings(params: TraceParams): TraceSuggestion[] {
+  const suggestions: TraceSuggestion[] = [];
+
+  if (params.searchPath.trim() && !params.exactKey) {
+    suggestions.push({
+      id: 'drop-path',
+      label: 'Search the whole payload',
+      hint: `ignores the path ${params.searchPath.trim()}, which may not exist in these messages`,
+      params: { ...params, searchPath: '' },
+    });
+  }
+  if (!params.searchHeaders && !params.exactKey && !params.searchPath.trim()) {
+    suggestions.push({
+      id: 'headers',
+      label: 'Search headers too',
+      hint: 'correlation ids often travel only in a Kafka header',
+      params: { ...params, searchHeaders: true },
+    });
+  }
+  if (params.windowMode === 'window') {
+    suggestions.push({
+      id: 'drop-window',
+      label: 'Drop the time window',
+      hint: `reads the newest messages instead of the last ${params.timeLimitMinutes} min`,
+      params: { ...params, windowMode: 'recent' },
+    });
+  }
+  if (params.maxMessages < 1000) {
+    suggestions.push({
+      id: 'raise-cap',
+      label: 'Read 1000 per topic',
+      hint: `up from ${params.maxMessages} — a longer scan, deeper into each topic`,
+      params: { ...params, maxMessages: 1000 },
+    });
+  }
+  if (params.caseSensitive) {
+    suggestions.push({
+      id: 'ignore-case',
+      label: 'Ignore case',
+      hint: 'matches ORD-42 against ord-42',
+      params: { ...params, caseSensitive: false },
+    });
+  }
+  if (params.topics.length > 0) {
+    suggestions.push({
+      id: 'whole-cluster',
+      label: 'Scan every topic',
+      hint: `the key may travel outside the ${params.topics.length} topic${params.topics.length > 1 ? 's' : ''} named — a much longer scan`,
+      params: { ...params, topics: [] },
+    });
+  }
+  return suggestions.slice(0, 4);
 }
 
 /* ──────────────────────────────────────────────────────────────────────────

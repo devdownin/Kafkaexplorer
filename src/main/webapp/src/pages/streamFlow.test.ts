@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  analyzeChain, buildLayout, buildTraceQuery, clampScale, describeChainInsight, describeCoverage,
-  describeProgress, describeSearchScope, fitTransform, formatDwell, parseSseBuffer, progressRatio,
-  formatLatency, formatRelativeTime, hitsToRows, HISTORY_KEY, HIT_EXPORT_COLUMNS, parseFlowResponse,
-  parseTraceParams, pushTraceHistory, readTraceHistory, searchScopeOf, traceToJson,
-  validateSearchPath, zoomAt,
+  analyzeChain, buildLayout, buildTopicSearchQuery, buildTraceQuery, centerOn, clampScale,
+  describeChainInsight, describeCoverage, describeProgress, describeSearchScope, filterHits,
+  fitTransform, formatDwell, isNodeVisible, parseSseBuffer, progressRatio,
+  formatLatency, formatRelativeTime, hitsToRows, HISTORY_KEY, HIT_EXPORT_COLUMNS, PANEL_KEY,
+  parseFlowResponse, parseTraceParams, pushTraceHistory, readPanelOpen, readTraceHistory,
+  sameCriterion, searchScopeOf, suggestWidenings, traceToJson, validateSearchPath, writePanelOpen,
+  zoomAt,
   type FlowHit, type FlowStats, type TraceParams,
 } from './streamFlow';
 import { toCsv } from './resultExport';
@@ -178,6 +180,41 @@ describe('trace params', () => {
 
   it('is empty for an empty query', () => {
     expect(buildTraceQuery(parseTraceParams(''))).toBe('');
+  });
+});
+
+describe('sameCriterion', () => {
+  const base = parseTraceParams('?key=ORD-42&path=order.id');
+
+  it('ignores what does not change the search', () => {
+    expect(sameCriterion(base, { ...base })).toBe(true);
+    // La fenêtre est ignorée tant qu'on lit « les plus récents » — comme dans le lien partagé.
+    expect(sameCriterion(base, { ...base, timeLimitMinutes: 99 })).toBe(true);
+  });
+
+  it('sees an edited field', () => {
+    expect(sameCriterion(base, { ...base, messageKey: 'ORD-43' })).toBe(false);
+    expect(sameCriterion(base, { ...base, searchHeaders: false })).toBe(false);
+    expect(sameCriterion(base, { ...base, topics: ['orders'] })).toBe(false);
+  });
+});
+
+describe('panel state', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('falls back to the caller default until a choice is stored', () => {
+    expect(readPanelOpen(true)).toBe(true);
+    expect(readPanelOpen(false)).toBe(false);
+    writePanelOpen(false);
+    expect(readPanelOpen(true)).toBe(false);
+    writePanelOpen(true);
+    expect(readPanelOpen(false)).toBe(true);
+  });
+
+  it('keeps the default when the stored value means nothing', () => {
+    localStorage.setItem(PANEL_KEY, 'yes please');
+    expect(readPanelOpen(true)).toBe(true);
+    expect(readPanelOpen(false)).toBe(false);
   });
 });
 
@@ -502,6 +539,137 @@ describe('describeChainInsight', () => {
     expect(notes[1]).toContain('slowest hop into billing');
     expect(notes[2]).toContain('1 topic saw the key more than once');
     expect(notes[3]).toContain('clock skew');
+  });
+});
+
+describe('buildTopicSearchQuery', () => {
+  const base = parseTraceParams('?key=ORD-42');
+  const parse = (params: TraceParams) => new URLSearchParams(buildTopicSearchQuery(params));
+
+  it('carries an exact record key as a KEY search on its own partition', () => {
+    const query = parse({ ...base, exactKey: true });
+    expect(query.get('mode')).toBe('KEY');
+    expect(query.get('op')).toBe('EQ');
+    expect(query.get('value')).toBe('ORD-42');
+    expect(query.get('keyPartitioning')).toBe('1');
+  });
+
+  it('carries a header criterion as a HEADER search on that header', () => {
+    const query = parse({ ...base, searchPath: 'header:correlation-id' });
+    expect(query.get('mode')).toBe('HEADER');
+    expect(query.get('field')).toBe('correlation-id');
+    expect(query.get('op')).toBe('CONTAINS');
+    expect(query.get('value')).toBe('ORD-42');
+  });
+
+  it('carries a dot path as a FIELD search, and a regex as the operator', () => {
+    const query = parse({ ...base, searchPath: 'order.id', useRegex: true });
+    expect(query.get('mode')).toBe('FIELD');
+    expect(query.get('field')).toBe('order.id');
+    expect(query.get('op')).toBe('REGEX');
+  });
+
+  /**
+   * Le Topic Explorer n'expose ni XPath ni JSONPath : le chemin est abandonné au profit d'une
+   * recherche texte, qui ramène un sur-ensemble. Prétendre appliquer le chemin serait un mensonge.
+   */
+  it('falls back to a text search when the path engine has no equivalent', () => {
+    for (const path of ['/order/id', '$..id']) {
+      const query = parse({ ...base, searchPath: path });
+      expect(query.get('mode')).toBe('CONTAINS');
+      expect(query.get('q')).toBe('ORD-42');
+      expect(query.get('field')).toBeNull();
+    }
+  });
+
+  it('passes the case and window options along', () => {
+    const query = parse({ ...base, caseSensitive: true, windowMode: 'window', timeLimitMinutes: 30 });
+    expect(query.get('case')).toBe('1');
+    expect(query.get('since')).toBe('30');
+    expect(parse(base).get('since')).toBeNull();
+  });
+});
+
+describe('filterHits', () => {
+  const hit = (topic: string, key: string | null, preview: string | null): FlowHit => ({
+    topic, occurrences: 1, firstTimestamp: 1, lastTimestamp: 1, firstPartition: 0,
+    firstOffset: 0, firstKey: key, preview, latencyFromPreviousMs: null,
+  });
+  const hits = [hit('orders.v2', 'ORD-1', '{"status":"NEW"}'), hit('billing', null, '{"amount":12}')];
+
+  it('returns everything for an empty filter', () => {
+    expect(filterHits(hits, '  ')).toBe(hits);
+  });
+
+  it('matches the topic, the record key or the preview, ignoring case', () => {
+    expect(filterHits(hits, 'ORDERS').map(h => h.topic)).toEqual(['orders.v2']);
+    expect(filterHits(hits, 'ord-1').map(h => h.topic)).toEqual(['orders.v2']);
+    expect(filterHits(hits, 'amount').map(h => h.topic)).toEqual(['billing']);
+    expect(filterHits(hits, 'nothing')).toEqual([]);
+  });
+});
+
+describe('suggestWidenings', () => {
+  const base = parseTraceParams('?key=ORD-42');
+  const ids = (params: TraceParams) => suggestWidenings(params).map(s => s.id);
+
+  it('offers to drop a search path first — the most likely reason for a miss', () => {
+    const suggestions = suggestWidenings({ ...base, searchPath: 'order.id' });
+    expect(suggestions[0].id).toBe('drop-path');
+    expect(suggestions[0].params.searchPath).toBe('');
+    expect(suggestions[0].hint).toContain('order.id');
+  });
+
+  it('offers the headers only for a raw search that ignores them', () => {
+    expect(ids({ ...base, searchHeaders: false })).toContain('headers');
+    expect(ids({ ...base, searchHeaders: false, searchPath: 'order.id' })).not.toContain('headers');
+    expect(ids({ ...base, searchHeaders: true })).not.toContain('headers');
+  });
+
+  it('only offers to widen what was actually narrowed', () => {
+    expect(ids({ ...base, maxMessages: 1000 })).not.toContain('raise-cap');
+    expect(ids(base)).not.toContain('drop-window');
+    expect(ids({ ...base, windowMode: 'window' })).toContain('drop-window');
+    expect(ids(base)).not.toContain('whole-cluster');
+    expect(ids({ ...base, topics: ['orders'] })).toContain('whole-cluster');
+  });
+
+  it('changes one thing at a time and keeps the rest of the criterion', () => {
+    const suggestion = suggestWidenings({ ...base, topics: ['orders'], caseSensitive: true })
+      .find(s => s.id === 'whole-cluster')!;
+    expect(suggestion.params.topics).toEqual([]);
+    expect(suggestion.params.messageKey).toBe('ORD-42');
+    expect(suggestion.params.caseSensitive).toBe(true);
+  });
+
+  it('stops at four proposals — a wall of buttons is not a hint', () => {
+    const everything: TraceParams = {
+      ...base, searchPath: 'order.id', windowMode: 'window', maxMessages: 50,
+      caseSensitive: true, topics: ['a', 'b'],
+    };
+    expect(suggestWidenings(everything)).toHaveLength(4);
+  });
+});
+
+describe('graph focus', () => {
+  const layout = buildLayout(
+    [{ id: 'a', label: 'a' }, { id: 'b', label: 'b' }, { id: 'c', label: 'c' }],
+    [{ source: 'a', target: 'b' }, { source: 'b', target: 'c' }],
+  );
+  const viewport = { width: 400, height: 300 };
+
+  it('knows when a node is off screen', () => {
+    const identity = { x: 0, y: 0, scale: 1 };
+    expect(isNodeVisible(layout, viewport, identity, 'a')).toBe(true);
+    expect(isNodeVisible(layout, viewport, identity, 'c')).toBe(false);
+    expect(isNodeVisible(layout, viewport, identity, 'unknown')).toBe(false);
+  });
+
+  it('brings a node to the centre without changing the scale', () => {
+    const centred = centerOn(layout, viewport, 'c', 0.5)!;
+    expect(centred.scale).toBe(0.5);
+    expect(isNodeVisible(layout, viewport, centred, 'c')).toBe(true);
+    expect(centerOn(layout, viewport, 'unknown', 1)).toBeNull();
   });
 });
 

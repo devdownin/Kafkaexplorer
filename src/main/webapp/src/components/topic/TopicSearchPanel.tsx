@@ -102,6 +102,55 @@ const SCOPES: { value: number; label: string }[] = [
   { value: 1440, label: 'Last 24 h' },
 ];
 
+const SEARCH_MODES: SearchMode[] = ['CONTAINS', 'REGEX', 'FIELD', 'HEADER', 'KEY'];
+
+/**
+ * Le sélecteur de portée ne propose que les valeurs de `SCOPES` : une fenêtre arbitraire venue
+ * de l'URL est arrondie à la plus petite portée qui la couvre, sinon le champ afficherait une
+ * durée que la liste ne contient pas et la recherche partirait sur autre chose que l'affiché.
+ */
+function snapScope(minutes: number): number {
+  if (!Number.isFinite(minutes) || minutes <= 0) return 0;
+  return SCOPES.map(s => s.value).filter(v => v > 0).find(v => v >= minutes) ?? 0;
+}
+
+/**
+ * Critère de recherche porté par la query string — c'est ainsi qu'un saut de la page Stream Flow
+ * ouvre le topic sur *sa* recherche, au lieu de laisser retranscrire le critère à la main dans un
+ * formulaire qui n'a pas les mêmes champs.
+ *
+ * Rend `null` dès que l'URL ne décrit pas une recherche exécutable : une navigation ordinaire
+ * vers un topic ne doit rien déclencher.
+ */
+export function criteriaFromQuery(search: string): TopicSearchCriteria | null {
+  const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
+  const mode = (params.get('mode') ?? '').toUpperCase() as SearchMode;
+  if (!SEARCH_MODES.includes(mode)) return null;
+
+  const query = (params.get('q') ?? '').trim();
+  const value = (params.get('value') ?? '').trim();
+  const field = (params.get('field') ?? '').trim();
+  const scoped = mode === 'FIELD' || mode === 'HEADER';
+  // Mêmes conditions que le bouton « Search » du panneau : une cible sans valeur, ou une
+  // recherche texte sans texte, n'aurait rien à exécuter.
+  if (scoped && !field) return null;
+  if ((scoped || mode === 'KEY') ? !value : !query) return null;
+
+  const operator = params.get('op') ?? '';
+  return {
+    ...emptyCriteria,
+    mode,
+    query,
+    field,
+    operator: OPERATORS.some(o => o.value === operator) ? operator : emptyCriteria.operator,
+    value,
+    caseSensitive: params.get('case') === '1',
+    searchHeaders: params.get('headers') === '1',
+    keyPartitioning: params.get('keyPartitioning') === '1',
+    sinceMinutes: snapScope(Number(params.get('since'))),
+  };
+}
+
 const STOP_REASONS: Record<string, string> = {
   MAX_HITS: 'hit limit reached',
   MAX_SCAN: 'scan budget reached',
@@ -273,7 +322,14 @@ const TopicSearchPanel: React.FC<Props> = ({
               className="flex-1 min-w-[12rem]"
             >
               <option value="">Select a field…</option>
-              {schemaPaths.map(path => <option key={path} value={path}>{path}</option>)}
+              {/* Un chemin venu d'un lien (une trace Stream Flow) ou d'un payload que
+                  l'échantillon n'a pas montré n'est pas dans le schéma inféré : l'ajouter à la
+                  liste, plutôt que d'afficher « Select a field… » au-dessus d'une recherche qui,
+                  elle, l'utilise bel et bien. */}
+              {(criteria.field && !schemaPaths.includes(criteria.field)
+                ? [criteria.field, ...schemaPaths]
+                : schemaPaths
+              ).map(path => <option key={path} value={path}>{path}</option>)}
             </Select>
           )}
           <Select
