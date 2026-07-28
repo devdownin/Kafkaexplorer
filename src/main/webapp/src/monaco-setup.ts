@@ -19,7 +19,11 @@
  */
 import * as monaco from 'monaco-editor';
 import { loader } from '@monaco-editor/react';
-import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
+// `monaco-editor/editor/…`, et non `monaco-editor/esm/vs/editor/…` : la 0.56 déclare un champ
+// `exports` (`"./*": "./esm/vs/*.js"`) qui enracine les sous-chemins sur `esm/vs`. L'ancien chemin
+// s'y résout en `esm/vs/esm/vs/…`, qui n'existe pas — Rollup ne trouvait plus le worker et la
+// compilation de production échouait, alors que `tsc` et Vitest, eux, passaient.
+import editorWorker from 'monaco-editor/editor/editor.worker?worker';
 
 // Fournit le worker de l'éditeur depuis le bundle plutôt que depuis un CDN.
 self.MonacoEnvironment = {
