@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, useLocation, Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import Editor from '@monaco-editor/react';
 import '../monaco-setup';
@@ -7,6 +7,7 @@ import { useToast } from '../components/Toast';
 import ErrorBanner from '../components/ErrorBanner';
 import { Button, Badge, Stat, EmptyState, StatGridSkeleton, TableSkeleton, Table } from '../components/ui';
 import TopicSearchPanel, {
+  criteriaFromQuery,
   emptyCriteria,
   splitOnMatches,
   type TopicMessage,
@@ -347,6 +348,7 @@ const MessageCard: React.FC<{
 
 const TopicExplorer: React.FC = () => {
   const { name } = useParams<{ name: string }>();
+  const location = useLocation();
   const navigate = useNavigate();
   const { toast } = useToast();
   const [data, setData] = useState<TopicDetail | null>(null);
@@ -396,26 +398,31 @@ const TopicExplorer: React.FC = () => {
     }
   };
 
-  const runSearch = async (resume: boolean) => {
+  /**
+   * `applied` permet de lancer une recherche avec un critère qui n'est pas encore passé par
+   * l'état React — c'est le cas de celui qui arrive dans l'URL, appliqué et exécuté d'un trait.
+   */
+  const runSearch = async (resume: boolean, applied?: TopicSearchCriteria) => {
+    const active = applied ?? criteria;
     setSearching(true);
     setSearchError(null);
     try {
       // FIELD et HEADER portent tous deux leur cible dans `field` (chemin / nom de header) ;
       // KEY compare `value` sans cible.
-      const fieldScoped = criteria.mode === 'FIELD' || criteria.mode === 'HEADER';
-      const valueScoped = fieldScoped || criteria.mode === 'KEY';
+      const fieldScoped = active.mode === 'FIELD' || active.mode === 'HEADER';
+      const valueScoped = fieldScoped || active.mode === 'KEY';
       const body = {
-        mode: criteria.mode,
-        query: criteria.query,
-        caseSensitive: criteria.caseSensitive,
-        searchKey: criteria.searchKey,
-        searchHeaders: criteria.searchHeaders,
-        keyPartitioning: criteria.keyPartitioning,
-        field: fieldScoped ? criteria.field : null,
-        operator: valueScoped ? criteria.operator : null,
-        value: valueScoped ? criteria.value : null,
-        from: criteria.sinceMinutes > 0 ? 'TIMESTAMP' : 'EARLIEST',
-        sinceMinutes: criteria.sinceMinutes > 0 ? criteria.sinceMinutes : null,
+        mode: active.mode,
+        query: active.query,
+        caseSensitive: active.caseSensitive,
+        searchKey: active.searchKey,
+        searchHeaders: active.searchHeaders,
+        keyPartitioning: active.keyPartitioning,
+        field: fieldScoped ? active.field : null,
+        operator: valueScoped ? active.operator : null,
+        value: valueScoped ? active.value : null,
+        from: active.sinceMinutes > 0 ? 'TIMESTAMP' : 'EARLIEST',
+        sinceMinutes: active.sinceMinutes > 0 ? active.sinceMinutes : null,
         // Resuming continues exactly where the previous pass stopped.
         cursor: resume ? searchResult?.nextCursor ?? null : null,
       };
@@ -437,6 +444,22 @@ const TopicExplorer: React.FC = () => {
       setSearching(false);
     }
   };
+
+  /**
+   * Une recherche décrite dans l'URL s'applique et s'exécute à l'ouverture : c'est ce qui permet
+   * à un saut de la page Stream Flow d'amener directement sur les messages concernés. Une seule
+   * fois — l'utilisateur reste maître du formulaire ensuite.
+   */
+  const presetApplied = React.useRef(false);
+  useEffect(() => {
+    if (presetApplied.current) return;
+    const preset = criteriaFromQuery(location.search);
+    if (!preset) return;
+    presetApplied.current = true;
+    setCriteria(preset);
+    void runSearch(false, preset);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- une passe unique à l'ouverture
+  }, [location.search]);
 
   const clearSearch = () => {
     setSearchActive(false);
