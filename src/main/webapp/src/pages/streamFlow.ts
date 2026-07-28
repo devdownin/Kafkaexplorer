@@ -33,6 +33,8 @@ export interface FlowHit {
   firstKey: string | null;
   preview: string | null;
   latencyFromPreviousMs: number | null;
+  /** Le topic contient plus d'occurrences que le scan n'en a gardées : le compte est un plancher. */
+  occurrencesCapped?: boolean;
 }
 
 export interface FlowStats {
@@ -59,21 +61,62 @@ export interface ParsedFlow {
 
 export type FormErrors = { messageKey?: string; searchPath?: string };
 
+export const HEADER_PREFIX = 'header:';
+
+/** Ce que le backend fera du chemin saisi — affiché sous le champ pour lever l'ambiguïté. */
+export type SearchScope = 'ANY' | 'FIELD' | 'JSONPATH' | 'XPATH' | 'HEADER';
+
 /**
- * Validation de surface d'un JSONPath / XPath, côté client.
+ * Descente récursive et filtres dépassent le parcours en notation pointée : le backend bascule
+ * alors sur le moteur JSONPath complet, qui exige un `$` en tête.
+ */
+export function needsFullJsonPath(path: string): boolean {
+  return path.includes('..') || path.includes('[?');
+}
+
+export function searchScopeOf(path: string): SearchScope {
+  const trimmed = path.trim();
+  if (!trimmed) return 'ANY';
+  if (trimmed.toLowerCase().startsWith(HEADER_PREFIX)) return 'HEADER';
+  if (trimmed.startsWith('/')) return 'XPATH';
+  return needsFullJsonPath(trimmed) ? 'JSONPATH' : 'FIELD';
+}
+
+export function describeSearchScope(path: string, searchHeaders: boolean): string {
+  switch (searchScopeOf(path)) {
+    case 'HEADER':
+      return `Compares the Kafka header "${path.trim().slice(HEADER_PREFIX.length).trim()}".`;
+    case 'XPATH':
+      return 'XPath over XML payloads. Only what the expression extracts is compared.';
+    case 'JSONPATH':
+      return 'Full JSONPath (recursive descent, filters) over JSON payloads.';
+    case 'FIELD':
+      return 'Dot-notation path over JSON or XML payloads. Only what the path extracts is compared.';
+    default:
+      return searchHeaders
+        ? 'Matches the record key, the payload, and every header value.'
+        : 'Matches the record key and the payload.';
+  }
+}
+
+/**
+ * Validation de surface du chemin de recherche, côté client.
  *
  * Un chemin invalide déclenchait un scan de tous les topics pour finir sur zéro résultat, sans
  * rien qui distingue « mauvaise syntaxe » de « clé absente ». Le backend rejette désormais un
  * chemin illisible avec son propre message ; cette passe évite l'aller-retour sur les fautes de
- * frappe manifestes. On ne réimplémente pas les deux grammaires.
+ * frappe manifestes. On ne réimplémente pas les grammaires.
+ *
+ * Un nom de champ nu (`orderId`, `order.items[].sku`) est **valide** : c'est la notation que
+ * produit la liste de champs du Topic Explorer, et l'ancienne version la rejetait au motif
+ * qu'elle n'était « ni un JSONPath ni un XPath ».
  */
 export function validateSearchPath(path: string): string | undefined {
   const trimmed = path.trim();
   if (!trimmed) return undefined;
-  const looksJsonPath = trimmed.startsWith('$');
-  const looksXPath = trimmed.startsWith('/');
-  if (!looksJsonPath && !looksXPath) {
-    return 'Expected a JSONPath ($.field) or an XPath (/root/field).';
+  const scope = searchScopeOf(trimmed);
+  if (scope === 'HEADER') {
+    return trimmed.slice(HEADER_PREFIX.length).trim() ? undefined : 'Missing header name after "header:".';
   }
   const brackets = [...trimmed].reduce((depth, char) => {
     if (char === '[') return depth + 1;
@@ -81,11 +124,15 @@ export function validateSearchPath(path: string): string | undefined {
     return depth;
   }, 0);
   if (brackets !== 0) return 'Unbalanced brackets.';
-  if (looksJsonPath && /\.\./.test(trimmed.slice(1).replace(/\.\.(?=[a-zA-Z_*])/g, ''))) {
-    return 'Empty path segment ("..").';
+  if (scope === 'XPATH') {
+    return trimmed.includes('//') && !trimmed.startsWith('//')
+      ? 'Empty path segment ("//").'
+      : undefined;
   }
-  if (looksXPath && trimmed.includes('//') && !trimmed.startsWith('//')) {
-    return 'Empty path segment ("//").';
+  // `..` (descente récursive) et `[?…]` (filtre) n'ont de sens qu'en JSONPath, qui commence par `$`.
+  // Sans lui, le chemin serait lu comme une notation pointée et ne matcherait jamais rien.
+  if (needsFullJsonPath(trimmed) && !trimmed.startsWith('$')) {
+    return 'Recursive descent (..) and filters ([?…]) need a JSONPath — start the path with "$".';
   }
   return undefined;
 }
@@ -142,6 +189,162 @@ export function parseFlowResponse(data: unknown): ParsedFlow {
     stats: payload.stats ?? null,
     warnings: Array.isArray(payload.warnings) ? payload.warnings : [],
   };
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Paramètres de trace : URL partageable et historique local
+ * ────────────────────────────────────────────────────────────────────────── */
+
+export interface TraceParams {
+  messageKey: string;
+  searchPath: string;
+  topics: string[];
+  windowMode: 'recent' | 'window';
+  timeLimitMinutes: number;
+  maxMessages: number;
+  useRegex: boolean;
+  caseSensitive: boolean;
+  searchHeaders: boolean;
+}
+
+export const DEFAULT_TRACE_PARAMS: TraceParams = {
+  messageKey: '',
+  searchPath: '',
+  topics: [],
+  windowMode: 'recent',
+  timeLimitMinutes: 5,
+  maxMessages: 100,
+  useRegex: false,
+  caseSensitive: false,
+  searchHeaders: true,
+};
+
+function boolParam(raw: string | null, fallback: boolean): boolean {
+  if (raw === null) return fallback;
+  return raw === '1' || raw.toLowerCase() === 'true';
+}
+
+function intParam(raw: string | null, fallback: number, min: number, max: number): number {
+  const parsed = Number(raw);
+  if (raw === null || !Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(parsed)));
+}
+
+/**
+ * Lit une trace depuis la query string.
+ *
+ * Une trace est une pièce à conviction : elle se colle dans un ticket d'incident, et le
+ * destinataire doit rejouer exactement la même — d'où tous les paramètres du formulaire dans
+ * l'URL, pas seulement la clé.
+ */
+export function parseTraceParams(search: string): TraceParams {
+  const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
+  const rawWindow = params.get('window');
+  // Une valeur illisible retombe sur le défaut plutôt que d'activer une fenêtre fantôme.
+  const hasWindow = rawWindow !== null && rawWindow !== 'recent' && Number.isFinite(Number(rawWindow));
+  return {
+    messageKey: params.get('key') ?? '',
+    searchPath: params.get('path') ?? '',
+    topics: (params.get('topics') ?? '').split(',').map(t => t.trim()).filter(Boolean),
+    windowMode: hasWindow ? 'window' : 'recent',
+    timeLimitMinutes: intParam(rawWindow, DEFAULT_TRACE_PARAMS.timeLimitMinutes, 1, 1440),
+    maxMessages: intParam(params.get('max'), DEFAULT_TRACE_PARAMS.maxMessages, 10, 1000),
+    useRegex: boolParam(params.get('regex'), false),
+    caseSensitive: boolParam(params.get('case'), false),
+    searchHeaders: boolParam(params.get('headers'), true),
+  };
+}
+
+/** Ne sérialise que ce qui s'écarte du défaut : un lien lisible plutôt qu'exhaustif. */
+export function buildTraceQuery(params: TraceParams): string {
+  const query = new URLSearchParams();
+  if (params.messageKey) query.set('key', params.messageKey);
+  if (params.searchPath) query.set('path', params.searchPath);
+  if (params.topics.length > 0) query.set('topics', params.topics.join(','));
+  if (params.windowMode === 'window') query.set('window', String(params.timeLimitMinutes));
+  if (params.maxMessages !== DEFAULT_TRACE_PARAMS.maxMessages) query.set('max', String(params.maxMessages));
+  if (params.useRegex) query.set('regex', '1');
+  if (params.caseSensitive) query.set('case', '1');
+  if (!params.searchHeaders) query.set('headers', '0');
+  const encoded = query.toString();
+  return encoded ? `?${encoded}` : '';
+}
+
+export const HISTORY_KEY = 'kse:flow-history';
+const HISTORY_MAX = 10;
+
+export interface TraceHistoryEntry extends TraceParams {
+  /** Date de l'exécution (ms) — l'entrée la plus récente est en tête. */
+  ranAt: number;
+  /** Nombre de topics trouvés, pour distinguer deux traces voisines dans la liste. */
+  topicsFound: number;
+}
+
+export function readTraceHistory(): TraceHistoryEntry[] {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter(e => e && typeof e.messageKey === 'string') : [];
+  } catch {
+    // Quota, mode privé, JSON corrompu : l'historique est un confort, jamais un blocage.
+    return [];
+  }
+}
+
+/** Empile une trace en tête, dédoublonnée sur le critère (pas sur le résultat). */
+export function pushTraceHistory(entry: TraceHistoryEntry): TraceHistoryEntry[] {
+  const signature = buildTraceQuery(entry);
+  const next = [entry, ...readTraceHistory().filter(e => buildTraceQuery(e) !== signature)]
+    .slice(0, HISTORY_MAX);
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+  } catch {
+    // idem : on renvoie la liste calculée même si le stockage refuse.
+  }
+  return next;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Export
+ * ────────────────────────────────────────────────────────────────────────── */
+
+export const HIT_EXPORT_COLUMNS = [
+  'hop', 'topic', 'occurrences', 'occurrencesCapped', 'firstSeen', 'lastSeen',
+  'latencyFromPreviousMs', 'partition', 'offset', 'recordKey', 'preview',
+];
+
+/** Une ligne par saut, horodatages en ISO : lisible dans un tableur comme dans un ticket. */
+export function hitsToRows(hits: FlowHit[]): Record<string, unknown>[] {
+  return hits.map((hit, i) => ({
+    hop: i + 1,
+    topic: hit.topic,
+    occurrences: hit.occurrences,
+    occurrencesCapped: Boolean(hit.occurrencesCapped),
+    firstSeen: formatAbsoluteTime(hit.firstTimestamp),
+    lastSeen: formatAbsoluteTime(hit.lastTimestamp),
+    latencyFromPreviousMs: hit.latencyFromPreviousMs ?? '',
+    partition: hit.firstPartition,
+    offset: hit.firstOffset,
+    recordKey: hit.firstKey ?? '',
+    preview: hit.preview ?? '',
+  }));
+}
+
+/** Export JSON complet : le critère, la couverture et les avertissements, pas seulement les sauts. */
+export function traceToJson(params: TraceParams, flow: ParsedFlow): string {
+  return JSON.stringify({
+    criterion: {
+      messageKey: params.messageKey,
+      searchPath: params.searchPath || null,
+      useRegex: params.useRegex,
+      caseSensitive: params.caseSensitive,
+      searchHeaders: params.searchHeaders,
+      targetTopics: params.topics,
+    },
+    stats: flow.stats,
+    warnings: flow.warnings,
+    hits: flow.hits,
+  }, null, 2);
 }
 
 export interface FlowLayout {

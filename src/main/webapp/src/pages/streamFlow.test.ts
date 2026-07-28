@@ -1,9 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  buildLayout, clampScale, describeCoverage, fitTransform, formatLatency, formatRelativeTime,
-  parseFlowResponse, validateSearchPath, zoomAt,
-  type FlowStats,
+  buildLayout, buildTraceQuery, clampScale, describeCoverage, describeSearchScope, fitTransform,
+  formatLatency, formatRelativeTime, hitsToRows, HISTORY_KEY, HIT_EXPORT_COLUMNS, parseFlowResponse,
+  parseTraceParams, pushTraceHistory, readTraceHistory, searchScopeOf, traceToJson,
+  validateSearchPath, zoomAt,
+  type FlowHit, type FlowStats, type TraceParams,
 } from './streamFlow';
+import { toCsv } from './resultExport';
 
 describe('validateSearchPath', () => {
   it('accepts an empty path (raw key / payload search)', () => {
@@ -11,19 +14,163 @@ describe('validateSearchPath', () => {
     expect(validateSearchPath('   ')).toBeUndefined();
   });
 
-  it('accepts a JSONPath and an XPath', () => {
+  it('accepts a JSONPath, an XPath and a bare dot path', () => {
     expect(validateSearchPath('$.orderId')).toBeUndefined();
     expect(validateSearchPath('$.items[*].id')).toBeUndefined();
     expect(validateSearchPath('/order/id')).toBeUndefined();
     expect(validateSearchPath('//id')).toBeUndefined();
+    // La notation que produit la liste de champs du Topic Explorer.
+    expect(validateSearchPath('orderId')).toBeUndefined();
+    expect(validateSearchPath('order.items[].sku')).toBeUndefined();
   });
 
-  it('rejects a bare field name', () => {
-    expect(validateSearchPath('orderId')).toMatch(/JSONPath/);
+  it('accepts a header search and rejects one without a name', () => {
+    expect(validateSearchPath('header:correlation-id')).toBeUndefined();
+    expect(validateSearchPath('header:  ')).toMatch(/header name/i);
   });
 
   it('rejects unbalanced brackets', () => {
     expect(validateSearchPath('$.items[0')).toBe('Unbalanced brackets.');
+  });
+
+  /** Recursive descent only means something to the JSONPath engine, which needs its `$`. */
+  it('rejects recursive descent written as a bare path', () => {
+    expect(validateSearchPath('order..id')).toMatch(/JSONPath/);
+    expect(validateSearchPath('$..id')).toBeUndefined();
+    expect(validateSearchPath('$.items[?(@.qty>1)].sku')).toBeUndefined();
+  });
+});
+
+describe('searchScopeOf', () => {
+  it('maps a path to what the backend will do with it', () => {
+    expect(searchScopeOf('')).toBe('ANY');
+    expect(searchScopeOf('order.id')).toBe('FIELD');
+    expect(searchScopeOf('$.order.id')).toBe('FIELD');
+    expect(searchScopeOf('/order/id')).toBe('XPATH');
+    expect(searchScopeOf('$..id')).toBe('JSONPATH');
+    expect(searchScopeOf('Header:Correlation-Id')).toBe('HEADER');
+  });
+
+  it('says whether headers are in scope for a raw search', () => {
+    expect(describeSearchScope('', true)).toMatch(/header/i);
+    expect(describeSearchScope('', false)).not.toMatch(/header/i);
+    expect(describeSearchScope('header:x', true)).toContain('"x"');
+  });
+});
+
+describe('trace params', () => {
+  const params: TraceParams = {
+    messageKey: 'ORD 42',
+    searchPath: '$.orderId',
+    topics: ['orders', 'billing'],
+    windowMode: 'window',
+    timeLimitMinutes: 30,
+    maxMessages: 500,
+    useRegex: true,
+    caseSensitive: true,
+    searchHeaders: false,
+  };
+
+  it('round-trips through the query string', () => {
+    expect(parseTraceParams(buildTraceQuery(params))).toEqual(params);
+  });
+
+  it('only serialises what differs from the defaults', () => {
+    const query = buildTraceQuery({
+      ...params, searchPath: '', topics: [], windowMode: 'recent',
+      maxMessages: 100, useRegex: false, caseSensitive: false, searchHeaders: true,
+    });
+    expect(query).toBe('?key=ORD+42');
+  });
+
+  it('falls back to the defaults on a malformed query', () => {
+    const parsed = parseTraceParams('?max=nonsense&window=abc');
+    expect(parsed.maxMessages).toBe(100);
+    expect(parsed.windowMode).toBe('recent');
+    expect(parsed.searchHeaders).toBe(true);
+  });
+
+  it('clamps out-of-range numbers instead of trusting the URL', () => {
+    expect(parseTraceParams('?max=99999').maxMessages).toBe(1000);
+    expect(parseTraceParams('?window=99999').timeLimitMinutes).toBe(1440);
+  });
+
+  it('is empty for an empty query', () => {
+    expect(buildTraceQuery(parseTraceParams(''))).toBe('');
+  });
+});
+
+describe('trace history', () => {
+  beforeEach(() => localStorage.clear());
+
+  const entry = (key: string) => ({
+    ...parseTraceParams(`?key=${key}`), ranAt: Date.now(), topicsFound: 2,
+  });
+
+  it('keeps the most recent trace first and de-duplicates on the criterion', () => {
+    pushTraceHistory(entry('a'));
+    pushTraceHistory(entry('b'));
+    const list = pushTraceHistory(entry('a'));
+
+    expect(list.map(e => e.messageKey)).toEqual(['a', 'b']);
+    expect(readTraceHistory().map(e => e.messageKey)).toEqual(['a', 'b']);
+  });
+
+  it('caps the list at ten entries', () => {
+    for (let i = 0; i < 15; i++) pushTraceHistory(entry(`k${i}`));
+    expect(readTraceHistory()).toHaveLength(10);
+    expect(readTraceHistory()[0].messageKey).toBe('k14');
+  });
+
+  it('survives a corrupted store rather than breaking the page', () => {
+    localStorage.setItem(HISTORY_KEY, '{not json');
+    expect(readTraceHistory()).toEqual([]);
+  });
+});
+
+describe('export', () => {
+  const hits: FlowHit[] = [
+    {
+      topic: 'orders', occurrences: 2, firstTimestamp: 1_700_000_000_000,
+      lastTimestamp: 1_700_000_001_000, firstPartition: 0, firstOffset: 10,
+      firstKey: 'K-1', preview: 'a,b"c', latencyFromPreviousMs: null,
+    },
+    {
+      topic: 'billing', occurrences: 1, firstTimestamp: 1_700_000_002_000,
+      lastTimestamp: 1_700_000_002_000, firstPartition: 1, firstOffset: 42,
+      firstKey: null, preview: null, latencyFromPreviousMs: 2000, occurrencesCapped: true,
+    },
+  ];
+
+  it('numbers the hops and renders timestamps as ISO', () => {
+    const rows = hitsToRows(hits);
+    expect(rows[0].hop).toBe(1);
+    expect(rows[0].firstSeen).toBe('2023-11-14T22:13:20.000Z');
+    expect(rows[1].latencyFromPreviousMs).toBe(2000);
+    expect(rows[0].latencyFromPreviousMs).toBe('');
+    expect(rows[1].occurrencesCapped).toBe(true);
+  });
+
+  it('escapes a preview containing commas and quotes', () => {
+    const csv = toCsv(HIT_EXPORT_COLUMNS, hitsToRows(hits));
+    expect(csv.split('\r\n')[1]).toContain('"a,b""c"');
+  });
+
+  it('exports the criterion and the coverage, not only the hops', () => {
+    const params = parseTraceParams('?key=K-1&path=$.id');
+    const json = JSON.parse(traceToJson(params, {
+      nodes: [], edges: [], hits, warnings: ['heads up'],
+      stats: {
+        topicsInScope: 2, topicsScanned: 2, topicsSkipped: 0, topicsFailed: 0,
+        messagesScanned: 10, matches: 3, durationMs: 5, truncated: false,
+        stopReason: 'COMPLETE', maxMessagesPerTopic: 100, timeLimitMinutes: null,
+      },
+    }));
+
+    expect(json.criterion.messageKey).toBe('K-1');
+    expect(json.criterion.searchPath).toBe('$.id');
+    expect(json.warnings).toEqual(['heads up']);
+    expect(json.hits).toHaveLength(2);
   });
 });
 

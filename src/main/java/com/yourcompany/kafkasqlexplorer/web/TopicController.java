@@ -77,7 +77,7 @@ public class TopicController {
     public TopicSearchResponse search(@PathVariable String name,
                                       @RequestBody(required = false) TopicSearchRequest request) {
         TopicSearchRequest criteria = request != null ? request : new TopicSearchRequest(
-                null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
         try {
             return topicSearchService.search(name, criteria);
         } catch (IllegalArgumentException e) {

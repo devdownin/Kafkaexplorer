@@ -1,43 +1,74 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import {
   Badge, Button, EmptyState, Field, Input, NumberInput, Select, TopicInput,
   Table, TableBody, TableHead, TableRow, Td, Th,
 } from '../components/ui';
+import { useToast } from '../components/Toast';
 import { describeApiError, type QueryErrorInfo } from './queryError';
+import { toCsv } from './resultExport';
 import {
-  buildLayout, clampScale, describeCoverage, fitTransform, formatAbsoluteTime, formatLatency,
-  formatRelativeTime, parseFlowResponse, validateSearchPath, zoomAt,
-  type FlowHit, type FlowStats, type FormErrors, type Transform,
+  buildLayout, buildTraceQuery, clampScale, describeCoverage, describeSearchScope, fitTransform,
+  formatAbsoluteTime, formatLatency, formatRelativeTime, hitsToRows, HIT_EXPORT_COLUMNS,
+  parseFlowResponse, parseTraceParams, pushTraceHistory, readTraceHistory, traceToJson,
+  validateSearchPath, zoomAt,
+  type FlowHit, type FormErrors, type ParsedFlow, type TraceHistoryEntry,
+  type TraceParams, type Transform,
 } from './streamFlow';
 
 /** Filet de sécurité côté client : le backend borne déjà la trace (explorer.stream-flow-timeout-ms). */
 const REQUEST_TIMEOUT_MS = 120_000;
 
+const EMPTY_FLOW: ParsedFlow = { nodes: [], edges: [], hits: [], stats: null, warnings: [] };
+
+/** Interrupteur du panneau de critères — trois options identiques, un seul rendu. */
+const Toggle: React.FC<{ label: string; hint?: string; checked: boolean; onChange: (v: boolean) => void }> =
+  ({ label, hint, checked, onChange }) => (
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-[12px] font-medium text-on-surface-variant" title={hint}>{label}</span>
+      <button
+        type="button"
+        role="switch" aria-checked={checked} aria-label={label}
+        onClick={() => onChange(!checked)}
+        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${checked ? 'bg-primary' : 'bg-surface-container-highest'}`}
+      >
+        <span className={`inline-block h-3.5 w-3.5 transform rounded-full transition-transform ${checked ? 'translate-x-[18px] bg-on-primary' : 'translate-x-1 bg-on-surface-variant'}`} />
+      </button>
+    </div>
+  );
+
 const StreamFlow: React.FC = () => {
-  const [messageKey, setMessageKey]         = useState('');
-  const [searchPath, setSearchPath]         = useState('');
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { toast } = useToast();
+
+  // Le formulaire s'initialise depuis l'URL : une trace se partage telle quelle.
+  const initial = useMemo(() => parseTraceParams(location.search), []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const [messageKey, setMessageKey]         = useState(initial.messageKey);
+  const [searchPath, setSearchPath]         = useState(initial.searchPath);
   /** Topics cibles saisis un par un, au lieu d'un textarea libre « un par ligne ». */
-  const [selectedTopics, setSelectedTopics] = useState<string[]>([]);
+  const [selectedTopics, setSelectedTopics] = useState<string[]>(initial.topics);
   const [topicDraft, setTopicDraft]         = useState('');
   const [fieldErrors, setFieldErrors]       = useState<FormErrors>({});
-  const [maxMessages, setMaxMessages]       = useState(100);
+  const [maxMessages, setMaxMessages]       = useState(initial.maxMessages);
   /** « recent » = derniers messages de chaque topic ; « window » = fenêtre temporelle. */
-  const [windowMode, setWindowMode]         = useState<'recent' | 'window'>('recent');
-  const [timeLimitMinutes, setTimeLimitMinutes] = useState(5);
-  const [useRegex, setUseRegex]             = useState(false);
+  const [windowMode, setWindowMode]         = useState(initial.windowMode);
+  const [timeLimitMinutes, setTimeLimitMinutes] = useState(initial.timeLimitMinutes);
+  const [useRegex, setUseRegex]             = useState(initial.useRegex);
+  const [caseSensitive, setCaseSensitive]   = useState(initial.caseSensitive);
+  const [searchHeaders, setSearchHeaders]   = useState(initial.searchHeaders);
+
   const [loading, setLoading]               = useState(false);
   const [error, setError]                   = useState<QueryErrorInfo | null>(null);
   const [notice, setNotice]                 = useState<string | null>(null);
-  const [nodes, setNodes]                   = useState<ReturnType<typeof parseFlowResponse>['nodes']>([]);
-  const [edges, setEdges]                   = useState<ReturnType<typeof parseFlowResponse>['edges']>([]);
-  const [hits, setHits]                     = useState<FlowHit[]>([]);
-  const [stats, setStats]                   = useState<FlowStats | null>(null);
-  const [warnings, setWarnings]             = useState<string[]>([]);
+  const [flow, setFlow]                     = useState<ParsedFlow>(EMPTY_FLOW);
   const [hasResult, setHasResult]           = useState(false);
   const [selectedTopic, setSelectedTopic]   = useState<string | null>(null);
   const [detailsOpen, setDetailsOpen]       = useState(true);
+  const [history, setHistory]               = useState<TraceHistoryEntry[]>(() => readTraceHistory());
+  const [historyOpen, setHistoryOpen]       = useState(false);
 
   const messageKeyRef = useRef<HTMLInputElement>(null);
   const searchPathRef = useRef<HTMLInputElement>(null);
@@ -52,7 +83,21 @@ const StreamFlow: React.FC = () => {
   /** Un glissé ne doit pas se terminer en clic sur le nœud relâché. */
   const dragged                   = useRef(false);
 
+  const { nodes, edges, hits, stats, warnings } = flow;
   const layout = useMemo(() => buildLayout(nodes, edges), [nodes, edges]);
+
+  const currentParams = useCallback((): TraceParams => ({
+    messageKey: messageKey.trim(),
+    searchPath: searchPath.trim(),
+    topics: selectedTopics,
+    windowMode,
+    timeLimitMinutes,
+    maxMessages,
+    useRegex,
+    caseSensitive,
+    searchHeaders,
+  }), [messageKey, searchPath, selectedTopics, windowMode, timeLimitMinutes, maxMessages,
+    useRegex, caseSensitive, searchHeaders]);
 
   const fitView = useCallback(() => {
     const el = svgRef.current;
@@ -119,10 +164,10 @@ const StreamFlow: React.FC = () => {
     abortRef.current = null;
   };
 
-  const handleRun = async () => {
+  const runTrace = useCallback(async (params: TraceParams) => {
     const errors: FormErrors = {};
-    if (!messageKey.trim()) errors.messageKey = 'A message key is required.';
-    const pathError = validateSearchPath(searchPath);
+    if (!params.messageKey) errors.messageKey = 'A message key is required.';
+    const pathError = validateSearchPath(params.searchPath);
     if (pathError) errors.searchPath = pathError;
     setFieldErrors(errors);
     if (errors.messageKey) { messageKeyRef.current?.focus(); return; }
@@ -135,30 +180,25 @@ const StreamFlow: React.FC = () => {
     setNotice(null);
     setSelectedTopic(null);
     try {
-      // Un topic encore dans le champ de saisie compte : on ne le perd pas parce que
-      // l'utilisateur a cliqué « Trace » sans valider par Entrée.
-      const pending = topicDraft.trim();
-      const parsedTopics = pending && !selectedTopics.includes(pending)
-        ? [...selectedTopics, pending]
-        : selectedTopics;
-
       const res = await axios.post('/api/stream-flow', {
-        messageKey: messageKey.trim(),
-        maxMessagesPerTopic: maxMessages,
-        searchPath: searchPath.trim() || null,
-        timeLimitMinutes: windowMode === 'window' ? timeLimitMinutes : null,
-        useRegex,
-        targetTopics: parsedTopics,
+        messageKey: params.messageKey,
+        maxMessagesPerTopic: params.maxMessages,
+        searchPath: params.searchPath || null,
+        timeLimitMinutes: params.windowMode === 'window' ? params.timeLimitMinutes : null,
+        useRegex: params.useRegex,
+        caseSensitive: params.caseSensitive,
+        searchHeaders: params.searchHeaders,
+        targetTopics: params.topics,
       }, { signal: controller.signal, timeout: REQUEST_TIMEOUT_MS });
 
-      const flow = parseFlowResponse(res.data);
-      setNodes(flow.nodes);
-      setEdges(flow.edges);
-      setHits(flow.hits);
-      setStats(flow.stats);
-      setWarnings(flow.warnings);
+      const parsed = parseFlowResponse(res.data);
+      setFlow(parsed);
       setDetailsOpen(true);
       setHasResult(true);
+      // L'URL suit la trace affichée : elle est copiable à tout moment, pas seulement
+      // depuis le bouton de partage.
+      navigate({ search: buildTraceQuery(params) }, { replace: true });
+      setHistory(pushTraceHistory({ ...params, ranAt: Date.now(), topicsFound: parsed.nodes.length }));
     } catch (err) {
       if (axios.isCancel(err) || (err as { code?: string })?.code === 'ERR_CANCELED') {
         setNotice('Trace cancelled — nothing was changed on the cluster.');
@@ -168,17 +208,74 @@ const StreamFlow: React.FC = () => {
         setError(describeApiError(err, 'Failed to trace stream flow.'));
         // The previous graph described a different search: keeping it on screen next to a
         // fresh error would present stale coverage as the result of this run.
-        setNodes([]); setEdges([]); setHits([]); setStats(null); setWarnings([]);
+        setFlow(EMPTY_FLOW);
         setHasResult(false);
       }
     } finally {
       abortRef.current = null;
       setLoading(false);
     }
+  }, [navigate]);
+
+  const handleSubmit = () => {
+    // Un topic encore dans le champ de saisie compte : on ne le perd pas parce que
+    // l'utilisateur a cliqué « Trace » sans valider par Entrée.
+    const pending = topicDraft.trim();
+    const params = currentParams();
+    if (pending && !params.topics.includes(pending)) {
+      params.topics = [...params.topics, pending];
+      setSelectedTopics(params.topics);
+      setTopicDraft('');
+    }
+    void runTrace(params);
+  };
+
+  /** Une trace ouverte depuis un lien partagé s'exécute d'elle-même : c'est ce qu'on partage. */
+  const autoRan = useRef(false);
+  useEffect(() => {
+    if (autoRan.current) return;
+    autoRan.current = true;
+    if (initial.messageKey.trim()) void runTrace(initial);
+  }, [initial, runTrace]);
+
+  const replay = (entry: TraceHistoryEntry) => {
+    setMessageKey(entry.messageKey);
+    setSearchPath(entry.searchPath);
+    setSelectedTopics(entry.topics);
+    setWindowMode(entry.windowMode);
+    setTimeLimitMinutes(entry.timeLimitMinutes);
+    setMaxMessages(entry.maxMessages);
+    setUseRegex(entry.useRegex);
+    setCaseSensitive(entry.caseSensitive);
+    setSearchHeaders(entry.searchHeaders);
+    setHistoryOpen(false);
+    void runTrace(entry);
+  };
+
+  const copyLink = async () => {
+    const url = `${window.location.origin}${window.location.pathname}${buildTraceQuery(currentParams())}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      toast('Trace link copied', 'success');
+    } catch {
+      toast('Could not copy — the browser refused clipboard access', 'error');
+    }
+  };
+
+  const download = (content: string, mime: string, ext: string) => {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `stream-flow-${messageKey.trim().replace(/[^\w.-]+/g, '_') || 'trace'}.${ext}`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast(`Exported as ${ext.toUpperCase()}`, 'success');
   };
 
   const coverage = describeCoverage(stats);
   const hitByTopic = useMemo(() => new Map(hits.map(h => [h.topic, h])), [hits]);
+  const scopeHint = describeSearchScope(searchPath, searchHeaders);
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -188,14 +285,47 @@ const StreamFlow: React.FC = () => {
           onKeyDown bricolé sur le seul champ « Message Key ». */}
       <form
         noValidate
-        onSubmit={e => { e.preventDefault(); void handleRun(); }}
+        onSubmit={e => { e.preventDefault(); handleSubmit(); }}
         aria-label="Stream flow tracer"
         className="w-72 border-r border-outline-variant/60 bg-surface-container-low p-5 flex flex-col gap-5 shrink-0 overflow-y-auto"
       >
         <div>
-          <h3 className="text-xs font-bold text-on-surface-variant uppercase tracking-widest mb-4">Stream Flow Tracer</h3>
+          <div className="flex items-start justify-between gap-2 mb-4">
+            <h3 className="text-xs font-bold text-on-surface-variant uppercase tracking-widest">Stream Flow Tracer</h3>
+            {history.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setHistoryOpen(o => !o)}
+                aria-expanded={historyOpen}
+                className="text-on-surface-variant hover:text-on-surface"
+                title="Recent traces"
+              >
+                <span aria-hidden="true" className="material-symbols-outlined text-[18px]">history</span>
+              </button>
+            )}
+          </div>
           <p className="text-xs text-on-surface-variant">Trace a message key across Kafka topics to visualize the data flow pipeline.</p>
         </div>
+
+        {historyOpen && history.length > 0 && (
+          <ul className="space-y-1 border border-outline-variant/60 rounded-md p-1.5" aria-label="Recent traces">
+            {history.map(entry => (
+              <li key={`${entry.ranAt}`}>
+                <button
+                  type="button"
+                  onClick={() => replay(entry)}
+                  className="w-full text-left px-1.5 py-1 rounded hover:bg-surface-container-high"
+                >
+                  <span className="block font-mono text-[11px] text-on-surface truncate">{entry.messageKey}</span>
+                  <span className="block text-[10px] text-outline">
+                    {entry.searchPath ? `${entry.searchPath} · ` : ''}
+                    {entry.topicsFound} topic{entry.topicsFound === 1 ? '' : 's'} · {formatRelativeTime(entry.ranAt)}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
 
         <div className="space-y-4">
           {/* Message Key */}
@@ -216,9 +346,9 @@ const StreamFlow: React.FC = () => {
 
           {/* Search Path */}
           <Field
-            label="Search Path (JSONPath / XPath)"
+            label="Search Path"
             error={fieldErrors.searchPath}
-            description="Empty: match the record key or anywhere in the payload. Set: only what the path extracts is compared."
+            description={scopeHint}
           >
             {p => (
               <Input
@@ -227,7 +357,7 @@ const StreamFlow: React.FC = () => {
                 className="font-mono"
                 value={searchPath}
                 onChange={e => { setSearchPath(e.target.value); clearFieldError('searchPath'); }}
-                placeholder="e.g. $.orderId"
+                placeholder="order.id · $.orderId · /order/id · header:correlation-id"
                 autoComplete="off"
                 spellCheck={false}
               />
@@ -311,17 +441,13 @@ const StreamFlow: React.FC = () => {
             />
           </div>
 
-          {/* Use Regex */}
-          <div className="flex items-center justify-between">
-            <span className="text-[12px] font-medium text-on-surface-variant">Use Regex</span>
-            <button
-              type="button"
-              role="switch" aria-checked={useRegex} aria-label="Use Regex"
-              onClick={() => setUseRegex(!useRegex)}
-              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${useRegex ? 'bg-primary' : 'bg-surface-container-highest'}`}
-            >
-              <span className={`inline-block h-3.5 w-3.5 transform rounded-full transition-transform ${useRegex ? 'translate-x-[18px] bg-on-primary' : 'translate-x-1 bg-on-surface-variant'}`} />
-            </button>
+          <div className="space-y-2.5 pt-1">
+            <Toggle label="Use Regex" checked={useRegex} onChange={setUseRegex}
+              hint="Treat the message key as a regular expression." />
+            <Toggle label="Case sensitive" checked={caseSensitive} onChange={setCaseSensitive}
+              hint="Off by default, like the topic search." />
+            <Toggle label="Search headers" checked={searchHeaders} onChange={setSearchHeaders}
+              hint="Also match Kafka header values — correlation ids often travel only there." />
           </div>
         </div>
 
@@ -360,10 +486,32 @@ const StreamFlow: React.FC = () => {
                 {stats?.truncated && (
                   <>
                     <span className="text-outline">·</span>
-                    <span className="text-warning" title="At least one topic filled its per-topic cap — older matches may exist.">partial scan</span>
+                    <span className="text-warning" title="At least one topic was not scanned to the end — older matches may exist.">partial scan</span>
                   </>
                 )}
               </div>
+            </div>
+          )}
+
+          {/* Partage & export */}
+          {hasResult && (
+            <div className="absolute top-4 right-4 z-10 flex items-center gap-1">
+              <Button size="sm" variant="ghost" icon="link" onClick={() => void copyLink()} title="Copy a link that reruns this exact trace">
+                Link
+              </Button>
+              {hits.length > 0 && (
+                <>
+                  <Button size="sm" variant="ghost" icon="download"
+                    onClick={() => download(toCsv(HIT_EXPORT_COLUMNS, hitsToRows(hits)), 'text/csv', 'csv')}>
+                    CSV
+                  </Button>
+                  <Button size="sm" variant="ghost" icon="download"
+                    onClick={() => download(traceToJson(currentParams(), flow), 'application/json', 'json')}
+                    title="Criterion, coverage, warnings and hops">
+                    JSON
+                  </Button>
+                </>
+              )}
             </div>
           )}
 
@@ -421,7 +569,7 @@ const StreamFlow: React.FC = () => {
             <div className="h-full flex flex-col items-center justify-center gap-3" role="status" aria-live="polite">
               <span aria-hidden="true" className="material-symbols-outlined animate-spin text-[32px] text-primary">progress_activity</span>
               <p className="text-[13px] text-on-surface-variant">Tracing message across topics…</p>
-              <p className="text-[11px] text-outline">Reading up to {maxMessages} messages per topic. Cancel any time.</p>
+              <p className="text-[11px] text-outline">Scanning up to {maxMessages} messages per topic. Cancel any time.</p>
             </div>
           )}
 
@@ -479,6 +627,7 @@ const StreamFlow: React.FC = () => {
                   const cx = nodeW / 2;
                   const ts = formatRelativeTime(node.timestamp);
                   const selected = selectedTopic === node.id;
+                  const capped = hitByTopic.get(node.id)?.occurrencesCapped;
                   return (
                     <g
                       key={node.id}
@@ -486,7 +635,7 @@ const StreamFlow: React.FC = () => {
                       style={{ cursor: 'pointer' }}
                       onClick={() => { if (!dragged.current) setSelectedTopic(node.id); }}
                     >
-                      <title>{`${node.label} — ${node.hits ?? 0} match(es), first seen ${formatAbsoluteTime(node.timestamp)}`}</title>
+                      <title>{`${node.label} — ${node.hits ?? 0}${capped ? '+' : ''} match(es), first seen ${formatAbsoluteTime(node.timestamp)}`}</title>
                       <rect width={nodeW} height={nodeH} rx="8"
                         fill={selected ? '#1b2030' : '#12151a'} stroke="#a3adff"
                         strokeWidth={selected ? 2.5 : 1.5} strokeOpacity={selected ? 1 : 0.6} />
@@ -498,7 +647,7 @@ const StreamFlow: React.FC = () => {
                       {ts && (
                         <text x={cx} y={nodeH / 2 + 10} textAnchor="middle"
                           fill="#a3adff" fontSize="9" fontFamily="Inter, sans-serif" opacity="0.7">
-                          {ts}{node.hits ? ` · ${node.hits} match${node.hits > 1 ? 'es' : ''}` : ''}
+                          {ts}{node.hits ? ` · ${node.hits}${capped ? '+' : ''} match${node.hits > 1 || capped ? 'es' : ''}` : ''}
                         </text>
                       )}
                     </g>
@@ -575,7 +724,7 @@ const StreamFlow: React.FC = () => {
                       </tr>
                     </TableHead>
                     <TableBody>
-                      {hits.map((hit, i) => (
+                      {hits.map((hit: FlowHit, i: number) => (
                         <TableRow
                           key={hit.topic}
                           onClick={() => setSelectedTopic(hit.topic)}
@@ -591,7 +740,9 @@ const StreamFlow: React.FC = () => {
                               {hit.topic}
                             </Link>
                           </Td>
-                          <Td>{hit.occurrences}</Td>
+                          <Td title={hit.occurrencesCapped ? 'More matches exist than the scan kept for this topic' : undefined}>
+                            {hit.occurrences}{hit.occurrencesCapped ? '+' : ''}
+                          </Td>
                           <Td title={formatAbsoluteTime(hit.firstTimestamp)}>
                             {formatRelativeTime(hit.firstTimestamp) || '—'}
                           </Td>

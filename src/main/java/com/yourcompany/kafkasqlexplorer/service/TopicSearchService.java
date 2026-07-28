@@ -72,6 +72,10 @@ public class TopicSearchService {
         long deadline = startedAt + timeoutMs;
         int scanned = 0;
         int matched = 0;
+        // A path search that never applied is the difference between "no record holds that value"
+        // and "no record scanned is in a format the path can read". Both used to look identical.
+        int formatMismatch = 0;
+        int parseFailures = 0;
         String stopReason = "EXHAUSTED";
 
         Properties props = buildConsumerProperties();
@@ -83,7 +87,7 @@ public class TopicSearchService {
             }
 
             consumer.assign(partitions);
-            seek(consumer, partitions, request);
+            seek(consumer, partitions, request, maxScan);
 
             Map<TopicPartition, Long> endOffsets = consumer.endOffsets(partitions);
             for (TopicPartition tp : partitions) {
@@ -114,13 +118,22 @@ public class TopicSearchService {
                     String key = record.key() == null
                         ? null
                         : new String(record.key(), StandardCharsets.UTF_8);
+                    // Built once per record: needed by the matcher only when headers are searched,
+                    // and by a hit for its response payload.
+                    Map<String, String> headers = matcher.needsHeaders() ? headersOf(record) : null;
 
-                    if (matcher.matches(key, value)) {
-                        matched++;
-                        if (hits.size() < maxHits) {
-                            hits.add(TopicMessage.of(record.partition(), record.offset(),
-                                record.timestamp(), key, value, headersOf(record), maxValueChars));
+                    switch (matcher.evaluate(key, value, headers)) {
+                        case MATCH -> {
+                            matched++;
+                            if (hits.size() < maxHits) {
+                                hits.add(TopicMessage.of(record.partition(), record.offset(),
+                                    record.timestamp(), key, value,
+                                    headers != null ? headers : headersOf(record), maxValueChars));
+                            }
                         }
+                        case FORMAT_MISMATCH -> formatMismatch++;
+                        case PARSE_ERROR -> parseFailures++;
+                        case NO_MATCH -> { /* nothing to record */ }
                     }
 
                     if (hits.size() >= maxHits) {
@@ -141,6 +154,7 @@ public class TopicSearchService {
             if (exhausted) {
                 stopReason = "EXHAUSTED";
             }
+            addPathWarnings(matcher, scanned, formatMismatch, parseFailures, warnings);
             long elapsed = System.currentTimeMillis() - startedAt;
             return new TopicSearchResponse(hits, scanned, matched, elapsed, exhausted, stopReason,
                 nextCursor, warnings);
@@ -150,6 +164,28 @@ public class TopicSearchService {
             warnings.add("Search failed: " + e.getMessage());
             return new TopicSearchResponse(hits, scanned, matched,
                 System.currentTimeMillis() - startedAt, false, "ERROR", nextCursor, warnings);
+        }
+    }
+
+    /**
+     * States when a path search could not be applied at all. Zero hits because every payload was
+     * plain text is a different answer from zero hits because the value is not there, and the user
+     * can act on the first one (clear the path, or fix it).
+     */
+    static void addPathWarnings(MessageMatcher matcher, int scanned, int formatMismatch,
+                                 int parseFailures, List<String> warnings) {
+        if (!matcher.isPathScoped()) {
+            return;
+        }
+        if (scanned > 0 && formatMismatch == scanned) {
+            warnings.add("The path could not be applied: none of the " + scanned
+                + " record(s) scanned is " + matcher.expectedFormat() + ".");
+        } else if (formatMismatch > 0) {
+            warnings.add(formatMismatch + " of " + scanned + " record(s) scanned are not "
+                + matcher.expectedFormat() + "; the path was not applied to them.");
+        }
+        if (parseFailures > 0) {
+            warnings.add(parseFailures + " malformed payload(s) were skipped.");
         }
     }
 
@@ -187,7 +223,7 @@ public class TopicSearchService {
      * pass stopped, whatever the original starting mode was.
      */
     private void seek(Consumer<byte[], byte[]> consumer, List<TopicPartition> partitions,
-                       TopicSearchRequest request) {
+                       TopicSearchRequest request, int maxScan) {
         Map<String, Long> cursor = request.cursor();
         boolean seekedFromCursor = false;
         if (cursor != null && !cursor.isEmpty()) {
@@ -209,6 +245,19 @@ public class TopicSearchService {
 
         switch (request.resolvedFrom()) {
             case "LATEST" -> consumer.seekToEnd(partitions);
+            // The most recent records, spread over the partitions. Clamped to the beginning offset:
+            // on a topic trimmed by retention, seeking below it is an out-of-range position and the
+            // consumer resets to auto.offset.reset, silently returning nothing.
+            case "LAST_N" -> {
+                Map<TopicPartition, Long> beginning = consumer.beginningOffsets(partitions);
+                Map<TopicPartition, Long> end = consumer.endOffsets(partitions);
+                long perPartition = Math.max(1L, (long) maxScan / Math.max(partitions.size(), 1)) + 1;
+                for (TopicPartition tp : partitions) {
+                    long endOffset = end.getOrDefault(tp, 0L);
+                    long start = Math.max(beginning.getOrDefault(tp, 0L), endOffset - perPartition);
+                    consumer.seek(tp, start);
+                }
+            }
             case "OFFSET" -> {
                 long target = request.fromOffset() == null ? 0L : request.fromOffset();
                 Map<TopicPartition, Long> beginning = consumer.beginningOffsets(partitions);

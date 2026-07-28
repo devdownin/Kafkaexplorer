@@ -6,158 +6,90 @@ import com.yourcompany.kafkasqlexplorer.config.ExplorerConfig;
 import com.yourcompany.kafkasqlexplorer.domain.StreamFlowHit;
 import com.yourcompany.kafkasqlexplorer.domain.StreamFlowRequest;
 import com.yourcompany.kafkasqlexplorer.domain.StreamFlowResponse;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.common.header.internals.RecordHeaders;
-import org.apache.kafka.common.record.TimestampType;
+import com.yourcompany.kafkasqlexplorer.domain.TopicMessage;
+import com.yourcompany.kafkasqlexplorer.domain.TopicSearchRequest;
+import com.yourcompany.kafkasqlexplorer.domain.TopicSearchResponse;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
-import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-public class StreamFlowServiceTest {
+/**
+ * The trace's own logic: how a criterion is translated into a topic search, and how per-topic hits
+ * become a chain. What a criterion actually matches is {@link MessageMatcherTest}'s subject — there
+ * is one matching engine now, tested in one place.
+ */
+class StreamFlowServiceTest {
 
     private KafkaAdminService kafkaAdminService;
+    private TopicSearchService topicSearchService;
+    private StreamFlowService service;
 
-    private StreamFlowService newService() {
+    @BeforeEach
+    void setUp() {
         kafkaAdminService = Mockito.mock(KafkaAdminService.class);
-        return new StreamFlowService(kafkaAdminService, new ExplorerConfig());
+        topicSearchService = Mockito.mock(TopicSearchService.class);
+        service = new StreamFlowService(kafkaAdminService, topicSearchService, new ExplorerConfig());
     }
 
-    private static ConsumerRecord<String, String> record(String topic, long timestamp, String key, String value) {
-        return record(topic, 0, 0L, timestamp, key, value);
+    private static StreamFlowRequest request(String key, String path, boolean regex, Integer window,
+                                             List<String> topics) {
+        return new StreamFlowRequest(key, 10, path, window, regex, null, null, topics);
     }
 
-    private static ConsumerRecord<String, String> record(String topic, int partition, long offset,
-                                                          long timestamp, String key, String value) {
-        return new ConsumerRecord<>(topic, partition, offset, timestamp, TimestampType.CREATE_TIME,
-            0, 0, key, value, new RecordHeaders(), Optional.empty());
+    private static TopicMessage message(int partition, long offset, long timestamp, String key, String value) {
+        return TopicMessage.of(partition, offset, timestamp, key, value, Map.of(), 8000);
+    }
+
+    private static TopicSearchResponse found(List<TopicMessage> hits, int scanned) {
+        return new TopicSearchResponse(hits, scanned, hits.size(), 5L, true, "EXHAUSTED",
+            Map.of(), List.of());
+    }
+
+    private static TopicSearchResponse nothing() {
+        return new TopicSearchResponse(List.of(), 5, 0, 5L, true, "EXHAUSTED", Map.of(), List.of());
+    }
+
+    private void onSearch(String topic, TopicSearchResponse response) {
+        when(topicSearchService.search(eq(topic), any())).thenReturn(response);
     }
 
     @Test
-    public void testGetStreamFlow() throws Exception {
-        StreamFlowService streamFlowService = newService();
-        when(kafkaAdminService.listTopics()).thenReturn(Arrays.asList("topic1", "topic2", "topic3"));
+    void chainsTopicsByFirstSighting() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("topic1", "topic2", "topic3"));
+        onSearch("topic1", found(List.of(message(0, 1L, 100L, "key1", "value1")), 1));
+        onSearch("topic2", found(List.of(message(0, 1L, 200L, "key2", "contains-key1")), 1));
+        onSearch("topic3", nothing());
 
-        when(kafkaAdminService.getRecentRecords(eq("topic1"), anyInt()))
-            .thenReturn(List.of(record("topic1", 100L, "key1", "value1")));
-        when(kafkaAdminService.getRecentRecords(eq("topic2"), anyInt()))
-            .thenReturn(List.of(record("topic2", 200L, "key2", "contains-key1")));
-        when(kafkaAdminService.getRecentRecords(eq("topic3"), anyInt()))
-            .thenReturn(List.of(record("topic3", 300L, "key3", "value3")));
-
-        StreamFlowRequest request = new StreamFlowRequest("key1", 10, null, null, false, null);
-        StreamFlowResponse response = streamFlowService.getStreamFlow(request);
+        StreamFlowResponse response = service.getStreamFlow(request("key1", null, false, null, null));
 
         assertEquals(2, response.nodes().size());
         assertEquals(1, response.edges().size());
-
         Map<String, String> edge = response.edges().get(0);
         assertEquals("topic1", edge.get("from"));
         assertEquals("topic2", edge.get("to"));
         assertEquals("+100 ms", edge.get("label"), "the edge label carries the hop latency");
     }
 
+    /** A key seen twice in one topic must not produce a back-edge. */
     @Test
-    public void testGetStreamFlowWithJsonPath() throws Exception {
-        StreamFlowService streamFlowService = newService();
-        when(kafkaAdminService.listTopics()).thenReturn(Collections.singletonList("orders"));
-
-        String jsonValue = "{\"orderId\": \"ORD-123\", \"status\": \"CREATED\"}";
-        when(kafkaAdminService.getRecentRecords(eq("orders"), anyInt()))
-            .thenReturn(List.of(record("orders", 100L, null, jsonValue)));
-
-        // Matches correct value
-        StreamFlowResponse response1 = streamFlowService.getStreamFlow(
-            new StreamFlowRequest("ORD-123", 10, "$.orderId", null, false, null));
-        assertEquals(1, response1.nodes().size());
-
-        // Does not match incorrect value at path
-        StreamFlowResponse response2 = streamFlowService.getStreamFlow(
-            new StreamFlowRequest("ORD-999", 10, "$.orderId", null, false, null));
-        assertEquals(0, response2.nodes().size());
-
-        // Does not match incorrect path
-        StreamFlowResponse response3 = streamFlowService.getStreamFlow(
-            new StreamFlowRequest("ORD-123", 10, "$.wrongPath", null, false, null));
-        assertEquals(0, response3.nodes().size());
-    }
-
-    @Test
-    public void testGetStreamFlowWithRegex() throws Exception {
-        StreamFlowService streamFlowService = newService();
-        when(kafkaAdminService.listTopics()).thenReturn(Collections.singletonList("logs"));
-
-        when(kafkaAdminService.getRecentRecords(eq("logs"), anyInt()))
-            .thenReturn(List.of(record("logs", 100L, null, "ERROR: user-456 failed to login")));
-
-        StreamFlowResponse response1 = streamFlowService.getStreamFlow(
-            new StreamFlowRequest("user-.* failed", 10, null, null, true, null));
-        assertEquals(1, response1.nodes().size());
-
-        StreamFlowResponse response2 = streamFlowService.getStreamFlow(
-            new StreamFlowRequest("user-\\d{4} failed", 10, null, null, true, null));
-        assertEquals(0, response2.nodes().size());
-    }
-
-    /** An unusable criterion is reported, not silently degraded into a different search. */
-    @Test
-    public void testInvalidRegexIsRejected() {
-        StreamFlowService streamFlowService = newService();
-
-        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
-            () -> streamFlowService.getStreamFlow(new StreamFlowRequest("user-[", 10, null, null, true, null)));
-        assertTrue(error.getMessage().toLowerCase().contains("regular expression"), error.getMessage());
-    }
-
-    @Test
-    public void testInvalidSearchPathIsRejected() {
-        StreamFlowService streamFlowService = newService();
-
-        assertThrows(IllegalArgumentException.class, () -> streamFlowService.getStreamFlow(
-            new StreamFlowRequest("k", 10, "orderId", null, false, null)), "neither JSONPath nor XPath");
-        assertThrows(IllegalArgumentException.class, () -> streamFlowService.getStreamFlow(
-            new StreamFlowRequest("k", 10, "$.[", null, false, null)), "malformed JSONPath");
-        assertThrows(IllegalArgumentException.class, () -> streamFlowService.getStreamFlow(
-            new StreamFlowRequest("k", 10, "/root[", null, false, null)), "malformed XPath");
-    }
-
-    @Test
-    public void testBlankMessageKeyIsRejected() {
-        StreamFlowService streamFlowService = newService();
-
-        assertThrows(IllegalArgumentException.class, () -> streamFlowService.getStreamFlow(
-            new StreamFlowRequest("   ", 10, null, null, false, null)));
-        assertThrows(IllegalArgumentException.class, () -> streamFlowService.getStreamFlow(
-            new StreamFlowRequest(null, 10, null, null, false, null)));
-    }
-
-    /**
-     * A key seen twice in the same topic must not produce a back-edge: the chain is one node per
-     * topic, ordered by first sighting.
-     */
-    @Test
-    public void testRepeatedOccurrencesDoNotCreateBackEdges() throws Exception {
-        StreamFlowService streamFlowService = newService();
+    void repeatedOccurrencesDoNotCreateBackEdges() throws Exception {
         when(kafkaAdminService.listTopics()).thenReturn(List.of("orders", "billing"));
+        onSearch("orders", found(List.of(
+            message(0, 10L, 100L, "K-1", "created"),
+            message(0, 11L, 300L, "K-1", "retried")), 2));
+        onSearch("billing", found(List.of(message(1, 42L, 200L, "K-1", "charged")), 1));
 
-        when(kafkaAdminService.getRecentRecords(eq("orders"), anyInt())).thenReturn(List.of(
-            record("orders", 0, 10L, 100L, "K-1", "created"),
-            record("orders", 0, 11L, 300L, "K-1", "retried")));
-        when(kafkaAdminService.getRecentRecords(eq("billing"), anyInt())).thenReturn(List.of(
-            record("billing", 1, 42L, 200L, "K-1", "charged")));
-
-        StreamFlowResponse response = streamFlowService.getStreamFlow(
-            new StreamFlowRequest("K-1", 10, null, null, false, null));
+        StreamFlowResponse response = service.getStreamFlow(request("K-1", null, false, null, null));
 
         assertEquals(2, response.nodes().size());
         assertEquals(1, response.edges().size());
@@ -165,9 +97,7 @@ public class StreamFlowServiceTest {
         assertEquals("billing", response.edges().get(0).get("to"));
 
         List<StreamFlowHit> hits = response.hits();
-        assertEquals(2, hits.size());
         StreamFlowHit orders = hits.get(0);
-        assertEquals("orders", orders.topic());
         assertEquals(2, orders.occurrences());
         assertEquals(100L, orders.firstTimestamp());
         assertEquals(300L, orders.lastTimestamp());
@@ -182,15 +112,13 @@ public class StreamFlowServiceTest {
 
     /** The node map keeps its keys in a fixed order — the renderer falls back to positional access. */
     @Test
-    public void testNodeCarriesHitCountAndOrderedKeys() throws Exception {
-        StreamFlowService streamFlowService = newService();
+    void nodeCarriesHitCountAndOrderedKeys() throws Exception {
         when(kafkaAdminService.listTopics()).thenReturn(List.of("orders"));
-        when(kafkaAdminService.getRecentRecords(eq("orders"), anyInt())).thenReturn(List.of(
-            record("orders", 0, 1L, 100L, "K-1", "a"),
-            record("orders", 0, 2L, 150L, "K-1", "b")));
+        onSearch("orders", found(List.of(
+            message(0, 1L, 100L, "K-1", "a"),
+            message(0, 2L, 150L, "K-1", "b")), 2));
 
-        StreamFlowResponse response = streamFlowService.getStreamFlow(
-            new StreamFlowRequest("K-1", 10, null, null, false, null));
+        StreamFlowResponse response = service.getStreamFlow(request("K-1", null, false, null, null));
 
         Map<String, String> node = response.nodes().get(0);
         assertEquals(List.of("id", "label", "type", "timestamp", "hits"), List.copyOf(node.keySet()));
@@ -198,115 +126,203 @@ public class StreamFlowServiceTest {
         assertEquals("2", node.get("hits"));
     }
 
-    /**
-     * A search path is a scope, not a hint: on a payload it cannot be applied to, the record does
-     * not match, and the response says why instead of leaving an unexplained empty graph.
-     */
+    // ── Criterion → topic search ────────────────────────────────────────────
+
     @Test
-    public void testSearchPathDoesNotFallBackToRawSearch() throws Exception {
-        StreamFlowService streamFlowService = newService();
-        when(kafkaAdminService.listTopics()).thenReturn(List.of("plain"));
-        when(kafkaAdminService.getRecentRecords(eq("plain"), anyInt()))
-            .thenReturn(List.of(record("plain", 100L, "K-1", "raw text mentioning ORD-123")));
+    void plainKeySearchesTheKeyPayloadAndHeaders() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders"));
+        onSearch("orders", nothing());
 
-        StreamFlowResponse response = streamFlowService.getStreamFlow(
-            new StreamFlowRequest("ORD-123", 10, "$.orderId", null, false, null));
+        service.getStreamFlow(request("K-1", null, false, null, null));
 
-        assertEquals(0, response.nodes().size());
-        assertTrue(response.warnings().stream().anyMatch(w -> w.contains("search path")),
-            "expected a warning about the inapplicable path, got " + response.warnings());
+        TopicSearchRequest criteria = captureCriteria();
+        assertEquals("CONTAINS", criteria.resolvedMode());
+        assertEquals("K-1", criteria.query());
+        assertTrue(criteria.isSearchKey());
+        assertTrue(criteria.isSearchHeaders(), "a correlation id often lives only in a header");
+        assertFalse(criteria.isCaseSensitive());
+        assertEquals("LAST_N", criteria.resolvedFrom());
+        assertEquals(10, criteria.maxScan());
     }
 
-    /** Malformed JSON is skipped and reported, never counted as a match nor as a clean miss. */
     @Test
-    public void testMalformedJsonIsReported() throws Exception {
-        StreamFlowService streamFlowService = newService();
+    void regexSwitchesTheSearchMode() throws Exception {
         when(kafkaAdminService.listTopics()).thenReturn(List.of("orders"));
-        when(kafkaAdminService.getRecentRecords(eq("orders"), anyInt()))
-            .thenReturn(List.of(record("orders", 100L, null, "{\"orderId\": \"ORD-1")));
+        onSearch("orders", nothing());
 
-        StreamFlowResponse response = streamFlowService.getStreamFlow(
-            new StreamFlowRequest("ORD-1", 10, "$.orderId", null, false, null));
+        service.getStreamFlow(request("user-\\d+", null, true, null, null));
 
-        assertEquals(0, response.nodes().size());
-        assertTrue(response.warnings().stream().anyMatch(w -> w.contains("Malformed JSON")),
-            "expected a warning about the malformed payload, got " + response.warnings());
+        assertEquals("REGEX", captureCriteria().resolvedMode());
     }
 
-    /** XPath is evaluated over the whole node set: a match on the second element still counts. */
     @Test
-    public void testXPathMatchesBeyondTheFirstNode() throws Exception {
-        StreamFlowService streamFlowService = newService();
+    void aDotPathBecomesAFieldSearch() throws Exception {
         when(kafkaAdminService.listTopics()).thenReturn(List.of("orders"));
-        String xml = "<order><item><id>A-1</id></item><item><id>A-2</id></item></order>";
-        when(kafkaAdminService.getRecentRecords(eq("orders"), anyInt()))
-            .thenReturn(List.of(record("orders", 100L, null, xml)));
+        onSearch("orders", nothing());
 
-        StreamFlowResponse response = streamFlowService.getStreamFlow(
-            new StreamFlowRequest("A-2", 10, "/order/item/id", null, false, null));
+        service.getStreamFlow(request("ORD-1", "order.items[].sku", false, null, null));
 
-        assertEquals(1, response.nodes().size());
+        TopicSearchRequest criteria = captureCriteria();
+        assertEquals("FIELD", criteria.resolvedMode());
+        assertEquals("order.items[].sku", criteria.field());
+        assertEquals("CONTAINS", criteria.resolvedOperator());
+        assertEquals("ORD-1", criteria.value());
     }
 
-    /** An indefinite JSONPath yields a list; each element is tested on its own. */
     @Test
-    public void testIndefiniteJsonPathTestsEachElement() throws Exception {
-        StreamFlowService streamFlowService = newService();
+    void aJsonPathBecomesAFieldSearch() throws Exception {
         when(kafkaAdminService.listTopics()).thenReturn(List.of("orders"));
-        when(kafkaAdminService.getRecentRecords(eq("orders"), anyInt())).thenReturn(List.of(
-            record("orders", 100L, null, "{\"items\":[{\"id\":\"A-1\"},{\"id\":\"A-2\"}]}")));
+        onSearch("orders", nothing());
 
-        StreamFlowResponse response = streamFlowService.getStreamFlow(
-            new StreamFlowRequest("A-2", 10, "$.items[*].id", null, false, null));
+        service.getStreamFlow(request("ORD-1", "$.orderId", false, null, null));
 
-        assertEquals(1, response.nodes().size());
+        assertEquals("FIELD", captureCriteria().resolvedMode());
+    }
+
+    /** Recursive descent and filters need the full engine; a simple path keeps the fast walker. */
+    @Test
+    void aRecursivePathBecomesAJsonPathSearch() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders"));
+        onSearch("orders", nothing());
+
+        service.getStreamFlow(request("ORD-1", "$..orderId", false, null, null));
+
+        assertEquals("JSONPATH", captureCriteria().resolvedMode());
+    }
+
+    @Test
+    void aSlashPathBecomesAnXPathSearch() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders"));
+        onSearch("orders", nothing());
+
+        service.getStreamFlow(request("ORD-1", "/order/id", false, null, null));
+
+        TopicSearchRequest criteria = captureCriteria();
+        assertEquals("XPATH", criteria.resolvedMode());
+        assertEquals("/order/id", criteria.field());
+    }
+
+    @Test
+    void aHeaderPrefixBecomesAHeaderSearch() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders"));
+        onSearch("orders", nothing());
+
+        service.getStreamFlow(request("abc-123", "header:correlation-id", false, null, null));
+
+        TopicSearchRequest criteria = captureCriteria();
+        assertEquals("HEADER", criteria.resolvedMode());
+        assertEquals("correlation-id", criteria.field());
+        assertEquals("abc-123", criteria.value());
+    }
+
+    @Test
+    void aTimeWindowSeeksByTimestamp() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders"));
+        onSearch("orders", nothing());
+
+        StreamFlowResponse response = service.getStreamFlow(request("K-1", null, false, 15, null));
+
+        TopicSearchRequest criteria = captureCriteria();
+        assertEquals("TIMESTAMP", criteria.resolvedFrom());
+        assertEquals(15, criteria.sinceMinutes());
+        assertEquals(15, response.stats().timeLimitMinutes());
     }
 
     /** A body omitting maxMessagesPerTopic deserializes to 0 — which used to scan nothing. */
     @Test
-    public void testZeroMaxMessagesFallsBackToADefault() throws Exception {
-        StreamFlowService streamFlowService = newService();
+    void zeroMaxMessagesFallsBackToADefault() throws Exception {
         when(kafkaAdminService.listTopics()).thenReturn(List.of("orders"));
-        when(kafkaAdminService.getRecentRecords(eq("orders"), anyInt())).thenReturn(List.of());
+        onSearch("orders", nothing());
 
-        StreamFlowResponse response = streamFlowService.getStreamFlow(
-            new StreamFlowRequest("K-1", 0, null, null, false, null));
+        StreamFlowResponse response = service.getStreamFlow(
+            new StreamFlowRequest("K-1", 0, null, null, false, null, null, null));
 
-        verify(kafkaAdminService).getRecentRecords("orders", 100);
+        assertEquals(100, captureCriteria().maxScan());
         assertEquals(100, response.stats().maxMessagesPerTopic());
     }
 
-    /** A scan that filled its cap may have missed older matches, and has to say so. */
-    @Test
-    public void testFilledCapIsReportedAsTruncated() throws Exception {
-        StreamFlowService streamFlowService = newService();
-        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders"));
-        when(kafkaAdminService.getRecentRecords(eq("orders"), anyInt())).thenReturn(List.of(
-            record("orders", 0, 1L, 100L, "K-1", "a"),
-            record("orders", 0, 2L, 150L, "other", "b")));
+    // ── Unusable criteria ───────────────────────────────────────────────────
 
-        StreamFlowResponse response = streamFlowService.getStreamFlow(
-            new StreamFlowRequest("K-1", 2, null, null, false, null));
+    @Test
+    void invalidRegexIsRejectedBeforeAnyTopicIsRead() {
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+            () -> service.getStreamFlow(request("user-[", null, true, null, null)));
+        assertTrue(error.getMessage().toLowerCase().contains("regular expression"), error.getMessage());
+        Mockito.verifyNoInteractions(topicSearchService);
+    }
+
+    @Test
+    void invalidXPathIsRejected() {
+        assertThrows(IllegalArgumentException.class,
+            () -> service.getStreamFlow(request("K-1", "/root[", false, null, null)));
+    }
+
+    @Test
+    void blankMessageKeyIsRejected() {
+        assertThrows(IllegalArgumentException.class,
+            () -> service.getStreamFlow(request("   ", null, false, null, null)));
+        assertThrows(IllegalArgumentException.class,
+            () -> service.getStreamFlow(request(null, null, false, null, null)));
+    }
+
+    @Test
+    void aHeaderSearchWithoutANameIsRejected() {
+        assertThrows(IllegalArgumentException.class,
+            () -> service.getStreamFlow(request("K-1", "header:", false, null, null)));
+    }
+
+    // ── Coverage reporting ──────────────────────────────────────────────────
+
+    @Test
+    void scanWarningsAreForwardedWithTheirTopic() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("plain"));
+        onSearch("plain", new TopicSearchResponse(List.of(), 50, 0, 5L, true, "EXHAUSTED", Map.of(),
+            List.of("The path could not be applied: none of the 50 record(s) scanned is JSON or XML.")));
+
+        StreamFlowResponse response = service.getStreamFlow(request("ORD-1", "$.orderId", false, null, null));
+
+        assertEquals(0, response.nodes().size());
+        assertTrue(response.warnings().stream().anyMatch(w -> w.startsWith("plain: ")),
+            "expected the scan's own warning, prefixed by its topic, got " + response.warnings());
+    }
+
+    @Test
+    void aScanThatDidNotReachTheEndIsReportedAsPartial() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders"));
+        onSearch("orders", new TopicSearchResponse(List.of(message(0, 1L, 100L, "K-1", "a")),
+            10, 1, 5L, false, "MAX_SCAN", Map.of(), List.of()));
+
+        StreamFlowResponse response = service.getStreamFlow(request("K-1", null, false, null, null));
 
         assertTrue(response.stats().truncated());
-        assertEquals(2, response.stats().messagesScanned());
+        assertEquals(10, response.stats().messagesScanned());
         assertEquals(1, response.stats().matches());
-        assertTrue(response.warnings().stream().anyMatch(w -> w.contains("per-topic cap")),
+        assertTrue(response.warnings().stream().anyMatch(w -> w.contains("not scanned to the end")),
             "expected a truncation warning, got " + response.warnings());
     }
 
-    /** A topic that cannot be read is named, instead of being indistinguishable from "no match". */
+    /** More matches than kept: the count shown is a floor and has to say so. */
     @Test
-    public void testUnreadableTopicIsReported() throws Exception {
-        StreamFlowService streamFlowService = newService();
+    void aCappedHitListIsReportedAsAFloor() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders"));
+        onSearch("orders", new TopicSearchResponse(List.of(message(0, 1L, 100L, "K-1", "a")),
+            500, 300, 5L, true, "MAX_HITS", Map.of(), List.of()));
+
+        StreamFlowResponse response = service.getStreamFlow(request("K-1", null, false, null, null));
+
+        assertTrue(response.hits().get(0).occurrencesCapped());
+        assertTrue(response.warnings().stream().anyMatch(w -> w.contains("floor")),
+            "expected a capped-count warning, got " + response.warnings());
+    }
+
+    @Test
+    void anUnreadableTopicIsNamed() throws Exception {
         when(kafkaAdminService.listTopics()).thenReturn(List.of("orders", "broken"));
-        when(kafkaAdminService.getRecentRecords(eq("orders"), anyInt()))
-            .thenReturn(List.of(record("orders", 100L, "K-1", "a")));
-        when(kafkaAdminService.getRecentRecords(eq("broken"), anyInt()))
+        onSearch("orders", found(List.of(message(0, 1L, 100L, "K-1", "a")), 1));
+        when(topicSearchService.search(eq("broken"), any()))
             .thenThrow(new IllegalStateException("broker down"));
 
-        StreamFlowResponse response = streamFlowService.getStreamFlow(
-            new StreamFlowRequest("K-1", 10, null, null, false, null));
+        StreamFlowResponse response = service.getStreamFlow(request("K-1", null, false, null, null));
 
         assertEquals(1, response.stats().topicsFailed());
         assertEquals(1, response.stats().topicsScanned());
@@ -314,47 +330,48 @@ public class StreamFlowServiceTest {
             "expected the failing topic to be named, got " + response.warnings());
     }
 
+    /** Producer clocks disagree; a hop that goes backwards is stated, not hidden. */
+    @Test
+    void aNegativeHopIsReportedAsClockSkew() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("a", "b"));
+        onSearch("a", found(List.of(message(0, 1L, 100L, "K-1", "x")), 1));
+        onSearch("b", found(List.of(message(0, 1L, 100L, "K-1", "y")), 1));
+
+        StreamFlowResponse response = service.getStreamFlow(request("K-1", null, false, null, null));
+
+        assertTrue(response.warnings().stream().anyMatch(w -> w.contains("arbitrary")),
+            "identical timestamps make the order arbitrary, got " + response.warnings());
+    }
+
     /** The explorer's own bookkeeping topics match almost any key; they are out of a blind scan. */
     @Test
-    public void testInternalTopicsAreExcludedFromAWholeClusterScan() throws Exception {
-        StreamFlowService streamFlowService = newService();
+    void internalTopicsAreExcludedFromAWholeClusterScan() throws Exception {
         when(kafkaAdminService.listTopics())
             .thenReturn(List.of("orders", "internal.audit.history", "internal.metrics.config"));
-        when(kafkaAdminService.getRecentRecords(eq("orders"), anyInt()))
-            .thenReturn(List.of(record("orders", 100L, "K-1", "a")));
+        onSearch("orders", found(List.of(message(0, 1L, 100L, "K-1", "a")), 1));
 
-        StreamFlowResponse response = streamFlowService.getStreamFlow(
-            new StreamFlowRequest("K-1", 10, null, null, false, null));
+        StreamFlowResponse response = service.getStreamFlow(request("K-1", null, false, null, null));
 
         assertEquals(1, response.stats().topicsInScope());
-        Mockito.verify(kafkaAdminService, Mockito.never()).getRecentRecords(eq("internal.audit.history"), anyInt());
+        verify(topicSearchService, Mockito.never()).search(eq("internal.audit.history"), any());
     }
 
     /** Naming a topic that does not exist is a typo worth surfacing, not an empty result. */
     @Test
-    public void testUnknownTargetTopicIsReported() throws Exception {
-        StreamFlowService streamFlowService = newService();
+    void unknownTargetTopicIsReported() throws Exception {
         when(kafkaAdminService.listTopics()).thenReturn(List.of("orders"));
-        when(kafkaAdminService.getRecentRecords(eq("odrers"), anyInt())).thenReturn(List.of());
+        onSearch("odrers", nothing());
 
-        StreamFlowResponse response = streamFlowService.getStreamFlow(
-            new StreamFlowRequest("K-1", 10, null, null, false, List.of("odrers")));
+        StreamFlowResponse response = service.getStreamFlow(
+            request("K-1", null, false, null, List.of("odrers")));
 
         assertTrue(response.warnings().stream().anyMatch(w -> w.contains("odrers")),
             "expected the unknown topic to be named, got " + response.warnings());
     }
 
-    /** A time window routes the read through the timestamp-seeking path. */
-    @Test
-    public void testTimeWindowUsesRecordsSince() throws Exception {
-        StreamFlowService streamFlowService = newService();
-        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders"));
-        when(kafkaAdminService.getRecordsSince(eq("orders"), anyInt(), anyInt())).thenReturn(List.of());
-
-        StreamFlowResponse response = streamFlowService.getStreamFlow(
-            new StreamFlowRequest("K-1", 25, null, 15, false, null));
-
-        verify(kafkaAdminService).getRecordsSince("orders", 15, 25);
-        assertEquals(15, response.stats().timeLimitMinutes());
+    private TopicSearchRequest captureCriteria() {
+        ArgumentCaptor<TopicSearchRequest> captor = ArgumentCaptor.forClass(TopicSearchRequest.class);
+        verify(topicSearchService).search(any(), captor.capture());
+        return captor.getValue();
     }
 }

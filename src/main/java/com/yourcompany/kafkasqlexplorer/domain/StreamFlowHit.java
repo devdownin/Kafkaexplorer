@@ -20,6 +20,8 @@ package com.yourcompany.kafkasqlexplorer.domain;
  * @param firstKey             Kafka record key of the earliest match, null when the record has none
  * @param preview              bounded preview of the earliest matching value
  * @param latencyFromPreviousMs delay from the previous topic in the chain, null on the first hop
+ * @param occurrencesCapped    the topic holds more matches than the scan kept, so {@code occurrences}
+ *                             is a floor rather than an exact count
  */
 public record StreamFlowHit(
         String topic,
@@ -30,6 +32,7 @@ public record StreamFlowHit(
         long firstOffset,
         String firstKey,
         String preview,
-        Long latencyFromPreviousMs
+        Long latencyFromPreviousMs,
+        boolean occurrencesCapped
 ) {
 }
