@@ -27,31 +27,18 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # The suite finishes in ~2 minutes. Without a cap, a wedged Flink test or a
+    # container that never becomes healthy runs into GitHub's 360-minute default.
+    timeout-minutes: 20
 
-    services:
-      # Kafka 4.2 in KRaft mode (single combined broker+controller node, no Zookeeper).
-      # The GraalVM-native image boots in ~1s vs ~15s for the JVM one and takes the
-      # exact same env-var configuration.
-      kafka:
-        image: apache/kafka-native:4.2.0
-        ports:
-          - 9092:9092
-        env:
-          KAFKA_NODE_ID: 1
-          KAFKA_PROCESS_ROLES: broker,controller
-          KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
-          KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-          KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
-          KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-          KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-          KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-          KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-          KAFKA_OFFSETS_TOPIC_NUM_PARTITIONS: 1
-          KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-          KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-          KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-          # The apache/kafka image reads CLUSTER_ID (not KAFKA_CLUSTER_ID)
-          CLUSTER_ID: "MkU2OhlMTT69sPFvS1n16g"
+    # No Kafka service container: nothing in the suite connects to localhost:9092.
+    # The one test that does exercise a real broker, KafkaClusterIntegrationTest,
+    # starts its own through Testcontainers (`@Testcontainers(disabledWithoutDocker
+    # = true)`) and reads KAFKA.getBootstrapServers(), so a service on 9092 served
+    # no test while costing an image pull and a boot on every run. The whole suite
+    # passes with no broker reachable at all. If a future test does need one, prefer
+    # a Testcontainers container in that test over a workflow-wide service — it then
+    # also works on a developer machine.
 
     steps:
     - uses: actions/checkout@v5
@@ -76,12 +63,26 @@ jobs:
           npm-${{ runner.os }}-
     - name: Build & Test with Maven
       # verify runs the full lifecycle including tests — no separate `mvn test`
-      # pass (the previous package + test combo ran the whole suite twice)
+      # pass (the previous package + test combo ran the whole suite twice).
+      # The frontend ESLint and Vitest runs are bound to this phase too.
       run: ./mvnw -B verify -P build-frontend --file pom.xml
+
+    - name: Upload test reports
+      # Only on failure, and this is the point: a build that is green locally but red
+      # here (CI resolves the real io.confluent jars, the local offline harness uses
+      # stubs) was otherwise diagnosable only by scrolling the raw log.
+      if: failure()
+      uses: actions/upload-artifact@v7
+      with:
+        name: test-reports
+        path: target/surefire-reports/
+        retention-days: 7
+        if-no-files-found: ignore
 
   deploy:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     needs: build
+    timeout-minutes: 10
     permissions:
       contents: read
       pages: write
