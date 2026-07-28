@@ -3,6 +3,7 @@
 package com.yourcompany.kafkasqlexplorer.service;
 
 import com.yourcompany.kafkasqlexplorer.config.ExplorerConfig;
+import com.yourcompany.kafkasqlexplorer.domain.StreamFlowCoverage;
 import com.yourcompany.kafkasqlexplorer.domain.StreamFlowHit;
 import com.yourcompany.kafkasqlexplorer.domain.StreamFlowProgress;
 import com.yourcompany.kafkasqlexplorer.domain.StreamFlowRequest;
@@ -46,7 +47,7 @@ class StreamFlowServiceTest {
 
     private static StreamFlowRequest request(String key, String path, boolean regex, Integer window,
                                              List<String> topics) {
-        return new StreamFlowRequest(key, 10, path, window, regex, null, null, null, topics);
+        return new StreamFlowRequest(key, 10, path, window, regex, null, null, null, topics, null, null);
     }
 
     private static TopicMessage message(int partition, long offset, long timestamp, String key, String value) {
@@ -239,7 +240,7 @@ class StreamFlowServiceTest {
         onSearch("orders", nothing());
 
         StreamFlowResponse response = service.getStreamFlow(
-            new StreamFlowRequest("K-1", null, null, null, false, null, null, null, null));
+            new StreamFlowRequest("K-1", null, null, null, false, null, null, null, null, null, null));
 
         assertEquals(100, captureCriteria().maxScan());
         assertEquals(100, response.stats().maxMessagesPerTopic());
@@ -373,6 +374,126 @@ class StreamFlowServiceTest {
             "expected the unknown topic to be named, got " + response.warnings());
     }
 
+    // ── Which topics a whole-cluster trace reads ────────────────────────────
+
+    /**
+     * The budget used to be spent alphabetically: on a cluster larger than the cap, a trace read
+     * {@code a*} onwards and never reached the topics that had seen traffic in the last minute.
+     */
+    @Test
+    void aCappedWholeClusterScanReadsTheMostRecentlyActiveTopics() throws Exception {
+        ExplorerConfig config = new ExplorerConfig();
+        config.setStreamFlowMaxTopics(2);
+        service = new StreamFlowService(kafkaAdminService, topicSearchService, config);
+
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("aardvark", "billing", "orders"));
+        when(kafkaAdminService.getTopicsLastMessageTimestamps(any()))
+            .thenReturn(Map.of("aardvark", 1_000L, "billing", 9_000L, "orders", 8_000L));
+        onSearch("billing", nothing());
+        onSearch("orders", nothing());
+
+        StreamFlowResponse response = service.getStreamFlow(request("K-1", null, false, null, null));
+
+        assertEquals(2, response.stats().topicsInScope());
+        verify(topicSearchService).search(eq("billing"), any());
+        verify(topicSearchService).search(eq("orders"), any());
+        verify(topicSearchService, Mockito.never()).search(eq("aardvark"), any());
+        assertTrue(response.warnings().stream().anyMatch(w -> w.contains("most recently active")),
+            "the choice must be stated, got " + response.warnings());
+    }
+
+    /** A topic whose newest record predates the window cannot hold a match inside it. */
+    @Test
+    void aTimeWindowDropsTopicsWithNothingInsideIt() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("cold", "warm"));
+        long now = System.currentTimeMillis();
+        when(kafkaAdminService.getTopicsLastMessageTimestamps(any()))
+            .thenReturn(Map.of("cold", now - 3_600_000L, "warm", now - 1_000L));
+        onSearch("warm", nothing());
+
+        StreamFlowResponse response = service.getStreamFlow(request("K-1", null, false, 5, null));
+
+        assertEquals(1, response.stats().topicsInScope());
+        verify(topicSearchService, Mockito.never()).search(eq("cold"), any());
+        assertTrue(response.warnings().stream().anyMatch(w -> w.contains("cold")),
+            "a dropped topic must be named, got " + response.warnings());
+    }
+
+    /** Unknown is not cold: a topic with no reported timestamp is still read, just read last. */
+    @Test
+    void aTopicWithNoKnownTimestampIsKeptAndRankedLast() throws Exception {
+        ExplorerConfig config = new ExplorerConfig();
+        config.setStreamFlowMaxTopics(2);
+        service = new StreamFlowService(kafkaAdminService, topicSearchService, config);
+
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("busy", "quiet", "unknown"));
+        when(kafkaAdminService.getTopicsLastMessageTimestamps(any()))
+            .thenReturn(Map.of("busy", 9_000L, "quiet", 1_000L));
+        onSearch("busy", nothing());
+        onSearch("quiet", nothing());
+
+        service.getStreamFlow(request("K-1", null, false, null, null));
+
+        verify(topicSearchService).search(eq("busy"), any());
+        verify(topicSearchService).search(eq("quiet"), any());
+    }
+
+    /** Timestamps unavailable: the old truncation stands, and the warning says it is degraded. */
+    @Test
+    void anUnreadableActivityRankingFallsBackToAlphabeticalAndSaysSo() throws Exception {
+        ExplorerConfig config = new ExplorerConfig();
+        config.setStreamFlowMaxTopics(1);
+        service = new StreamFlowService(kafkaAdminService, topicSearchService, config);
+
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("alpha", "beta"));
+        when(kafkaAdminService.getTopicsLastMessageTimestamps(any()))
+            .thenThrow(new IllegalStateException("broker unreachable"));
+        onSearch("alpha", nothing());
+
+        StreamFlowResponse response = service.getStreamFlow(request("K-1", null, false, null, null));
+
+        verify(topicSearchService).search(eq("alpha"), any());
+        assertTrue(response.warnings().stream().anyMatch(w -> w.contains("alphabetical")),
+            "a degraded choice is still a choice, got " + response.warnings());
+    }
+
+    // ── Continuing a trace ──────────────────────────────────────────────────
+
+    /** A second pass draws one graph, not two: prior hops are chained with the new ones. */
+    @Test
+    void aContinuedTraceMergesTheEarlierHopsIntoOneChain() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("billing"));
+        onSearch("billing", found(List.of(message(1, 7L, 300L, "K-1", "charged")), 3));
+
+        StreamFlowHit prior = new StreamFlowHit("orders", 1, 100L, 100L, 0, 1L, "K-1",
+            "{\"id\":\"K-1\"}", null, false);
+        StreamFlowResponse response = service.getStreamFlow(new StreamFlowRequest(
+            "K-1", 10, null, null, false, null, null, null, List.of("billing"),
+            List.of(prior), new StreamFlowCoverage(249, 24_800, 5, 12_000L)));
+
+        assertEquals(List.of("orders", "billing"),
+            response.hits().stream().map(StreamFlowHit::topic).toList());
+        assertEquals(1, response.edges().size());
+        assertEquals("orders", response.edges().get(0).get("from"));
+        // La latence du saut est calculée sur la chaîne fusionnée, comme pour une passe unique.
+        assertEquals(200L, response.hits().get(1).latencyFromPreviousMs());
+    }
+
+    /** The coverage line legends the whole picture, so a continued pass adds to what came before. */
+    @Test
+    void aContinuedTraceReportsTheCoverageOfBothPasses() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("billing"));
+        onSearch("billing", found(List.of(message(0, 1L, 300L, "K-1", "x")), 40));
+
+        StreamFlowResponse response = service.getStreamFlow(new StreamFlowRequest(
+            "K-1", 10, null, null, false, null, null, null, List.of("billing"),
+            List.of(), new StreamFlowCoverage(249, 24_800, 5, 12_000L)));
+
+        assertEquals(250, response.stats().topicsScanned());
+        assertEquals(24_840, response.stats().messagesScanned());
+        assertEquals(6, response.stats().matches());
+    }
+
     // ── Streaming ───────────────────────────────────────────────────────────
 
     /** Collects what a streamed trace emits, in order. */
@@ -474,6 +595,12 @@ class StreamFlowServiceTest {
         assertTrue(result.stats().topicsScanned() < 4, "the remaining topics were never read");
         assertTrue(result.warnings().stream().anyMatch(w -> w.contains("Stopped early")),
             "expected the partial scan to be stated, got " + result.warnings());
+        // Nommés, pas seulement comptés : sans leurs noms, impossible de savoir si les topics
+        // abandonnés étaient justement ceux qui comptaient — et c'est la portée d'une reprise.
+        assertEquals(result.stats().topicsSkipped(), result.stats().skippedTopics().size());
+        assertTrue(result.stats().skippedTopics().stream().noneMatch(
+                t -> result.hits().stream().anyMatch(h -> h.topic().equals(t))),
+            "a topic that answered is not skipped, got " + result.stats().skippedTopics());
     }
 
     /** The plain request/response entry point behaves exactly like a trace nobody is watching. */
@@ -502,7 +629,7 @@ class StreamFlowServiceTest {
         when(kafkaAdminService.listTopics()).thenReturn(List.of("orders"));
         onSearch("orders", nothing());
 
-        service.getStreamFlow(new StreamFlowRequest("K-1", 10, null, null, false, true, null, null, null));
+        service.getStreamFlow(new StreamFlowRequest("K-1", 10, null, null, false, true, null, null, null, null, null));
 
         TopicSearchRequest criteria = captureCriteria();
         assertEquals("KEY", criteria.resolvedMode());
@@ -515,13 +642,13 @@ class StreamFlowServiceTest {
     @Test
     void anExactKeySearchRefusesASearchPath() {
         assertThrows(IllegalArgumentException.class, () -> service.getStreamFlow(
-            new StreamFlowRequest("K-1", 10, "$.orderId", null, false, true, null, null, null)));
+            new StreamFlowRequest("K-1", 10, "$.orderId", null, false, true, null, null, null, null, null)));
     }
 
     @Test
     void anExactKeySearchRefusesARegex() {
         assertThrows(IllegalArgumentException.class, () -> service.getStreamFlow(
-            new StreamFlowRequest("K-.*", 10, null, null, true, true, null, null, null)));
+            new StreamFlowRequest("K-.*", 10, null, null, true, true, null, null, null, null, null)));
     }
 
     private TopicSearchRequest captureCriteria() {

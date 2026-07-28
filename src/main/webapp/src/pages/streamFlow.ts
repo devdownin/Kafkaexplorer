@@ -42,6 +42,9 @@ export interface FlowStats {
   topicsScanned: number;
   topicsSkipped: number;
   topicsFailed: number;
+  /** Quels topics n'ont jamais été lus (borné côté serveur) — la portée exacte d'une reprise. */
+  skippedTopics?: string[];
+  failedTopics?: string[];
   messagesScanned: number;
   matches: number;
   durationMs: number;
@@ -423,8 +426,74 @@ export function pushTraceHistory(entry: TraceHistoryEntry): TraceHistoryEntry[] 
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * Saisie des topics cibles
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Découpe une saisie ou un collage en noms de topics.
+ *
+ * Les topics se choisissaient un par un, alors qu'un pipeline se connaît par listes — celle d'un
+ * runbook, d'un ticket, d'une commande `kafka-topics --list`. Virgules, points-virgules, espaces
+ * et sauts de ligne séparent donc tous, et les doublons tombent.
+ */
+export function parseTopicList(text: string): string[] {
+  const seen = new Set<string>();
+  return text
+    .split(/[\s,;]+/)
+    .map(entry => entry.trim())
+    .filter(entry => entry.length > 0 && !seen.has(entry) && seen.add(entry));
+}
+
+/** `orders.*` → toutes les correspondances du catalogue. `*` seul est le seul caractère spécial. */
+function patternToRegExp(pattern: string): RegExp {
+  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+  return new RegExp(`^${escaped}$`);
+}
+
+/**
+ * Étend les motifs (`orders.*`) sur le catalogue déjà chargé, et **rend compte** de ceux qui ne
+ * correspondent à rien : envoyer `orders.*` tel quel au serveur ne ferait qu'un scan d'un topic
+ * qui n'existe pas, avec un avertissement à l'autre bout du voyage. Un nom sans `*` passe tel
+ * quel — un topic peut exister avant que le catalogue (30 s de cache) ne le montre.
+ */
+export function expandTopicPatterns(
+  entries: string[], known: string[],
+): { topics: string[]; unmatched: string[] } {
+  const topics: string[] = [];
+  const unmatched: string[] = [];
+  for (const entry of entries) {
+    if (!entry.includes('*')) {
+      topics.push(entry);
+      continue;
+    }
+    const matcher = patternToRegExp(entry);
+    const matches = known.filter(topic => matcher.test(topic));
+    if (matches.length === 0) {
+      unmatched.push(entry);
+    } else {
+      topics.push(...matches);
+    }
+  }
+  const seen = new Set<string>();
+  return { topics: topics.filter(t => !seen.has(t) && seen.add(t)), unmatched };
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
  * Rebond vers le Topic Explorer
  * ────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Lien inverse : depuis un message du Topic Explorer, tracer sa clé à travers le cluster.
+ *
+ * La clé du record est connue exactement, donc la trace part en mode « clé exacte » — comparaison
+ * entière et scan de la seule partition concernée, plutôt qu'une recherche de sous-chaîne qui
+ * trouverait aussi les messages qui ne font que la mentionner.
+ */
+export function buildTraceLinkForKey(recordKey: string): string {
+  return `/stream-flow${buildTraceQuery({
+    ...DEFAULT_TRACE_PARAMS, messageKey: recordKey, exactKey: true,
+  })}`;
+}
 
 /**
  * Query string ouvrant le Topic Explorer sur *la même* recherche.
@@ -752,6 +821,142 @@ export function filterHits(hits: FlowHit[], query: string): FlowHit[] {
     || (hit.preview ?? '').toLowerCase().includes(needle));
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * Reprise d'une trace interrompue
+ * ────────────────────────────────────────────────────────────────────────── */
+
+export interface TraceCoverage {
+  topicsScanned: number;
+  messagesScanned: number;
+  matches: number;
+  durationMs: number;
+}
+
+/** De quoi reprendre une trace là où son budget l'a arrêtée, sans repartir de zéro. */
+export interface TraceContinuation {
+  /** Les topics jamais lus — la portée de la seconde passe. */
+  topics: string[];
+  /** Ce que la première passe a trouvé : renvoyé au serveur, qui rend **un** graphe fusionné. */
+  priorHits: FlowHit[];
+  priorCoverage: TraceCoverage;
+  /** Nombre total de topics jamais lus, dont `topics` n'est que la part nommée. */
+  pending: number;
+}
+
+/**
+ * Une trace arrêtée par le budget laissait comme seule issue de tout relancer, plus large : les
+ * topics déjà lus l'étaient une seconde fois, et le graphe précédent était jeté. Le serveur nomme
+ * désormais les topics jamais lus, ce qui suffit à ne rescanner que ceux-là et à fusionner.
+ *
+ * Rend `null` quand il n'y a rien à reprendre — une trace complète, ou une interruption si précoce
+ * qu'aucun nom n'a été rapporté.
+ */
+export function buildContinuation(flow: ParsedFlow): TraceContinuation | null {
+  const stats = flow.stats;
+  if (!stats) return null;
+  if (stats.stopReason !== 'TIME_BUDGET' && stats.stopReason !== 'CANCELLED') return null;
+  const topics = (stats.skippedTopics ?? []).filter(Boolean);
+  if (topics.length === 0) return null;
+  return {
+    topics,
+    priorHits: flow.hits,
+    priorCoverage: {
+      topicsScanned: stats.topicsScanned,
+      messagesScanned: stats.messagesScanned,
+      matches: stats.matches,
+      durationMs: stats.durationMs,
+    },
+    pending: Math.max(stats.topicsSkipped, topics.length),
+  };
+}
+
+/**
+ * Le libellé dit la portée réelle : le serveur borne la liste des noms, donc une reprise peut ne
+ * couvrir qu'une partie des topics manquants — l'annoncer « les 412 topics » serait faux.
+ */
+export function describeContinuation(continuation: TraceContinuation): string {
+  const { topics, pending } = continuation;
+  return topics.length < pending
+    ? `Continue on ${topics.length} of the ${pending} topics never read`
+    : `Continue on the ${pending} topic${pending > 1 ? 's' : ''} never read`;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Tri du tableau de preuves
+ * ────────────────────────────────────────────────────────────────────────── */
+
+export type HitSortKey = 'chain' | 'topic' | 'occurrences' | 'firstTimestamp' | 'latency';
+
+/**
+ * Trie les sauts sans jamais perdre leur rang dans la chaîne — celui-ci vient de `hopNumber`,
+ * pas de la position dans le tableau. `chain` est l'ordre naturel (par première apparition) et
+ * reste le défaut : c'est le sens même de la trace, et on n'y renonce que sur demande.
+ *
+ * Un saut sans latence (le premier de la chaîne) se range **toujours en dernier**, dans les deux
+ * sens : demander « le saut le plus lent » et voir un tiret en tête ne répondrait pas à la question.
+ */
+export function sortHits(hits: FlowHit[], key: HitSortKey, desc: boolean): FlowHit[] {
+  if (key === 'chain') return desc ? [...hits].reverse() : hits;
+  const direction = desc ? -1 : 1;
+
+  return [...hits].sort((a, b) => {
+    if (key === 'topic') return a.topic.localeCompare(b.topic) * direction;
+
+    const left = key === 'occurrences' ? a.occurrences
+      : key === 'firstTimestamp' ? a.firstTimestamp
+        : a.latencyFromPreviousMs;
+    const right = key === 'occurrences' ? b.occurrences
+      : key === 'firstTimestamp' ? b.firstTimestamp
+        : b.latencyFromPreviousMs;
+
+    const leftMissing = left === null || left === undefined;
+    const rightMissing = right === null || right === undefined;
+    if (leftMissing || rightMissing) {
+      if (leftMissing && rightMissing) return a.topic.localeCompare(b.topic);
+      return leftMissing ? 1 : -1;
+    }
+    // Égalité départagée par le nom : deux exécutions sur les mêmes données trient pareil.
+    return left === right ? a.topic.localeCompare(b.topic) : (left - right) * direction;
+  });
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Hauteur du panneau de preuves
+ * ────────────────────────────────────────────────────────────────────────── */
+
+export const EVIDENCE_KEY = 'kse:flow-evidence';
+export const MIN_EVIDENCE_PCT = 15;
+export const MAX_EVIDENCE_PCT = 75;
+export const DEFAULT_EVIDENCE_PCT = 45;
+
+/** Le graphe et le tableau ne doivent jamais pouvoir se réduire à rien l'un l'autre. */
+export function clampEvidencePct(pct: number): number {
+  if (!Number.isFinite(pct)) return DEFAULT_EVIDENCE_PCT;
+  return Math.min(MAX_EVIDENCE_PCT, Math.max(MIN_EVIDENCE_PCT, Math.round(pct)));
+}
+
+/**
+ * Le partage entre graphe et preuves était figé à 45 % : sur une chaîne de quinze sauts, le
+ * tableau défilait dans une lucarne pendant que le graphe gardait la moitié de l'écran pour
+ * quatre nœuds. Il se règle, et le réglage suit l'utilisateur.
+ */
+export function readEvidencePct(): number {
+  try {
+    const raw = localStorage.getItem(EVIDENCE_KEY);
+    return raw === null ? DEFAULT_EVIDENCE_PCT : clampEvidencePct(Number(raw));
+  } catch {
+    return DEFAULT_EVIDENCE_PCT;
+  }
+}
+
+export function writeEvidencePct(pct: number): void {
+  try {
+    localStorage.setItem(EVIDENCE_KEY, String(clampEvidencePct(pct)));
+  } catch {
+    // Confort d'affichage : un stockage indisponible ne bloque rien.
+  }
+}
+
 /** Une relance proposée quand la trace n'a rien trouvé : un critère élargi, et ce qu'il change. */
 export interface TraceSuggestion {
   id: string;
@@ -819,6 +1024,129 @@ export function suggestWidenings(params: TraceParams): TraceSuggestion[] {
     });
   }
   return suggestions.slice(0, 4);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Comparaison de deux traces
+ * ────────────────────────────────────────────────────────────────────────── */
+
+export type ComparisonStatus = 'BOTH' | 'ONLY_A' | 'ONLY_B';
+
+export interface FlowComparisonRow {
+  topic: string;
+  status: ComparisonStatus;
+  /** Rang du saut dans chaque chaîne (1-based), null quand le topic manque de ce côté. */
+  hopA: number | null;
+  hopB: number | null;
+  /** Latence depuis le saut précédent, dans chaque chaîne. */
+  latencyA: number | null;
+  latencyB: number | null;
+  /** `latencyB - latencyA`, seulement quand les deux existent. */
+  deltaMs: number | null;
+}
+
+export interface FlowComparison {
+  rows: FlowComparisonRow[];
+  shared: number;
+  onlyA: number;
+  onlyB: number;
+  /** Les deux clés ont-elles emprunté exactement les mêmes topics, dans le même ordre ? */
+  sameRoute: boolean;
+  /** Durée bout en bout de chaque chaîne, quand elle en a une. */
+  totalA: number | null;
+  totalB: number | null;
+}
+
+/**
+ * Compare deux traces : par où l'une est passée et pas l'autre, et où le temps est parti.
+ *
+ * « ORD-42 est arrivé, ORD-43 s'est perdu — où ? » est la question d'incident, et la seule façon
+ * d'y répondre était jusqu'ici de garder deux onglets ouverts et de lire deux tableaux en
+ * vis-à-vis. Ce sont les **latences de saut** qui sont comparées, jamais les horodatages absolus :
+ * deux clés traitées à une heure d'écart n'ont rien à se dire dans l'absolu, alors que « ce saut a
+ * pris 200 ms là et 4 minutes ici » est exactement le constat recherché.
+ *
+ * L'ordre des lignes suit la chaîne A, puis les topics que seule B a vus — pour lire la référence
+ * d'abord et les écarts ensuite.
+ */
+export function compareFlows(a: FlowHit[], b: FlowHit[]): FlowComparison {
+  const indexA = new Map(a.map((hit, i) => [hit.topic, { hit, hop: i + 1 }]));
+  const indexB = new Map(b.map((hit, i) => [hit.topic, { hit, hop: i + 1 }]));
+
+  const rows: FlowComparisonRow[] = a.map((hit, i) => {
+    const other = indexB.get(hit.topic);
+    const latencyA = hit.latencyFromPreviousMs ?? null;
+    const latencyB = other ? other.hit.latencyFromPreviousMs ?? null : null;
+    return {
+      topic: hit.topic,
+      status: other ? 'BOTH' : 'ONLY_A',
+      hopA: i + 1,
+      hopB: other ? other.hop : null,
+      latencyA,
+      latencyB,
+      deltaMs: latencyA !== null && latencyB !== null ? latencyB - latencyA : null,
+    };
+  });
+
+  for (const [i, hit] of b.entries()) {
+    if (indexA.has(hit.topic)) continue;
+    rows.push({
+      topic: hit.topic,
+      status: 'ONLY_B',
+      hopA: null,
+      hopB: i + 1,
+      latencyA: null,
+      latencyB: hit.latencyFromPreviousMs ?? null,
+      deltaMs: null,
+    });
+  }
+
+  const endToEnd = (hits: FlowHit[]) => (hits.length >= 2
+    ? hits[hits.length - 1].firstTimestamp - hits[0].firstTimestamp
+    : null);
+
+  return {
+    rows,
+    shared: rows.filter(r => r.status === 'BOTH').length,
+    onlyA: rows.filter(r => r.status === 'ONLY_A').length,
+    onlyB: rows.filter(r => r.status === 'ONLY_B').length,
+    // Même route = mêmes topics dans le même ordre. Deux chaînes vides ne se ressemblent pas :
+    // elles ne disent rien, et l'annoncer « identiques » serait une conclusion sans données.
+    sameRoute: a.length > 0 && a.length === b.length
+      && a.every((hit, i) => hit.topic === b[i].topic),
+    totalA: endToEnd(a),
+    totalB: endToEnd(b),
+  };
+}
+
+/** Le constat en une phrase, au-dessus du tableau de comparaison. */
+export function describeComparison(comparison: FlowComparison): string {
+  const { rows, shared, onlyA, onlyB, sameRoute, totalA, totalB } = comparison;
+  if (rows.length === 0) return 'Neither trace found anything to compare.';
+
+  const parts: string[] = [];
+  parts.push(sameRoute
+    ? `Same route through ${shared} topic${shared > 1 ? 's' : ''}`
+    : `${shared} shared topic${shared === 1 ? '' : 's'}`);
+  if (!sameRoute && onlyA > 0) parts.push(`${onlyA} only in A`);
+  if (!sameRoute && onlyB > 0) parts.push(`${onlyB} only in B`);
+  if (totalA !== null && totalB !== null) {
+    const delta = totalB - totalA;
+    parts.push(`end to end ${formatLatency(totalA).replace(/^\+/, '')} vs `
+      + `${formatLatency(totalB).replace(/^\+/, '')} (${formatLatency(delta)})`);
+  }
+  return parts.join(' · ');
+}
+
+/**
+ * Le saut partagé dont la latence s'écarte le plus entre les deux traces — là où le temps est
+ * parti quand la route est la même. Rendu `null` en dessous d'un écart mesurable.
+ */
+export function slowestDivergence(comparison: FlowComparison): FlowComparisonRow | null {
+  const measured = comparison.rows.filter(r => r.deltaMs !== null && r.deltaMs !== 0);
+  if (measured.length === 0) return null;
+  return measured.reduce((worst, row) =>
+    (Math.abs(row.deltaMs ?? 0) > Math.abs(worst.deltaMs ?? 0) ? row : worst));
 }
 
 /* ──────────────────────────────────────────────────────────────────────────

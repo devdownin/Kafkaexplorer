@@ -6,17 +6,21 @@ import {
   Table, TableBody, TableHead, TableRow, Td, Th,
 } from '../components/ui';
 import { useToast } from '../components/Toast';
+import { useCatalog } from '../catalogStore';
 import { describeApiError, type QueryErrorInfo } from './queryError';
 import { toCsv } from './resultExport';
 import {
-  analyzeChain, buildLayout, buildTopicSearchQuery, buildTraceQuery, centerOn, clampScale,
-  describeChainInsight, describeCoverage, describeProgress, describeSearchScope, filterHits,
+  analyzeChain, buildContinuation, buildLayout, buildTopicSearchQuery, buildTraceQuery, centerOn,
+  clampScale, compareFlows, describeChainInsight, describeComparison, describeContinuation,
+  describeCoverage, describeProgress, describeSearchScope, expandTopicPatterns, filterHits,
   fitTransform, formatAbsoluteTime, formatDwell, formatLatency, formatRelativeTime, hitsToRows,
-  HIT_EXPORT_COLUMNS, isNodeVisible, parseFlowResponse, parseSseBuffer, parseTraceParams,
-  progressRatio, pushTraceHistory, readPanelOpen, readTraceHistory, sameCriterion, suggestWidenings,
-  traceToJson, validateSearchPath, writePanelOpen, zoomAt,
-  type FlowHit, type FormErrors, type ParsedFlow, type TraceHistoryEntry,
-  type TraceParams, type TraceProgress, type Transform,
+  HIT_EXPORT_COLUMNS, isNodeVisible, parseFlowResponse, parseSseBuffer, parseTopicList,
+  clampEvidencePct, MAX_EVIDENCE_PCT, MIN_EVIDENCE_PCT,
+  parseTraceParams, progressRatio, pushTraceHistory, readEvidencePct, readPanelOpen,
+  readTraceHistory, sameCriterion, slowestDivergence, sortHits, suggestWidenings, traceToJson,
+  validateSearchPath, writeEvidencePct, writePanelOpen, zoomAt,
+  type FlowHit, type FormErrors, type HitSortKey, type ParsedFlow, type TraceContinuation,
+  type TraceHistoryEntry, type TraceParams, type TraceProgress, type Transform,
 } from './streamFlow';
 
 /** Filet de sécurité côté client : le backend borne déjà la trace (explorer.stream-flow-timeout-ms). */
@@ -51,6 +55,8 @@ const StreamFlow: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const { toast } = useToast();
+  /** Déjà alimenté par le sondage de `Layout` : étendre `orders.*` ne coûte aucune requête. */
+  const catalog = useCatalog();
 
   // Le formulaire s'initialise depuis l'URL : une trace se partage telle quelle.
   const initial = useMemo(() => parseTraceParams(location.search), []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -73,11 +79,18 @@ const StreamFlow: React.FC = () => {
   const [loading, setLoading]               = useState(false);
   const [error, setError]                   = useState<QueryErrorInfo | null>(null);
   const [notice, setNotice]                 = useState<string | null>(null);
+  /** Annonce vocale d'une trace terminée — la barre de progression disparaît sans rien dire. */
+  const [completionMessage, setCompletionMessage] = useState('');
   const [flow, setFlow]                     = useState<ParsedFlow>(EMPTY_FLOW);
   const [hasResult, setHasResult]           = useState(false);
   const [selectedTopic, setSelectedTopic]   = useState<string | null>(null);
   const [detailsOpen, setDetailsOpen]       = useState(true);
   const [hitFilter, setHitFilter]           = useState('');
+  /** Tri du tableau de preuves. `chain` — l'ordre des sauts — est le sens même de la trace. */
+  const [sortKey, setSortKey]               = useState<HitSortKey>('chain');
+  const [sortDesc, setSortDesc]             = useState(false);
+  /** Partage graphe / preuves, en pourcentage de hauteur, réglable et mémorisé. */
+  const [evidencePct, setEvidencePct]       = useState(() => readEvidencePct());
   const [history, setHistory]               = useState<TraceHistoryEntry[]>(() => readTraceHistory());
   const [historyOpen, setHistoryOpen]       = useState(false);
   const [progress, setProgress]             = useState<TraceProgress | null>(null);
@@ -89,9 +102,18 @@ const StreamFlow: React.FC = () => {
   /** Le panneau de critères se replie ; sur un écran étroit il part replié, le graphe passe avant. */
   const [panelOpen, setPanelOpen]           = useState(() =>
     readPanelOpen(typeof window === 'undefined' || window.innerWidth >= 1024));
+  /**
+   * Seconde trace mise en regard de celle qui est affichée. « ORD-42 est passé, ORD-43 s'est
+   * perdu — où ? » se répondait jusqu'ici avec deux onglets et deux tableaux lus en vis-à-vis.
+   */
+  const [comparison, setComparison]         = useState<{ params: TraceParams; flow: ParsedFlow } | null>(null);
+  const [comparing, setComparing]           = useState(false);
+  const [comparePickerOpen, setComparePickerOpen] = useState(false);
 
   const messageKeyRef = useRef<HTMLInputElement>(null);
   const searchPathRef = useRef<HTMLInputElement>(null);
+  /** Zone graphe + preuves : sa hauteur sert de référence au glissé du séparateur. */
+  const mainRef       = useRef<HTMLElement>(null);
   /** Requête en vol — annulable, une trace peut légitimement durer une minute. */
   const abortRef      = useRef<AbortController | null>(null);
   /** Numéro de la trace en cours : ce qui arrive d'une passe abandonnée est ignoré. */
@@ -229,14 +251,59 @@ const StreamFlow: React.FC = () => {
     document.getElementById(`sf-hit-${selectedTopic}`)?.scrollIntoView({ block: 'nearest' });
   }, [selectedTopic, detailsOpen]);
 
+  /**
+   * Glissé du séparateur : la hauteur suit le pointeur, et n'est écrite qu'au relâché — un
+   * `localStorage.setItem` par image de glissement serait du gaspillage pur.
+   */
+  const evidencePctRef = useRef(evidencePct);
+  const applyEvidencePct = useCallback((pct: number) => {
+    const next = clampEvidencePct(pct);
+    evidencePctRef.current = next;
+    setEvidencePct(next);
+  }, []);
+
+  const onDividerPointerDown = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    const box = mainRef.current?.getBoundingClientRect();
+    if (!box || box.height === 0) return;
+    const move = (event: PointerEvent) =>
+      applyEvidencePct(((box.bottom - event.clientY) / box.height) * 100);
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      writeEvidencePct(evidencePctRef.current);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }, [applyEvidencePct]);
+
+  /** Le séparateur se règle aussi au clavier : c'est un `separator` ARIA, pas une poignée souris. */
+  const onDividerKeyDown = (e: React.KeyboardEvent) => {
+    const step = e.key === 'ArrowUp' ? 5 : e.key === 'ArrowDown' ? -5 : 0;
+    if (step === 0) return;
+    e.preventDefault();
+    applyEvidencePct(evidencePctRef.current + step);
+    writeEvidencePct(evidencePctRef.current);
+  };
+
   const clearFieldError = (key: keyof FormErrors) =>
     setFieldErrors(prev => (prev[key] ? { ...prev, [key]: undefined } : prev));
 
-  /** Valide le brouillon puis l'ajoute à la liste ; ignore les doublons et les vides. */
+  /**
+   * Ajoute le brouillon à la liste. Il peut valoir plusieurs topics — une liste collée depuis un
+   * runbook, ou un motif `orders.*` étendu sur le catalogue déjà chargé. Un motif sans
+   * correspondance est signalé plutôt qu'envoyé comme nom de topic : il n'en est pas un.
+   */
   const addTopic = () => {
-    const topic = topicDraft.trim();
-    if (!topic) return;
-    setSelectedTopics(list => (list.includes(topic) ? list : [...list, topic]));
+    const entries = parseTopicList(topicDraft);
+    if (entries.length === 0) return;
+    const { topics, unmatched } = expandTopicPatterns(entries, catalog.topics);
+    if (topics.length > 0) {
+      setSelectedTopics(list => [...list, ...topics.filter(t => !list.includes(t))]);
+    }
+    if (unmatched.length > 0) {
+      toast(`No topic matches ${unmatched.join(', ')}`, 'error');
+    }
     setTopicDraft('');
   };
 
@@ -245,7 +312,12 @@ const StreamFlow: React.FC = () => {
     abortRef.current = null;
   };
 
-  const runTrace = useCallback(async (params: TraceParams) => {
+  /**
+   * @param continuation seconde passe d'une trace interrompue : seuls les topics jamais lus sont
+   *        rescannés, et le serveur rend un graphe fusionné. Le critère affiché (URL, historique,
+   *        pastille) reste celui de la trace entière — la liste réduite n'est qu'un moyen.
+   */
+  const runTrace = useCallback(async (params: TraceParams, continuation?: TraceContinuation) => {
     const errors: FormErrors = {};
     if (!params.messageKey) errors.messageKey = 'A message key is required.';
     const pathError = validateSearchPath(params.searchPath);
@@ -264,9 +336,14 @@ const StreamFlow: React.FC = () => {
     setLoading(true);
     setError(null);
     setNotice(null);
+    setCompletionMessage('');
     setProgress(null);
     setSelectedTopic(null);
     setHitFilter('');
+    // La comparaison portait sur la trace précédente ; la garder en regard d'une nouvelle
+    // reviendrait à comparer deux critères sans rapport.
+    setComparison(null);
+    setComparePickerOpen(false);
     setFlow(EMPTY_FLOW);
     setHasResult(false);
     // Le graphe qui va s'afficher appartient à ce critère-là, y compris s'il est partiel :
@@ -282,7 +359,9 @@ const StreamFlow: React.FC = () => {
       exactKey: params.exactKey,
       caseSensitive: params.caseSensitive,
       searchHeaders: params.searchHeaders,
-      targetTopics: params.topics,
+      targetTopics: continuation ? continuation.topics : params.topics,
+      priorHits: continuation?.priorHits ?? null,
+      priorCoverage: continuation?.priorCoverage ?? null,
     };
 
     // Ce que la trace a trouvé au moment où on la quitte : gardé en ref pour que l'annulation
@@ -299,6 +378,10 @@ const StreamFlow: React.FC = () => {
       // depuis le bouton de partage.
       navigate({ search: buildTraceQuery(params2) }, { replace: true });
       setHistory(pushTraceHistory({ ...params2, ranAt: Date.now(), topicsFound: parsed.nodes.length }));
+      setCompletionMessage(parsed.nodes.length === 0
+        ? `Trace complete: ${params2.messageKey} was not found in what was scanned.`
+        : `Trace complete: ${parsed.nodes.length} topic${parsed.nodes.length > 1 ? 's' : ''}, `
+          + `${parsed.stats?.matches ?? parsed.hits.length} match(es).`);
     };
 
     try {
@@ -355,14 +438,18 @@ const StreamFlow: React.FC = () => {
       if (axios.isCancel(err) || (err as { name?: string })?.name === 'AbortError'
         || (err as { code?: string })?.code === 'ERR_CANCELED') {
         // Arrêter tôt est le but de la trace streamée : on garde ce qui a été trouvé.
-        setNotice(lastProgress
+        const stopped = lastProgress
           ? `Stopped after ${lastProgress.topicsCompleted} of ${lastProgress.topicsInScope} topics — showing what was found by then.`
-          : 'Trace cancelled — nothing was changed on the cluster.');
+          : 'Trace cancelled — nothing was changed on the cluster.';
+        setNotice(stopped);
+        setCompletionMessage(stopped);
         if (lastFlow) setHasResult(true);
       } else {
         // Surface the real backend cause when there is one (invalid regex, malformed
         // search path, unreachable broker); otherwise fall back to a generic hint.
-        setError(describeApiError(err, 'Failed to trace stream flow.'));
+        const failure = describeApiError(err, 'Failed to trace stream flow.');
+        setError(failure);
+        setCompletionMessage(`Trace failed: ${failure.title}`);
         // The previous graph described a different search: keeping it on screen next to a
         // fresh error would present stale coverage as the result of this run.
         setFlow(EMPTY_FLOW);
@@ -381,10 +468,11 @@ const StreamFlow: React.FC = () => {
   const handleSubmit = () => {
     // Un topic encore dans le champ de saisie compte : on ne le perd pas parce que
     // l'utilisateur a cliqué « Trace » sans valider par Entrée.
-    const pending = topicDraft.trim();
     const params = currentParams();
-    if (pending && !params.topics.includes(pending)) {
-      params.topics = [...params.topics, pending];
+    const { topics: pending } = expandTopicPatterns(parseTopicList(topicDraft), catalog.topics);
+    const added = pending.filter(topic => !params.topics.includes(topic));
+    if (added.length > 0) {
+      params.topics = [...params.topics, ...added];
       setSelectedTopics(params.topics);
       setTopicDraft('');
     }
@@ -433,6 +521,35 @@ const StreamFlow: React.FC = () => {
    * Le lien décrit la trace **affichée**, pas le formulaire : les trois boutons (Link, CSV, JSON)
    * portent sur le même résultat, et un critère édité depuis a son propre bandeau pour se relancer.
    */
+  /**
+   * Rejoue un critère de l'historique **à côté** de la trace affichée, sans la remplacer.
+   *
+   * Passe par l'endpoint non streamé : une comparaison n'a rien à montrer avant d'être complète,
+   * et le flux SSE de la trace principale n'a pas à être partagé avec une seconde exécution.
+   */
+  const compareWith = async (params: TraceParams) => {
+    setComparePickerOpen(false);
+    setComparing(true);
+    try {
+      const response = await axios.post('/api/stream-flow', {
+        messageKey: params.messageKey,
+        maxMessagesPerTopic: params.maxMessages,
+        searchPath: params.searchPath || null,
+        timeLimitMinutes: params.windowMode === 'window' ? params.timeLimitMinutes : null,
+        useRegex: params.useRegex,
+        exactKey: params.exactKey,
+        caseSensitive: params.caseSensitive,
+        searchHeaders: params.searchHeaders,
+        targetTopics: params.topics,
+      }, { timeout: REQUEST_TIMEOUT_MS });
+      setComparison({ params, flow: parseFlowResponse(response.data) });
+    } catch (err) {
+      toast(describeApiError(err, 'Failed to run the comparison trace.').title, 'error');
+    } finally {
+      setComparing(false);
+    }
+  };
+
   const copyLink = async () => {
     const url = `${window.location.origin}${window.location.pathname}${buildTraceQuery(ranParams ?? currentParams())}`;
     try {
@@ -460,14 +577,45 @@ const StreamFlow: React.FC = () => {
   const insight = useMemo(() => analyzeChain(hits), [hits]);
   const insightNotes = useMemo(() => describeChainInsight(insight), [insight]);
   const scopeHint = describeSearchScope(searchPath, searchHeaders, exactKey);
-  /** Rang du saut dans la chaîne — conservé même quand le tableau est filtré. */
+  /** Rang du saut dans la chaîne — conservé quel que soit le filtre ou le tri du tableau. */
   const hopNumber = useMemo(() => new Map(hits.map((h, i) => [h.topic, i + 1])), [hits]);
-  const shownHits = useMemo(() => filterHits(hits, hitFilter), [hits, hitFilter]);
+  const shownHits = useMemo(
+    () => sortHits(filterHits(hits, hitFilter), sortKey, sortDesc),
+    [hits, hitFilter, sortKey, sortDesc]);
+
+  const toggleSort = (key: HitSortKey) => {
+    if (key === sortKey) {
+      setSortDesc(desc => !desc);
+    } else {
+      setSortKey(key);
+      // Un tri numérique s'ouvre décroissant : « le plus lent », « le plus vu » d'abord.
+      setSortDesc(key !== 'chain' && key !== 'topic');
+    }
+  };
+
+  const sortIcon = (key: HitSortKey) =>
+    (key !== sortKey ? 'unfold_more' : sortDesc ? 'arrow_downward' : 'arrow_upward');
   /** Le formulaire a bougé depuis la trace affichée : le graphe ne répond plus à ce qu'on lit. */
   const stale = hasResult && !loading && ranParams !== null
     && !sameCriterion(ranParams, currentParams());
   const suggestions = useMemo(
     () => (ranParams ? suggestWidenings(ranParams) : []), [ranParams]);
+  /** Trace arrêtée par son budget : les topics jamais lus sont nommés, donc reprenables. */
+  const continuation = useMemo(() => buildContinuation(flow), [flow]);
+  const diff = useMemo(
+    () => (comparison ? compareFlows(hits, comparison.flow.hits) : null), [comparison, hits]);
+  const divergence = useMemo(() => (diff ? slowestDivergence(diff) : null), [diff]);
+  /** Topics que la trace comparée n'a pas vus — soulignés sur le graphe, qui montre toujours A. */
+  const missingInB = useMemo(
+    () => new Set(diff ? diff.rows.filter(r => r.status === 'ONLY_A').map(r => r.topic) : []),
+    [diff]);
+  /** Critères rejouables : l'historique, moins celui qui est déjà affiché. */
+  const comparable = useMemo(
+    () => (ranParams ? history.filter(entry => !sameCriterion(entry, ranParams)) : []),
+    [history, ranParams]);
+  const continueTrace = () => {
+    if (continuation && ranParams) void runTrace(ranParams, continuation);
+  };
   const graphLegend = insight.slowestHopTopic !== null || insight.clockSkewTopics.length > 0;
 
   return (
@@ -609,7 +757,7 @@ const StreamFlow: React.FC = () => {
               value={topicDraft}
               onChange={setTopicDraft}
               onEnter={addTopic}
-              placeholder="Type or pick a topic…"
+              placeholder="Topic, orders.*, or a pasted list…"
             />
             {selectedTopics.length > 0 && (
               <ul className="flex flex-wrap gap-1 pt-1">
@@ -632,9 +780,18 @@ const StreamFlow: React.FC = () => {
             )}
             <p className="text-[10px] text-on-surface-variant">
               {selectedTopics.length === 0
-                ? 'None selected — the whole cluster is scanned, one consumer per topic. Naming the topics is much faster.'
+                ? 'None selected — the whole cluster is scanned, one consumer per topic. Naming the topics is much faster: paste a list, or use a pattern like orders.*'
                 : `${selectedTopics.length} topic(s) will be scanned.`}
             </p>
+            {selectedTopics.length > 1 && (
+              <button
+                type="button"
+                onClick={() => setSelectedTopics([])}
+                className="text-[10px] text-outline hover:text-error"
+              >
+                Clear all
+              </button>
+            )}
           </div>
 
           {/* Fenêtre lue */}
@@ -665,13 +822,24 @@ const StreamFlow: React.FC = () => {
             </Field>
           )}
 
-          {/* Max Messages */}
+          {/* Max Messages — le curseur pour balayer, le champ pour viser : 750 se tapait
+              autrement en visant un pixel sur une piste de dix pas. */}
           <div className="space-y-1.5">
-            <label htmlFor="sf-max-messages" className="text-[12px] font-medium text-on-surface-variant">
-              Max Messages / Topic: <span className="text-primary">{maxMessages}</span>
-            </label>
+            <div className="flex items-end justify-between gap-2">
+              <label htmlFor="sf-max-messages" className="text-[12px] font-medium text-on-surface-variant">
+                Max Messages / Topic
+              </label>
+              <NumberInput
+                id="sf-max-messages-value"
+                aria-label="Max messages per topic"
+                className="h-7 w-20 text-[12px]"
+                min={10} max={1000} fallback={100}
+                value={maxMessages} onChange={setMaxMessages}
+              />
+            </div>
             <input
               id="sf-max-messages"
+              aria-label="Max messages per topic (slider)"
               type="range" min={10} max={1000} step={10} value={maxMessages}
               onChange={e => setMaxMessages(Number(e.target.value))}
               className="w-full accent-primary"
@@ -719,7 +887,11 @@ const StreamFlow: React.FC = () => {
       )}
 
       {/* ── Graph Area ── */}
-      <main className="flex-1 relative bg-background-dark overflow-hidden flex flex-col min-w-0">
+      <main ref={mainRef} className="flex-1 relative bg-background-dark overflow-hidden flex flex-col min-w-0">
+
+        {/* Ce qu'une trace terminée a donné, annoncé une fois : la barre de progression est un
+            `status` tant qu'elle tourne, mais sa disparition ne dit rien à qui ne voit pas l'écran. */}
+        <p className="sr-only" role="status" aria-live="polite">{completionMessage}</p>
 
         <div className="relative flex-1 min-h-0">
 
@@ -810,6 +982,47 @@ const StreamFlow: React.FC = () => {
             {/* Partage & export — sur un résultat figé : exporter une cible mouvante n'a pas de sens */}
             {hasResult && !loading && (
               <div className="shrink-0 flex items-center gap-1 pointer-events-auto">
+                {/* Comparer deux traces : la question d'incident est « l'autre clé, elle, est
+                    passée par où ? », et l'historique tient déjà les critères à rejouer. */}
+                {(comparable.length > 0 || comparison) && (
+                  <div className="relative">
+                    <Button
+                      size="sm" variant={comparison ? 'secondary' : 'ghost'} icon="compare_arrows"
+                      loading={comparing}
+                      onClick={() => (comparison ? setComparison(null) : setComparePickerOpen(o => !o))}
+                      aria-expanded={comparePickerOpen}
+                      title={comparison
+                        ? 'Stop comparing and show this trace alone'
+                        : 'Compare this trace with a recent one'}
+                    >
+                      {comparison ? 'Exit compare' : 'Compare'}
+                    </Button>
+                    {comparePickerOpen && !comparison && (
+                      <ul
+                        className="absolute right-0 top-full mt-1 z-30 w-72 max-h-64 overflow-y-auto rounded-lg border border-outline-variant bg-surface-container shadow-xl p-1"
+                        aria-label="Compare with a recent trace"
+                      >
+                        {comparable.map(entry => (
+                          <li key={entry.ranAt}>
+                            <button
+                              type="button"
+                              onClick={() => void compareWith(entry)}
+                              className="w-full text-left px-2 py-1.5 rounded hover:bg-surface-container-high"
+                            >
+                              <span className="block font-mono text-[11px] text-on-surface truncate">
+                                {entry.messageKey}
+                              </span>
+                              <span className="block text-[10px] text-outline">
+                                {entry.searchPath ? `${entry.searchPath} · ` : ''}
+                                {entry.topicsFound} topic{entry.topicsFound === 1 ? '' : 's'} · {formatRelativeTime(entry.ranAt)}
+                              </span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
                 <Button size="sm" variant="ghost" icon="link" onClick={() => void copyLink()} title="Copy a link that reruns this exact trace">
                   Link
                 </Button>
@@ -852,8 +1065,14 @@ const StreamFlow: React.FC = () => {
           )}
 
           {/* Légende — l'ambre et le rouge tiraient l'œil sans jamais dire ce qu'ils marquaient. */}
-          {hasResult && nodes.length > 0 && graphLegend && (
+          {hasResult && nodes.length > 0 && (graphLegend || missingInB.size > 0) && (
             <div className="absolute bottom-6 left-20 z-10 flex flex-col gap-1 rounded-lg border border-outline-variant bg-surface-container/90 px-3 py-2 text-[10px] text-on-surface-variant">
+              {missingInB.size > 0 && (
+                <span className="flex items-center gap-1.5">
+                  <span aria-hidden="true" className="inline-block h-3 w-5 rounded border border-dashed" style={{ borderColor: '#ffd479' }} />
+                  not seen by {comparison?.params.messageKey}
+                </span>
+              )}
               {insight.slowestHopTopic && (
                 <span className="flex items-center gap-1.5">
                   <span aria-hidden="true" className="inline-block h-[3px] w-5 rounded" style={{ background: '#ffd479' }} />
@@ -978,9 +1197,14 @@ const StreamFlow: React.FC = () => {
                         selectFromGraph(node.id);
                       }}
                     >
-                      <title>{`${node.label} — ${node.hits ?? 0}${capped ? '+' : ''} match(es), first seen ${formatAbsoluteTime(node.timestamp)}`}</title>
+                      <title>{`${node.label} — ${node.hits ?? 0}${capped ? '+' : ''} match(es), first seen ${formatAbsoluteTime(node.timestamp)}`
+                        + (missingInB.has(node.id) ? ' — not seen by the compared trace' : '')}</title>
+                      {/* En comparaison, un topic que l'autre clé n'a pas traversé est la
+                          divergence elle-même : il se voit sur le graphe, pas seulement en table. */}
                       <rect width={nodeW} height={nodeH} rx="8"
-                        fill={selected ? '#1b2030' : '#12151a'} stroke="#a3adff"
+                        fill={selected ? '#1b2030' : '#12151a'}
+                        stroke={missingInB.has(node.id) ? '#ffd479' : '#a3adff'}
+                        strokeDasharray={missingInB.has(node.id) ? '5 3' : undefined}
                         strokeWidth={selected ? 2.5 : 1.5} strokeOpacity={selected ? 1 : 0.6} />
                       <text x={cx} y={ts ? nodeH / 2 - 8 : nodeH / 2 + 4}
                         textAnchor="middle" fill="white" fontSize="11"
@@ -1009,6 +1233,16 @@ const StreamFlow: React.FC = () => {
                 <p className="text-sm text-outline mt-1">
                   The key was not in what was scanned{coverage ? ` — ${coverage}.` : '.'}
                 </p>
+                {/* Rien trouvé alors que des topics n'ont jamais été lus : la première réponse
+                    n'est pas d'élargir le critère, c'est de finir le scan. */}
+                {continuation && (
+                  <div className="mt-4">
+                    <Button variant="primary" icon="playlist_add" onClick={continueTrace}>
+                      {describeContinuation(continuation)}
+                    </Button>
+                  </div>
+                )}
+
                 {/* Chaque piste est un bouton qui relance : le conseil « élargissez la fenêtre »
                     obligeait à remonter dans le formulaire pour l'appliquer. */}
                 {suggestions.length > 0 && (
@@ -1036,7 +1270,28 @@ const StreamFlow: React.FC = () => {
 
         {/* ── Coverage, warnings & evidence ── */}
         {hasResult && (
-          <section className="border-t border-outline-variant/60 bg-surface-container-low shrink-0 max-h-[45%] overflow-y-auto">
+          <>
+          {/* Séparateur réglable : le partage était figé à 45 %, si bien qu'une chaîne de quinze
+              sauts défilait dans une lucarne pendant que quatre nœuds gardaient la moitié haute. */}
+          {detailsOpen && (
+            <div
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label="Resize the evidence panel"
+              aria-valuenow={evidencePct}
+              aria-valuemin={MIN_EVIDENCE_PCT}
+              aria-valuemax={MAX_EVIDENCE_PCT}
+              tabIndex={0}
+              onPointerDown={onDividerPointerDown}
+              onKeyDown={onDividerKeyDown}
+              className="h-1.5 shrink-0 cursor-row-resize bg-outline-variant/40 hover:bg-primary/50 focus-visible:bg-primary/60 transition-colors"
+              style={{ touchAction: 'none' }}
+            />
+          )}
+          <section
+            className="border-t border-outline-variant/60 bg-surface-container-low shrink-0 overflow-y-auto"
+            style={detailsOpen ? { height: `${evidencePct}%` } : undefined}
+          >
             <div className="flex items-center gap-3 px-4 py-2 sticky top-0 bg-surface-container-low z-10 border-b border-outline-variant/40">
               <button
                 type="button"
@@ -1051,6 +1306,14 @@ const StreamFlow: React.FC = () => {
               </button>
               <span className="text-[11px] text-outline truncate" title={coverage}>{coverage}</span>
               <div className="ml-auto flex items-center gap-2 shrink-0">
+                {/* Reprendre plutôt que tout relancer : les topics déjà lus ne le sont pas deux
+                    fois, et le graphe précédent n'est pas jeté. */}
+                {continuation && !loading && (
+                  <Button size="sm" variant="outline" icon="playlist_add" onClick={continueTrace}
+                    title="Scans only the topics the budget never reached and merges the result into this graph">
+                    {describeContinuation(continuation)}
+                  </Button>
+                )}
                 {/* Un filtre dès qu'une trace ramène plus d'une poignée de sauts : sur un scan
                     de cluster, retrouver un topic se faisait à la molette. */}
                 {detailsOpen && hits.length > 6 && (
@@ -1095,6 +1358,63 @@ const StreamFlow: React.FC = () => {
                   </ul>
                 )}
 
+                {/* ── Comparaison de deux traces ── */}
+                {diff && comparison && (
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+                      <span className="inline-flex items-center gap-1.5 text-on-surface-variant">
+                        <span aria-hidden="true" className="material-symbols-outlined text-[14px] text-primary">compare_arrows</span>
+                        <span className="font-mono text-on-surface">{ranParams?.messageKey}</span>
+                        <span className="text-outline">(A) vs</span>
+                        <span className="font-mono text-on-surface">{comparison.params.messageKey}</span>
+                        <span className="text-outline">(B)</span>
+                      </span>
+                      <span className="text-outline">·</span>
+                      <span className="text-on-surface-variant">{describeComparison(diff)}</span>
+                    </div>
+
+                    {/* Là où le temps est parti, quand les deux clés ont pris la même route. */}
+                    {divergence && (
+                      <p className="text-[11px] text-warning">
+                        Biggest difference into <span className="font-mono">{divergence.topic}</span>:{' '}
+                        {formatLatency(divergence.latencyA)} in A vs {formatLatency(divergence.latencyB)} in B
+                        {' '}({formatLatency(divergence.deltaMs)}).
+                      </p>
+                    )}
+
+                    <Table rowCount={diff.rows.length} scrollThreshold={12} maxBodyHeight="18rem">
+                      <TableHead>
+                        <tr>
+                          <Th>Topic</Th>
+                          <Th>In A</Th>
+                          <Th>In B</Th>
+                          <Th>Δ hop A</Th>
+                          <Th>Δ hop B</Th>
+                          <Th>Difference</Th>
+                        </tr>
+                      </TableHead>
+                      <TableBody>
+                        {diff.rows.map(row => (
+                          <TableRow key={row.topic}>
+                            <Td className="font-mono text-[12px]">{row.topic}</Td>
+                            <Td>{row.hopA !== null ? `hop ${row.hopA}` : (
+                              <Badge tone="warning">not seen</Badge>
+                            )}</Td>
+                            <Td>{row.hopB !== null ? `hop ${row.hopB}` : (
+                              <Badge tone="warning">not seen</Badge>
+                            )}</Td>
+                            <Td className="whitespace-nowrap">{formatLatency(row.latencyA)}</Td>
+                            <Td className="whitespace-nowrap">{formatLatency(row.latencyB)}</Td>
+                            <Td className={`whitespace-nowrap ${row.deltaMs !== null && Math.abs(row.deltaMs) > 0 ? 'text-warning' : 'text-outline'}`}>
+                              {row.deltaMs !== null ? formatLatency(row.deltaMs) : '—'}
+                            </Td>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+
                 {hits.length > 0 && shownHits.length === 0 && (
                   <p className="text-[11px] text-outline">
                     No matched topic contains “{hitFilter}”.{' '}
@@ -1108,11 +1428,28 @@ const StreamFlow: React.FC = () => {
                   <Table rowCount={shownHits.length} scrollThreshold={12} maxBodyHeight="18rem">
                     <TableHead>
                       <tr>
-                        <Th>#</Th>
-                        <Th>Topic</Th>
-                        <Th>Matches</Th>
-                        <Th>First seen</Th>
-                        <Th>Δ from previous</Th>
+                        {/* Colonnes triables : sur une chaîne longue, « le saut le plus lent » se
+                            cherchait à l'œil. Le rang dans la chaîne, lui, ne bouge jamais. */}
+                        {([
+                          ['chain', '#'],
+                          ['topic', 'Topic'],
+                          ['occurrences', 'Matches'],
+                          ['firstTimestamp', 'First seen'],
+                          ['latency', 'Δ from previous'],
+                        ] as [HitSortKey, string][]).map(([key, label]) => (
+                          <Th key={key} aria-sort={sortKey === key ? (sortDesc ? 'descending' : 'ascending') : 'none'}>
+                            <button
+                              type="button"
+                              onClick={() => toggleSort(key)}
+                              className="inline-flex items-center gap-1 hover:text-on-surface uppercase tracking-[0.05em]"
+                            >
+                              {label}
+                              <span aria-hidden="true" className="material-symbols-outlined text-[13px]">
+                                {sortIcon(key)}
+                              </span>
+                            </button>
+                          </Th>
+                        ))}
                         <Th>Partition / Offset</Th>
                         <Th>Preview</Th>
                       </tr>
@@ -1195,6 +1532,7 @@ const StreamFlow: React.FC = () => {
               </div>
             )}
           </section>
+          </>
         )}
       </main>
     </div>

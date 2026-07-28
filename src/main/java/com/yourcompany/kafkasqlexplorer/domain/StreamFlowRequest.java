@@ -27,6 +27,12 @@ import java.util.List;
  *                      <strong>true</strong> here, unlike a topic search: a correlation id very
  *                      often travels only in a header, and a trace that never looks there reports
  *                      a confident "not found"
+ * @param priorHits     hops already found by an earlier pass of the same trace, merged into this
+ *                      one's graph. A trace stopped by the time budget leaves topics unread; the
+ *                      natural next step is to scan those and keep the chain, not to start over —
+ *                      and the chain rule stays server-side, where it is written once
+ * @param priorCoverage what that earlier pass covered, so the coverage line describes the whole
+ *                      picture instead of only its last pass
  */
 public record StreamFlowRequest(
         String messageKey,
@@ -37,8 +43,15 @@ public record StreamFlowRequest(
         Boolean exactKey,
         Boolean caseSensitive,
         Boolean searchHeaders,
-        List<String> targetTopics
+        List<String> targetTopics,
+        List<StreamFlowHit> priorHits,
+        StreamFlowCoverage priorCoverage
 ) {
+    /** Never null: an absent property, and an absent list, are both "nothing already found". */
+    public List<StreamFlowHit> resolvedPriorHits() {
+        return priorHits == null ? List.of() : priorHits;
+    }
+
     public boolean isUseRegex() {
         return Boolean.TRUE.equals(useRegex);
     }

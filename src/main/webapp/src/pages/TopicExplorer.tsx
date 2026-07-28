@@ -6,6 +6,7 @@ import '../monaco-setup';
 import { useToast } from '../components/Toast';
 import ErrorBanner from '../components/ErrorBanner';
 import { Button, Badge, Stat, EmptyState, StatGridSkeleton, TableSkeleton, Table } from '../components/ui';
+import { buildTraceLinkForKey } from './streamFlow';
 import TopicSearchPanel, {
   criteriaFromQuery,
   emptyCriteria,
@@ -332,6 +333,19 @@ const MessageCard: React.FC<{
             >
               <span className="material-symbols-outlined text-base">{raw ? 'account_tree' : 'data_object'}</span>
             </button>
+          )}
+          {/* Le trajet inverse du lien qu'un saut de Stream Flow pose ici : depuis un message,
+              suivre sa clé à travers le cluster. La clé est connue exactement, donc la trace
+              part en comparaison entière plutôt qu'en recherche de sous-chaîne. */}
+          {message.key !== null && message.key !== undefined && message.key !== '' && (
+            <Link
+              to={buildTraceLinkForKey(message.key)}
+              className="p-1.5 text-on-surface-variant hover:text-primary hover:bg-primary/10 rounded transition-colors"
+              title={`Trace ${message.key} across topics`}
+              aria-label={`Trace ${message.key} across topics`}
+            >
+              <span aria-hidden="true" className="material-symbols-outlined text-base">route</span>
+            </Link>
           )}
           <button
             onClick={() => onCopy(formatted)}

@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.yourcompany.kafkasqlexplorer.domain;
 
+import java.util.List;
+
 /**
  * What the trace actually covered.
  *
@@ -14,6 +16,12 @@ package com.yourcompany.kafkasqlexplorer.domain;
  * @param topicsScanned       topics actually read
  * @param topicsSkipped       topics dropped because the time budget was spent
  * @param topicsFailed        topics whose read raised an error
+ * @param skippedTopics       <em>which</em> topics were never read, bounded. A count alone leaves
+ *                            the reader unable to tell whether the two topics the budget dropped
+ *                            were the two that mattered — and it is also the exact scope of a
+ *                            "continue where it stopped" pass
+ * @param failedTopics        which topics could not be read, bounded; the reason travels in the
+ *                            warnings
  * @param messagesScanned     records examined across every topic
  * @param matches             records that matched the criterion
  * @param durationMs          wall-clock duration of the trace
@@ -29,6 +37,8 @@ public record StreamFlowStats(
         int topicsScanned,
         int topicsSkipped,
         int topicsFailed,
+        List<String> skippedTopics,
+        List<String> failedTopics,
         int messagesScanned,
         int matches,
         long durationMs,

@@ -1,8 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  analyzeChain, buildLayout, buildTopicSearchQuery, buildTraceQuery, centerOn, clampScale,
-  describeChainInsight, describeCoverage, describeProgress, describeSearchScope, filterHits,
-  fitTransform, formatDwell, isNodeVisible, parseSseBuffer, progressRatio,
+  analyzeChain, buildContinuation, buildLayout, buildTopicSearchQuery, buildTraceLinkForKey,
+  buildTraceQuery, centerOn, clampScale, compareFlows, describeChainInsight, describeComparison,
+  describeContinuation, describeCoverage, describeProgress, describeSearchScope, expandTopicPatterns,
+  filterHits, fitTransform, formatDwell, isNodeVisible, parseSseBuffer, parseTopicList,
+  progressRatio, slowestDivergence, sortHits, clampEvidencePct, readEvidencePct,
+  writeEvidencePct, EVIDENCE_KEY, MIN_EVIDENCE_PCT, MAX_EVIDENCE_PCT, DEFAULT_EVIDENCE_PCT,
   formatLatency, formatRelativeTime, hitsToRows, HISTORY_KEY, HIT_EXPORT_COLUMNS, PANEL_KEY,
   parseFlowResponse, parseTraceParams, pushTraceHistory, readPanelOpen, readTraceHistory,
   sameCriterion, searchScopeOf, suggestWidenings, traceToJson, validateSearchPath, writePanelOpen,
@@ -648,6 +651,224 @@ describe('suggestWidenings', () => {
       caseSensitive: true, topics: ['a', 'b'],
     };
     expect(suggestWidenings(everything)).toHaveLength(4);
+  });
+});
+
+describe('sortHits', () => {
+  const hit = (topic: string, occurrences: number, first: number, latency: number | null): FlowHit => ({
+    topic, occurrences, firstTimestamp: first, lastTimestamp: first, firstPartition: 0,
+    firstOffset: 1, firstKey: null, preview: null, latencyFromPreviousMs: latency,
+  });
+  const hits = [
+    hit('orders', 3, 1_000, null),
+    hit('billing', 1, 1_200, 200),
+    hit('audit', 2, 1_900, 700),
+  ];
+
+  it('leaves the chain order alone by default, and reverses it on demand', () => {
+    expect(sortHits(hits, 'chain', false)).toBe(hits);
+    expect(sortHits(hits, 'chain', true).map(h => h.topic)).toEqual(['audit', 'billing', 'orders']);
+  });
+
+  it('sorts by occurrences, by first sighting and by name', () => {
+    expect(sortHits(hits, 'occurrences', true).map(h => h.topic)).toEqual(['orders', 'audit', 'billing']);
+    expect(sortHits(hits, 'firstTimestamp', false).map(h => h.topic)).toEqual(['orders', 'billing', 'audit']);
+    expect(sortHits(hits, 'topic', false).map(h => h.topic)).toEqual(['audit', 'billing', 'orders']);
+  });
+
+  /** Demander « le saut le plus lent » et lire un tiret en tête ne répondrait pas à la question. */
+  it('keeps a hop with no latency last, whichever way the column is sorted', () => {
+    expect(sortHits(hits, 'latency', true).map(h => h.topic)).toEqual(['audit', 'billing', 'orders']);
+    expect(sortHits(hits, 'latency', false).map(h => h.topic)).toEqual(['billing', 'audit', 'orders']);
+  });
+
+  it('does not mutate the array it was given', () => {
+    const original = [...hits];
+    sortHits(hits, 'occurrences', true);
+    expect(hits).toEqual(original);
+  });
+
+  it('breaks ties by name so two runs sort the same way', () => {
+    const tied = [hit('zulu', 1, 5, 10), hit('alpha', 1, 5, 10)];
+    expect(sortHits(tied, 'occurrences', false).map(h => h.topic)).toEqual(['alpha', 'zulu']);
+  });
+});
+
+describe('evidence panel height', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('keeps both panes usable', () => {
+    expect(clampEvidencePct(0)).toBe(MIN_EVIDENCE_PCT);
+    expect(clampEvidencePct(99)).toBe(MAX_EVIDENCE_PCT);
+    expect(clampEvidencePct(50)).toBe(50);
+    expect(clampEvidencePct(Number.NaN)).toBe(DEFAULT_EVIDENCE_PCT);
+  });
+
+  it('remembers the split, and clamps whatever was stored', () => {
+    expect(readEvidencePct()).toBe(DEFAULT_EVIDENCE_PCT);
+    writeEvidencePct(60);
+    expect(readEvidencePct()).toBe(60);
+    localStorage.setItem(EVIDENCE_KEY, '5');
+    expect(readEvidencePct()).toBe(MIN_EVIDENCE_PCT);
+    localStorage.setItem(EVIDENCE_KEY, 'huge');
+    expect(readEvidencePct()).toBe(DEFAULT_EVIDENCE_PCT);
+  });
+});
+
+describe('target topic entry', () => {
+  it('splits a pasted list on commas, spaces and newlines, without duplicates', () => {
+    expect(parseTopicList('orders, billing\nshipping;orders  audit'))
+      .toEqual(['orders', 'billing', 'shipping', 'audit']);
+    expect(parseTopicList('   ')).toEqual([]);
+  });
+
+  it('expands a pattern over the catalogue and leaves plain names alone', () => {
+    const known = ['orders.inbound', 'orders.validated', 'billing.charges'];
+    expect(expandTopicPatterns(['orders.*', 'billing.charges'], known))
+      .toEqual({ topics: ['orders.inbound', 'orders.validated', 'billing.charges'], unmatched: [] });
+  });
+
+  /** Un motif sans correspondance ne doit pas partir comme nom de topic : il n'en est pas un. */
+  it('reports a pattern that matches nothing instead of sending it as a name', () => {
+    const result = expandTopicPatterns(['nope.*', 'orders.inbound'], ['orders.inbound']);
+    expect(result.topics).toEqual(['orders.inbound']);
+    expect(result.unmatched).toEqual(['nope.*']);
+  });
+
+  it('treats the dot as a literal and only * as a wildcard', () => {
+    const known = ['ordersXinbound', 'orders.inbound'];
+    expect(expandTopicPatterns(['orders.*'], known).topics).toEqual(['orders.inbound']);
+  });
+
+  /** Le catalogue a 30 s de retard : un topic tout juste créé reste saisissable. */
+  it('keeps an unknown plain name, which may simply be newer than the catalogue', () => {
+    expect(expandTopicPatterns(['brand.new'], []).topics).toEqual(['brand.new']);
+  });
+});
+
+describe('buildTraceLinkForKey', () => {
+  it('traces the record key as an exact key search', () => {
+    expect(buildTraceLinkForKey('ORD-42')).toBe('/stream-flow?key=ORD-42&exact=1');
+  });
+
+  it('escapes a key that would otherwise break the query string', () => {
+    const link = buildTraceLinkForKey('a b&c=d');
+    expect(parseTraceParams(link.slice(link.indexOf('?'))).messageKey).toBe('a b&c=d');
+  });
+});
+
+describe('compareFlows', () => {
+  const hop = (topic: string, latency: number | null, first: number): FlowHit => ({
+    topic, occurrences: 1, firstTimestamp: first, lastTimestamp: first, firstPartition: 0,
+    firstOffset: 1, firstKey: null, preview: null, latencyFromPreviousMs: latency,
+  });
+
+  const a = [hop('orders', null, 1_000), hop('billing', 200, 1_200), hop('shipping', 300, 1_500)];
+
+  it('reads the same route as the same route', () => {
+    const b = [hop('orders', null, 9_000), hop('billing', 250, 9_250), hop('shipping', 350, 9_600)];
+    const comparison = compareFlows(a, b);
+
+    expect(comparison.sameRoute).toBe(true);
+    expect(comparison.shared).toBe(3);
+    expect(comparison.onlyA + comparison.onlyB).toBe(0);
+    expect(describeComparison(comparison)).toContain('Same route through 3 topics');
+  });
+
+  /** Ce sont les latences de saut qui se comparent : deux clés traitées à une heure d'écart
+      n'ont rien à se dire dans l'absolu. */
+  it('compares hop latencies, not absolute timestamps', () => {
+    const b = [hop('orders', null, 9_000), hop('billing', 4_200, 13_200), hop('shipping', 300, 13_500)];
+    const comparison = compareFlows(a, b);
+
+    const billing = comparison.rows.find(r => r.topic === 'billing')!;
+    expect(billing.latencyA).toBe(200);
+    expect(billing.latencyB).toBe(4_200);
+    expect(billing.deltaMs).toBe(4_000);
+    expect(slowestDivergence(comparison)?.topic).toBe('billing');
+  });
+
+  it('marks what only one side saw, A first then B', () => {
+    const b = [hop('orders', null, 9_000), hop('audit', 100, 9_100)];
+    const comparison = compareFlows(a, b);
+
+    expect(comparison.rows.map(r => [r.topic, r.status])).toEqual([
+      ['orders', 'BOTH'], ['billing', 'ONLY_A'], ['shipping', 'ONLY_A'], ['audit', 'ONLY_B'],
+    ]);
+    expect(comparison.sameRoute).toBe(false);
+    const text = describeComparison(comparison);
+    expect(text).toContain('2 only in A');
+    expect(text).toContain('1 only in B');
+  });
+
+  it('keeps each chain hop number so a row can be located in either trace', () => {
+    const b = [hop('audit', null, 9_000), hop('billing', 100, 9_100)];
+    const billing = compareFlows(a, b).rows.find(r => r.topic === 'billing')!;
+    expect(billing.hopA).toBe(2);
+    expect(billing.hopB).toBe(2);
+  });
+
+  /** Deux traces vides ne se ressemblent pas : elles ne disent rien. */
+  it('does not call two empty traces identical', () => {
+    const comparison = compareFlows([], []);
+    expect(comparison.sameRoute).toBe(false);
+    expect(describeComparison(comparison)).toMatch(/anything to compare/i);
+    expect(slowestDivergence(comparison)).toBeNull();
+  });
+
+  it('has no divergence to report when every shared hop took the same time', () => {
+    expect(slowestDivergence(compareFlows(a, a))).toBeNull();
+  });
+});
+
+describe('buildContinuation', () => {
+  const stats: FlowStats = {
+    topicsInScope: 250, topicsScanned: 248, topicsSkipped: 2, topicsFailed: 0,
+    skippedTopics: ['billing', 'shipping'],
+    messagesScanned: 24_800, matches: 3, durationMs: 12_400, truncated: true,
+    stopReason: 'TIME_BUDGET', maxMessagesPerTopic: 100, timeLimitMinutes: null,
+  };
+  const hit: FlowHit = {
+    topic: 'orders', occurrences: 1, firstTimestamp: 10, lastTimestamp: 10, firstPartition: 0,
+    firstOffset: 3, firstKey: 'K-1', preview: null, latencyFromPreviousMs: null,
+  };
+  const flow = { nodes: [], edges: [], hits: [hit], stats, warnings: [] };
+
+  it('carries the unread topics, the hops found and what the first pass covered', () => {
+    const continuation = buildContinuation(flow)!;
+    expect(continuation.topics).toEqual(['billing', 'shipping']);
+    expect(continuation.priorHits).toEqual([hit]);
+    expect(continuation.priorCoverage).toEqual({
+      topicsScanned: 248, messagesScanned: 24_800, matches: 3, durationMs: 12_400,
+    });
+  });
+
+  it('offers itself after a cancellation too — the same topics are missing', () => {
+    expect(buildContinuation({ ...flow, stats: { ...stats, stopReason: 'CANCELLED' } })).not.toBeNull();
+  });
+
+  it('has nothing to offer on a completed trace, or with no topic named', () => {
+    expect(buildContinuation({ ...flow, stats: { ...stats, stopReason: 'COMPLETE' } })).toBeNull();
+    expect(buildContinuation({ ...flow, stats: { ...stats, skippedTopics: [] } })).toBeNull();
+    // Un serveur plus ancien ne renvoie pas la liste : on ne propose pas une reprise sans portée.
+    expect(buildContinuation({ ...flow, stats: { ...stats, skippedTopics: undefined } })).toBeNull();
+    expect(buildContinuation({ ...flow, stats: null })).toBeNull();
+  });
+
+  /** La liste des noms est bornée côté serveur : le libellé ne doit pas promettre plus. */
+  it('states the real scope when only some of the missing topics are named', () => {
+    expect(describeContinuation(buildContinuation(flow)!))
+      .toBe('Continue on the 2 topics never read');
+
+    const many = buildContinuation({ ...flow, stats: { ...stats, topicsSkipped: 412 } })!;
+    expect(many.pending).toBe(412);
+    expect(describeContinuation(many)).toBe('Continue on 2 of the 412 topics never read');
+  });
+
+  it('trusts the named list when the count disagrees with it', () => {
+    const continuation = buildContinuation({ ...flow, stats: { ...stats, topicsSkipped: 0 } })!;
+    expect(continuation.pending).toBe(2);
+    expect(describeContinuation(continuation)).toBe('Continue on the 2 topics never read');
   });
 });
 
