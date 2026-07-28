@@ -1,68 +1,19 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import axios from 'axios';
-import { Button, EmptyState, Field, Input, NumberInput, TopicInput } from '../components/ui';
+import {
+  Badge, Button, EmptyState, Field, Input, NumberInput, Select, TopicInput,
+  Table, TableBody, TableHead, TableRow, Td, Th,
+} from '../components/ui';
 import { describeApiError, type QueryErrorInfo } from './queryError';
+import {
+  buildLayout, clampScale, describeCoverage, fitTransform, formatAbsoluteTime, formatLatency,
+  formatRelativeTime, parseFlowResponse, validateSearchPath, zoomAt,
+  type FlowHit, type FlowStats, type FormErrors, type Transform,
+} from './streamFlow';
 
-interface FlowNode {
-  id: string;
-  label: string;
-  type?: string;
-  timestamp?: string;
-}
-
-interface FlowEdge {
-  source: string;
-  target: string;
-  label?: string;
-}
-
-interface StreamFlowResponse {
-  nodes: Record<string, string>[];
-  edges: Record<string, string>[];
-}
-
-function formatTs(tsStr: string | undefined): string {
-  if (!tsStr) return '';
-  const ts = Number(tsStr);
-  if (!ts) return '';
-  const diff = Date.now() - ts;
-  if (diff < 60_000) return '< 1 min ago';
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} min ago`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
-  return new Date(ts).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-}
-
-type FormErrors = { messageKey?: string; searchPath?: string };
-
-/**
- * Validation de surface d'un JSONPath / XPath, côté client.
- *
- * Un chemin invalide déclenchait un scan de tous les topics pour finir sur zéro résultat, sans
- * rien qui distingue « mauvaise syntaxe » de « clé absente ». On ne réimplémente pas les deux
- * grammaires : on n'attrape que les fautes de frappe manifestes.
- */
-function validateSearchPath(path: string): string | undefined {
-  const trimmed = path.trim();
-  if (!trimmed) return undefined;
-  const looksJsonPath = trimmed.startsWith('$');
-  const looksXPath = trimmed.startsWith('/');
-  if (!looksJsonPath && !looksXPath) {
-    return 'Expected a JSONPath ($.field) or an XPath (/root/field).';
-  }
-  const brackets = [...trimmed].reduce((depth, char) => {
-    if (char === '[') return depth + 1;
-    if (char === ']') return depth - 1;
-    return depth;
-  }, 0);
-  if (brackets !== 0) return 'Unbalanced brackets.';
-  if (looksJsonPath && /\.\./.test(trimmed.slice(1).replace(/\.\.(?=[a-zA-Z_*])/g, ''))) {
-    return 'Empty path segment ("..").';
-  }
-  if (looksXPath && trimmed.includes('//') && !trimmed.startsWith('//')) {
-    return 'Empty path segment ("//").';
-  }
-  return undefined;
-}
+/** Filet de sécurité côté client : le backend borne déjà la trace (explorer.stream-flow-timeout-ms). */
+const REQUEST_TIMEOUT_MS = 120_000;
 
 const StreamFlow: React.FC = () => {
   const [messageKey, setMessageKey]         = useState('');
@@ -71,35 +22,69 @@ const StreamFlow: React.FC = () => {
   const [selectedTopics, setSelectedTopics] = useState<string[]>([]);
   const [topicDraft, setTopicDraft]         = useState('');
   const [fieldErrors, setFieldErrors]       = useState<FormErrors>({});
-  const [maxMessages, setMaxMessages]       = useState(50);
+  const [maxMessages, setMaxMessages]       = useState(100);
+  /** « recent » = derniers messages de chaque topic ; « window » = fenêtre temporelle. */
+  const [windowMode, setWindowMode]         = useState<'recent' | 'window'>('recent');
   const [timeLimitMinutes, setTimeLimitMinutes] = useState(5);
   const [useRegex, setUseRegex]             = useState(false);
   const [loading, setLoading]               = useState(false);
   const [error, setError]                   = useState<QueryErrorInfo | null>(null);
-  const [nodes, setNodes]                   = useState<FlowNode[]>([]);
-  const [edges, setEdges]                   = useState<FlowEdge[]>([]);
+  const [notice, setNotice]                 = useState<string | null>(null);
+  const [nodes, setNodes]                   = useState<ReturnType<typeof parseFlowResponse>['nodes']>([]);
+  const [edges, setEdges]                   = useState<ReturnType<typeof parseFlowResponse>['edges']>([]);
+  const [hits, setHits]                     = useState<FlowHit[]>([]);
+  const [stats, setStats]                   = useState<FlowStats | null>(null);
+  const [warnings, setWarnings]             = useState<string[]>([]);
   const [hasResult, setHasResult]           = useState(false);
+  const [selectedTopic, setSelectedTopic]   = useState<string | null>(null);
+  const [detailsOpen, setDetailsOpen]       = useState(true);
+
+  const messageKeyRef = useRef<HTMLInputElement>(null);
+  const searchPathRef = useRef<HTMLInputElement>(null);
+  /** Requête en vol — annulable, une trace peut légitimement durer une minute. */
+  const abortRef      = useRef<AbortController | null>(null);
 
   // Pan & zoom
-  const [transform, setTransform]  = useState({ x: 40, y: 40, scale: 1 });
-  const svgRef                     = useRef<SVGSVGElement>(null);
-  const isPanning                  = useRef(false);
-  const lastPos                    = useRef({ x: 0, y: 0 });
+  const [transform, setTransform] = useState<Transform>({ x: 48, y: 48, scale: 1 });
+  const svgRef                    = useRef<SVGSVGElement>(null);
+  const isPanning                 = useRef(false);
+  const lastPos                   = useRef({ x: 0, y: 0 });
+  /** Un glissé ne doit pas se terminer en clic sur le nœud relâché. */
+  const dragged                   = useRef(false);
+
+  const layout = useMemo(() => buildLayout(nodes, edges), [nodes, edges]);
+
+  const fitView = useCallback(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    const box = el.getBoundingClientRect();
+    setTransform(fitTransform(layout, { width: box.width, height: box.height }));
+  }, [layout]);
+
+  // Le graphe est cadré dès son arrivée : un « reset » à translate(40,40) scale(1) laissait
+  // la moitié d'une chaîne de sept topics hors écran.
+  useEffect(() => {
+    if (nodes.length > 0) fitView();
+  }, [nodes, fitView]);
 
   useEffect(() => {
     const el = svgRef.current;
     if (!el) return;
     const handler = (e: WheelEvent) => {
       e.preventDefault();
+      const box = el.getBoundingClientRect();
       const factor = e.deltaY > 0 ? 0.9 : 1.1;
-      setTransform(t => ({ ...t, scale: Math.max(0.15, Math.min(4, t.scale * factor)) }));
+      setTransform(t => zoomAt(t, factor, e.clientX - box.left, e.clientY - box.top));
     };
     el.addEventListener('wheel', handler, { passive: false });
     return () => el.removeEventListener('wheel', handler);
-  }, [hasResult]); // re-attach after SVG mounts
+  }, [hasResult, nodes.length]); // re-attach after the SVG mounts
+
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   const onMouseDown = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
     isPanning.current = true;
+    dragged.current = false;
     lastPos.current = { x: e.clientX, y: e.clientY };
     e.currentTarget.style.cursor = 'grabbing';
   }, []);
@@ -108,6 +93,7 @@ const StreamFlow: React.FC = () => {
     if (!isPanning.current) return;
     const dx = e.clientX - lastPos.current.x;
     const dy = e.clientY - lastPos.current.y;
+    if (Math.abs(dx) + Math.abs(dy) > 2) dragged.current = true;
     lastPos.current = { x: e.clientX, y: e.clientY };
     setTransform(t => ({ ...t, x: t.x + dx, y: t.y + dy }));
   }, []);
@@ -128,17 +114,26 @@ const StreamFlow: React.FC = () => {
     setTopicDraft('');
   };
 
+  const cancelRun = () => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+  };
+
   const handleRun = async () => {
     const errors: FormErrors = {};
     if (!messageKey.trim()) errors.messageKey = 'A message key is required.';
     const pathError = validateSearchPath(searchPath);
     if (pathError) errors.searchPath = pathError;
     setFieldErrors(errors);
-    if (Object.keys(errors).length > 0) return;
+    if (errors.messageKey) { messageKeyRef.current?.focus(); return; }
+    if (errors.searchPath) { searchPathRef.current?.focus(); return; }
 
+    const controller = new AbortController();
+    abortRef.current = controller;
     setLoading(true);
     setError(null);
-    setTransform({ x: 40, y: 40, scale: 1 });
+    setNotice(null);
+    setSelectedTopic(null);
     try {
       // Un topic encore dans le champ de saisie compte : on ne le perd pas parce que
       // l'utilisateur a cliqué « Trace » sans valider par Entrée.
@@ -147,86 +142,43 @@ const StreamFlow: React.FC = () => {
         ? [...selectedTopics, pending]
         : selectedTopics;
 
-      const res = await axios.post<StreamFlowResponse>('/api/stream-flow', {
+      const res = await axios.post('/api/stream-flow', {
         messageKey: messageKey.trim(),
         maxMessagesPerTopic: maxMessages,
         searchPath: searchPath.trim() || null,
-        timeLimitMinutes,
+        timeLimitMinutes: windowMode === 'window' ? timeLimitMinutes : null,
         useRegex,
         targetTopics: parsedTopics,
-      });
+      }, { signal: controller.signal, timeout: REQUEST_TIMEOUT_MS });
 
-      const parsedNodes: FlowNode[] = res.data.nodes.map(n => ({
-        id:        n.id    ?? n.label ?? Object.values(n)[0],
-        label:     n.label ?? n.id    ?? Object.values(n)[0],
-        type:      n.type,
-        timestamp: n.timestamp,
-      }));
-      const parsedEdges: FlowEdge[] = res.data.edges.map(e => ({
-        source: e.source ?? e.from ?? Object.values(e)[0],
-        target: e.target ?? e.to   ?? Object.values(e)[1],
-        label:  e.label,
-      }));
-      setNodes(parsedNodes);
-      setEdges(parsedEdges);
+      const flow = parseFlowResponse(res.data);
+      setNodes(flow.nodes);
+      setEdges(flow.edges);
+      setHits(flow.hits);
+      setStats(flow.stats);
+      setWarnings(flow.warnings);
+      setDetailsOpen(true);
       setHasResult(true);
     } catch (err) {
-      // Surface the real backend cause when there is one; otherwise fall back to
-      // the actionable hint about the message key.
-      setError(describeApiError(err, 'Failed to trace stream flow — ensure the message key exists in the target topics.'));
+      if (axios.isCancel(err) || (err as { code?: string })?.code === 'ERR_CANCELED') {
+        setNotice('Trace cancelled — nothing was changed on the cluster.');
+      } else {
+        // Surface the real backend cause when there is one (invalid regex, malformed
+        // search path, unreachable broker); otherwise fall back to a generic hint.
+        setError(describeApiError(err, 'Failed to trace stream flow.'));
+        // The previous graph described a different search: keeping it on screen next to a
+        // fresh error would present stale coverage as the result of this run.
+        setNodes([]); setEdges([]); setHits([]); setStats(null); setWarnings([]);
+        setHasResult(false);
+      }
     } finally {
+      abortRef.current = null;
       setLoading(false);
     }
   };
 
-  // Simple layered BFS layout
-  const layout = useMemo(() => {
-    const empty = { positions: {} as Record<string, { x: number; y: number }>, nodeW: 160, nodeH: 60 };
-    if (nodes.length === 0) return empty;
-
-    const inDegree: Record<string, number> = {};
-    nodes.forEach(n => { inDegree[n.id] = 0; });
-    edges.forEach(e => { inDegree[e.target] = (inDegree[e.target] ?? 0) + 1; });
-
-    const layers: string[][] = [];
-    const visited = new Set<string>();
-    const queue: string[] = nodes.filter(n => inDegree[n.id] === 0).map(n => n.id);
-    if (queue.length === 0 && nodes.length > 0) queue.push(nodes[0].id);
-
-    while (queue.length > 0) {
-      const layer: string[] = [];
-      const next: string[] = [];
-      for (const id of [...queue]) {
-        if (!visited.has(id)) {
-          visited.add(id);
-          layer.push(id);
-          edges.filter(e => e.source === id).forEach(e => {
-            if (!visited.has(e.target)) next.push(e.target);
-          });
-        }
-      }
-      if (layer.length > 0) layers.push(layer);
-      queue.length = 0;
-      queue.push(...next);
-    }
-    nodes.forEach(n => { if (!visited.has(n.id)) layers.push([n.id]); });
-
-    const nodeW = 160, nodeH = 60, colGap = 220, rowGap = 90;
-    const positions: Record<string, { x: number; y: number }> = {};
-    const maxRows = Math.max(...layers.map(l => l.length), 1);
-    layers.forEach((layer, col) => {
-      const totalH = layer.length * nodeH + (layer.length - 1) * rowGap;
-      const startY = (maxRows * (nodeH + rowGap) - totalH) / 2;
-      layer.forEach((id, row) => {
-        positions[id] = {
-          x: col * (nodeW + colGap),
-          y: startY + row * (nodeH + rowGap),
-        };
-      });
-    });
-
-    return { positions, nodeW, nodeH };
-  }, [nodes, edges]);
+  const coverage = describeCoverage(stats);
+  const hitByTopic = useMemo(() => new Map(hits.map(h => [h.topic, h])), [hits]);
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -247,14 +199,15 @@ const StreamFlow: React.FC = () => {
 
         <div className="space-y-4">
           {/* Message Key */}
-          <Field label="Message Key" required error={fieldErrors.messageKey}>
+          <Field label={useRegex ? 'Message Key (regex)' : 'Message Key'} required error={fieldErrors.messageKey}>
             {p => (
               <Input
                 {...p}
+                ref={messageKeyRef}
                 className="font-mono"
                 value={messageKey}
                 onChange={e => { setMessageKey(e.target.value); clearFieldError('messageKey'); }}
-                placeholder="e.g. order_88219"
+                placeholder={useRegex ? 'e.g. order_\\d+' : 'e.g. order_88219'}
                 autoComplete="off"
                 spellCheck={false}
               />
@@ -265,11 +218,12 @@ const StreamFlow: React.FC = () => {
           <Field
             label="Search Path (JSONPath / XPath)"
             error={fieldErrors.searchPath}
-            description="Leave empty to match the raw Kafka record key."
+            description="Empty: match the record key or anywhere in the payload. Set: only what the path extracts is compared."
           >
             {p => (
               <Input
                 {...p}
+                ref={searchPathRef}
                 className="font-mono"
                 value={searchPath}
                 onChange={e => { setSearchPath(e.target.value); clearFieldError('searchPath'); }}
@@ -311,10 +265,38 @@ const StreamFlow: React.FC = () => {
             )}
             <p className="text-[10px] text-on-surface-variant">
               {selectedTopics.length === 0
-                ? 'None selected — every topic will be scanned.'
+                ? 'None selected — the whole cluster is scanned, one consumer per topic. Naming the topics is much faster.'
                 : `${selectedTopics.length} topic(s) will be scanned.`}
             </p>
           </div>
+
+          {/* Fenêtre lue */}
+          <Field
+            label="Scan window"
+            description={windowMode === 'window'
+              ? 'Reads forward from the start of the window: on a busy topic the cap can be reached before the newest messages.'
+              : 'Reads the newest messages of each topic.'}
+          >
+            {p => (
+              <Select
+                {...p}
+                value={windowMode}
+                onChange={e => setWindowMode(e.target.value as 'recent' | 'window')}
+              >
+                <option value="recent">Most recent messages</option>
+                <option value="window">Time window</option>
+              </Select>
+            )}
+          </Field>
+
+          {windowMode === 'window' && (
+            <Field label="Window length (minutes)">
+              {p => (
+                <NumberInput {...p} min={1} max={1440} fallback={5}
+                  value={timeLimitMinutes} onChange={setTimeLimitMinutes} />
+              )}
+            </Field>
+          )}
 
           {/* Max Messages */}
           <div className="space-y-1.5">
@@ -323,19 +305,11 @@ const StreamFlow: React.FC = () => {
             </label>
             <input
               id="sf-max-messages"
-              type="range" min={10} max={500} step={10} value={maxMessages}
+              type="range" min={10} max={1000} step={10} value={maxMessages}
               onChange={e => setMaxMessages(Number(e.target.value))}
               className="w-full accent-primary"
             />
           </div>
-
-          {/* Time Limit */}
-          <Field label="Time Limit (minutes)">
-            {p => (
-              <NumberInput {...p} min={1} max={60} fallback={5}
-                value={timeLimitMinutes} onChange={setTimeLimitMinutes} />
-            )}
-          </Field>
 
           {/* Use Regex */}
           <div className="flex items-center justify-between">
@@ -351,163 +325,300 @@ const StreamFlow: React.FC = () => {
           </div>
         </div>
 
-        <Button
-          type="submit"
-          variant="primary"
-          className="mt-auto w-full"
-          icon={loading ? undefined : 'route'}
-          loading={loading}
-          disabled={loading || !messageKey.trim()}
-        >
-          {loading ? 'Tracing…' : 'Trace Flow'}
-        </Button>
+        <div className="mt-auto space-y-2">
+          <Button
+            type="submit"
+            variant="primary"
+            className="w-full"
+            icon={loading ? undefined : 'route'}
+            loading={loading}
+            disabled={loading || !messageKey.trim()}
+          >
+            {loading ? 'Tracing…' : 'Trace Flow'}
+          </Button>
+          {loading && (
+            <Button type="button" variant="outline" className="w-full" icon="close" onClick={cancelRun}>
+              Cancel
+            </Button>
+          )}
+        </div>
       </form>
 
       {/* ── Graph Area ── */}
-      <main className="flex-1 relative bg-background-dark overflow-hidden flex flex-col">
+      <main className="flex-1 relative bg-background-dark overflow-hidden flex flex-col min-w-0">
 
-        {/* Stats badge */}
-        {hasResult && nodes.length > 0 && (
-          <div className="absolute top-4 left-4 z-10 pointer-events-none">
-            <div className="flex items-center gap-2 bg-surface-container/90 border border-outline-variant px-3 py-1.5 rounded-full text-xs">
-              <span className="material-symbols-outlined text-sm text-primary">route</span>
-              <span className="text-on-surface-variant">{nodes.length} topics</span>
-              <span className="text-outline">·</span>
-              <span className="text-on-surface-variant">{edges.length} edges</span>
+        <div className="relative flex-1 min-h-0">
+
+          {/* Stats badge */}
+          {hasResult && nodes.length > 0 && (
+            <div className="absolute top-4 left-4 z-10 pointer-events-none">
+              <div className="flex items-center gap-2 bg-surface-container/90 border border-outline-variant px-3 py-1.5 rounded-full text-xs">
+                <span aria-hidden="true" className="material-symbols-outlined text-sm text-primary">route</span>
+                <span className="text-on-surface-variant">{nodes.length} topics</span>
+                <span className="text-outline">·</span>
+                <span className="text-on-surface-variant">{stats?.matches ?? 0} matches</span>
+                {stats?.truncated && (
+                  <>
+                    <span className="text-outline">·</span>
+                    <span className="text-warning" title="At least one topic filled its per-topic cap — older matches may exist.">partial scan</span>
+                  </>
+                )}
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Zoom controls */}
-        {hasResult && nodes.length > 0 && (
-          <div className="absolute bottom-6 left-4 z-10 flex flex-col bg-background-dark border border-outline-variant rounded-xl overflow-hidden shadow-xl">
-            <button onClick={() => setTransform(t => ({ ...t, scale: Math.min(4, t.scale * 1.25) }))}
-              className="p-2 hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface border-b border-outline-variant/60 transition-colors">
-              <span className="material-symbols-outlined text-lg">add</span>
-            </button>
-            <button onClick={() => setTransform(t => ({ ...t, scale: Math.max(0.15, t.scale * 0.8) }))}
-              className="p-2 hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface border-b border-outline-variant/60 transition-colors">
-              <span className="material-symbols-outlined text-lg">remove</span>
-            </button>
-            <button onClick={() => setTransform({ x: 40, y: 40, scale: 1 })}
-              className="p-2 hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface transition-colors" title="Reset view">
-              <span className="material-symbols-outlined text-lg">center_focus_weak</span>
-            </button>
-          </div>
-        )}
-
-        {/* Error */}
-        {error && (
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 max-w-md bg-error/10 border border-error/20 text-error text-xs px-4 py-2 rounded-lg flex items-start gap-2" role="alert" title={error.raw}>
-            <span className="material-symbols-outlined text-sm mt-0.5 shrink-0">warning</span>
-            <span className="min-w-0">
-              <span className="font-semibold">{error.title}</span>
-              {error.hint && <span className="block text-error/80 mt-0.5 leading-relaxed">{error.hint}</span>}
-            </span>
-          </div>
-        )}
-
-        {/* Empty state */}
-        {!hasResult && !loading && (
-          <div className="flex-1 flex items-center justify-center">
-            <EmptyState
-              icon="waves"
-              title="No flow traced yet"
-              description="Enter a message key and click Trace Flow to visualize the stream pipeline."
-            />
-          </div>
-        )}
-
-        {/* Loading */}
-        {loading && (
-          <div className="flex-1 flex flex-col items-center justify-center gap-3" role="status" aria-live="polite">
-            <span aria-hidden="true" className="material-symbols-outlined animate-spin text-[32px] text-primary">progress_activity</span>
-            <p className="text-[13px] text-on-surface-variant">Tracing message across topics…</p>
-          </div>
-        )}
-
-        {/* SVG Graph with pan/zoom */}
-        {hasResult && !loading && nodes.length > 0 && (
-          <svg
-            ref={svgRef}
-            className="w-full h-full select-none"
-            style={{ cursor: 'grab' }}
-            onMouseDown={onMouseDown}
-            onMouseMove={onMouseMove}
-            onMouseUp={onMouseUp}
-            onMouseLeave={onMouseUp}
-          >
-            <defs>
-              <marker id="sf-arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-                <polygon points="0 0, 10 3.5, 0 7" fill="#a3adff" opacity="0.6" />
-              </marker>
-            </defs>
-
-            <g transform={`translate(${transform.x}, ${transform.y}) scale(${transform.scale})`}>
-
-              {/* Edges */}
-              {edges.map((edge, i) => {
-                const s = layout.positions[edge.source];
-                const t = layout.positions[edge.target];
-                if (!s || !t) return null;
-                const { nodeW, nodeH } = layout;
-                const x1 = s.x + nodeW, y1 = s.y + nodeH / 2;
-                const x2 = t.x,          y2 = t.y + nodeH / 2;
-                const mx = (x1 + x2) / 2;
-                return (
-                  <g key={i}>
-                    <path
-                      d={`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`}
-                      fill="none" stroke="#a3adff" strokeWidth="2" opacity="0.5"
-                      markerEnd="url(#sf-arrow)"
-                    />
-                    {edge.label && (
-                      <text x={mx} y={Math.min(y1, y2) - 6} textAnchor="middle" fill="#9aa3b2" fontSize="10">
-                        {edge.label}
-                      </text>
-                    )}
-                  </g>
-                );
-              })}
-
-              {/* Nodes */}
-              {nodes.map(node => {
-                const pos = layout.positions[node.id];
-                if (!pos) return null;
-                const { nodeW, nodeH } = layout;
-                const cx = nodeW / 2;
-                const ts = formatTs(node.timestamp);
-                return (
-                  <g key={node.id} transform={`translate(${pos.x}, ${pos.y})`}>
-                    <rect width={nodeW} height={nodeH} rx="8"
-                      fill="#12151a" stroke="#a3adff" strokeWidth="1.5" strokeOpacity="0.6" />
-                    <text x={cx} y={ts ? nodeH / 2 - 8 : nodeH / 2 + 4}
-                      textAnchor="middle" fill="white" fontSize="11"
-                      fontFamily="JetBrains Mono, monospace" fontWeight="bold">
-                      {node.label.length > 18 ? node.label.slice(0, 17) + '…' : node.label}
-                    </text>
-                    {ts && (
-                      <text x={cx} y={nodeH / 2 + 10} textAnchor="middle"
-                        fill="#a3adff" fontSize="9" fontFamily="Inter, sans-serif" opacity="0.7">
-                        {ts}
-                      </text>
-                    )}
-                  </g>
-                );
-              })}
-            </g>
-          </svg>
-        )}
-
-        {/* No result */}
-        {hasResult && !loading && nodes.length === 0 && (
-          <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center p-12">
-            <span className="material-symbols-outlined text-5xl text-outline">search_off</span>
-            <div>
-              <p className="font-bold text-on-surface-variant">No flow found</p>
-              <p className="text-sm text-outline mt-1">The message key was not found in the specified topics.</p>
+          {/* Zoom controls */}
+          {hasResult && nodes.length > 0 && (
+            <div className="absolute bottom-6 left-4 z-10 flex flex-col bg-background-dark border border-outline-variant rounded-xl overflow-hidden shadow-xl">
+              <button type="button" aria-label="Zoom in"
+                onClick={() => setTransform(t => ({ ...t, scale: clampScale(t.scale * 1.25) }))}
+                className="p-2 hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface border-b border-outline-variant/60 transition-colors">
+                <span aria-hidden="true" className="material-symbols-outlined text-lg">add</span>
+              </button>
+              <button type="button" aria-label="Zoom out"
+                onClick={() => setTransform(t => ({ ...t, scale: clampScale(t.scale * 0.8) }))}
+                className="p-2 hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface border-b border-outline-variant/60 transition-colors">
+                <span aria-hidden="true" className="material-symbols-outlined text-lg">remove</span>
+              </button>
+              <button type="button" aria-label="Fit graph to view" onClick={fitView}
+                className="p-2 hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface transition-colors" title="Fit to view">
+                <span aria-hidden="true" className="material-symbols-outlined text-lg">center_focus_weak</span>
+              </button>
             </div>
-          </div>
+          )}
+
+          {/* Error */}
+          {error && (
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 max-w-md bg-error/10 border border-error/20 text-error text-xs px-4 py-2 rounded-lg flex items-start gap-2" role="alert" title={error.raw}>
+              <span aria-hidden="true" className="material-symbols-outlined text-sm mt-0.5 shrink-0">warning</span>
+              <span className="min-w-0">
+                <span className="font-semibold">{error.title}</span>
+                {error.hint && <span className="block text-error/80 mt-0.5 leading-relaxed">{error.hint}</span>}
+              </span>
+            </div>
+          )}
+
+          {/* Notice (annulation) */}
+          {notice && !error && (
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 max-w-md bg-surface-container border border-outline-variant text-on-surface-variant text-xs px-4 py-2 rounded-lg" role="status">
+              {notice}
+            </div>
+          )}
+
+          {/* Empty state */}
+          {!hasResult && !loading && (
+            <div className="h-full flex items-center justify-center">
+              <EmptyState
+                icon="waves"
+                title="No flow traced yet"
+                description="Enter a message key and click Trace Flow to visualize the stream pipeline."
+              />
+            </div>
+          )}
+
+          {/* Loading */}
+          {loading && (
+            <div className="h-full flex flex-col items-center justify-center gap-3" role="status" aria-live="polite">
+              <span aria-hidden="true" className="material-symbols-outlined animate-spin text-[32px] text-primary">progress_activity</span>
+              <p className="text-[13px] text-on-surface-variant">Tracing message across topics…</p>
+              <p className="text-[11px] text-outline">Reading up to {maxMessages} messages per topic. Cancel any time.</p>
+            </div>
+          )}
+
+          {/* SVG Graph with pan/zoom */}
+          {hasResult && !loading && nodes.length > 0 && (
+            <svg
+              ref={svgRef}
+              className="w-full h-full select-none"
+              style={{ cursor: 'grab' }}
+              role="img"
+              aria-label={`Message flow through ${nodes.map(n => n.label).join(', then ')}`}
+              onMouseDown={onMouseDown}
+              onMouseMove={onMouseMove}
+              onMouseUp={onMouseUp}
+              onMouseLeave={onMouseUp}
+            >
+              <defs>
+                <marker id="sf-arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                  <polygon points="0 0, 10 3.5, 0 7" fill="#a3adff" opacity="0.6" />
+                </marker>
+              </defs>
+
+              <g transform={`translate(${transform.x}, ${transform.y}) scale(${transform.scale})`}>
+
+                {/* Edges */}
+                {edges.map((edge, i) => {
+                  const s = layout.positions[edge.source];
+                  const t = layout.positions[edge.target];
+                  if (!s || !t) return null;
+                  const { nodeW, nodeH } = layout;
+                  const x1 = s.x + nodeW, y1 = s.y + nodeH / 2;
+                  const x2 = t.x,          y2 = t.y + nodeH / 2;
+                  const mx = (x1 + x2) / 2;
+                  return (
+                    <g key={`${edge.source}->${edge.target}-${i}`}>
+                      <path
+                        d={`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`}
+                        fill="none" stroke="#a3adff" strokeWidth="2" opacity="0.5"
+                        markerEnd="url(#sf-arrow)"
+                      />
+                      {edge.label && (
+                        <text x={mx} y={Math.min(y1, y2) - 8} textAnchor="middle" fill="#9aa3b2" fontSize="10">
+                          {edge.label}
+                        </text>
+                      )}
+                    </g>
+                  );
+                })}
+
+                {/* Nodes */}
+                {nodes.map(node => {
+                  const pos = layout.positions[node.id];
+                  if (!pos) return null;
+                  const { nodeW, nodeH } = layout;
+                  const cx = nodeW / 2;
+                  const ts = formatRelativeTime(node.timestamp);
+                  const selected = selectedTopic === node.id;
+                  return (
+                    <g
+                      key={node.id}
+                      transform={`translate(${pos.x}, ${pos.y})`}
+                      style={{ cursor: 'pointer' }}
+                      onClick={() => { if (!dragged.current) setSelectedTopic(node.id); }}
+                    >
+                      <title>{`${node.label} — ${node.hits ?? 0} match(es), first seen ${formatAbsoluteTime(node.timestamp)}`}</title>
+                      <rect width={nodeW} height={nodeH} rx="8"
+                        fill={selected ? '#1b2030' : '#12151a'} stroke="#a3adff"
+                        strokeWidth={selected ? 2.5 : 1.5} strokeOpacity={selected ? 1 : 0.6} />
+                      <text x={cx} y={ts ? nodeH / 2 - 8 : nodeH / 2 + 4}
+                        textAnchor="middle" fill="white" fontSize="11"
+                        fontFamily="JetBrains Mono, monospace" fontWeight="bold">
+                        {node.label.length > 20 ? node.label.slice(0, 19) + '…' : node.label}
+                      </text>
+                      {ts && (
+                        <text x={cx} y={nodeH / 2 + 10} textAnchor="middle"
+                          fill="#a3adff" fontSize="9" fontFamily="Inter, sans-serif" opacity="0.7">
+                          {ts}{node.hits ? ` · ${node.hits} match${node.hits > 1 ? 'es' : ''}` : ''}
+                        </text>
+                      )}
+                    </g>
+                  );
+                })}
+              </g>
+            </svg>
+          )}
+
+          {/* No result — dit ce qui a été lu, sinon « introuvable » se confond avec « hors fenêtre » */}
+          {hasResult && !loading && nodes.length === 0 && (
+            <div className="h-full flex flex-col items-center justify-center gap-3 text-center p-12">
+              <span aria-hidden="true" className="material-symbols-outlined text-5xl text-outline">search_off</span>
+              <div className="max-w-lg">
+                <p className="font-bold text-on-surface-variant">No flow found</p>
+                <p className="text-sm text-outline mt-1">
+                  The key was not in what was scanned{coverage ? ` — ${coverage}.` : '.'}
+                </p>
+                <p className="text-xs text-outline mt-2">
+                  Widen the scan window, raise the per-topic cap, or check the search path.
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* ── Coverage, warnings & evidence ── */}
+        {hasResult && !loading && (
+          <section className="border-t border-outline-variant/60 bg-surface-container-low shrink-0 max-h-[45%] overflow-y-auto">
+            <div className="flex items-center gap-3 px-4 py-2 sticky top-0 bg-surface-container-low z-10 border-b border-outline-variant/40">
+              <button
+                type="button"
+                onClick={() => setDetailsOpen(o => !o)}
+                aria-expanded={detailsOpen}
+                className="flex items-center gap-1.5 text-[12px] font-semibold text-on-surface-variant hover:text-on-surface"
+              >
+                <span aria-hidden="true" className="material-symbols-outlined text-base">
+                  {detailsOpen ? 'expand_more' : 'chevron_right'}
+                </span>
+                Matches ({hits.length})
+              </button>
+              <span className="text-[11px] text-outline truncate" title={coverage}>{coverage}</span>
+              {warnings.length > 0 && (
+                <Badge tone="warning" className="ml-auto shrink-0">
+                  {warnings.length} note{warnings.length > 1 ? 's' : ''}
+                </Badge>
+              )}
+            </div>
+
+            {detailsOpen && (
+              <div className="p-4 space-y-4">
+                {warnings.length > 0 && (
+                  <ul className="space-y-1.5" aria-label="Scan warnings">
+                    {warnings.map((warning, i) => (
+                      <li key={i} className="flex items-start gap-2 text-[11px] text-warning leading-relaxed">
+                        <span aria-hidden="true" className="material-symbols-outlined text-[14px] mt-0.5 shrink-0">info</span>
+                        <span>{warning}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                {hits.length > 0 && (
+                  <Table rowCount={hits.length} scrollThreshold={12} maxBodyHeight="18rem">
+                    <TableHead>
+                      <tr>
+                        <Th>#</Th>
+                        <Th>Topic</Th>
+                        <Th>Matches</Th>
+                        <Th>First seen</Th>
+                        <Th>Δ from previous</Th>
+                        <Th>Partition / Offset</Th>
+                        <Th>Preview</Th>
+                      </tr>
+                    </TableHead>
+                    <TableBody>
+                      {hits.map((hit, i) => (
+                        <TableRow
+                          key={hit.topic}
+                          onClick={() => setSelectedTopic(hit.topic)}
+                          className={selectedTopic === hit.topic ? 'bg-primary/10 cursor-pointer' : 'cursor-pointer'}
+                        >
+                          <Td className="text-outline">{i + 1}</Td>
+                          <Td>
+                            <Link
+                              to={`/topic/${encodeURIComponent(hit.topic)}`}
+                              className="font-mono text-[12px] text-primary hover:underline"
+                              onClick={e => e.stopPropagation()}
+                            >
+                              {hit.topic}
+                            </Link>
+                          </Td>
+                          <Td>{hit.occurrences}</Td>
+                          <Td title={formatAbsoluteTime(hit.firstTimestamp)}>
+                            {formatRelativeTime(hit.firstTimestamp) || '—'}
+                          </Td>
+                          <Td className={hit.latencyFromPreviousMs === null ? 'text-outline' : ''}>
+                            {formatLatency(hit.latencyFromPreviousMs)}
+                          </Td>
+                          <Td className="font-mono text-[11px] text-on-surface-variant">
+                            {hit.firstPartition} / {hit.firstOffset}
+                          </Td>
+                          <Td className="font-mono text-[11px] text-on-surface-variant max-w-md truncate" title={hit.preview ?? ''}>
+                            {hit.preview ?? '—'}
+                          </Td>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+
+                {selectedTopic && hitByTopic.get(selectedTopic)?.firstKey && (
+                  <p className="text-[11px] text-on-surface-variant">
+                    Record key in <span className="font-mono">{selectedTopic}</span>:{' '}
+                    <span className="font-mono text-on-surface">{hitByTopic.get(selectedTopic)?.firstKey}</span>
+                  </p>
+                )}
+              </div>
+            )}
+          </section>
         )}
       </main>
     </div>
