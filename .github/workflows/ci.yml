@@ -53,7 +53,7 @@ jobs:
       # a warm ~/.npm serves the package tarballs locally and shields the build
       # from transient registry failures (an npm ECONNRESET broke a previous run).
       # src/main/webapp/node is the node/npm runtime the plugin downloads.
-      uses: actions/cache@v5
+      uses: actions/cache@v6
       with:
         path: |
           ~/.npm
