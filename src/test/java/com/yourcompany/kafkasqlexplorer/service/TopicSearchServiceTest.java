@@ -70,7 +70,7 @@ class TopicSearchServiceTest {
     }
 
     private static TopicSearchRequest textSearch(String query) {
-        return new TopicSearchRequest(query, "CONTAINS", null, null, null, null, null,
+        return new TopicSearchRequest(query, "CONTAINS", null, null, null, null, null, null,
             "EARLIEST", null, null, null, null, null, null, null, null);
     }
 
@@ -122,7 +122,7 @@ class TopicSearchServiceTest {
     void resumingFromACursorContinuesWhereTheScanStopped() {
         seedRecords("first", "second", "third");
         TopicSearchRequest resume = new TopicSearchRequest(null, "CONTAINS", null, null, null, null,
-            null, "EARLIEST", null, null, null, Map.of("0", 2L), null, null, null, null);
+            null, null, "EARLIEST", null, null, null, Map.of("0", 2L), null, null, null, null);
 
         TopicSearchResponse response = service.search(TOPIC, resume);
 
@@ -135,7 +135,7 @@ class TopicSearchServiceTest {
         seedRecords(
             "{\"order\": {\"total\": 10}}",
             "{\"order\": {\"total\": 250}}");
-        TopicSearchRequest request = new TopicSearchRequest(null, "FIELD", null, null,
+        TopicSearchRequest request = new TopicSearchRequest(null, "FIELD", null, null, null,
             "order.total", "GT", "100", "EARLIEST", null, null, null, null, null, null, null, null);
 
         TopicSearchResponse response = service.search(TOPIC, request);
@@ -161,7 +161,7 @@ class TopicSearchServiceTest {
     @Test
     void invalidRegexIsSurfacedToTheCaller() {
         TopicSearchRequest request = new TopicSearchRequest("[unclosed", "REGEX", null, null, null,
-            null, null, "EARLIEST", null, null, null, null, null, null, null, null);
+            null, null, null, "EARLIEST", null, null, null, null, null, null, null, null);
 
         assertThrows(IllegalArgumentException.class, () -> service.search(TOPIC, request));
     }

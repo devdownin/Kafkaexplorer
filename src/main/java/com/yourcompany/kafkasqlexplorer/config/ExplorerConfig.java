@@ -59,6 +59,19 @@ public class ExplorerConfig {
     private int searchTimeoutMs = 10000;
     /** Message values longer than this are truncated in search results and samples. */
     private int searchMaxValueChars = 8000;
+    /**
+     * Wall-clock budget for one stream-flow trace. Each topic read carries its own 20 s broker
+     * budget, so a whole-cluster trace against an unhealthy broker would otherwise hold the HTTP
+     * thread for many minutes. Past the budget the trace returns what it has and names the topics
+     * it never reached.
+     */
+    private long streamFlowTimeoutMs = 60000;
+    /**
+     * Topics scanned by a stream-flow trace that names no target topic. A trace opens one consumer
+     * per topic; on a cluster with thousands of them, scanning everything is never what the user
+     * meant by leaving the field empty.
+     */
+    private int streamFlowMaxTopics = 250;
     private String flinkJobStorePath = "data/flink-jobs.json";
     private long flinkJobRetentionHours = 24;
 
@@ -212,6 +225,22 @@ public class ExplorerConfig {
 
     public void setSearchMaxValueChars(int searchMaxValueChars) {
         this.searchMaxValueChars = searchMaxValueChars;
+    }
+
+    public long getStreamFlowTimeoutMs() {
+        return streamFlowTimeoutMs;
+    }
+
+    public void setStreamFlowTimeoutMs(long streamFlowTimeoutMs) {
+        this.streamFlowTimeoutMs = streamFlowTimeoutMs;
+    }
+
+    public int getStreamFlowMaxTopics() {
+        return streamFlowMaxTopics;
+    }
+
+    public void setStreamFlowMaxTopics(int streamFlowMaxTopics) {
+        this.streamFlowMaxTopics = streamFlowMaxTopics;
     }
 
     public String getFlinkJobStorePath() {

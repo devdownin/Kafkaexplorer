@@ -400,14 +400,17 @@ const TopicExplorer: React.FC = () => {
     setSearching(true);
     setSearchError(null);
     try {
+      // FIELD et HEADER portent tous deux leur cible dans `field` (chemin / nom de header).
+      const fieldScoped = criteria.mode === 'FIELD' || criteria.mode === 'HEADER';
       const body = {
         mode: criteria.mode,
         query: criteria.query,
         caseSensitive: criteria.caseSensitive,
         searchKey: criteria.searchKey,
-        field: criteria.mode === 'FIELD' ? criteria.field : null,
-        operator: criteria.mode === 'FIELD' ? criteria.operator : null,
-        value: criteria.mode === 'FIELD' ? criteria.value : null,
+        searchHeaders: criteria.searchHeaders,
+        field: fieldScoped ? criteria.field : null,
+        operator: fieldScoped ? criteria.operator : null,
+        value: fieldScoped ? criteria.value : null,
         from: criteria.sinceMinutes > 0 ? 'TIMESTAMP' : 'EARLIEST',
         sinceMinutes: criteria.sinceMinutes > 0 ? criteria.sinceMinutes : null,
         // Resuming continues exactly where the previous pass stopped.

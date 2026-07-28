@@ -13,13 +13,19 @@ export interface TopicMessage {
   truncated: boolean;
 }
 
-export type SearchMode = 'CONTAINS' | 'REGEX' | 'FIELD';
+export type SearchMode = 'CONTAINS' | 'REGEX' | 'FIELD' | 'HEADER';
 
 export interface TopicSearchCriteria {
   mode: SearchMode;
   query: string;
   caseSensitive: boolean;
   searchKey: boolean;
+  /**
+   * Étend une recherche texte / regex aux valeurs des headers Kafka. Décoché par défaut :
+   * l'activer d'office changerait ce que renvoie une recherche existante.
+   */
+  searchHeaders: boolean;
+  /** Chemin de champ en mode FIELD, nom du header en mode HEADER. */
   field: string;
   operator: string;
   value: string;
@@ -63,6 +69,7 @@ export const emptyCriteria: TopicSearchCriteria = {
   query: '',
   caseSensitive: false,
   searchKey: true,
+  searchHeaders: false,
   field: '',
   operator: 'EQ',
   value: '',
@@ -118,7 +125,8 @@ const TopicSearchPanel: React.FC<Props> = ({
   const set = <K extends keyof TopicSearchCriteria>(key: K, value: TopicSearchCriteria[K]) =>
     onChange({ ...criteria, [key]: value });
 
-  const canSearch = criteria.mode === 'FIELD'
+  const fieldScoped = criteria.mode === 'FIELD' || criteria.mode === 'HEADER';
+  const canSearch = fieldScoped
     ? criteria.field.trim().length > 0
     : criteria.query.trim().length > 0;
 
@@ -131,7 +139,7 @@ const TopicSearchPanel: React.FC<Props> = ({
       {/* Mode */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="inline-flex bg-surface-container border border-outline-variant rounded-md p-0.5">
-          {(['CONTAINS', 'REGEX', 'FIELD'] as SearchMode[]).map(mode => (
+          {(['CONTAINS', 'REGEX', 'FIELD', 'HEADER'] as SearchMode[]).map(mode => (
             <button
               key={mode}
               onClick={() => set('mode', mode)}
@@ -142,7 +150,7 @@ const TopicSearchPanel: React.FC<Props> = ({
                   : 'text-on-surface-variant hover:text-on-surface'
               }`}
             >
-              {mode === 'CONTAINS' ? 'Text' : mode === 'REGEX' ? 'Regex' : 'Field'}
+              {mode === 'CONTAINS' ? 'Text' : mode === 'REGEX' ? 'Regex' : mode === 'FIELD' ? 'Field' : 'Header'}
             </button>
           ))}
         </div>
@@ -167,30 +175,55 @@ const TopicSearchPanel: React.FC<Props> = ({
           Case sensitive
         </label>
 
-        {criteria.mode !== 'FIELD' && (
-          <label className="flex items-center gap-1.5 text-[12px] text-on-surface-variant cursor-pointer">
-            <input
-              type="checkbox"
-              checked={criteria.searchKey}
-              onChange={e => set('searchKey', e.target.checked)}
-            />
-            Search keys too
-          </label>
+        {!fieldScoped && (
+          <>
+            <label className="flex items-center gap-1.5 text-[12px] text-on-surface-variant cursor-pointer">
+              <input
+                type="checkbox"
+                checked={criteria.searchKey}
+                onChange={e => set('searchKey', e.target.checked)}
+              />
+              Search keys too
+            </label>
+            <label
+              className="flex items-center gap-1.5 text-[12px] text-on-surface-variant cursor-pointer"
+              title="Also match Kafka header values — a correlation id often travels only there."
+            >
+              <input
+                type="checkbox"
+                checked={criteria.searchHeaders}
+                onChange={e => set('searchHeaders', e.target.checked)}
+              />
+              Search headers too
+            </label>
+          </>
         )}
       </div>
 
       {/* Criteria */}
-      {criteria.mode === 'FIELD' ? (
+      {fieldScoped ? (
         <div className="flex flex-wrap items-center gap-2">
-          <Select
-            value={criteria.field}
-            onChange={e => set('field', e.target.value)}
-            aria-label="Field path"
-            className="flex-1 min-w-[12rem]"
-          >
-            <option value="">Select a field…</option>
-            {schemaPaths.map(path => <option key={path} value={path}>{path}</option>)}
-          </Select>
+          {criteria.mode === 'HEADER' ? (
+            // Les noms de headers ne viennent d'aucun schéma : saisie libre, pas de liste.
+            <Input
+              value={criteria.field}
+              onChange={e => set('field', e.target.value)}
+              onKeyDown={submitOnEnter}
+              placeholder="Header name, e.g. correlation-id"
+              aria-label="Header name"
+              className="flex-1 min-w-[12rem]"
+            />
+          ) : (
+            <Select
+              value={criteria.field}
+              onChange={e => set('field', e.target.value)}
+              aria-label="Field path"
+              className="flex-1 min-w-[12rem]"
+            >
+              <option value="">Select a field…</option>
+              {schemaPaths.map(path => <option key={path} value={path}>{path}</option>)}
+            </Select>
+          )}
           <Select
             value={criteria.operator}
             onChange={e => set('operator', e.target.value)}
