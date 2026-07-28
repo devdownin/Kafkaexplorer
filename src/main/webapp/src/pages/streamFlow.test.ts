@@ -57,6 +57,12 @@ describe('searchScopeOf', () => {
     expect(describeSearchScope('', false)).not.toMatch(/header/i);
     expect(describeSearchScope('header:x', true)).toContain('"x"');
   });
+
+  /** L'option « clé exacte » l'emporte : le chemin n'est pas utilisé. */
+  it('describes an exact key search whatever the path field holds', () => {
+    expect(describeSearchScope('$.orderId', true, true)).toMatch(/record key/i);
+    expect(describeSearchScope('$.orderId', true, true)).toMatch(/partition/i);
+  });
 });
 
 describe('parseSseBuffer', () => {
@@ -135,6 +141,7 @@ describe('trace params', () => {
     timeLimitMinutes: 30,
     maxMessages: 500,
     useRegex: true,
+    exactKey: false,
     caseSensitive: true,
     searchHeaders: false,
   };
@@ -146,9 +153,15 @@ describe('trace params', () => {
   it('only serialises what differs from the defaults', () => {
     const query = buildTraceQuery({
       ...params, searchPath: '', topics: [], windowMode: 'recent',
-      maxMessages: 100, useRegex: false, caseSensitive: false, searchHeaders: true,
+      maxMessages: 100, useRegex: false, exactKey: false, caseSensitive: false, searchHeaders: true,
     });
     expect(query).toBe('?key=ORD+42');
+  });
+
+  it('carries the exact-key option through the link', () => {
+    expect(buildTraceQuery({ ...params, exactKey: true })).toContain('exact=1');
+    expect(parseTraceParams('?key=K-1&exact=1').exactKey).toBe(true);
+    expect(parseTraceParams('?key=K-1').exactKey).toBe(false);
   });
 
   it('falls back to the defaults on a malformed query', () => {

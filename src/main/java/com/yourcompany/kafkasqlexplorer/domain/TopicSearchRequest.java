@@ -31,6 +31,14 @@ public record TopicSearchRequest(
     Boolean caseSensitive,
     Boolean searchKey,
     Boolean searchHeaders,
+    /**
+     * Scan only the partition the default partitioner would have written this key to. Honoured for
+     * an exact {@code KEY} search and nowhere else: it divides the work by the partition count, at
+     * the price of two assumptions the search cannot verify — the producer used the default
+     * partitioner, and the partition count has not changed since. Opt-in, and the response says
+     * what it assumed.
+     */
+    Boolean keyPartitioning,
     String field,
     String operator,
     String value,
@@ -54,6 +62,10 @@ public record TopicSearchRequest(
 
     public boolean isSearchHeaders() {
         return Boolean.TRUE.equals(searchHeaders);
+    }
+
+    public boolean isKeyPartitioning() {
+        return Boolean.TRUE.equals(keyPartitioning);
     }
 
     public String resolvedMode() {

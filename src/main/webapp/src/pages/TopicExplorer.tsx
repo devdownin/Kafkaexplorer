@@ -400,17 +400,20 @@ const TopicExplorer: React.FC = () => {
     setSearching(true);
     setSearchError(null);
     try {
-      // FIELD et HEADER portent tous deux leur cible dans `field` (chemin / nom de header).
+      // FIELD et HEADER portent tous deux leur cible dans `field` (chemin / nom de header) ;
+      // KEY compare `value` sans cible.
       const fieldScoped = criteria.mode === 'FIELD' || criteria.mode === 'HEADER';
+      const valueScoped = fieldScoped || criteria.mode === 'KEY';
       const body = {
         mode: criteria.mode,
         query: criteria.query,
         caseSensitive: criteria.caseSensitive,
         searchKey: criteria.searchKey,
         searchHeaders: criteria.searchHeaders,
+        keyPartitioning: criteria.keyPartitioning,
         field: fieldScoped ? criteria.field : null,
-        operator: fieldScoped ? criteria.operator : null,
-        value: fieldScoped ? criteria.value : null,
+        operator: valueScoped ? criteria.operator : null,
+        value: valueScoped ? criteria.value : null,
         from: criteria.sinceMinutes > 0 ? 'TIMESTAMP' : 'EARLIEST',
         sinceMinutes: criteria.sinceMinutes > 0 ? criteria.sinceMinutes : null,
         // Resuming continues exactly where the previous pass stopped.

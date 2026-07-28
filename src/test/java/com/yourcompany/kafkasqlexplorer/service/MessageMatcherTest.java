@@ -17,12 +17,12 @@ class MessageMatcherTest {
         """;
 
     private static TopicSearchRequest text(String query, String mode, boolean caseSensitive, boolean searchKey) {
-        return new TopicSearchRequest(query, mode, caseSensitive, searchKey, null, null, null, null,
+        return new TopicSearchRequest(query, mode, caseSensitive, searchKey, null, null, null, null, null,
             null, null, null, null, null, null, null, null, null);
     }
 
     private static TopicSearchRequest field(String path, String operator, String value) {
-        return new TopicSearchRequest(null, "FIELD", null, null, null, path, operator, value,
+        return new TopicSearchRequest(null, "FIELD", null, null, null, null, path, operator, value,
             null, null, null, null, null, null, null, null, null);
     }
 
@@ -137,6 +137,42 @@ class MessageMatcherTest {
         assertTrue(matcher.matches(null, ORDER));
     }
 
+    // ── Record key ──────────────────────────────────────────────────────────
+
+    private static TopicSearchRequest key(String operator, String value) {
+        return new TopicSearchRequest(null, "KEY", null, null, null, null, null, operator, value,
+            null, null, null, null, null, null, null, null, null);
+    }
+
+    /** A text search finds the key as a substring anywhere; KEY mode compares the whole key. */
+    @Test
+    void keyModeComparesTheWholeKey() {
+        assertTrue(MessageMatcher.from(key("EQ", "ORD-42")).matches("ORD-42", "{}"));
+        assertFalse(MessageMatcher.from(key("EQ", "ORD-4")).matches("ORD-42", "{}"),
+            "a prefix is not the key");
+        assertFalse(MessageMatcher.from(key("EQ", "ORD-42")).matches(null, "{\"id\": \"ORD-42\"}"),
+            "the payload is not the key");
+    }
+
+    @Test
+    void keyModeSupportsTheUsualOperators() {
+        assertTrue(MessageMatcher.from(key("CONTAINS", "ORD")).matches("ORD-42", "{}"));
+        assertTrue(MessageMatcher.from(key("REGEX", "ORD-\\d+")).matches("ORD-42", "{}"));
+        assertTrue(MessageMatcher.from(key("NEQ", "OTHER")).matches("ORD-42", "{}"));
+        assertTrue(MessageMatcher.from(key("EXISTS", null)).matches("ORD-42", "{}"));
+        assertFalse(MessageMatcher.from(key("EXISTS", null)).matches(null, "{}"));
+    }
+
+    @Test
+    void keyModeIsCaseInsensitiveByDefaultLikeTheRest() {
+        assertTrue(MessageMatcher.from(key("EQ", "ord-42")).matches("ORD-42", "{}"));
+    }
+
+    @Test
+    void keySearchWithoutAValueIsRejected() {
+        assertThrows(IllegalArgumentException.class, () -> MessageMatcher.from(key("EQ", " ")));
+    }
+
     // ── Kafka headers ───────────────────────────────────────────────────────
 
     private static final Map<String, String> HEADERS = Map.of(
@@ -144,12 +180,12 @@ class MessageMatcherTest {
         "traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
 
     private static TopicSearchRequest textWithHeaders(String query, String mode, boolean searchHeaders) {
-        return new TopicSearchRequest(query, mode, null, true, searchHeaders, null, null, null,
+        return new TopicSearchRequest(query, mode, null, true, searchHeaders, null, null, null, null,
             null, null, null, null, null, null, null, null, null);
     }
 
     private static TopicSearchRequest header(String name, String operator, String value) {
-        return new TopicSearchRequest(null, "HEADER", null, null, null, name, operator, value,
+        return new TopicSearchRequest(null, "HEADER", null, null, null, null, name, operator, value,
             null, null, null, null, null, null, null, null, null);
     }
 
@@ -206,7 +242,7 @@ class MessageMatcherTest {
         "<order><item><id>A-1</id></item><item><id>A-2</id></item></order>";
 
     private static TopicSearchRequest xpath(String expression, String operator, String value) {
-        return new TopicSearchRequest(null, "XPATH", null, null, null, expression, operator, value,
+        return new TopicSearchRequest(null, "XPATH", null, null, null, null, expression, operator, value,
             null, null, null, null, null, null, null, null, null);
     }
 
@@ -236,7 +272,7 @@ class MessageMatcherTest {
     // ── Full JSONPath ───────────────────────────────────────────────────────
 
     private static TopicSearchRequest jsonPath(String expression, String operator, String value) {
-        return new TopicSearchRequest(null, "JSONPATH", null, null, null, expression, operator, value,
+        return new TopicSearchRequest(null, "JSONPATH", null, null, null, null, expression, operator, value,
             null, null, null, null, null, null, null, null, null);
     }
 

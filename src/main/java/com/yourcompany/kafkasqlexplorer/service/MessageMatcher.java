@@ -44,6 +44,11 @@ import java.util.regex.PatternSyntaxException;
  * The syntax the caller typed decides which one runs, so a simple path never pays for the general
  * engine.</p>
  *
+ * <p>{@code KEY} mode compares the Kafka record key itself with the usual operators. A text search
+ * already looks at the key, but only as a substring anywhere; an exact key comparison is both what
+ * "find record X" means and what makes it safe to scan a single partition (see
+ * {@code TopicSearchService}).</p>
+ *
  * <p>Kafka <strong>headers</strong> are searchable: {@code HEADER} mode compares one named header
  * with the usual operators, and {@code searchHeaders} widens a text or regex search to every header
  * value. Correlation ids very often travel there ({@code correlation-id}, W3C {@code traceparent})
@@ -119,6 +124,15 @@ public final class MessageMatcher {
         boolean caseSensitive = request.isCaseSensitive();
         boolean searchHeaders = request.isSearchHeaders();
 
+        if ("KEY".equals(mode)) {
+            if (!"EXISTS".equals(operator) && (request.value() == null || request.value().isBlank())) {
+                throw new IllegalArgumentException("A value is required for a KEY search.");
+            }
+            Pattern keyPattern = "REGEX".equals(operator) ? compile(request.value(), caseSensitive) : null;
+            return new MessageMatcher(mode, operator, caseSensitive, true, searchHeaders, null,
+                keyPattern, null, request.value(), null, null);
+        }
+
         if ("FIELD".equals(mode) || "XPATH".equals(mode) || "JSONPATH".equals(mode)
             || "HEADER".equals(mode)) {
             if (request.field() == null || request.field().isBlank()) {
@@ -146,7 +160,7 @@ public final class MessageMatcher {
 
     /** True when this matcher accepts everything — lets the scan skip the work entirely. */
     public boolean matchesEverything() {
-        return !isPathScoped() && !"HEADER".equals(mode)
+        return !isPathScoped() && !"HEADER".equals(mode) && !"KEY".equals(mode)
             && (needle == null || needle.isEmpty()) && pattern == null;
     }
 
@@ -181,6 +195,12 @@ public final class MessageMatcher {
     public MatchOutcome evaluate(String key, String value, Map<String, String> headers) {
         if (matchesEverything()) {
             return MatchOutcome.MATCH;
+        }
+        if ("KEY".equals(mode)) {
+            if ("EXISTS".equals(operator)) {
+                return key != null ? MatchOutcome.MATCH : MatchOutcome.NO_MATCH;
+            }
+            return key != null && compare(key) ? MatchOutcome.MATCH : MatchOutcome.NO_MATCH;
         }
         if ("HEADER".equals(mode)) {
             return matchesHeader(headers);

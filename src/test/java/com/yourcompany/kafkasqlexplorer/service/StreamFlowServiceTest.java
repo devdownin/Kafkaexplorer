@@ -46,7 +46,7 @@ class StreamFlowServiceTest {
 
     private static StreamFlowRequest request(String key, String path, boolean regex, Integer window,
                                              List<String> topics) {
-        return new StreamFlowRequest(key, 10, path, window, regex, null, null, topics);
+        return new StreamFlowRequest(key, 10, path, window, regex, null, null, null, topics);
     }
 
     private static TopicMessage message(int partition, long offset, long timestamp, String key, String value) {
@@ -226,19 +226,20 @@ class StreamFlowServiceTest {
         StreamFlowResponse response = service.getStreamFlow(request("K-1", null, false, 15, null));
 
         TopicSearchRequest criteria = captureCriteria();
-        assertEquals("TIMESTAMP", criteria.resolvedFrom());
+        // LAST_N + un plancher temporel : les messages les plus récents *dans* la fenêtre.
+        assertEquals("LAST_N", criteria.resolvedFrom());
         assertEquals(15, criteria.sinceMinutes());
         assertEquals(15, response.stats().timeLimitMinutes());
     }
 
-    /** A body omitting maxMessagesPerTopic deserializes to 0 — which used to scan nothing. */
+    /** An omitted cap used to scan nothing at all; it is simply the default now. */
     @Test
-    void zeroMaxMessagesFallsBackToADefault() throws Exception {
+    void anOmittedMaxMessagesFallsBackToADefault() throws Exception {
         when(kafkaAdminService.listTopics()).thenReturn(List.of("orders"));
         onSearch("orders", nothing());
 
         StreamFlowResponse response = service.getStreamFlow(
-            new StreamFlowRequest("K-1", 0, null, null, false, null, null, null));
+            new StreamFlowRequest("K-1", null, null, null, false, null, null, null, null));
 
         assertEquals(100, captureCriteria().maxScan());
         assertEquals(100, response.stats().maxMessagesPerTopic());
@@ -492,6 +493,35 @@ class StreamFlowServiceTest {
         assertThrows(IllegalArgumentException.class,
             () -> service.validateCriterion(request("user-[", null, true, null, null)));
         Mockito.verifyNoInteractions(topicSearchService);
+    }
+
+    // ── Exact record key ────────────────────────────────────────────────────
+
+    @Test
+    void anExactKeySearchComparesTheKeyAndTargetsItsPartition() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders"));
+        onSearch("orders", nothing());
+
+        service.getStreamFlow(new StreamFlowRequest("K-1", 10, null, null, false, true, null, null, null));
+
+        TopicSearchRequest criteria = captureCriteria();
+        assertEquals("KEY", criteria.resolvedMode());
+        assertEquals("EQ", criteria.resolvedOperator());
+        assertEquals("K-1", criteria.value());
+        assertTrue(criteria.isKeyPartitioning());
+    }
+
+    /** The key is not inside the payload: asking for both is a contradiction, not a preference. */
+    @Test
+    void anExactKeySearchRefusesASearchPath() {
+        assertThrows(IllegalArgumentException.class, () -> service.getStreamFlow(
+            new StreamFlowRequest("K-1", 10, "$.orderId", null, false, true, null, null, null)));
+    }
+
+    @Test
+    void anExactKeySearchRefusesARegex() {
+        assertThrows(IllegalArgumentException.class, () -> service.getStreamFlow(
+            new StreamFlowRequest("K-.*", 10, null, null, true, true, null, null, null)));
     }
 
     private TopicSearchRequest captureCriteria() {

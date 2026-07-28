@@ -13,7 +13,7 @@ export interface TopicMessage {
   truncated: boolean;
 }
 
-export type SearchMode = 'CONTAINS' | 'REGEX' | 'FIELD' | 'HEADER';
+export type SearchMode = 'CONTAINS' | 'REGEX' | 'FIELD' | 'HEADER' | 'KEY';
 
 export interface TopicSearchCriteria {
   mode: SearchMode;
@@ -25,6 +25,12 @@ export interface TopicSearchCriteria {
    * l'activer d'office changerait ce que renvoie une recherche existante.
    */
   searchHeaders: boolean;
+  /**
+   * Mode KEY : ne lire que la partition que le partitionneur par défaut aurait choisie pour cette
+   * clé. Divise le travail par le nombre de partitions, au prix de deux hypothèses invérifiables
+   * (partitionneur par défaut, nombre de partitions inchangé) — d'où l'opt-in.
+   */
+  keyPartitioning: boolean;
   /** Chemin de champ en mode FIELD, nom du header en mode HEADER. */
   field: string;
   operator: string;
@@ -70,6 +76,7 @@ export const emptyCriteria: TopicSearchCriteria = {
   caseSensitive: false,
   searchKey: true,
   searchHeaders: false,
+  keyPartitioning: false,
   field: '',
   operator: 'EQ',
   value: '',
@@ -125,10 +132,14 @@ const TopicSearchPanel: React.FC<Props> = ({
   const set = <K extends keyof TopicSearchCriteria>(key: K, value: TopicSearchCriteria[K]) =>
     onChange({ ...criteria, [key]: value });
 
+  // FIELD et HEADER portent leur cible dans `field` ; KEY compare directement `value`.
   const fieldScoped = criteria.mode === 'FIELD' || criteria.mode === 'HEADER';
+  const keyScoped = criteria.mode === 'KEY';
   const canSearch = fieldScoped
     ? criteria.field.trim().length > 0
-    : criteria.query.trim().length > 0;
+    : keyScoped
+      ? criteria.value.trim().length > 0
+      : criteria.query.trim().length > 0;
 
   const submitOnEnter = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && canSearch && !searching) onSearch();
@@ -139,7 +150,7 @@ const TopicSearchPanel: React.FC<Props> = ({
       {/* Mode */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="inline-flex bg-surface-container border border-outline-variant rounded-md p-0.5">
-          {(['CONTAINS', 'REGEX', 'FIELD', 'HEADER'] as SearchMode[]).map(mode => (
+          {(['CONTAINS', 'REGEX', 'FIELD', 'HEADER', 'KEY'] as SearchMode[]).map(mode => (
             <button
               key={mode}
               onClick={() => set('mode', mode)}
@@ -150,7 +161,10 @@ const TopicSearchPanel: React.FC<Props> = ({
                   : 'text-on-surface-variant hover:text-on-surface'
               }`}
             >
-              {mode === 'CONTAINS' ? 'Text' : mode === 'REGEX' ? 'Regex' : mode === 'FIELD' ? 'Field' : 'Header'}
+              {mode === 'CONTAINS' ? 'Text'
+                : mode === 'REGEX' ? 'Regex'
+                : mode === 'FIELD' ? 'Field'
+                : mode === 'HEADER' ? 'Header' : 'Key'}
             </button>
           ))}
         </div>
@@ -175,7 +189,21 @@ const TopicSearchPanel: React.FC<Props> = ({
           Case sensitive
         </label>
 
-        {!fieldScoped && (
+        {keyScoped && criteria.operator === 'EQ' && (
+          <label
+            className="flex items-center gap-1.5 text-[12px] text-on-surface-variant cursor-pointer"
+            title="Reads only the partition the default partitioner would have chosen for this key. Much faster, but it assumes the default partitioner and an unchanged partition count."
+          >
+            <input
+              type="checkbox"
+              checked={criteria.keyPartitioning}
+              onChange={e => set('keyPartitioning', e.target.checked)}
+            />
+            Only this key&#39;s partition
+          </label>
+        )}
+
+        {!fieldScoped && !keyScoped && (
           <>
             <label className="flex items-center gap-1.5 text-[12px] text-on-surface-variant cursor-pointer">
               <input
@@ -201,7 +229,31 @@ const TopicSearchPanel: React.FC<Props> = ({
       </div>
 
       {/* Criteria */}
-      {fieldScoped ? (
+      {keyScoped ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Select
+            value={criteria.operator}
+            onChange={e => set('operator', e.target.value)}
+            aria-label="Operator"
+            className="w-44"
+          >
+            {OPERATORS.map(op => <option key={op.value} value={op.value}>{op.label}</option>)}
+          </Select>
+          {criteria.operator !== 'EXISTS' && (
+            <Input
+              value={criteria.value}
+              onChange={e => set('value', e.target.value)}
+              onKeyDown={submitOnEnter}
+              placeholder="Record key, e.g. order-88219"
+              aria-label="Record key"
+              className="flex-1 min-w-[12rem] font-mono"
+            />
+          )}
+          <Button variant="primary" icon="search" onClick={onSearch} disabled={!canSearch || searching}>
+            {searching ? 'Searching…' : 'Search'}
+          </Button>
+        </div>
+      ) : fieldScoped ? (
         <div className="flex flex-wrap items-center gap-2">
           {criteria.mode === 'HEADER' ? (
             // Les noms de headers ne viennent d'aucun schéma : saisie libre, pas de liste.
