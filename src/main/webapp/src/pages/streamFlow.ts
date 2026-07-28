@@ -42,6 +42,9 @@ export interface FlowStats {
   topicsScanned: number;
   topicsSkipped: number;
   topicsFailed: number;
+  /** Quels topics n'ont jamais été lus (borné côté serveur) — la portée exacte d'une reprise. */
+  skippedTopics?: string[];
+  failedTopics?: string[];
   messagesScanned: number;
   matches: number;
   durationMs: number;
@@ -750,6 +753,66 @@ export function filterHits(hits: FlowHit[], query: string): FlowHit[] {
     hit.topic.toLowerCase().includes(needle)
     || (hit.firstKey ?? '').toLowerCase().includes(needle)
     || (hit.preview ?? '').toLowerCase().includes(needle));
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Reprise d'une trace interrompue
+ * ────────────────────────────────────────────────────────────────────────── */
+
+export interface TraceCoverage {
+  topicsScanned: number;
+  messagesScanned: number;
+  matches: number;
+  durationMs: number;
+}
+
+/** De quoi reprendre une trace là où son budget l'a arrêtée, sans repartir de zéro. */
+export interface TraceContinuation {
+  /** Les topics jamais lus — la portée de la seconde passe. */
+  topics: string[];
+  /** Ce que la première passe a trouvé : renvoyé au serveur, qui rend **un** graphe fusionné. */
+  priorHits: FlowHit[];
+  priorCoverage: TraceCoverage;
+  /** Nombre total de topics jamais lus, dont `topics` n'est que la part nommée. */
+  pending: number;
+}
+
+/**
+ * Une trace arrêtée par le budget laissait comme seule issue de tout relancer, plus large : les
+ * topics déjà lus l'étaient une seconde fois, et le graphe précédent était jeté. Le serveur nomme
+ * désormais les topics jamais lus, ce qui suffit à ne rescanner que ceux-là et à fusionner.
+ *
+ * Rend `null` quand il n'y a rien à reprendre — une trace complète, ou une interruption si précoce
+ * qu'aucun nom n'a été rapporté.
+ */
+export function buildContinuation(flow: ParsedFlow): TraceContinuation | null {
+  const stats = flow.stats;
+  if (!stats) return null;
+  if (stats.stopReason !== 'TIME_BUDGET' && stats.stopReason !== 'CANCELLED') return null;
+  const topics = (stats.skippedTopics ?? []).filter(Boolean);
+  if (topics.length === 0) return null;
+  return {
+    topics,
+    priorHits: flow.hits,
+    priorCoverage: {
+      topicsScanned: stats.topicsScanned,
+      messagesScanned: stats.messagesScanned,
+      matches: stats.matches,
+      durationMs: stats.durationMs,
+    },
+    pending: Math.max(stats.topicsSkipped, topics.length),
+  };
+}
+
+/**
+ * Le libellé dit la portée réelle : le serveur borne la liste des noms, donc une reprise peut ne
+ * couvrir qu'une partie des topics manquants — l'annoncer « les 412 topics » serait faux.
+ */
+export function describeContinuation(continuation: TraceContinuation): string {
+  const { topics, pending } = continuation;
+  return topics.length < pending
+    ? `Continue on ${topics.length} of the ${pending} topics never read`
+    : `Continue on the ${pending} topic${pending > 1 ? 's' : ''} never read`;
 }
 
 /** Une relance proposée quand la trace n'a rien trouvé : un critère élargi, et ce qu'il change. */

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  analyzeChain, buildLayout, buildTopicSearchQuery, buildTraceQuery, centerOn, clampScale,
-  describeChainInsight, describeCoverage, describeProgress, describeSearchScope, filterHits,
+  analyzeChain, buildContinuation, buildLayout, buildTopicSearchQuery, buildTraceQuery, centerOn,
+  clampScale, describeChainInsight, describeContinuation, describeCoverage, describeProgress, describeSearchScope, filterHits,
   fitTransform, formatDwell, isNodeVisible, parseSseBuffer, progressRatio,
   formatLatency, formatRelativeTime, hitsToRows, HISTORY_KEY, HIT_EXPORT_COLUMNS, PANEL_KEY,
   parseFlowResponse, parseTraceParams, pushTraceHistory, readPanelOpen, readTraceHistory,
@@ -648,6 +648,57 @@ describe('suggestWidenings', () => {
       caseSensitive: true, topics: ['a', 'b'],
     };
     expect(suggestWidenings(everything)).toHaveLength(4);
+  });
+});
+
+describe('buildContinuation', () => {
+  const stats: FlowStats = {
+    topicsInScope: 250, topicsScanned: 248, topicsSkipped: 2, topicsFailed: 0,
+    skippedTopics: ['billing', 'shipping'],
+    messagesScanned: 24_800, matches: 3, durationMs: 12_400, truncated: true,
+    stopReason: 'TIME_BUDGET', maxMessagesPerTopic: 100, timeLimitMinutes: null,
+  };
+  const hit: FlowHit = {
+    topic: 'orders', occurrences: 1, firstTimestamp: 10, lastTimestamp: 10, firstPartition: 0,
+    firstOffset: 3, firstKey: 'K-1', preview: null, latencyFromPreviousMs: null,
+  };
+  const flow = { nodes: [], edges: [], hits: [hit], stats, warnings: [] };
+
+  it('carries the unread topics, the hops found and what the first pass covered', () => {
+    const continuation = buildContinuation(flow)!;
+    expect(continuation.topics).toEqual(['billing', 'shipping']);
+    expect(continuation.priorHits).toEqual([hit]);
+    expect(continuation.priorCoverage).toEqual({
+      topicsScanned: 248, messagesScanned: 24_800, matches: 3, durationMs: 12_400,
+    });
+  });
+
+  it('offers itself after a cancellation too — the same topics are missing', () => {
+    expect(buildContinuation({ ...flow, stats: { ...stats, stopReason: 'CANCELLED' } })).not.toBeNull();
+  });
+
+  it('has nothing to offer on a completed trace, or with no topic named', () => {
+    expect(buildContinuation({ ...flow, stats: { ...stats, stopReason: 'COMPLETE' } })).toBeNull();
+    expect(buildContinuation({ ...flow, stats: { ...stats, skippedTopics: [] } })).toBeNull();
+    // Un serveur plus ancien ne renvoie pas la liste : on ne propose pas une reprise sans portée.
+    expect(buildContinuation({ ...flow, stats: { ...stats, skippedTopics: undefined } })).toBeNull();
+    expect(buildContinuation({ ...flow, stats: null })).toBeNull();
+  });
+
+  /** La liste des noms est bornée côté serveur : le libellé ne doit pas promettre plus. */
+  it('states the real scope when only some of the missing topics are named', () => {
+    expect(describeContinuation(buildContinuation(flow)!))
+      .toBe('Continue on the 2 topics never read');
+
+    const many = buildContinuation({ ...flow, stats: { ...stats, topicsSkipped: 412 } })!;
+    expect(many.pending).toBe(412);
+    expect(describeContinuation(many)).toBe('Continue on 2 of the 412 topics never read');
+  });
+
+  it('trusts the named list when the count disagrees with it', () => {
+    const continuation = buildContinuation({ ...flow, stats: { ...stats, topicsSkipped: 0 } })!;
+    expect(continuation.pending).toBe(2);
+    expect(describeContinuation(continuation)).toBe('Continue on the 2 topics never read');
   });
 });
 

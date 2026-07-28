@@ -48,7 +48,7 @@ class StreamFlowControllerTest {
 
     private static StreamFlowResponse emptyFlow() {
         return new StreamFlowResponse(List.of(), List.of(), List.of(),
-            new StreamFlowStats(1, 1, 0, 0, 10, 0, 5L, false, "COMPLETE", 100, null), List.of());
+            new StreamFlowStats(1, 1, 0, 0, List.of(), List.of(), 10, 0, 5L, false, "COMPLETE", 100, null), List.of());
     }
 
     @Test

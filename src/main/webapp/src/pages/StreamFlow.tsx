@@ -9,13 +9,13 @@ import { useToast } from '../components/Toast';
 import { describeApiError, type QueryErrorInfo } from './queryError';
 import { toCsv } from './resultExport';
 import {
-  analyzeChain, buildLayout, buildTopicSearchQuery, buildTraceQuery, centerOn, clampScale,
-  describeChainInsight, describeCoverage, describeProgress, describeSearchScope, filterHits,
-  fitTransform, formatAbsoluteTime, formatDwell, formatLatency, formatRelativeTime, hitsToRows,
-  HIT_EXPORT_COLUMNS, isNodeVisible, parseFlowResponse, parseSseBuffer, parseTraceParams,
-  progressRatio, pushTraceHistory, readPanelOpen, readTraceHistory, sameCriterion, suggestWidenings,
-  traceToJson, validateSearchPath, writePanelOpen, zoomAt,
-  type FlowHit, type FormErrors, type ParsedFlow, type TraceHistoryEntry,
+  analyzeChain, buildContinuation, buildLayout, buildTopicSearchQuery, buildTraceQuery, centerOn,
+  clampScale, describeChainInsight, describeContinuation, describeCoverage, describeProgress,
+  describeSearchScope, filterHits, fitTransform, formatAbsoluteTime, formatDwell, formatLatency,
+  formatRelativeTime, hitsToRows, HIT_EXPORT_COLUMNS, isNodeVisible, parseFlowResponse,
+  parseSseBuffer, parseTraceParams, progressRatio, pushTraceHistory, readPanelOpen, readTraceHistory,
+  sameCriterion, suggestWidenings, traceToJson, validateSearchPath, writePanelOpen, zoomAt,
+  type FlowHit, type FormErrors, type ParsedFlow, type TraceContinuation, type TraceHistoryEntry,
   type TraceParams, type TraceProgress, type Transform,
 } from './streamFlow';
 
@@ -245,7 +245,12 @@ const StreamFlow: React.FC = () => {
     abortRef.current = null;
   };
 
-  const runTrace = useCallback(async (params: TraceParams) => {
+  /**
+   * @param continuation seconde passe d'une trace interrompue : seuls les topics jamais lus sont
+   *        rescannés, et le serveur rend un graphe fusionné. Le critère affiché (URL, historique,
+   *        pastille) reste celui de la trace entière — la liste réduite n'est qu'un moyen.
+   */
+  const runTrace = useCallback(async (params: TraceParams, continuation?: TraceContinuation) => {
     const errors: FormErrors = {};
     if (!params.messageKey) errors.messageKey = 'A message key is required.';
     const pathError = validateSearchPath(params.searchPath);
@@ -282,7 +287,9 @@ const StreamFlow: React.FC = () => {
       exactKey: params.exactKey,
       caseSensitive: params.caseSensitive,
       searchHeaders: params.searchHeaders,
-      targetTopics: params.topics,
+      targetTopics: continuation ? continuation.topics : params.topics,
+      priorHits: continuation?.priorHits ?? null,
+      priorCoverage: continuation?.priorCoverage ?? null,
     };
 
     // Ce que la trace a trouvé au moment où on la quitte : gardé en ref pour que l'annulation
@@ -468,6 +475,11 @@ const StreamFlow: React.FC = () => {
     && !sameCriterion(ranParams, currentParams());
   const suggestions = useMemo(
     () => (ranParams ? suggestWidenings(ranParams) : []), [ranParams]);
+  /** Trace arrêtée par son budget : les topics jamais lus sont nommés, donc reprenables. */
+  const continuation = useMemo(() => buildContinuation(flow), [flow]);
+  const continueTrace = () => {
+    if (continuation && ranParams) void runTrace(ranParams, continuation);
+  };
   const graphLegend = insight.slowestHopTopic !== null || insight.clockSkewTopics.length > 0;
 
   return (
@@ -1009,6 +1021,16 @@ const StreamFlow: React.FC = () => {
                 <p className="text-sm text-outline mt-1">
                   The key was not in what was scanned{coverage ? ` — ${coverage}.` : '.'}
                 </p>
+                {/* Rien trouvé alors que des topics n'ont jamais été lus : la première réponse
+                    n'est pas d'élargir le critère, c'est de finir le scan. */}
+                {continuation && (
+                  <div className="mt-4">
+                    <Button variant="primary" icon="playlist_add" onClick={continueTrace}>
+                      {describeContinuation(continuation)}
+                    </Button>
+                  </div>
+                )}
+
                 {/* Chaque piste est un bouton qui relance : le conseil « élargissez la fenêtre »
                     obligeait à remonter dans le formulaire pour l'appliquer. */}
                 {suggestions.length > 0 && (
@@ -1051,6 +1073,14 @@ const StreamFlow: React.FC = () => {
               </button>
               <span className="text-[11px] text-outline truncate" title={coverage}>{coverage}</span>
               <div className="ml-auto flex items-center gap-2 shrink-0">
+                {/* Reprendre plutôt que tout relancer : les topics déjà lus ne le sont pas deux
+                    fois, et le graphe précédent n'est pas jeté. */}
+                {continuation && !loading && (
+                  <Button size="sm" variant="outline" icon="playlist_add" onClick={continueTrace}
+                    title="Scans only the topics the budget never reached and merges the result into this graph">
+                    {describeContinuation(continuation)}
+                  </Button>
+                )}
                 {/* Un filtre dès qu'une trace ramène plus d'une poignée de sauts : sur un scan
                     de cluster, retrouver un topic se faisait à la molette. */}
                 {detailsOpen && hits.length > 6 && (

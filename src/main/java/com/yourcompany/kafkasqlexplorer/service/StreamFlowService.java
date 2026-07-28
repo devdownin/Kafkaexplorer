@@ -3,6 +3,7 @@
 package com.yourcompany.kafkasqlexplorer.service;
 
 import com.yourcompany.kafkasqlexplorer.config.ExplorerConfig;
+import com.yourcompany.kafkasqlexplorer.domain.StreamFlowCoverage;
 import com.yourcompany.kafkasqlexplorer.domain.StreamFlowHit;
 import com.yourcompany.kafkasqlexplorer.domain.StreamFlowProgress;
 import com.yourcompany.kafkasqlexplorer.domain.StreamFlowRequest;
@@ -31,6 +32,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
+import java.util.stream.Collectors;
 
 /**
  * Traces one message key across Kafka topics and derives the pipeline it travelled through.
@@ -77,6 +79,8 @@ public class StreamFlowService {
     private static final int PREVIEW_CHARS = 240;
     /** Warnings are a diagnostic, not a log: past this many per kind the rest is summarised. */
     private static final int MAX_WARNINGS_PER_KIND = 8;
+    /** Topic names carried in the stats for the UI to act on (continue, list); the counts are exact. */
+    private static final int MAX_NAMED_TOPICS = 50;
     /** Header searches are written {@code header:correlation-id} in the search path field. */
     private static final String HEADER_PREFIX = "header:";
 
@@ -173,12 +177,12 @@ public class StreamFlowService {
             explorerConfig.getSearchTimeoutMs());
         MessageMatcher.from(criteria);
 
-        List<String> topicsToScan = resolveTopics(request, warnings);
+        List<String> topicsToScan = resolveTopics(request, timeLimit, warnings);
         if (topicsToScan.isEmpty()) {
-            return emptyResponse(warnings, 0, recordLimit, timeLimit, startNanos);
+            return emptyResponse(warnings, request, recordLimit, timeLimit, startNanos);
         }
 
-        ProgressTracker tracker = new ProgressTracker(topicsToScan.size(), listener, startNanos,
+        ProgressTracker tracker = new ProgressTracker(topicsToScan, request, listener, startNanos,
             recordLimit, timeLimit);
         tracker.announceStart();
 
@@ -186,7 +190,7 @@ public class StreamFlowService {
         List<TopicScan> scans = scanTopics(topicsToScan, request, recordLimit, timeLimit,
             deadlineNanos, cancelled, tracker);
 
-        return buildResponse(topicsToScan.size(), scans, recordLimit, timeLimit,
+        return buildResponse(topicsToScan, request, scans, recordLimit, timeLimit,
             startNanos, deadlineNanos, warnings, cancelled.getAsBoolean(), false);
     }
 
@@ -196,16 +200,18 @@ public class StreamFlowService {
      * not hold back the nine that already answered.
      */
     private final class ProgressTracker {
-        private final int topicsInScope;
+        private final List<String> topicsInScope;
+        private final StreamFlowRequest request;
         private final TraceListener listener;
         private final long startNanos;
         private final int recordLimit;
         private final Integer timeLimit;
         private final List<TopicScan> completed = new ArrayList<>();
 
-        ProgressTracker(int topicsInScope, TraceListener listener, long startNanos, int recordLimit,
-                        Integer timeLimit) {
+        ProgressTracker(List<String> topicsInScope, StreamFlowRequest request, TraceListener listener,
+                        long startNanos, int recordLimit, Integer timeLimit) {
             this.topicsInScope = topicsInScope;
+            this.request = request;
             this.listener = listener;
             this.startNanos = startNanos;
             this.recordLimit = recordLimit;
@@ -213,7 +219,7 @@ public class StreamFlowService {
         }
 
         void announceStart() {
-            listener.onProgress(new StreamFlowProgress(0, topicsInScope, 0, 0,
+            listener.onProgress(new StreamFlowProgress(0, topicsInScope.size(), 0, 0,
                 elapsedMs(startNanos), null));
         }
 
@@ -225,12 +231,12 @@ public class StreamFlowService {
         /** Synchronized: emissions must be serialized, and the rebuild reads the whole list. */
         synchronized void record(TopicScan scan) {
             completed.add(scan);
-            listener.onProgress(new StreamFlowProgress(completed.size(), topicsInScope,
+            listener.onProgress(new StreamFlowProgress(completed.size(), topicsInScope.size(),
                 completed.stream().mapToInt(TopicScan::scanned).sum(),
                 completed.stream().mapToInt(TopicScan::matched).sum(),
                 elapsedMs(startNanos), scan.topic()));
             if (!scan.hits().isEmpty()) {
-                listener.onPartialFlow(buildResponse(topicsInScope, List.copyOf(completed),
+                listener.onPartialFlow(buildResponse(topicsInScope, request, List.copyOf(completed),
                     recordLimit, timeLimit, startNanos, Long.MAX_VALUE, new ArrayList<>(), false, true));
             }
         }
@@ -329,7 +335,7 @@ public class StreamFlowService {
      * matches almost anything and would draw a node that means nothing) and capped, because a
      * cluster with thousands of topics would otherwise open thousands of consumers.
      */
-    private List<String> resolveTopics(StreamFlowRequest request, List<String> warnings) {
+    private List<String> resolveTopics(StreamFlowRequest request, Integer timeLimit, List<String> warnings) {
         List<String> requested = request.targetTopics();
         if (requested != null && !requested.isEmpty()) {
             List<String> targets = requested.stream()
@@ -357,13 +363,80 @@ public class StreamFlowService {
             .toList();
 
         int maxTopics = explorerConfig.getStreamFlowMaxTopics();
-        if (candidates.size() > maxTopics) {
-            warnings.add("No target topic selected and the cluster has " + candidates.size()
-                + " topics: only the first " + maxTopics + " (alphabetical) were scanned. "
-                + "Select the topics to trace, or raise explorer.stream-flow-max-topics.");
-            return candidates.subList(0, maxTopics);
+        boolean mustChoose = candidates.size() > maxTopics;
+        if (!mustChoose && timeLimit == null) {
+            return candidates;
         }
-        return candidates;
+        return prioritiseByActivity(candidates, timeLimit, maxTopics, mustChoose, warnings);
+    }
+
+    /**
+     * Chooses which topics a whole-cluster trace reads, by <em>recent activity</em>.
+     *
+     * <p>This used to be {@code candidates.sorted().subList(0, maxTopics)}: on a cluster of nine
+     * hundred topics, a trace read {@code a*} through {@code d*} and never touched {@code orders.*}.
+     * The budget was spent by alphabet, which has nothing to do with where a key from the last ten
+     * minutes might be — so "no flow found" meant almost nothing.
+     *
+     * <p>Two consequences of the last-message timestamps (Caffeine-cached, one batched consumer):
+     * a topic whose newest record predates the requested window <em>cannot</em> hold a match inside
+     * it and is dropped outright, and what remains is read newest-first. A topic whose timestamp is
+     * unknown — empty, or not described — is kept and ranked last: unknown is not the same as cold,
+     * and dropping it would be the silent kind of narrowing this page exists to avoid.
+     *
+     * <p>If the timestamps cannot be read at all, the old alphabetical truncation stands and the
+     * warning says which of the two happened. A degraded choice is still a choice; a silent one is not.
+     */
+    private List<String> prioritiseByActivity(List<String> candidates, Integer timeLimit, int maxTopics,
+                                              boolean mustChoose, List<String> warnings) {
+        Map<String, Long> lastSeen;
+        try {
+            lastSeen = kafkaAdminService.getTopicsLastMessageTimestamps(candidates);
+        } catch (Exception e) {
+            log.warn("Could not read last-message timestamps to prioritise the trace", e);
+            lastSeen = Map.of();
+        }
+        if (lastSeen == null || lastSeen.isEmpty()) {
+            if (mustChoose) {
+                warnings.add("No target topic selected and the cluster has " + candidates.size()
+                    + " topics: only the first " + maxTopics + " (alphabetical) were scanned — the "
+                    + "last-message timestamps that would have ranked them by recent activity could "
+                    + "not be read. Select the topics to trace, or raise explorer.stream-flow-max-topics.");
+                return candidates.subList(0, maxTopics);
+            }
+            return candidates;
+        }
+
+        List<String> live = candidates;
+        if (timeLimit != null) {
+            long floor = System.currentTimeMillis() - TimeUnit.MINUTES.toMillis(timeLimit);
+            Map<String, Long> seen = lastSeen;
+            List<String> cold = candidates.stream()
+                .filter(t -> seen.get(t) != null && seen.get(t) < floor)
+                .toList();
+            if (!cold.isEmpty()) {
+                live = candidates.stream().filter(t -> !cold.contains(t)).toList();
+                warnings.add(cold.size() + " topic(s) had no message in the last " + timeLimit
+                    + " minute(s) and were not read: nothing inside the window could have matched ("
+                    + summarise(cold) + ").");
+            }
+        }
+
+        Map<String, Long> seen = lastSeen;
+        List<String> ranked = live.stream()
+            // Newest first; a topic with no known timestamp sorts last, name as the tie-break so
+            // two runs on an unchanged cluster read the same topics in the same order.
+            .sorted(Comparator.comparingLong((String t) -> seen.getOrDefault(t, Long.MIN_VALUE)).reversed()
+                .thenComparing(Comparator.naturalOrder()))
+            .toList();
+
+        if (ranked.size() > maxTopics) {
+            warnings.add("No target topic selected and the cluster has " + candidates.size()
+                + " topics: the " + maxTopics + " most recently active were scanned. "
+                + "Select the topics to trace, or raise explorer.stream-flow-max-topics.");
+            return ranked.subList(0, maxTopics);
+        }
+        return ranked;
     }
 
     private void warnUnknownTopics(List<String> targets, List<String> warnings) {
@@ -480,13 +553,21 @@ public class StreamFlowService {
      * so the same trace drew a different picture on each run. One node per topic, ordered by first
      * sighting and tie-broken by name, is both stable and what "where did this message go" means.
      */
-    private StreamFlowResponse buildResponse(int topicsInScope, List<TopicScan> scans,
+    private StreamFlowResponse buildResponse(List<String> topicsInScope, StreamFlowRequest request,
+                                             List<TopicScan> scans,
                                              int recordLimit, Integer timeLimit, long startNanos,
                                              long deadlineNanos, List<String> warnings,
                                              boolean cancelled, boolean partial) {
         List<TopicScan> matched = scans.stream().filter(s -> !s.hits().isEmpty()).toList();
 
-        List<StreamFlowHit> hits = new ArrayList<>(matched.size());
+        // Une passe de reprise ne redessine pas un second graphe : ses sauts rejoignent ceux de la
+        // passe précédente et la chaîne est reconstruite ici, par la même règle, sur l'union.
+        Map<String, StreamFlowHit> byTopic = new LinkedHashMap<>();
+        for (StreamFlowHit prior : request.resolvedPriorHits()) {
+            if (prior != null && prior.topic() != null) {
+                byTopic.put(prior.topic(), prior);
+            }
+        }
         for (TopicScan scan : matched) {
             List<TopicMessage> ordered = scan.hits().stream()
                 .sorted(Comparator.comparingLong(TopicMessage::timestamp)
@@ -494,10 +575,13 @@ public class StreamFlowService {
                 .toList();
             TopicMessage first = ordered.get(0);
             TopicMessage last = ordered.get(ordered.size() - 1);
-            hits.add(new StreamFlowHit(scan.topic(), scan.matched(), first.timestamp(), last.timestamp(),
-                first.partition(), first.offset(), first.key(), preview(first.value()),
-                null, scan.capped()));
+            StreamFlowHit fresh = new StreamFlowHit(scan.topic(), scan.matched(), first.timestamp(),
+                last.timestamp(), first.partition(), first.offset(), first.key(), preview(first.value()),
+                null, scan.capped());
+            byTopic.merge(scan.topic(), fresh, StreamFlowService::mergeHits);
         }
+
+        List<StreamFlowHit> hits = new ArrayList<>(byTopic.values());
         hits.sort(Comparator.comparingLong(StreamFlowHit::firstTimestamp)
             .thenComparing(StreamFlowHit::topic));
 
@@ -555,7 +639,20 @@ public class StreamFlowService {
         int failed = (int) scans.stream().filter(s -> s.failure() != null).count();
         // While the trace runs, the topics not yet read are pending, not skipped: the progress
         // event carries how many are left, and calling them skipped would read as a broken scan.
-        int skipped = partial ? 0 : Math.max(topicsInScope - scanned - failed, 0);
+        int skipped = partial ? 0 : Math.max(topicsInScope.size() - scanned - failed, 0);
+        // Named, not just counted: a task cancelled before it started never produced a scan, so the
+        // topics never read are the ones in scope that nothing reported back.
+        Set<String> answered = scans.stream()
+            .filter(s -> !s.skipped())
+            .map(TopicScan::topic)
+            .collect(Collectors.toCollection(LinkedHashSet::new));
+        List<String> skippedTopics = partial ? List.of() : topicsInScope.stream()
+            .filter(t -> !answered.contains(t))
+            .toList();
+        List<String> failedTopics = scans.stream()
+            .filter(s -> s.failure() != null)
+            .map(TopicScan::topic)
+            .toList();
         boolean truncated = scans.stream().anyMatch(TopicScan::truncated);
         String stopReason;
         if (partial) {
@@ -566,22 +663,48 @@ public class StreamFlowService {
             stopReason = skipped > 0 && System.nanoTime() >= deadlineNanos ? "TIME_BUDGET" : "COMPLETE";
         }
         if (cancelled && skipped > 0) {
-            warnings.add("Stopped early: " + skipped + " topic(s) of " + topicsInScope
-                + " were never read. What is shown is what had been found by then.");
+            warnings.add("Stopped early: " + skipped + " topic(s) of " + topicsInScope.size()
+                + " were never read (" + summarise(skippedTopics) + "). "
+                + "What is shown is what had been found by then.");
         }
         if ("TIME_BUDGET".equals(stopReason)) {
             warnings.add("The " + (explorerConfig.getStreamFlowTimeoutMs() / 1000)
-                + "s trace budget was spent before " + skipped + " topic(s) could be read. "
-                + "Narrow the target topics, or raise explorer.stream-flow-timeout-ms.");
+                + "s trace budget was spent before " + skipped + " topic(s) could be read ("
+                + summarise(skippedTopics) + "). Continue the scan on those topics, narrow the "
+                + "target topics, or raise explorer.stream-flow-timeout-ms.");
         }
 
+        // Une reprise dessine un graphe issu de deux passes : la couverture les additionne, sinon
+        // la ligne « 2/2 topics scannés » légenderait une chaîne qui en a coûté deux cent cinquante.
+        StreamFlowCoverage prior = StreamFlowCoverage.orNone(request.priorCoverage());
         StreamFlowStats stats = new StreamFlowStats(
-            topicsInScope, scanned, skipped, failed,
-            scans.stream().mapToInt(TopicScan::scanned).sum(),
-            scans.stream().mapToInt(TopicScan::matched).sum(),
-            elapsedMs(startNanos), truncated, stopReason, recordLimit, timeLimit);
+            topicsInScope.size() + prior.topicsScanned(), scanned + prior.topicsScanned(),
+            skipped, failed, boundNames(skippedTopics), boundNames(failedTopics),
+            scans.stream().mapToInt(TopicScan::scanned).sum() + prior.messagesScanned(),
+            scans.stream().mapToInt(TopicScan::matched).sum() + prior.matches(),
+            elapsedMs(startNanos) + prior.durationMs(), truncated, stopReason, recordLimit, timeLimit);
 
         return new StreamFlowResponse(nodes, edges, chained, stats, warnings);
+    }
+
+    /**
+     * Two sightings of the same key in the same topic, seen by two passes of one trace.
+     *
+     * <p>The earliest first sighting wins with its coordinates — that is what the chain is ordered
+     * by — and the occurrence count is the larger of the two rather than their sum: the two passes
+     * may well have read the same records, and a count inflated by double-reading would be worse
+     * than one that stays a floor (which it already is, as {@code occurrencesCapped} says).
+     */
+    private static StreamFlowHit mergeHits(StreamFlowHit a, StreamFlowHit b) {
+        StreamFlowHit earliest = a.firstTimestamp() <= b.firstTimestamp() ? a : b;
+        return new StreamFlowHit(
+            earliest.topic(),
+            Math.max(a.occurrences(), b.occurrences()),
+            earliest.firstTimestamp(),
+            Math.max(a.lastTimestamp(), b.lastTimestamp()),
+            earliest.firstPartition(), earliest.firstOffset(), earliest.firstKey(), earliest.preview(),
+            null,
+            a.occurrencesCapped() || b.occurrencesCapped());
     }
 
     /**
@@ -624,6 +747,16 @@ public class StreamFlowService {
         }
     }
 
+    /**
+     * Topic names carried in the stats, bounded. A trace that skipped four hundred topics must say
+     * so and name enough of them to be actionable, not ship a four-hundred-entry array to a table
+     * that will show a dozen — {@code topicsSkipped} keeps the exact count.
+     */
+    private static List<String> boundNames(List<String> names) {
+        return names.size() <= MAX_NAMED_TOPICS ? List.copyOf(names)
+            : List.copyOf(names.subList(0, MAX_NAMED_TOPICS));
+    }
+
     private static String summarise(List<String> items) {
         if (items.size() <= MAX_WARNINGS_PER_KIND) {
             return String.join(", ", items);
@@ -638,11 +771,14 @@ public class StreamFlowService {
         return flat.length() <= PREVIEW_CHARS ? flat : flat.substring(0, PREVIEW_CHARS) + "…";
     }
 
-    private StreamFlowResponse emptyResponse(List<String> warnings, int topicsInScope,
+    /** No topic in scope: nothing was read, but a continued pass still carries its predecessor. */
+    private StreamFlowResponse emptyResponse(List<String> warnings, StreamFlowRequest request,
                                              int recordLimit, Integer timeLimit, long startNanos) {
+        StreamFlowCoverage prior = StreamFlowCoverage.orNone(request.priorCoverage());
         return new StreamFlowResponse(List.of(), List.of(), List.of(),
-            new StreamFlowStats(topicsInScope, 0, 0, 0, 0, 0, elapsedMs(startNanos), false,
-                "COMPLETE", recordLimit, timeLimit),
+            new StreamFlowStats(prior.topicsScanned(), prior.topicsScanned(), 0, 0,
+                List.of(), List.of(), prior.messagesScanned(), prior.matches(),
+                elapsedMs(startNanos) + prior.durationMs(), false, "COMPLETE", recordLimit, timeLimit),
             warnings);
     }
 
