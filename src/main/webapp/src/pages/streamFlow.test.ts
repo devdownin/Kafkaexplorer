@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  analyzeChain, buildContinuation, buildLayout, buildTopicSearchQuery, buildTraceQuery, centerOn,
-  clampScale, describeChainInsight, describeContinuation, describeCoverage, describeProgress, describeSearchScope, filterHits,
-  fitTransform, formatDwell, isNodeVisible, parseSseBuffer, progressRatio,
+  analyzeChain, buildContinuation, buildLayout, buildTopicSearchQuery, buildTraceLinkForKey,
+  buildTraceQuery, centerOn, clampScale, compareFlows, describeChainInsight, describeComparison,
+  describeContinuation, describeCoverage, describeProgress, describeSearchScope, expandTopicPatterns,
+  filterHits, fitTransform, formatDwell, isNodeVisible, parseSseBuffer, parseTopicList,
+  progressRatio, slowestDivergence,
   formatLatency, formatRelativeTime, hitsToRows, HISTORY_KEY, HIT_EXPORT_COLUMNS, PANEL_KEY,
   parseFlowResponse, parseTraceParams, pushTraceHistory, readPanelOpen, readTraceHistory,
   sameCriterion, searchScopeOf, suggestWidenings, traceToJson, validateSearchPath, writePanelOpen,
@@ -648,6 +650,112 @@ describe('suggestWidenings', () => {
       caseSensitive: true, topics: ['a', 'b'],
     };
     expect(suggestWidenings(everything)).toHaveLength(4);
+  });
+});
+
+describe('target topic entry', () => {
+  it('splits a pasted list on commas, spaces and newlines, without duplicates', () => {
+    expect(parseTopicList('orders, billing\nshipping;orders  audit'))
+      .toEqual(['orders', 'billing', 'shipping', 'audit']);
+    expect(parseTopicList('   ')).toEqual([]);
+  });
+
+  it('expands a pattern over the catalogue and leaves plain names alone', () => {
+    const known = ['orders.inbound', 'orders.validated', 'billing.charges'];
+    expect(expandTopicPatterns(['orders.*', 'billing.charges'], known))
+      .toEqual({ topics: ['orders.inbound', 'orders.validated', 'billing.charges'], unmatched: [] });
+  });
+
+  /** Un motif sans correspondance ne doit pas partir comme nom de topic : il n'en est pas un. */
+  it('reports a pattern that matches nothing instead of sending it as a name', () => {
+    const result = expandTopicPatterns(['nope.*', 'orders.inbound'], ['orders.inbound']);
+    expect(result.topics).toEqual(['orders.inbound']);
+    expect(result.unmatched).toEqual(['nope.*']);
+  });
+
+  it('treats the dot as a literal and only * as a wildcard', () => {
+    const known = ['ordersXinbound', 'orders.inbound'];
+    expect(expandTopicPatterns(['orders.*'], known).topics).toEqual(['orders.inbound']);
+  });
+
+  /** Le catalogue a 30 s de retard : un topic tout juste créé reste saisissable. */
+  it('keeps an unknown plain name, which may simply be newer than the catalogue', () => {
+    expect(expandTopicPatterns(['brand.new'], []).topics).toEqual(['brand.new']);
+  });
+});
+
+describe('buildTraceLinkForKey', () => {
+  it('traces the record key as an exact key search', () => {
+    expect(buildTraceLinkForKey('ORD-42')).toBe('/stream-flow?key=ORD-42&exact=1');
+  });
+
+  it('escapes a key that would otherwise break the query string', () => {
+    const link = buildTraceLinkForKey('a b&c=d');
+    expect(parseTraceParams(link.slice(link.indexOf('?'))).messageKey).toBe('a b&c=d');
+  });
+});
+
+describe('compareFlows', () => {
+  const hop = (topic: string, latency: number | null, first: number): FlowHit => ({
+    topic, occurrences: 1, firstTimestamp: first, lastTimestamp: first, firstPartition: 0,
+    firstOffset: 1, firstKey: null, preview: null, latencyFromPreviousMs: latency,
+  });
+
+  const a = [hop('orders', null, 1_000), hop('billing', 200, 1_200), hop('shipping', 300, 1_500)];
+
+  it('reads the same route as the same route', () => {
+    const b = [hop('orders', null, 9_000), hop('billing', 250, 9_250), hop('shipping', 350, 9_600)];
+    const comparison = compareFlows(a, b);
+
+    expect(comparison.sameRoute).toBe(true);
+    expect(comparison.shared).toBe(3);
+    expect(comparison.onlyA + comparison.onlyB).toBe(0);
+    expect(describeComparison(comparison)).toContain('Same route through 3 topics');
+  });
+
+  /** Ce sont les latences de saut qui se comparent : deux clés traitées à une heure d'écart
+      n'ont rien à se dire dans l'absolu. */
+  it('compares hop latencies, not absolute timestamps', () => {
+    const b = [hop('orders', null, 9_000), hop('billing', 4_200, 13_200), hop('shipping', 300, 13_500)];
+    const comparison = compareFlows(a, b);
+
+    const billing = comparison.rows.find(r => r.topic === 'billing')!;
+    expect(billing.latencyA).toBe(200);
+    expect(billing.latencyB).toBe(4_200);
+    expect(billing.deltaMs).toBe(4_000);
+    expect(slowestDivergence(comparison)?.topic).toBe('billing');
+  });
+
+  it('marks what only one side saw, A first then B', () => {
+    const b = [hop('orders', null, 9_000), hop('audit', 100, 9_100)];
+    const comparison = compareFlows(a, b);
+
+    expect(comparison.rows.map(r => [r.topic, r.status])).toEqual([
+      ['orders', 'BOTH'], ['billing', 'ONLY_A'], ['shipping', 'ONLY_A'], ['audit', 'ONLY_B'],
+    ]);
+    expect(comparison.sameRoute).toBe(false);
+    const text = describeComparison(comparison);
+    expect(text).toContain('2 only in A');
+    expect(text).toContain('1 only in B');
+  });
+
+  it('keeps each chain hop number so a row can be located in either trace', () => {
+    const b = [hop('audit', null, 9_000), hop('billing', 100, 9_100)];
+    const billing = compareFlows(a, b).rows.find(r => r.topic === 'billing')!;
+    expect(billing.hopA).toBe(2);
+    expect(billing.hopB).toBe(2);
+  });
+
+  /** Deux traces vides ne se ressemblent pas : elles ne disent rien. */
+  it('does not call two empty traces identical', () => {
+    const comparison = compareFlows([], []);
+    expect(comparison.sameRoute).toBe(false);
+    expect(describeComparison(comparison)).toMatch(/anything to compare/i);
+    expect(slowestDivergence(comparison)).toBeNull();
+  });
+
+  it('has no divergence to report when every shared hop took the same time', () => {
+    expect(slowestDivergence(compareFlows(a, a))).toBeNull();
   });
 });
 

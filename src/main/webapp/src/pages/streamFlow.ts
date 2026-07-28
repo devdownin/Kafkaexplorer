@@ -426,8 +426,74 @@ export function pushTraceHistory(entry: TraceHistoryEntry): TraceHistoryEntry[] 
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * Saisie des topics cibles
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Découpe une saisie ou un collage en noms de topics.
+ *
+ * Les topics se choisissaient un par un, alors qu'un pipeline se connaît par listes — celle d'un
+ * runbook, d'un ticket, d'une commande `kafka-topics --list`. Virgules, points-virgules, espaces
+ * et sauts de ligne séparent donc tous, et les doublons tombent.
+ */
+export function parseTopicList(text: string): string[] {
+  const seen = new Set<string>();
+  return text
+    .split(/[\s,;]+/)
+    .map(entry => entry.trim())
+    .filter(entry => entry.length > 0 && !seen.has(entry) && seen.add(entry));
+}
+
+/** `orders.*` → toutes les correspondances du catalogue. `*` seul est le seul caractère spécial. */
+function patternToRegExp(pattern: string): RegExp {
+  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+  return new RegExp(`^${escaped}$`);
+}
+
+/**
+ * Étend les motifs (`orders.*`) sur le catalogue déjà chargé, et **rend compte** de ceux qui ne
+ * correspondent à rien : envoyer `orders.*` tel quel au serveur ne ferait qu'un scan d'un topic
+ * qui n'existe pas, avec un avertissement à l'autre bout du voyage. Un nom sans `*` passe tel
+ * quel — un topic peut exister avant que le catalogue (30 s de cache) ne le montre.
+ */
+export function expandTopicPatterns(
+  entries: string[], known: string[],
+): { topics: string[]; unmatched: string[] } {
+  const topics: string[] = [];
+  const unmatched: string[] = [];
+  for (const entry of entries) {
+    if (!entry.includes('*')) {
+      topics.push(entry);
+      continue;
+    }
+    const matcher = patternToRegExp(entry);
+    const matches = known.filter(topic => matcher.test(topic));
+    if (matches.length === 0) {
+      unmatched.push(entry);
+    } else {
+      topics.push(...matches);
+    }
+  }
+  const seen = new Set<string>();
+  return { topics: topics.filter(t => !seen.has(t) && seen.add(t)), unmatched };
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
  * Rebond vers le Topic Explorer
  * ────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Lien inverse : depuis un message du Topic Explorer, tracer sa clé à travers le cluster.
+ *
+ * La clé du record est connue exactement, donc la trace part en mode « clé exacte » — comparaison
+ * entière et scan de la seule partition concernée, plutôt qu'une recherche de sous-chaîne qui
+ * trouverait aussi les messages qui ne font que la mentionner.
+ */
+export function buildTraceLinkForKey(recordKey: string): string {
+  return `/stream-flow${buildTraceQuery({
+    ...DEFAULT_TRACE_PARAMS, messageKey: recordKey, exactKey: true,
+  })}`;
+}
 
 /**
  * Query string ouvrant le Topic Explorer sur *la même* recherche.
@@ -882,6 +948,129 @@ export function suggestWidenings(params: TraceParams): TraceSuggestion[] {
     });
   }
   return suggestions.slice(0, 4);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Comparaison de deux traces
+ * ────────────────────────────────────────────────────────────────────────── */
+
+export type ComparisonStatus = 'BOTH' | 'ONLY_A' | 'ONLY_B';
+
+export interface FlowComparisonRow {
+  topic: string;
+  status: ComparisonStatus;
+  /** Rang du saut dans chaque chaîne (1-based), null quand le topic manque de ce côté. */
+  hopA: number | null;
+  hopB: number | null;
+  /** Latence depuis le saut précédent, dans chaque chaîne. */
+  latencyA: number | null;
+  latencyB: number | null;
+  /** `latencyB - latencyA`, seulement quand les deux existent. */
+  deltaMs: number | null;
+}
+
+export interface FlowComparison {
+  rows: FlowComparisonRow[];
+  shared: number;
+  onlyA: number;
+  onlyB: number;
+  /** Les deux clés ont-elles emprunté exactement les mêmes topics, dans le même ordre ? */
+  sameRoute: boolean;
+  /** Durée bout en bout de chaque chaîne, quand elle en a une. */
+  totalA: number | null;
+  totalB: number | null;
+}
+
+/**
+ * Compare deux traces : par où l'une est passée et pas l'autre, et où le temps est parti.
+ *
+ * « ORD-42 est arrivé, ORD-43 s'est perdu — où ? » est la question d'incident, et la seule façon
+ * d'y répondre était jusqu'ici de garder deux onglets ouverts et de lire deux tableaux en
+ * vis-à-vis. Ce sont les **latences de saut** qui sont comparées, jamais les horodatages absolus :
+ * deux clés traitées à une heure d'écart n'ont rien à se dire dans l'absolu, alors que « ce saut a
+ * pris 200 ms là et 4 minutes ici » est exactement le constat recherché.
+ *
+ * L'ordre des lignes suit la chaîne A, puis les topics que seule B a vus — pour lire la référence
+ * d'abord et les écarts ensuite.
+ */
+export function compareFlows(a: FlowHit[], b: FlowHit[]): FlowComparison {
+  const indexA = new Map(a.map((hit, i) => [hit.topic, { hit, hop: i + 1 }]));
+  const indexB = new Map(b.map((hit, i) => [hit.topic, { hit, hop: i + 1 }]));
+
+  const rows: FlowComparisonRow[] = a.map((hit, i) => {
+    const other = indexB.get(hit.topic);
+    const latencyA = hit.latencyFromPreviousMs ?? null;
+    const latencyB = other ? other.hit.latencyFromPreviousMs ?? null : null;
+    return {
+      topic: hit.topic,
+      status: other ? 'BOTH' : 'ONLY_A',
+      hopA: i + 1,
+      hopB: other ? other.hop : null,
+      latencyA,
+      latencyB,
+      deltaMs: latencyA !== null && latencyB !== null ? latencyB - latencyA : null,
+    };
+  });
+
+  for (const [i, hit] of b.entries()) {
+    if (indexA.has(hit.topic)) continue;
+    rows.push({
+      topic: hit.topic,
+      status: 'ONLY_B',
+      hopA: null,
+      hopB: i + 1,
+      latencyA: null,
+      latencyB: hit.latencyFromPreviousMs ?? null,
+      deltaMs: null,
+    });
+  }
+
+  const endToEnd = (hits: FlowHit[]) => (hits.length >= 2
+    ? hits[hits.length - 1].firstTimestamp - hits[0].firstTimestamp
+    : null);
+
+  return {
+    rows,
+    shared: rows.filter(r => r.status === 'BOTH').length,
+    onlyA: rows.filter(r => r.status === 'ONLY_A').length,
+    onlyB: rows.filter(r => r.status === 'ONLY_B').length,
+    // Même route = mêmes topics dans le même ordre. Deux chaînes vides ne se ressemblent pas :
+    // elles ne disent rien, et l'annoncer « identiques » serait une conclusion sans données.
+    sameRoute: a.length > 0 && a.length === b.length
+      && a.every((hit, i) => hit.topic === b[i].topic),
+    totalA: endToEnd(a),
+    totalB: endToEnd(b),
+  };
+}
+
+/** Le constat en une phrase, au-dessus du tableau de comparaison. */
+export function describeComparison(comparison: FlowComparison): string {
+  const { rows, shared, onlyA, onlyB, sameRoute, totalA, totalB } = comparison;
+  if (rows.length === 0) return 'Neither trace found anything to compare.';
+
+  const parts: string[] = [];
+  parts.push(sameRoute
+    ? `Same route through ${shared} topic${shared > 1 ? 's' : ''}`
+    : `${shared} shared topic${shared === 1 ? '' : 's'}`);
+  if (!sameRoute && onlyA > 0) parts.push(`${onlyA} only in A`);
+  if (!sameRoute && onlyB > 0) parts.push(`${onlyB} only in B`);
+  if (totalA !== null && totalB !== null) {
+    const delta = totalB - totalA;
+    parts.push(`end to end ${formatLatency(totalA).replace(/^\+/, '')} vs `
+      + `${formatLatency(totalB).replace(/^\+/, '')} (${formatLatency(delta)})`);
+  }
+  return parts.join(' · ');
+}
+
+/**
+ * Le saut partagé dont la latence s'écarte le plus entre les deux traces — là où le temps est
+ * parti quand la route est la même. Rendu `null` en dessous d'un écart mesurable.
+ */
+export function slowestDivergence(comparison: FlowComparison): FlowComparisonRow | null {
+  const measured = comparison.rows.filter(r => r.deltaMs !== null && r.deltaMs !== 0);
+  if (measured.length === 0) return null;
+  return measured.reduce((worst, row) =>
+    (Math.abs(row.deltaMs ?? 0) > Math.abs(worst.deltaMs ?? 0) ? row : worst));
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
