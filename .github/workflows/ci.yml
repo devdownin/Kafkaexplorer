@@ -1,8 +1,14 @@
 name: CI & Deployment
 
+# `push` is deliberately limited to main. Listing feature branches here as well
+# built every pushed commit twice once its pull request existed: the push and the
+# pull_request event both fired, and the concurrency guard below cannot collapse
+# them because `github.ref` differs between the two (refs/heads/<branch> against
+# refs/pull/<n>/merge), putting them in separate groups. Branch work is covered by
+# its pull request; use workflow_dispatch to build a branch before opening one.
 on:
   push:
-    branches: [ "main", "claude/**" ]
+    branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
   workflow_dispatch:
@@ -10,10 +16,10 @@ on:
 permissions:
   contents: read
 
-# Scoped per ref so feature-branch builds run in parallel instead of queueing
-# behind each other; a superseded push to the same branch is cancelled. The
-# Pages deployment keeps its own dedicated group on the deploy job, since
-# GitHub allows only one concurrent Pages deployment.
+# Scoped per ref so pull requests build in parallel instead of queueing behind
+# each other; a superseded push to the same one is cancelled. The Pages
+# deployment keeps its own dedicated group on the deploy job, since GitHub allows
+# only one concurrent Pages deployment.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true

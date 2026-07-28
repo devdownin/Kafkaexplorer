@@ -17,17 +17,30 @@ mvn clean package
 # Run the app
 ./mvnw spring-boot:run
 
-# Run all tests
+# The complete gate: Java tests + frontend ESLint + frontend Vitest. This is what CI runs.
+mvn verify
+
+# Run the Java tests only — stays a fast backend loop, no npm involved
 mvn test
 
 # Run a single test class
 mvn test -Dtest=AuditServiceTest
 
-# Build without tests
+# Build without tests (never reaches the verify phase, so the frontend checks are skipped too)
 mvn clean package -DskipTests
 ```
 
+**`mvn verify` is the only command that runs everything.** `npm run lint` and `npm test` are bound to the
+`verify` phase of the `build-frontend` profile — deliberately not to `test`, which keeps
+`mvn test -Dtest=SomeClass` a Java-only loop and leaves `mvn package -DskipTests` (what
+`release.yml` uses) untouched, since `package` runs before `verify`. The Vitest execution also reads
+`${skipTests}`, so `mvn verify -DskipTests` skips both suites. Before this wiring, `mvn verify` ran
+`npm run build` (tsc + vite) and nothing else: ESLint and the 169 Vitest cases never ran in CI, and a
+broken pure module (`queryError`, `sqlScope`, `windowSql`, `resultExport`) went green.
+
 A Maven wrapper is checked in (`./mvnw`, Maven 3.9.9, `distributionType=only-script` so there is no wrapper JAR in the tree). Both CI workflows build through it.
+
+`ci.yml` triggers on `push` to **main only**, plus `pull_request`. Listing feature branches under `push` as well built every commit twice once its PR existed — the `push` and `pull_request` events both fired, and the `concurrency` guard cannot collapse them because `github.ref` differs (`refs/heads/<branch>` vs `refs/pull/<n>/merge`), putting them in separate groups. Branch work is covered by its PR; `workflow_dispatch` builds a branch before one is opened.
 
 #### When `packages.confluent.io` is blocked
 
