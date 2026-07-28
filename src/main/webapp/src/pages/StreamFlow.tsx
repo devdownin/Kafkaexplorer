@@ -10,12 +10,12 @@ import { describeApiError, type QueryErrorInfo } from './queryError';
 import { toCsv } from './resultExport';
 import {
   analyzeChain, buildLayout, buildTraceQuery, clampScale, describeChainInsight, describeCoverage,
-  describeSearchScope, fitTransform, formatAbsoluteTime, formatDwell, formatLatency,
+  describeProgress, describeSearchScope, fitTransform, formatAbsoluteTime, formatDwell, formatLatency,
   formatRelativeTime, hitsToRows, HIT_EXPORT_COLUMNS,
-  parseFlowResponse, parseTraceParams, pushTraceHistory, readTraceHistory, traceToJson,
-  validateSearchPath, zoomAt,
+  parseFlowResponse, parseSseBuffer, parseTraceParams, progressRatio, pushTraceHistory,
+  readTraceHistory, traceToJson, validateSearchPath, zoomAt,
   type FlowHit, type FormErrors, type ParsedFlow, type TraceHistoryEntry,
-  type TraceParams, type Transform,
+  type TraceParams, type TraceProgress, type Transform,
 } from './streamFlow';
 
 /** Filet de sécurité côté client : le backend borne déjà la trace (explorer.stream-flow-timeout-ms). */
@@ -70,6 +70,7 @@ const StreamFlow: React.FC = () => {
   const [detailsOpen, setDetailsOpen]       = useState(true);
   const [history, setHistory]               = useState<TraceHistoryEntry[]>(() => readTraceHistory());
   const [historyOpen, setHistoryOpen]       = useState(false);
+  const [progress, setProgress]             = useState<TraceProgress | null>(null);
 
   const messageKeyRef = useRef<HTMLInputElement>(null);
   const searchPathRef = useRef<HTMLInputElement>(null);
@@ -179,30 +180,92 @@ const StreamFlow: React.FC = () => {
     setLoading(true);
     setError(null);
     setNotice(null);
+    setProgress(null);
     setSelectedTopic(null);
-    try {
-      const res = await axios.post('/api/stream-flow', {
-        messageKey: params.messageKey,
-        maxMessagesPerTopic: params.maxMessages,
-        searchPath: params.searchPath || null,
-        timeLimitMinutes: params.windowMode === 'window' ? params.timeLimitMinutes : null,
-        useRegex: params.useRegex,
-        caseSensitive: params.caseSensitive,
-        searchHeaders: params.searchHeaders,
-        targetTopics: params.topics,
-      }, { signal: controller.signal, timeout: REQUEST_TIMEOUT_MS });
+    setFlow(EMPTY_FLOW);
+    setHasResult(false);
 
-      const parsed = parseFlowResponse(res.data);
+    const body = {
+      messageKey: params.messageKey,
+      maxMessagesPerTopic: params.maxMessages,
+      searchPath: params.searchPath || null,
+      timeLimitMinutes: params.windowMode === 'window' ? params.timeLimitMinutes : null,
+      useRegex: params.useRegex,
+      caseSensitive: params.caseSensitive,
+      searchHeaders: params.searchHeaders,
+      targetTopics: params.topics,
+    };
+
+    // Ce que la trace a trouvé au moment où on la quitte : gardé en ref pour que l'annulation
+    // conserve le graphe partiel, alors que l'état React n'est pas lisible depuis ce callback.
+    let lastFlow: ParsedFlow | null = null;
+    let lastProgress: TraceProgress | null = null;
+
+    const finish = (parsed: ParsedFlow, params2: TraceParams) => {
       setFlow(parsed);
       setDetailsOpen(true);
       setHasResult(true);
       // L'URL suit la trace affichée : elle est copiable à tout moment, pas seulement
       // depuis le bouton de partage.
-      navigate({ search: buildTraceQuery(params) }, { replace: true });
-      setHistory(pushTraceHistory({ ...params, ranAt: Date.now(), topicsFound: parsed.nodes.length }));
+      navigate({ search: buildTraceQuery(params2) }, { replace: true });
+      setHistory(pushTraceHistory({ ...params2, ranAt: Date.now(), topicsFound: parsed.nodes.length }));
+    };
+
+    try {
+      const res = await fetch('/api/stream-flow/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const detail = await res.json().catch(() => null);
+        throw { response: { status: res.status, data: detail } };
+      }
+      if (!res.body) {
+        // Pas de flux lisible (navigateur ancien, environnement de test) : l'appel non streamé
+        // reste la même trace, sans les résultats intermédiaires.
+        const fallback = await axios.post('/api/stream-flow', body,
+          { signal: controller.signal, timeout: REQUEST_TIMEOUT_MS });
+        finish(parseFlowResponse(fallback.data), params);
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const { events, rest } = parseSseBuffer(buffer);
+        buffer = rest;
+        for (const event of events) {
+          if (event.event === 'progress') {
+            lastProgress = JSON.parse(event.data) as TraceProgress;
+            setProgress(lastProgress);
+          } else if (event.event === 'flow') {
+            lastFlow = parseFlowResponse(JSON.parse(event.data));
+            setFlow(lastFlow);
+            setHasResult(true);
+          } else if (event.event === 'result') {
+            finish(parseFlowResponse(JSON.parse(event.data)), params);
+            lastFlow = null;
+          } else if (event.event === 'failed') {
+            const message = (JSON.parse(event.data) as { message?: string }).message;
+            throw { response: { status: 500, data: { message } } };
+          }
+        }
+      }
     } catch (err) {
-      if (axios.isCancel(err) || (err as { code?: string })?.code === 'ERR_CANCELED') {
-        setNotice('Trace cancelled — nothing was changed on the cluster.');
+      if (axios.isCancel(err) || (err as { name?: string })?.name === 'AbortError'
+        || (err as { code?: string })?.code === 'ERR_CANCELED') {
+        // Arrêter tôt est le but de la trace streamée : on garde ce qui a été trouvé.
+        setNotice(lastProgress
+          ? `Stopped after ${lastProgress.topicsCompleted} of ${lastProgress.topicsInScope} topics — showing what was found by then.`
+          : 'Trace cancelled — nothing was changed on the cluster.');
+        if (lastFlow) setHasResult(true);
       } else {
         // Surface the real backend cause when there is one (invalid regex, malformed
         // search path, unreachable broker); otherwise fall back to a generic hint.
@@ -214,6 +277,7 @@ const StreamFlow: React.FC = () => {
       }
     } finally {
       abortRef.current = null;
+      setProgress(null);
       setLoading(false);
     }
   }, [navigate]);
@@ -496,8 +560,8 @@ const StreamFlow: React.FC = () => {
             </div>
           )}
 
-          {/* Partage & export */}
-          {hasResult && (
+          {/* Partage & export — sur un résultat figé : exporter une cible mouvante n'a pas de sens */}
+          {hasResult && !loading && (
             <div className="absolute top-4 right-4 z-10 flex items-center gap-1">
               <Button size="sm" variant="ghost" icon="link" onClick={() => void copyLink()} title="Copy a link that reruns this exact trace">
                 Link
@@ -538,6 +602,32 @@ const StreamFlow: React.FC = () => {
             </div>
           )}
 
+          {/* Progression : la trace se regarde avancer et s'arrête quand on en a assez vu */}
+          {loading && (
+            <div
+              className="absolute top-4 left-1/2 -translate-x-1/2 z-20 w-[28rem] max-w-[calc(100%-2rem)] bg-surface-container/95 border border-outline-variant rounded-lg px-3 py-2 shadow-xl"
+              role="status" aria-live="polite"
+            >
+              <div className="flex items-center gap-2 text-[11px] text-on-surface-variant">
+                <span aria-hidden="true" className="material-symbols-outlined animate-spin text-[14px] text-primary">progress_activity</span>
+                <span className="truncate">{describeProgress(progress) || 'Starting the trace…'}</span>
+                <button
+                  type="button"
+                  onClick={cancelRun}
+                  className="ml-auto shrink-0 text-[11px] font-medium text-on-surface-variant hover:text-error"
+                >
+                  Stop
+                </button>
+              </div>
+              <div className="mt-1.5 h-1 rounded-full bg-primary/15 overflow-hidden">
+                <div
+                  className="h-full bg-primary transition-[width] duration-300"
+                  style={{ width: `${Math.max(progressRatio(progress) * 100, 2)}%` }}
+                />
+              </div>
+            </div>
+          )}
+
           {/* Error */}
           {error && (
             <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 max-w-md bg-error/10 border border-error/20 text-error text-xs px-4 py-2 rounded-lg flex items-start gap-2" role="alert" title={error.raw}>
@@ -567,17 +657,18 @@ const StreamFlow: React.FC = () => {
             </div>
           )}
 
-          {/* Loading */}
-          {loading && (
-            <div className="h-full flex flex-col items-center justify-center gap-3" role="status" aria-live="polite">
-              <span aria-hidden="true" className="material-symbols-outlined animate-spin text-[32px] text-primary">progress_activity</span>
+          {/* Loading — seulement tant qu'il n'y a rien à montrer ; sinon le graphe partiel prend le relais */}
+          {loading && nodes.length === 0 && (
+            <div className="h-full flex flex-col items-center justify-center gap-3">
               <p className="text-[13px] text-on-surface-variant">Tracing message across topics…</p>
-              <p className="text-[11px] text-outline">Scanning up to {maxMessages} messages per topic. Cancel any time.</p>
+              <p className="text-[11px] text-outline">
+                Scanning up to {maxMessages} messages per topic. Hops appear as they are found.
+              </p>
             </div>
           )}
 
-          {/* SVG Graph with pan/zoom */}
-          {hasResult && !loading && nodes.length > 0 && (
+          {/* SVG Graph with pan/zoom — visible dès le premier saut trouvé, trace en cours comprise */}
+          {hasResult && nodes.length > 0 && (
             <svg
               ref={svgRef}
               className="w-full h-full select-none"
@@ -687,7 +778,7 @@ const StreamFlow: React.FC = () => {
         </div>
 
         {/* ── Coverage, warnings & evidence ── */}
-        {hasResult && !loading && (
+        {hasResult && (
           <section className="border-t border-outline-variant/60 bg-surface-container-low shrink-0 max-h-[45%] overflow-y-auto">
             <div className="flex items-center gap-3 px-4 py-2 sticky top-0 bg-surface-container-low z-10 border-b border-outline-variant/40">
               <button

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   analyzeChain, buildLayout, buildTraceQuery, clampScale, describeChainInsight, describeCoverage,
-  describeSearchScope, fitTransform, formatDwell,
+  describeProgress, describeSearchScope, fitTransform, formatDwell, parseSseBuffer, progressRatio,
   formatLatency, formatRelativeTime, hitsToRows, HISTORY_KEY, HIT_EXPORT_COLUMNS, parseFlowResponse,
   parseTraceParams, pushTraceHistory, readTraceHistory, searchScopeOf, traceToJson,
   validateSearchPath, zoomAt,
@@ -56,6 +56,73 @@ describe('searchScopeOf', () => {
     expect(describeSearchScope('', true)).toMatch(/header/i);
     expect(describeSearchScope('', false)).not.toMatch(/header/i);
     expect(describeSearchScope('header:x', true)).toContain('"x"');
+  });
+});
+
+describe('parseSseBuffer', () => {
+  it('reads complete events and keeps the unfinished tail', () => {
+    const { events, rest } = parseSseBuffer(
+      'event: progress\ndata: {"topicsCompleted":1}\n\nevent: flow\ndata: {"nodes":[]}\n\nevent: res');
+
+    expect(events).toEqual([
+      { event: 'progress', data: '{"topicsCompleted":1}' },
+      { event: 'flow', data: '{"nodes":[]}' },
+    ]);
+    expect(rest).toBe('event: res');
+  });
+
+  /** Un événement coupé en deux lectures doit se recoller, pas se perdre. */
+  it('reassembles an event split across two chunks', () => {
+    const first = parseSseBuffer('event: progress\ndata: {"topics');
+    expect(first.events).toEqual([]);
+
+    const second = parseSseBuffer(`${first.rest}Completed":2}\n\n`);
+    expect(second.events).toEqual([{ event: 'progress', data: '{"topicsCompleted":2}' }]);
+    expect(second.rest).toBe('');
+  });
+
+  it('joins a multi-line data field and ignores comments', () => {
+    const { events } = parseSseBuffer(': keep-alive\n\nevent: flow\ndata: line one\ndata: line two\n\n');
+
+    expect(events).toEqual([{ event: 'flow', data: 'line one\nline two' }]);
+  });
+
+  it('handles CRLF line endings and a missing event name', () => {
+    const { events } = parseSseBuffer('data: bare\r\n\r\n');
+
+    expect(events).toEqual([{ event: 'message', data: 'bare' }]);
+  });
+
+  it('returns nothing for an empty buffer', () => {
+    expect(parseSseBuffer('')).toEqual({ events: [], rest: '' });
+  });
+});
+
+describe('progress', () => {
+  const progress = {
+    topicsCompleted: 42, topicsInScope: 250, messagesScanned: 12_800,
+    matches: 3, elapsedMs: 4_000, lastTopic: 'orders',
+  };
+
+  it('states what has been covered so far', () => {
+    const text = describeProgress(progress);
+    expect(text).toContain('42/250 topics');
+    expect(text).toContain('12,800 messages');
+    expect(text).toContain('3 matches');
+    expect(text).toContain('orders');
+    expect(describeProgress(null)).toBe('');
+  });
+
+  it('gives a ratio the bar can trust', () => {
+    expect(progressRatio(progress)).toBeCloseTo(42 / 250);
+    expect(progressRatio(null)).toBe(0);
+    expect(progressRatio({ ...progress, topicsInScope: 0 })).toBe(0);
+    // Un serveur qui compte au-delà de la portée ne fait pas déborder la barre.
+    expect(progressRatio({ ...progress, topicsCompleted: 300 })).toBe(1);
+  });
+
+  it('says "1 match" without an s', () => {
+    expect(describeProgress({ ...progress, matches: 1 })).toContain('1 match ');
   });
 });
 

@@ -192,6 +192,77 @@ export function parseFlowResponse(data: unknown): ParsedFlow {
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * Flux d'événements (SSE)
+ * ────────────────────────────────────────────────────────────────────────── */
+
+export interface TraceProgress {
+  topicsCompleted: number;
+  topicsInScope: number;
+  messagesScanned: number;
+  matches: number;
+  elapsedMs: number;
+  lastTopic: string | null;
+}
+
+export interface SseEvent {
+  event: string;
+  data: string;
+}
+
+/**
+ * Découpe un tampon SSE en événements complets et rend le reliquat.
+ *
+ * `EventSource` ferait ce travail, mais il ne parle que GET et se reconnecte tout seul : sur une
+ * coupure réseau au milieu d'un scan, il relancerait silencieusement une trace de tout le cluster.
+ * On lit donc la réponse d'un POST à la main — même corps de requête que l'appel non streamé, et
+ * l'`AbortController` du bouton « Cancel » reste la seule façon d'arrêter.
+ *
+ * Un événement se termine par une ligne vide ; un `data:` peut tenir sur plusieurs lignes, elles se
+ * recollent avec des sauts de ligne (spec SSE). Un bloc sans `data:` est ignoré — c'est ainsi que
+ * s'écrit un commentaire de maintien de connexion.
+ */
+export function parseSseBuffer(buffer: string): { events: SseEvent[]; rest: string } {
+  const events: SseEvent[] = [];
+  const normalized = buffer.replace(/\r\n/g, '\n');
+  const blocks = normalized.split('\n\n');
+  // Le dernier bloc n'est complet que si le tampon se terminait par un séparateur.
+  const rest = blocks.pop() ?? '';
+
+  for (const block of blocks) {
+    let event = 'message';
+    const data: string[] = [];
+    for (const line of block.split('\n')) {
+      if (line.startsWith(':') || !line.trim()) continue;
+      const separator = line.indexOf(':');
+      const field = separator < 0 ? line : line.slice(0, separator);
+      const value = separator < 0 ? '' : line.slice(separator + 1).replace(/^ /, '');
+      if (field === 'event') event = value;
+      else if (field === 'data') data.push(value);
+    }
+    if (data.length > 0) events.push({ event, data: data.join('\n') });
+  }
+  return { events, rest };
+}
+
+/** Progression telle qu'elle s'affiche : « 42/250 topics · 12 800 messages · 3 matches ». */
+export function describeProgress(progress: TraceProgress | null): string {
+  if (!progress) return '';
+  const parts = [
+    `${progress.topicsCompleted}/${progress.topicsInScope} topics`,
+    `${progress.messagesScanned.toLocaleString()} messages`,
+    `${progress.matches} match${progress.matches === 1 ? '' : 'es'}`,
+  ];
+  if (progress.lastTopic) parts.push(progress.lastTopic);
+  return parts.join(' · ');
+}
+
+/** Part scannée, bornée à [0,1] — une barre de progression n'a pas à se fier au serveur. */
+export function progressRatio(progress: TraceProgress | null): number {
+  if (!progress || progress.topicsInScope <= 0) return 0;
+  return Math.min(1, Math.max(0, progress.topicsCompleted / progress.topicsInScope));
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
  * Paramètres de trace : URL partageable et historique local
  * ────────────────────────────────────────────────────────────────────────── */
 

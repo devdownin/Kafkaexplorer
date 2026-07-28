@@ -4,6 +4,7 @@ package com.yourcompany.kafkasqlexplorer.service;
 
 import com.yourcompany.kafkasqlexplorer.config.ExplorerConfig;
 import com.yourcompany.kafkasqlexplorer.domain.StreamFlowHit;
+import com.yourcompany.kafkasqlexplorer.domain.StreamFlowProgress;
 import com.yourcompany.kafkasqlexplorer.domain.StreamFlowRequest;
 import com.yourcompany.kafkasqlexplorer.domain.StreamFlowResponse;
 import com.yourcompany.kafkasqlexplorer.domain.StreamFlowStats;
@@ -29,6 +30,7 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BooleanSupplier;
 
 /**
  * Traces one message key across Kafka topics and derives the pipeline it travelled through.
@@ -111,11 +113,51 @@ public class StreamFlowService {
     }
 
     /**
+     * Watches a trace as it runs. Every topic reports its completion, and a topic that yields hits
+     * republishes the graph rebuilt from everything found so far — the chain rule lives in one
+     * place, server-side, so a partial graph is assembled exactly like the final one.
+     */
+    public interface TraceListener {
+        void onProgress(StreamFlowProgress progress);
+
+        void onPartialFlow(StreamFlowResponse flow);
+
+        /** For the plain request/response entry point, which has nobody to tell. */
+        TraceListener NOOP = new TraceListener() {
+            @Override public void onProgress(StreamFlowProgress progress) { }
+
+            @Override public void onPartialFlow(StreamFlowResponse flow) { }
+        };
+    }
+
+    /**
      * @throws IllegalArgumentException when the criterion itself is unusable (no key, invalid regex,
      *         malformed path) — the caller can fix those, so they are reported rather than silently
      *         returning an empty flow
      */
     public StreamFlowResponse getStreamFlow(StreamFlowRequest request) {
+        return trace(request, TraceListener.NOOP, () -> false);
+    }
+
+    /**
+     * Compiles the criterion without reading anything, so a streaming caller can answer 400 before
+     * it opens an event stream it would immediately have to close.
+     *
+     * @throws IllegalArgumentException on an unusable criterion
+     */
+    public void validateCriterion(StreamFlowRequest request) {
+        MessageMatcher.from(buildCriteria(request, resolveRecordLimit(request.maxMessagesPerTopic()),
+            request.timeLimitMinutes(), explorerConfig.getSearchTimeoutMs()));
+    }
+
+    /**
+     * Runs a trace, reporting progress and partial graphs as topics complete.
+     *
+     * @param cancelled polled between topics; a client that hangs up stops the scan instead of
+     *                  leaving ten workers reading a cluster nobody is watching any more
+     */
+    public StreamFlowResponse trace(StreamFlowRequest request, TraceListener listener,
+                                    BooleanSupplier cancelled) {
         long startNanos = System.nanoTime();
         List<String> warnings = new ArrayList<>();
 
@@ -124,7 +166,7 @@ public class StreamFlowService {
             ? request.timeLimitMinutes()
             : null;
 
-        // Validated on the request thread so a broken regex or path answers 400 before a single
+        // Validated on the calling thread so a broken regex or path is reported before a single
         // consumer is opened. Each topic scan builds its own matcher from the same criteria —
         // MessageMatcher is not thread-safe, and ten workers share nothing.
         TopicSearchRequest criteria = buildCriteria(request, recordLimit, timeLimit,
@@ -136,11 +178,62 @@ public class StreamFlowService {
             return emptyResponse(warnings, 0, recordLimit, timeLimit, startNanos);
         }
 
+        ProgressTracker tracker = new ProgressTracker(topicsToScan.size(), listener, startNanos,
+            recordLimit, timeLimit);
+        tracker.announceStart();
+
         long deadlineNanos = startNanos + TimeUnit.MILLISECONDS.toNanos(explorerConfig.getStreamFlowTimeoutMs());
-        List<TopicScan> scans = scanTopics(topicsToScan, request, recordLimit, timeLimit, deadlineNanos);
+        List<TopicScan> scans = scanTopics(topicsToScan, request, recordLimit, timeLimit,
+            deadlineNanos, cancelled, tracker);
 
         return buildResponse(topicsToScan.size(), scans, recordLimit, timeLimit,
-            startNanos, deadlineNanos, warnings);
+            startNanos, deadlineNanos, warnings, cancelled.getAsBoolean(), false);
+    }
+
+    /**
+     * Accumulates finished scans and emits from the worker that finished, so progress follows
+     * completion order rather than submission order — one slow topic at the head of the list must
+     * not hold back the nine that already answered.
+     */
+    private final class ProgressTracker {
+        private final int topicsInScope;
+        private final TraceListener listener;
+        private final long startNanos;
+        private final int recordLimit;
+        private final Integer timeLimit;
+        private final List<TopicScan> completed = new ArrayList<>();
+
+        ProgressTracker(int topicsInScope, TraceListener listener, long startNanos, int recordLimit,
+                        Integer timeLimit) {
+            this.topicsInScope = topicsInScope;
+            this.listener = listener;
+            this.startNanos = startNanos;
+            this.recordLimit = recordLimit;
+            this.timeLimit = timeLimit;
+        }
+
+        void announceStart() {
+            listener.onProgress(new StreamFlowProgress(0, topicsInScope, 0, 0,
+                elapsedMs(startNanos), null));
+        }
+
+        /** Everything that actually completed, whatever the trace's own fate. */
+        synchronized List<TopicScan> snapshot() {
+            return List.copyOf(completed);
+        }
+
+        /** Synchronized: emissions must be serialized, and the rebuild reads the whole list. */
+        synchronized void record(TopicScan scan) {
+            completed.add(scan);
+            listener.onProgress(new StreamFlowProgress(completed.size(), topicsInScope,
+                completed.stream().mapToInt(TopicScan::scanned).sum(),
+                completed.stream().mapToInt(TopicScan::matched).sum(),
+                elapsedMs(startNanos), scan.topic()));
+            if (!scan.hits().isEmpty()) {
+                listener.onPartialFlow(buildResponse(topicsInScope, List.copyOf(completed),
+                    recordLimit, timeLimit, startNanos, Long.MAX_VALUE, new ArrayList<>(), false, true));
+            }
+        }
     }
 
     /**
@@ -279,22 +372,27 @@ public class StreamFlowService {
      * skipped.
      */
     private List<TopicScan> scanTopics(List<String> topics, StreamFlowRequest request, int recordLimit,
-                                       Integer timeLimit, long deadlineNanos) {
+                                       Integer timeLimit, long deadlineNanos, BooleanSupplier cancelled,
+                                       ProgressTracker tracker) {
         List<CompletableFuture<TopicScan>> futures = topics.stream()
             .map(topic -> CompletableFuture.supplyAsync(
-                () -> scanTopic(topic, request, recordLimit, timeLimit, deadlineNanos), executorService))
+                () -> scanTopic(topic, request, recordLimit, timeLimit, deadlineNanos, cancelled, tracker),
+                executorService))
             .toList();
 
-        List<TopicScan> scans = new ArrayList<>(futures.size());
         boolean budgetSpent = false;
         for (CompletableFuture<TopicScan> future : futures) {
-            if (budgetSpent) {
+            if (budgetSpent || cancelled.getAsBoolean()) {
+                // Cancelling a task that has not started prevents it from ever running; one that is
+                // already running finishes and still reports itself to the tracker, which is why the
+                // tracker — not this loop — is what the result is built from. Collecting here
+                // instead threw away topics that had already answered when the client hung up.
                 future.cancel(false);
                 continue;
             }
             long remaining = deadlineNanos - System.nanoTime();
             try {
-                scans.add(future.get(Math.max(remaining, 0), TimeUnit.NANOSECONDS));
+                future.get(Math.max(remaining, 0), TimeUnit.NANOSECONDS);
             } catch (TimeoutException e) {
                 budgetSpent = true;
                 future.cancel(false);
@@ -306,19 +404,29 @@ public class StreamFlowService {
                 log.warn("Stream-flow topic scan failed", e);
             }
         }
-        return scans;
+        return tracker.snapshot();
     }
 
     private TopicScan scanTopic(String topic, StreamFlowRequest request, int recordLimit,
-                                Integer timeLimit, long deadlineNanos) {
+                                Integer timeLimit, long deadlineNanos, BooleanSupplier cancelled,
+                                ProgressTracker tracker) {
         long remainingMs = TimeUnit.NANOSECONDS.toMillis(deadlineNanos - System.nanoTime());
-        if (remainingMs <= 0) {
+        // Checked inside the task, not before submission: every topic is queued up front, so a
+        // cancellation cannot un-queue them — the check has to be where the work happens.
+        if (remainingMs <= 0 || cancelled.getAsBoolean()) {
             return TopicScan.skipped(topic);
         }
         // No topic may outlive the trace's own budget, so its scan is bounded by whichever of the
         // per-search timeout and the remaining trace budget comes first.
         int timeoutMs = (int) Math.min(explorerConfig.getSearchTimeoutMs(), remainingMs);
 
+        TopicScan scan = readTopic(topic, request, recordLimit, timeLimit, timeoutMs);
+        tracker.record(scan);
+        return scan;
+    }
+
+    private TopicScan readTopic(String topic, StreamFlowRequest request, int recordLimit,
+                                Integer timeLimit, int timeoutMs) {
         TopicSearchResponse response;
         try {
             response = topicSearchService.search(topic, buildCriteria(request, recordLimit, timeLimit, timeoutMs));
@@ -356,7 +464,8 @@ public class StreamFlowService {
      */
     private StreamFlowResponse buildResponse(int topicsInScope, List<TopicScan> scans,
                                              int recordLimit, Integer timeLimit, long startNanos,
-                                             long deadlineNanos, List<String> warnings) {
+                                             long deadlineNanos, List<String> warnings,
+                                             boolean cancelled, boolean partial) {
         List<TopicScan> matched = scans.stream().filter(s -> !s.hits().isEmpty()).toList();
 
         List<StreamFlowHit> hits = new ArrayList<>(matched.size());
@@ -426,9 +535,22 @@ public class StreamFlowService {
 
         int scanned = (int) scans.stream().filter(s -> !s.skipped() && s.failure() == null).count();
         int failed = (int) scans.stream().filter(s -> s.failure() != null).count();
-        int skipped = Math.max(topicsInScope - scanned - failed, 0);
+        // While the trace runs, the topics not yet read are pending, not skipped: the progress
+        // event carries how many are left, and calling them skipped would read as a broken scan.
+        int skipped = partial ? 0 : Math.max(topicsInScope - scanned - failed, 0);
         boolean truncated = scans.stream().anyMatch(TopicScan::truncated);
-        String stopReason = skipped > 0 && System.nanoTime() >= deadlineNanos ? "TIME_BUDGET" : "COMPLETE";
+        String stopReason;
+        if (partial) {
+            stopReason = "RUNNING";
+        } else if (cancelled) {
+            stopReason = "CANCELLED";
+        } else {
+            stopReason = skipped > 0 && System.nanoTime() >= deadlineNanos ? "TIME_BUDGET" : "COMPLETE";
+        }
+        if (cancelled && skipped > 0) {
+            warnings.add("Stopped early: " + skipped + " topic(s) of " + topicsInScope
+                + " were never read. What is shown is what had been found by then.");
+        }
         if ("TIME_BUDGET".equals(stopReason)) {
             warnings.add("The " + (explorerConfig.getStreamFlowTimeoutMs() / 1000)
                 + "s trace budget was spent before " + skipped + " topic(s) could be read. "

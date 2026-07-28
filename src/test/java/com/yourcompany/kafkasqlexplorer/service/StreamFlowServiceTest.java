@@ -4,6 +4,7 @@ package com.yourcompany.kafkasqlexplorer.service;
 
 import com.yourcompany.kafkasqlexplorer.config.ExplorerConfig;
 import com.yourcompany.kafkasqlexplorer.domain.StreamFlowHit;
+import com.yourcompany.kafkasqlexplorer.domain.StreamFlowProgress;
 import com.yourcompany.kafkasqlexplorer.domain.StreamFlowRequest;
 import com.yourcompany.kafkasqlexplorer.domain.StreamFlowResponse;
 import com.yourcompany.kafkasqlexplorer.domain.TopicMessage;
@@ -16,6 +17,8 @@ import org.mockito.Mockito;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -367,6 +370,128 @@ class StreamFlowServiceTest {
 
         assertTrue(response.warnings().stream().anyMatch(w -> w.contains("odrers")),
             "expected the unknown topic to be named, got " + response.warnings());
+    }
+
+    // ── Streaming ───────────────────────────────────────────────────────────
+
+    /** Collects what a streamed trace emits, in order. */
+    private static class RecordingListener implements StreamFlowService.TraceListener {
+        final List<StreamFlowProgress> progress = new CopyOnWriteArrayList<>();
+        final List<StreamFlowResponse> partials = new CopyOnWriteArrayList<>();
+
+        @Override public void onProgress(StreamFlowProgress p) { progress.add(p); }
+
+        @Override public void onPartialFlow(StreamFlowResponse flow) { partials.add(flow); }
+    }
+
+    @Test
+    void aStreamedTraceReportsEveryTopicAsItCompletes() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("a", "b", "c"));
+        onSearch("a", found(List.of(message(0, 1L, 100L, "K-1", "x")), 4));
+        onSearch("b", nothing());
+        onSearch("c", found(List.of(message(0, 1L, 200L, "K-1", "y")), 6));
+
+        RecordingListener listener = new RecordingListener();
+        StreamFlowResponse result = service.trace(request("K-1", null, false, null, null),
+            listener, () -> false);
+
+        // One opening event plus one per topic.
+        assertEquals(4, listener.progress.size());
+        StreamFlowProgress opening = listener.progress.get(0);
+        assertEquals(0, opening.topicsCompleted());
+        assertEquals(3, opening.topicsInScope());
+        assertNull(opening.lastTopic());
+
+        StreamFlowProgress last = listener.progress.get(listener.progress.size() - 1);
+        assertEquals(3, last.topicsCompleted());
+        assertEquals(15, last.messagesScanned(), "the counters accumulate across topics");
+        assertEquals(2, last.matches());
+        assertNotNull(last.lastTopic());
+
+        assertEquals(2, result.nodes().size());
+    }
+
+    /** Only a topic that adds to the graph republishes it — an empty topic is progress, not a flow. */
+    @Test
+    void aPartialFlowIsPublishedOnlyByATopicThatMatched() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("a", "b", "c"));
+        onSearch("a", found(List.of(message(0, 1L, 100L, "K-1", "x")), 1));
+        onSearch("b", nothing());
+        onSearch("c", found(List.of(message(0, 1L, 200L, "K-1", "y")), 1));
+
+        RecordingListener listener = new RecordingListener();
+        service.trace(request("K-1", null, false, null, null), listener, () -> false);
+
+        assertEquals(2, listener.partials.size());
+        StreamFlowResponse first = listener.partials.get(0);
+        StreamFlowResponse second = listener.partials.get(1);
+        assertEquals(1, first.nodes().size(), "the graph grows as topics answer");
+        assertEquals(2, second.nodes().size());
+        assertEquals(1, second.edges().size());
+    }
+
+    /** A partial has pending topics, not skipped ones — the difference reads as a broken scan. */
+    @Test
+    void aPartialFlowIsMarkedRunningAndCountsNothingAsSkipped() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("a", "b", "c"));
+        onSearch("a", found(List.of(message(0, 1L, 100L, "K-1", "x")), 1));
+        onSearch("b", nothing());
+        onSearch("c", nothing());
+
+        RecordingListener listener = new RecordingListener();
+        service.trace(request("K-1", null, false, null, null), listener, () -> false);
+
+        StreamFlowResponse partial = listener.partials.get(0);
+        assertEquals("RUNNING", partial.stats().stopReason());
+        assertEquals(0, partial.stats().topicsSkipped());
+        assertEquals(3, partial.stats().topicsInScope());
+    }
+
+    /** A client that hangs up stops the scan instead of leaving workers reading for nobody. */
+    @Test
+    void cancellingStopsTheScanAndKeepsWhatWasFound() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("a", "b", "c", "d"));
+        onSearch("a", found(List.of(message(0, 1L, 100L, "K-1", "x")), 1));
+        onSearch("b", nothing());
+        onSearch("c", nothing());
+        onSearch("d", nothing());
+
+        // Raised as soon as the first topic has been recorded.
+        AtomicBoolean cancelled = new AtomicBoolean();
+        RecordingListener listener = new RecordingListener() {
+            @Override public void onProgress(StreamFlowProgress p) {
+                super.onProgress(p);
+                if (p.topicsCompleted() >= 1) cancelled.set(true);
+            }
+        };
+
+        StreamFlowResponse result = service.trace(request("K-1", null, false, null, null),
+            listener, cancelled::get);
+
+        assertEquals("CANCELLED", result.stats().stopReason());
+        assertEquals(1, result.nodes().size(), "what was found before the stop is kept");
+        assertTrue(result.stats().topicsScanned() < 4, "the remaining topics were never read");
+        assertTrue(result.warnings().stream().anyMatch(w -> w.contains("Stopped early")),
+            "expected the partial scan to be stated, got " + result.warnings());
+    }
+
+    /** The plain request/response entry point behaves exactly like a trace nobody is watching. */
+    @Test
+    void theNonStreamingEntryPointStillWorks() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("a"));
+        onSearch("a", found(List.of(message(0, 1L, 100L, "K-1", "x")), 1));
+
+        StreamFlowResponse result = service.getStreamFlow(request("K-1", null, false, null, null));
+
+        assertEquals(1, result.nodes().size());
+        assertEquals("COMPLETE", result.stats().stopReason());
+    }
+
+    @Test
+    void validateCriterionRejectsWithoutReadingAnything() {
+        assertThrows(IllegalArgumentException.class,
+            () -> service.validateCriterion(request("user-[", null, true, null, null)));
+        Mockito.verifyNoInteractions(topicSearchService);
     }
 
     private TopicSearchRequest captureCriteria() {
