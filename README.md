@@ -81,6 +81,52 @@ A single Spring Boot 4.1 JAR embedding Apache Flink 2.3 as the SQL engine, with 
 
 Architecture deep-dive: **[docs/architecture.md](docs/architecture.md)**
 
+## 🏗️ Build and Development
+
+There are several ways to build and work on the project depending on your needs.
+
+### 1. Docker Production Build (Recommended)
+The project uses an optimized multi-stage Docker build that separates frontend and backend compilation for better caching, then packages everything into a lightweight JRE image:
+```bash
+docker build -t kafka-sql-explorer:latest .
+```
+
+### 2. Development Environment (Hot-Reload)
+To develop with live-reloading (Hot Module Replacement for the Vite frontend and class reloading for the Spring Boot backend):
+```bash
+docker-compose -f docker-compose-dev.yml up --build
+```
+- The **frontend** is available at `http://localhost:5173`
+- The **backend** API runs on `http://localhost:8080` (automatically proxied by the frontend)
+
+### 3. Standard Local Build
+If you prefer to compile the entire project locally without Docker, Maven handles everything via a default-activated profile (downloading Node.js, building the React app, and packaging the Spring Boot executable):
+```bash
+./mvnw clean package
+```
+## 🏗️ Build and Development
+
+There are several ways to build and work on the project depending on your needs.
+
+### 1. Docker Production Build (Recommended)
+The project uses an optimized multi-stage Docker build that separates frontend and backend compilation for better caching, then packages everything into a lightweight JRE image:
+```bash
+docker build -t kafka-sql-explorer:latest .
+```
+
+### 2. Development Environment (Hot-Reload)
+To develop with live-reloading (Hot Module Replacement for the Vite frontend and class reloading for the Spring Boot backend):
+```bash
+docker-compose -f docker-compose-dev.yml up --build
+```
+- The **frontend** is available at `http://localhost:5173`
+- The **backend** API runs on `http://localhost:8080` (automatically proxied by the frontend)
+
+### 3. Standard Local Build
+If you prefer to compile the entire project locally without Docker, Maven handles everything via a default-activated profile (downloading Node.js, building the React app, and packaging the Spring Boot executable):
+```bash
+./mvnw clean package
+```
 ## 🤝 Contributing
 
 Contributions are welcome — the codebase is deliberately heavily commented to double as a learning resource for Flink SQL + Spring Boot integration, and `mvn test` / `npm test` cover the core services.

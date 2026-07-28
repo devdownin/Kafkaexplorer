@@ -1,5 +1,5 @@
 # --- Stage 1: Build Frontend ---
-FROM node:20.11.1-alpine AS frontend-builder
+FROM node:24.0.0-alpine AS frontend-builder
 WORKDIR /app
 
 # Copier uniquement les fichiers nécessaires pour installer les dépendances (cache optimization)
@@ -26,7 +26,7 @@ COPY src/main/resources ./src/main/resources
 COPY --from=frontend-builder /app/dist ./src/main/resources/static
 
 # Build du backend
-RUN mvn clean package -DskipTests
+RUN mvn clean package -P !build-frontend -DskipTests
 
 # --- Stage 3: Runtime ---
 FROM eclipse-temurin:21-jre-alpine

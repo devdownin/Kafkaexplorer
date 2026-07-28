@@ -1,3 +1,3 @@
-FROM node:20.11.1-alpine
+FROM node:24.0.0-alpine
 WORKDIR /app
 CMD ["sh", "-c", "npm install && npm run dev -- --host"]
