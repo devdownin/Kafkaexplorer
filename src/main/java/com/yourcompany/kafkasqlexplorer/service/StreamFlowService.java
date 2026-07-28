@@ -61,9 +61,9 @@ public class StreamFlowService {
     /** Hard ceiling on records scanned in one topic, whatever the request asks for. */
     private static final int MAX_RECORDS_PER_TOPIC = 1000;
     /**
-     * Applied when the request asks for nothing usable. {@code maxMessagesPerTopic} is a primitive
-     * {@code int}, so a JSON body that omits it deserializes to 0 — which used to scan zero records
-     * per topic and report an empty flow for a key that was right there.
+     * Applied when the request asks for nothing usable — an omitted or non-positive cap. It used to
+     * be a primitive {@code int} whose zero scanned no record at all and reported an empty flow for
+     * a key that was right there; boxed, an omitted cap is simply this default.
      */
     private static final int DEFAULT_RECORDS_PER_TOPIC = 100;
     private static final int THREAD_POOL_SIZE = 10;
@@ -256,11 +256,29 @@ public class StreamFlowService {
         String path = request.searchPath() == null ? "" : request.searchPath().trim();
         boolean caseSensitive = request.isCaseSensitive();
         boolean searchHeaders = request.isSearchHeaders();
-        String from = timeLimit != null ? "TIMESTAMP" : "LAST_N";
+        // Always LAST_N: a time window now raises its floor instead of replacing it, so the scan
+        // reads the most recent records *within* the window. Seeking to the start of the window and
+        // reading forward spent the budget on its oldest records, and a match from a minute ago was
+        // missed while the scan worked through messages from an hour before.
+        String from = "LAST_N";
+
+        if (request.isExactKey()) {
+            if (!path.isEmpty()) {
+                throw new IllegalArgumentException("An exact record-key search and a search path are "
+                    + "mutually exclusive: the key is not inside the payload. Clear one of them.");
+            }
+            if (request.isUseRegex()) {
+                throw new IllegalArgumentException("An exact record-key search compares the whole key, "
+                    + "so it cannot be a regex. Turn one of the two off.");
+            }
+            return new TopicSearchRequest(null, "KEY", caseSensitive, true, searchHeaders, true, null,
+                "EQ", key, from, null, timeLimit, null, null, null,
+                MAX_HITS_PER_TOPIC, recordLimit, timeoutMs);
+        }
 
         if (path.isEmpty()) {
-            return new TopicSearchRequest(key, request.useRegex() ? "REGEX" : "CONTAINS",
-                caseSensitive, true, searchHeaders, null, null, null,
+            return new TopicSearchRequest(key, request.isUseRegex() ? "REGEX" : "CONTAINS",
+                caseSensitive, true, searchHeaders, null, null, null, null,
                 from, null, timeLimit, null, null, null, MAX_HITS_PER_TOPIC, recordLimit, timeoutMs);
         }
 
@@ -284,8 +302,8 @@ public class StreamFlowService {
         // CONTAINS, not EQ: the historical behaviour compared the extracted value with
         // String.contains, and a correlation id is often embedded in a larger header value
         // (a W3C traceparent carries the trace id inside a dash-separated tuple).
-        String operator = request.useRegex() ? "REGEX" : "CONTAINS";
-        return new TopicSearchRequest(null, mode, caseSensitive, false, searchHeaders, field,
+        String operator = request.isUseRegex() ? "REGEX" : "CONTAINS";
+        return new TopicSearchRequest(null, mode, caseSensitive, false, searchHeaders, null, field,
             operator, key, from, null, timeLimit, null, null, null,
             MAX_HITS_PER_TOPIC, recordLimit, timeoutMs);
     }
@@ -300,8 +318,8 @@ public class StreamFlowService {
     }
 
     /** The record cap actually applied: the request's, floored to a usable value and capped. */
-    private static int resolveRecordLimit(int requested) {
-        int limit = requested > 0 ? requested : DEFAULT_RECORDS_PER_TOPIC;
+    private static int resolveRecordLimit(Integer requested) {
+        int limit = requested != null && requested > 0 ? requested : DEFAULT_RECORDS_PER_TOPIC;
         return Math.min(limit, MAX_RECORDS_PER_TOPIC);
     }
 

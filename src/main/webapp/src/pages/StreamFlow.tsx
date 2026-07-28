@@ -58,6 +58,7 @@ const StreamFlow: React.FC = () => {
   const [windowMode, setWindowMode]         = useState(initial.windowMode);
   const [timeLimitMinutes, setTimeLimitMinutes] = useState(initial.timeLimitMinutes);
   const [useRegex, setUseRegex]             = useState(initial.useRegex);
+  const [exactKey, setExactKey]             = useState(initial.exactKey);
   const [caseSensitive, setCaseSensitive]   = useState(initial.caseSensitive);
   const [searchHeaders, setSearchHeaders]   = useState(initial.searchHeaders);
 
@@ -96,10 +97,11 @@ const StreamFlow: React.FC = () => {
     timeLimitMinutes,
     maxMessages,
     useRegex,
+    exactKey,
     caseSensitive,
     searchHeaders,
   }), [messageKey, searchPath, selectedTopics, windowMode, timeLimitMinutes, maxMessages,
-    useRegex, caseSensitive, searchHeaders]);
+    useRegex, exactKey, caseSensitive, searchHeaders]);
 
   const fitView = useCallback(() => {
     const el = svgRef.current;
@@ -191,6 +193,7 @@ const StreamFlow: React.FC = () => {
       searchPath: params.searchPath || null,
       timeLimitMinutes: params.windowMode === 'window' ? params.timeLimitMinutes : null,
       useRegex: params.useRegex,
+      exactKey: params.exactKey,
       caseSensitive: params.caseSensitive,
       searchHeaders: params.searchHeaders,
       targetTopics: params.topics,
@@ -311,6 +314,7 @@ const StreamFlow: React.FC = () => {
     setTimeLimitMinutes(entry.timeLimitMinutes);
     setMaxMessages(entry.maxMessages);
     setUseRegex(entry.useRegex);
+    setExactKey(entry.exactKey);
     setCaseSensitive(entry.caseSensitive);
     setSearchHeaders(entry.searchHeaders);
     setHistoryOpen(false);
@@ -342,7 +346,7 @@ const StreamFlow: React.FC = () => {
   const hitByTopic = useMemo(() => new Map(hits.map(h => [h.topic, h])), [hits]);
   const insight = useMemo(() => analyzeChain(hits), [hits]);
   const insightNotes = useMemo(() => describeChainInsight(insight), [insight]);
-  const scopeHint = describeSearchScope(searchPath, searchHeaders);
+  const scopeHint = describeSearchScope(searchPath, searchHeaders, exactKey);
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -396,7 +400,11 @@ const StreamFlow: React.FC = () => {
 
         <div className="space-y-4">
           {/* Message Key */}
-          <Field label={useRegex ? 'Message Key (regex)' : 'Message Key'} required error={fieldErrors.messageKey}>
+          <Field
+            label={exactKey ? 'Record key (exact)' : useRegex ? 'Message Key (regex)' : 'Message Key'}
+            required
+            error={fieldErrors.messageKey}
+          >
             {p => (
               <Input
                 {...p}
@@ -415,7 +423,9 @@ const StreamFlow: React.FC = () => {
           <Field
             label="Search Path"
             error={fieldErrors.searchPath}
-            description={scopeHint}
+            description={exactKey
+              ? 'Not used: the record key is not inside the payload.'
+              : scopeHint}
           >
             {p => (
               <Input
@@ -423,6 +433,7 @@ const StreamFlow: React.FC = () => {
                 ref={searchPathRef}
                 className="font-mono"
                 value={searchPath}
+                disabled={exactKey}
                 onChange={e => { setSearchPath(e.target.value); clearFieldError('searchPath'); }}
                 placeholder="order.id · $.orderId · /order/id · header:correlation-id"
                 autoComplete="off"
@@ -471,7 +482,7 @@ const StreamFlow: React.FC = () => {
           <Field
             label="Scan window"
             description={windowMode === 'window'
-              ? 'Reads forward from the start of the window: on a busy topic the cap can be reached before the newest messages.'
+              ? 'Reads the newest messages of each topic that fall inside the window.'
               : 'Reads the newest messages of each topic.'}
           >
             {p => (
@@ -509,7 +520,13 @@ const StreamFlow: React.FC = () => {
           </div>
 
           <div className="space-y-2.5 pt-1">
-            <Toggle label="Use Regex" checked={useRegex} onChange={setUseRegex}
+            <Toggle
+              label="Exact record key"
+              checked={exactKey}
+              onChange={next => { setExactKey(next); if (next) setUseRegex(false); }}
+              hint="The value is the Kafka record key, compared whole. Scans only that key's partition — much faster, but it assumes the default partitioner." />
+            <Toggle label="Use Regex" checked={useRegex && !exactKey}
+              onChange={next => { setUseRegex(next); if (next) setExactKey(false); }}
               hint="Treat the message key as a regular expression." />
             <Toggle label="Case sensitive" checked={caseSensitive} onChange={setCaseSensitive}
               hint="Off by default, like the topic search." />

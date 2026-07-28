@@ -82,7 +82,10 @@ export function searchScopeOf(path: string): SearchScope {
   return needsFullJsonPath(trimmed) ? 'JSONPATH' : 'FIELD';
 }
 
-export function describeSearchScope(path: string, searchHeaders: boolean): string {
+export function describeSearchScope(path: string, searchHeaders: boolean, exactKey = false): string {
+  if (exactKey) {
+    return 'Compares the whole Kafka record key. Scans only that key\u2019s partition.';
+  }
   switch (searchScopeOf(path)) {
     case 'HEADER':
       return `Compares the Kafka header "${path.trim().slice(HEADER_PREFIX.length).trim()}".`;
@@ -274,6 +277,12 @@ export interface TraceParams {
   timeLimitMinutes: number;
   maxMessages: number;
   useRegex: boolean;
+  /**
+   * La valeur cherchée *est* la clé du record, comparée à l'identique. Le scan peut alors ne lire
+   * que la partition choisie par le partitionneur par défaut — d'où l'exclusion mutuelle avec un
+   * chemin de recherche (la clé n'est pas dans le payload) et avec une regex (on compare tout).
+   */
+  exactKey: boolean;
   caseSensitive: boolean;
   searchHeaders: boolean;
 }
@@ -286,6 +295,7 @@ export const DEFAULT_TRACE_PARAMS: TraceParams = {
   timeLimitMinutes: 5,
   maxMessages: 100,
   useRegex: false,
+  exactKey: false,
   caseSensitive: false,
   searchHeaders: true,
 };
@@ -321,6 +331,7 @@ export function parseTraceParams(search: string): TraceParams {
     timeLimitMinutes: intParam(rawWindow, DEFAULT_TRACE_PARAMS.timeLimitMinutes, 1, 1440),
     maxMessages: intParam(params.get('max'), DEFAULT_TRACE_PARAMS.maxMessages, 10, 1000),
     useRegex: boolParam(params.get('regex'), false),
+    exactKey: boolParam(params.get('exact'), false),
     caseSensitive: boolParam(params.get('case'), false),
     searchHeaders: boolParam(params.get('headers'), true),
   };
@@ -335,6 +346,7 @@ export function buildTraceQuery(params: TraceParams): string {
   if (params.windowMode === 'window') query.set('window', String(params.timeLimitMinutes));
   if (params.maxMessages !== DEFAULT_TRACE_PARAMS.maxMessages) query.set('max', String(params.maxMessages));
   if (params.useRegex) query.set('regex', '1');
+  if (params.exactKey) query.set('exact', '1');
   if (params.caseSensitive) query.set('case', '1');
   if (!params.searchHeaders) query.set('headers', '0');
   const encoded = query.toString();
@@ -408,6 +420,7 @@ export function traceToJson(params: TraceParams, flow: ParsedFlow): string {
       messageKey: params.messageKey,
       searchPath: params.searchPath || null,
       useRegex: params.useRegex,
+      exactKey: params.exactKey,
       caseSensitive: params.caseSensitive,
       searchHeaders: params.searchHeaders,
       targetTopics: params.topics,

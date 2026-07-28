@@ -7,6 +7,11 @@ import java.util.List;
 /**
  * Criteria for a stream-flow trace.
  *
+ * <p>Every field but the key is optional and <strong>boxed</strong>: Jackson binds a record through
+ * its canonical constructor, so an absent property arrives as {@code null} and a primitive component
+ * fails the whole request with an unhelpful "Cannot map null into type int". A body as small as
+ * {@code {"messageKey": "ORD-42"}} — what any script would send — has to work.
+ *
  * @param messageKey    the value to look for — a literal, or a regex when {@code useRegex}
  * @param searchPath    where to look: empty for the record key and the whole payload,
  *                      {@code header:correlation-id} for one Kafka header, {@code /order/id} for an
@@ -14,6 +19,10 @@ import java.util.List;
  *                      resolved against JSON and XML alike
  * @param caseSensitive defaults to false, like the topic search — an operator chasing an id rarely
  *                      means the case to matter
+ * @param exactKey      the traced value <em>is</em> the Kafka record key, compared for equality.
+ *                      Beyond being what "find record X" means, it lets the scan read only the
+ *                      partition the default partitioner would have chosen — a twentieth of the
+ *                      work on a twenty-partition topic. Mutually exclusive with a search path
  * @param searchHeaders widens a key/payload search to every Kafka header value. Defaults to
  *                      <strong>true</strong> here, unlike a topic search: a correlation id very
  *                      often travels only in a header, and a trace that never looks there reports
@@ -21,14 +30,23 @@ import java.util.List;
  */
 public record StreamFlowRequest(
         String messageKey,
-        int maxMessagesPerTopic,
+        Integer maxMessagesPerTopic,
         String searchPath,
         Integer timeLimitMinutes,
-        boolean useRegex,
+        Boolean useRegex,
+        Boolean exactKey,
         Boolean caseSensitive,
         Boolean searchHeaders,
         List<String> targetTopics
 ) {
+    public boolean isUseRegex() {
+        return Boolean.TRUE.equals(useRegex);
+    }
+
+    public boolean isExactKey() {
+        return Boolean.TRUE.equals(exactKey);
+    }
+
     public boolean isCaseSensitive() {
         return Boolean.TRUE.equals(caseSensitive);
     }

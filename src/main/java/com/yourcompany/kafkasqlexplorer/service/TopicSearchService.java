@@ -17,6 +17,7 @@ import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.header.Header;
 import org.apache.kafka.common.serialization.ByteArrayDeserializer;
+import org.apache.kafka.common.utils.Utils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -45,6 +46,8 @@ public class TopicSearchService {
     private static final Duration POLL_TIMEOUT = Duration.ofMillis(500);
     /** Consecutive empty polls before a partition set is considered drained. */
     private static final int MAX_EMPTY_POLLS = 2;
+    /** Characters examined when deciding whether a value is text at all. */
+    private static final int BINARY_PROBE_CHARS = 256;
 
     private final KafkaConfig kafkaConfig;
     private final KafkaAdminService kafkaAdminService;
@@ -76,6 +79,7 @@ public class TopicSearchService {
         // and "no record scanned is in a format the path can read". Both used to look identical.
         int formatMismatch = 0;
         int parseFailures = 0;
+        int binaryPayloads = 0;
         String stopReason = "EXHAUSTED";
 
         Properties props = buildConsumerProperties();
@@ -122,6 +126,10 @@ public class TopicSearchService {
                     // and by a hit for its response payload.
                     Map<String, String> headers = matcher.needsHeaders() ? headersOf(record) : null;
 
+                    if (looksBinary(value)) {
+                        binaryPayloads++;
+                    }
+
                     switch (matcher.evaluate(key, value, headers)) {
                         case MATCH -> {
                             matched++;
@@ -155,6 +163,7 @@ public class TopicSearchService {
                 stopReason = "EXHAUSTED";
             }
             addPathWarnings(matcher, scanned, formatMismatch, parseFailures, warnings);
+            addBinaryWarning(scanned, binaryPayloads, warnings);
             long elapsed = System.currentTimeMillis() - startedAt;
             return new TopicSearchResponse(hits, scanned, matched, elapsed, exhausted, stopReason,
                 nextCursor, warnings);
@@ -189,6 +198,34 @@ public class TopicSearchService {
         }
     }
 
+    /**
+     * A value that did not survive being read as UTF-8 (protobuf, a compressed blob, an unregistered
+     * Avro record): the replacement character or a NUL is the give-away. A text search can never
+     * match such a record, and saying so beats a confident zero. Only the head of the value is
+     * examined — the question is what kind of payload this is, not where the first bad byte sits.
+     */
+    static boolean looksBinary(String value) {
+        if (value == null || value.isEmpty()) {
+            return false;
+        }
+        int limit = Math.min(value.length(), BINARY_PROBE_CHARS);
+        for (int i = 0; i < limit; i++) {
+            char c = value.charAt(i);
+            if (c == '\uFFFD' || (c == '\0')) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static void addBinaryWarning(int scanned, int binaryPayloads, List<String> warnings) {
+        if (binaryPayloads == 0) {
+            return;
+        }
+        warnings.add(binaryPayloads + " of " + scanned + " record(s) scanned are not text "
+            + "(binary payload, or a format this cluster cannot decode); no text search can match them.");
+    }
+
     /** Seam for tests: overridden to inject a MockConsumer instead of a real one. */
     protected Consumer<byte[], byte[]> createConsumer(Properties props) {
         return new KafkaConsumer<>(props);
@@ -206,7 +243,7 @@ public class TopicSearchService {
             .toList();
 
         if (request.partitions() == null || request.partitions().isEmpty()) {
-            return all;
+            return narrowToKeyPartition(all, request, warnings);
         }
         List<TopicPartition> selected = all.stream()
             .filter(tp -> request.partitions().contains(tp.partition()))
@@ -216,6 +253,45 @@ public class TopicSearchService {
             return all;
         }
         return selected;
+    }
+
+    /**
+     * Scans only the partition the default partitioner would have chosen for the key.
+     *
+     * <p>Worth a twentieth of the work on a twenty-partition topic, and unsound in exactly two
+     * cases the search cannot detect: a custom partitioner, or a partition count that changed after
+     * the record was produced. Hence opt-in, restricted to an exact key comparison — a substring
+     * match says nothing about which key was hashed — and always stated in the response, because a
+     * narrowed scan that found nothing is not the same answer as a full scan that found nothing.
+     */
+    private List<TopicPartition> narrowToKeyPartition(List<TopicPartition> all,
+                                                       TopicSearchRequest request,
+                                                       List<String> warnings) {
+        if (!request.isKeyPartitioning()) {
+            return all;
+        }
+        boolean exactKeySearch = "KEY".equals(request.resolvedMode())
+            && "EQ".equals(request.resolvedOperator());
+        if (!exactKeySearch) {
+            warnings.add("Key partitioning was requested but ignored: it only applies to an exact "
+                + "key search (mode KEY, operator =). Every partition was scanned.");
+            return all;
+        }
+        String key = request.value();
+        if (key == null || key.isBlank() || all.isEmpty()) {
+            return all;
+        }
+        int partition = Utils.toPositive(Utils.murmur2(key.getBytes(StandardCharsets.UTF_8))) % all.size();
+        List<TopicPartition> target = all.stream()
+            .filter(tp -> tp.partition() == partition)
+            .toList();
+        if (target.isEmpty()) {
+            return all;
+        }
+        warnings.add("Scanned partition " + partition + " of " + all.size()
+            + " only, assuming the default partitioner and an unchanged partition count. "
+            + "Turn key partitioning off to scan every partition.");
+        return target;
     }
 
     /**
@@ -248,13 +324,26 @@ public class TopicSearchService {
             // The most recent records, spread over the partitions. Clamped to the beginning offset:
             // on a topic trimmed by retention, seeking below it is an out-of-range position and the
             // consumer resets to auto.offset.reset, silently returning nothing.
+            //
+            // A time window raises that floor instead of replacing it. Seeking to the start of the
+            // window and reading forward — what TIMESTAMP does — spends the record budget on the
+            // OLDEST records of the window, so on a busy topic a match from a minute ago was missed
+            // while the scan read messages from an hour ago. Starting at whichever is later reads
+            // the most recent records that are still inside the window.
             case "LAST_N" -> {
                 Map<TopicPartition, Long> beginning = consumer.beginningOffsets(partitions);
                 Map<TopicPartition, Long> end = consumer.endOffsets(partitions);
+                Map<TopicPartition, Long> windowStart = hasTimeWindow(request)
+                    ? windowOffsets(consumer, partitions, resolveTimestamp(request))
+                    : Map.of();
                 long perPartition = Math.max(1L, (long) maxScan / Math.max(partitions.size(), 1)) + 1;
                 for (TopicPartition tp : partitions) {
                     long endOffset = end.getOrDefault(tp, 0L);
                     long start = Math.max(beginning.getOrDefault(tp, 0L), endOffset - perPartition);
+                    Long floor = windowStart.get(tp);
+                    if (floor != null) {
+                        start = Math.max(start, floor);
+                    }
                     consumer.seek(tp, start);
                 }
             }
@@ -272,6 +361,25 @@ public class TopicSearchService {
             case "TIMESTAMP" -> seekToTimestamp(consumer, partitions, resolveTimestamp(request));
             default -> consumer.seekToBeginning(partitions);
         }
+    }
+
+    private static boolean hasTimeWindow(TopicSearchRequest request) {
+        return request.fromTimestamp() != null
+            || (request.sinceMinutes() != null && request.sinceMinutes() > 0);
+    }
+
+    /** First offset at or after {@code timestamp}, per partition; absent when there is none. */
+    private Map<TopicPartition, Long> windowOffsets(Consumer<byte[], byte[]> consumer,
+                                                     List<TopicPartition> partitions, long timestamp) {
+        Map<TopicPartition, Long> query = new LinkedHashMap<>();
+        partitions.forEach(tp -> query.put(tp, timestamp));
+        Map<TopicPartition, Long> resolved = new LinkedHashMap<>();
+        consumer.offsetsForTimes(query).forEach((tp, found) -> {
+            if (found != null) {
+                resolved.put(tp, found.offset());
+            }
+        });
+        return resolved;
     }
 
     private long resolveTimestamp(TopicSearchRequest request) {
