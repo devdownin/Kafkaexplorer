@@ -48,6 +48,13 @@ Ouvrez ensuite **http://localhost:8080** et commencez à cliquer. C'est tout.
 - **Avec Confluent Schema Registry** (topics Avro) : `docker compose -f docker-compose-kafka4.yml up -d`
 - **Avec un LLM local pré-câblé** (Ollama) : `docker compose -f docker-compose-llm.yml up -d`
 - **Depuis les sources** (JDK 21) : lancez Kafka avec `docker compose up -d kafka`, puis `./mvnw spring-boot:run`
+- **Builder sans rien installer d'autre que Docker** — ni JDK, ni Maven, ni Node :
+  ```bash
+  docker compose -f docker-compose-build.yml run --rm verify    # le gate complet, comme la CI
+  docker compose -f docker-compose-build.yml run --rm package   # le JAR dans ./target
+  docker compose -f docker-compose-build.yml run --rm frontend  # ESLint + Vitest seuls
+  ```
+- **Stack de dev avec rechargement à chaud** (backend + Vite + Kafka, toujours sans installation locale) : `docker compose -f docker-compose-dev.yml up`
 - **Image précompilée** : `docker run -p 8080:8080 -e SPRING_KAFKA_BOOTSTRAP_SERVERS=votre-broker:9092 ghcr.io/devdownin/kafkaexplorer:latest`
 - **Sur votre propre cluster** : pointez `kafka.bootstrap-servers` vers n'importe quel broker Kafka 2.1+ (PLAIN, SSL ou Confluent Cloud) — rien à installer côté cluster.
 

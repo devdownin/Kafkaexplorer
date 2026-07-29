@@ -1,0 +1,74 @@
+# Build, test and package the project with nothing installed locally but Docker —
+# no JDK, no Maven, no Node.
+#
+#   docker compose -f docker-compose-build.yml run --rm verify    # the full CI gate
+#   docker compose -f docker-compose-build.yml run --rm package   # JAR into ./target
+#   docker compose -f docker-compose-build.yml run --rm frontend  # ESLint + Vitest only
+#   docker compose -f docker-compose-build.yml run --rm shell     # interactive toolchain
+#
+# `verify` is the one that matches CI: `mvn verify` is the only command that runs
+# everything — Java tests, then ESLint and Vitest through the `build-frontend` profile
+# (see CLAUDE.md). `package` skips the lot and only produces the artefact.
+#
+# Everything downloaded — the Maven repository, the npm cache, the Node toolchain
+# fetched by frontend-maven-plugin — lands in the `build_cache` named volume, so the
+# second run is fast and the host stays clean. `down -v` on this file resets it.
+#
+# Two things to know. The source tree is bind-mounted, so `target/` is written into
+# your checkout and, on Linux, owned by root — same as the existing dev stack; remove
+# it with the `shell` service if it gets in the way. And these services are one-shot:
+# always `run --rm`, never `up`.
+
+x-maven: &maven
+  image: maven:3.9-eclipse-temurin-21
+  working_dir: /app
+  environment:
+    # Maven 3.9 reads MAVEN_ARGS. Even if it did not, HOME points into the volume, so
+    # the default ~/.m2 would still be cached — the flag just makes the path explicit.
+    MAVEN_ARGS: -B -Dmaven.repo.local=/cache/m2
+    # frontend-maven-plugin shells out to npm, which needs a writable HOME and cache.
+    HOME: /cache
+    npm_config_cache: /cache/npm
+  volumes:
+    - .:/app
+    - build_cache:/cache
+    # `mvn verify` runs `npm install` through frontend-maven-plugin. Without this the
+    # install would land in the bind-mounted checkout, and its Linux-native
+    # esbuild/rollup binaries would then break a host-side `npm run dev` on macOS or
+    # Windows. Same volume as the `frontend` service below, so they warm each other.
+    - frontend_node_modules:/app/src/main/webapp/node_modules
+
+services:
+  # The full gate, exactly what CI runs.
+  verify:
+    <<: *maven
+    command: mvn verify
+
+  # Artefact only — no tests, no frontend checks. This is what release.yml's Docker
+  # stage effectively does, and what you want when you only need a JAR to run.
+  package:
+    <<: *maven
+    command: mvn package -DskipTests
+
+  # The frontend checks on their own, without paying for a Java build. Bound to the
+  # webapp directory, so it is the fast loop when the change is TypeScript only.
+  frontend:
+    image: node:24.0.0-alpine
+    working_dir: /app
+    environment:
+      npm_config_cache: /cache/npm
+    volumes:
+      - ./src/main/webapp:/app
+      - frontend_node_modules:/app/node_modules
+      - build_cache:/cache
+    command: sh -c "npm ci --no-audit --no-fund && npm run lint && npm test"
+
+  # Interactive shell with the whole toolchain, for anything not covered above
+  # (a single test class, `mvn dependency:tree`, cleaning up target/…).
+  shell:
+    <<: *maven
+    command: bash
+
+volumes:
+  build_cache:
+  frontend_node_modules:

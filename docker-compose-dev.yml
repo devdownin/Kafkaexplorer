@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   kafka:
     image: apache/kafka:4.2.0
@@ -53,7 +51,15 @@ services:
       - "8080:8080"
     volumes:
       - .:/app
-      - ~/.m2:/root/.m2
+      # `~/.m2` was bind-mounted from the host — the one thing this stack exists to
+      # avoid. It required (or silently created, root-owned) a Maven directory on a
+      # machine that may have no Maven at all. A named volume caches just as well and
+      # belongs to the stack: `docker compose -f docker-compose-dev.yml down -v` resets it.
+      - m2_cache:/root/.m2
+      # Keeps target/ out of the bind mount: no root-owned build output in the host
+      # checkout, and no bind-mount I/O on the thousands of files Maven writes there
+      # (which is most of the compile time on macOS and Windows).
+      - backend_target:/app/target
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       - KAFKA_CONSUMER_GROUP_PROTOCOL=consumer
@@ -70,10 +76,22 @@ services:
       - "5173:5173"
     volumes:
       - ./src/main/webapp:/app
+      # Shadows the bind mount: the container's Linux-native dependencies stay in the
+      # container, and the host checkout keeps no node_modules of its own.
+      - frontend_node_modules:/app/node_modules
+      - npm_cache:/npm-cache
     environment:
-      - VITE_API_URL=http://backend:8080
+      # Read by vite.config.ts. Vite's proxy targeted `localhost:8080`, which inside
+      # this container is the frontend itself — every /api call in the dev stack was
+      # proxied into the void. VITE_API_URL, which used to be set here, is read by
+      # nothing in the codebase.
+      - VITE_PROXY_TARGET=http://backend:8080
     depends_on:
       - backend
 
 volumes:
   kafka_data_dev:
+  m2_cache:
+  backend_target:
+  frontend_node_modules:
+  npm_cache:
