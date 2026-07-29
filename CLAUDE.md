@@ -58,6 +58,39 @@ The `docker` job builds **`Dockerfile.release` from the JAR the `build` job prod
 
 Two things to know: Avro / Schema Registry paths run against the stubs, not the real Confluent client, so those results are indicative only; and the launcher must be started as `java -cp … org.junit.platform.console.ConsoleLauncher`, never `java -jar`. With `-jar` the system classpath holds only the launcher, Flink's job-graph deserialization cannot find `flink-table-runtime`, every SELECT fails to submit, the planner circuit breaker trips, and a dozen `FlinkSqlServiceTest` cases fail for no real reason. CI remains the authority — it builds against the real Confluent jars.
 
+### Building without a local toolchain
+
+`docker-compose-build.yml` runs the same commands inside containers, so a machine with only Docker
+can build, test and package. Always `run --rm` — these are one-shot services, never `up`.
+
+```bash
+docker compose -f docker-compose-build.yml run --rm verify    # the full gate (= mvn verify)
+docker compose -f docker-compose-build.yml run --rm package   # JAR into ./target, no tests
+docker compose -f docker-compose-build.yml run --rm frontend  # ESLint + Vitest only, no JVM
+docker compose -f docker-compose-build.yml run --rm shell     # interactive toolchain
+```
+
+Everything downloaded (Maven repository, npm cache, the Node toolchain frontend-maven-plugin
+fetches) lands in the `build_cache` named volume, so the second run is fast; `down -v` resets it.
+The source tree is bind-mounted, so `target/` appears in the checkout — root-owned on Linux, same
+as the dev stack.
+
+`docker-compose-dev.yml` is the hot-reload stack (Kafka + `spring-boot:run` + Vite). Three things
+about it are load-bearing: the backend runs with `-P '!build-frontend'` (the profile is
+`activeByDefault`, so a plain `spring-boot:run` downloaded a whole Node toolchain into `target/` and
+rebuilt the SPA on every container start); `node_modules` and `target/` are **named volumes
+shadowing the bind mounts**, keeping Linux-native binaries and root-owned build output out of the
+host checkout; and `VITE_PROXY_TARGET=http://backend:8080` is read by `vite.config.ts` — Vite's
+proxy pointed at `localhost:8080`, which inside the frontend container is the frontend itself, so
+every `/api` call in the dev stack was proxied into the void. The `~/.m2` bind mount it used to
+carry is gone: requiring a Maven directory on the host defeats the point of the stack.
+
+The production `Dockerfile` needs BuildKit (Docker 23+ default) for its `RUN --mount=type=cache`
+lines. Do not reorder the backend stage to copy sources before resolving dependencies — that was
+the original layout, and it re-downloaded the whole Flink/Kafka/Spring tree on every source edit.
+`.dockerignore` uses `**/node_modules`, not `node_modules/`: the latter only matches the repository
+root, while the real one is at `src/main/webapp/node_modules`.
+
 ### Frontend (React / Vite)
 
 ```bash

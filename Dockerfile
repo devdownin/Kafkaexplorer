@@ -1,10 +1,19 @@
+# syntax=docker/dockerfile:1.7
+# BuildKit is required (Docker 23+ uses it by default) for the `RUN --mount=type=cache`
+# lines below. They are what makes a rebuild cheap: the Maven repository and the npm
+# cache live in build caches shared across builds instead of inside image layers, so
+# editing one Java file no longer re-downloads the Flink / Kafka / Spring dependency
+# tree — several hundred MB that used to be fetched on every single build, because the
+# sources were copied in before any dependency resolution had happened.
+
 # --- Stage 1: Build Frontend ---
 FROM node:24.0.0-alpine AS frontend-builder
 WORKDIR /app
 
-# Copier uniquement les fichiers nécessaires pour installer les dépendances (cache optimization)
+# Manifest first: this layer is reused as long as the dependencies do not move.
 COPY src/main/webapp/package.json src/main/webapp/package-lock.json* ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --no-audit --no-fund
 
 # Copier le reste du code frontend et build
 # The output directory is pinned here, not taken from vite.config.ts. That config sets
@@ -31,8 +40,12 @@ COPY src/main/resources ./src/main/resources
 # L'application Spring Boot sert le contenu de src/main/resources/static
 COPY --from=frontend-builder /app/dist ./src/main/resources/static
 
-# Build du backend
-RUN mvn clean package -P !build-frontend -DskipTests
+# `clean` is dead weight here — the stage starts from an empty /app, there is nothing
+# to clean, and it cannot help correctness. The frontend profile is off because the SPA
+# was already built in stage 1; leaving it on would download a second Node toolchain
+# and rebuild the very same bundle.
+RUN --mount=type=cache,target=/root/.m2,sharing=locked \
+    mvn -B package -P '!build-frontend' -DskipTests
 
 # --- Stage 3: Runtime ---
 FROM eclipse-temurin:21-jre-alpine
@@ -60,7 +73,8 @@ HEALTHCHECK --interval=15s --timeout=3s --start-period=60s --retries=10 \
   CMD wget -q -O - http://127.0.0.1:8080/actuator/health | grep -q '"status":"UP"' || exit 1
 
 # Deliberately still root. Dropping to a non-root user is the right thing to do, but not
-# in a release-pipeline fix: `logging.file.name: logs/kafkaexplorer.log` makes the app
-# write under /app, and docker-compose.yml bind-mounts a host path onto
-# /app/logs/kafkaexplorer.log — a host file Docker creates root-owned.
+# here: `logging.file.name: logs/kafkaexplorer.log` makes the app write under /app, and
+# docker-compose.yml bind-mounts a host path onto /app/logs/kafkaexplorer.log — a host
+# file Docker creates root-owned. Switching users without also reworking that mount
+# trades a build improvement for broken logging.
 ENTRYPOINT ["java", "-jar", "app.jar"]

@@ -117,6 +117,9 @@ jobs:
           fi
           cp "${jars[0]}" app.jar
 
+      # `Dockerfile` now uses `RUN --mount=type=cache`, which is BuildKit-only. This job
+      # builds Dockerfile.release, which does not — but ci.yml builds the other one, and
+      # runners defaulting to BuildKit is a default, not a guarantee.
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 

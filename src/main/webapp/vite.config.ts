@@ -15,7 +15,11 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'http://localhost:8080',
+        // Dans le conteneur de dev, `localhost` est le conteneur frontend lui-même :
+        // le proxy pointait donc dans le vide et aucun appel API n'aboutissait.
+        // VITE_PROXY_TARGET vise le service backend de docker-compose-dev.yml ; le
+        // défaut reste inchangé pour un `npm run dev` lancé sur la machine.
+        target: process.env.VITE_PROXY_TARGET || 'http://localhost:8080',
         changeOrigin: true,
       }
     }

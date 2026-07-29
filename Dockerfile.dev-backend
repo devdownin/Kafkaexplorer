@@ -1,3 +1,7 @@
 FROM maven:3.9-eclipse-temurin-21
 WORKDIR /app
-CMD ["mvn", "spring-boot:run"]
+# `build-frontend` is activeByDefault, so a plain `mvn spring-boot:run` downloaded a
+# whole Node v24 toolchain into target/ and rebuilt the SPA on every container start —
+# minutes of work, and pointless here: the frontend service of this stack serves the
+# app with hot reload. Backend restarts are for backend code.
+CMD ["mvn", "-P", "!build-frontend", "spring-boot:run"]
