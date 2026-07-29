@@ -159,8 +159,25 @@ const NodeShape: React.FC<{
 
   return (
     <g
-      className="cursor-pointer"
+      className="cursor-pointer focus:outline-none"
+      // Chaque nœud est atteignable au clavier : la sélection ouvre le panneau de détails, et
+      // elle n'existait qu'à la souris.
+      tabIndex={0}
+      role="button"
+      aria-pressed={selected}
+      aria-label={`${node.label}, ${subLabel}`}
       onClick={onClick}
+      onKeyDown={e => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        e.preventDefault();
+        e.stopPropagation();
+        onClick();
+      }}
+      onFocus={e => {
+        const box = (e.currentTarget as SVGGElement).getBoundingClientRect();
+        onHoverEnter(box.left + box.width / 2, box.top);
+      }}
+      onBlur={onHoverLeave}
       onMouseEnter={e => onHoverEnter(e.clientX, e.clientY)}
       onMouseLeave={onHoverLeave}
     >
@@ -328,14 +345,17 @@ const Lineage: React.FC = () => {
 
   // ── Pan handlers ────────────────────────────────────────────────────────────
 
-  const onMouseDown = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+  // Événements *pointeur* et non souris : le même code fait glisser le graphe au doigt sur une
+  // tablette, où le déplacement était jusqu'ici impossible (`touch-action: none` empêche la page
+  // de défiler sous le geste). Même traitement que le graphe de Stream Flow.
+  const onPointerDown = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
     if ((e.target as Element).closest('[data-node]')) return;
     isPanning.current = true;
     lastPos.current = { x: e.clientX, y: e.clientY };
     e.currentTarget.style.cursor = 'grabbing';
   }, []);
 
-  const onMouseMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+  const onPointerMove = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
     if (!isPanning.current) return;
     const dx = e.clientX - lastPos.current.x;
     const dy = e.clientY - lastPos.current.y;
@@ -344,12 +364,32 @@ const Lineage: React.FC = () => {
     setTooltip(null);
   }, []);
 
-  const onMouseUp = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+  const onPointerUp = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
     isPanning.current = false;
     e.currentTarget.style.cursor = 'grab';
   }, []);
 
-  const resetView = () => setTransform({ x: 40, y: 20, scale: 1 });
+  const resetView = useCallback(() => setTransform({ x: 40, y: 20, scale: 1 }), []);
+
+  /**
+   * Le graphe se pilote au clavier : flèches pour se déplacer, +/− pour zoomer, 0 pour recadrer,
+   * Échap pour désélectionner. Sans cela, un graphe de dépendances n'existait qu'à la souris.
+   */
+  const onGraphKeyDown = useCallback((e: React.KeyboardEvent<SVGSVGElement>) => {
+    const step = e.shiftKey ? 160 : 48;
+    switch (e.key) {
+      case 'ArrowLeft':  setTransform(t => ({ ...t, x: t.x + step })); break;
+      case 'ArrowRight': setTransform(t => ({ ...t, x: t.x - step })); break;
+      case 'ArrowUp':    setTransform(t => ({ ...t, y: t.y + step })); break;
+      case 'ArrowDown':  setTransform(t => ({ ...t, y: t.y - step })); break;
+      case '+': case '=': zoomFromCenter(1.25); break;
+      case '-': case '_': zoomFromCenter(0.8); break;
+      case '0': resetView(); break;
+      case 'Escape': setSelectedNode(null); break;
+      default: return;
+    }
+    e.preventDefault();
+  }, [resetView, zoomFromCenter]);
   const isEmpty   = !loading && data.nodes.length === 0;
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -550,12 +590,18 @@ const Lineage: React.FC = () => {
         {!isEmpty && (
           <svg
             ref={svgRef}
-            className="w-full h-full select-none"
-            style={{ cursor: 'grab' }}
-            onMouseDown={onMouseDown}
-            onMouseMove={onMouseMove}
-            onMouseUp={onMouseUp}
-            onMouseLeave={onMouseUp}
+            className="w-full h-full select-none focus:outline-none focus-visible:ring-1 focus-visible:ring-primary/60"
+            style={{ cursor: 'grab', touchAction: 'none' }}
+            role="application"
+            tabIndex={0}
+            aria-label={`Dependency graph, ${data.nodes.length} nodes. Arrow keys pan, plus and minus zoom, 0 resets.`}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerLeave={onPointerUp}
+            onKeyDown={onGraphKeyDown}
+            // Cliquer le fond désélectionne, comme sur le graphe de Stream Flow.
+            onClick={e => { if (e.target === e.currentTarget) setSelectedNode(null); }}
           >
             <defs>
               <marker id="arrow-lin" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">

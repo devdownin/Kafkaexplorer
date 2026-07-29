@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
-  Button, Badge, Field, Input, EmptyState, Stat,
+  Button, Badge, Field, Input, EmptyState, ErrorPanel, Stat,
   Table, TableHead, TableBody, TableRow, Th, Td, TableSkeleton,
 } from './index';
 
@@ -137,5 +137,50 @@ describe('EmptyState', () => {
     expect(screen.getByText('Pick a template')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Add metric' }));
     expect(onClick).toHaveBeenCalledOnce();
+  });
+});
+
+describe('ErrorPanel', () => {
+  const error = {
+    title: 'Unknown column "amountt"',
+    hint: 'Check the column name against the topic schema.',
+    raw: 'SQL validation failed: column amountt not found in table orders',
+  };
+
+  it('shows the readable title and the hint', () => {
+    render(<ErrorPanel error={error} />);
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+    expect(screen.getByText(error.title)).toBeInTheDocument();
+    expect(screen.getByText(error.hint)).toBeInTheDocument();
+  });
+
+  /** Le message brut est la vraie raison du refus : caché par défaut, jamais jeté. */
+  it('keeps the raw error one click away', async () => {
+    render(<ErrorPanel error={error} />);
+    expect(screen.queryByText(error.raw)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /Show raw error/ }));
+    expect(screen.getByText(error.raw)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /Hide raw error/ }));
+    expect(screen.queryByText(error.raw)).not.toBeInTheDocument();
+  });
+
+  it('offers no raw toggle when the raw text adds nothing', () => {
+    render(<ErrorPanel error={{ title: 'Boom', raw: 'Boom' }} />);
+    expect(screen.queryByRole('button', { name: /raw error/ })).not.toBeInTheDocument();
+  });
+
+  it('reports the SQL position when the engine cited one', () => {
+    render(<ErrorPanel error={{ ...error, location: { line: 3, column: 12 } }} />);
+    expect(screen.getByText('Line 3, column 12')).toBeInTheDocument();
+  });
+
+  it('fires retry and dismiss', async () => {
+    const onRetry = vi.fn();
+    const onDismiss = vi.fn();
+    render(<ErrorPanel error={error} onRetry={onRetry} onDismiss={onDismiss} />);
+    await userEvent.click(screen.getByRole('button', { name: /Retry/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss error' }));
+    expect(onRetry).toHaveBeenCalledOnce();
+    expect(onDismiss).toHaveBeenCalledOnce();
   });
 });

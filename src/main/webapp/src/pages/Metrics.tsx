@@ -6,9 +6,11 @@ import '../monaco-setup';
 import { AreaChart, Area, ResponsiveContainer, ReferenceLine, Tooltip, YAxis } from 'recharts';
 import { useToast } from '../components/Toast';
 import { useCatalog } from '../catalogStore';
+import { describeApiError, type QueryErrorInfo } from './queryError';
 import {
   PageHeader, Button, Stat, Select, EmptyState, CardSkeleton, TopicInput,
   Field, Input, Textarea, useConfirm,
+  ErrorPanel,
 } from '../components/ui';
 import { describeQueryError } from './queryError';
 
@@ -659,6 +661,9 @@ const Metrics: React.FC = () => {
   const [labelPreviewLoading, setLabelPreviewLoading] = useState(false);
 
   const monaco = useMonaco();
+  /** Échec d'enregistrement, gardé sous les yeux plutôt que dans un toast fugace. */
+  const [saveError, setSaveError] = useState<QueryErrorInfo | null>(null);
+  const [templatesError, setTemplatesError] = useState<QueryErrorInfo | null>(null);
 
   const fetchMetrics = useCallback(async () => {
     try {
@@ -678,7 +683,10 @@ const Metrics: React.FC = () => {
     axios.get<{ bootstrapServers: string }>('/api/config').then(r => {
       if (r.data.bootstrapServers) setBootstrapServers(r.data.bootstrapServers);
     }).catch(() => {});
-    axios.get<MetricTemplateDescriptor[]>('/api/metrics/templates').then(r => setTemplates(r.data)).catch(() => {});
+    // `.catch(() => {})` laissait la liste de gabarits vide sans que rien ne le dise.
+    axios.get<MetricTemplateDescriptor[]>('/api/metrics/templates')
+      .then(r => setTemplates(r.data))
+      .catch(err => setTemplatesError(describeApiError(err, 'Failed to load metric templates.')));
     const iv = setInterval(fetchMetrics, 15000);
     return () => clearInterval(iv);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- poll on mount; fetchMetrics/toast are stable
@@ -889,13 +897,17 @@ const Metrics: React.FC = () => {
       return;
     }
     setSaving(true);
+    setSaveError(null);
     try {
       await axios.post('/api/metrics', editingMetric);
       toast('Metric saved', 'success');
       setIsModalOpen(false);
       fetchMetrics();
-    } catch {
-      toast('Failed to save metric', 'error');
+    } catch (err) {
+      // Un toast disparaît derrière le modal en trois secondes, et `catch {}` jetait la seule
+      // chose utile : la raison du refus — quelle colonne SQL est inconnue, quelle DDL ne compile
+      // pas. Elle reste affichée dans le modal, là où l'on peut corriger.
+      setSaveError(describeApiError(err, 'Failed to save metric.'));
     } finally {
       setSaving(false);
     }
@@ -1112,6 +1124,12 @@ const Metrics: React.FC = () => {
               </button>
             </div>
 
+            {saveError && (
+              <div className="px-6 pt-4">
+                <ErrorPanel error={saveError} onDismiss={() => setSaveError(null)} />
+              </div>
+            )}
+
             {/* Modal body */}
             <div className="flex flex-1 overflow-hidden">
 
@@ -1166,6 +1184,11 @@ const Metrics: React.FC = () => {
                     </div>
                   )}
                 </div>
+
+                {/* Un sélecteur vide sans explication laisse croire qu'il n'y a pas de gabarit. */}
+                {templates.length === 0 && templatesError && (
+                  <ErrorPanel error={templatesError} onDismiss={() => setTemplatesError(null)} />
+                )}
 
                 {/* Metric source / template */}
                 {templates.length > 0 && (
