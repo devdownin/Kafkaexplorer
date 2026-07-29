@@ -36,17 +36,25 @@ The assistant transforms the message preview into a query design tool:
 - **Resource Management**: Automatic cancellation of Flink jobs in case of timeout or error, preventing any resource leak in the minicluster.
 
 ## 5. Visual Query Lineage
-- **Interactive Graph**: A custom SVG dependency graph visualizing the relationships between topics, tables, and views.
+- **Interactive Graph**: A custom SVG dependency graph visualizing the relationships between topics, tables, and views. Pointer, touch and keyboard driven (arrows pan, `+`/`−` zoom, `0` resets, Tab moves between nodes, Enter opens one).
+- **Resolved by Flink, not guessed**: Dependencies come from Flink's own parser walking the resolved operation tree, so a windowed source (`FROM TABLE(TUMBLE(TABLE orders, …))`), a quoted identifier or a multi-statement script is read correctly. When a statement cannot be resolved — a table that no longer exists — the graph falls back to a lexical scan and **says so** above the graph, because a missing edge and an absent dependency look identical.
 - **Active Job Tracking**: Real-time visualization of running `INSERT INTO` queries as nodes connecting source and target tables.
 - **Node Inspector**: Click on any node to view detailed information, such as the table schema or topic type.
 
 ## 6. Message Propagation (Stream Flow)
 - **Message Tracing**: Trace the path of a specific message across multiple Kafka topics by searching for a key or pattern.
-- **Advanced Targeting**: Use **JSONPath** or **XPath** to pinpoint the exact location of the search key within complex payloads.
-- **Regular Expression Support**: Flexible matching using standard regex syntax.
-- **Time-Based Filtering**: Narrow down the search to specific time windows (e.g., messages from the last 60 minutes).
-- **Parallel Scanning**: High-performance concurrent scanning of topics with managed resource limits.
-- **Chronological Visualization**: Interactive graph showing the sequential flow of messages between topics.
+- **Advanced Targeting**: A dot path (`order.items[].sku`), **JSONPath** (`$..id`), **XPath** (`/order/id`) or a single Kafka header (`header:correlation-id`). Left empty, the search covers the record key, the payload and every header — a correlation id very often travels only in a header.
+- **Exact Record Key**: Compares the whole Kafka key and scans only the partition the default partitioner would have chosen — a fraction of the work, and what "find record X" actually means.
+- **Regular Expression Support**: Flexible matching using standard regex syntax. An invalid regex or a malformed path is rejected with its reason, never silently degraded into a substring search.
+- **Time-Based Filtering**: Narrow the search to a time window. Topics whose newest record predates the window are skipped outright and named — nothing inside the window could have matched them.
+- **Parallel Scanning**: Concurrent scanning with managed resource limits. Without target topics, the **most recently active** topics are read first, up to `explorer.stream-flow-max-topics`.
+- **Streamed Results**: Hops appear on the graph as they are found, with live progress; stopping the scan keeps what was found rather than discarding it.
+- **Honest Coverage**: Every trace states how many topics and messages were read, why it stopped, and *which* topics were never reached. An empty result reads as "not in the window I scanned", never as a bare "not found".
+- **Continue, don't restart**: A trace stopped by its time budget resumes on the topics it never read, merging the new hops into the same chain.
+- **Compare Two Traces**: Put two keys side by side — shared topics, topics only one of them reached, and the per-hop latency difference. Hop latencies are compared, never absolute timestamps: two keys processed an hour apart have nothing to say to each other in the absolute.
+- **Chronological Visualization**: Interactive graph of the chain, with the slowest hop and any clock skew marked. Pointer, touch and keyboard driven (arrows pan, `+`/`−` zoom, `0` fits, Tab moves between nodes).
+- **Shareable & Exportable**: The whole criterion round-trips through the URL, so a trace pasted into an incident ticket reruns exactly as it was. Hops export to CSV, or to JSON carrying the criterion, the coverage and the warnings.
+- **Two-Way Links**: A hop opens the Topic Explorer on the same search; a message in the Topic Explorer traces its key across the cluster. The command palette (⌘K) offers to trace any text that is not a known topic.
 
 ## 7. Advanced Topic Comparison
 - **Side-by-Side Analysis**: Compare messages from two Kafka topics in independent columns.
@@ -68,6 +76,8 @@ The assistant transforms the message preview into a query design tool:
 - **SQL Validation**: Whitelist of authorized commands (`SELECT`, `EXPLAIN`, `CREATE TABLE`) to prevent destructive DML operations.
 - **Credential Masking**: DDL shown in the UI (topic detail, DDL preview, lineage) has SSL passwords and SASL/Confluent secrets redacted.
 - **Connection Management**: Clean lifecycle of the Kafka AdminClient, consumers, producers and thread pools; heavy metadata calls are cached (30s) to keep dashboard polling cheap.
+- **Guarded Cluster Repointing**: Changing the Kafka connection while an audit, a Flink job or a live Process Mining session is still running is refused (HTTP 409) and the response names what is running — one report must not describe two clusters. The refusal can be overridden explicitly; what was already running keeps reading the previous cluster.
+- **Failures That Stay On Screen**: An error that needs acting on is shown as a panel with the server's own message — readable title, hint, raw text one click away — not a toast that fades in three seconds.
 
 ## 10. Process Mining & AI Analysis (LLM)
 Kafka Explorer integrates AI to analyze message flows and detect anomalies:
