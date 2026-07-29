@@ -77,9 +77,39 @@ docker compose -f docker-compose-kafka4.yml up -d
 # Kafka 4.2 (KRaft) + app + demo topics, without Schema Registry
 docker compose up -d
 
-# Demo data setup (creates 70+ topics)
+# Demo data setup (creates 76 topics)
 ./setup-demo.sh localhost:9092
+
+# Avro topics — needs Schema Registry and the Confluent CLI, so it is a separate
+# script wired only into docker-compose-kafka4.yml
+./setup-demo-avro.sh localhost:9092 http://localhost:8081
 ```
+
+`setup-demo.sh` is the sandbox every stack seeds, and it is written to exercise the features that
+have no data otherwise. **Every business record carries a record key and Kafka headers**
+(`correlation-id`, W3C `traceparent`, `source-system`, `event-type`, `produced-at`) — without them,
+exact-key tracing, key-partition narrowing, HEADER search, log compaction and the audit's key-based
+duplicate detection have nothing to run against, which is what the demo looked like before. The
+order pipeline and `demo.orders.nested` are **multi-partition** (3 and 6), because "only this key's
+partition" narrows nothing on a single-partition topic. `demo.payments.*` / `demo.shipments.*` are
+correlated to the orders **by header only** — their payloads carry `PAY-`/`SHP-` references and
+never the order id — so they are the dataset that proves the "search headers too" switch does
+something. `demo.iot.sensors` and `demo.orders.nested` spread `event_time` over ~2 hours, which is
+what makes `TUMBLE`/`HOP` return more than one bucket; with every record stamped "now" the whole
+window feature collapsed into a single row. Duplicates (`ORD-103`/`ORD-105` redelivered) and poison
+records *inside a healthy topic* (`demo.orders.3.enriched`) exist so the cluster audit reports
+findings rather than a clean-room zero.
+
+Two constraints when extending it: **one producer call per topic, not per message** (a JVM start
+costs ~1.5 s, and docker-compose blocks the app on this container — the per-message version spent
+minutes seeding 400 records), and **no `bc`, no `date -d`, no `${var,,}`** — it runs inside the
+busybox-based `apache/kafka` image as well as on macOS. Money is integer cents through `printf`,
+and event times are epoch seconds (the query engine reads any value below 10^10 as seconds).
+Header values must contain no comma, colon or tab: `kafka-console-producer` parses headers as
+`k1:v1,k2:v2` ahead of a `key<TAB>value` line, which is why timestamps travel as epoch millis.
+`DEMO_HOP_DELAY` (default 2 s) is the real pause between the traced order's hops — record
+timestamps come from the broker at produce time, so a real pause is the only way to give Stream
+Flow a hop latency to chart; set it to 0 for the fastest seeding and flat latencies.
 
 KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `CLUSTER_ID` env var (a `KAFKA_CLUSTER_ID` var would be translated into an ignored `cluster.id` server property); all internal-topic replication factors (`offsets`, `transaction state`, share-group state) are pinned to 1 and `__consumer_offsets` runs with a single partition for faster startup. Kafka data persists in a named `kafka_data` volume (`KAFKA_LOG_DIRS=/var/lib/kafka/data`) so `internal.*` topics survive `docker compose down` (`down -v` resets); the image runs as non-root `appuser`, so a `kafka-data-init` one-shot service chowns the volume before the broker starts — don't remove it.
 

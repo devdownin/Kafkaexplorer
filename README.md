@@ -30,7 +30,7 @@ Built for data engineers, architects and anyone who has ever asked *"what's actu
 - 🩺 **One-click cluster audit** — poison messages, duplicates, flow drop-offs and latency, computed across your whole cluster in the background.
 - 🤖 **AI-powered process mining** — reconstruct business flows as flowcharts and hunt anomalies with Claude, any local LLM (Ollama…), or a private [SpectraLLM](https://github.com/devdownin/SpectraLLM).
 - 🔭 **Kafka 4 native** — KRaft controller quorum, KIP-848 consumer groups, share groups (KIP-932) and feature versions, visible in the UI and exported to Prometheus.
-- 🎁 **A batteries-included sandbox** — 70+ demo topics, from a 6-step order pipeline to a 60-topic supply chain, seeded automatically.
+- 🎁 **A batteries-included sandbox** — 76 demo topics seeded automatically, from a 6-step order pipeline to a 60-topic supply chain, all keyed and header-stamped: an order to trace across partitions, a header-only correlation to follow, a real time series to window, duplicates and poison records for the audit to find.
 
 ## 🚀 Quick Start
 

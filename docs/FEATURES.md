@@ -88,13 +88,23 @@ Kafka Explorer integrates AI to analyze message flows and detect anomalies:
 - **Multi-Provider Support**: Compatible with **Claude (Anthropic)**, **Open Source models** (via OpenAI-compatible APIs like Ollama), and **SpectraLLM** (self-hosted private RAG/fine-tuned models). See the [LLM provider guide](LLM-PROVIDERS.md).
 
 ## 11. Demo & Sandbox Environment
-The application includes an automated demonstration setup to help you explore features immediately:
-- **6-Step Order Pipeline**: Sequential topics (`demo.orders.1.received` to `6.delivered`) to test **Stream Flow** traceability.
-- **JOINs & Reference Data**: A `demo.customers` topic to practice SQL JOINs with orders.
-- **XML Processing**: A `demo.orders.xml` topic to test `XmlExtract` UDF.
-- **Complex JSON**: A `demo.orders.complex` topic with deep nesting for testing **Schema Inference**.
-- **Poison Messages**: A `demo.errors.poison` topic containing malformed data to observe error resilience.
-- **Supply Chain 2.0 (Complex Process)**: A 20-step massive pipeline (`demo.sc.01.order.placed.out` to `20.delivered.out`) involving 60 topics. It features evolving nested JSON payloads (adding payment, fulfillment, quality control, and logistics data incrementally) to demonstrate advanced **Schema Inference** and **Stream Flow** across complex architectures.
+`setup-demo.sh` seeds **76 topics** automatically (78 with Schema Registry), so every feature on this page has a dataset to run against. Each stack runs it for you — `docker compose up -d` and it is there.
+
+Every business record carries a **record key** and **Kafka headers** (`correlation-id`, W3C `traceparent`, `source-system`, `event-type`, `produced-at`). Without them, exact-key tracing, key-partition narrowing, header search, log compaction and the audit's key-based duplicate detection would have nothing to run against.
+
+- **6-Step Order Pipeline**: Sequential topics (`demo.orders.1.received` to `6.delivered`), **3 partitions each**, keyed by order id. `ORD-101` walks all six steps with a real pause between hops — the 3 → 4 hop is deliberately three times slower, so **Stream Flow** has a genuine bottleneck edge to highlight. `ORD-102` is rejected at step 2, giving the flow a drop-off.
+- **Header-only correlation**: `demo.payments.authorized` / `.captured` and `demo.shipments.dispatched` / `.delivered` carry their own `PAY-…` / `SHP-…` references and **never mention the order id in their payload** — only in the `correlation-id` header. Trace `ORD-101` and they join the chain if, and only if, *search headers too* is on.
+- **Key partitioning**: `demo.orders.nested` has **6 partitions** and is keyed by order id, so *only this key's partition* on an exact-key search visibly narrows the scan (murmur2 routing) instead of being a no-op on a single-partition topic.
+- **Real time windows**: `demo.iot.sensors` holds 144 readings from 8 sensors, one per minute over the last ~2h24, with a few out-of-range `ALERT` values. Its `event_time` is genuinely spread, which is what makes `TUMBLE` / `HOP` return several buckets — and what makes a Prometheus **GAUGE / SUMMARY** metric move. `demo.orders.nested` spreads its `event_time` over ~2 hours for the same reason.
+- **JOINs & Reference Data**: `demo.customers` is **log-compacted** and keyed by `customer_id`; `C-002` is produced twice, so the topic shows what compaction keeps.
+- **XML Processing**: `demo.orders.xml` holds four documents of two shapes — including a nested one with attributes, a contact subtree and a shipping address — to test the `XmlExtract` UDF and XPath predicates.
+- **Complex JSON**: `demo.orders.complex` and `demo.orders.nested` (20 documents, 3 levels deep) for **Schema Inference**.
+- **Poison Messages**: `demo.errors.poison` covers the four kinds of unreadable the app reports differently — truncated JSON, plain prose, unclosed XML, invalid UTF-8 (flagged as *binary*, which no text search can match) and an empty payload. Two truncated records also sit inside `demo.orders.3.enriched`: a poison check that only ever runs against a topic named "poison" proves nothing, so the **Cluster Audit** reports one CRITICAL topic inside an otherwise green flow.
+- **Duplicates**: `ORD-103` and `ORD-105` are redelivered identically on `demo.orders.1.received`, the way an at-least-once producer retries — the audit's duplicate detection has a real finding instead of a clean-room zero.
+- **Avro & Schema Registry** (`docker-compose-kafka4.yml` only): `demo.avro.orders` and `demo.avro.customers` register a `<topic>-value` subject, which is what makes `AvroSchemaInferrer` classify them as AVRO and derive their columns from the registry rather than from sampling. Seeded by `setup-demo-avro.sh`; it exits cleanly if the registry is unreachable.
+- **Supply Chain 2.0 (Complex Process)**: A 20-step massive pipeline (`demo.sc.01.order.placed.out` to `20.delivered.out`) involving 60 topics. It features evolving nested JSON payloads (adding payment, fulfillment, quality control, and logistics data incrementally) to demonstrate advanced **Schema Inference** and **Stream Flow** across complex architectures. Each step is stamped 90 s after the previous one.
+
+Seeding is batched — one producer per topic, not one per message — and topics are created 8 at a time. Two knobs: `DEMO_HOP_DELAY` (seconds between the traced pipeline's hops, default 2; set to 0 for the fastest seeding, at the cost of flat hop latencies) and `DEMO_PARALLEL` (concurrent Kafka CLI processes, default 8).
 
 ## 12. Kafka 4 / KRaft Observability
 - **KRaft Controller Quorum** (Cluster page): metadata-log leader, epoch and high watermark, plus a voters/observers table with per-replica lag and last fetch / last caught-up timestamps. Hidden automatically on Zookeeper-based clusters.
