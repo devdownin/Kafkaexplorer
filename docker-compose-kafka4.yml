@@ -95,5 +95,21 @@ services:
       - ./setup-demo.sh:/data/setup-demo.sh
     entrypoint: [ "sh", "-c", "cp /data/setup-demo.sh /tmp/setup-demo.sh && sed -i 's/\\r$//' /tmp/setup-demo.sh && echo 'Waiting for Kafka...' && until /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka:29092 > /dev/null 2>&1; do sleep 2; done && bash /tmp/setup-demo.sh kafka:29092" ]
 
+  # Avro topics need `kafka-avro-console-producer`, which ships with the Confluent
+  # distribution rather than with apache/kafka — hence the second seeder, and hence
+  # its absence from the Schema-Registry-less stacks. Nothing depends on it: the
+  # topics simply show up in the UI once it finishes, and the script exits 0 when
+  # the registry is unreachable, so a hiccup here never blocks the stack.
+  demo-setup-avro:
+    image: confluentinc/cp-schema-registry:7.6.0
+    depends_on:
+      schema-registry:
+        condition: service_started
+      demo-setup:
+        condition: service_completed_successfully
+    volumes:
+      - ./setup-demo-avro.sh:/data/setup-demo-avro.sh
+    entrypoint: [ "sh", "-c", "cp /data/setup-demo-avro.sh /tmp/setup-demo-avro.sh && sed -i 's/\\r$//' /tmp/setup-demo-avro.sh && bash /tmp/setup-demo-avro.sh kafka:29092 http://schema-registry:8081" ]
+
 volumes:
   kafka_data:
