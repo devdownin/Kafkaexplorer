@@ -7,14 +7,22 @@ COPY src/main/webapp/package.json src/main/webapp/package-lock.json* ./
 RUN npm ci
 
 # Copier le reste du code frontend et build
+COPY src/main/webapp/ ./
 # The output directory is pinned here, not taken from vite.config.ts. That config sets
 # `build.outDir: '../resources/static'` — the path Maven wants when the SPA is built in
 # place — which from /app resolves to /resources/static, while the next stage copies
 # /app/dist. The image build had been failing on exactly that ("/app/dist": not found)
 # since the outDir was introduced, so every tag published a Release JAR but no GHCR
-# image. `npm run build -- <args>` appends to the whole script, giving
-# `tsc && vite build --outDir …`.
-RUN npm run build -- --outDir /app/dist --emptyOutDir
+# image.
+#
+# The two binaries are invoked directly rather than through `npm run build -- <args>`:
+# where npm forwards those extra arguments depends on the npm version. With the npm in
+# node:24 they reached `tsc`, which does not know `--emptyOutDir`, printed its help and
+# exited 1; with npm 10 they reached `vite build` as intended. Calling the binaries
+# leaves nothing to interpret. This must stay equivalent to the `build` script in
+# package.json (`tsc && vite build`) — the type check is not optional.
+RUN ./node_modules/.bin/tsc \
+ && ./node_modules/.bin/vite build --outDir /app/dist --emptyOutDir
 
 # --- Stage 2: Build Backend ---
 FROM maven:3.9-eclipse-temurin-21 AS backend-builder
