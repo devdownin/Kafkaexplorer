@@ -19,6 +19,12 @@ interface LineageEdge {
 interface LineageData {
   nodes: LineageNode[];
   edges: LineageEdge[];
+  /**
+   * Statements Flink's parser could not resolve, whose dependencies were read off the SQL text
+   * instead. A missing edge and an absent dependency look identical on a graph — so the graph says
+   * when it had to guess.
+   */
+  warnings?: string[];
 }
 
 const nodeConfig: Record<string, { shape: 'circle' | 'rect' | 'diamond' | 'hex'; color: string; bg: string }> = {
@@ -153,8 +159,25 @@ const NodeShape: React.FC<{
 
   return (
     <g
-      className="cursor-pointer"
+      className="cursor-pointer focus:outline-none"
+      // Chaque nœud est atteignable au clavier : la sélection ouvre le panneau de détails, et
+      // elle n'existait qu'à la souris.
+      tabIndex={0}
+      role="button"
+      aria-pressed={selected}
+      aria-label={`${node.label}, ${subLabel}`}
       onClick={onClick}
+      onKeyDown={e => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        e.preventDefault();
+        e.stopPropagation();
+        onClick();
+      }}
+      onFocus={e => {
+        const box = (e.currentTarget as SVGGElement).getBoundingClientRect();
+        onHoverEnter(box.left + box.width / 2, box.top);
+      }}
+      onBlur={onHoverLeave}
       onMouseEnter={e => onHoverEnter(e.clientX, e.clientY)}
       onMouseLeave={onHoverLeave}
     >
@@ -179,7 +202,7 @@ const NodeShape: React.FC<{
 
 const Lineage: React.FC = () => {
   const { toast } = useToast();
-  const [data, setData]                   = useState<LineageData>({ nodes: [], edges: [] });
+  const [data, setData]                   = useState<LineageData>({ nodes: [], edges: [], warnings: [] });
   const [loading, setLoading]             = useState(true);
   const [connectedOnly, setConnectedOnly] = useState(false);
   const [selectedNode, setSelectedNode]   = useState<LineageNode | null>(null);
@@ -214,7 +237,7 @@ const Lineage: React.FC = () => {
       );
       if (seq !== requestSeq.current) return;
       const d = res.data;
-      setData({ nodes: d.nodes ?? [], edges: d.edges ?? [] });
+      setData({ nodes: d.nodes ?? [], edges: d.edges ?? [], warnings: d.warnings ?? [] });
       // Clear selection if node no longer exists
       setSelectedNode(prev =>
         prev && (d.nodes ?? []).some(n => n.id === prev.id) ? prev : null
@@ -322,14 +345,17 @@ const Lineage: React.FC = () => {
 
   // ── Pan handlers ────────────────────────────────────────────────────────────
 
-  const onMouseDown = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+  // Événements *pointeur* et non souris : le même code fait glisser le graphe au doigt sur une
+  // tablette, où le déplacement était jusqu'ici impossible (`touch-action: none` empêche la page
+  // de défiler sous le geste). Même traitement que le graphe de Stream Flow.
+  const onPointerDown = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
     if ((e.target as Element).closest('[data-node]')) return;
     isPanning.current = true;
     lastPos.current = { x: e.clientX, y: e.clientY };
     e.currentTarget.style.cursor = 'grabbing';
   }, []);
 
-  const onMouseMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+  const onPointerMove = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
     if (!isPanning.current) return;
     const dx = e.clientX - lastPos.current.x;
     const dy = e.clientY - lastPos.current.y;
@@ -338,12 +364,32 @@ const Lineage: React.FC = () => {
     setTooltip(null);
   }, []);
 
-  const onMouseUp = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+  const onPointerUp = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
     isPanning.current = false;
     e.currentTarget.style.cursor = 'grab';
   }, []);
 
-  const resetView = () => setTransform({ x: 40, y: 20, scale: 1 });
+  const resetView = useCallback(() => setTransform({ x: 40, y: 20, scale: 1 }), []);
+
+  /**
+   * Le graphe se pilote au clavier : flèches pour se déplacer, +/− pour zoomer, 0 pour recadrer,
+   * Échap pour désélectionner. Sans cela, un graphe de dépendances n'existait qu'à la souris.
+   */
+  const onGraphKeyDown = useCallback((e: React.KeyboardEvent<SVGSVGElement>) => {
+    const step = e.shiftKey ? 160 : 48;
+    switch (e.key) {
+      case 'ArrowLeft':  setTransform(t => ({ ...t, x: t.x + step })); break;
+      case 'ArrowRight': setTransform(t => ({ ...t, x: t.x - step })); break;
+      case 'ArrowUp':    setTransform(t => ({ ...t, y: t.y + step })); break;
+      case 'ArrowDown':  setTransform(t => ({ ...t, y: t.y - step })); break;
+      case '+': case '=': zoomFromCenter(1.25); break;
+      case '-': case '_': zoomFromCenter(0.8); break;
+      case '0': resetView(); break;
+      case 'Escape': setSelectedNode(null); break;
+      default: return;
+    }
+    e.preventDefault();
+  }, [resetView, zoomFromCenter]);
   const isEmpty   = !loading && data.nodes.length === 0;
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -478,7 +524,7 @@ const Lineage: React.FC = () => {
       <main className="flex-1 relative overflow-hidden graph-bg bg-background-dark">
 
         {/* Top badge */}
-        <div className="absolute top-4 left-4 z-10 flex items-center gap-2 pointer-events-none">
+        <div className="absolute top-4 left-4 right-4 z-10 flex flex-col items-start gap-2 pointer-events-none">
           <div className="flex items-center gap-2 bg-surface-container/90 border border-outline-variant px-3 py-1.5 rounded-full text-xs">
             <span className="text-on-surface-variant">Lineage</span>
             <span className="text-primary/40">/</span>
@@ -489,6 +535,18 @@ const Lineage: React.FC = () => {
               </span>
             )}
           </div>
+          {/* Une arête manquante et une dépendance inexistante se ressemblent sur un graphe :
+              quand le parseur n'a pas pu résoudre un statement, le graphe le dit. */}
+          {(data.warnings ?? []).map(warning => (
+            <div
+              key={warning}
+              className="max-w-lg flex items-start gap-2 bg-warning/10 border border-warning/30 text-warning px-3 py-1.5 rounded-lg text-[11px] leading-relaxed"
+              role="status"
+            >
+              <span aria-hidden="true" className="material-symbols-outlined text-[14px] mt-0.5 shrink-0">info</span>
+              <span>{warning}</span>
+            </div>
+          ))}
         </div>
 
         {/* Zoom controls */}
@@ -532,12 +590,18 @@ const Lineage: React.FC = () => {
         {!isEmpty && (
           <svg
             ref={svgRef}
-            className="w-full h-full select-none"
-            style={{ cursor: 'grab' }}
-            onMouseDown={onMouseDown}
-            onMouseMove={onMouseMove}
-            onMouseUp={onMouseUp}
-            onMouseLeave={onMouseUp}
+            className="w-full h-full select-none focus:outline-none focus-visible:ring-1 focus-visible:ring-primary/60"
+            style={{ cursor: 'grab', touchAction: 'none' }}
+            role="application"
+            tabIndex={0}
+            aria-label={`Dependency graph, ${data.nodes.length} nodes. Arrow keys pan, plus and minus zoom, 0 resets.`}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerLeave={onPointerUp}
+            onKeyDown={onGraphKeyDown}
+            // Cliquer le fond désélectionne, comme sur le graphe de Stream Flow.
+            onClick={e => { if (e.target === e.currentTarget) setSelectedNode(null); }}
           >
             <defs>
               <marker id="arrow-lin" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">

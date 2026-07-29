@@ -5,12 +5,19 @@ import {
   Table, TableHead, TableBody, TableRow, Th, Td,
 } from '../components/ui';
 
+/**
+ * Uniquement des raccourcis qui existent : la ligne « Ctrl + S — Save query (coming soon) »
+ * annonçait une touche qui ne faisait rien (l'enregistrement se fait par le bouton de l'éditeur).
+ */
 const SHORTCUTS = [
-  { key: 'Ctrl + Enter', desc: 'Execute current SQL query', where: 'SQL Editor' },
-  { key: 'Ctrl + S', desc: 'Save query (coming soon)', where: 'SQL Editor' },
-  { key: 'Esc', desc: 'Close modal / deselect node', where: 'Global' },
-  { key: 'Scroll', desc: 'Zoom in / out on graph', where: 'Lineage · Stream Flow' },
-  { key: 'Drag', desc: 'Pan the graph canvas', where: 'Lineage · Stream Flow' },
+  { key: '⌘ / Ctrl + K', desc: 'Open the command palette — pages, topics, tables, or trace a key', where: 'Global' },
+  { key: '⌘ / Ctrl + Enter', desc: 'Run the current query (or just the selection)', where: 'SQL Editor' },
+  { key: 'Esc', desc: 'Close a modal, or deselect the focused node', where: 'Global · Graphs' },
+  { key: 'Scroll / drag', desc: 'Zoom and pan — pointer or touch', where: 'Lineage · Stream Flow' },
+  { key: '↑ ↓ ← →', desc: 'Pan the graph (hold Shift for larger steps)', where: 'Lineage · Stream Flow' },
+  { key: '+ / −', desc: 'Zoom the graph in and out', where: 'Lineage · Stream Flow' },
+  { key: '0', desc: 'Fit the graph back into view', where: 'Lineage · Stream Flow' },
+  { key: 'Tab, then Enter', desc: 'Move between graph nodes and open the focused one', where: 'Lineage · Stream Flow' },
 ];
 
 const SQL_EXAMPLES = [
@@ -89,10 +96,12 @@ const Help: React.FC = () => {
       />
 
       {/* Quick links */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         {[
           { label: 'SQL Editor', path: '/query', icon: 'terminal' },
+          { label: 'Stream Flow', path: '/stream-flow', icon: 'waves' },
           { label: 'Lineage Graph', path: '/lineage', icon: 'account_tree' },
+          { label: 'Metrics', path: '/metrics', icon: 'monitoring' },
           { label: 'Audit', path: '/audit', icon: 'fact_check' },
           { label: 'Configuration', path: '/config', icon: 'settings' },
         ].map(link => (
@@ -142,18 +151,40 @@ const Help: React.FC = () => {
       {/* Execution Engines */}
       <section>
         <SectionTitle icon="settings_ethernet">Execution Engines</SectionTitle>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {/* Ce panneau affirmait que *tout* SELECT passait par le scan Kafka, « no Flink SQL
+              planner involved » : c'était vrai avant la remise en service du planificateur, et
+              cela laissait croire qu'un JOIN était hors de portée. */}
           <Card padding="md" className="space-y-2">
             <div className="flex items-center gap-2">
-              <Badge tone="primary">Kafka Direct</Badge>
-              <span className="text-[11px] text-on-surface-variant">SELECT · Exploration</span>
+              <Badge tone="primary">Flink planner</Badge>
+              <span className="text-[11px] text-on-surface-variant">SELECT · default</span>
             </div>
             <p className="text-[12px] text-on-surface leading-relaxed">
-              All <code className="text-primary bg-primary/15 px-1 rounded">SELECT</code> queries run through a bounded Kafka scan — no Flink SQL planner involved.
-              Supported: projections, <code className="text-primary bg-primary/15 px-1 rounded">WHERE</code>, aggregates (<code className="text-primary bg-primary/15 px-1 rounded">COUNT / SUM / AVG / MAX / MIN</code>), <code className="text-primary bg-primary/15 px-1 rounded">GROUP BY</code>, and <code className="text-primary bg-primary/15 px-1 rounded">TUMBLE</code> windows.
+              <code className="text-primary bg-primary/15 px-1 rounded">SELECT</code> runs through the real Flink SQL planner: multi-topic JOINs, sub-queries,
+              windows and the full function library. Each result reports the engine that produced it
+              (<code className="text-primary bg-primary/15 px-1 rounded">FLINK</code>).
             </p>
             <p className="text-[12px] text-on-surface-variant leading-relaxed">
-              Not supported: multi-topic JOINs, sub-queries, arbitrary SQL functions. Up to 100 000 messages are scanned for aggregates.
+              A query the planner rejects — an unknown column, a syntax error — comes back with its own message and
+              line, rather than being retried elsewhere.
+            </p>
+          </Card>
+          <Card padding="md" className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Badge tone="warning">Kafka Direct</Badge>
+              <span className="text-[11px] text-on-surface-variant">SELECT · fallback</span>
+            </div>
+            <p className="text-[12px] text-on-surface leading-relaxed">
+              If the planner itself fails, the query falls back to a bounded Kafka scan and the result says so
+              (<code className="text-primary bg-primary/15 px-1 rounded">KAFKA_DIRECT</code>). It covers projections,
+              simple <code className="text-primary bg-primary/15 px-1 rounded">WHERE</code> equality, aggregates
+              (<code className="text-primary bg-primary/15 px-1 rounded">COUNT / SUM / AVG / MAX / MIN</code>),
+              <code className="text-primary bg-primary/15 px-1 rounded">GROUP BY</code> and windows.
+            </p>
+            <p className="text-[12px] text-on-surface-variant leading-relaxed">
+              Not JOINs or sub-queries. Predicates it cannot apply are listed in the result's warnings — a filtered
+              scan is never passed off as one that filtered. Up to 100 000 messages are read for aggregates.
             </p>
           </Card>
           <Card padding="md" className="space-y-2">
@@ -170,6 +201,50 @@ const Help: React.FC = () => {
             </p>
           </Card>
         </div>
+      </section>
+
+      {/* Tracer un message — rien, dans l'application, ne disait ce qu'une trace sait faire. */}
+      <section>
+        <SectionTitle icon="route">Tracing a message across topics</SectionTitle>
+        <Card padding="md" className="space-y-3">
+          <p className="text-[12px] text-on-surface leading-relaxed">
+            <Link to="/stream-flow" className="text-primary hover:underline">Stream Flow</Link> follows one key
+            through the cluster and draws the chain it travelled. A trace is a <strong>bounded scan</strong>, and the
+            page says what it covered: how many topics were read, how many messages, why it stopped, and which topics
+            it never reached.
+          </p>
+          <ul className="space-y-1.5 text-[12px] text-on-surface-variant leading-relaxed">
+            <li>
+              <strong className="text-on-surface">Where to look.</strong> Leave the path empty to match the record key,
+              the payload and every header. Or target it: <code className="text-primary bg-primary/15 px-1 rounded">order.id</code>{' '}
+              (dot path), <code className="text-primary bg-primary/15 px-1 rounded">$..id</code> (JSONPath),{' '}
+              <code className="text-primary bg-primary/15 px-1 rounded">/order/id</code> (XPath),{' '}
+              <code className="text-primary bg-primary/15 px-1 rounded">header:correlation-id</code> (one Kafka header).
+            </li>
+            <li>
+              <strong className="text-on-surface">Exact record key</strong> compares the whole Kafka key and reads only
+              the partition the default partitioner would have chosen — much faster, and it is what &ldquo;find record X&rdquo; means.
+            </li>
+            <li>
+              <strong className="text-on-surface">Target topics</strong> take a pasted list or a pattern such as{' '}
+              <code className="text-primary bg-primary/15 px-1 rounded">orders.*</code>. Name them when you can: a
+              whole-cluster trace reads the most recently active topics first, but naming them is far quicker.
+            </li>
+            <li>
+              <strong className="text-on-surface">If the budget runs out,</strong> continue the scan on the topics that
+              were never read — the hops already found are kept and merged into the same chain.
+            </li>
+            <li>
+              <strong className="text-on-surface">Compare two traces</strong> to answer &ldquo;this key arrived, that one
+              vanished — where?&rdquo;. Hop latencies are compared side by side, and a topic only one key reached is marked.
+            </li>
+            <li>
+              <strong className="text-on-surface">Every trace is a link.</strong> The criterion round-trips through the
+              URL, so a trace pasted into an incident ticket reruns exactly as it was — and exports to CSV or JSON with
+              its coverage and warnings.
+            </li>
+          </ul>
+        </Card>
       </section>
 
       {/* SQL Examples */}

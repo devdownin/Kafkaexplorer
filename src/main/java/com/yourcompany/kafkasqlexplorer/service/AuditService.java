@@ -142,6 +142,17 @@ public class AuditService {
      */
     public record AuditStart(String auditId, boolean started) {}
 
+    /**
+     * The id of the run in flight, or null when the cluster is not being audited.
+     *
+     * <p>Read by the settings endpoint: repointing Kafka in the middle of a scan would have the
+     * report describe two different clusters under one heading.
+     */
+    public String runningAuditId() {
+        RunHandle handle = currentRun.get();
+        return handle == null ? null : handle.auditId();
+    }
+
     public AuditStart startAudit(AuditOptions options) {
         String auditId = UUID.randomUUID().toString();
         RunHandle handle = new RunHandle(auditId);

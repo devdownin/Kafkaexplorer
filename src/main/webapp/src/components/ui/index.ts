@@ -12,6 +12,8 @@ export { Badge } from './Badge';
 export type { BadgeProps, BadgeTone } from './Badge';
 export { EmptyState } from './EmptyState';
 export type { EmptyStateProps } from './EmptyState';
+export { ErrorPanel } from './ErrorPanel';
+export type { ErrorPanelProps } from './ErrorPanel';
 export { PageHeader } from './PageHeader';
 export type { PageHeaderProps } from './PageHeader';
 export { Stat } from './Stat';

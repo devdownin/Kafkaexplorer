@@ -26,7 +26,7 @@ Built for data engineers, architects and anyone who has ever asked *"what's actu
 - 🖱️ **Click-to-query** — click a JSON key or XML tag in a message preview and it lands in your `SELECT`/`WHERE`, with `JSON_VALUE`/XPath generated for you.
 - 🧠 **Zero-config schemas** — topics are sampled, their structure inferred (JSON, XML, Avro via Schema Registry), and registered as Flink tables in one click.
 - 📝 **A real SQL editor** — Monaco (the VS Code engine), auto-completion of topics and tables, query history, earliest/latest read modes.
-- 🕸️ **Lineage & tracing** — an interactive graph of topics → tables → live jobs, plus cross-topic message tracing by JSONPath/XPath.
+- 🕸️ **Lineage & tracing** — an interactive graph of topics → tables → live jobs, resolved by Flink's own parser; plus cross-topic message tracing by key, header, JSONPath or XPath, which streams its hops as it finds them, says exactly what it scanned, resumes where a time budget stopped it, and compares two keys side by side.
 - 🩺 **One-click cluster audit** — poison messages, duplicates, flow drop-offs and latency, computed across your whole cluster in the background.
 - 🤖 **AI-powered process mining** — reconstruct business flows as flowcharts and hunt anomalies with Claude, any local LLM (Ollama…), or a private [SpectraLLM](https://github.com/devdownin/SpectraLLM).
 - 🔭 **Kafka 4 native** — KRaft controller quorum, KIP-848 consumer groups, share groups (KIP-932) and feature versions, visible in the UI and exported to Prometheus.

@@ -80,6 +80,14 @@ public class SseEmitterManager {
         }
     }
 
+    /**
+     * How many live sessions are currently attached. Read by the settings endpoint, which refuses
+     * to repoint the cluster out from under a running Process Mining session without being told to.
+     */
+    public int activeSessions() {
+        return emitters.size();
+    }
+
     public boolean exists(String sessionId) {
         return emitters.containsKey(sessionId);
     }

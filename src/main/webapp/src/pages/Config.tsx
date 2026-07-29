@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import axios from 'axios';
 import {
-  PageHeader, Button, CardSkeleton, Field, Input, NumberInput, PasswordInput,
+  PageHeader, Button, CardSkeleton, Field, Input, NumberInput, PasswordInput, useConfirm,
 } from '../components/ui';
 
 interface ClusterConfig {
@@ -76,6 +76,7 @@ const LLM_PROVIDERS = [
 ] as const;
 
 const Config: React.FC = () => {
+  const confirm = useConfirm();
   const [config, setConfig] = useState<ClusterConfig>({
     bootstrapServers: 'localhost:9092',
     mode: 'PLAIN',
@@ -130,22 +131,48 @@ const Config: React.FC = () => {
     return () => window.removeEventListener('beforeunload', warn);
   }, [dirty]);
 
+  /**
+   * Le serveur refuse de repointer le cluster tant qu'un audit, un job Flink ou une session
+   * Process Mining tourne encore dessus (409) : il dit lequel, et on propose de forcer plutôt que
+   * d'afficher « Failed to save configuration » sur un refus parfaitement délibéré.
+   */
+  const applyConfig = async (force: boolean) => {
+    const res = await axios.post<ClusterConfig>('/api/config', force ? { ...config, force } : config);
+    setConfig(prev => {
+      const next = { ...prev, ...res.data };
+      savedRef.current = JSON.stringify(next);
+      return next;
+    });
+    setSaveSuccess(true);
+    setTimeout(() => setSaveSuccess(false), 3000);
+  };
+
   const handleSave = async () => {
     if (!checkBeforeSubmit()) return;
     setSaving(true);
     setError(null);
     setSaveSuccess(false);
     try {
-      const res = await axios.post<ClusterConfig>('/api/config', config);
-      setConfig(prev => {
-        const next = { ...prev, ...res.data };
-        savedRef.current = JSON.stringify(next);
-        return next;
-      });
-      setSaveSuccess(true);
-      setTimeout(() => setSaveSuccess(false), 3000);
-    } catch {
-      setError('Failed to save configuration.');
+      await applyConfig(false);
+    } catch (err) {
+      const conflict = axios.isAxiosError(err) && err.response?.status === 409
+        ? (err.response.data as { message?: string } | undefined)?.message
+        : null;
+      if (!conflict) {
+        setError('Failed to save configuration.');
+      } else if (await confirm({
+        title: 'Work is still running on this cluster',
+        description: conflict,
+        confirmLabel: 'Repoint anyway',
+        tone: 'danger',
+        icon: 'warning',
+      })) {
+        try {
+          await applyConfig(true);
+        } catch {
+          setError('Failed to save configuration.');
+        }
+      }
     } finally {
       setSaving(false);
     }

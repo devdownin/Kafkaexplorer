@@ -4,6 +4,13 @@ package com.yourcompany.kafkasqlexplorer.service;
 
 import org.apache.flink.table.api.TableEnvironment;
 import org.apache.flink.table.api.TableResult;
+import org.apache.flink.table.api.internal.TableEnvironmentImpl;
+import org.apache.flink.table.catalog.CatalogView;
+import org.apache.flink.table.operations.Operation;
+import org.apache.flink.table.operations.QueryOperation;
+import org.apache.flink.table.operations.SinkModifyOperation;
+import org.apache.flink.table.operations.SourceQueryOperation;
+import org.apache.flink.table.operations.ddl.CreateViewOperation;
 import org.apache.flink.types.Row;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -78,16 +85,23 @@ public class LineageService {
         Map<String, Map<String, Object>> nodesById = new LinkedHashMap<>();
         List<Map<String, String>> edges = new ArrayList<>();
 
+        // Statements whose dependencies had to be guessed by the regex scan rather than read
+        // from the plan — reported, never swallowed: an edge that is missing for that reason is
+        // indistinguishable, on the graph, from a dependency that does not exist.
+        List<String> guessed = new ArrayList<>();
+
         // 1. Active INSERT INTO jobs
         flinkSqlService.getActiveJobsDetails().forEach((id, info) -> {
             String sql = info.sql();
             if (sql.toUpperCase(Locale.ROOT).contains("INSERT INTO")) {
-                String target = extractInsertTarget(sql);
-                Set<String> sources = extractSources(sql);
+                SqlDependencies dependencies = dependenciesOf(sql);
+                if (!dependencies.parsed()) guessed.add("job " + id);
                 String queryNodeId = "query_" + id;
                 putNode(nodesById, mkNode(queryNodeId, "INSERT", "query"));
-                sources.forEach(src -> edges.add(mkEdge(src, queryNodeId, "reads")));
-                if (target != null) edges.add(mkEdge(queryNodeId, target, "writes"));
+                dependencies.sources().forEach(src -> edges.add(mkEdge(src, queryNodeId, "reads")));
+                if (dependencies.target() != null) {
+                    edges.add(mkEdge(queryNodeId, dependencies.target(), "writes"));
+                }
             }
         });
 
@@ -116,7 +130,9 @@ public class LineageService {
             putNode(nodesById, mkNode(viewName, viewName, "view"));
             String ddl = getDdl(viewName, "VIEW");
             if (ddl != null) {
-                extractSources(ddl).forEach(src -> edges.add(mkEdge(src, viewName, "depends")));
+                SqlDependencies dependencies = dependenciesOf(ddl);
+                if (!dependencies.parsed()) guessed.add("view " + viewName);
+                dependencies.sources().forEach(src -> edges.add(mkEdge(src, viewName, "depends")));
             }
         }
 
@@ -154,10 +170,19 @@ public class LineageService {
             nodes.removeIf(n -> !wired.contains(n.get("id")));
         }
 
+        List<String> warnings = new ArrayList<>();
+        if (!guessed.isEmpty()) {
+            warnings.add(guessed.size() + " statement(s) could not be resolved by Flink's parser; "
+                + "their dependencies were read off the SQL text instead and may be incomplete ("
+                + String.join(", ", guessed.size() <= 8 ? guessed : guessed.subList(0, 8))
+                + (guessed.size() > 8 ? " and " + (guessed.size() - 8) + " more" : "") + ").");
+        }
+
         // The result is shared by every caller for the cache TTL — hand out read-only lists.
         return Map.of(
             "nodes", Collections.unmodifiableList(nodes),
-            "edges", Collections.unmodifiableList(edges));
+            "edges", Collections.unmodifiableList(edges),
+            "warnings", Collections.unmodifiableList(warnings));
     }
 
     /**
@@ -219,7 +244,95 @@ public class LineageService {
         return Map.of("from", from, "to", to, "label", label);
     }
 
-    // ── SQL parsing helpers ──────────────────────────────────────────────────
+    // ── SQL parsing ──────────────────────────────────────────────────────────
+
+    /**
+     * What one statement reads and writes — and whether Flink's parser said so, or the regex
+     * fallback guessed it. The distinction travels all the way to the UI: a graph built by
+     * guessing is still useful, but it must not be presented as one built by reading the plan.
+     */
+    public record SqlDependencies(Set<String> sources, String target, boolean parsed) { }
+
+    /**
+     * Resolves a statement's dependencies, through Flink's own parser when it can.
+     *
+     * <p>The regex scan below is a lexical approximation, and it is wrong in ways that matter:
+     * {@code FROM TABLE(TUMBLE(TABLE orders, …))} yields the keyword {@code TABLE} and loses
+     * {@code orders} entirely — the same trap that once broke auto-registration in
+     * {@link FlinkSqlService} — a quoted identifier carrying a hyphen is dropped by the
+     * identifier filter, and only the first {@code INSERT INTO} of a multi-statement script is
+     * ever seen. The parser resolves the real operation tree instead, so a source is a source
+     * because the planner says it is.
+     *
+     * <p>It falls back rather than fails: a statement referencing a table that no longer exists
+     * cannot be resolved, and a lineage graph missing one edge beats a lineage page that errors.
+     */
+    private SqlDependencies dependenciesOf(String sql) {
+        SqlDependencies parsed = parseWithFlink(sql, true);
+        return parsed != null ? parsed
+            : new SqlDependencies(extractSources(sql), extractInsertTarget(sql), false);
+    }
+
+    /**
+     * @param expandViews follow a {@code CREATE VIEW} down to the query it wraps — that is the
+     *                    shape {@code SHOW CREATE VIEW} returns, and the sources are inside it.
+     *                    Cleared on the recursive call, so a view can never send us round again.
+     * @return null when the parser is unavailable (a plain {@link TableEnvironment}, as in the
+     *         unit tests) or when it refuses the statement
+     */
+    private SqlDependencies parseWithFlink(String sql, boolean expandViews) {
+        if (!(tableEnv instanceof TableEnvironmentImpl impl)) {
+            return null;
+        }
+        List<Operation> operations;
+        try {
+            operations = runtimeCoordinator.runRead("lineage-parse", () -> impl.getParser().parse(sql));
+        } catch (Exception e) {
+            log.debug("Flink could not parse a statement for lineage, falling back to the regex scan: {}",
+                e.getMessage());
+            return null;
+        }
+        if (operations == null || operations.isEmpty()) {
+            return null;
+        }
+
+        Set<String> sources = new LinkedHashSet<>();
+        String target = null;
+        for (Operation operation : operations) {
+            if (operation instanceof SinkModifyOperation sink) {
+                if (target == null) {
+                    target = sink.getContextResolvedTable().getIdentifier().getObjectName();
+                }
+                collectSources(sink.getChild(), sources);
+            } else if (operation instanceof QueryOperation query) {
+                collectSources(query, sources);
+            } else if (expandViews && operation instanceof CreateViewOperation view) {
+                CatalogView catalogView = view.getCatalogView();
+                String query = catalogView.getOriginalQuery() != null && !catalogView.getOriginalQuery().isBlank()
+                    ? catalogView.getOriginalQuery()
+                    : catalogView.getExpandedQuery();
+                SqlDependencies inner = query == null ? null : parseWithFlink(query, false);
+                if (inner == null) {
+                    return null;
+                }
+                sources.addAll(inner.sources());
+            }
+        }
+        return new SqlDependencies(sources, target, true);
+    }
+
+    /** Every table the planner resolved under this operation, however deeply nested. */
+    private static void collectSources(QueryOperation operation, Set<String> into) {
+        if (operation == null) return;
+        if (operation instanceof SourceQueryOperation source) {
+            into.add(source.getContextResolvedTable().getIdentifier().getObjectName());
+        }
+        for (QueryOperation child : operation.getChildren()) {
+            collectSources(child, into);
+        }
+    }
+
+    // ── Regex fallback ───────────────────────────────────────────────────────
 
     private String extractInsertTarget(String sql) {
         Matcher m = INSERT_PATTERN.matcher(sql);

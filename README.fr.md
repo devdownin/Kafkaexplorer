@@ -26,7 +26,7 @@ Pensé pour les data engineers, les architectes, et tous ceux qui se sont un jou
 - 🖱️ **Cliquer, c'est requêter** — cliquez sur une clé JSON ou une balise XML dans l'aperçu d'un message et elle atterrit dans votre `SELECT`/`WHERE`, `JSON_VALUE`/XPath générés pour vous.
 - 🧠 **Schémas sans configuration** — les topics sont échantillonnés, leur structure inférée (JSON, XML, Avro via Schema Registry) et enregistrée comme table Flink en un clic.
 - 📝 **Un vrai éditeur SQL** — Monaco (le moteur de VS Code), auto-complétion des topics et tables, historique de requêtes, lecture earliest/latest.
-- 🕸️ **Lignage & traçage** — un graphe interactif topics → tables → jobs actifs, plus le traçage d'un message à travers plusieurs topics par JSONPath/XPath.
+- 🕸️ **Lignage & traçage** — un graphe interactif topics → tables → jobs actifs, résolu par le parseur de Flink lui-même ; plus le traçage d'un message à travers les topics par clé, header, JSONPath ou XPath, qui affiche ses sauts au fil de la recherche, dit exactement ce qu'il a lu, reprend là où le budget l'a arrêté, et compare deux clés côte à côte.
 - 🩺 **Audit du cluster en un clic** — messages toxiques, doublons, pertes en ligne et latence des flux, calculés sur tout le cluster en tâche de fond.
 - 🤖 **Process mining assisté par IA** — reconstruisez vos flux métier en flowcharts et traquez les anomalies avec Claude, un LLM local (Ollama…) ou un [SpectraLLM](https://github.com/devdownin/SpectraLLM) privé.
 - 🔭 **Nativement Kafka 4** — quorum de contrôleurs KRaft, groupes KIP-848, share groups (KIP-932) et versions de features, visibles dans l'UI et exportés vers Prometheus.
