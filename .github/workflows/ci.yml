@@ -79,6 +79,31 @@ jobs:
         retention-days: 7
         if-no-files-found: ignore
 
+  # Nothing here ever built the image, so a broken Dockerfile stayed invisible until a
+  # tag was pushed — which is exactly how it went: `vite.config.ts` gained
+  # `build.outDir: '../resources/static'`, the frontend stage stopped producing
+  # /app/dist, main stayed green, and v1.2 shipped a Release JAR with no GHCR image
+  # behind it. This is the cheapest place to catch that, and it is the image the
+  # README's one-command quick start builds.
+  #
+  # Deliberately not `needs: build`: it runs in parallel, so it costs wall-clock time
+  # only if it is the slowest job. It never pushes — publishing stays release.yml's job.
+  docker:
+    name: Build Docker image (no push)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build image from source
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   deploy:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     needs: build

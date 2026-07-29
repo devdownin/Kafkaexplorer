@@ -7,8 +7,14 @@ COPY src/main/webapp/package.json src/main/webapp/package-lock.json* ./
 RUN npm ci
 
 # Copier le reste du code frontend et build
-COPY src/main/webapp/ ./
-RUN npm run build
+# The output directory is pinned here, not taken from vite.config.ts. That config sets
+# `build.outDir: '../resources/static'` — the path Maven wants when the SPA is built in
+# place — which from /app resolves to /resources/static, while the next stage copies
+# /app/dist. The image build had been failing on exactly that ("/app/dist": not found)
+# since the outDir was introduced, so every tag published a Release JAR but no GHCR
+# image. `npm run build -- <args>` appends to the whole script, giving
+# `tsc && vite build --outDir …`.
+RUN npm run build -- --outDir /app/dist --emptyOutDir
 
 # --- Stage 2: Build Backend ---
 FROM maven:3.9-eclipse-temurin-21 AS backend-builder
@@ -36,4 +42,25 @@ WORKDIR /app
 COPY --from=backend-builder /app/target/kafka-sql-explorer-*.jar app.jar
 
 EXPOSE 8080
+
+# Kept in step with Dockerfile.release, which is what a tag actually publishes — the two
+# runtime surfaces drifting apart is how you end up debugging an image that behaves
+# unlike the one you built locally.
+#
+# Without this the JVM sizes its heap from the *host* memory it can see, which on a
+# container with a memory limit means being OOM-killed rather than running a GC.
+# JAVA_TOOL_OPTIONS is picked up by the JVM itself, so the entrypoint stays exec-form.
+ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75.0"
+
+# `management.endpoints.web.exposure.include` already exposes health. The start period
+# is generous on purpose: the embedded Flink runtime takes its time on a cold start,
+# and a container reported unhealthy while it is still legitimately booting is worse
+# than no healthcheck at all.
+HEALTHCHECK --interval=15s --timeout=3s --start-period=60s --retries=10 \
+  CMD wget -q -O - http://127.0.0.1:8080/actuator/health | grep -q '"status":"UP"' || exit 1
+
+# Deliberately still root. Dropping to a non-root user is the right thing to do, but not
+# in a release-pipeline fix: `logging.file.name: logs/kafkaexplorer.log` makes the app
+# write under /app, and docker-compose.yml bind-mounts a host path onto
+# /app/logs/kafkaexplorer.log — a host file Docker creates root-owned.
 ENTRYPOINT ["java", "-jar", "app.jar"]

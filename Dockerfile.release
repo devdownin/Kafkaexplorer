@@ -1,10 +1,27 @@
-# Dockerfile optimisé pour le déploiement de JAR pré-buildés
-FROM eclipse-temurin:21-jre
+# Runtime image for an already-built JAR: no Maven, no npm, no sources.
+#
+# This is what release.yml publishes to GHCR. The `build` job has already produced and
+# verified the JAR (`mvn verify`, the full gate) and attached it to the GitHub Release,
+# so rebuilding the whole thing from source inside Docker only bought a second, slower,
+# *unverified* copy of the same artefact — and left room for the image and the Release
+# asset to differ. The image now contains exactly the JAR you can download.
+#
+# Kept deliberately identical to the runtime stage of `Dockerfile`, which stays the
+# from-source path used by the compose stacks and by `docker build .`.
+FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 
-# On s'attend à ce que le JAR soit nommé app.jar (téléchargé par update.ps1)
+# Expected at the root of the build context, named app.jar (release.yml stages it
+# there; update.ps1 downloads it there).
 COPY app.jar app.jar
 
 EXPOSE 8080
+
+# Without this the JVM sizes its heap from the host memory it can see, which under a
+# container memory limit means being OOM-killed rather than running a GC.
+ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75.0"
+
+HEALTHCHECK --interval=15s --timeout=3s --start-period=60s --retries=10 \
+  CMD wget -q -O - http://127.0.0.1:8080/actuator/health | grep -q '"status":"UP"' || exit 1
 
 ENTRYPOINT ["java", "-jar", "app.jar"]

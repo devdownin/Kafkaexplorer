@@ -44,7 +44,11 @@ A Maven wrapper is checked in (`./mvnw`, Maven 3.9.9, `distributionType=only-scr
 
 Every job carries a `timeout-minutes` (the GitHub default is 360, so a wedged test would burn six hours of runner), and a failed build uploads `target/surefire-reports/` as an artifact — a run that is green locally but red here is expected from time to time, since CI resolves the real `io.confluent` jars while the local offline harness uses stubs.
 
-`release.yml` runs `./mvnw -B clean verify -P build-frontend`, **not** `package -DskipTests`. A tag can be pushed at any commit and nothing verified that commit had ever been green, so a release could ship code no suite had run against; the `docker` job inherits the gate through `needs: build`. Note that the image is rebuilt from source by the multi-stage `Dockerfile` (`-P !build-frontend -DskipTests`, the frontend having been built in its own stage), so the `upload-artifact`/`download-artifact` jar hand-off between the two jobs feeds nothing — `needs: build` is what actually matters there.
+`release.yml` runs `./mvnw -B clean verify -P build-frontend`, **not** `package -DskipTests`. A tag can be pushed at any commit and nothing verified that commit had ever been green, so a release could ship code no suite had run against; the `docker` job inherits the gate through `needs: build`.
+
+The `docker` job builds **`Dockerfile.release` from the JAR the `build` job produced**, not the multi-stage `Dockerfile` from source. It used to do the latter, which meant the release recompiled everything a second time, *without* the test gate, and the published image could drift from the JAR attached to the Release; the `upload-artifact`/`download-artifact` hand-off between the jobs fed nothing. Now the artefact is downloaded to `dist/` (**not** `target/` — `.dockerignore` excludes that, so the JAR would be missing from the build context), staged as `./app.jar`, and copied into a runtime-only image. Both ends are guarded: the build fails if `target/` does not hold exactly one JAR (`spring-boot:repackage` leaves the plain one as `*.jar.original`, which the glob does not match), `upload-artifact` uses `if-no-files-found: error` and the release step `fail_on_unmatched_files: true` — the default `warn` would publish a Release whose only content is its notes. A `SHA256SUMS.txt` is attached alongside the JAR.
+
+`ci.yml` builds the multi-stage `Dockerfile` on every run (`push: false`, GHA layer cache). Nothing built the image before a tag was pushed, and that is precisely how it broke: `vite.config.ts` sets `build.outDir: '../resources/static'` (the path Maven wants for an in-place build), so from `/app` the frontend stage wrote to `/resources/static` while the next stage copied `/app/dist` — `"/app/dist": not found`. main stayed green and **v1.2 shipped a Release JAR with no GHCR image behind it**. The Dockerfile now pins the output itself (`npm run build -- --outDir /app/dist --emptyOutDir`) rather than depending on that config value; keep it that way, and keep the CI image build, or the same class of breakage returns unnoticed.
 
 #### When `packages.confluent.io` is blocked
 
@@ -301,6 +305,6 @@ premature-empty-poll behaviour of `KafkaAdminService.getEarliestRecords`).
 ## Docker & GHCR
 
 - Image publiée sur `ghcr.io/devdownin/kafkaexplorer` via `.github/workflows/release.yml` au push d'un tag `v*`.
-- Le job `docker` dépend du job `build` et récupère le JAR via `actions/upload-artifact` / `actions/download-artifact`.
+- Le job `docker` dépend du job `build`, récupère le JAR via `actions/upload-artifact` / `actions/download-artifact` et le copie dans `Dockerfile.release` : l'image publiée contient exactement le JAR attaché à la Release, et n'est pas une seconde compilation non testée.
 - Tags générés : `{{version}}` (ex: `0.0.3`), `{{major}}.{{minor}}`, `latest`.
 - Lancement local : `docker run -p 8080:8080 -e SPRING_KAFKA_BOOTSTRAP_SERVERS=localhost:9092 -e ANTHROPIC_API_KEY=sk-ant-... ghcr.io/devdownin/kafkaexplorer:latest`
