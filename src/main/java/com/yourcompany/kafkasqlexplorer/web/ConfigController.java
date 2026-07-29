@@ -4,48 +4,55 @@ package com.yourcompany.kafkasqlexplorer.web;
 
 import com.yourcompany.kafkasqlexplorer.config.ClaudeConfig;
 import com.yourcompany.kafkasqlexplorer.config.KafkaConfig;
+import com.yourcompany.kafkasqlexplorer.service.AuditService;
+import com.yourcompany.kafkasqlexplorer.service.FlinkSqlService;
 import com.yourcompany.kafkasqlexplorer.service.KafkaAdminService;
 import com.yourcompany.kafkasqlexplorer.service.LlmClient;
 import com.yourcompany.kafkasqlexplorer.service.LlmClientFactory;
-import org.springframework.stereotype.Controller;
-import org.springframework.ui.Model;
+import com.yourcompany.kafkasqlexplorer.service.SseEmitterManager;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
-@Controller
+/**
+ * Settings, under {@code /api} only.
+ *
+ * <p>There used to be a {@code @GetMapping("/config")} returning the view name {@code "config"}.
+ * {@code /config} is a client-side route (the Settings page) and there is no template engine, so
+ * that mapping shadowed {@link SpaController} and answered a page refresh with a circular-view-path
+ * 500 — the same trap already documented for {@code /stream-flow} and {@code /audit}. The
+ * form-encoded {@code POST /config} went with it: the SPA posts JSON to {@code /api/config}.
+ */
+@RestController
 public class ConfigController {
 
     private final KafkaConfig kafkaConfig;
     private final KafkaAdminService kafkaAdminService;
     private final ClaudeConfig claudeConfig;
+    private final AuditService auditService;
+    private final FlinkSqlService flinkSqlService;
+    private final SseEmitterManager sseEmitterManager;
 
     public ConfigController(KafkaConfig kafkaConfig,
                             KafkaAdminService kafkaAdminService,
-                            ClaudeConfig claudeConfig) {
+                            ClaudeConfig claudeConfig,
+                            AuditService auditService,
+                            FlinkSqlService flinkSqlService,
+                            SseEmitterManager sseEmitterManager) {
         this.kafkaConfig = kafkaConfig;
         this.kafkaAdminService = kafkaAdminService;
         this.claudeConfig = claudeConfig;
-    }
-
-    @GetMapping("/config")
-    public String index(Model model) {
-        model.addAttribute("bootstrapServers", kafkaConfig.getBootstrapServers());
-        model.addAttribute("clusters", kafkaConfig.getClusters());
-        model.addAttribute("isConnected", kafkaAdminService.ping());
-        return "config";
-    }
-
-    @PostMapping("/config")
-    public String update(@RequestParam String bootstrapServers) {
-        kafkaConfig.setBootstrapServers(bootstrapServers);
-        kafkaAdminService.init();
-        return "redirect:/config";
+        this.auditService = auditService;
+        this.flinkSqlService = flinkSqlService;
+        this.sseEmitterManager = sseEmitterManager;
     }
 
     @GetMapping("/api/config")
-    @ResponseBody
     public Map<String, Object> getConfig() {
         Map<String, Object> result = new HashMap<>();
         result.put("bootstrapServers", kafkaConfig.getBootstrapServers());
@@ -56,9 +63,55 @@ public class ConfigController {
         return result;
     }
 
+    /**
+     * Work that a settings change would pull the ground out from under.
+     *
+     * <p>Repointing Kafka mutates shared singletons and re-initialises the admin client, while an
+     * audit keeps scanning, Flink jobs keep streaming and a live Process Mining session keeps
+     * polling — all against the cluster that was configured when they started. The report, the job
+     * and the session would then describe two different clusters under one heading. Nothing here
+     * stops that work: it is bounded and cancellable through its own screens, and killing it from
+     * a settings save would be a worse surprise than refusing the save.
+     */
+    private List<String> workInFlight() {
+        List<String> running = new ArrayList<>();
+        String auditId = auditService.runningAuditId();
+        if (auditId != null) {
+            running.add("an audit (" + auditId + ")");
+        }
+        int jobs = flinkSqlService.getActiveJobsDetails().size();
+        if (jobs > 0) {
+            running.add(jobs + " Flink job" + (jobs > 1 ? "s" : ""));
+        }
+        int sessions = sseEmitterManager.activeSessions();
+        if (sessions > 0) {
+            running.add(sessions + " live Process Mining session" + (sessions > 1 ? "s" : ""));
+        }
+        return running;
+    }
+
+    /**
+     * @param body {@code force: true} proceeds anyway — the operator who knows what is running is
+     *             not blocked, they are told
+     */
     @PostMapping(value = "/api/config", consumes = "application/json")
-    @ResponseBody
-    public Map<String, Object> updateConfig(@RequestBody Map<String, Object> body) {
+    public ResponseEntity<Map<String, Object>> updateConfig(@RequestBody Map<String, Object> body) {
+        boolean repointsCluster = body.containsKey("bootstrapServers") || body.containsKey("mode");
+        if (repointsCluster && !Boolean.parseBoolean(asString(body.get("force")))) {
+            List<String> running = workInFlight();
+            if (!running.isEmpty()) {
+                Map<String, Object> conflict = new HashMap<>();
+                conflict.put("message", "Not applied: " + String.join(", ", running)
+                    + " still running against the current cluster. Stop it, or send force=true to "
+                    + "repoint anyway — what is already running keeps reading the previous cluster.");
+                conflict.put("inFlight", running);
+                return ResponseEntity.status(HttpStatus.CONFLICT).body(conflict);
+            }
+        }
+        return ResponseEntity.ok(applyConfig(body));
+    }
+
+    private Map<String, Object> applyConfig(Map<String, Object> body) {
         ClaudeConfig.Provider previousProvider = claudeConfig.getProvider();
 
         if (body.containsKey("bootstrapServers") && body.get("bootstrapServers") != null) {
@@ -122,7 +175,6 @@ public class ConfigController {
     }
 
     @PostMapping("/api/config/test-llm")
-    @ResponseBody
     public Map<String, Object> testLlm() {
         Map<String, Object> result = new HashMap<>();
         result.put("provider", claudeConfig.getProviderLabel());

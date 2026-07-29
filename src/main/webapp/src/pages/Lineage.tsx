@@ -19,6 +19,12 @@ interface LineageEdge {
 interface LineageData {
   nodes: LineageNode[];
   edges: LineageEdge[];
+  /**
+   * Statements Flink's parser could not resolve, whose dependencies were read off the SQL text
+   * instead. A missing edge and an absent dependency look identical on a graph — so the graph says
+   * when it had to guess.
+   */
+  warnings?: string[];
 }
 
 const nodeConfig: Record<string, { shape: 'circle' | 'rect' | 'diamond' | 'hex'; color: string; bg: string }> = {
@@ -179,7 +185,7 @@ const NodeShape: React.FC<{
 
 const Lineage: React.FC = () => {
   const { toast } = useToast();
-  const [data, setData]                   = useState<LineageData>({ nodes: [], edges: [] });
+  const [data, setData]                   = useState<LineageData>({ nodes: [], edges: [], warnings: [] });
   const [loading, setLoading]             = useState(true);
   const [connectedOnly, setConnectedOnly] = useState(false);
   const [selectedNode, setSelectedNode]   = useState<LineageNode | null>(null);
@@ -214,7 +220,7 @@ const Lineage: React.FC = () => {
       );
       if (seq !== requestSeq.current) return;
       const d = res.data;
-      setData({ nodes: d.nodes ?? [], edges: d.edges ?? [] });
+      setData({ nodes: d.nodes ?? [], edges: d.edges ?? [], warnings: d.warnings ?? [] });
       // Clear selection if node no longer exists
       setSelectedNode(prev =>
         prev && (d.nodes ?? []).some(n => n.id === prev.id) ? prev : null
@@ -478,7 +484,7 @@ const Lineage: React.FC = () => {
       <main className="flex-1 relative overflow-hidden graph-bg bg-background-dark">
 
         {/* Top badge */}
-        <div className="absolute top-4 left-4 z-10 flex items-center gap-2 pointer-events-none">
+        <div className="absolute top-4 left-4 right-4 z-10 flex flex-col items-start gap-2 pointer-events-none">
           <div className="flex items-center gap-2 bg-surface-container/90 border border-outline-variant px-3 py-1.5 rounded-full text-xs">
             <span className="text-on-surface-variant">Lineage</span>
             <span className="text-primary/40">/</span>
@@ -489,6 +495,18 @@ const Lineage: React.FC = () => {
               </span>
             )}
           </div>
+          {/* Une arête manquante et une dépendance inexistante se ressemblent sur un graphe :
+              quand le parseur n'a pas pu résoudre un statement, le graphe le dit. */}
+          {(data.warnings ?? []).map(warning => (
+            <div
+              key={warning}
+              className="max-w-lg flex items-start gap-2 bg-warning/10 border border-warning/30 text-warning px-3 py-1.5 rounded-lg text-[11px] leading-relaxed"
+              role="status"
+            >
+              <span aria-hidden="true" className="material-symbols-outlined text-[14px] mt-0.5 shrink-0">info</span>
+              <span>{warning}</span>
+            </div>
+          ))}
         </div>
 
         {/* Zoom controls */}
