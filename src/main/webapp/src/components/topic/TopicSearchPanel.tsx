@@ -1,163 +1,18 @@
 import React from 'react';
 import { Button, Input, Select } from '../ui';
-
-/** One Kafka record with its coordinates — what /api/topic returns and what a search hit is. */
-export interface TopicMessage {
-  partition: number;
-  offset: number;
-  timestamp: number;
-  key: string | null;
-  value: string | null;
-  headers: Record<string, string | null>;
-  valueBytes: number;
-  truncated: boolean;
-}
-
-export type SearchMode = 'CONTAINS' | 'REGEX' | 'FIELD' | 'HEADER' | 'KEY';
-
-export interface TopicSearchCriteria {
-  mode: SearchMode;
-  query: string;
-  caseSensitive: boolean;
-  searchKey: boolean;
-  /**
-   * Étend une recherche texte / regex aux valeurs des headers Kafka. Décoché par défaut :
-   * l'activer d'office changerait ce que renvoie une recherche existante.
-   */
-  searchHeaders: boolean;
-  /**
-   * Mode KEY : ne lire que la partition que le partitionneur par défaut aurait choisie pour cette
-   * clé. Divise le travail par le nombre de partitions, au prix de deux hypothèses invérifiables
-   * (partitionneur par défaut, nombre de partitions inchangé) — d'où l'opt-in.
-   */
-  keyPartitioning: boolean;
-  /** Chemin de champ en mode FIELD, nom du header en mode HEADER. */
-  field: string;
-  operator: string;
-  value: string;
-  /** Minutes to look back; 0 means "from the beginning of the topic". */
-  sinceMinutes: number;
-}
-
-export interface TopicSearchResponse {
-  hits: TopicMessage[];
-  scanned: number;
-  matched: number;
-  elapsedMs: number;
-  exhausted: boolean;
-  stopReason: 'MAX_HITS' | 'MAX_SCAN' | 'TIMEOUT' | 'EXHAUSTED' | 'ERROR';
-  nextCursor: Record<string, number>;
-  warnings: string[];
-}
-
-/**
- * Splits text around every occurrence of `needle`, so a caller can mark the matches: even
- * indexes are the text between matches, odd indexes are the matches themselves.
- */
-export const splitOnMatches = (text: string, needle: string, caseSensitive: boolean): string[] => {
-  if (!needle) return [text];
-  const haystack = caseSensitive ? text : text.toLowerCase();
-  const target = caseSensitive ? needle : needle.toLowerCase();
-  const parts: string[] = [];
-  let cursor = 0;
-  for (;;) {
-    const found = haystack.indexOf(target, cursor);
-    if (found < 0) break;
-    parts.push(text.slice(cursor, found), text.slice(found, found + target.length));
-    cursor = found + target.length;
-  }
-  parts.push(text.slice(cursor));
-  return parts;
-};
-
-export const emptyCriteria: TopicSearchCriteria = {
-  mode: 'CONTAINS',
-  query: '',
-  caseSensitive: false,
-  searchKey: true,
-  searchHeaders: false,
-  keyPartitioning: false,
-  field: '',
-  operator: 'EQ',
-  value: '',
-  sinceMinutes: 0,
-};
-
-const OPERATORS: { value: string; label: string }[] = [
-  { value: 'EQ', label: '=' },
-  { value: 'NEQ', label: '≠' },
-  { value: 'CONTAINS', label: 'contains' },
-  { value: 'REGEX', label: 'matches regex' },
-  { value: 'GT', label: '>' },
-  { value: 'GTE', label: '≥' },
-  { value: 'LT', label: '<' },
-  { value: 'LTE', label: '≤' },
-  { value: 'EXISTS', label: 'exists' },
-];
-
-const SCOPES: { value: number; label: string }[] = [
-  { value: 0, label: 'Whole topic' },
-  { value: 15, label: 'Last 15 min' },
-  { value: 60, label: 'Last hour' },
-  { value: 1440, label: 'Last 24 h' },
-];
-
-const SEARCH_MODES: SearchMode[] = ['CONTAINS', 'REGEX', 'FIELD', 'HEADER', 'KEY'];
-
-/**
- * Le sélecteur de portée ne propose que les valeurs de `SCOPES` : une fenêtre arbitraire venue
- * de l'URL est arrondie à la plus petite portée qui la couvre, sinon le champ afficherait une
- * durée que la liste ne contient pas et la recherche partirait sur autre chose que l'affiché.
- */
-function snapScope(minutes: number): number {
-  if (!Number.isFinite(minutes) || minutes <= 0) return 0;
-  return SCOPES.map(s => s.value).filter(v => v > 0).find(v => v >= minutes) ?? 0;
-}
-
-/**
- * Critère de recherche porté par la query string — c'est ainsi qu'un saut de la page Stream Flow
- * ouvre le topic sur *sa* recherche, au lieu de laisser retranscrire le critère à la main dans un
- * formulaire qui n'a pas les mêmes champs.
- *
- * Rend `null` dès que l'URL ne décrit pas une recherche exécutable : une navigation ordinaire
- * vers un topic ne doit rien déclencher.
- */
-export function criteriaFromQuery(search: string): TopicSearchCriteria | null {
-  const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
-  const mode = (params.get('mode') ?? '').toUpperCase() as SearchMode;
-  if (!SEARCH_MODES.includes(mode)) return null;
-
-  const query = (params.get('q') ?? '').trim();
-  const value = (params.get('value') ?? '').trim();
-  const field = (params.get('field') ?? '').trim();
-  const scoped = mode === 'FIELD' || mode === 'HEADER';
-  // Mêmes conditions que le bouton « Search » du panneau : une cible sans valeur, ou une
-  // recherche texte sans texte, n'aurait rien à exécuter.
-  if (scoped && !field) return null;
-  if ((scoped || mode === 'KEY') ? !value : !query) return null;
-
-  const operator = params.get('op') ?? '';
-  return {
-    ...emptyCriteria,
-    mode,
-    query,
-    field,
-    operator: OPERATORS.some(o => o.value === operator) ? operator : emptyCriteria.operator,
-    value,
-    caseSensitive: params.get('case') === '1',
-    searchHeaders: params.get('headers') === '1',
-    keyPartitioning: params.get('keyPartitioning') === '1',
-    sinceMinutes: snapScope(Number(params.get('since'))),
-  };
-}
-
-const STOP_REASONS: Record<string, string> = {
-  MAX_HITS: 'hit limit reached',
-  MAX_SCAN: 'scan budget reached',
-  TIMEOUT: 'time budget reached',
-  EXHAUSTED: 'whole range scanned',
-  ERROR: 'search failed',
-};
+import {
+  DIRECTIONS,
+  OPERATORS,
+  SCOPES,
+  canRun,
+  describeCoverage,
+  isFieldScoped,
+  nextScanAction,
+  type ScanAction,
+  type SearchCoverage,
+  type SearchMode,
+  type TopicSearchCriteria,
+} from './topicSearch';
 
 interface Props {
   /** Field paths from the inferred schema — the whole point is not having to guess them. */
@@ -165,34 +20,43 @@ interface Props {
   criteria: TopicSearchCriteria;
   onChange: (criteria: TopicSearchCriteria) => void;
   onSearch: () => void;
-  onLoadMore: () => void;
+  onContinue: (action: ScanAction) => void;
+  onCancel: () => void;
+  onCopyLink: () => void;
   onClear: () => void;
   searching: boolean;
   active: boolean;
-  result: TopicSearchResponse | null;
+  coverage: SearchCoverage | null;
+  /**
+   * Le critère de la passe affichée. La couverture et le bouton « en lire plus » parlent de la
+   * recherche qui a tourné, pas du formulaire tel qu'il est en train d'être édité.
+   */
+  ranCriteria: TopicSearchCriteria | null;
+  warnings: string[];
   error: string | null;
+  /** Une passe abandonnée en cours de route : elle ne rapporte rien, et doit le dire. */
+  stopped: boolean;
   loadedHits: number;
 }
 
 const TopicSearchPanel: React.FC<Props> = ({
-  schemaPaths, criteria, onChange, onSearch, onLoadMore, onClear,
-  searching, active, result, error, loadedHits,
+  schemaPaths, criteria, onChange, onSearch, onContinue, onCancel, onCopyLink, onClear,
+  searching, active, coverage, ranCriteria, warnings, error, stopped, loadedHits,
 }) => {
   const set = <K extends keyof TopicSearchCriteria>(key: K, value: TopicSearchCriteria[K]) =>
     onChange({ ...criteria, [key]: value });
 
-  // FIELD et HEADER portent leur cible dans `field` ; KEY compare directement `value`.
-  const fieldScoped = criteria.mode === 'FIELD' || criteria.mode === 'HEADER';
+  const fieldScoped = isFieldScoped(criteria.mode);
   const keyScoped = criteria.mode === 'KEY';
-  const canSearch = fieldScoped
-    ? criteria.field.trim().length > 0
-    : keyScoped
-      ? criteria.value.trim().length > 0
-      : criteria.query.trim().length > 0;
+  const canSearch = canRun(criteria);
 
   const submitOnEnter = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && canSearch && !searching) onSearch();
   };
+
+  const action = coverage && ranCriteria && !searching
+    ? nextScanAction(coverage, ranCriteria)
+    : null;
 
   return (
     <div className="rounded-xl border border-outline-variant bg-surface-container-low p-3 space-y-3">
@@ -226,6 +90,22 @@ const TopicSearchPanel: React.FC<Props> = ({
         >
           {SCOPES.map(scope => (
             <option key={scope.value} value={scope.value}>{scope.label}</option>
+          ))}
+        </Select>
+
+        {/* Par quel bout le scan entre. Le budget de scan est borné, donc ce choix décide de ce
+            qui sera lu — et non simplement de l'ordre dans lequel on le lit. */}
+        <Select
+          value={criteria.direction}
+          onChange={e => set('direction', e.target.value as TopicSearchCriteria['direction'])}
+          aria-label="Scan direction"
+          className="w-40"
+          title={criteria.direction === 'NEWEST'
+            ? 'Reads back from the most recent records. Older ones are only reached by scanning further back.'
+            : 'Reads forward from the oldest record in range. On a large topic the scan budget is spent on the oldest history.'}
+        >
+          {DIRECTIONS.map(direction => (
+            <option key={direction.value} value={direction.value}>{direction.label}</option>
           ))}
         </Select>
 
@@ -298,9 +178,12 @@ const TopicSearchPanel: React.FC<Props> = ({
               className="flex-1 min-w-[12rem] font-mono"
             />
           )}
-          <Button variant="primary" icon="search" onClick={onSearch} disabled={!canSearch || searching}>
-            {searching ? 'Searching…' : 'Search'}
-          </Button>
+          <SearchButtons
+            canSearch={canSearch}
+            searching={searching}
+            onSearch={onSearch}
+            onCancel={onCancel}
+          />
         </div>
       ) : fieldScoped ? (
         <div className="flex flex-wrap items-center gap-2">
@@ -350,9 +233,12 @@ const TopicSearchPanel: React.FC<Props> = ({
               className="flex-1 min-w-[10rem]"
             />
           )}
-          <Button variant="primary" icon="search" onClick={onSearch} disabled={!canSearch || searching}>
-            {searching ? 'Searching…' : 'Search'}
-          </Button>
+          <SearchButtons
+            canSearch={canSearch}
+            searching={searching}
+            onSearch={onSearch}
+            onCancel={onCancel}
+          />
         </div>
       ) : (
         <div className="flex items-center gap-2">
@@ -367,9 +253,12 @@ const TopicSearchPanel: React.FC<Props> = ({
               className="pl-9"
             />
           </div>
-          <Button variant="primary" icon="search" onClick={onSearch} disabled={!canSearch || searching}>
-            {searching ? 'Searching…' : 'Search'}
-          </Button>
+          <SearchButtons
+            canSearch={canSearch}
+            searching={searching}
+            onSearch={onSearch}
+            onCancel={onCancel}
+          />
         </div>
       )}
 
@@ -380,33 +269,55 @@ const TopicSearchPanel: React.FC<Props> = ({
         </p>
       )}
 
-      {/* What the scan actually covered — a search that stops early must say so. */}
-      {active && result && !error && (
+      {/* Une passe interrompue est perdue côté client : le dire, plutôt que de laisser croire que
+          les résultats affichés incluent ce qu'elle avait commencé à lire. */}
+      {stopped && !searching && (
+        <p className="text-[12px] text-warning flex items-center gap-1.5">
+          <span className="material-symbols-outlined text-[16px]">cancel</span>
+          Scan stopped — that pass was abandoned, so nothing from it is shown.
+        </p>
+      )}
+
+      {/* What the scan actually covered — a search that stops early must say so, and the numbers
+          are those of every pass together, not of the last one. */}
+      {active && coverage && ranCriteria && !error && (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[12px] text-on-surface-variant border-t border-outline-variant/60 pt-2.5">
           <span>
             <span className="font-mono font-semibold text-on-surface tabular-nums">{loadedHits}</span>
-            {result.matched > loadedHits && <span> of {result.matched}</span>} match
+            {coverage.matched > loadedHits && <span> of {coverage.matched}</span>} match
             {loadedHits === 1 ? '' : 'es'}
           </span>
           <span>
-            <span className="font-mono tabular-nums">{result.scanned.toLocaleString()}</span> scanned
-            {' '}in <span className="font-mono tabular-nums">{(result.elapsedMs / 1000).toFixed(1)}s</span>
+            <span className="font-mono tabular-nums">{coverage.scanned.toLocaleString()}</span> scanned
+            {' '}in <span className="font-mono tabular-nums">{(coverage.elapsedMs / 1000).toFixed(1)}s</span>
+            {coverage.passes > 1 && <span> over {coverage.passes} passes</span>}
           </span>
-          <span className={result.exhausted ? 'text-success' : 'text-warning'}>
-            {result.exhausted ? 'Whole range scanned' : STOP_REASONS[result.stopReason] ?? result.stopReason}
+          <span className={coverage.exhausted ? 'text-success' : 'text-warning'}>
+            {describeCoverage(coverage, ranCriteria)}
           </span>
-          {!result.exhausted && result.stopReason !== 'ERROR' && (
-            <Button variant="ghost" icon="more_horiz" onClick={onLoadMore} disabled={searching}>
-              {searching ? 'Scanning…' : 'Continue scanning'}
+          {action && (
+            <Button
+              variant="ghost"
+              icon={action.kind === 'DEEPEN' ? 'history' : 'more_horiz'}
+              onClick={() => onContinue(action)}
+              title={action.hint}
+            >
+              {action.label}
             </Button>
           )}
+          {searching && (
+            <span className="text-on-surface-variant">Scanning…</span>
+          )}
+          <Button variant="ghost" icon="link" onClick={onCopyLink} title="Copy a link that reruns this search">
+            Link
+          </Button>
           <Button variant="ghost" icon="close" onClick={onClear} disabled={searching}>
             Clear
           </Button>
         </div>
       )}
 
-      {result?.warnings?.map((warning, i) => (
+      {warnings.map((warning, i) => (
         <p key={i} className="text-[12px] text-warning flex items-start gap-1.5">
           <span className="material-symbols-outlined text-[16px] shrink-0">warning</span>
           {warning}
@@ -415,5 +326,25 @@ const TopicSearchPanel: React.FC<Props> = ({
     </div>
   );
 };
+
+/**
+ * Un scan dure jusqu'à dix secondes par passe : tant qu'il tourne, le bouton d'à côté doit
+ * permettre de l'arrêter, pas seulement de constater qu'on ne peut rien faire.
+ */
+const SearchButtons: React.FC<{
+  canSearch: boolean;
+  searching: boolean;
+  onSearch: () => void;
+  onCancel: () => void;
+}> = ({ canSearch, searching, onSearch, onCancel }) => (
+  <div className="flex items-center gap-2">
+    <Button variant="primary" icon="search" onClick={onSearch} disabled={!canSearch || searching}>
+      {searching ? 'Searching…' : 'Search'}
+    </Button>
+    {searching && (
+      <Button variant="outline" icon="stop_circle" onClick={onCancel}>Stop</Button>
+    )}
+  </div>
+);
 
 export default TopicSearchPanel;

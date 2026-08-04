@@ -7,14 +7,26 @@ import { useToast } from '../components/Toast';
 import ErrorBanner from '../components/ErrorBanner';
 import { Button, Badge, Stat, EmptyState, StatGridSkeleton, TableSkeleton, Table } from '../components/ui';
 import { buildTraceLinkForKey } from './streamFlow';
-import TopicSearchPanel, {
+import TopicSearchPanel from '../components/topic/TopicSearchPanel';
+import {
+  NO_HIGHLIGHT,
+  buildSearchBody,
+  buildSearchQuery,
+  coverageOf,
   criteriaFromQuery,
   emptyCriteria,
-  splitOnMatches,
+  highlightFor,
+  highlightedHeader,
+  revealsHeaders,
+  splitForHighlight,
+  type ScanAction,
+  type SearchCoverage,
+  type SearchHighlight,
+  type SearchPass,
   type TopicMessage,
   type TopicSearchCriteria,
   type TopicSearchResponse,
-} from '../components/topic/TopicSearchPanel';
+} from '../components/topic/topicSearch';
 
 interface TopicDetail {
   topic: {
@@ -206,12 +218,16 @@ const XmlViewer: React.FC<{
   );
 };
 
-/** Renders text with every occurrence of `highlight` marked. Odd indexes are the matches. */
-const Highlighted: React.FC<{ text: string; highlight: string; caseSensitive: boolean }> = ({
-  text, highlight, caseSensitive,
+/**
+ * Renders text with everything the search matched on marked. Odd indexes are the matches.
+ * Le surlignage suit le mode : littéral en recherche texte, motif en regex, valeur comparée en
+ * recherche par champ / header / clé — un hit doit montrer *pourquoi* il en est un.
+ */
+const Highlighted: React.FC<{ text: string; highlight: SearchHighlight }> = ({
+  text, highlight,
 }) => {
-  if (!highlight) return <>{text}</>;
-  const parts = splitOnMatches(text, highlight, caseSensitive);
+  if (highlight.kind === 'NONE') return <>{text}</>;
+  const parts = splitForHighlight(text, highlight);
   return (
     <>
       {parts.map((part, i) => (i % 2 === 1
@@ -234,19 +250,28 @@ const MessageCard: React.FC<{
   onCopy: (s: string) => void;
   onFieldClick?: (field: string) => void;
   selectedFields?: string[];
-  highlight?: string;
-  caseSensitive?: boolean;
-}> = ({ message, index, onCopy, onFieldClick, selectedFields, highlight, caseSensitive }) => {
+  highlight: SearchHighlight;
+  /** Le header comparé par la recherche, à désigner parmi les autres. */
+  highlightHeader?: string | null;
+  /** Vrai quand le match s'est joué dans les headers : ils ne peuvent plus rester en infobulle. */
+  revealHeaders?: boolean;
+}> = ({
+  message, index, onCopy, onFieldClick, selectedFields, highlight, highlightHeader, revealHeaders,
+}) => {
   const sample = message.value ?? '';
+  const marked = highlight.kind !== 'NONE';
   const [expanded, setExpanded] = useState(index < 3);
   // Raw view is what highlighting can mark up, so a card opens raw as soon as there is
   // something to highlight — the user should see *why* the record matched.
-  const [raw, setRaw] = useState(Boolean(highlight));
+  const [raw, setRaw] = useState(marked);
+  const headerEntries = Object.entries(message.headers ?? {});
+  const [showHeaders, setShowHeaders] = useState(Boolean(revealHeaders));
   // Cards are keyed by list position, so when filtering shifts a different message into this slot
   // the instance is reused — reset the expand state to the default for the new content instead of
   // bleeding the previous message's state.
   useEffect(() => { setExpanded(index < 3); }, [sample, index]);
-  useEffect(() => { setRaw(Boolean(highlight)); }, [highlight, sample]);
+  useEffect(() => { setRaw(marked); }, [marked, sample]);
+  useEffect(() => { setShowHeaders(Boolean(revealHeaders)); }, [revealHeaders, sample]);
 
   let parsed: unknown = null;
   let isJson = false;
@@ -274,13 +299,20 @@ const MessageCard: React.FC<{
         <span title="Record timestamp">{formatTimestamp(message.timestamp)}</span>
         {message.key !== null && message.key !== undefined && (
           <span className="text-primary truncate max-w-[16rem]" title={`Key: ${message.key}`}>
-            key={message.key}
+            key=<Highlighted text={message.key} highlight={highlight} />
           </span>
         )}
-        {message.headers && Object.keys(message.headers).length > 0 && (
-          <span title={Object.entries(message.headers).map(([k, v]) => `${k}: ${v}`).join('\n')}>
-            {Object.keys(message.headers).length} header{Object.keys(message.headers).length > 1 ? 's' : ''}
-          </span>
+        {headerEntries.length > 0 && (
+          <button
+            onClick={() => setShowHeaders(!showHeaders)}
+            aria-expanded={showHeaders}
+            className="flex items-center gap-0.5 hover:text-on-surface transition-colors"
+          >
+            <span aria-hidden="true" className="material-symbols-outlined text-[12px]">
+              {showHeaders ? 'expand_more' : 'chevron_right'}
+            </span>
+            {headerEntries.length} header{headerEntries.length > 1 ? 's' : ''}
+          </button>
         )}
         {message.truncated && (
           <span className="text-warning" title={`Value truncated (${message.valueBytes} chars)`}>
@@ -288,11 +320,31 @@ const MessageCard: React.FC<{
           </span>
         )}
       </div>
+      {/* Les headers portent très souvent le corrélatif qu'on cherche. Les laisser en infobulle
+          rendait une recherche HEADER inspectable seulement à la souris, un hit à la fois. */}
+      {showHeaders && headerEntries.length > 0 && (
+        <dl className="px-4 pt-1.5 space-y-0.5">
+          {headerEntries.map(([name, value]) => {
+            const targeted = highlightHeader !== null && highlightHeader !== undefined
+              && name.toLowerCase() === highlightHeader.toLowerCase();
+            return (
+              <div key={name} className="flex gap-2 font-mono text-[10px] leading-relaxed">
+                <dt className={`shrink-0 ${targeted ? 'text-warning font-semibold' : 'text-on-surface-variant'}`}>
+                  {name}
+                </dt>
+                <dd className="min-w-0 break-all text-on-surface">
+                  <Highlighted text={value ?? ''} highlight={highlight} />
+                </dd>
+              </div>
+            );
+          })}
+        </dl>
+      )}
       <div className="flex items-start gap-3 px-4 pb-4 pt-1 hover:bg-surface-container-high/40 transition-colors">
         <div className="flex-1 min-w-0 overflow-x-auto">
           {raw ? (
             <pre className={`font-mono text-[11px] text-on-surface whitespace-pre-wrap break-all leading-relaxed ${!expanded && needsCollapse ? 'max-h-24 overflow-hidden' : ''}`}>
-              <Highlighted text={formatted} highlight={highlight ?? ''} caseSensitive={Boolean(caseSensitive)} />
+              <Highlighted text={formatted} highlight={highlight} />
             </pre>
           ) : isJson && parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? (
             <div className={`leading-relaxed ${!expanded && needsCollapse ? 'max-h-24 overflow-hidden' : ''}`}>
@@ -375,10 +427,22 @@ const TopicExplorer: React.FC = () => {
   // appends instead of replacing what the user is already reading.
   const [criteria, setCriteria] = useState<TopicSearchCriteria>(emptyCriteria);
   const [searchResult, setSearchResult] = useState<TopicSearchResponse | null>(null);
+  const [coverage, setCoverage] = useState<SearchCoverage | null>(null);
+  /** Le critère de la passe affichée : le formulaire peut avoir bougé depuis. */
+  const [ranCriteria, setRanCriteria] = useState<TopicSearchCriteria | null>(null);
   const [hits, setHits] = useState<TopicMessage[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [searchActive, setSearchActive] = useState(false);
+  const [stopped, setStopped] = useState(false);
+  /** La passe en vol, pour pouvoir l'abandonner : un scan dure jusqu'à dix secondes. */
+  const abortRef = React.useRef<AbortController | null>(null);
+  /** Numéro de passe : ce qui revient d'une passe remplacée ne doit pas atterrir sur la suivante. */
+  const runIdRef = React.useRef(0);
+  /** La query string que la page a écrite elle-même, pour ne pas la relire comme un ordre. */
+  const lastAppliedSearch = React.useRef<string | null>(null);
+
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   const toggleField = (field: string) => {
     setSelectedFields(prev =>
@@ -413,39 +477,54 @@ const TopicExplorer: React.FC = () => {
   };
 
   /**
+   * Une passe de scan.
+   *
+   * `resume` reprend au curseur de la passe précédente : elle lit du terrain neuf, donc ses hits
+   * s'ajoutent et sa couverture se cumule. Toute autre passe (première recherche, élargissement du
+   * budget) relit depuis le même bout et remplace donc ce qui était affiché — sinon la couverture
+   * compterait deux fois des records lus une seule.
+   *
    * `applied` permet de lancer une recherche avec un critère qui n'est pas encore passé par
    * l'état React — c'est le cas de celui qui arrive dans l'URL, appliqué et exécuté d'un trait.
    */
-  const runSearch = async (resume: boolean, applied?: TopicSearchCriteria) => {
+  const runSearch = async (
+    pass: { resume?: boolean; maxScan?: number } = {},
+    applied?: TopicSearchCriteria,
+  ) => {
     const active = applied ?? criteria;
+    const resume = Boolean(pass.resume);
+    const runId = ++runIdRef.current;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setSearching(true);
     setSearchError(null);
+    setStopped(false);
     try {
-      // FIELD et HEADER portent tous deux leur cible dans `field` (chemin / nom de header) ;
-      // KEY compare `value` sans cible.
-      const fieldScoped = active.mode === 'FIELD' || active.mode === 'HEADER';
-      const valueScoped = fieldScoped || active.mode === 'KEY';
-      const body = {
-        mode: active.mode,
-        query: active.query,
-        caseSensitive: active.caseSensitive,
-        searchKey: active.searchKey,
-        searchHeaders: active.searchHeaders,
-        keyPartitioning: active.keyPartitioning,
-        field: fieldScoped ? active.field : null,
-        operator: valueScoped ? active.operator : null,
-        value: valueScoped ? active.value : null,
-        from: active.sinceMinutes > 0 ? 'TIMESTAMP' : 'EARLIEST',
-        sinceMinutes: active.sinceMinutes > 0 ? active.sinceMinutes : null,
+      const request: SearchPass = {
         // Resuming continues exactly where the previous pass stopped.
         cursor: resume ? searchResult?.nextCursor ?? null : null,
+        maxScan: pass.maxScan ?? null,
       };
       const response = await axios.post<TopicSearchResponse>(
-        `/api/topic/${encodeURIComponent(name ?? '')}/search`, body);
+        `/api/topic/${encodeURIComponent(name ?? '')}/search`,
+        buildSearchBody(active, request),
+        { signal: controller.signal });
+      if (runIdRef.current !== runId) return;
       setSearchResult(response.data);
+      setCoverage(prev => coverageOf(response.data, prev, resume, pass.maxScan));
       setHits(prev => resume ? [...prev, ...response.data.hits] : response.data.hits);
+      setRanCriteria(active);
       setSearchActive(true);
+      // L'URL décrit désormais la recherche affichée : un lien collé dans un ticket la rejoue.
+      const search = buildSearchQuery(active);
+      lastAppliedSearch.current = search;
+      navigate({ pathname: location.pathname, search }, { replace: true });
     } catch (e) {
+      if (runIdRef.current !== runId) return;
+      // Une passe abandonnée n'a rien à dire : ni erreur, ni résultat. `stopped` le signale.
+      if (axios.isCancel(e) || controller.signal.aborted) return;
       const message = axios.isAxiosError(e)
         ? (e.response?.data as { message?: string } | undefined)?.message ?? e.message
         : 'Search failed';
@@ -453,10 +532,31 @@ const TopicExplorer: React.FC = () => {
       if (!resume) {
         setHits([]);
         setSearchResult(null);
+        setCoverage(null);
       }
     } finally {
-      setSearching(false);
+      if (runIdRef.current === runId) setSearching(false);
     }
+  };
+
+  const cancelSearch = () => {
+    if (!abortRef.current) return;
+    abortRef.current.abort();
+    setStopped(true);
+    setSearching(false);
+  };
+
+  const continueSearch = (action: ScanAction) => {
+    void runSearch(action.kind === 'RESUME'
+      ? { resume: true }
+      : { maxScan: action.maxScan }, ranCriteria ?? criteria);
+  };
+
+  const copySearchLink = () => {
+    const target = ranCriteria ?? criteria;
+    const url = `${window.location.origin}${location.pathname}${buildSearchQuery(target)}`;
+    void navigator.clipboard.writeText(url);
+    toast('Search link copied', 'success');
   };
 
   /**
@@ -464,23 +564,33 @@ const TopicExplorer: React.FC = () => {
    * à un saut de la page Stream Flow d'amener directement sur les messages concernés. Une seule
    * fois — l'utilisateur reste maître du formulaire ensuite.
    */
-  const presetApplied = React.useRef(false);
   useEffect(() => {
-    if (presetApplied.current) return;
+    // La page réécrit l'URL après chaque recherche : sans cette garde, la réécriture serait relue
+    // comme un nouveau critère et relancerait la recherche qui vient de la produire, en boucle.
+    if (lastAppliedSearch.current === location.search) return;
+    lastAppliedSearch.current = location.search;
     const preset = criteriaFromQuery(location.search);
     if (!preset) return;
-    presetApplied.current = true;
     setCriteria(preset);
-    void runSearch(false, preset);
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- une passe unique à l'ouverture
+    void runSearch({}, preset);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- réagit au seul critère porté par l'URL
   }, [location.search]);
 
   const clearSearch = () => {
+    abortRef.current?.abort();
+    runIdRef.current++;
+    setSearching(false);
     setSearchActive(false);
     setSearchResult(null);
+    setCoverage(null);
+    setRanCriteria(null);
     setHits([]);
     setSearchError(null);
+    setStopped(false);
     setCriteria(emptyCriteria);
+    // L'URL annonçait la recherche affichée : elle ne doit plus décrire ce qui n'est plus là.
+    lastAppliedSearch.current = '';
+    navigate({ pathname: location.pathname, search: '' }, { replace: true });
   };
 
   const copyToClipboard = (text: string) => {
@@ -504,8 +614,11 @@ const TopicExplorer: React.FC = () => {
 
   // The list shows search hits when a search is active, the sampled messages otherwise.
   const displayedMessages = searchActive ? hits : data.samples;
-  // Only a plain text search maps to a literal that can be marked up in the raw view.
-  const highlight = searchActive && criteria.mode === 'CONTAINS' ? criteria.query : '';
+  // Ce qui est marqué décrit la passe affichée, pas le formulaire : un critère édité après coup
+  // désignerait des correspondances que la recherche affichée n'a jamais cherchées.
+  const highlight = searchActive && ranCriteria ? highlightFor(ranCriteria) : NO_HIGHLIGHT;
+  const headerTarget = searchActive && ranCriteria ? highlightedHeader(ranCriteria) : null;
+  const showHeaders = searchActive && ranCriteria ? revealsHeaders(ranCriteria) : false;
 
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-6">
@@ -579,13 +692,18 @@ const TopicExplorer: React.FC = () => {
             schemaPaths={Object.keys(data.schema)}
             criteria={criteria}
             onChange={setCriteria}
-            onSearch={() => runSearch(false)}
-            onLoadMore={() => runSearch(true)}
+            onSearch={() => runSearch()}
+            onContinue={continueSearch}
+            onCancel={cancelSearch}
+            onCopyLink={copySearchLink}
             onClear={clearSearch}
             searching={searching}
             active={searchActive}
-            result={searchResult}
+            coverage={coverage}
+            ranCriteria={ranCriteria}
+            warnings={searchResult?.warnings ?? []}
             error={searchError}
+            stopped={stopped}
             loadedHits={hits.length}
           />
 
@@ -625,7 +743,8 @@ const TopicExplorer: React.FC = () => {
                 onFieldClick={toggleField}
                 selectedFields={selectedFields}
                 highlight={highlight}
-                caseSensitive={criteria.caseSensitive}
+                highlightHeader={headerTarget}
+                revealHeaders={showHeaders}
               />
             ))}
             {displayedMessages.length === 0 && (
@@ -633,7 +752,9 @@ const TopicExplorer: React.FC = () => {
                 icon="search_off"
                 title={searchActive ? 'No matching messages' : 'No messages in topic'}
                 description={searchActive
-                  ? 'Nothing matched in the range that was scanned. Widen the range, or continue scanning.'
+                  ? ranCriteria?.direction === 'NEWEST'
+                    ? 'Nothing matched in the records that were scanned. Widen the range, or scan further back.'
+                    : 'Nothing matched in the range that was scanned. Widen the range, or continue scanning.'
                   : undefined}
               />
             )}
