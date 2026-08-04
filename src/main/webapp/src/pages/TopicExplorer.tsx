@@ -5,23 +5,40 @@ import Editor from '@monaco-editor/react';
 import '../monaco-setup';
 import { useToast } from '../components/Toast';
 import ErrorBanner from '../components/ErrorBanner';
-import { Button, Badge, Stat, EmptyState, StatGridSkeleton, TableSkeleton, Table } from '../components/ui';
+import { Button, Badge, Stat, EmptyState, StatGridSkeleton, TableSkeleton, Table, useVirtualRows } from '../components/ui';
 import { buildTraceLinkForKey } from './streamFlow';
-import TopicSearchPanel from '../components/topic/TopicSearchPanel';
+import TopicSearchPanel, { FIELD_IDS } from '../components/topic/TopicSearchPanel';
+import { describeApiError, type QueryErrorInfo } from './queryError';
+import { toCsv } from './resultExport';
 import {
+  HIT_EXPORT_COLUMNS,
   NO_HIGHLIGHT,
   buildSearchBody,
   buildSearchQuery,
   coverageOf,
   criteriaFromQuery,
+  effectiveScanBudget,
   emptyCriteria,
+  exportFileName,
+  firstErrorField,
   highlightFor,
   highlightedHeader,
+  hitsToRows,
+  previewOf,
+  pushSearchHistory,
+  readSearchHistory,
+  readViewMode,
   revealsHeaders,
+  searchToJson,
   splitForHighlight,
+  validateCriteria,
+  writeViewMode,
+  type MessageView,
   type ScanAction,
   type SearchCoverage,
+  type SearchErrors,
   type SearchHighlight,
+  type SearchHistoryEntry,
   type SearchPass,
   type TopicMessage,
   type TopicSearchCriteria,
@@ -412,6 +429,93 @@ const MessageCard: React.FC<{
   );
 };
 
+/** Hauteur de ligne fixe : c'est ce qui permet de ne monter que les lignes visibles. */
+const ROW_HEIGHT = 32;
+
+/**
+ * Vue compacte : une ligne par record, le détail à la sélection.
+ *
+ * Une recherche ramène jusqu'à cent hits et « continuer » les empile ; en cartes, chacun rend un
+ * arbre JSON complet, ce qui se parcourt mal et coûte cher. Les lignes sont de hauteur fixe et
+ * fenêtrées (`useVirtualRows`), donc trois cents hits ne montent pas trois cents lignes.
+ */
+const MessageTable: React.FC<{
+  messages: TopicMessage[];
+  highlight: SearchHighlight;
+  selected: number | null;
+  onSelect: (index: number) => void;
+}> = ({ messages, highlight, selected, onSelect }) => {
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+  const rows = useVirtualRows(scrollRef, messages.length, ROW_HEIGHT);
+
+  return (
+    <div
+      ref={scrollRef}
+      className="rounded-xl bg-surface-container ring-1 ring-white/[0.045] overflow-auto max-h-[26rem]"
+    >
+      <table className="w-full text-[11px] font-mono border-collapse">
+        <thead className="sticky top-0 z-10 bg-surface-container-high">
+          <tr className="text-[10px] uppercase tracking-widest text-on-surface-variant">
+            <th scope="col" className="text-left font-medium px-3 py-2">#</th>
+            <th scope="col" className="text-left font-medium px-3 py-2">P</th>
+            <th scope="col" className="text-right font-medium px-3 py-2">Offset</th>
+            <th scope="col" className="text-left font-medium px-3 py-2">Timestamp</th>
+            <th scope="col" className="text-left font-medium px-3 py-2">Key</th>
+            <th scope="col" className="text-left font-medium px-3 py-2">Preview</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.padTop > 0 && (
+            <tr aria-hidden="true" style={{ height: rows.padTop }}><td colSpan={6} /></tr>
+          )}
+          {messages.slice(rows.start, rows.end).map((message, offset) => {
+            const index = rows.start + offset;
+            const isSelected = selected === index;
+            return (
+              <tr
+                key={`${message.partition}-${message.offset}-${index}`}
+                tabIndex={0}
+                aria-selected={isSelected}
+                onClick={() => onSelect(index)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onSelect(index);
+                  }
+                }}
+                style={{ height: ROW_HEIGHT }}
+                className={`cursor-pointer transition-colors ${
+                  isSelected ? 'bg-primary/15 text-on-surface' : 'hover:bg-surface-container-high/60'
+                }`}
+              >
+                <td className="px-3 whitespace-nowrap text-outline">{index + 1}</td>
+                <td className="px-3 whitespace-nowrap text-on-surface-variant">p{message.partition}</td>
+                <td className="px-3 whitespace-nowrap text-right text-on-surface-variant tabular-nums">
+                  {message.offset.toLocaleString()}
+                </td>
+                <td className="px-3 whitespace-nowrap text-on-surface-variant">
+                  {formatTimestamp(message.timestamp)}
+                </td>
+                <td className="px-3 whitespace-nowrap text-primary max-w-[12rem] truncate">
+                  {message.key === null || message.key === undefined
+                    ? '—'
+                    : <Highlighted text={message.key} highlight={highlight} />}
+                </td>
+                <td className="px-3 whitespace-nowrap text-on-surface max-w-0 w-full truncate">
+                  <Highlighted text={previewOf(message.value)} highlight={highlight} />
+                </td>
+              </tr>
+            );
+          })}
+          {rows.padBottom > 0 && (
+            <tr aria-hidden="true" style={{ height: rows.padBottom }}><td colSpan={6} /></tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+};
+
 const TopicExplorer: React.FC = () => {
   const { name } = useParams<{ name: string }>();
   const location = useLocation();
@@ -432,9 +536,13 @@ const TopicExplorer: React.FC = () => {
   const [ranCriteria, setRanCriteria] = useState<TopicSearchCriteria | null>(null);
   const [hits, setHits] = useState<TopicMessage[]>([]);
   const [searching, setSearching] = useState(false);
-  const [searchError, setSearchError] = useState<string | null>(null);
+  const [searchError, setSearchError] = useState<QueryErrorInfo | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<SearchErrors>({});
   const [searchActive, setSearchActive] = useState(false);
   const [stopped, setStopped] = useState(false);
+  const [history, setHistory] = useState<SearchHistoryEntry[]>([]);
+  const [view, setView] = useState<MessageView>(readViewMode);
+  const [selectedRow, setSelectedRow] = useState<number | null>(null);
   /** La passe en vol, pour pouvoir l'abandonner : un scan dure jusqu'à dix secondes. */
   const abortRef = React.useRef<AbortController | null>(null);
   /** Numéro de passe : ce qui revient d'une passe remplacée ne doit pas atterrir sur la suivante. */
@@ -443,6 +551,7 @@ const TopicExplorer: React.FC = () => {
   const lastAppliedSearch = React.useRef<string | null>(null);
 
   useEffect(() => () => abortRef.current?.abort(), []);
+  useEffect(() => { setHistory(readSearchHistory(name ?? '')); }, [name]);
 
   const toggleField = (field: string) => {
     setSelectedFields(prev =>
@@ -493,6 +602,17 @@ const TopicExplorer: React.FC = () => {
   ) => {
     const active = applied ?? criteria;
     const resume = Boolean(pass.resume);
+
+    // Tous les champs validés d'un coup, et le curseur sur le premier fautif : le bouton se
+    // contentait d'être grisé, sans dire ce qu'il attendait.
+    const invalid = validateCriteria(active);
+    setFieldErrors(invalid);
+    if (Object.keys(invalid).length > 0) {
+      const target = firstErrorField(invalid);
+      if (target) document.getElementById(FIELD_IDS[target])?.focus();
+      return;
+    }
+
     const runId = ++runIdRef.current;
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -513,10 +633,15 @@ const TopicExplorer: React.FC = () => {
         { signal: controller.signal });
       if (runIdRef.current !== runId) return;
       setSearchResult(response.data);
-      setCoverage(prev => coverageOf(response.data, prev, resume, pass.maxScan));
-      setHits(prev => resume ? [...prev, ...response.data.hits] : response.data.hits);
+      setCoverage(prev => coverageOf(response.data, prev, resume, effectiveScanBudget(active, request)));
+      const nextHits = resume ? [...hits, ...response.data.hits] : response.data.hits;
+      setHits(nextHits);
       setRanCriteria(active);
       setSearchActive(true);
+      setSelectedRow(null);
+      setHistory(pushSearchHistory({
+        topic: name ?? '', criteria: active, ranAt: Date.now(), hits: nextHits.length,
+      }));
       // L'URL décrit désormais la recherche affichée : un lien collé dans un ticket la rejoue.
       const search = buildSearchQuery(active);
       lastAppliedSearch.current = search;
@@ -525,10 +650,7 @@ const TopicExplorer: React.FC = () => {
       if (runIdRef.current !== runId) return;
       // Une passe abandonnée n'a rien à dire : ni erreur, ni résultat. `stopped` le signale.
       if (axios.isCancel(e) || controller.signal.aborted) return;
-      const message = axios.isAxiosError(e)
-        ? (e.response?.data as { message?: string } | undefined)?.message ?? e.message
-        : 'Search failed';
-      setSearchError(message);
+      setSearchError(describeApiError(e, 'Search failed'));
       if (!resume) {
         setHits([]);
         setSearchResult(null);
@@ -559,6 +681,36 @@ const TopicExplorer: React.FC = () => {
     toast('Search link copied', 'success');
   };
 
+  /** Applique un critère (historique, relance suggérée) et l'exécute d'un trait. */
+  const applyCriteria = (next: TopicSearchCriteria) => {
+    setCriteria(next);
+    void runSearch({}, next);
+  };
+
+  const exportHits = (format: 'csv' | 'json') => {
+    const target = ranCriteria ?? criteria;
+    const content = format === 'csv'
+      ? toCsv(HIT_EXPORT_COLUMNS, hitsToRows(hits))
+      // Un export collé dans un ticket doit dire ce qu'il a couvert, pas seulement ce qu'il a vu.
+      : searchToJson(name ?? '', target, coverage, hits, searchResult?.warnings ?? []);
+    const blob = new Blob([content], {
+      type: format === 'csv' ? 'text/csv;charset=utf-8' : 'application/json',
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = exportFileName(name ?? '', format);
+    anchor.click();
+    URL.revokeObjectURL(url);
+    toast(`Exported as ${format.toUpperCase()}`, 'success');
+  };
+
+  const changeView = (next: MessageView) => {
+    setView(next);
+    writeViewMode(next);
+    setSelectedRow(null);
+  };
+
   /**
    * Une recherche décrite dans l'URL s'applique et s'exécute à l'ouverture : c'est ce qui permet
    * à un saut de la page Stream Flow d'amener directement sur les messages concernés. Une seule
@@ -586,9 +738,12 @@ const TopicExplorer: React.FC = () => {
     setRanCriteria(null);
     setHits([]);
     setSearchError(null);
+    setFieldErrors({});
     setStopped(false);
-    setCriteria(emptyCriteria);
-    // L'URL annonçait la recherche affichée : elle ne doit plus décrire ce qui n'est plus là.
+    setSelectedRow(null);
+    // Le critère reste dans le formulaire : effacer les résultats ne doit pas effacer la question
+    // qu'on venait de poser, souvent longue à ressaisir (un chemin de champ, une regex).
+    // L'URL, elle, annonçait la recherche affichée : elle ne doit plus décrire ce qui n'est plus là.
     lastAppliedSearch.current = '';
     navigate({ pathname: location.pathname, search: '' }, { replace: true });
   };
@@ -690,6 +845,8 @@ const TopicExplorer: React.FC = () => {
         <div className="space-y-3">
           <TopicSearchPanel
             schemaPaths={Object.keys(data.schema)}
+            partitionCount={data.topic.partitions}
+            topicSize={data.topic.estimatedSize}
             criteria={criteria}
             onChange={setCriteria}
             onSearch={() => runSearch()}
@@ -697,12 +854,16 @@ const TopicExplorer: React.FC = () => {
             onCancel={cancelSearch}
             onCopyLink={copySearchLink}
             onClear={clearSearch}
+            onExport={exportHits}
+            onApply={applyCriteria}
+            history={history}
             searching={searching}
             active={searchActive}
             coverage={coverage}
             ranCriteria={ranCriteria}
             warnings={searchResult?.warnings ?? []}
             error={searchError}
+            errors={fieldErrors}
             stopped={stopped}
             loadedHits={hits.length}
           />
@@ -733,20 +894,74 @@ const TopicExplorer: React.FC = () => {
             </div>
           )}
 
+          {displayedMessages.length > 0 && (
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-[11px] text-on-surface-variant">
+                {displayedMessages.length} message{displayedMessages.length === 1 ? '' : 's'}
+                {searchActive ? ' matched' : ' sampled'}
+              </span>
+              <div className="inline-flex bg-surface-container border border-outline-variant rounded-md p-0.5">
+                {(['cards', 'table'] as MessageView[]).map(mode => (
+                  <button
+                    key={mode}
+                    onClick={() => changeView(mode)}
+                    aria-pressed={view === mode}
+                    title={mode === 'cards' ? 'Full payload per message' : 'One line per record, details on selection'}
+                    className={`flex items-center gap-1.5 px-3 h-7 text-[12px] font-medium rounded transition-colors ${
+                      view === mode
+                        ? 'bg-surface-container-highest text-on-surface'
+                        : 'text-on-surface-variant hover:text-on-surface'
+                    }`}
+                  >
+                    <span aria-hidden="true" className="material-symbols-outlined text-[16px]">
+                      {mode === 'cards' ? 'view_agenda' : 'table_rows'}
+                    </span>
+                    {mode === 'cards' ? 'Cards' : 'Table'}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {view === 'table' && displayedMessages.length > 0 && (
+            <MessageTable
+              messages={displayedMessages}
+              highlight={highlight}
+              selected={selectedRow}
+              onSelect={setSelectedRow}
+            />
+          )}
+
           <div className="rounded-xl bg-surface-container ring-1 ring-white/[0.045] overflow-hidden">
-            {displayedMessages.map((message, i) => (
-              <MessageCard
-                key={`${message.partition}-${message.offset}-${i}`}
-                message={message}
-                index={i}
-                onCopy={copyToClipboard}
-                onFieldClick={toggleField}
-                selectedFields={selectedFields}
-                highlight={highlight}
-                highlightHeader={headerTarget}
-                revealHeaders={showHeaders}
-              />
-            ))}
+            {view === 'cards'
+              ? displayedMessages.map((message, i) => (
+                <MessageCard
+                  key={`${message.partition}-${message.offset}-${i}`}
+                  message={message}
+                  index={i}
+                  onCopy={copyToClipboard}
+                  onFieldClick={toggleField}
+                  selectedFields={selectedFields}
+                  highlight={highlight}
+                  highlightHeader={headerTarget}
+                  revealHeaders={showHeaders}
+                />
+              ))
+              : selectedRow !== null && displayedMessages[selectedRow] ? (
+                <MessageCard
+                  key={`detail-${selectedRow}`}
+                  message={displayedMessages[selectedRow]}
+                  index={selectedRow}
+                  onCopy={copyToClipboard}
+                  onFieldClick={toggleField}
+                  selectedFields={selectedFields}
+                  highlight={highlight}
+                  highlightHeader={headerTarget}
+                  revealHeaders={showHeaders}
+                />
+              ) : displayedMessages.length > 0 ? (
+                <EmptyState icon="touch_app" title="Select a row to read the record" />
+              ) : null}
             {displayedMessages.length === 0 && (
               <EmptyState
                 icon="search_off"

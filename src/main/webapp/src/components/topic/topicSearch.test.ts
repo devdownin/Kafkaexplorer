@@ -1,5 +1,25 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
+  SEARCH_HISTORY_KEY,
+  VIEW_KEY,
+  describeCriterion,
+  describePartitionScope,
+  describeScanShare,
+  effectiveScanBudget,
+  firstErrorField,
+  hitsToRows,
+  keyPartitioningApplies,
+  operatorsFor,
+  previewOf,
+  pushSearchHistory,
+  readSearchHistory,
+  readViewMode,
+  searchToJson,
+  suggestWidenings,
+  switchMode,
+  validateCriteria,
+  writeViewMode,
+  type TopicMessage,
   buildSearchBody,
   buildSearchQuery,
   coverageOf,
@@ -387,5 +407,253 @@ describe('buildSearchQuery', () => {
   it('round-trips an EXISTS search, value or no value', () => {
     const exists = criteria({ mode: 'FIELD', field: 'order.id', operator: 'EXISTS' });
     expect(roundTrip(exists)).toEqual(exists);
+  });
+
+  it('round-trips a partition selection and a scan budget', () => {
+    const narrowed = criteria({ mode: 'CONTAINS', query: 'x', partitions: [0, 3], maxScan: 100_000 });
+    expect(roundTrip(narrowed)).toEqual(narrowed);
+  });
+
+  it('drops a partition list or a budget it cannot make sense of', () => {
+    expect(criteriaFromQuery('?mode=CONTAINS&q=x&parts=2,nope,-1,2')!.partitions).toEqual([2]);
+    expect(criteriaFromQuery('?mode=CONTAINS&q=x&scan=99')!.maxScan).toBe(0);
+  });
+});
+
+describe('validateCriteria', () => {
+  it('accepts a complete criterion', () => {
+    expect(validateCriteria(criteria({ mode: 'CONTAINS', query: 'ORD' }))).toEqual({});
+    expect(validateCriteria(criteria({ mode: 'FIELD', field: 'id', value: '4' }))).toEqual({});
+    expect(validateCriteria(criteria({ mode: 'FIELD', field: 'id', operator: 'EXISTS' }))).toEqual({});
+  });
+
+  /** Le bouton était simplement grisé : l'écran ne disait pas ce qu'il attendait. */
+  it('names every missing part at once, not one at a time', () => {
+    const errors = validateCriteria(criteria({ mode: 'FIELD' }));
+    expect(errors.field).toBeTruthy();
+    expect(errors.value).toBeTruthy();
+    expect(firstErrorField(errors)).toBe('field');
+  });
+
+  /** Une regex invalide n'a pas à faire un aller-retour serveur pour être signalée. */
+  it('compiles the regex on the spot', () => {
+    expect(validateCriteria(criteria({ mode: 'REGEX', query: 'ORD-[' })).query)
+      .toMatch(/Invalid regular expression/);
+    expect(validateCriteria(criteria({ mode: 'REGEX', query: 'ORD-\\d+' }))).toEqual({});
+    expect(validateCriteria(criteria({ mode: 'KEY', operator: 'REGEX', value: '(' })).value)
+      .toMatch(/Invalid regular expression/);
+  });
+
+  /** `>` compare des nombres côté serveur : une valeur texte ne matcherait jamais, en silence. */
+  it('refuses a non-numeric value on a numeric comparison', () => {
+    expect(validateCriteria(criteria({ mode: 'FIELD', field: 'total', operator: 'GT', value: 'abc' })).value)
+      .toMatch(/compares numbers/);
+    expect(validateCriteria(criteria({ mode: 'FIELD', field: 'total', operator: 'GT', value: '10' })))
+      .toEqual({});
+  });
+});
+
+describe('operatorsFor and key partitioning', () => {
+  /** KEY + EXISTS répond vrai sans rien comparer : ce serait un critère qui ne filtre rien. */
+  it('drops EXISTS from a key search only', () => {
+    expect(operatorsFor('KEY').some(op => op.value === 'EXISTS')).toBe(false);
+    expect(operatorsFor('FIELD').some(op => op.value === 'EXISTS')).toBe(true);
+  });
+
+  /** Le serveur ignore le partitionnement par clé dès qu'une partition est choisie, sans le dire. */
+  it('applies only to an exact key search with no manual partition choice', () => {
+    expect(keyPartitioningApplies(criteria({ mode: 'KEY', value: 'a' }))).toBe(true);
+    expect(keyPartitioningApplies(criteria({ mode: 'KEY', value: 'a', operator: 'CONTAINS' }))).toBe(false);
+    expect(keyPartitioningApplies(criteria({ mode: 'KEY', value: 'a', partitions: [1] }))).toBe(false);
+    expect(keyPartitioningApplies(criteria({ mode: 'FIELD', field: 'id', value: 'a' }))).toBe(false);
+  });
+});
+
+describe('switchMode', () => {
+  /** La saisie restait dans `query`, ignorée par la recherche par champ qui allait partir. */
+  it('carries the typed text into the input the new mode uses', () => {
+    expect(switchMode(criteria({ mode: 'CONTAINS', query: 'ORD-42' }), 'KEY').value).toBe('ORD-42');
+    expect(switchMode(criteria({ mode: 'KEY', value: 'ORD-42' }), 'CONTAINS').query).toBe('ORD-42');
+  });
+
+  it('never overwrites what the target field already holds', () => {
+    const criterion = criteria({ mode: 'CONTAINS', query: 'typed', value: 'kept' });
+    expect(switchMode(criterion, 'FIELD').value).toBe('kept');
+  });
+
+  /** Basculer sur KEY avec EXISTS laisserait un opérateur absent de la liste proposée. */
+  it('resets an operator the new mode does not offer', () => {
+    const criterion = criteria({ mode: 'FIELD', field: 'id', operator: 'EXISTS' });
+    expect(switchMode(criterion, 'KEY').operator).toBe('EQ');
+    expect(switchMode(criterion, 'HEADER').operator).toBe('EXISTS');
+  });
+});
+
+describe('effectiveScanBudget', () => {
+  it('prefers the widened pass, then the form, then the server default', () => {
+    expect(effectiveScanBudget(criteria({ maxScan: 50_000 }), { maxScan: 80_000 })).toBe(80_000);
+    expect(effectiveScanBudget(criteria({ maxScan: 50_000 }))).toBe(50_000);
+    expect(effectiveScanBudget(criteria())).toBeUndefined();
+  });
+
+  it('travels in the request body', () => {
+    expect(buildSearchBody(criteria({ query: 'x', maxScan: 50_000 })).maxScan).toBe(50_000);
+    expect(buildSearchBody(criteria({ query: 'x', partitions: [1, 4] })).partitions).toEqual([1, 4]);
+    expect(buildSearchBody(criteria({ query: 'x' })).partitions).toBeNull();
+  });
+});
+
+describe('scope of a pass', () => {
+  /** « 20 000 scanned » ne dit pas la même chose sur un topic de 30 000 et sur un de deux millions. */
+  it('situates what was read against the topic', () => {
+    expect(describeScanShare(20_000, 1_000_000)).toBe('≈2% of the topic');
+    expect(describeScanShare(2_000, 1_000_000)).toBe('≈0.2% of the topic');
+    expect(describeScanShare(500, 1_000_000)).toBe('≈<0.1% of the topic');
+    expect(describeScanShare(20_000, 20_000)).toBeNull();
+    expect(describeScanShare(20_000, 0)).toBeNull();
+  });
+
+  /** Le serveur ne prévient pas d'un scan restreint : sans cette ligne, le zéro serait trompeur. */
+  it('states a partition restriction', () => {
+    expect(describePartitionScope(criteria({ partitions: [3] }))).toBe('partition 3 only');
+    expect(describePartitionScope(criteria({ partitions: [0, 3] }))).toBe('partitions 0, 3 only');
+    expect(describePartitionScope(criteria())).toBeNull();
+  });
+});
+
+describe('describeCriterion', () => {
+  it('reads back as the search that was run', () => {
+    expect(describeCriterion(criteria({ mode: 'CONTAINS', query: 'ORD-42' }))).toBe('ORD-42');
+    expect(describeCriterion(criteria({ mode: 'REGEX', query: 'ORD-\\d+' }))).toBe('regex ORD-\\d+');
+    expect(describeCriterion(criteria({ mode: 'FIELD', field: 'order.id', value: 'ORD-42' })))
+      .toBe('order.id = ORD-42');
+    expect(describeCriterion(criteria({ mode: 'FIELD', field: 'id', operator: 'EXISTS' })))
+      .toBe('id exists');
+    expect(describeCriterion(criteria({ mode: 'HEADER', field: 'correlation-id', operator: 'CONTAINS', value: 'abc' })))
+      .toBe('header correlation-id contains abc');
+    expect(describeCriterion(criteria({ mode: 'KEY', value: 'ORD-42' }))).toBe('key = ORD-42');
+  });
+});
+
+describe('history', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('keeps the newest first, per topic', () => {
+    pushSearchHistory({ topic: 'orders', criteria: criteria({ query: 'a' }), ranAt: 1, hits: 1 });
+    pushSearchHistory({ topic: 'payments', criteria: criteria({ query: 'b' }), ranAt: 2, hits: 2 });
+    pushSearchHistory({ topic: 'orders', criteria: criteria({ query: 'c' }), ranAt: 3, hits: 3 });
+
+    expect(readSearchHistory('orders').map(e => e.criteria.query)).toEqual(['c', 'a']);
+    expect(readSearchHistory('payments').map(e => e.criteria.query)).toEqual(['b']);
+    expect(readSearchHistory('shipments')).toEqual([]);
+  });
+
+  /** Dédoublonné sur le critère, pas sur son résultat : relancer la même recherche ne l'empile pas. */
+  it('de-duplicates on the criterion', () => {
+    pushSearchHistory({ topic: 'orders', criteria: criteria({ query: 'a' }), ranAt: 1, hits: 1 });
+    const after = pushSearchHistory({
+      topic: 'orders', criteria: criteria({ query: 'a' }), ranAt: 9, hits: 4,
+    });
+    expect(after).toHaveLength(1);
+    expect(after[0].ranAt).toBe(9);
+  });
+
+  it('survives a corrupted or partial store', () => {
+    localStorage.setItem(SEARCH_HISTORY_KEY, 'not json');
+    expect(readSearchHistory('orders')).toEqual([]);
+
+    localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify([
+      { topic: 'orders', criteria: { mode: 'CONTAINS', query: 'a' }, ranAt: 1, hits: 0 },
+    ]));
+    // Une entrée d'une version antérieure est complétée, pas rejouée trouée.
+    expect(readSearchHistory('orders')[0].criteria.direction).toBe('NEWEST');
+    expect(readSearchHistory('orders')[0].criteria.partitions).toEqual([]);
+  });
+});
+
+describe('view mode', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('defaults to cards and remembers a choice', () => {
+    expect(readViewMode()).toBe('cards');
+    writeViewMode('table');
+    expect(readViewMode()).toBe('table');
+    localStorage.setItem(VIEW_KEY, 'nonsense');
+    expect(readViewMode()).toBe('cards');
+  });
+
+  it('flattens a payload onto one line', () => {
+    expect(previewOf('{\n  "id": 1\n}')).toBe('{ "id": 1 }');
+    expect(previewOf('x'.repeat(300))).toHaveLength(241);
+    expect(previewOf(null)).toBe('');
+  });
+});
+
+describe('export', () => {
+  const hit: TopicMessage = {
+    partition: 2, offset: 88, timestamp: 1_700_000_000_000, key: 'ORD-42',
+    headers: { 'correlation-id': 'abc', empty: null }, value: '{"id":1}',
+    valueBytes: 8, truncated: false,
+  };
+
+  it('flattens a hit onto exportable columns', () => {
+    const [row] = hitsToRows([hit]);
+    expect(row.partition).toBe(2);
+    expect(row.offset).toBe(88);
+    expect(row.key).toBe('ORD-42');
+    expect(row.headers).toBe('correlation-id=abc; empty=');
+    expect(row.timestamp).toBe('2023-11-14T22:13:20.000Z');
+  });
+
+  /** Un export collé dans un ticket doit dire ce qu'il a couvert, pas seulement ce qu'il a vu. */
+  it('carries the criterion and the coverage alongside the hits', () => {
+    const covered = coverageOf(response({ exhausted: true, stopReason: 'EXHAUSTED' }), null, false);
+    const parsed = JSON.parse(searchToJson(
+      'orders', criteria({ mode: 'KEY', value: 'ORD-42', partitions: [2] }), covered, [hit], ['careful'],
+    ));
+
+    expect(parsed.topic).toBe('orders');
+    expect(parsed.criterion).toBe('key = ORD-42');
+    expect(parsed.coverage.scanned).toBe(20_000);
+    expect(parsed.coverage.scope).toBe('partition 2 only');
+    expect(parsed.coverage.summary).toContain('Newest');
+    expect(parsed.warnings).toEqual(['careful']);
+    expect(parsed.hits).toHaveLength(1);
+  });
+});
+
+describe('suggestWidenings', () => {
+  it('turns the advice into reruns that each change one thing', () => {
+    const suggestions = suggestWidenings(criteria({
+      mode: 'FIELD', field: 'order.id', value: 'ORD-42', caseSensitive: true, sinceMinutes: 60,
+    }));
+    const ids = suggestions.map(s => s.id);
+
+    expect(ids).toContain('contains');
+    expect(ids).toContain('raw-text');
+    expect(suggestions.find(s => s.id === 'contains')!.criteria.operator).toBe('CONTAINS');
+    expect(suggestions.find(s => s.id === 'raw-text')!.criteria.query).toBe('ORD-42');
+    expect(suggestions.length).toBeLessThanOrEqual(4);
+  });
+
+  it('offers headers and a bigger budget on a bare text search', () => {
+    const ids = suggestWidenings(criteria({ mode: 'CONTAINS', query: 'ORD-42' })).map(s => s.id);
+    expect(ids).toContain('headers');
+    expect(ids).toContain('bigger-budget');
+  });
+
+  it('never suggests what is already the case', () => {
+    const ids = suggestWidenings(criteria({
+      mode: 'CONTAINS', query: 'x', searchHeaders: true, maxScan: 250_000,
+    })).map(s => s.id);
+    expect(ids).not.toContain('headers');
+    expect(ids).not.toContain('bigger-budget');
+    expect(ids).not.toContain('drop-window');
+  });
+
+  it('offers to widen a scan that was narrowed to some partitions', () => {
+    const ids = suggestWidenings(criteria({ mode: 'CONTAINS', query: 'x', partitions: [1] }))
+      .map(s => s.id);
+    expect(ids).toContain('all-partitions');
   });
 });

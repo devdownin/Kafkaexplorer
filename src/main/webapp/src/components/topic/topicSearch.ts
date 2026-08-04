@@ -53,6 +53,15 @@ export interface TopicSearchCriteria {
   /** Minutes to look back; 0 means "from the beginning of the topic". */
   sinceMinutes: number;
   direction: ScanDirection;
+  /**
+   * Partitions à lire ; vide = toutes. On arrive très souvent sur un topic avec un numéro de
+   * partition déjà en main (une alerte de lag, un consumer bloqué), et lire une partition sur
+   * vingt-quatre divise le travail par vingt-quatre sans rien supposer — contrairement au
+   * partitionnement par clé, qui parie sur le partitionneur.
+   */
+  partitions: number[];
+  /** Records que la passe a le droit de lire ; 0 = le budget par défaut du serveur. */
+  maxScan: number;
 }
 
 export interface TopicSearchResponse {
@@ -78,6 +87,20 @@ export const OPERATORS: { value: string; label: string }[] = [
   { value: 'EXISTS', label: 'exists' },
 ];
 
+/** `>` `≥` `<` `≤` comparent des nombres : le serveur rejette une valeur non numérique. */
+const NUMERIC_OPERATORS = ['GT', 'GTE', 'LT', 'LTE'];
+
+/**
+ * Les opérateurs qu'un mode peut réellement porter.
+ *
+ * `EXISTS` disparaît en mode KEY : côté serveur il répond vrai sans rien comparer, donc une
+ * recherche par clé « exists » ramène tous les records du scan. Un critère qui ne filtre rien
+ * n'est pas une recherche.
+ */
+export function operatorsFor(mode: SearchMode): { value: string; label: string }[] {
+  return mode === 'KEY' ? OPERATORS.filter(op => op.value !== 'EXISTS') : OPERATORS;
+}
+
 export const SCOPES: { value: number; label: string }[] = [
   { value: 0, label: 'Whole topic' },
   { value: 15, label: 'Last 15 min' },
@@ -92,6 +115,17 @@ export const DIRECTIONS: { value: ScanDirection; label: string }[] = [
 
 export const SEARCH_MODES: SearchMode[] = ['CONTAINS', 'REGEX', 'FIELD', 'HEADER', 'KEY'];
 
+/**
+ * Budgets de scan proposés. Décider une fois de dépenser 100 000 records vaut mieux que de
+ * cliquer dix fois sur « continue » — et le serveur borne de toute façon à un million.
+ */
+export const SCAN_BUDGETS: { value: number; label: string }[] = [
+  { value: 0, label: 'Default budget' },
+  { value: 50_000, label: 'Scan 50 000' },
+  { value: 100_000, label: 'Scan 100 000' },
+  { value: 250_000, label: 'Scan 250 000' },
+];
+
 export const emptyCriteria: TopicSearchCriteria = {
   mode: 'CONTAINS',
   query: '',
@@ -104,6 +138,8 @@ export const emptyCriteria: TopicSearchCriteria = {
   value: '',
   sinceMinutes: 0,
   direction: 'NEWEST',
+  partitions: [],
+  maxScan: 0,
 };
 
 /** FIELD et HEADER portent leur cible dans `field` ; KEY compare `value` sans cible. */
@@ -113,7 +149,7 @@ export const isValueScoped = (mode: SearchMode): boolean => isFieldScoped(mode) 
 /** `EXISTS` ne compare rien : c'est le seul opérateur qui n'attend pas de valeur. */
 const needsValue = (operator: string): boolean => operator !== 'EXISTS';
 
-/** Ce que le bouton « Search » accepte de lancer — et donc ce qu'une URL peut décrire. */
+/** Ce qu'une URL doit au minimum décrire pour valoir recherche : une cible et de quoi comparer. */
 export function canRun(criteria: TopicSearchCriteria): boolean {
   if (isFieldScoped(criteria.mode)) {
     return criteria.field.trim().length > 0
@@ -123,6 +159,105 @@ export function canRun(criteria: TopicSearchCriteria): boolean {
     return !needsValue(criteria.operator) || criteria.value.trim().length > 0;
   }
   return criteria.query.trim().length > 0;
+}
+
+/** Le partitionnement par clé n'a de sens que sur une comparaison exacte, et sans choix manuel. */
+export function keyPartitioningApplies(criteria: TopicSearchCriteria): boolean {
+  return criteria.mode === 'KEY'
+    && criteria.operator === 'EQ'
+    && criteria.partitions.length === 0;
+}
+
+export type SearchField = 'query' | 'field' | 'value';
+export type SearchErrors = Partial<Record<SearchField, string>>;
+
+/** L'ordre de focalisation : le premier champ en faute reçoit le curseur après validation. */
+export const SEARCH_FIELD_ORDER: SearchField[] = ['field', 'value', 'query'];
+
+function regexError(source: string): string | undefined {
+  try {
+    new RegExp(source);
+    return undefined;
+  } catch (e) {
+    return `Invalid regular expression: ${e instanceof Error ? e.message : 'unparseable'}`;
+  }
+}
+
+/**
+ * Valide *tous* les champs d'un coup, pour que le formulaire puisse afficher chaque faute à sa
+ * place et focaliser la première. Le bouton « Search » était simplement désactivé : en mode Field,
+ * tant qu'aucun champ n'était choisi, l'écran restait gris et muet sur ce qu'il attendait.
+ *
+ * La regex est compilée ici, sur le fil de saisie : un motif invalide n'a pas à faire un
+ * aller-retour serveur pour être signalé.
+ */
+export function validateCriteria(criteria: TopicSearchCriteria): SearchErrors {
+  const errors: SearchErrors = {};
+  const value = criteria.value.trim();
+
+  if (criteria.mode === 'CONTAINS' || criteria.mode === 'REGEX') {
+    if (!criteria.query.trim()) {
+      errors.query = criteria.mode === 'REGEX'
+        ? 'Enter a regular expression to search for.'
+        : 'Enter the text to search for.';
+    } else if (criteria.mode === 'REGEX') {
+      errors.query = regexError(criteria.query);
+    }
+    return prune(errors);
+  }
+
+  if (isFieldScoped(criteria.mode) && !criteria.field.trim()) {
+    errors.field = criteria.mode === 'HEADER'
+      ? 'Enter the header name to compare.'
+      : 'Choose the field to compare.';
+  }
+  if (needsValue(criteria.operator)) {
+    if (!value) {
+      errors.value = criteria.mode === 'KEY'
+        ? 'Enter the record key to compare.'
+        : 'Enter the value to compare.';
+    } else if (criteria.operator === 'REGEX') {
+      errors.value = regexError(value);
+    } else if (NUMERIC_OPERATORS.includes(criteria.operator) && !Number.isFinite(Number(value))) {
+      // Le serveur compare des nombres et rejette le reste : une valeur non numérique ne
+      // matcherait jamais, en silence.
+      errors.value = 'This operator compares numbers — enter a numeric value.';
+    }
+  }
+  return prune(errors);
+}
+
+function prune(errors: SearchErrors): SearchErrors {
+  for (const key of Object.keys(errors) as SearchField[]) {
+    if (!errors[key]) delete errors[key];
+  }
+  return errors;
+}
+
+export const firstErrorField = (errors: SearchErrors): SearchField | null =>
+  SEARCH_FIELD_ORDER.find(field => errors[field]) ?? null;
+
+/**
+ * Reporte la saisie en cours dans le champ que le nouveau mode utilise réellement.
+ *
+ * On tape un identifiant dans la barre de texte, on comprend qu'il faut chercher dans un champ,
+ * on bascule — et la saisie restait dans `query`, ignorée par la recherche qui allait partir.
+ */
+export function switchMode(criteria: TopicSearchCriteria, mode: SearchMode): TopicSearchCriteria {
+  if (mode === criteria.mode) return criteria;
+  const carried = (isValueScoped(criteria.mode) ? criteria.value : criteria.query).trim();
+  const next: TopicSearchCriteria = { ...criteria, mode };
+  if (isValueScoped(mode)) {
+    if (!next.value.trim()) next.value = carried;
+  } else if (!next.query.trim()) {
+    next.query = carried;
+  }
+  // `EXISTS` n'existe pas en mode KEY : y basculer laisserait un opérateur que la liste ne
+  // propose pas, donc un formulaire qui affiche autre chose que ce qu'il exécuterait.
+  if (!operatorsFor(mode).some(op => op.value === next.operator)) {
+    next.operator = emptyCriteria.operator;
+  }
+  return next;
 }
 
 /**
@@ -162,6 +297,10 @@ export function criteriaFromQuery(search: string): TopicSearchCriteria | null {
     keyPartitioning: params.get('keyPartitioning') === '1',
     sinceMinutes: snapScope(Number(params.get('since'))),
     direction: direction === 'OLDEST' ? 'OLDEST' : emptyCriteria.direction,
+    partitions: parsePartitionList(params.get('parts')),
+    maxScan: SCAN_BUDGETS.some(b => b.value === Number(params.get('scan')))
+      ? Number(params.get('scan'))
+      : emptyCriteria.maxScan,
   };
   // Mêmes conditions que le bouton « Search » du panneau : une cible sans valeur, ou une
   // recherche texte sans texte, n'aurait rien à exécuter.
@@ -189,13 +328,39 @@ export function buildSearchQuery(criteria: TopicSearchCriteria): string {
   if (criteria.keyPartitioning) params.set('keyPartitioning', '1');
   if (criteria.sinceMinutes > 0) params.set('since', String(criteria.sinceMinutes));
   if (criteria.direction !== emptyCriteria.direction) params.set('dir', criteria.direction);
+  if (criteria.partitions.length > 0) params.set('parts', criteria.partitions.join(','));
+  if (criteria.maxScan > 0) params.set('scan', String(criteria.maxScan));
   return `?${params.toString()}`;
+}
+
+/** `parts=0,3,7` — les entiers, dédoublonnés et triés ; le reste est ignoré. */
+function parsePartitionList(raw: string | null): number[] {
+  if (!raw) return [];
+  const seen = new Set<number>();
+  for (const piece of raw.split(',')) {
+    const partition = Number(piece.trim());
+    if (Number.isInteger(partition) && partition >= 0) seen.add(partition);
+  }
+  return [...seen].sort((a, b) => a - b);
 }
 
 /** Une passe : soit la reprise du curseur précédent, soit un budget de scan élargi. */
 export interface SearchPass {
   cursor?: Record<string, number> | null;
   maxScan?: number | null;
+}
+
+/**
+ * Le budget réellement demandé au serveur : celui de l'élargissement s'il y en a un, sinon celui
+ * du formulaire, sinon rien (le serveur applique le sien). La couverture enregistre ce même
+ * chiffre, faute de quoi l'élargissement suivant doublerait à partir d'une autre base.
+ */
+export function effectiveScanBudget(
+  criteria: TopicSearchCriteria,
+  pass: SearchPass = {},
+): number | undefined {
+  if (pass.maxScan) return pass.maxScan;
+  return criteria.maxScan > 0 ? criteria.maxScan : undefined;
 }
 
 /** Corps envoyé à `POST /api/topic/{name}/search`. */
@@ -217,8 +382,9 @@ export function buildSearchBody(criteria: TopicSearchCriteria, pass: SearchPass 
     // de la fenêtre, et rate ce qui vient d'arriver.
     from: criteria.direction === 'NEWEST' ? 'LAST_N' : windowed ? 'TIMESTAMP' : 'EARLIEST',
     sinceMinutes: windowed ? criteria.sinceMinutes : null,
+    partitions: criteria.partitions.length > 0 ? criteria.partitions : null,
     cursor: pass.cursor ?? null,
-    maxScan: pass.maxScan ?? null,
+    maxScan: effectiveScanBudget(criteria, pass) ?? null,
   };
 }
 
@@ -432,4 +598,272 @@ export function splitForHighlight(text: string, highlight: SearchHighlight): str
     default:
       return [text];
   }
+}
+
+// ── Portée d'une passe ────────────────────────────────────────────────────
+
+/**
+ * La part du topic que la passe a ouverte. « 20 000 scanned » sur un topic qui en compte deux
+ * millions et sur un topic qui en compte trente mille ne veut pas dire la même chose, et la
+ * différence décide de la confiance à accorder à un zéro.
+ */
+export function describeScanShare(scanned: number, topicSize: number): string | null {
+  if (!Number.isFinite(topicSize) || topicSize <= 0 || scanned <= 0) return null;
+  if (scanned >= topicSize) return null;
+  const share = (scanned / topicSize) * 100;
+  const rendered = share < 0.1
+    ? '<0.1'
+    : share < 10
+      // `2.0%` se lit comme une précision qu'on n'a pas : la décimale ne sert que sous 10 %.
+      ? share.toFixed(1).replace(/\.0$/, '')
+      : String(Math.round(share));
+  return `≈${rendered}% of the topic`;
+}
+
+/**
+ * Un scan restreint à quelques partitions doit le dire : le serveur ne prévient que si *aucune*
+ * des partitions demandées n'existe, donc un « 0 match » sur une partition sur vingt-quatre
+ * ressemblerait sinon à un « 0 match » sur le topic.
+ */
+export function describePartitionScope(criteria: TopicSearchCriteria): string | null {
+  const count = criteria.partitions.length;
+  if (count === 0) return null;
+  return count === 1
+    ? `partition ${criteria.partitions[0]} only`
+    : `partitions ${criteria.partitions.join(', ')} only`;
+}
+
+/** Résumé court d'un critère — pour l'historique, un export ou un libellé de bouton. */
+export function describeCriterion(criteria: TopicSearchCriteria): string {
+  const operator = OPERATORS.find(op => op.value === criteria.operator)?.label ?? criteria.operator;
+  const value = criteria.value.trim();
+  switch (criteria.mode) {
+    case 'REGEX':
+      return `regex ${criteria.query.trim()}`;
+    case 'FIELD':
+      return `${criteria.field.trim()} ${operator}${needsValue(criteria.operator) ? ` ${value}` : ''}`;
+    case 'HEADER':
+      return `header ${criteria.field.trim()} ${operator}${needsValue(criteria.operator) ? ` ${value}` : ''}`;
+    case 'KEY':
+      return `key ${operator} ${value}`;
+    default:
+      return criteria.query.trim();
+  }
+}
+
+// ── Affichage des messages ────────────────────────────────────────────────
+
+export const VIEW_KEY = 'kse:topic-view';
+export type MessageView = 'cards' | 'table';
+
+/**
+ * Une recherche peut ramener cent hits, et « continuer » les empile : cent cartes rendant chacune
+ * un arbre JSON récursif saturent le rendu, et surtout se parcourent mal. La vue tableau donne une
+ * ligne par record — coordonnées et aperçu — et le détail à la sélection.
+ */
+export function readViewMode(): MessageView {
+  try {
+    return localStorage.getItem(VIEW_KEY) === 'table' ? 'table' : 'cards';
+  } catch {
+    return 'cards';
+  }
+}
+
+export function writeViewMode(view: MessageView): void {
+  try {
+    localStorage.setItem(VIEW_KEY, view);
+  } catch {
+    // Mode privé ou quota : la préférence est un confort, pas une condition d'affichage.
+  }
+}
+
+/** Aperçu d'un payload sur une ligne — les lignes du tableau doivent rester de hauteur égale. */
+export function previewOf(value: string | null, max = 240): string {
+  const flat = (value ?? '').replace(/\s+/g, ' ').trim();
+  return flat.length > max ? `${flat.slice(0, max)}…` : flat;
+}
+
+// ── Historique ────────────────────────────────────────────────────────────
+
+export const SEARCH_HISTORY_KEY = 'kse:topic-search-history';
+const HISTORY_PER_TOPIC = 8;
+const HISTORY_MAX = 60;
+
+export interface SearchHistoryEntry {
+  topic: string;
+  criteria: TopicSearchCriteria;
+  /** Date d'exécution (ms) — la plus récente en tête. */
+  ranAt: number;
+  /** Nombre de hits ramenés, pour distinguer deux critères voisins dans la liste. */
+  hits: number;
+}
+
+function readAllHistory(): SearchHistoryEntry[] {
+  try {
+    const raw = localStorage.getItem(SEARCH_HISTORY_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed)
+      ? parsed.filter((e): e is SearchHistoryEntry =>
+          Boolean(e) && typeof e.topic === 'string' && Boolean(e.criteria))
+        // Une entrée écrite par une version antérieure n'a pas tous les champs du critère :
+        // la compléter vaut mieux que la rejeter ou que rejouer un critère troué.
+        .map(e => ({ ...e, criteria: { ...emptyCriteria, ...e.criteria } }))
+      : [];
+  } catch {
+    // Quota, mode privé, JSON corrompu : l'historique est un confort, jamais un blocage.
+    return [];
+  }
+}
+
+/** Les recherches passées sur ce topic, la plus récente en tête. */
+export function readSearchHistory(topic: string): SearchHistoryEntry[] {
+  return readAllHistory().filter(entry => entry.topic === topic).slice(0, HISTORY_PER_TOPIC);
+}
+
+/** Empile une recherche, dédoublonnée sur le critère (pas sur son résultat). */
+export function pushSearchHistory(entry: SearchHistoryEntry): SearchHistoryEntry[] {
+  const signature = buildSearchQuery(entry.criteria);
+  const kept = readAllHistory().filter(other =>
+    other.topic !== entry.topic || buildSearchQuery(other.criteria) !== signature);
+  const next = [entry, ...kept].slice(0, HISTORY_MAX);
+  try {
+    localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(next));
+  } catch {
+    // idem : on renvoie la liste calculée même si le stockage refuse.
+  }
+  return next.filter(other => other.topic === entry.topic).slice(0, HISTORY_PER_TOPIC);
+}
+
+// ── Export ────────────────────────────────────────────────────────────────
+
+export const HIT_EXPORT_COLUMNS = [
+  'partition', 'offset', 'timestamp', 'key', 'headers', 'value',
+];
+
+export function hitsToRows(hits: TopicMessage[]): Record<string, unknown>[] {
+  return hits.map(hit => ({
+    partition: hit.partition,
+    offset: hit.offset,
+    timestamp: hit.timestamp > 0 ? new Date(hit.timestamp).toISOString() : '',
+    key: hit.key ?? '',
+    headers: Object.entries(hit.headers ?? {}).map(([k, v]) => `${k}=${v ?? ''}`).join('; '),
+    value: hit.value ?? '',
+  }));
+}
+
+/**
+ * Un export collé dans un ticket doit porter ce qu'il a couvert : les hits seuls ne disent ni
+ * quel critère les a produits, ni combien de records ont été lus pour les trouver.
+ */
+export function searchToJson(
+  topic: string,
+  criteria: TopicSearchCriteria,
+  coverage: SearchCoverage | null,
+  hits: TopicMessage[],
+  warnings: string[],
+): string {
+  return JSON.stringify({
+    topic,
+    exportedAt: new Date().toISOString(),
+    criterion: describeCriterion(criteria),
+    criteria,
+    coverage: coverage && {
+      ...coverage,
+      scope: describePartitionScope(criteria) ?? 'every partition',
+      summary: describeCoverage(coverage, criteria),
+    },
+    warnings,
+    hits: hitsToRows(hits),
+  }, null, 2);
+}
+
+/** Nom de fichier sûr pour un export de ce topic. */
+export function exportFileName(topic: string, extension: string): string {
+  return `topic-search-${topic.replace(/[^\w.-]+/g, '_') || 'topic'}.${extension}`;
+}
+
+// ── Relances quand rien n'a été trouvé ────────────────────────────────────
+
+/** Une relance proposée sur un résultat vide : un critère élargi, et ce qu'il change. */
+export interface SearchSuggestion {
+  id: string;
+  label: string;
+  hint: string;
+  criteria: TopicSearchCriteria;
+}
+
+/**
+ * « Élargissez la portée, ou continuez le scan » était un conseil juste, écrit en texte, à
+ * appliquer à la main dans un formulaire situé plus haut. Chaque piste devient un bouton qui
+ * relance avec ce seul paramètre changé, de la plus probable à la plus coûteuse.
+ */
+export function suggestWidenings(criteria: TopicSearchCriteria): SearchSuggestion[] {
+  const suggestions: SearchSuggestion[] = [];
+  const textual = criteria.mode === 'CONTAINS' || criteria.mode === 'REGEX';
+
+  if (criteria.mode === 'FIELD' && criteria.operator === 'EQ') {
+    suggestions.push({
+      id: 'contains',
+      label: 'Match anywhere in the field',
+      hint: `compares ${criteria.field.trim() || 'the field'} with "contains" instead of an exact "="`,
+      criteria: { ...criteria, operator: 'CONTAINS' },
+    });
+  }
+  if (isFieldScoped(criteria.mode) && criteria.value.trim()) {
+    suggestions.push({
+      id: 'raw-text',
+      label: 'Search the raw payload',
+      hint: `looks for ${criteria.value.trim()} anywhere in the record, ignoring the path`,
+      criteria: { ...criteria, mode: 'CONTAINS', query: criteria.value },
+    });
+  }
+  if (textual && !criteria.searchHeaders) {
+    suggestions.push({
+      id: 'headers',
+      label: 'Search headers too',
+      hint: 'correlation ids often travel only in a Kafka header',
+      criteria: { ...criteria, searchHeaders: true },
+    });
+  }
+  if (criteria.caseSensitive) {
+    suggestions.push({
+      id: 'ignore-case',
+      label: 'Ignore case',
+      hint: 'matches whatever the casing of the records',
+      criteria: { ...criteria, caseSensitive: false },
+    });
+  }
+  if (criteria.partitions.length > 0) {
+    suggestions.push({
+      id: 'all-partitions',
+      label: 'Scan every partition',
+      hint: `the scan only read ${describePartitionScope(criteria)}`,
+      criteria: { ...criteria, partitions: [] },
+    });
+  }
+  if (criteria.keyPartitioning && keyPartitioningApplies(criteria)) {
+    suggestions.push({
+      id: 'drop-key-partitioning',
+      label: 'Scan every partition',
+      hint: 'the key may have been written by a different partitioner',
+      criteria: { ...criteria, keyPartitioning: false },
+    });
+  }
+  if (criteria.sinceMinutes > 0) {
+    suggestions.push({
+      id: 'drop-window',
+      label: 'Drop the time window',
+      hint: `reads without the last ${criteria.sinceMinutes} min limit`,
+      criteria: { ...criteria, sinceMinutes: 0 },
+    });
+  }
+  if (criteria.maxScan < 100_000) {
+    suggestions.push({
+      id: 'bigger-budget',
+      label: 'Scan 100 000 records',
+      hint: 'reads deeper before giving up — slower',
+      criteria: { ...criteria, maxScan: 100_000 },
+    });
+  }
+  return suggestions.slice(0, 4);
 }
