@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import {
-  Badge, Button, EmptyState, Field, Input, NumberInput, Select, TopicInput,
+  Badge, Button, EmptyState, Field, Input, NumberInput, Select, TopicInput, Tooltip,
   Table, TableBody, TableHead, TableRow, Td, Th,
 } from '../components/ui';
 import { useToast } from '../components/Toast';
@@ -37,9 +37,8 @@ const EMPTY_FLOW: ParsedFlow = { nodes: [], edges: [], hits: [], stats: null, wa
 const Toggle: React.FC<{
   label: string; hint?: string; checked: boolean; disabled?: boolean;
   onChange: (v: boolean) => void;
-}> = ({ label, hint, checked, disabled = false, onChange }) => (
-  <div className={`flex items-center justify-between gap-2 ${disabled ? 'opacity-50' : ''}`} title={hint}>
-    <span className="text-[12px] font-medium text-on-surface-variant">{label}</span>
+}> = ({ label, hint, checked, disabled = false, onChange }) => {
+  const control = (
     <button
       type="button"
       role="switch" aria-checked={checked} aria-label={label} disabled={disabled}
@@ -48,8 +47,16 @@ const Toggle: React.FC<{
     >
       <span className={`inline-block h-3.5 w-3.5 transform rounded-full transition-transform ${checked ? 'translate-x-[18px] bg-on-primary' : 'translate-x-1 bg-on-surface-variant'}`} />
     </button>
-  </div>
-);
+  );
+  return (
+    <div className={`flex items-center justify-between gap-2 ${disabled ? 'opacity-50' : ''}`}>
+      <span className="text-[12px] font-medium text-on-surface-variant">{label}</span>
+      {/* L'explication vivait sur le conteneur, donc n'atteignait que la souris — alors qu'elle
+          dit précisément ce que l'interrupteur va changer. */}
+      {hint ? <Tooltip content={hint}>{control}</Tooltip> : control}
+    </div>
+  );
+};
 
 const StreamFlow: React.FC = () => {
   const location = useLocation();
@@ -919,7 +926,9 @@ const StreamFlow: React.FC = () => {
                   {stats?.truncated && (
                     <>
                       <span className="text-outline">·</span>
-                      <span className="text-warning" title="At least one topic was not scanned to the end — older matches may exist.">partial scan</span>
+                      <Tooltip content="At least one topic was not scanned to the end — older matches may exist beyond what the budget allowed.">
+                        <span tabIndex={0} className="text-warning rounded">partial scan</span>
+                      </Tooltip>
                     </>
                   )}
                 </div>
@@ -927,15 +936,16 @@ const StreamFlow: React.FC = () => {
 
               {/* Le formulaire a changé depuis ce graphe : le dire, et offrir la relance sur place. */}
               {stale && (
+                <Tooltip content="The criteria were edited after this run — this graph answers the previous ones.">
                 <button
                   type="button"
                   onClick={handleSubmit}
                   className="flex items-center gap-1.5 rounded-full border border-warning/40 bg-warning/10 px-3 py-1.5 text-[11px] text-warning hover:bg-warning/20"
-                  title="The criteria were edited after this run — this graph answers the previous ones."
                 >
                   <span aria-hidden="true" className="material-symbols-outlined text-[14px]">refresh</span>
                   Criteria changed — rerun
                 </button>
+                </Tooltip>
               )}
             </div>
 
@@ -1023,7 +1033,7 @@ const StreamFlow: React.FC = () => {
                     )}
                   </div>
                 )}
-                <Button size="sm" variant="ghost" icon="link" onClick={() => void copyLink()} title="Copy a link that reruns this exact trace">
+                <Button size="sm" variant="ghost" icon="link" onClick={() => void copyLink()} aria-label="Copy a link that reruns this exact trace">
                   Link
                 </Button>
                 {hits.length > 0 && (
@@ -1034,7 +1044,7 @@ const StreamFlow: React.FC = () => {
                     </Button>
                     <Button size="sm" variant="ghost" icon="download"
                       onClick={() => download(traceToJson(ranParams ?? currentParams(), flow), 'application/json', 'json')}
-                      title="Criterion, coverage, warnings and hops">
+                      aria-label="Export as JSON: criterion, coverage, warnings and hops">
                       JSON
                     </Button>
                   </>
@@ -1056,11 +1066,13 @@ const StreamFlow: React.FC = () => {
                 className="p-2 hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface border-b border-outline-variant/60 transition-colors">
                 <span aria-hidden="true" className="material-symbols-outlined text-lg">remove</span>
               </button>
-              <button type="button" aria-label="Fit graph to view" onClick={fitView}
-                className="p-2 hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface transition-colors"
-                title="Fit to view — click the graph, then use the arrows to pan, + / − to zoom, 0 to fit">
-                <span aria-hidden="true" className="material-symbols-outlined text-lg">center_focus_weak</span>
-              </button>
+              {/* Le raccourci clavier n'était annoncé que dans une infobulle de souris. */}
+              <Tooltip content="Fits the graph to the view. Once the graph has focus: arrows pan, + and − zoom, 0 fits.">
+                <button type="button" aria-label="Fit graph to view" onClick={fitView}
+                  className="p-2 hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface transition-colors">
+                  <span aria-hidden="true" className="material-symbols-outlined text-lg">center_focus_weak</span>
+                </button>
+              </Tooltip>
             </div>
           )}
 
@@ -1254,7 +1266,7 @@ const StreamFlow: React.FC = () => {
                           key={suggestion.id}
                           size="sm"
                           variant="outline"
-                          title={suggestion.hint}
+                          aria-label={`${suggestion.label}: ${suggestion.hint}`}
                           onClick={() => rerun(suggestion.params)}
                         >
                           {suggestion.label}
@@ -1310,7 +1322,7 @@ const StreamFlow: React.FC = () => {
                     fois, et le graphe précédent n'est pas jeté. */}
                 {continuation && !loading && (
                   <Button size="sm" variant="outline" icon="playlist_add" onClick={continueTrace}
-                    title="Scans only the topics the budget never reached and merges the result into this graph">
+                    aria-label="Continue the trace: scans only the topics the budget never reached and merges the result into this graph">
                     {describeContinuation(continuation)}
                   </Button>
                 )}
@@ -1478,10 +1490,18 @@ const StreamFlow: React.FC = () => {
                               {hit.topic}
                             </Link>
                           </Td>
-                          <Td title={hit.occurrencesCapped ? 'More matches exist than the scan kept for this topic' : undefined}>
-                            <span className={hit.occurrences > 1 || hit.occurrencesCapped ? 'text-warning' : ''}>
-                              {hit.occurrences}{hit.occurrencesCapped ? '+' : ''}
-                            </span>
+                          <Td>
+                            {hit.occurrencesCapped ? (
+                              <Tooltip content="More matches exist than the scan kept for this topic — the count is a floor, not a total.">
+                                <span tabIndex={0} className="text-warning rounded">
+                                  {hit.occurrences}+
+                                </span>
+                              </Tooltip>
+                            ) : (
+                              <span className={hit.occurrences > 1 ? 'text-warning' : ''}>
+                                {hit.occurrences}
+                              </span>
+                            )}
                             {/* Une clé vue plusieurs fois peut être une reprise, une mise à jour
                                 compactée ou un doublon : on montre l'étalement, on ne conclut pas. */}
                             {formatDwell(hit.lastTimestamp - hit.firstTimestamp) && (
@@ -1500,14 +1520,14 @@ const StreamFlow: React.FC = () => {
                                 {formatLatency(hit.latencyFromPreviousMs)}
                               </span>
                               {insight.clockSkewTopics.includes(hit.topic) && (
-                                <Badge tone="error" title="This hop goes backwards in time: the producers' clocks disagree.">
-                                  clock skew
-                                </Badge>
+                                <Tooltip content="This hop goes backwards in time: the producers' clocks disagree, so the chain order here is not evidence of anything.">
+                                  <Badge tone="error" tabIndex={0}>clock skew</Badge>
+                                </Tooltip>
                               )}
                               {insight.slowestHopTopic === hit.topic && (
-                                <Badge tone="warning" title="Longest delay between two sightings in this chain.">
-                                  slowest hop
-                                </Badge>
+                                <Tooltip content="The longest delay between two sightings in this chain.">
+                                  <Badge tone="warning" tabIndex={0}>slowest hop</Badge>
+                                </Tooltip>
                               )}
                             </span>
                           </Td>
