@@ -86,6 +86,24 @@ public class TopicController {
         }
     }
 
+    /**
+     * One record, read by its coordinates and returned whole — what a search hit's "truncated"
+     * badge could otherwise only point at without ever letting anyone read the rest.
+     */
+    @GetMapping("/{name}/record")
+    public TopicMessage getRecord(@PathVariable String name,
+                                  @RequestParam int partition,
+                                  @RequestParam long offset) {
+        TopicMessage record = topicSearchService.readRecord(name, partition, offset);
+        if (record == null) {
+            // Out of range or compacted away: a caller must be able to tell that from a failure.
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND,
+                "No record at offset " + offset + " of partition " + partition
+                    + " — it may have been compacted or aged out.");
+        }
+        return record;
+    }
+
     @GetMapping(value = "/{name}/ddl", produces = "text/plain")
     public String getDdl(@PathVariable String name,
                          @RequestParam(defaultValue = "earliest-offset") String readMode) throws Exception {

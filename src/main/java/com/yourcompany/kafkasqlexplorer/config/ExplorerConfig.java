@@ -60,6 +60,13 @@ public class ExplorerConfig {
     /** Message values longer than this are truncated in search results and samples. */
     private int searchMaxValueChars = 8000;
     /**
+     * Cap for a single record fetched by its coordinates (GET /api/topic/{name}/record).
+     * A search result is deliberately truncated to keep a hundred hits small; reading one record
+     * on purpose is the opposite need, so this is a hundred times larger — but still a cap, or a
+     * single pathological payload would be enough to sink the browser.
+     */
+    private int recordMaxValueChars = 1000000;
+    /**
      * Wall-clock budget for one stream-flow trace. Each topic read carries its own 20 s broker
      * budget, so a whole-cluster trace against an unhealthy broker would otherwise hold the HTTP
      * thread for many minutes. Past the budget the trace returns what it has and names the topics
@@ -225,6 +232,14 @@ public class ExplorerConfig {
 
     public void setSearchMaxValueChars(int searchMaxValueChars) {
         this.searchMaxValueChars = searchMaxValueChars;
+    }
+
+    public int getRecordMaxValueChars() {
+        return recordMaxValueChars;
+    }
+
+    public void setRecordMaxValueChars(int recordMaxValueChars) {
+        this.recordMaxValueChars = recordMaxValueChars;
     }
 
     public long getStreamFlowTimeoutMs() {

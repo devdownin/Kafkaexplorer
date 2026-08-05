@@ -4,6 +4,7 @@ package com.yourcompany.kafkasqlexplorer.service;
 
 import com.yourcompany.kafkasqlexplorer.config.ExplorerConfig;
 import com.yourcompany.kafkasqlexplorer.config.KafkaConfig;
+import com.yourcompany.kafkasqlexplorer.domain.TopicMessage;
 import com.yourcompany.kafkasqlexplorer.domain.TopicSearchRequest;
 import com.yourcompany.kafkasqlexplorer.domain.TopicSearchResponse;
 import org.apache.kafka.clients.consumer.Consumer;
@@ -339,5 +340,81 @@ class TopicSearchServiceTest {
 
         assertTrue(response.hits().isEmpty());
         assertFalse(response.warnings().isEmpty());
+    }
+
+    /**
+     * Le point de la lecture par coordonnées : un hit de recherche est tronqué pour que cent hits
+     * restent une petite réponse, ce qui ne laissait aucun moyen de lire le reste du payload.
+     */
+    @Test
+    void readsOneRecordWholeEvenWhenASearchHitWouldBeTruncated() {
+        String payload = "{\"body\":\"" + "x".repeat(200) + "\"}";
+        explorerConfig.setSearchMaxValueChars(20);
+        seedRecords("{\"status\":\"NEW\"}", payload);
+
+        TopicMessage record = service.readRecord(TOPIC, 0, 1L);
+
+        assertNotNull(record);
+        assertEquals(1L, record.offset());
+        assertEquals("key-1", record.key());
+        assertEquals(payload, record.value(), "read on purpose, so it comes back whole");
+        assertFalse(record.truncated());
+        assertEquals(payload.length(), record.valueBytes());
+    }
+
+    /** Le cap de la lecture reste un cap, et la réponse le dit — un cap qui ment serait le même bug. */
+    @Test
+    void stillTruncatesAtItsOwnCapAndSaysSo() {
+        String payload = "y".repeat(500);
+        explorerConfig.setRecordMaxValueChars(100);
+        seedRecords(payload);
+
+        TopicMessage record = service.readRecord(TOPIC, 0, 0L);
+
+        assertNotNull(record);
+        assertEquals(100, record.value().length());
+        assertTrue(record.truncated());
+        assertEquals(500, record.valueBytes());
+    }
+
+    /**
+     * Hors plage, partition ou topic inconnus : autant de « pas de record » que l'appelant doit
+     * pouvoir distinguer d'une panne. Un cas par test — chaque lecture ouvre et ferme son
+     * consumer, donc le double du harnais ne sert qu'une fois.
+     */
+    @Test
+    void returnsNothingPastTheEndOffset() {
+        seedRecords("{\"status\":\"NEW\"}", "{\"status\":\"SHIPPED\"}");
+
+        assertNull(service.readRecord(TOPIC, 0, 9L));
+    }
+
+    @Test
+    void returnsNothingForAnUnknownPartition() {
+        seedRecords("{\"status\":\"NEW\"}");
+
+        assertNull(service.readRecord(TOPIC, 3, 0L));
+    }
+
+    @Test
+    void returnsNothingForAnUnknownTopic() {
+        assertNull(service.readRecord("missing-topic", 0, 0L));
+    }
+
+    /**
+     * Sur un topic compacté, l'offset peut simplement ne plus exister : le lecteur tombe sur le
+     * record suivant, et lire au-delà de la cible prouve qu'elle a disparu.
+     */
+    @Test
+    void returnsNothingWhenTheRecordWasCompactedAway() {
+        mockConsumer.updateEndOffsets(Map.of(PARTITION, 6L));
+        mockConsumer.schedulePollTask(() -> {
+            mockConsumer.addRecord(new ConsumerRecord<>(TOPIC, 0, 0L,
+                "key-0".getBytes(StandardCharsets.UTF_8), "{}".getBytes(StandardCharsets.UTF_8)));
+            mockConsumer.addRecord(new ConsumerRecord<>(TOPIC, 0, 5L,
+                "key-5".getBytes(StandardCharsets.UTF_8), "{}".getBytes(StandardCharsets.UTF_8)));
+        });
+
+        assertNull(service.readRecord(TOPIC, 0, 3L));
     }
 }

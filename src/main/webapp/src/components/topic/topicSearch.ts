@@ -30,6 +30,16 @@ export type SearchMode = 'CONTAINS' | 'REGEX' | 'FIELD' | 'HEADER' | 'KEY';
  */
 export type ScanDirection = 'NEWEST' | 'OLDEST';
 
+/**
+ * D'où part le scan.
+ *
+ * `RANGE` est le cas courant (tout le topic, ou une fenêtre relative). `TIMESTAMP` et `OFFSET`
+ * existaient déjà côté serveur sans que rien ne puisse les demander : « à partir de 14h02 » et
+ * « à partir de l'offset 128 000 » sont pourtant les deux formes que prend une question d'incident,
+ * la seconde arrivant très souvent d'une alerte de lag qui donne déjà le numéro.
+ */
+export type StartMode = 'RANGE' | 'TIMESTAMP' | 'OFFSET';
+
 export interface TopicSearchCriteria {
   mode: SearchMode;
   query: string;
@@ -62,6 +72,13 @@ export interface TopicSearchCriteria {
   partitions: number[];
   /** Records que la passe a le droit de lire ; 0 = le budget par défaut du serveur. */
   maxScan: number;
+  /** Hits que la passe a le droit de rapporter ; 0 = le plafond par défaut du serveur (100). */
+  maxHits: number;
+  startMode: StartMode;
+  /** Instant de départ en mode TIMESTAMP, tel que le rend un `<input type="datetime-local">`. */
+  fromTime: string;
+  /** Offset de départ en mode OFFSET, gardé en chaîne pour ne pas coercer pendant la saisie. */
+  fromOffset: string;
 }
 
 export interface TopicSearchResponse {
@@ -126,6 +143,23 @@ export const SCAN_BUDGETS: { value: number; label: string }[] = [
   { value: 250_000, label: 'Scan 250 000' },
 ];
 
+/**
+ * Plafonds de hits proposés. Le serveur borne à mille : au-delà, une réponse cesse d'être
+ * quelque chose qu'on lit et devient quelque chose qu'on exporte.
+ */
+export const HIT_CAPS: { value: number; label: string }[] = [
+  { value: 0, label: 'Up to 100 hits' },
+  { value: 250, label: 'Up to 250 hits' },
+  { value: 500, label: 'Up to 500 hits' },
+  { value: 1000, label: 'Up to 1 000 hits' },
+];
+
+export const START_MODES: { value: StartMode; label: string }[] = [
+  { value: 'RANGE', label: 'Time range' },
+  { value: 'TIMESTAMP', label: 'From a date' },
+  { value: 'OFFSET', label: 'From an offset' },
+];
+
 export const emptyCriteria: TopicSearchCriteria = {
   mode: 'CONTAINS',
   query: '',
@@ -140,7 +174,32 @@ export const emptyCriteria: TopicSearchCriteria = {
   direction: 'NEWEST',
   partitions: [],
   maxScan: 0,
+  maxHits: 0,
+  startMode: 'RANGE',
+  fromTime: '',
+  fromOffset: '',
 };
+
+/** L'instant de départ, en millisecondes ; `null` quand le mode n'en demande pas ou qu'il est illisible. */
+export function startTimestamp(criteria: TopicSearchCriteria): number | null {
+  if (criteria.startMode !== 'TIMESTAMP' || !criteria.fromTime.trim()) return null;
+  const parsed = Date.parse(criteria.fromTime);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/** L'offset de départ ; `null` quand le mode n'en demande pas ou qu'il n'est pas un entier. */
+export function startOffset(criteria: TopicSearchCriteria): number | null {
+  if (criteria.startMode !== 'OFFSET') return null;
+  const parsed = Number(criteria.fromOffset.trim());
+  return criteria.fromOffset.trim() && Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+/**
+ * Un départ par offset est une lecture vers l'avant : le sens de scan ne s'y applique pas, et le
+ * proposer quand même laisserait choisir une option que la requête n'emporte pas.
+ */
+export const directionApplies = (criteria: TopicSearchCriteria): boolean =>
+  criteria.startMode !== 'OFFSET';
 
 /** FIELD et HEADER portent leur cible dans `field` ; KEY compare `value` sans cible. */
 export const isFieldScoped = (mode: SearchMode): boolean => mode === 'FIELD' || mode === 'HEADER';
@@ -168,11 +227,12 @@ export function keyPartitioningApplies(criteria: TopicSearchCriteria): boolean {
     && criteria.partitions.length === 0;
 }
 
-export type SearchField = 'query' | 'field' | 'value';
+export type SearchField = 'query' | 'field' | 'value' | 'fromTime' | 'fromOffset';
 export type SearchErrors = Partial<Record<SearchField, string>>;
 
 /** L'ordre de focalisation : le premier champ en faute reçoit le curseur après validation. */
-export const SEARCH_FIELD_ORDER: SearchField[] = ['field', 'value', 'query'];
+export const SEARCH_FIELD_ORDER: SearchField[] =
+  ['field', 'value', 'query', 'fromTime', 'fromOffset'];
 
 function regexError(source: string): string | undefined {
   try {
@@ -191,9 +251,23 @@ function regexError(source: string): string | undefined {
  * La regex est compilée ici, sur le fil de saisie : un motif invalide n'a pas à faire un
  * aller-retour serveur pour être signalé.
  */
-export function validateCriteria(criteria: TopicSearchCriteria): SearchErrors {
+export function validateCriteria(criteria: TopicSearchCriteria, now = Date.now()): SearchErrors {
   const errors: SearchErrors = {};
   const value = criteria.value.trim();
+
+  if (criteria.startMode === 'TIMESTAMP') {
+    const timestamp = startTimestamp(criteria);
+    if (timestamp === null) {
+      errors.fromTime = 'Enter the date and time to start from.';
+    } else if (timestamp > now) {
+      // Le broker ne rend aucun offset pour un instant futur : le plancher tomberait en silence
+      // et le scan lirait les records les plus récents, en prétendant partir de cette date.
+      errors.fromTime = 'That instant is in the future — nothing was written then.';
+    }
+  }
+  if (criteria.startMode === 'OFFSET' && startOffset(criteria) === null) {
+    errors.fromOffset = 'Enter the offset to start from — a whole number, 0 or more.';
+  }
 
   if (criteria.mode === 'CONTAINS' || criteria.mode === 'REGEX') {
     if (!criteria.query.trim()) {
@@ -236,6 +310,30 @@ function prune(errors: SearchErrors): SearchErrors {
 
 export const firstErrorField = (errors: SearchErrors): SearchField | null =>
   SEARCH_FIELD_ORDER.find(field => errors[field]) ?? null;
+
+/** Un instant en valeur d'`<input type="datetime-local">`, c'est-à-dire en heure locale. */
+export function toDateTimeLocal(ms: number): string {
+  const local = new Date(ms - new Date(ms).getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
+/**
+ * Change le point de départ du scan, en portant la fenêtre relative dans le champ absolu : passer
+ * de « Last hour » à « From a date » sur un champ vide obligerait sinon à retrouver à la main
+ * l'heure qu'il était il y a une heure.
+ */
+export function switchStart(
+  criteria: TopicSearchCriteria,
+  startMode: StartMode,
+  now = Date.now(),
+): TopicSearchCriteria {
+  if (startMode === criteria.startMode) return criteria;
+  const next: TopicSearchCriteria = { ...criteria, startMode };
+  if (startMode === 'TIMESTAMP' && !next.fromTime.trim() && criteria.sinceMinutes > 0) {
+    next.fromTime = toDateTimeLocal(now - criteria.sinceMinutes * 60_000);
+  }
+  return next;
+}
 
 /**
  * Reporte la saisie en cours dans le champ que le nouveau mode utilise réellement.
@@ -284,6 +382,7 @@ export function criteriaFromQuery(search: string): TopicSearchCriteria | null {
 
   const operator = params.get('op') ?? '';
   const direction = (params.get('dir') ?? '').toUpperCase();
+  const start = (params.get('start') ?? '').toUpperCase() as StartMode;
   const criteria: TopicSearchCriteria = {
     ...emptyCriteria,
     mode,
@@ -301,6 +400,12 @@ export function criteriaFromQuery(search: string): TopicSearchCriteria | null {
     maxScan: SCAN_BUDGETS.some(b => b.value === Number(params.get('scan')))
       ? Number(params.get('scan'))
       : emptyCriteria.maxScan,
+    maxHits: HIT_CAPS.some(c => c.value === Number(params.get('hits')))
+      ? Number(params.get('hits'))
+      : emptyCriteria.maxHits,
+    startMode: START_MODES.some(m => m.value === start) ? start : emptyCriteria.startMode,
+    fromTime: (params.get('at') ?? '').trim(),
+    fromOffset: (params.get('off') ?? '').trim(),
   };
   // Mêmes conditions que le bouton « Search » du panneau : une cible sans valeur, ou une
   // recherche texte sans texte, n'aurait rien à exécuter.
@@ -330,6 +435,12 @@ export function buildSearchQuery(criteria: TopicSearchCriteria): string {
   if (criteria.direction !== emptyCriteria.direction) params.set('dir', criteria.direction);
   if (criteria.partitions.length > 0) params.set('parts', criteria.partitions.join(','));
   if (criteria.maxScan > 0) params.set('scan', String(criteria.maxScan));
+  if (criteria.maxHits > 0) params.set('hits', String(criteria.maxHits));
+  if (criteria.startMode !== emptyCriteria.startMode) {
+    params.set('start', criteria.startMode);
+    if (criteria.startMode === 'TIMESTAMP') params.set('at', criteria.fromTime.trim());
+    if (criteria.startMode === 'OFFSET') params.set('off', criteria.fromOffset.trim());
+  }
   return `?${params.toString()}`;
 }
 
@@ -365,8 +476,27 @@ export function effectiveScanBudget(
 
 /** Corps envoyé à `POST /api/topic/{name}/search`. */
 export function buildSearchBody(criteria: TopicSearchCriteria, pass: SearchPass = {}) {
-  const windowed = criteria.sinceMinutes > 0;
+  const offset = startOffset(criteria);
+  const timestamp = startTimestamp(criteria);
+  // Une fenêtre relative n'a de sens que dans le mode qui la porte, et le serveur préfère de
+  // toute façon `fromTimestamp` à `sinceMinutes` quand les deux arrivent.
+  const windowed = criteria.startMode === 'RANGE' && criteria.sinceMinutes > 0;
+  // NEWEST → LAST_N : le serveur remonte de `maxScan` records depuis la fin, et un instant y
+  // *relève le plancher* au lieu de le remplacer — qu'il vienne d'une fenêtre relative ou d'une
+  // date choisie. Partir du début de la fenêtre et lire vers l'avant (ce que fait TIMESTAMP)
+  // dépense le budget sur les records les plus anciens, et rate ce qui vient d'arriver. Un départ
+  // par offset, lui, est une lecture vers l'avant : il l'emporte sur le sens de scan.
+  const from = offset !== null
+    ? 'OFFSET'
+    : criteria.direction === 'NEWEST'
+      ? 'LAST_N'
+      : (windowed || timestamp !== null) ? 'TIMESTAMP' : 'EARLIEST';
   return {
+    from,
+    fromOffset: offset,
+    fromTimestamp: timestamp,
+    sinceMinutes: windowed ? criteria.sinceMinutes : null,
+    maxHits: criteria.maxHits > 0 ? criteria.maxHits : null,
     mode: criteria.mode,
     query: criteria.query,
     caseSensitive: criteria.caseSensitive,
@@ -376,12 +506,6 @@ export function buildSearchBody(criteria: TopicSearchCriteria, pass: SearchPass 
     field: isFieldScoped(criteria.mode) ? criteria.field : null,
     operator: isValueScoped(criteria.mode) ? criteria.operator : null,
     value: isValueScoped(criteria.mode) ? criteria.value : null,
-    // NEWEST → LAST_N : le serveur remonte de `maxScan` records depuis la fin, et une fenêtre
-    // temporelle y *relève le plancher* au lieu de le remplacer. Partir du début de la fenêtre et
-    // lire vers l'avant (ce que fait TIMESTAMP) dépense le budget sur les records les plus anciens
-    // de la fenêtre, et rate ce qui vient d'arriver.
-    from: criteria.direction === 'NEWEST' ? 'LAST_N' : windowed ? 'TIMESTAMP' : 'EARLIEST',
-    sinceMinutes: windowed ? criteria.sinceMinutes : null,
     partitions: criteria.partitions.length > 0 ? criteria.partitions : null,
     cursor: pass.cursor ?? null,
     maxScan: effectiveScanBudget(criteria, pass) ?? null,
@@ -467,6 +591,14 @@ export function describeCoverage(
 ): string {
   if (coverage.stopReason === 'ERROR') return STOP_REASONS.ERROR;
   if (!coverage.exhausted) return STOP_REASONS[coverage.stopReason] ?? coverage.stopReason;
+  // Un départ choisi se lit toujours vers l'avant : « tout le topic » serait faux, ce qui précède
+  // le point de départ n'a jamais été ouvert.
+  if (criteria.startMode === 'OFFSET') {
+    return `Read to the end from offset ${criteria.fromOffset.trim()}`;
+  }
+  if (criteria.startMode === 'TIMESTAMP') {
+    return 'Read to the end from that date';
+  }
   if (criteria.direction === 'OLDEST') {
     return criteria.sinceMinutes > 0 ? 'Whole time range scanned' : 'Whole topic scanned';
   }
@@ -494,17 +626,19 @@ export function nextScanAction(
   criteria: TopicSearchCriteria,
 ): ScanAction | null {
   if (coverage.stopReason === 'ERROR') return null;
+  const readsBackFromTheEnd = directionApplies(criteria) && criteria.direction === 'NEWEST';
   if (!coverage.exhausted) {
     return {
       kind: 'RESUME',
       label: 'Continue scanning',
-      hint: criteria.direction === 'NEWEST'
+      hint: readsBackFromTheEnd
         ? 'Reads on from where this pass stopped, towards the newest record.'
         : 'Reads on from where this pass stopped, towards the end of the topic.',
     };
   }
-  // Plus rien devant : en partant du plus ancien, la plage entière a été lue.
-  if (criteria.direction === 'OLDEST') return null;
+  // Plus rien devant : en lisant vers l'avant, la plage entière a été lue. Élargir le budget ne
+  // ferait que relire la même chose, puisque le point de départ, lui, ne bouge pas.
+  if (!readsBackFromTheEnd) return null;
   const current = Math.max(coverage.scanned, coverage.scanBudget ?? 0);
   if (current <= 0 || current >= MAX_SCAN_BUDGET) return null;
   const maxScan = Math.min(MAX_SCAN_BUDGET, current * 2);
@@ -514,6 +648,35 @@ export function nextScanAction(
     label: `Scan further back (${maxScan.toLocaleString()})`,
     hint: `Re-reads the newest ${maxScan.toLocaleString()} records instead of `
       + `${current.toLocaleString()} — the older ones were never opened. Results are replaced.`,
+  };
+}
+
+/** Le plafond de hits que le serveur borne à mille. */
+export const MAX_HIT_CAP = 1_000;
+/** Le plafond appliqué quand la requête n'en demande pas (`explorer.search-max-hits`). */
+const DEFAULT_HIT_CAP = 100;
+
+/**
+ * Relever le plafond et relancer.
+ *
+ * Une passe arrêtée sur `MAX_HITS` affiche « 12 of 340 matches » : reprendre au curseur repart
+ * *après* la zone déjà lue, donc les 328 restants de cette zone-là sont hors d'atteinte pour
+ * toujours. C'est le seul geste qui les ramène, et il relit — donc il remplace.
+ */
+export function raiseHitCapAction(
+  coverage: SearchCoverage,
+  criteria: TopicSearchCriteria,
+): { maxHits: number; label: string; hint: string } | null {
+  if (coverage.stopReason !== 'MAX_HITS') return null;
+  const current = criteria.maxHits > 0 ? criteria.maxHits : DEFAULT_HIT_CAP;
+  if (current >= MAX_HIT_CAP) return null;
+  const maxHits = Math.min(MAX_HIT_CAP, current * 4);
+  return {
+    maxHits,
+    label: `Show up to ${maxHits.toLocaleString()} hits`,
+    hint: `The pass stopped at ${current.toLocaleString()} hits, so the matches it skipped in the `
+      + 'records it had already read cannot be reached by continuing — that reads on past them. '
+      + 'This rereads from the same end with a higher cap, and replaces the results.',
   };
 }
 
@@ -712,7 +875,17 @@ export function writeAdvancedOpen(open: boolean): void {
 /** Ce que les options avancées changent par rapport au défaut ; vide quand elles n'y touchent pas. */
 export function describeAdvanced(criteria: TopicSearchCriteria): string[] {
   const notes: string[] = [];
-  if (criteria.direction !== emptyCriteria.direction) {
+  if (criteria.startMode === 'TIMESTAMP' && criteria.fromTime.trim()) {
+    notes.push(`from ${criteria.fromTime.trim().replace('T', ' ')}`);
+  }
+  if (criteria.startMode === 'OFFSET' && criteria.fromOffset.trim()) {
+    notes.push(`from offset ${criteria.fromOffset.trim()}`);
+  }
+  if (criteria.maxHits > 0) {
+    notes.push(HIT_CAPS.find(c => c.value === criteria.maxHits)?.label
+      ?? `up to ${criteria.maxHits.toLocaleString()} hits`);
+  }
+  if (directionApplies(criteria) && criteria.direction !== emptyCriteria.direction) {
     notes.push(DIRECTIONS.find(d => d.value === criteria.direction)?.label ?? criteria.direction);
   }
   if (criteria.maxScan > 0) {

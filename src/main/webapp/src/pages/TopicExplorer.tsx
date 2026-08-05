@@ -311,11 +311,15 @@ const MessageCard: React.FC<{
   highlightPath?: string | null;
   /** Vrai quand le match s'est joué dans les headers : ils ne peuvent plus rester en infobulle. */
   revealHeaders?: boolean;
+  /** Le payload entier, une fois relu par ses coordonnées ; sinon la valeur tronquée du hit. */
+  fullValue?: string;
+  onLoadFull?: (message: TopicMessage) => void;
+  loadingFull?: boolean;
 }> = React.memo(({
   message, index, onCopy, onFieldClick, selectedFields, highlight, highlightHeader, highlightPath,
-  revealHeaders,
+  revealHeaders, fullValue, onLoadFull, loadingFull,
 }) => {
-  const sample = message.value ?? '';
+  const sample = fullValue ?? message.value ?? '';
   const marked = highlight.kind !== 'NONE';
   const [expanded, setExpanded] = useState(index < 3);
   // Raw view is what highlighting can mark up, so a card opens raw as soon as there is
@@ -375,10 +379,20 @@ const MessageCard: React.FC<{
             {headerEntries.length} header{headerEntries.length > 1 ? 's' : ''}
           </button>
         )}
-        {message.truncated && (
-          <span className="text-warning" title={`Value truncated (${message.valueBytes} chars)`}>
-            truncated
-          </span>
+        {/* Le badge « truncated » ne pointait sur rien : le reste du payload n'était accessible
+            par aucun chemin. Il se relit maintenant par ses coordonnées. */}
+        {message.truncated && (fullValue
+          ? <span className="text-success" title={`${message.valueBytes} chars`}>full record</span>
+          : (
+            <button
+              onClick={() => onLoadFull?.(message)}
+              disabled={loadingFull}
+              className="text-warning hover:text-on-surface underline decoration-dotted transition-colors disabled:no-underline"
+              title={`Value truncated (${message.valueBytes.toLocaleString()} chars) — read the whole record`}
+            >
+              {loadingFull ? 'loading…' : 'truncated — load full record'}
+            </button>
+          )
         )}
       </div>
       {/* Les headers portent très souvent le corrélatif qu'on cherche. Les laisser en infobulle
@@ -633,6 +647,9 @@ const TopicExplorer: React.FC = () => {
    * reprise alors qu'ils décrivaient toujours une partie des résultats affichés.
    */
   const [warnings, setWarnings] = useState<string[]>([]);
+  /** Payloads relus entiers, par `partition-offset`. */
+  const [fullRecords, setFullRecords] = useState<Record<string, string>>({});
+  const [loadingRecord, setLoadingRecord] = useState<string | null>(null);
   /** La passe en vol, pour pouvoir l'abandonner : un scan dure jusqu'à dix secondes. */
   const abortRef = React.useRef<AbortController | null>(null);
   /** Numéro de passe : ce qui revient d'une passe remplacée ne doit pas atterrir sur la suivante. */
@@ -655,6 +672,30 @@ const TopicExplorer: React.FC = () => {
     navigator.clipboard.writeText(text);
     toast('Copied to clipboard', 'success');
   }, [toast]);
+
+  /**
+   * Relit un record entier par ses coordonnées. Un hit de recherche est tronqué pour que cent
+   * hits restent une petite réponse, ce qui laissait le badge « truncated » pointer sur un reste
+   * que rien ne pouvait aller chercher.
+   */
+  const loadFullRecord = React.useCallback(async (message: TopicMessage) => {
+    const id = `${message.partition}-${message.offset}`;
+    setLoadingRecord(id);
+    try {
+      const response = await axios.get<TopicMessage>(
+        `/api/topic/${encodeURIComponent(name ?? '')}/record`,
+        { params: { partition: message.partition, offset: message.offset } });
+      setFullRecords(prev => ({ ...prev, [id]: response.data.value ?? '' }));
+      if (response.data.truncated) {
+        toast(`Record is ${response.data.valueBytes.toLocaleString()} chars — still capped`, 'info');
+      }
+    } catch (e) {
+      // Compacté, purgé par la rétention, ou hors plage : le serveur répond 404 avec sa raison.
+      toast(describeApiError(e, 'Could not read the record').title, 'error');
+    } finally {
+      setLoadingRecord(current => (current === id ? null : current));
+    }
+  }, [name, toast]);
 
   useEffect(() => {
     // Guard against out-of-order responses: toggling read mode quickly fires several requests,
@@ -1115,6 +1156,9 @@ const TopicExplorer: React.FC = () => {
                   highlightHeader={headerTarget}
                   highlightPath={pathTarget}
                   revealHeaders={showHeaders}
+                  fullValue={fullRecords[`${message.partition}-${message.offset}`]}
+                  onLoadFull={loadFullRecord}
+                  loadingFull={loadingRecord === `${message.partition}-${message.offset}`}
                 />
               ))
               : selectedHit ? (
@@ -1129,6 +1173,9 @@ const TopicExplorer: React.FC = () => {
                   highlightHeader={headerTarget}
                   highlightPath={pathTarget}
                   revealHeaders={showHeaders}
+                  fullValue={fullRecords[`${selectedHit.partition}-${selectedHit.offset}`]}
+                  onLoadFull={loadFullRecord}
+                  loadingFull={loadingRecord === `${selectedHit.partition}-${selectedHit.offset}`}
                 />
               ) : displayedMessages.length > 0 ? (
                 <EmptyState icon="touch_app" title="Select a row to read the record" />

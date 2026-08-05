@@ -3,6 +3,10 @@ import {
   SEARCH_HISTORY_KEY,
   VIEW_KEY,
   analyzeHits,
+  directionApplies,
+  raiseHitCapAction,
+  switchStart,
+  toDateTimeLocal,
   describeAdvanced,
   describeCriterion,
   describeHitInsight,
@@ -627,6 +631,123 @@ describe('export', () => {
     expect(parsed.coverage.summary).toContain('Newest');
     expect(parsed.warnings).toEqual(['careful']);
     expect(parsed.hits).toHaveLength(1);
+  });
+});
+
+describe('scan start', () => {
+  /** `fromTimestamp` et `fromOffset` existaient côté serveur sans que rien ne puisse les demander. */
+  it('starts from an absolute instant, as a floor when reading back from the end', () => {
+    const at = criteria({ mode: 'CONTAINS', query: 'x', startMode: 'TIMESTAMP', fromTime: '2026-08-05T14:02' });
+    const body = buildSearchBody(at);
+
+    expect(body.from).toBe('LAST_N');
+    expect(body.fromTimestamp).toBe(Date.parse('2026-08-05T14:02'));
+    expect(body.sinceMinutes).toBeNull();
+
+    expect(buildSearchBody({ ...at, direction: 'OLDEST' }).from).toBe('TIMESTAMP');
+  });
+
+  /** Une lecture par offset va vers l'avant : le sens de scan ne s'y applique pas. */
+  it('starts from an offset, whatever the scan direction says', () => {
+    const at = criteria({ mode: 'CONTAINS', query: 'x', startMode: 'OFFSET', fromOffset: '128000' });
+    const body = buildSearchBody(at);
+
+    expect(body.from).toBe('OFFSET');
+    expect(body.fromOffset).toBe(128_000);
+    expect(directionApplies(at)).toBe(false);
+    expect(buildSearchBody({ ...at, direction: 'OLDEST' }).from).toBe('OFFSET');
+  });
+
+  it('ignores the relative window once an absolute start is chosen', () => {
+    const body = buildSearchBody(criteria({
+      mode: 'CONTAINS', query: 'x', sinceMinutes: 60, startMode: 'OFFSET', fromOffset: '10',
+    }));
+    expect(body.sinceMinutes).toBeNull();
+    expect(body.fromTimestamp).toBeNull();
+  });
+
+  it('sends nothing on a half-typed start rather than a wrong one', () => {
+    expect(buildSearchBody(criteria({ query: 'x', startMode: 'OFFSET', fromOffset: '12.5' })).fromOffset)
+      .toBeNull();
+    expect(buildSearchBody(criteria({ query: 'x', startMode: 'TIMESTAMP', fromTime: 'nope' })).fromTimestamp)
+      .toBeNull();
+  });
+
+  /** Un instant futur ne rend aucun offset : le plancher tomberait en silence. */
+  it('refuses an empty, unparseable or future start', () => {
+    const now = Date.parse('2026-08-05T12:00:00Z');
+    expect(validateCriteria(criteria({ query: 'x', startMode: 'TIMESTAMP' }), now).fromTime)
+      .toBeTruthy();
+    expect(validateCriteria(criteria({
+      query: 'x', startMode: 'TIMESTAMP', fromTime: '2027-01-01T00:00',
+    }), now).fromTime).toMatch(/future/);
+    expect(validateCriteria(criteria({ query: 'x', startMode: 'OFFSET', fromOffset: '-3' })).fromOffset)
+      .toBeTruthy();
+    expect(validateCriteria(criteria({ query: 'x', startMode: 'OFFSET', fromOffset: '0' })))
+      .toEqual({});
+  });
+
+  /** Retrouver à la main l'heure qu'il était il y a une heure n'est pas un travail d'opérateur. */
+  it('carries the relative window into the absolute field', () => {
+    const now = Date.parse('2026-08-05T12:00:00Z');
+    const switched = switchStart(criteria({ sinceMinutes: 60 }), 'TIMESTAMP', now);
+    expect(switched.fromTime).toBe(toDateTimeLocal(now - 3_600_000));
+
+    // Ce qui est déjà saisi n'est jamais écrasé.
+    const typed = criteria({ sinceMinutes: 60, fromTime: '2026-01-01T08:00' });
+    expect(switchStart(typed, 'TIMESTAMP', now).fromTime).toBe('2026-01-01T08:00');
+  });
+
+  it('says where the pass started once it reached the end', () => {
+    const covered: SearchCoverage = {
+      passes: 1, scanned: 500, matched: 1, elapsedMs: 10,
+      exhausted: true, stopReason: 'EXHAUSTED',
+    };
+    expect(describeCoverage(covered, criteria({ startMode: 'OFFSET', fromOffset: '128000' })))
+      .toBe('Read to the end from offset 128000');
+    expect(describeCoverage(covered, criteria({ startMode: 'TIMESTAMP', fromTime: '2026-08-05T14:02' })))
+      .toBe('Read to the end from that date');
+  });
+
+  /** Élargir le budget ne bouge pas un point de départ fixe : ce serait relire la même chose. */
+  it('offers no deepening once a chosen start has been read to the end', () => {
+    const covered: SearchCoverage = {
+      passes: 1, scanned: 500, matched: 0, elapsedMs: 10,
+      exhausted: true, stopReason: 'EXHAUSTED',
+    };
+    expect(nextScanAction(covered, criteria({ startMode: 'OFFSET', fromOffset: '10' }))).toBeNull();
+    expect(nextScanAction(covered, criteria({ startMode: 'TIMESTAMP', fromTime: '2026-08-05T14:02' }))?.kind)
+      .toBe('DEEPEN');
+  });
+});
+
+describe('raiseHitCapAction', () => {
+  const cappedAt = (stopReason: string): SearchCoverage => ({
+    passes: 1, scanned: 20_000, matched: 340, elapsedMs: 900, exhausted: false, stopReason,
+  });
+
+  /**
+   * Reprendre repart *après* la zone lue : les matches sautés au-delà du plafond y restent hors
+   * d'atteinte pour toujours. Relever le plafond est le seul geste qui les ramène.
+   */
+  it('offers a higher cap only when the cap is what stopped the pass', () => {
+    const action = raiseHitCapAction(cappedAt('MAX_HITS'), criteria());
+    expect(action?.maxHits).toBe(400);
+    expect(action?.hint).toMatch(/continuing/);
+    expect(raiseHitCapAction(cappedAt('MAX_SCAN'), criteria())).toBeNull();
+  });
+
+  it('counts from the cap the pass actually ran with, and stops at the server maximum', () => {
+    expect(raiseHitCapAction(cappedAt('MAX_HITS'), criteria({ maxHits: 250 }))?.maxHits).toBe(1_000);
+    expect(raiseHitCapAction(cappedAt('MAX_HITS'), criteria({ maxHits: 1_000 }))).toBeNull();
+  });
+
+  it('travels in the request body and round-trips through the URL', () => {
+    expect(buildSearchBody(criteria({ query: 'x', maxHits: 500 })).maxHits).toBe(500);
+    expect(buildSearchBody(criteria({ query: 'x' })).maxHits).toBeNull();
+
+    const capped = criteria({ mode: 'CONTAINS', query: 'x', maxHits: 500 });
+    expect(criteriaFromQuery(buildSearchQuery(capped))).toEqual(capped);
   });
 });
 

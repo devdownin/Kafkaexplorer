@@ -3,8 +3,14 @@ import { Button, ErrorPanel, Input, Select } from '../ui';
 import type { QueryErrorInfo } from '../../pages/queryError';
 import {
   DIRECTIONS,
+  HIT_CAPS,
   SCAN_BUDGETS,
   SCOPES,
+  START_MODES,
+  directionApplies,
+  raiseHitCapAction,
+  switchStart,
+  type StartMode,
   describeAdvanced,
   describeCoverage,
   describeCriterion,
@@ -30,6 +36,8 @@ export const FIELD_IDS = {
   query: 'topic-search-query',
   field: 'topic-search-field',
   value: 'topic-search-value',
+  fromTime: 'topic-search-from-time',
+  fromOffset: 'topic-search-from-offset',
 } as const;
 
 interface Props {
@@ -84,6 +92,9 @@ const TopicSearchPanel: React.FC<Props> = ({
   const suggestions = active && ranCriteria && loadedHits === 0 && !searching
     ? suggestWidenings(ranCriteria)
     : [];
+  const capAction = coverage && ranCriteria && !searching
+    ? raiseHitCapAction(coverage, ranCriteria)
+    : null;
   const advanced = describeAdvanced(criteria);
 
   const togglePartition = (partition: number) => {
@@ -315,22 +326,71 @@ const TopicSearchPanel: React.FC<Props> = ({
 
         {advancedOpen && (
           <div id="topic-search-advanced" className="mt-2.5 space-y-2.5">
-            <div className="flex flex-wrap items-center gap-3">
-              {/* Par quel bout le scan entre. Le budget est borné, donc ce choix décide de ce qui
-                  sera lu — et non simplement de l'ordre dans lequel on le lit. */}
+            <div className="flex flex-wrap items-start gap-3">
+              {/* D'où le scan part. Une question d'incident prend presque toujours la forme
+                  « à partir de telle heure » ou « à partir de tel offset ». */}
               <Select
-                value={criteria.direction}
-                onChange={e => set('direction', e.target.value as TopicSearchCriteria['direction'])}
-                aria-label="Scan direction"
+                value={criteria.startMode}
+                onChange={e => onChange(switchStart(criteria, e.target.value as StartMode))}
+                aria-label="Scan start"
                 className="w-40"
-                title={criteria.direction === 'NEWEST'
-                  ? 'Reads back from the most recent records. Older ones are only reached by scanning further back.'
-                  : 'Reads forward from the oldest record in range. On a large topic the scan budget is spent on the oldest history.'}
               >
-                {DIRECTIONS.map(direction => (
-                  <option key={direction.value} value={direction.value}>{direction.label}</option>
+                {START_MODES.map(start => (
+                  <option key={start.value} value={start.value}>{start.label}</option>
                 ))}
               </Select>
+
+              {criteria.startMode === 'TIMESTAMP' && (
+                <div>
+                  <Input
+                    id={FIELD_IDS.fromTime}
+                    type="datetime-local"
+                    value={criteria.fromTime}
+                    onChange={e => set('fromTime', e.target.value)}
+                    aria-label="Start date and time"
+                    aria-invalid={Boolean(errors.fromTime)}
+                    aria-describedby={errors.fromTime ? `${FIELD_IDS.fromTime}-error` : undefined}
+                    className="w-52"
+                  />
+                  <FieldError id={`${FIELD_IDS.fromTime}-error`} message={errors.fromTime} />
+                </div>
+              )}
+
+              {criteria.startMode === 'OFFSET' && (
+                <div>
+                  <Input
+                    id={FIELD_IDS.fromOffset}
+                    value={criteria.fromOffset}
+                    onChange={e => set('fromOffset', e.target.value)}
+                    inputMode="numeric"
+                    placeholder="Offset, e.g. 128000"
+                    aria-label="Start offset"
+                    aria-invalid={Boolean(errors.fromOffset)}
+                    aria-describedby={errors.fromOffset ? `${FIELD_IDS.fromOffset}-error` : undefined}
+                    className="w-44 font-mono"
+                  />
+                  <FieldError id={`${FIELD_IDS.fromOffset}-error`} message={errors.fromOffset} />
+                </div>
+              )}
+
+              {/* Par quel bout le scan entre. Le budget est borné, donc ce choix décide de ce qui
+                  sera lu — et non simplement de l'ordre dans lequel on le lit. Un départ par offset
+                  est une lecture vers l'avant : le choix ne s'y applique pas et disparaît. */}
+              {directionApplies(criteria) && (
+                <Select
+                  value={criteria.direction}
+                  onChange={e => set('direction', e.target.value as TopicSearchCriteria['direction'])}
+                  aria-label="Scan direction"
+                  className="w-40"
+                  title={criteria.direction === 'NEWEST'
+                    ? 'Reads back from the most recent records. Older ones are only reached by scanning further back.'
+                    : 'Reads forward from the oldest record in range. On a large topic the scan budget is spent on the oldest history.'}
+                >
+                  {DIRECTIONS.map(direction => (
+                    <option key={direction.value} value={direction.value}>{direction.label}</option>
+                  ))}
+                </Select>
+              )}
 
               <Select
                 value={String(criteria.maxScan)}
@@ -343,7 +403,26 @@ const TopicSearchPanel: React.FC<Props> = ({
                   <option key={budget.value} value={budget.value}>{budget.label}</option>
                 ))}
               </Select>
+
+              <Select
+                value={String(criteria.maxHits)}
+                onChange={e => set('maxHits', Number(e.target.value))}
+                aria-label="Hit cap"
+                className="w-44"
+                title="How many matches one pass may report. Continuing reads on past what a full pass skipped, so the cap is what decides whether they are ever shown."
+              >
+                {HIT_CAPS.map(cap => (
+                  <option key={cap.value} value={cap.value}>{cap.label}</option>
+                ))}
+              </Select>
             </div>
+
+            {criteria.startMode === 'OFFSET' && partitionCount > 1 && (
+              <p className="text-[11px] text-on-surface-variant">
+                That offset is applied to every partition scanned — on a {partitionCount}-partition
+                topic, pick the one you mean below.
+              </p>
+            )}
 
             {/* Partitions : on arrive souvent avec un numéro déjà en main. */}
             {partitionCount > 1 && (
@@ -447,6 +526,18 @@ const TopicSearchPanel: React.FC<Props> = ({
               title={action.hint}
             >
               {action.label}
+            </Button>
+          )}
+          {/* Les matches sautés au-delà du plafond sont hors d'atteinte d'une reprise, qui lit
+              *après* la zone déjà parcourue : relever le plafond est le seul geste qui les ramène. */}
+          {capAction && ranCriteria && (
+            <Button
+              variant="ghost"
+              icon="expand_content"
+              onClick={() => onApply({ ...ranCriteria, maxHits: capAction.maxHits })}
+              title={capAction.hint}
+            >
+              {capAction.label}
             </Button>
           )}
           {searching && <span className="text-on-surface-variant">Scanning…</span>}
