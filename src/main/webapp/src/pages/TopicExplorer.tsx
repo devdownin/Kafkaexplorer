@@ -5,7 +5,7 @@ import Editor from '@monaco-editor/react';
 import '../monaco-setup';
 import { useToast } from '../components/Toast';
 import ErrorBanner from '../components/ErrorBanner';
-import { Button, Badge, Stat, EmptyState, StatGridSkeleton, TableSkeleton, Table, useVirtualRows } from '../components/ui';
+import { Button, Badge, Stat, EmptyState, ErrorPanel, StatGridSkeleton, TableSkeleton, Table, useVirtualRows } from '../components/ui';
 import { buildTraceLinkForKey } from './streamFlow';
 import TopicSearchPanel, { FIELD_IDS } from '../components/topic/TopicSearchPanel';
 import { describeApiError, type QueryErrorInfo } from './queryError';
@@ -17,6 +17,7 @@ import {
   analyzeHits,
   announceResult,
   canFollow,
+  buildRecordLink,
   buildSearchBody,
   buildSearchQuery,
   coverageOf,
@@ -41,12 +42,15 @@ import {
   readPinned,
   readSearchHistory,
   readViewMode,
+  recordFromQuery,
+  recordParam,
   revealsHeaders,
   searchToJson,
   sortHits,
   splitForHighlight,
   togglePinned,
   valuesAtPath,
+  withRecord,
   validateCriteria,
   writeAdvancedOpen,
   writeViewMode,
@@ -54,6 +58,7 @@ import {
   type MessageView,
   type PinnedSearch,
   type RankedHit,
+  type RecordCoordinates,
   type ScanAction,
   type SearchCoverage,
   type SearchErrors,
@@ -324,9 +329,11 @@ const MessageCard: React.FC<{
   fullValue?: string;
   onLoadFull?: (message: TopicMessage) => void;
   loadingFull?: boolean;
+  /** Copie un lien vers *ce* message — ce qu'on colle dans un ticket. */
+  onCopyLink?: (message: TopicMessage) => void;
 }> = React.memo(({
   message, index, onCopy, onFieldClick, selectedFields, highlight, highlightHeader, highlightPath,
-  revealHeaders, fullValue, onLoadFull, loadingFull,
+  revealHeaders, fullValue, onLoadFull, loadingFull, onCopyLink,
 }) => {
   const sample = fullValue ?? message.value ?? '';
   const marked = highlight.kind !== 'NONE';
@@ -490,6 +497,16 @@ const MessageCard: React.FC<{
             >
               <span aria-hidden="true" className="material-symbols-outlined text-base">route</span>
             </Link>
+          )}
+          {onCopyLink && (
+            <button
+              onClick={() => onCopyLink(message)}
+              className="p-1.5 text-on-surface-variant hover:text-primary hover:bg-primary/10 rounded transition-colors"
+              title={`Copy a link to p${message.partition}@${message.offset}`}
+              aria-label="Copy a link to this record"
+            >
+              <span aria-hidden="true" className="material-symbols-outlined text-base">link</span>
+            </button>
           )}
           <button
             onClick={() => onCopy(formatted)}
@@ -660,6 +677,10 @@ const TopicExplorer: React.FC = () => {
   const [fullRecords, setFullRecords] = useState<Record<string, string>>({});
   const [loadingRecord, setLoadingRecord] = useState<string | null>(null);
   const [pinned, setPinned] = useState<PinnedSearch[]>([]);
+  /** Le message ouvert par un lien `?record=p:offset`, avec ce qui a empêché de le lire. */
+  const [linkedRecord, setLinkedRecord] = useState<TopicMessage | null>(null);
+  const [linkedError, setLinkedError] = useState<QueryErrorInfo | null>(null);
+  const [linkedLoading, setLinkedLoading] = useState(false);
   /** Reprises automatiques : le curseur pointe vers l'avant, donc répéter la reprise est un tail. */
   const [following, setFollowing] = useState(false);
   /** La passe en vol, pour pouvoir l'abandonner : un scan dure jusqu'à dix secondes. */
@@ -668,6 +689,8 @@ const TopicExplorer: React.FC = () => {
   const runIdRef = React.useRef(0);
   /** La query string que la page a écrite elle-même, pour ne pas la relire comme un ordre. */
   const lastAppliedSearch = React.useRef<string | null>(null);
+  /** Les coordonnées portées par l'URL, lues à chaque rendu et relues par la réécriture. */
+  const linkedCoordinatesRef = React.useRef<RecordCoordinates | null>(null);
   /**
    * La liste affichée, pour le gestionnaire clavier : il est posé une fois, et le lire par une
    * ref évite de le reposer à chaque frappe dans le filtre.
@@ -679,6 +702,11 @@ const TopicExplorer: React.FC = () => {
     setHistory(readSearchHistory(name ?? ''));
     setPinned(readPinned(name ?? ''));
   }, [name]);
+
+  // Mémoïsés parce que `MessageCard` l'est : une callback recréée à chaque rendu annulerait la
+  // comparaison de props et la carte re-parserait son payload comme avant.
+  const linkedCoordinates = useMemo(() => recordFromQuery(location.search), [location.search]);
+  linkedCoordinatesRef.current = linkedCoordinates;
 
   // Mémoïsés parce que `MessageCard` l'est : une callback recréée à chaque rendu annulerait la
   // comparaison de props et la carte re-parserait son payload comme avant.
@@ -698,13 +726,22 @@ const TopicExplorer: React.FC = () => {
    * hits restent une petite réponse, ce qui laissait le badge « truncated » pointer sur un reste
    * que rien ne pouvait aller chercher.
    */
+  const fetchRecord = React.useCallback(
+    (partition: number, offset: number) => axios.get<TopicMessage>(
+      `/api/topic/${encodeURIComponent(name ?? '')}/record`, { params: { partition, offset } }),
+    [name]);
+
+  const copyRecordLink = React.useCallback((message: TopicMessage) => {
+    void navigator.clipboard.writeText(
+      buildRecordLink(window.location.origin, location.pathname, message));
+    toast(`Link to p${message.partition}@${message.offset} copied`, 'success');
+  }, [location.pathname, toast]);
+
   const loadFullRecord = React.useCallback(async (message: TopicMessage) => {
     const id = `${message.partition}-${message.offset}`;
     setLoadingRecord(id);
     try {
-      const response = await axios.get<TopicMessage>(
-        `/api/topic/${encodeURIComponent(name ?? '')}/record`,
-        { params: { partition: message.partition, offset: message.offset } });
+      const response = await fetchRecord(message.partition, message.offset);
       setFullRecords(prev => ({ ...prev, [id]: response.data.value ?? '' }));
       if (response.data.truncated) {
         toast(`Record is ${response.data.valueBytes.toLocaleString()} chars — still capped`, 'info');
@@ -715,7 +752,7 @@ const TopicExplorer: React.FC = () => {
     } finally {
       setLoadingRecord(current => (current === id ? null : current));
     }
-  }, [name, toast]);
+  }, [fetchRecord, toast]);
 
   useEffect(() => {
     // Guard against out-of-order responses: toggling read mode quickly fires several requests,
@@ -807,7 +844,8 @@ const TopicExplorer: React.FC = () => {
         }));
       }
       // L'URL décrit désormais la recherche affichée : un lien collé dans un ticket la rejoue.
-      const search = buildSearchQuery(active);
+      // L'URL décrit la recherche *et* le message ouvert : l'une ne doit pas effacer l'autre.
+      const search = withRecord(buildSearchQuery(active), linkedCoordinatesRef.current);
       lastAppliedSearch.current = search;
       navigate({ pathname: location.pathname, search }, { replace: true });
     } catch (e) {
@@ -959,6 +997,40 @@ const TopicExplorer: React.FC = () => {
     void runSearch({}, preset);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- réagit au seul critère porté par l'URL
   }, [location.search]);
+
+  /**
+   * Un lien `?record=p:offset` ouvre *ce* message. Le paramètre est indépendant du critère de
+   * recherche : une URL qui ne porte que lui n'exécute aucune recherche, et une URL qui porte les
+   * deux montre les deux. La clé de l'effet est le couple de coordonnées, donc réécrire la même
+   * URL ne relit rien.
+   */
+  const linkedKey = linkedCoordinates ? recordParam(linkedCoordinates) : '';
+  useEffect(() => {
+    if (!linkedCoordinates) {
+      setLinkedRecord(null);
+      setLinkedError(null);
+      return;
+    }
+    let active = true;
+    setLinkedLoading(true);
+    setLinkedError(null);
+    fetchRecord(linkedCoordinates.partition, linkedCoordinates.offset)
+      .then(response => { if (active) setLinkedRecord(response.data); })
+      .catch(e => {
+        if (!active) return;
+        setLinkedRecord(null);
+        // 404 : compacté, purgé par la rétention, ou hors plage — le serveur dit lequel.
+        setLinkedError(describeApiError(e, 'Could not read that record'));
+      })
+      .finally(() => { if (active) setLinkedLoading(false); });
+    return () => { active = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- les coordonnées sont la clé
+  }, [linkedKey, fetchRecord]);
+
+  const closeLinkedRecord = () => {
+    navigate({ pathname: location.pathname, search: withRecord(location.search, null) },
+      { replace: true });
+  };
 
   const clearSearch = () => {
     setFollowing(false);
@@ -1161,6 +1233,44 @@ const TopicExplorer: React.FC = () => {
             </div>
           )}
 
+          {/* Le message désigné par le lien. Il vit à part des résultats : ce n'est pas une
+              recherche qui l'a trouvé, c'est quelqu'un qui l'a nommé. */}
+          {linkedCoordinates && (
+            <div className="rounded-xl border border-primary/30 bg-primary/5 overflow-hidden">
+              <div className="flex items-center justify-between gap-3 px-4 py-2 border-b border-primary/20">
+                <span className="text-[12px] text-on-surface-variant">
+                  Linked record
+                  <span className="font-mono text-primary ml-2">
+                    p{linkedCoordinates.partition}@{linkedCoordinates.offset.toLocaleString()}
+                  </span>
+                </span>
+                <Button variant="ghost" size="sm" icon="close" onClick={closeLinkedRecord}>
+                  Close
+                </Button>
+              </div>
+              {linkedLoading && (
+                <p className="px-4 py-3 text-[12px] text-on-surface-variant">Reading the record…</p>
+              )}
+              {linkedError && !linkedLoading && (
+                <div className="p-3">
+                  <ErrorPanel error={linkedError} />
+                </div>
+              )}
+              {linkedRecord && !linkedLoading && (
+                <MessageCard
+                  message={{ ...linkedRecord, rank: 1 }}
+                  index={0}
+                  onCopy={copyToClipboard}
+                  onFieldClick={toggleField}
+                  selectedFields={selectedFields}
+                  highlight={NO_HIGHLIGHT}
+                  revealHeaders
+                  onCopyLink={copyRecordLink}
+                />
+              )}
+            </div>
+          )}
+
           {/* La disparition de « Searching… » ne dit rien à qui ne voit pas l'écran. */}
           <p className="sr-only" role="status" aria-live="polite">{announcement}</p>
 
@@ -1253,6 +1363,7 @@ const TopicExplorer: React.FC = () => {
                   fullValue={fullRecords[`${message.partition}-${message.offset}`]}
                   onLoadFull={loadFullRecord}
                   loadingFull={loadingRecord === `${message.partition}-${message.offset}`}
+                  onCopyLink={copyRecordLink}
                 />
               ))
               : selectedHit ? (
@@ -1270,6 +1381,7 @@ const TopicExplorer: React.FC = () => {
                   fullValue={fullRecords[`${selectedHit.partition}-${selectedHit.offset}`]}
                   onLoadFull={loadFullRecord}
                   loadingFull={loadingRecord === `${selectedHit.partition}-${selectedHit.offset}`}
+                  onCopyLink={copyRecordLink}
                 />
               ) : displayedMessages.length > 0 ? (
                 <EmptyState icon="touch_app" title="Select a row to read the record" />

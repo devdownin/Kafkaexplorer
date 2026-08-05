@@ -1117,6 +1117,55 @@ export function pushSearchHistory(entry: SearchHistoryEntry): SearchHistoryEntry
   return next.filter(other => other.topic === entry.topic).slice(0, HISTORY_PER_TOPIC);
 }
 
+// ── Lien vers un message précis ───────────────────────────────────────────
+
+/** Les coordonnées d'un record : ce qui l'identifie, et ce qu'un lien doit donc porter. */
+export interface RecordCoordinates {
+  partition: number;
+  offset: number;
+}
+
+/**
+ * `?record=2:88` — un lien vers *un message*, là où le reste de l'URL ne décrit qu'une recherche.
+ *
+ * C'est pourtant le message qu'on colle dans un ticket, et jusqu'ici il fallait décrire à la main
+ * comment le retrouver. La lecture par coordonnées existant côté serveur, il ne restait que le lien.
+ */
+export function recordFromQuery(search: string): RecordCoordinates | null {
+  const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
+  const raw = params.get('record');
+  if (!raw) return null;
+  const [left, right] = raw.split(':');
+  const partition = Number(left);
+  const offset = Number(right);
+  return Number.isInteger(partition) && partition >= 0 && Number.isInteger(offset) && offset >= 0
+    ? { partition, offset }
+    : null;
+}
+
+export const recordParam = (coordinates: RecordCoordinates): string =>
+  `${coordinates.partition}:${coordinates.offset}`;
+
+/**
+ * Pose ou retire le record d'une query string, en laissant le reste intact : l'URL doit décrire
+ * à la fois la recherche affichée et le message ouvert, sans que l'une efface l'autre.
+ */
+export function withRecord(search: string, coordinates: RecordCoordinates | null): string {
+  const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
+  if (coordinates) {
+    params.set('record', recordParam(coordinates));
+  } else {
+    params.delete('record');
+  }
+  const rendered = params.toString();
+  return rendered ? `?${rendered}` : '';
+}
+
+/** Le lien complet vers un message, tel qu'il se colle dans un ticket. */
+export function buildRecordLink(origin: string, pathname: string, message: TopicMessage): string {
+  return `${origin}${pathname}${withRecord('', message)}`;
+}
+
 // ── Suivre l'arrivée des messages ─────────────────────────────────────────
 
 /** Intervalle entre deux reprises en mode « suivre ». */

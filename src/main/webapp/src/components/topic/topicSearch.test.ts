@@ -5,6 +5,10 @@ import {
   VIEW_KEY,
   analyzeHits,
   announceResult,
+  buildRecordLink,
+  recordFromQuery,
+  recordParam,
+  withRecord,
   canFollow,
   describeFollow,
   isPinned,
@@ -758,6 +762,49 @@ describe('raiseHitCapAction', () => {
 
     const capped = criteria({ mode: 'CONTAINS', query: 'x', maxHits: 500 });
     expect(criteriaFromQuery(buildSearchQuery(capped))).toEqual(capped);
+  });
+});
+
+describe('record permalink', () => {
+  const message: TopicMessage = {
+    partition: 2, offset: 88, timestamp: 0, key: null, headers: {},
+    value: '{}', valueBytes: 2, truncated: false,
+  };
+
+  it('reads and writes a record link', () => {
+    expect(recordFromQuery('?record=2:88')).toEqual({ partition: 2, offset: 88 });
+    expect(recordParam({ partition: 2, offset: 88 })).toBe('2:88');
+    expect(buildRecordLink('https://kse.example', '/topic/orders', message))
+      .toBe('https://kse.example/topic/orders?record=2%3A88');
+  });
+
+  /** Une URL ordinaire, ou des coordonnées qui n'en sont pas, n'ouvrent rien. */
+  it('ignores anything that is not a pair of coordinates', () => {
+    expect(recordFromQuery('')).toBeNull();
+    expect(recordFromQuery('?mode=CONTAINS&q=x')).toBeNull();
+    expect(recordFromQuery('?record=')).toBeNull();
+    expect(recordFromQuery('?record=2')).toBeNull();
+    expect(recordFromQuery('?record=2:notanoffset')).toBeNull();
+    expect(recordFromQuery('?record=-1:5')).toBeNull();
+  });
+
+  /** L'URL décrit la recherche *et* le message ouvert : l'une n'efface pas l'autre. */
+  it('sits alongside a search criterion without disturbing it', () => {
+    const search = buildSearchQuery(criteria({ mode: 'CONTAINS', query: 'ORD-42' }));
+    const both = withRecord(search, { partition: 2, offset: 88 });
+
+    expect(recordFromQuery(both)).toEqual({ partition: 2, offset: 88 });
+    expect(criteriaFromQuery(both)?.query).toBe('ORD-42');
+
+    const without = withRecord(both, null);
+    expect(recordFromQuery(without)).toBeNull();
+    expect(criteriaFromQuery(without)?.query).toBe('ORD-42');
+  });
+
+  /** Un lien vers un message seul ne déclenche aucune recherche. */
+  it('does not read as a search on its own', () => {
+    expect(criteriaFromQuery('?record=2:88')).toBeNull();
+    expect(withRecord('', null)).toBe('');
   });
 });
 
