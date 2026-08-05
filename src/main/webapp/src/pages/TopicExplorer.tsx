@@ -5,16 +5,56 @@ import Editor from '@monaco-editor/react';
 import '../monaco-setup';
 import { useToast } from '../components/Toast';
 import ErrorBanner from '../components/ErrorBanner';
-import { Button, Badge, Stat, EmptyState, StatGridSkeleton, TableSkeleton, Table } from '../components/ui';
+import { Button, Badge, Stat, EmptyState, StatGridSkeleton, TableSkeleton, Table, useVirtualRows } from '../components/ui';
 import { buildTraceLinkForKey } from './streamFlow';
-import TopicSearchPanel, {
+import TopicSearchPanel, { FIELD_IDS } from '../components/topic/TopicSearchPanel';
+import { describeApiError, type QueryErrorInfo } from './queryError';
+import { toCsv } from './resultExport';
+import {
+  HIT_EXPORT_COLUMNS,
+  NO_HIGHLIGHT,
+  analyzeHits,
+  buildSearchBody,
+  buildSearchQuery,
+  coverageOf,
   criteriaFromQuery,
+  describeHitInsight,
+  effectiveScanBudget,
   emptyCriteria,
-  splitOnMatches,
+  exportFileName,
+  filterHits,
+  firstErrorField,
+  highlightFor,
+  highlightedHeader,
+  highlightedPath,
+  hitsToRows,
+  mergeWarnings,
+  previewOf,
+  pushSearchHistory,
+  rankHits,
+  readAdvancedOpen,
+  readSearchHistory,
+  readViewMode,
+  revealsHeaders,
+  searchToJson,
+  sortHits,
+  splitForHighlight,
+  validateCriteria,
+  writeAdvancedOpen,
+  writeViewMode,
+  type HitSortKey,
+  type MessageView,
+  type RankedHit,
+  type ScanAction,
+  type SearchCoverage,
+  type SearchErrors,
+  type SearchHighlight,
+  type SearchHistoryEntry,
+  type SearchPass,
   type TopicMessage,
   type TopicSearchCriteria,
   type TopicSearchResponse,
-} from '../components/topic/TopicSearchPanel';
+} from '../components/topic/topicSearch';
 
 interface TopicDetail {
   topic: {
@@ -30,6 +70,26 @@ interface TopicDetail {
   samples: TopicMessage[];
 }
 
+/**
+ * Renders text with everything the search matched on marked. Odd indexes are the matches.
+ * Le surlignage suit le mode : littéral en recherche texte, motif en regex, valeur comparée en
+ * recherche par champ / header / clé — un hit doit montrer *pourquoi* il en est un.
+ */
+const Highlighted: React.FC<{ text: string; highlight: SearchHighlight }> = ({
+  text, highlight,
+}) => {
+  if (highlight.kind === 'NONE') return <>{text}</>;
+  const parts = splitForHighlight(text, highlight);
+  return (
+    <>
+      {parts.map((part, i) => (i % 2 === 1
+        ? <mark key={i} className="bg-warning/40 text-on-surface rounded-sm">{part}</mark>
+        : <React.Fragment key={i}>{part}</React.Fragment>
+      ))}
+    </>
+  );
+};
+
 // ── Interactive JSON renderer ─────────────────────────────────────────────
 const JsonNode: React.FC<{
   value: unknown;
@@ -38,11 +98,25 @@ const JsonNode: React.FC<{
   fieldPath?: string;  // full dot-notation path to this node (e.g. "customer.name")
   onFieldClick?: (field: string) => void;
   selectedFields?: string[];
-}> = ({ value, depth, keyName, fieldPath, onFieldClick, selectedFields }) => {
+  highlight?: SearchHighlight;
+  /** Chemin comparé par la recherche : le nœud qui le porte est désigné dans l'arbre. */
+  highlightPath?: string | null;
+}> = ({
+  value, depth, keyName, fieldPath, onFieldClick, selectedFields,
+  highlight = NO_HIGHLIGHT, highlightPath,
+}) => {
   const indent = '  '.repeat(depth);
   // Use fieldPath for selection/click if available, otherwise fall back to keyName
   const clickPath = fieldPath ?? keyName;
   const isSelected = clickPath !== undefined && selectedFields?.includes(clickPath);
+  const targeted = Boolean(highlightPath) && clickPath === highlightPath;
+  /**
+   * Une recherche par champ ne marque que la valeur du champ comparé : marquer partout où le
+   * texte apparaît désignerait des nœuds que la recherche n'a jamais regardés. Une recherche
+   * texte, elle, s'applique bien à toutes les feuilles.
+   */
+  const leafHighlight = highlightPath ? (targeted ? highlight : NO_HIGHLIGHT) : highlight;
+  const childProps = { highlight, highlightPath, onFieldClick, selectedFields };
 
   const keyEl = keyName !== undefined && onFieldClick && clickPath !== undefined ? (
     <button
@@ -52,12 +126,14 @@ const JsonNode: React.FC<{
         isSelected
           ? 'text-primary bg-primary/20 line-through'
           : 'text-warning hover:text-primary hover:bg-primary/10 cursor-pointer'
-      }`}
+      } ${targeted ? 'ring-1 ring-warning/60' : ''}`}
     >
       "{keyName}"
     </button>
   ) : keyName !== undefined ? (
-    <span className="text-warning font-mono text-[11px]">"{keyName}"</span>
+    <span className={`text-warning font-mono text-[11px] ${targeted ? 'ring-1 ring-warning/60 rounded' : ''}`}>
+      "{keyName}"
+    </span>
   ) : null;
 
   if (value === null) {
@@ -67,10 +143,10 @@ const JsonNode: React.FC<{
     return <span>{keyEl && <>{keyEl}<span className="text-on-surface-variant">: </span></>}<span className="text-secondary font-mono text-[11px]">{String(value)}</span></span>;
   }
   if (typeof value === 'number') {
-    return <span>{keyEl && <>{keyEl}<span className="text-on-surface-variant">: </span></>}<span className="text-success font-mono text-[11px]">{value}</span></span>;
+    return <span>{keyEl && <>{keyEl}<span className="text-on-surface-variant">: </span></>}<span className="text-success font-mono text-[11px]"><Highlighted text={String(value)} highlight={leafHighlight} /></span></span>;
   }
   if (typeof value === 'string') {
-    return <span>{keyEl && <>{keyEl}<span className="text-on-surface-variant">: </span></>}<span className="text-primary font-mono text-[11px]">"{value}"</span></span>;
+    return <span>{keyEl && <>{keyEl}<span className="text-on-surface-variant">: </span></>}<span className="text-primary font-mono text-[11px]">"<Highlighted text={value} highlight={leafHighlight} />"</span></span>;
   }
   if (Array.isArray(value)) {
     if (value.length === 0) return <span>{keyEl && <>{keyEl}<span className="text-on-surface-variant">: </span></>}<span className="text-on-surface-variant font-mono text-[11px]">[]</span></span>;
@@ -82,7 +158,7 @@ const JsonNode: React.FC<{
           {value.slice(0, 3).map((item, i) => (
             <div key={i} className="font-mono text-[11px]">
               {indent + '  '}
-              <JsonNode value={item} depth={depth + 1} />
+              <JsonNode value={item} depth={depth + 1} highlight={highlight} highlightPath={highlightPath} />
               {i < Math.min(value.length, 3) - 1 && <span className="text-on-surface-variant">,</span>}
             </div>
           ))}
@@ -110,8 +186,7 @@ const JsonNode: React.FC<{
                   depth={depth + 1}
                   keyName={k}
                   fieldPath={childPath}
-                  onFieldClick={onFieldClick}
-                  selectedFields={selectedFields}
+                  {...childProps}
                 />
                 {i < entries.length - 1 && <span className="text-on-surface-variant">,</span>}
               </div>
@@ -130,7 +205,9 @@ const XmlViewer: React.FC<{
   xml: string;
   onFieldClick?: (field: string) => void;
   selectedFields?: string[];
-}> = ({ xml, onFieldClick, selectedFields }) => {
+  highlight?: SearchHighlight;
+  highlightPath?: string | null;
+}> = ({ xml, onFieldClick, selectedFields, highlight = NO_HIGHLIGHT, highlightPath }) => {
   const doc = useMemo(() => {
     try {
       const parser = new DOMParser();
@@ -155,6 +232,8 @@ const XmlViewer: React.FC<{
     const childEls = Array.from(el.childNodes).filter(n => n.nodeType === Node.ELEMENT_NODE) as Element[];
     const isLeaf = childEls.length === 0;
     const isSelected = selectedFields?.includes(path);
+    const targeted = Boolean(highlightPath) && path === highlightPath;
+    const leafHighlight = highlightPath ? (targeted ? highlight : NO_HIGHLIGHT) : highlight;
     const indentPx = depth * 12;
 
     const tagBtn = onFieldClick ? (
@@ -165,7 +244,7 @@ const XmlViewer: React.FC<{
           isSelected
             ? 'text-primary bg-primary/20 line-through'
             : 'text-success hover:text-primary hover:bg-primary/10 cursor-pointer'
-        }`}
+        } ${targeted ? 'ring-1 ring-warning/60' : ''}`}
       >
         {tag}
       </button>
@@ -175,7 +254,9 @@ const XmlViewer: React.FC<{
       return (
         <div key={path} style={{ paddingLeft: `${indentPx}px` }} className="font-mono text-[11px]">
           <span className="text-on-surface-variant">{'<'}</span>{tagBtn}<span className="text-on-surface-variant">{'>'}</span>
-          <span className="text-on-surface">{el.textContent?.trim()}</span>
+          <span className="text-on-surface">
+            <Highlighted text={el.textContent?.trim() ?? ''} highlight={leafHighlight} />
+          </span>
           <span className="text-on-surface-variant">{`</${tag}>`}</span>
         </div>
       );
@@ -206,81 +287,93 @@ const XmlViewer: React.FC<{
   );
 };
 
-/** Renders text with every occurrence of `highlight` marked. Odd indexes are the matches. */
-const Highlighted: React.FC<{ text: string; highlight: string; caseSensitive: boolean }> = ({
-  text, highlight, caseSensitive,
-}) => {
-  if (!highlight) return <>{text}</>;
-  const parts = splitOnMatches(text, highlight, caseSensitive);
-  return (
-    <>
-      {parts.map((part, i) => (i % 2 === 1
-        ? <mark key={i} className="bg-warning/40 text-on-surface rounded-sm">{part}</mark>
-        : <React.Fragment key={i}>{part}</React.Fragment>
-      ))}
-    </>
-  );
-};
-
 const formatTimestamp = (ms: number): string => {
   if (!ms || ms < 0) return '—';
   return new Date(ms).toISOString().replace('T', ' ').replace('Z', '');
 };
 
 // ── MessageCard ────────────────────────────────────────────────────────────
+/**
+ * `React.memo` : le critère de recherche vit dans la page, donc chaque caractère tapé dans le
+ * formulaire re-rendait la liste entière — et chaque carte re-parsait son payload au passage.
+ * Toutes les props passées par la page sont mémoïsées de leur côté pour que la comparaison serve.
+ */
 const MessageCard: React.FC<{
-  message: TopicMessage;
+  message: RankedHit;
   index: number;
   onCopy: (s: string) => void;
   onFieldClick?: (field: string) => void;
   selectedFields?: string[];
-  highlight?: string;
-  caseSensitive?: boolean;
-}> = ({ message, index, onCopy, onFieldClick, selectedFields, highlight, caseSensitive }) => {
+  highlight: SearchHighlight;
+  /** Le header comparé par la recherche, à désigner parmi les autres. */
+  highlightHeader?: string | null;
+  /** Le chemin comparé, désigné dans la vue structurée. */
+  highlightPath?: string | null;
+  /** Vrai quand le match s'est joué dans les headers : ils ne peuvent plus rester en infobulle. */
+  revealHeaders?: boolean;
+}> = React.memo(({
+  message, index, onCopy, onFieldClick, selectedFields, highlight, highlightHeader, highlightPath,
+  revealHeaders,
+}) => {
   const sample = message.value ?? '';
+  const marked = highlight.kind !== 'NONE';
   const [expanded, setExpanded] = useState(index < 3);
   // Raw view is what highlighting can mark up, so a card opens raw as soon as there is
   // something to highlight — the user should see *why* the record matched.
-  const [raw, setRaw] = useState(Boolean(highlight));
+  const [raw, setRaw] = useState(marked);
+  const headerEntries = Object.entries(message.headers ?? {});
+  const [showHeaders, setShowHeaders] = useState(Boolean(revealHeaders));
   // Cards are keyed by list position, so when filtering shifts a different message into this slot
   // the instance is reused — reset the expand state to the default for the new content instead of
   // bleeding the previous message's state.
   useEffect(() => { setExpanded(index < 3); }, [sample, index]);
-  useEffect(() => { setRaw(Boolean(highlight)); }, [highlight, sample]);
+  useEffect(() => { setRaw(marked); }, [marked, sample]);
+  useEffect(() => { setShowHeaders(Boolean(revealHeaders)); }, [revealHeaders, sample]);
 
-  let parsed: unknown = null;
-  let isJson = false;
-  let isXml = false;
-  try {
-    parsed = JSON.parse(sample);
-    // Only structured JSON (object/array) counts as JSON — a bare number/string/boolean that
-    // happens to parse is shown as plain text rather than mislabelled with a JSON badge.
-    isJson = parsed !== null && typeof parsed === 'object';
-  } catch {
-    isXml = sample.trimStart().startsWith('<');
-  }
-
-  const formatted = isJson ? JSON.stringify(parsed, null, 2) : sample;
-  const lines = formatted.split('\n');
+  // Le parsing et le reformatage ne dépendent que du payload : les refaire à chaque rendu de la
+  // page coûtait un JSON.parse + un JSON.stringify par carte affichée, à chaque frappe.
+  const { parsed, isJson, isXml, formatted, lines } = useMemo(() => {
+    let value: unknown = null;
+    let json = false;
+    let xml = false;
+    try {
+      value = JSON.parse(sample);
+      // Only structured JSON (object/array) counts as JSON — a bare number/string/boolean that
+      // happens to parse is shown as plain text rather than mislabelled with a JSON badge.
+      json = value !== null && typeof value === 'object';
+    } catch {
+      xml = sample.trimStart().startsWith('<');
+    }
+    const text = json ? JSON.stringify(value, null, 2) : sample;
+    return { parsed: value, isJson: json, isXml: xml, formatted: text, lines: text.split('\n') };
+  }, [sample]);
   const needsCollapse = lines.length > 8;
 
   return (
     <div className="border-b border-outline-variant/40 last:border-b-0 group">
       {/* Record coordinates: without them a hit is a wall of text with no location */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 pt-2.5 text-[10px] font-mono text-on-surface-variant">
-        <span className="text-outline">#{index + 1}</span>
+        {/* Le rang du hit dans le scan, pas sa place dans la liste : il survit au tri et au filtre. */}
+        <span className="text-outline">#{message.rank}</span>
         <span title="Partition">p{message.partition}</span>
         <span title="Offset">@{message.offset.toLocaleString()}</span>
         <span title="Record timestamp">{formatTimestamp(message.timestamp)}</span>
         {message.key !== null && message.key !== undefined && (
           <span className="text-primary truncate max-w-[16rem]" title={`Key: ${message.key}`}>
-            key={message.key}
+            key=<Highlighted text={message.key} highlight={highlight} />
           </span>
         )}
-        {message.headers && Object.keys(message.headers).length > 0 && (
-          <span title={Object.entries(message.headers).map(([k, v]) => `${k}: ${v}`).join('\n')}>
-            {Object.keys(message.headers).length} header{Object.keys(message.headers).length > 1 ? 's' : ''}
-          </span>
+        {headerEntries.length > 0 && (
+          <button
+            onClick={() => setShowHeaders(!showHeaders)}
+            aria-expanded={showHeaders}
+            className="flex items-center gap-0.5 hover:text-on-surface transition-colors"
+          >
+            <span aria-hidden="true" className="material-symbols-outlined text-[12px]">
+              {showHeaders ? 'expand_more' : 'chevron_right'}
+            </span>
+            {headerEntries.length} header{headerEntries.length > 1 ? 's' : ''}
+          </button>
         )}
         {message.truncated && (
           <span className="text-warning" title={`Value truncated (${message.valueBytes} chars)`}>
@@ -288,11 +381,31 @@ const MessageCard: React.FC<{
           </span>
         )}
       </div>
+      {/* Les headers portent très souvent le corrélatif qu'on cherche. Les laisser en infobulle
+          rendait une recherche HEADER inspectable seulement à la souris, un hit à la fois. */}
+      {showHeaders && headerEntries.length > 0 && (
+        <dl className="px-4 pt-1.5 space-y-0.5">
+          {headerEntries.map(([name, value]) => {
+            const targeted = highlightHeader !== null && highlightHeader !== undefined
+              && name.toLowerCase() === highlightHeader.toLowerCase();
+            return (
+              <div key={name} className="flex gap-2 font-mono text-[10px] leading-relaxed">
+                <dt className={`shrink-0 ${targeted ? 'text-warning font-semibold' : 'text-on-surface-variant'}`}>
+                  {name}
+                </dt>
+                <dd className="min-w-0 break-all text-on-surface">
+                  <Highlighted text={value ?? ''} highlight={highlight} />
+                </dd>
+              </div>
+            );
+          })}
+        </dl>
+      )}
       <div className="flex items-start gap-3 px-4 pb-4 pt-1 hover:bg-surface-container-high/40 transition-colors">
         <div className="flex-1 min-w-0 overflow-x-auto">
           {raw ? (
             <pre className={`font-mono text-[11px] text-on-surface whitespace-pre-wrap break-all leading-relaxed ${!expanded && needsCollapse ? 'max-h-24 overflow-hidden' : ''}`}>
-              <Highlighted text={formatted} highlight={highlight ?? ''} caseSensitive={Boolean(caseSensitive)} />
+              <Highlighted text={formatted} highlight={highlight} />
             </pre>
           ) : isJson && parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? (
             <div className={`leading-relaxed ${!expanded && needsCollapse ? 'max-h-24 overflow-hidden' : ''}`}>
@@ -301,11 +414,19 @@ const MessageCard: React.FC<{
                 depth={0}
                 onFieldClick={onFieldClick}
                 selectedFields={selectedFields}
+                highlight={highlight}
+                highlightPath={highlightPath}
               />
             </div>
           ) : isXml ? (
             <div className={!expanded && needsCollapse ? 'max-h-24 overflow-hidden' : ''}>
-              <XmlViewer xml={sample} onFieldClick={onFieldClick} selectedFields={selectedFields} />
+              <XmlViewer
+                xml={sample}
+                onFieldClick={onFieldClick}
+                selectedFields={selectedFields}
+                highlight={highlight}
+                highlightPath={highlightPath}
+              />
             </div>
           ) : (
             <pre className={`font-mono text-[11px] text-on-surface whitespace-pre-wrap break-all leading-relaxed ${!expanded && needsCollapse ? 'max-h-24 overflow-hidden' : ''}`}>
@@ -358,6 +479,121 @@ const MessageCard: React.FC<{
       </div>
     </div>
   );
+});
+MessageCard.displayName = 'MessageCard';
+
+/** Hauteur de ligne fixe : c'est ce qui permet de ne monter que les lignes visibles. */
+const ROW_HEIGHT = 32;
+
+/**
+ * Vue compacte : une ligne par record, le détail à la sélection.
+ *
+ * Une recherche ramène jusqu'à cent hits et « continuer » les empile ; en cartes, chacun rend un
+ * arbre JSON complet, ce qui se parcourt mal et coûte cher. Les lignes sont de hauteur fixe et
+ * fenêtrées (`useVirtualRows`), donc trois cents hits ne montent pas trois cents lignes.
+ */
+const SORT_COLUMNS: { key: HitSortKey; label: string; align: string }[] = [
+  { key: 'rank', label: '#', align: 'text-left' },
+  { key: 'partition', label: 'P', align: 'text-left' },
+  { key: 'offset', label: 'Offset', align: 'text-right' },
+  { key: 'timestamp', label: 'Timestamp', align: 'text-left' },
+  { key: 'key', label: 'Key', align: 'text-left' },
+];
+
+const MessageTable: React.FC<{
+  messages: RankedHit[];
+  highlight: SearchHighlight;
+  /** Rang du hit sélectionné — un index de ligne ne survivrait ni au tri ni au filtre. */
+  selected: number | null;
+  onSelect: (rank: number) => void;
+  sortKey: HitSortKey;
+  sortDesc: boolean;
+  onSort: (key: HitSortKey) => void;
+}> = ({ messages, highlight, selected, onSelect, sortKey, sortDesc, onSort }) => {
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+  const rows = useVirtualRows(scrollRef, messages.length, ROW_HEIGHT);
+
+  return (
+    <div
+      ref={scrollRef}
+      className="rounded-xl bg-surface-container ring-1 ring-white/[0.045] overflow-auto max-h-[26rem]"
+    >
+      <table className="w-full text-[11px] font-mono border-collapse">
+        <thead className="sticky top-0 z-10 bg-surface-container-high">
+          <tr className="text-[10px] uppercase tracking-widest text-on-surface-variant">
+            {SORT_COLUMNS.map(column => (
+              <th
+                key={column.key}
+                scope="col"
+                aria-sort={sortKey === column.key ? (sortDesc ? 'descending' : 'ascending') : 'none'}
+                className={`${column.align} font-medium px-3 py-2`}
+              >
+                <button
+                  type="button"
+                  onClick={() => onSort(column.key)}
+                  className="inline-flex items-center gap-0.5 hover:text-on-surface transition-colors uppercase tracking-widest"
+                >
+                  {column.label}
+                  {sortKey === column.key && (
+                    <span aria-hidden="true" className="material-symbols-outlined text-[13px]">
+                      {sortDesc ? 'arrow_drop_down' : 'arrow_drop_up'}
+                    </span>
+                  )}
+                </button>
+              </th>
+            ))}
+            <th scope="col" className="text-left font-medium px-3 py-2">Preview</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.padTop > 0 && (
+            <tr aria-hidden="true" style={{ height: rows.padTop }}><td colSpan={6} /></tr>
+          )}
+          {messages.slice(rows.start, rows.end).map(message => {
+            const isSelected = selected === message.rank;
+            return (
+              <tr
+                key={message.rank}
+                tabIndex={0}
+                aria-selected={isSelected}
+                onClick={() => onSelect(message.rank)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onSelect(message.rank);
+                  }
+                }}
+                style={{ height: ROW_HEIGHT }}
+                className={`cursor-pointer transition-colors ${
+                  isSelected ? 'bg-primary/15 text-on-surface' : 'hover:bg-surface-container-high/60'
+                }`}
+              >
+                <td className="px-3 whitespace-nowrap text-outline">{message.rank}</td>
+                <td className="px-3 whitespace-nowrap text-on-surface-variant">p{message.partition}</td>
+                <td className="px-3 whitespace-nowrap text-right text-on-surface-variant tabular-nums">
+                  {message.offset.toLocaleString()}
+                </td>
+                <td className="px-3 whitespace-nowrap text-on-surface-variant">
+                  {formatTimestamp(message.timestamp)}
+                </td>
+                <td className="px-3 whitespace-nowrap text-primary max-w-[12rem] truncate">
+                  {message.key === null || message.key === undefined
+                    ? '—'
+                    : <Highlighted text={message.key} highlight={highlight} />}
+                </td>
+                <td className="px-3 whitespace-nowrap text-on-surface max-w-0 w-full truncate">
+                  <Highlighted text={previewOf(message.value)} highlight={highlight} />
+                </td>
+              </tr>
+            );
+          })}
+          {rows.padBottom > 0 && (
+            <tr aria-hidden="true" style={{ height: rows.padBottom }}><td colSpan={6} /></tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
 };
 
 const TopicExplorer: React.FC = () => {
@@ -375,16 +611,50 @@ const TopicExplorer: React.FC = () => {
   // appends instead of replacing what the user is already reading.
   const [criteria, setCriteria] = useState<TopicSearchCriteria>(emptyCriteria);
   const [searchResult, setSearchResult] = useState<TopicSearchResponse | null>(null);
+  const [coverage, setCoverage] = useState<SearchCoverage | null>(null);
+  /** Le critère de la passe affichée : le formulaire peut avoir bougé depuis. */
+  const [ranCriteria, setRanCriteria] = useState<TopicSearchCriteria | null>(null);
   const [hits, setHits] = useState<TopicMessage[]>([]);
   const [searching, setSearching] = useState(false);
-  const [searchError, setSearchError] = useState<string | null>(null);
+  const [searchError, setSearchError] = useState<QueryErrorInfo | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<SearchErrors>({});
   const [searchActive, setSearchActive] = useState(false);
+  const [stopped, setStopped] = useState(false);
+  const [history, setHistory] = useState<SearchHistoryEntry[]>([]);
+  const [advancedOpen, setAdvancedOpen] = useState(readAdvancedOpen);
+  const [view, setView] = useState<MessageView>(readViewMode);
+  /** Rang du hit ouvert en vue tableau — stable au tri comme au filtre, contrairement à un index. */
+  const [selectedRank, setSelectedRank] = useState<number | null>(null);
+  const [hitFilter, setHitFilter] = useState('');
+  const [sortKey, setSortKey] = useState<HitSortKey>('rank');
+  const [sortDesc, setSortDesc] = useState(false);
+  /**
+   * Les avertissements de toutes les passes : ceux de la seule dernière réponse s'effaçaient à la
+   * reprise alors qu'ils décrivaient toujours une partie des résultats affichés.
+   */
+  const [warnings, setWarnings] = useState<string[]>([]);
+  /** La passe en vol, pour pouvoir l'abandonner : un scan dure jusqu'à dix secondes. */
+  const abortRef = React.useRef<AbortController | null>(null);
+  /** Numéro de passe : ce qui revient d'une passe remplacée ne doit pas atterrir sur la suivante. */
+  const runIdRef = React.useRef(0);
+  /** La query string que la page a écrite elle-même, pour ne pas la relire comme un ordre. */
+  const lastAppliedSearch = React.useRef<string | null>(null);
 
-  const toggleField = (field: string) => {
+  useEffect(() => () => abortRef.current?.abort(), []);
+  useEffect(() => { setHistory(readSearchHistory(name ?? '')); }, [name]);
+
+  // Mémoïsés parce que `MessageCard` l'est : une callback recréée à chaque rendu annulerait la
+  // comparaison de props et la carte re-parserait son payload comme avant.
+  const toggleField = React.useCallback((field: string) => {
     setSelectedFields(prev =>
       prev.includes(field) ? prev.filter(f => f !== field) : [...prev, field]
     );
-  };
+  }, []);
+
+  const copyToClipboard = React.useCallback((text: string) => {
+    navigator.clipboard.writeText(text);
+    toast('Copied to clipboard', 'success');
+  }, [toast]);
 
   useEffect(() => {
     // Guard against out-of-order responses: toggling read mode quickly fires several requests,
@@ -413,50 +683,145 @@ const TopicExplorer: React.FC = () => {
   };
 
   /**
+   * Une passe de scan.
+   *
+   * `resume` reprend au curseur de la passe précédente : elle lit du terrain neuf, donc ses hits
+   * s'ajoutent et sa couverture se cumule. Toute autre passe (première recherche, élargissement du
+   * budget) relit depuis le même bout et remplace donc ce qui était affiché — sinon la couverture
+   * compterait deux fois des records lus une seule.
+   *
    * `applied` permet de lancer une recherche avec un critère qui n'est pas encore passé par
    * l'état React — c'est le cas de celui qui arrive dans l'URL, appliqué et exécuté d'un trait.
    */
-  const runSearch = async (resume: boolean, applied?: TopicSearchCriteria) => {
+  const runSearch = async (
+    pass: { resume?: boolean; maxScan?: number } = {},
+    applied?: TopicSearchCriteria,
+  ) => {
     const active = applied ?? criteria;
+    const resume = Boolean(pass.resume);
+
+    // Tous les champs validés d'un coup, et le curseur sur le premier fautif : le bouton se
+    // contentait d'être grisé, sans dire ce qu'il attendait.
+    const invalid = validateCriteria(active);
+    setFieldErrors(invalid);
+    if (Object.keys(invalid).length > 0) {
+      const target = firstErrorField(invalid);
+      if (target) document.getElementById(FIELD_IDS[target])?.focus();
+      return;
+    }
+
+    const runId = ++runIdRef.current;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setSearching(true);
     setSearchError(null);
+    setStopped(false);
     try {
-      // FIELD et HEADER portent tous deux leur cible dans `field` (chemin / nom de header) ;
-      // KEY compare `value` sans cible.
-      const fieldScoped = active.mode === 'FIELD' || active.mode === 'HEADER';
-      const valueScoped = fieldScoped || active.mode === 'KEY';
-      const body = {
-        mode: active.mode,
-        query: active.query,
-        caseSensitive: active.caseSensitive,
-        searchKey: active.searchKey,
-        searchHeaders: active.searchHeaders,
-        keyPartitioning: active.keyPartitioning,
-        field: fieldScoped ? active.field : null,
-        operator: valueScoped ? active.operator : null,
-        value: valueScoped ? active.value : null,
-        from: active.sinceMinutes > 0 ? 'TIMESTAMP' : 'EARLIEST',
-        sinceMinutes: active.sinceMinutes > 0 ? active.sinceMinutes : null,
+      const request: SearchPass = {
         // Resuming continues exactly where the previous pass stopped.
         cursor: resume ? searchResult?.nextCursor ?? null : null,
+        maxScan: pass.maxScan ?? null,
       };
       const response = await axios.post<TopicSearchResponse>(
-        `/api/topic/${encodeURIComponent(name ?? '')}/search`, body);
+        `/api/topic/${encodeURIComponent(name ?? '')}/search`,
+        buildSearchBody(active, request),
+        { signal: controller.signal });
+      if (runIdRef.current !== runId) return;
       setSearchResult(response.data);
-      setHits(prev => resume ? [...prev, ...response.data.hits] : response.data.hits);
+      setCoverage(prev => coverageOf(response.data, prev, resume, effectiveScanBudget(active, request)));
+      setWarnings(prev => mergeWarnings(prev, response.data.warnings ?? [], resume));
+      const nextHits = resume ? [...hits, ...response.data.hits] : response.data.hits;
+      setHits(nextHits);
+      setRanCriteria(active);
       setSearchActive(true);
+      setSelectedRank(null);
+      setHitFilter('');
+      setHistory(pushSearchHistory({
+        topic: name ?? '', criteria: active, ranAt: Date.now(), hits: nextHits.length,
+      }));
+      // L'URL décrit désormais la recherche affichée : un lien collé dans un ticket la rejoue.
+      const search = buildSearchQuery(active);
+      lastAppliedSearch.current = search;
+      navigate({ pathname: location.pathname, search }, { replace: true });
     } catch (e) {
-      const message = axios.isAxiosError(e)
-        ? (e.response?.data as { message?: string } | undefined)?.message ?? e.message
-        : 'Search failed';
-      setSearchError(message);
+      if (runIdRef.current !== runId) return;
+      // Une passe abandonnée n'a rien à dire : ni erreur, ni résultat. `stopped` le signale.
+      if (axios.isCancel(e) || controller.signal.aborted) return;
+      setSearchError(describeApiError(e, 'Search failed'));
       if (!resume) {
         setHits([]);
         setSearchResult(null);
+        setCoverage(null);
       }
     } finally {
-      setSearching(false);
+      if (runIdRef.current === runId) setSearching(false);
     }
+  };
+
+  const cancelSearch = () => {
+    if (!abortRef.current) return;
+    abortRef.current.abort();
+    setStopped(true);
+    setSearching(false);
+  };
+
+  const continueSearch = (action: ScanAction) => {
+    void runSearch(action.kind === 'RESUME'
+      ? { resume: true }
+      : { maxScan: action.maxScan }, ranCriteria ?? criteria);
+  };
+
+  const copySearchLink = () => {
+    const target = ranCriteria ?? criteria;
+    const url = `${window.location.origin}${location.pathname}${buildSearchQuery(target)}`;
+    void navigator.clipboard.writeText(url);
+    toast('Search link copied', 'success');
+  };
+
+  /** Applique un critère (historique, relance suggérée) et l'exécute d'un trait. */
+  const applyCriteria = (next: TopicSearchCriteria) => {
+    setCriteria(next);
+    void runSearch({}, next);
+  };
+
+  const exportHits = (format: 'csv' | 'json') => {
+    const target = ranCriteria ?? criteria;
+    const content = format === 'csv'
+      ? toCsv(HIT_EXPORT_COLUMNS, hitsToRows(hits))
+      // Un export collé dans un ticket doit dire ce qu'il a couvert, pas seulement ce qu'il a vu.
+      : searchToJson(name ?? '', target, coverage, hits, warnings);
+    const blob = new Blob([content], {
+      type: format === 'csv' ? 'text/csv;charset=utf-8' : 'application/json',
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = exportFileName(name ?? '', format);
+    anchor.click();
+    URL.revokeObjectURL(url);
+    toast(`Exported as ${format.toUpperCase()}`, 'success');
+  };
+
+  const changeView = (next: MessageView) => {
+    setView(next);
+    writeViewMode(next);
+  };
+
+  const toggleAdvanced = (open: boolean) => {
+    setAdvancedOpen(open);
+    writeAdvancedOpen(open);
+  };
+
+  /** Un second clic sur la même colonne inverse le sens, comme partout ailleurs dans l'app. */
+  const changeSort = (key: HitSortKey) => {
+    if (key === sortKey) {
+      setSortDesc(!sortDesc);
+      return;
+    }
+    setSortKey(key);
+    setSortDesc(false);
   };
 
   /**
@@ -464,34 +829,75 @@ const TopicExplorer: React.FC = () => {
    * à un saut de la page Stream Flow d'amener directement sur les messages concernés. Une seule
    * fois — l'utilisateur reste maître du formulaire ensuite.
    */
-  const presetApplied = React.useRef(false);
   useEffect(() => {
-    if (presetApplied.current) return;
+    // La page réécrit l'URL après chaque recherche : sans cette garde, la réécriture serait relue
+    // comme un nouveau critère et relancerait la recherche qui vient de la produire, en boucle.
+    if (lastAppliedSearch.current === location.search) return;
+    lastAppliedSearch.current = location.search;
     const preset = criteriaFromQuery(location.search);
     if (!preset) return;
-    presetApplied.current = true;
     setCriteria(preset);
-    void runSearch(false, preset);
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- une passe unique à l'ouverture
+    void runSearch({}, preset);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- réagit au seul critère porté par l'URL
   }, [location.search]);
 
   const clearSearch = () => {
+    abortRef.current?.abort();
+    runIdRef.current++;
+    setSearching(false);
     setSearchActive(false);
     setSearchResult(null);
+    setCoverage(null);
+    setRanCriteria(null);
     setHits([]);
     setSearchError(null);
-    setCriteria(emptyCriteria);
-  };
-
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-    toast('Copied to clipboard', 'success');
+    setFieldErrors({});
+    setStopped(false);
+    setSelectedRank(null);
+    setHitFilter('');
+    setWarnings([]);
+    // Le critère reste dans le formulaire : effacer les résultats ne doit pas effacer la question
+    // qu'on venait de poser, souvent longue à ressaisir (un chemin de champ, une regex).
+    // L'URL, elle, annonçait la recherche affichée : elle ne doit plus décrire ce qui n'est plus là.
+    lastAppliedSearch.current = '';
+    navigate({ pathname: location.pathname, search: '' }, { replace: true });
   };
 
   const openInEditor = () => {
     const cols = selectedFields.length > 0 ? selectedFields.join(', ') : '*';
     navigate(`/query?sql=${encodeURIComponent(`SELECT ${cols} FROM "${name}" LIMIT 50`)}`);
   };
+
+  // The list shows search hits when a search is active, the sampled messages otherwise. Le rang
+  // est posé une fois pour toutes ici : il survit ensuite au filtre comme au tri.
+  const rankedMessages = useMemo(
+    () => rankHits(searchActive ? hits : data?.samples ?? []),
+    [searchActive, hits, data]);
+  const displayedMessages = useMemo(
+    () => sortHits(filterHits(rankedMessages, hitFilter), sortKey, sortDesc),
+    [rankedMessages, hitFilter, sortKey, sortDesc]);
+  const insightNotes = useMemo(
+    () => (searchActive ? describeHitInsight(analyzeHits(rankedMessages), data?.topic.partitions ?? 0) : []),
+    [searchActive, rankedMessages, data]);
+  // Ce qui est marqué décrit la passe affichée, pas le formulaire : un critère édité après coup
+  // désignerait des correspondances que la recherche affichée n'a jamais cherchées. Mémoïsé pour
+  // que `MessageCard` puisse l'être : un objet recréé à chaque rendu rendrait `React.memo` inutile.
+  const highlight = useMemo(
+    () => (searchActive && ranCriteria ? highlightFor(ranCriteria) : NO_HIGHLIGHT),
+    [searchActive, ranCriteria]);
+  const headerTarget = useMemo(
+    () => (searchActive && ranCriteria ? highlightedHeader(ranCriteria) : null),
+    [searchActive, ranCriteria]);
+  const pathTarget = useMemo(
+    () => (searchActive && ranCriteria ? highlightedPath(ranCriteria) : null),
+    [searchActive, ranCriteria]);
+  const showHeaders = useMemo(
+    () => (searchActive && ranCriteria ? revealsHeaders(ranCriteria) : false),
+    [searchActive, ranCriteria]);
+  /** Le hit ouvert en vue tableau, retrouvé par son rang : un index ne survivrait pas au tri. */
+  const selectedHit = useMemo(
+    () => displayedMessages.find(message => message.rank === selectedRank) ?? null,
+    [displayedMessages, selectedRank]);
 
   if (loading && !data) return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-6">
@@ -501,11 +907,6 @@ const TopicExplorer: React.FC = () => {
     </div>
   );
   if (!data) return <ErrorBanner message="Failed to load topic" onRetry={fetchTopicDetails} />;
-
-  // The list shows search hits when a search is active, the sampled messages otherwise.
-  const displayedMessages = searchActive ? hits : data.samples;
-  // Only a plain text search maps to a literal that can be marked up in the raw view.
-  const highlight = searchActive && criteria.mode === 'CONTAINS' ? criteria.query : '';
 
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-6">
@@ -577,15 +978,28 @@ const TopicExplorer: React.FC = () => {
         <div className="space-y-3">
           <TopicSearchPanel
             schemaPaths={Object.keys(data.schema)}
+            partitionCount={data.topic.partitions}
+            topicSize={data.topic.estimatedSize}
             criteria={criteria}
             onChange={setCriteria}
-            onSearch={() => runSearch(false)}
-            onLoadMore={() => runSearch(true)}
+            onSearch={() => runSearch()}
+            onContinue={continueSearch}
+            onCancel={cancelSearch}
+            onCopyLink={copySearchLink}
             onClear={clearSearch}
+            onExport={exportHits}
+            onApply={applyCriteria}
+            history={history}
+            advancedOpen={advancedOpen}
+            onToggleAdvanced={toggleAdvanced}
             searching={searching}
             active={searchActive}
-            result={searchResult}
+            coverage={coverage}
+            ranCriteria={ranCriteria}
+            warnings={warnings}
             error={searchError}
+            errors={fieldErrors}
+            stopped={stopped}
             loadedHits={hits.length}
           />
 
@@ -615,26 +1029,123 @@ const TopicExplorer: React.FC = () => {
             </div>
           )}
 
+          {/* Ce que les hits disent d'eux-mêmes : quarante lignes ne montrent pas qu'elles sont
+              trente-huit sur la même partition, ni qu'elles tiennent dans quatre minutes. */}
+          {insightNotes.length > 0 && (
+            <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-on-surface-variant">
+              <span aria-hidden="true" className="material-symbols-outlined text-[16px] text-primary">insights</span>
+              {insightNotes.map((note, i) => (
+                <React.Fragment key={note}>
+                  {i > 0 && <span className="text-outline">·</span>}
+                  <span>{note}</span>
+                </React.Fragment>
+              ))}
+            </p>
+          )}
+
+          {rankedMessages.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="text-[11px] text-on-surface-variant whitespace-nowrap">
+                  {hitFilter.trim()
+                    ? `${displayedMessages.length} of ${rankedMessages.length}`
+                    : displayedMessages.length}
+                  {' '}message{displayedMessages.length === 1 ? '' : 's'}
+                  {searchActive ? ' matched' : ' sampled'}
+                </span>
+                {/* Resserrer sur ce qui est déjà là : instantané, là où relancer une passe coûte
+                    dix secondes de scan. */}
+                <div className="relative">
+                  <span aria-hidden="true" className="material-symbols-outlined text-on-surface-variant text-[15px] absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none">filter_alt</span>
+                  <input
+                    value={hitFilter}
+                    onChange={e => setHitFilter(e.target.value)}
+                    placeholder="Filter these results…"
+                    aria-label="Filter the results already fetched"
+                    className="h-7 w-52 pl-7 pr-2 rounded-md bg-surface-container border border-outline-variant text-[12px] text-on-surface placeholder:text-outline focus:outline-none focus:border-primary/60"
+                  />
+                </div>
+              </div>
+              <div className="inline-flex bg-surface-container border border-outline-variant rounded-md p-0.5">
+                {(['cards', 'table'] as MessageView[]).map(mode => (
+                  <button
+                    key={mode}
+                    onClick={() => changeView(mode)}
+                    aria-pressed={view === mode}
+                    title={mode === 'cards' ? 'Full payload per message' : 'One line per record, details on selection'}
+                    className={`flex items-center gap-1.5 px-3 h-7 text-[12px] font-medium rounded transition-colors ${
+                      view === mode
+                        ? 'bg-surface-container-highest text-on-surface'
+                        : 'text-on-surface-variant hover:text-on-surface'
+                    }`}
+                  >
+                    <span aria-hidden="true" className="material-symbols-outlined text-[16px]">
+                      {mode === 'cards' ? 'view_agenda' : 'table_rows'}
+                    </span>
+                    {mode === 'cards' ? 'Cards' : 'Table'}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {view === 'table' && displayedMessages.length > 0 && (
+            <MessageTable
+              messages={displayedMessages}
+              highlight={highlight}
+              selected={selectedRank}
+              onSelect={setSelectedRank}
+              sortKey={sortKey}
+              sortDesc={sortDesc}
+              onSort={changeSort}
+            />
+          )}
+
           <div className="rounded-xl bg-surface-container ring-1 ring-white/[0.045] overflow-hidden">
-            {displayedMessages.map((message, i) => (
-              <MessageCard
-                key={`${message.partition}-${message.offset}-${i}`}
-                message={message}
-                index={i}
-                onCopy={copyToClipboard}
-                onFieldClick={toggleField}
-                selectedFields={selectedFields}
-                highlight={highlight}
-                caseSensitive={criteria.caseSensitive}
-              />
-            ))}
+            {view === 'cards'
+              ? displayedMessages.map((message, i) => (
+                <MessageCard
+                  key={message.rank}
+                  message={message}
+                  index={i}
+                  onCopy={copyToClipboard}
+                  onFieldClick={toggleField}
+                  selectedFields={selectedFields}
+                  highlight={highlight}
+                  highlightHeader={headerTarget}
+                  highlightPath={pathTarget}
+                  revealHeaders={showHeaders}
+                />
+              ))
+              : selectedHit ? (
+                <MessageCard
+                  key={selectedHit.rank}
+                  message={selectedHit}
+                  index={0}
+                  onCopy={copyToClipboard}
+                  onFieldClick={toggleField}
+                  selectedFields={selectedFields}
+                  highlight={highlight}
+                  highlightHeader={headerTarget}
+                  highlightPath={pathTarget}
+                  revealHeaders={showHeaders}
+                />
+              ) : displayedMessages.length > 0 ? (
+                <EmptyState icon="touch_app" title="Select a row to read the record" />
+              ) : null}
             {displayedMessages.length === 0 && (
               <EmptyState
                 icon="search_off"
-                title={searchActive ? 'No matching messages' : 'No messages in topic'}
-                description={searchActive
-                  ? 'Nothing matched in the range that was scanned. Widen the range, or continue scanning.'
-                  : undefined}
+                title={hitFilter.trim() && rankedMessages.length > 0
+                  ? 'No message matches that filter'
+                  : searchActive ? 'No matching messages' : 'No messages in topic'}
+                description={hitFilter.trim() && rankedMessages.length > 0
+                  ? `The filter is applied to the ${rankedMessages.length} messages already fetched — clear it to see them all.`
+                  : searchActive
+                    ? ranCriteria?.direction === 'NEWEST'
+                      ? 'Nothing matched in the records that were scanned. Widen the range, or scan further back.'
+                      : 'Nothing matched in the range that was scanned. Widen the range, or continue scanning.'
+                    : undefined}
               />
             )}
           </div>
