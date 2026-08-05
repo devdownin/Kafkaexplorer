@@ -1,5 +1,5 @@
 import React from 'react';
-import { Button, ErrorPanel, Input, Select } from '../ui';
+import { Button, Combobox, ErrorPanel, Input, Select } from '../ui';
 import type { QueryErrorInfo } from '../../pages/queryError';
 import {
   DIRECTIONS,
@@ -7,7 +7,9 @@ import {
   SCAN_BUDGETS,
   SCOPES,
   START_MODES,
+  describeFollow,
   directionApplies,
+  isPinned,
   raiseHitCapAction,
   switchStart,
   type StartMode,
@@ -25,6 +27,7 @@ import {
   type ScanAction,
   type SearchCoverage,
   type SearchErrors,
+  type PinnedSearch,
   type SearchHistoryEntry,
   type SearchMode,
   type SearchSuggestion,
@@ -56,6 +59,14 @@ interface Props {
   onExport: (format: 'csv' | 'json') => void;
   onApply: (criteria: TopicSearchCriteria) => void;
   history: SearchHistoryEntry[];
+  /** Recherches épinglées sur ce topic — celles qu'on rejoue à chaque incident. */
+  pinned: PinnedSearch[];
+  onTogglePin: () => void;
+  /** Valeurs observées au chemin choisi, tirées des messages déjà échantillonnés. */
+  fieldValues: string[];
+  following: boolean;
+  onToggleFollow: () => void;
+  followAvailable: boolean;
   advancedOpen: boolean;
   onToggleAdvanced: (open: boolean) => void;
   searching: boolean;
@@ -76,7 +87,8 @@ interface Props {
 
 const TopicSearchPanel: React.FC<Props> = ({
   schemaPaths, partitionCount, topicSize, criteria, onChange, onSearch, onContinue, onCancel,
-  onCopyLink, onClear, onExport, onApply, history, advancedOpen, onToggleAdvanced, searching,
+  onCopyLink, onClear, onExport, onApply, history, pinned, onTogglePin, fieldValues, following,
+  onToggleFollow, followAvailable, advancedOpen, onToggleAdvanced, searching,
   active, coverage, ranCriteria, warnings, error, errors, stopped, loadedHits,
 }) => {
   const set = <K extends keyof TopicSearchCriteria>(key: K, value: TopicSearchCriteria[K]) =>
@@ -96,6 +108,7 @@ const TopicSearchPanel: React.FC<Props> = ({
     ? raiseHitCapAction(coverage, ranCriteria)
     : null;
   const advanced = describeAdvanced(criteria);
+  const pinnedNow = ranCriteria ? isPinned(pinned, ranCriteria) : false;
 
   const togglePartition = (partition: number) => {
     const next = criteria.partitions.includes(partition)
@@ -264,15 +277,36 @@ const TopicSearchPanel: React.FC<Props> = ({
             {operators.map(op => <option key={op.value} value={op.value}>{op.label}</option>)}
           </Select>
           {criteria.operator !== 'EXISTS' && (
-            <ValueInput
-              id={FIELD_IDS.value}
-              value={criteria.value}
-              onChange={value => set('value', value)}
-              placeholder="Value"
-              label="Value"
-              error={errors.value}
-              className="flex-1 min-w-[10rem]"
-            />
+            // Les valeurs observées au chemin choisi : on ne sait pas de mémoire si le statut
+            // s'écrit SHIPPED, shipped ou Shipped, et c'est la cause la plus banale d'un zéro.
+            // La saisie reste libre — l'échantillon ne montre pas tout ce que le topic contient.
+            <div className="flex-1 min-w-[10rem]">
+              {fieldValues.length > 0 ? (
+                <Combobox
+                  id={FIELD_IDS.value}
+                  value={criteria.value}
+                  onChange={value => set('value', value)}
+                  options={fieldValues}
+                  placeholder="Value"
+                  aria-label="Value"
+                  invalid={Boolean(errors.value)}
+                  aria-describedby={errors.value ? `${FIELD_IDS.value}-error` : undefined}
+                  onEnter={onSearch}
+                />
+              ) : (
+                <Input
+                  id={FIELD_IDS.value}
+                  value={criteria.value}
+                  onChange={e => set('value', e.target.value)}
+                  placeholder="Value"
+                  aria-label="Value"
+                  aria-invalid={Boolean(errors.value)}
+                  aria-describedby={errors.value ? `${FIELD_IDS.value}-error` : undefined}
+                  className="w-full"
+                />
+              )}
+              <FieldError id={`${FIELD_IDS.value}-error`} message={errors.value} />
+            </div>
           )}
           <SearchButtons searching={searching} onCancel={onCancel} />
         </div>
@@ -464,6 +498,24 @@ const TopicSearchPanel: React.FC<Props> = ({
         )}
       </div>
 
+      {/* Épinglées : l'historique se dévide, celles-ci restent. */}
+      {pinned.length > 0 && !active && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span aria-hidden="true" className="material-symbols-outlined text-[14px] text-primary">push_pin</span>
+          {pinned.map(entry => (
+            <button
+              key={entry.pinnedAt}
+              type="button"
+              onClick={() => onApply(entry.criteria)}
+              title={`Pinned ${new Date(entry.pinnedAt).toLocaleString()}`}
+              className="px-2 h-6 rounded border border-primary/30 bg-primary/10 text-[11px] text-primary hover:bg-primary/20 transition-colors max-w-[18rem] truncate"
+            >
+              {describeCriterion(entry.criteria)}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Historique : un critère de champ se retape sinon à chaque incident. */}
       {history.length > 0 && !active && (
         <div className="flex flex-wrap items-center gap-1.5">
@@ -541,8 +593,31 @@ const TopicSearchPanel: React.FC<Props> = ({
             </Button>
           )}
           {searching && <span className="text-on-surface-variant">Scanning…</span>}
+          {/* Reprendre au curseur *est* un tail : « suivre » ne fait que répéter ce geste. */}
+          {followAvailable && (
+            <Button
+              variant={following ? 'secondary' : 'ghost'}
+              icon={following ? 'pause' : 'play_arrow'}
+              onClick={onToggleFollow}
+              aria-pressed={following}
+              title={describeFollow(following, coverage)}
+            >
+              {following ? 'Following' : 'Follow'}
+            </Button>
+          )}
           <Button variant="ghost" icon="link" onClick={onCopyLink} title="Copy a link that reruns this search">
             Link
+          </Button>
+          <Button
+            variant="ghost"
+            icon={pinnedNow ? 'push_pin' : 'push_pin'}
+            onClick={onTogglePin}
+            aria-pressed={pinnedNow}
+            title={pinnedNow
+              ? 'Unpin this search'
+              : 'Pin this search — it stays available while the history scrolls past'}
+          >
+            {pinnedNow ? 'Pinned' : 'Pin'}
           </Button>
           {loadedHits > 0 && (
             <>

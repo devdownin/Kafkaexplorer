@@ -1117,6 +1117,168 @@ export function pushSearchHistory(entry: SearchHistoryEntry): SearchHistoryEntry
   return next.filter(other => other.topic === entry.topic).slice(0, HISTORY_PER_TOPIC);
 }
 
+// ── Suivre l'arrivée des messages ─────────────────────────────────────────
+
+/** Intervalle entre deux reprises en mode « suivre ». */
+export const FOLLOW_INTERVAL_MS = 5_000;
+
+/**
+ * Reprendre au curseur *est* un tail : le curseur pointe après le dernier record lu, donc relancer
+ * la même passe ramène exactement les nouveaux arrivants. Le mode « suivre » ne fait que répéter
+ * ce geste — ce qu'un opérateur faisait à la main, un clic toutes les quelques secondes.
+ *
+ * Il faut un curseur pour cela : sans passe précédente, il n'y a rien à reprendre.
+ */
+export function canFollow(cursor: Record<string, number> | null | undefined): boolean {
+  return Boolean(cursor) && Object.keys(cursor ?? {}).length > 0;
+}
+
+/** Ce que le mode « suivre » annonce — jamais « en direct », qui promettrait plus que ça. */
+export function describeFollow(following: boolean, coverage: SearchCoverage | null): string {
+  if (!following) return 'Re-reads from where the scan stopped every few seconds, for new arrivals.';
+  const passes = coverage ? ` · ${coverage.passes} passes` : '';
+  return `Following: new records only, every ${FOLLOW_INTERVAL_MS / 1000}s${passes}`;
+}
+
+// ── Valeurs observées ─────────────────────────────────────────────────────
+
+/**
+ * Les valeurs qu'un chemin porte dans les messages déjà échantillonnés.
+ *
+ * La liste des chemins vient du schéma inféré, mais la valeur restait une saisie libre : on ne
+ * sait pas si le statut s'écrit `SHIPPED`, `shipped` ou `Shipped`, et c'est la cause la plus
+ * banale d'un zéro. Les échantillons sont déjà chargés — aucune requête de plus.
+ *
+ * JSON seulement, et chemins pointés simples : un chemin qui traverse un tableau ne désigne pas
+ * une valeur, et proposer la mauvaise serait pire que de ne rien proposer.
+ */
+export function valuesAtPath(samples: TopicMessage[], path: string, max = 12): string[] {
+  const segments = path.trim().replace(/^\$\.?/, '').split('.');
+  if (!path.trim() || segments.some(segment => !segment || /[[\]()*@?$]/.test(segment))) return [];
+
+  const seen = new Set<string>();
+  for (const sample of samples) {
+    let node: unknown;
+    try {
+      node = JSON.parse(sample.value ?? '');
+    } catch {
+      continue;
+    }
+    for (const segment of segments) {
+      if (node === null || typeof node !== 'object' || Array.isArray(node)) {
+        node = undefined;
+        break;
+      }
+      node = (node as Record<string, unknown>)[segment];
+    }
+    if (node === null || node === undefined || typeof node === 'object') continue;
+    seen.add(String(node));
+    if (seen.size >= max) break;
+  }
+  return [...seen];
+}
+
+// ── Recherches épinglées ──────────────────────────────────────────────────
+
+export const PINNED_KEY = 'kse:topic-search-pinned';
+const PINNED_MAX = 40;
+
+/**
+ * Une recherche épinglée, par opposition à l'historique qui se dévide : le chemin du corrélatif
+ * d'un pipeline se rejoue à chaque incident et n'a pas à survivre par chance aux huit dernières.
+ */
+export interface PinnedSearch {
+  topic: string;
+  criteria: TopicSearchCriteria;
+  pinnedAt: number;
+}
+
+function readAllPinned(): PinnedSearch[] {
+  try {
+    const raw = localStorage.getItem(PINNED_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed)
+      ? parsed
+        .filter((e): e is PinnedSearch =>
+          Boolean(e) && typeof e.topic === 'string' && Boolean(e.criteria))
+        .map(e => ({ ...e, criteria: { ...emptyCriteria, ...e.criteria } }))
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+export const readPinned = (topic: string): PinnedSearch[] =>
+  readAllPinned().filter(entry => entry.topic === topic);
+
+export const isPinned = (pinned: PinnedSearch[], criteria: TopicSearchCriteria): boolean => {
+  const signature = buildSearchQuery(criteria);
+  return pinned.some(entry => buildSearchQuery(entry.criteria) === signature);
+};
+
+/** Épingle, ou désépingle si le critère y est déjà — un même bouton, deux sens. */
+export function togglePinned(topic: string, criteria: TopicSearchCriteria): PinnedSearch[] {
+  const signature = buildSearchQuery(criteria);
+  const all = readAllPinned();
+  const without = all.filter(entry =>
+    entry.topic !== topic || buildSearchQuery(entry.criteria) !== signature);
+  const next = without.length === all.length
+    ? [{ topic, criteria, pinnedAt: Date.now() }, ...all].slice(0, PINNED_MAX)
+    : without;
+  try {
+    localStorage.setItem(PINNED_KEY, JSON.stringify(next));
+  } catch {
+    // idem que l'historique : on renvoie la liste calculée même si le stockage refuse.
+  }
+  return next.filter(entry => entry.topic === topic);
+}
+
+// ── Clavier ───────────────────────────────────────────────────────────────
+
+/**
+ * Le hit suivant / précédent, par rang, dans l'ordre où la liste est *affichée* — tri et filtre
+ * compris, sans quoi `j` sauterait à un record absent de l'écran.
+ */
+export function nextSelectedRank(
+  displayed: RankedHit[],
+  current: number | null,
+  delta: number,
+): number | null {
+  if (displayed.length === 0) return null;
+  const index = displayed.findIndex(hit => hit.rank === current);
+  if (index < 0) return displayed[delta > 0 ? 0 : displayed.length - 1].rank;
+  const next = Math.min(Math.max(index + delta, 0), displayed.length - 1);
+  return displayed[next].rank;
+}
+
+/**
+ * Vrai quand une frappe doit rester au champ qui a le focus. Un raccourci à une touche qui
+ * s'appliquerait pendant la saisie transformerait « j » en commande au milieu d'un mot.
+ */
+export function isTypingTarget(target: EventTarget | null): boolean {
+  const element = target as HTMLElement | null;
+  if (!element || !element.tagName) return false;
+  return ['INPUT', 'TEXTAREA', 'SELECT'].includes(element.tagName)
+    || element.isContentEditable === true;
+}
+
+/**
+ * Ce qu'une recherche terminée annonce à un lecteur d'écran : la disparition de « Searching… »
+ * ne dit rien, et le bandeau de couverture n'est pas lu à sa mise à jour.
+ */
+export function announceResult(
+  searching: boolean,
+  coverage: SearchCoverage | null,
+  criteria: TopicSearchCriteria | null,
+  hits: number,
+): string {
+  if (searching) return 'Searching…';
+  if (!coverage || !criteria) return '';
+  return `${hits} match${hits === 1 ? '' : 'es'}, `
+    + `${coverage.scanned.toLocaleString()} records scanned. `
+    + `${describeCoverage(coverage, criteria)}.`;
+}
+
 // ── Export ────────────────────────────────────────────────────────────────
 
 export const HIT_EXPORT_COLUMNS = [

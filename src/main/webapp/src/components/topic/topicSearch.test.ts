@@ -1,8 +1,18 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
+  PINNED_KEY,
   SEARCH_HISTORY_KEY,
   VIEW_KEY,
   analyzeHits,
+  announceResult,
+  canFollow,
+  describeFollow,
+  isPinned,
+  isTypingTarget,
+  nextSelectedRank,
+  readPinned,
+  togglePinned,
+  valuesAtPath,
   directionApplies,
   raiseHitCapAction,
   switchStart,
@@ -748,6 +758,143 @@ describe('raiseHitCapAction', () => {
 
     const capped = criteria({ mode: 'CONTAINS', query: 'x', maxHits: 500 });
     expect(criteriaFromQuery(buildSearchQuery(capped))).toEqual(capped);
+  });
+});
+
+describe('follow', () => {
+  /** Reprendre au curseur *est* un tail : sans curseur, il n'y a rien à reprendre. */
+  it('needs a cursor to have anything to resume', () => {
+    expect(canFollow({ '0': 42 })).toBe(true);
+    expect(canFollow({})).toBe(false);
+    expect(canFollow(null)).toBe(false);
+    expect(canFollow(undefined)).toBe(false);
+  });
+
+  /** Jamais « en direct » : ce mode ne ramène que ce qui arrive après le point déjà lu. */
+  it('says what it actually brings back', () => {
+    expect(describeFollow(false, null)).toMatch(/every few seconds/);
+    const following = describeFollow(true, {
+      passes: 3, scanned: 10, matched: 1, elapsedMs: 5, exhausted: true, stopReason: 'EXHAUSTED',
+    });
+    expect(following).toMatch(/new records only/);
+    expect(following).toMatch(/3 passes/);
+  });
+});
+
+describe('valuesAtPath', () => {
+  const sample = (value: string): TopicMessage => ({
+    partition: 0, offset: 0, timestamp: 0, key: null, headers: {},
+    value, valueBytes: value.length, truncated: false,
+  });
+
+  /** On ne sait pas de mémoire si le statut s'écrit SHIPPED, shipped ou Shipped. */
+  it('collects the distinct values a path carries in the samples', () => {
+    const samples = [
+      sample('{"order":{"status":"NEW"}}'),
+      sample('{"order":{"status":"SHIPPED"}}'),
+      sample('{"order":{"status":"NEW"}}'),
+      sample('{"order":{"total":12}}'),
+    ];
+    expect(valuesAtPath(samples, 'order.status')).toEqual(['NEW', 'SHIPPED']);
+    expect(valuesAtPath(samples, '$.order.status')).toEqual(['NEW', 'SHIPPED']);
+    expect(valuesAtPath(samples, 'order.total')).toEqual(['12']);
+  });
+
+  it('suggests nothing rather than the wrong thing', () => {
+    const samples = [sample('{"items":[{"sku":"A"}]}'), sample('not json'), sample('{"a":{"b":1}}')];
+    // Un chemin qui traverse un tableau ne désigne pas une valeur.
+    expect(valuesAtPath(samples, 'items[].sku')).toEqual([]);
+    expect(valuesAtPath(samples, '')).toEqual([]);
+    // Un nœud objet n'est pas une valeur comparable.
+    expect(valuesAtPath(samples, 'a')).toEqual([]);
+    expect(valuesAtPath(samples, 'a.b')).toEqual(['1']);
+  });
+
+  it('stops at the cap', () => {
+    const samples = Array.from({ length: 40 }, (_, i) => sample(`{"id":${i}}`));
+    expect(valuesAtPath(samples, 'id', 5)).toHaveLength(5);
+  });
+});
+
+describe('pinned searches', () => {
+  beforeEach(() => localStorage.clear());
+
+  /** L'historique se dévide ; un critère qu'on rejoue à chaque incident ne doit pas en dépendre. */
+  it('pins, reports and unpins the same criterion', () => {
+    const criterion = criteria({ mode: 'FIELD', field: 'order.id', value: 'ORD-42' });
+
+    expect(isPinned(readPinned('orders'), criterion)).toBe(false);
+    const after = togglePinned('orders', criterion);
+    expect(after).toHaveLength(1);
+    expect(isPinned(after, criterion)).toBe(true);
+    expect(isPinned(readPinned('orders'), criterion)).toBe(true);
+
+    expect(togglePinned('orders', criterion)).toHaveLength(0);
+  });
+
+  it('keeps each topic to itself', () => {
+    togglePinned('orders', criteria({ query: 'a' }));
+    togglePinned('payments', criteria({ query: 'b' }));
+
+    expect(readPinned('orders')).toHaveLength(1);
+    expect(readPinned('payments')[0].criteria.query).toBe('b');
+    expect(readPinned('shipments')).toEqual([]);
+  });
+
+  it('survives a corrupted store', () => {
+    localStorage.setItem(PINNED_KEY, '{oops');
+    expect(readPinned('orders')).toEqual([]);
+  });
+});
+
+describe('keyboard', () => {
+  const hits = rankHits([0, 1, 2].map(offset => ({
+    partition: 0, offset, timestamp: 0, key: null, headers: {},
+    value: '{}', valueBytes: 2, truncated: false,
+  })));
+
+  /** Le déplacement suit la liste *affichée* : `j` ne doit pas sauter à un record filtré. */
+  it('moves through the displayed hits and stops at the ends', () => {
+    expect(nextSelectedRank(hits, null, 1)).toBe(1);
+    expect(nextSelectedRank(hits, null, -1)).toBe(3);
+    expect(nextSelectedRank(hits, 1, 1)).toBe(2);
+    expect(nextSelectedRank(hits, 3, 1)).toBe(3);
+    expect(nextSelectedRank(hits, 1, -1)).toBe(1);
+    expect(nextSelectedRank([], 1, 1)).toBeNull();
+    // Une sélection sortie du filtre repart du début plutôt que de rester introuvable.
+    expect(nextSelectedRank(hits, 99, 1)).toBe(1);
+  });
+
+  /** Un raccourci à une touche pendant la saisie transformerait « j » en commande. */
+  it('leaves a keystroke to the field that has the focus', () => {
+    const input = document.createElement('input');
+    const div = document.createElement('div');
+    const editable = document.createElement('div');
+    editable.contentEditable = 'true';
+
+    expect(isTypingTarget(input)).toBe(true);
+    expect(isTypingTarget(document.createElement('textarea'))).toBe(true);
+    expect(isTypingTarget(document.createElement('select'))).toBe(true);
+    expect(isTypingTarget(div)).toBe(false);
+    expect(isTypingTarget(null)).toBe(false);
+  });
+});
+
+describe('announceResult', () => {
+  /** La disparition de « Searching… » ne dit rien à qui ne voit pas l'écran. */
+  it('states the outcome once the pass is over', () => {
+    const covered = coverageOf(response({ matched: 12, exhausted: true, stopReason: 'EXHAUSTED' }), null, false);
+
+    expect(announceResult(true, covered, criteria(), 12)).toBe('Searching…');
+    const done = announceResult(false, covered, criteria(), 12);
+    expect(done).toMatch(/^12 matches, 20,000 records scanned/);
+    expect(done).toMatch(/Newest/);
+    expect(announceResult(false, null, null, 0)).toBe('');
+  });
+
+  it('agrees in number on a single match', () => {
+    const covered = coverageOf(response({ matched: 1 }), null, false);
+    expect(announceResult(false, covered, criteria(), 1)).toMatch(/^1 match,/);
   });
 });
 

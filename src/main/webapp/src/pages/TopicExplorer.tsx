@@ -11,9 +11,12 @@ import TopicSearchPanel, { FIELD_IDS } from '../components/topic/TopicSearchPane
 import { describeApiError, type QueryErrorInfo } from './queryError';
 import { toCsv } from './resultExport';
 import {
+  FOLLOW_INTERVAL_MS,
   HIT_EXPORT_COLUMNS,
   NO_HIGHLIGHT,
   analyzeHits,
+  announceResult,
+  canFollow,
   buildSearchBody,
   buildSearchQuery,
   coverageOf,
@@ -24,6 +27,8 @@ import {
   exportFileName,
   filterHits,
   firstErrorField,
+  isTypingTarget,
+  nextSelectedRank,
   highlightFor,
   highlightedHeader,
   highlightedPath,
@@ -33,17 +38,21 @@ import {
   pushSearchHistory,
   rankHits,
   readAdvancedOpen,
+  readPinned,
   readSearchHistory,
   readViewMode,
   revealsHeaders,
   searchToJson,
   sortHits,
   splitForHighlight,
+  togglePinned,
+  valuesAtPath,
   validateCriteria,
   writeAdvancedOpen,
   writeViewMode,
   type HitSortKey,
   type MessageView,
+  type PinnedSearch,
   type RankedHit,
   type ScanAction,
   type SearchCoverage,
@@ -650,15 +659,26 @@ const TopicExplorer: React.FC = () => {
   /** Payloads relus entiers, par `partition-offset`. */
   const [fullRecords, setFullRecords] = useState<Record<string, string>>({});
   const [loadingRecord, setLoadingRecord] = useState<string | null>(null);
+  const [pinned, setPinned] = useState<PinnedSearch[]>([]);
+  /** Reprises automatiques : le curseur pointe vers l'avant, donc répéter la reprise est un tail. */
+  const [following, setFollowing] = useState(false);
   /** La passe en vol, pour pouvoir l'abandonner : un scan dure jusqu'à dix secondes. */
   const abortRef = React.useRef<AbortController | null>(null);
   /** Numéro de passe : ce qui revient d'une passe remplacée ne doit pas atterrir sur la suivante. */
   const runIdRef = React.useRef(0);
   /** La query string que la page a écrite elle-même, pour ne pas la relire comme un ordre. */
   const lastAppliedSearch = React.useRef<string | null>(null);
+  /**
+   * La liste affichée, pour le gestionnaire clavier : il est posé une fois, et le lire par une
+   * ref évite de le reposer à chaque frappe dans le filtre.
+   */
+  const displayedMessagesRef = React.useRef<RankedHit[]>([]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
-  useEffect(() => { setHistory(readSearchHistory(name ?? '')); }, [name]);
+  useEffect(() => {
+    setHistory(readSearchHistory(name ?? ''));
+    setPinned(readPinned(name ?? ''));
+  }, [name]);
 
   // Mémoïsés parce que `MessageCard` l'est : une callback recréée à chaque rendu annulerait la
   // comparaison de props et la carte re-parserait son payload comme avant.
@@ -779,9 +799,13 @@ const TopicExplorer: React.FC = () => {
       setSearchActive(true);
       setSelectedRank(null);
       setHitFilter('');
-      setHistory(pushSearchHistory({
-        topic: name ?? '', criteria: active, ranAt: Date.now(), hits: nextHits.length,
-      }));
+      // Une reprise n'est pas une nouvelle recherche — et en mode « suivre », l'historique serait
+      // réécrit toutes les cinq secondes.
+      if (!resume) {
+        setHistory(pushSearchHistory({
+          topic: name ?? '', criteria: active, ranAt: Date.now(), hits: nextHits.length,
+        }));
+      }
       // L'URL décrit désormais la recherche affichée : un lien collé dans un ticket la rejoue.
       const search = buildSearchQuery(active);
       lastAppliedSearch.current = search;
@@ -790,6 +814,8 @@ const TopicExplorer: React.FC = () => {
       if (runIdRef.current !== runId) return;
       // Une passe abandonnée n'a rien à dire : ni erreur, ni résultat. `stopped` le signale.
       if (axios.isCancel(e) || controller.signal.aborted) return;
+      // Suivre une recherche qui échoue relancerait l'échec toutes les cinq secondes.
+      setFollowing(false);
       setSearchError(describeApiError(e, 'Search failed'));
       if (!resume) {
         setHits([]);
@@ -802,6 +828,7 @@ const TopicExplorer: React.FC = () => {
   };
 
   const cancelSearch = () => {
+    setFollowing(false);
     if (!abortRef.current) return;
     abortRef.current.abort();
     setStopped(true);
@@ -845,6 +872,57 @@ const TopicExplorer: React.FC = () => {
     toast(`Exported as ${format.toUpperCase()}`, 'success');
   };
 
+  /**
+   * Le mode « suivre » : une reprise au curseur toutes les cinq secondes. La passe n'est
+   * programmée qu'une fois la précédente terminée — deux passes concurrentes s'annuleraient
+   * l'une l'autre, puisque chaque recherche abandonne celle en vol.
+   */
+  useEffect(() => {
+    if (!following || searching || !searchActive) return;
+    const timer = window.setTimeout(() => { void runSearch({ resume: true }); }, FOLLOW_INTERVAL_MS);
+    return () => window.clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- se réarme après chaque passe
+  }, [following, searching, searchActive, searchResult]);
+
+  /**
+   * Raccourcis : `/` amène au champ de recherche, `j` / `k` parcourent les hits en vue tableau,
+   * `Échap` désélectionne. Ignorés dès qu'une saisie a le focus — sinon « j » deviendrait une
+   * commande au milieu d'un mot.
+   */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.metaKey || event.ctrlKey || event.altKey || isTypingTarget(event.target)) return;
+      if (event.key === '/') {
+        const target = [FIELD_IDS.query, FIELD_IDS.field, FIELD_IDS.value]
+          .map(id => document.getElementById(id))
+          .find(Boolean);
+        if (target) {
+          event.preventDefault();
+          target.focus();
+        }
+        return;
+      }
+      if (event.key === 'Escape') {
+        setSelectedRank(null);
+        return;
+      }
+      if ((event.key === 'j' || event.key === 'k') && view === 'table') {
+        event.preventDefault();
+        setSelectedRank(current =>
+          nextSelectedRank(displayedMessagesRef.current, current, event.key === 'j' ? 1 : -1));
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [view]);
+
+  const togglePin = () => {
+    const target = ranCriteria ?? criteria;
+    const next = togglePinned(name ?? '', target);
+    setPinned(next);
+    toast(next.length > pinned.length ? 'Search pinned' : 'Search unpinned', 'success');
+  };
+
   const changeView = (next: MessageView) => {
     setView(next);
     writeViewMode(next);
@@ -883,6 +961,7 @@ const TopicExplorer: React.FC = () => {
   }, [location.search]);
 
   const clearSearch = () => {
+    setFollowing(false);
     abortRef.current?.abort();
     runIdRef.current++;
     setSearching(false);
@@ -935,6 +1014,12 @@ const TopicExplorer: React.FC = () => {
   const showHeaders = useMemo(
     () => (searchActive && ranCriteria ? revealsHeaders(ranCriteria) : false),
     [searchActive, ranCriteria]);
+  /** Valeurs déjà observées au chemin choisi — tirées de l'échantillon, sans requête de plus. */
+  const fieldValues = useMemo(
+    () => (criteria.mode === 'FIELD' ? valuesAtPath(data?.samples ?? [], criteria.field) : []),
+    [criteria.mode, criteria.field, data]);
+  const announcement = announceResult(searching, coverage, ranCriteria, hits.length);
+  displayedMessagesRef.current = displayedMessages;
   /** Le hit ouvert en vue tableau, retrouvé par son rang : un index ne survivrait pas au tri. */
   const selectedHit = useMemo(
     () => displayedMessages.find(message => message.rank === selectedRank) ?? null,
@@ -1031,6 +1116,12 @@ const TopicExplorer: React.FC = () => {
             onExport={exportHits}
             onApply={applyCriteria}
             history={history}
+            pinned={pinned}
+            onTogglePin={togglePin}
+            fieldValues={fieldValues}
+            following={following}
+            onToggleFollow={() => setFollowing(!following)}
+            followAvailable={searchActive && canFollow(searchResult?.nextCursor)}
             advancedOpen={advancedOpen}
             onToggleAdvanced={toggleAdvanced}
             searching={searching}
@@ -1069,6 +1160,9 @@ const TopicExplorer: React.FC = () => {
               </button>
             </div>
           )}
+
+          {/* La disparition de « Searching… » ne dit rien à qui ne voit pas l'écran. */}
+          <p className="sr-only" role="status" aria-live="polite">{announcement}</p>
 
           {/* Ce que les hits disent d'eux-mêmes : quarante lignes ne montrent pas qu'elles sont
               trente-huit sur la même partition, ni qu'elles tiennent dans quatre minutes. */}
