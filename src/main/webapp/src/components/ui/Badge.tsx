@@ -1,15 +1,17 @@
-import type { FC, ReactNode } from 'react';
+import type { FC, HTMLAttributes, ReactNode } from 'react';
 import { cn } from './cn';
 
 export type BadgeTone = 'neutral' | 'primary' | 'secondary' | 'success' | 'warning' | 'error';
 
-export interface BadgeProps {
+/**
+ * Les attributs d'un `<span>` passent au travers : un badge est court, son explication tient
+ * rarement dedans, et elle doit pouvoir venir d'un `Tooltip` — qui pose `aria-describedby` sur
+ * son déclencheur, donc ici.
+ */
+export interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
   tone?: BadgeTone;
   /** Affiche une pastille d'état avant le libellé. */
   dot?: boolean;
-  /** Infobulle native — un badge est court, l'explication tient rarement dedans. */
-  title?: string;
-  className?: string;
   children: ReactNode;
 }
 
@@ -32,9 +34,9 @@ const DOTS: Record<BadgeTone, string> = {
 };
 
 /** Étiquette d'état compacte (statuts, compteurs, tags). */
-export const Badge: FC<BadgeProps> = ({ tone = 'neutral', dot = false, title, className, children }) => (
+export const Badge: FC<BadgeProps> = ({ tone = 'neutral', dot = false, className, children, ...rest }) => (
   <span
-    title={title}
+    {...rest}
     className={cn(
       'inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium leading-5',
       TONES[tone],

@@ -177,6 +177,67 @@ public class TopicSearchService {
     }
 
     /**
+     * One record, read by its coordinates and returned whole.
+     *
+     * <p>A search hit is truncated to {@code search-max-value-chars} so that a hundred of them stay
+     * a small response — which leaves no way to read a large payload at all, only a badge saying it
+     * was cut. Reading one record on purpose is the opposite need, so it gets its own budget
+     * ({@code record-max-value-chars}); the response still carries {@code truncated} and the
+     * original size, because a cap that lies about itself would be the same bug one order of
+     * magnitude further out.</p>
+     *
+     * @return the record, or {@code null} when that offset holds none — out of range, or compacted
+     *     away, which are the two cases a caller has to be able to tell from a server error
+     */
+    public TopicMessage readRecord(String topic, int partition, long offset) {
+        TopicPartition tp = new TopicPartition(topic, partition);
+        long deadline = System.currentTimeMillis() + explorerConfig.getSearchTimeoutMs();
+
+        try (Consumer<byte[], byte[]> consumer = createConsumer(buildConsumerProperties())) {
+            List<PartitionInfo> infos = consumer.partitionsFor(topic);
+            if (infos == null || infos.stream().noneMatch(info -> info.partition() == partition)) {
+                return null;
+            }
+            List<TopicPartition> assignment = List.of(tp);
+            consumer.assign(assignment);
+
+            long beginning = consumer.beginningOffsets(assignment).getOrDefault(tp, 0L);
+            long end = consumer.endOffsets(assignment).getOrDefault(tp, 0L);
+            if (offset < beginning || offset >= end) {
+                return null;
+            }
+            consumer.seek(tp, offset);
+
+            int emptyPolls = 0;
+            while (System.currentTimeMillis() < deadline && emptyPolls < MAX_EMPTY_POLLS) {
+                ConsumerRecords<byte[], byte[]> polled = consumer.poll(POLL_TIMEOUT);
+                if (polled.isEmpty()) {
+                    emptyPolls++;
+                    continue;
+                }
+                emptyPolls = 0;
+                for (ConsumerRecord<byte[], byte[]> record : polled) {
+                    if (record.offset() == offset) {
+                        return TopicMessage.of(record.partition(), record.offset(), record.timestamp(),
+                            record.key() == null ? null : new String(record.key(), StandardCharsets.UTF_8),
+                            kafkaAdminService.deserializeValue(record.topic(), record.value()),
+                            headersOf(record), explorerConfig.getRecordMaxValueChars());
+                    }
+                    // On a compacted topic the offset can simply no longer exist: the reader lands
+                    // on the next surviving record, and reading past the target proves it is gone.
+                    if (record.offset() > offset) {
+                        return null;
+                    }
+                }
+            }
+            return null;
+        } catch (Exception e) {
+            log.error("Error reading {}-{} at offset {}: {}", topic, partition, offset, e.getMessage(), e);
+            throw new IllegalStateException("Could not read record: " + e.getMessage(), e);
+        }
+    }
+
+    /**
      * States when a path search could not be applied at all. Zero hits because every payload was
      * plain text is a different answer from zero hits because the value is not there, and the user
      * can act on the first one (clear the path, or fix it).

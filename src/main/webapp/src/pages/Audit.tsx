@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { Link } from 'react-router-dom';
 import axios from 'axios';
 import {
-  PageHeader, Button, Stat, Badge, EmptyState, Card, Input, Select,
+  PageHeader, Button, Stat, Badge, EmptyState, Card, Input, Select, Tooltip,
   Table, TableHead, TableBody, TableRow, Th, Td, TopicInput, type BadgeTone,
 } from '../components/ui';
 
@@ -662,10 +662,14 @@ const Audit: React.FC = () => {
                               <span className="font-mono text-[11px] text-on-surface-variant">{run.topicPrefix}*</span>
                             )}
                             {run.legacy && (
-                              <span
-                                title="Recorded before graded severity — its shape cannot be loaded into this view"
-                                className="text-[10px] uppercase tracking-wider text-outline border border-outline-variant rounded px-1"
-                              >legacy</span>
+                              <Tooltip content="Recorded before graded severity. The old scale never
+                                distinguished warnings from critical findings, so this run cannot be
+                                opened here — any mapping would be a guess.">
+                                <span
+                                  tabIndex={0}
+                                  className="text-[10px] uppercase tracking-wider text-outline border border-outline-variant rounded px-1"
+                                >legacy</span>
+                              </Tooltip>
                             )}
                           </div>
                         </Td>
@@ -676,7 +680,11 @@ const Audit: React.FC = () => {
                           {run.criticalTopicsCount}
                         </Td>
                         <Td className={`text-right font-mono tabular-nums ${run.warningTopicsCount > 0 ? 'text-warning' : 'text-on-surface-variant'}`}>
-                          {run.legacy ? <span className="text-outline" title="The old scale recorded no warnings">—</span> : run.warningTopicsCount}
+                          {run.legacy ? (
+                            <Tooltip content="The old scale recorded no warnings — this is missing data, not a count of zero.">
+                              <span tabIndex={0} className="text-outline rounded">—</span>
+                            </Tooltip>
+                          ) : run.warningTopicsCount}
                         </Td>
                         <Td className="text-right font-mono tabular-nums">
                           {run.healthScore == null ? <span className="text-outline">—</span> : (
@@ -694,34 +702,39 @@ const Audit: React.FC = () => {
                           {run.durationMs == null ? '—' : formatDuration(run.durationMs)}
                         </Td>
                         <Td className="text-right whitespace-nowrap">
+                          {/* Un bouton grisé doit dire pourquoi — et le dire aussi au clavier. */}
+                          <Tooltip content={!previous
+                            ? 'No earlier run to compare against.'
+                            : run.legacy || previous.legacy
+                              ? 'One of the two runs predates graded severity, so the direction of a change cannot be decided.'
+                              : 'Compare with the previous run.'}
+                          >
                           <Button
                             size="sm"
                             variant="ghost"
                             icon="difference"
                             loading={diffingRunId === run.auditId}
                             disabled={!previous || run.legacy || previous.legacy || diffingRunId != null}
-                            title={!previous
-                              ? 'No earlier run to compare against'
-                              : run.legacy || previous.legacy
-                                ? 'One of the two runs predates graded severity — not comparable'
-                                : 'Compare with the previous run'}
                             onClick={() => previous && compareWithPrevious(run, previous)}
                           >
                             Diff
                           </Button>
+                          </Tooltip>
+                          <Tooltip content={run.legacy
+                            ? 'Recorded before graded severity — its shape cannot be shown in this view.'
+                            : 'Load this run into the current view.'}
+                          >
                           <Button
                             size="sm"
                             variant="ghost"
                             icon="open_in_new"
                             loading={loadingRunId === run.auditId}
                             disabled={run.legacy || loadingRunId != null}
-                            title={run.legacy
-                              ? 'Recorded before graded severity — cannot be shown in this view'
-                              : 'Show this run'}
                             onClick={() => loadHistoricalRun(run)}
                           >
                             Open
                           </Button>
+                          </Tooltip>
                         </Td>
                       </TableRow>
                     );
@@ -816,12 +829,14 @@ const Audit: React.FC = () => {
                         <Td>
                           <div className="flex flex-wrap gap-1">
                             {t.newIssues.map(issue => (
-                              <span key={`new-${issue}`} className="text-[11px] px-1.5 py-0.5 rounded border bg-error/10 text-error border-error/25"
-                                title="Present in the later run only">+ {issue}</span>
+                              <Tooltip key={`new-${issue}`} content="Present in the later run only — this finding appeared.">
+                                <span tabIndex={0} className="text-[11px] px-1.5 py-0.5 rounded border bg-error/10 text-error border-error/25">+ {issue}</span>
+                              </Tooltip>
                             ))}
                             {t.resolvedIssues.map(issue => (
-                              <span key={`old-${issue}`} className="text-[11px] px-1.5 py-0.5 rounded border bg-success/10 text-success border-success/25 line-through"
-                                title="Present in the baseline run only">− {issue}</span>
+                              <Tooltip key={`old-${issue}`} content="Present in the baseline run only — this finding was resolved.">
+                                <span tabIndex={0} className="text-[11px] px-1.5 py-0.5 rounded border bg-success/10 text-success border-success/25 line-through">− {issue}</span>
+                              </Tooltip>
                             ))}
                             {t.newIssues.length === 0 && t.resolvedIssues.length === 0 && (
                               <span className="text-outline">—</span>
@@ -1104,9 +1119,11 @@ const Audit: React.FC = () => {
                       <span className="font-semibold text-on-surface">{flow.flowName}</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-[11px] uppercase font-medium tracking-[0.05em] text-on-surface-variant" title="Share of the first step's volume still reaching the last one">
-                        End-to-end retention
-                      </span>
+                      <Tooltip content="The share of the first step's volume still reaching the last one.">
+                        <span tabIndex={0} className="text-[11px] uppercase font-medium tracking-[0.05em] text-on-surface-variant rounded">
+                          End-to-end retention
+                        </span>
+                      </Tooltip>
                       <span className={`text-lg font-semibold tabular-nums ${flow.overallHealthScore >= 0.8 ? 'text-success' : flow.overallHealthScore >= 0.5 ? 'text-warning' : 'text-error'}`}>
                         {Math.round(flow.overallHealthScore * 100)}%
                       </span>

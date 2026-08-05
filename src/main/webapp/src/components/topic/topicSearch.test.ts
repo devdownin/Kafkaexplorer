@@ -1,8 +1,31 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
+  PINNED_KEY,
   SEARCH_HISTORY_KEY,
   VIEW_KEY,
+  OPERATORS,
+  SEARCH_MODES,
   analyzeHits,
+  announceResult,
+  describeMode,
+  describeOperator,
+  describeStopReason,
+  buildRecordLink,
+  recordFromQuery,
+  recordParam,
+  withRecord,
+  canFollow,
+  describeFollow,
+  isPinned,
+  isTypingTarget,
+  nextSelectedRank,
+  readPinned,
+  togglePinned,
+  valuesAtPath,
+  directionApplies,
+  raiseHitCapAction,
+  switchStart,
+  toDateTimeLocal,
   describeAdvanced,
   describeCriterion,
   describeHitInsight,
@@ -627,6 +650,332 @@ describe('export', () => {
     expect(parsed.coverage.summary).toContain('Newest');
     expect(parsed.warnings).toEqual(['careful']);
     expect(parsed.hits).toHaveLength(1);
+  });
+});
+
+describe('scan start', () => {
+  /** `fromTimestamp` et `fromOffset` existaient côté serveur sans que rien ne puisse les demander. */
+  it('starts from an absolute instant, as a floor when reading back from the end', () => {
+    const at = criteria({ mode: 'CONTAINS', query: 'x', startMode: 'TIMESTAMP', fromTime: '2026-08-05T14:02' });
+    const body = buildSearchBody(at);
+
+    expect(body.from).toBe('LAST_N');
+    expect(body.fromTimestamp).toBe(Date.parse('2026-08-05T14:02'));
+    expect(body.sinceMinutes).toBeNull();
+
+    expect(buildSearchBody({ ...at, direction: 'OLDEST' }).from).toBe('TIMESTAMP');
+  });
+
+  /** Une lecture par offset va vers l'avant : le sens de scan ne s'y applique pas. */
+  it('starts from an offset, whatever the scan direction says', () => {
+    const at = criteria({ mode: 'CONTAINS', query: 'x', startMode: 'OFFSET', fromOffset: '128000' });
+    const body = buildSearchBody(at);
+
+    expect(body.from).toBe('OFFSET');
+    expect(body.fromOffset).toBe(128_000);
+    expect(directionApplies(at)).toBe(false);
+    expect(buildSearchBody({ ...at, direction: 'OLDEST' }).from).toBe('OFFSET');
+  });
+
+  it('ignores the relative window once an absolute start is chosen', () => {
+    const body = buildSearchBody(criteria({
+      mode: 'CONTAINS', query: 'x', sinceMinutes: 60, startMode: 'OFFSET', fromOffset: '10',
+    }));
+    expect(body.sinceMinutes).toBeNull();
+    expect(body.fromTimestamp).toBeNull();
+  });
+
+  it('sends nothing on a half-typed start rather than a wrong one', () => {
+    expect(buildSearchBody(criteria({ query: 'x', startMode: 'OFFSET', fromOffset: '12.5' })).fromOffset)
+      .toBeNull();
+    expect(buildSearchBody(criteria({ query: 'x', startMode: 'TIMESTAMP', fromTime: 'nope' })).fromTimestamp)
+      .toBeNull();
+  });
+
+  /** Un instant futur ne rend aucun offset : le plancher tomberait en silence. */
+  it('refuses an empty, unparseable or future start', () => {
+    const now = Date.parse('2026-08-05T12:00:00Z');
+    expect(validateCriteria(criteria({ query: 'x', startMode: 'TIMESTAMP' }), now).fromTime)
+      .toBeTruthy();
+    expect(validateCriteria(criteria({
+      query: 'x', startMode: 'TIMESTAMP', fromTime: '2027-01-01T00:00',
+    }), now).fromTime).toMatch(/future/);
+    expect(validateCriteria(criteria({ query: 'x', startMode: 'OFFSET', fromOffset: '-3' })).fromOffset)
+      .toBeTruthy();
+    expect(validateCriteria(criteria({ query: 'x', startMode: 'OFFSET', fromOffset: '0' })))
+      .toEqual({});
+  });
+
+  /** Retrouver à la main l'heure qu'il était il y a une heure n'est pas un travail d'opérateur. */
+  it('carries the relative window into the absolute field', () => {
+    const now = Date.parse('2026-08-05T12:00:00Z');
+    const switched = switchStart(criteria({ sinceMinutes: 60 }), 'TIMESTAMP', now);
+    expect(switched.fromTime).toBe(toDateTimeLocal(now - 3_600_000));
+
+    // Ce qui est déjà saisi n'est jamais écrasé.
+    const typed = criteria({ sinceMinutes: 60, fromTime: '2026-01-01T08:00' });
+    expect(switchStart(typed, 'TIMESTAMP', now).fromTime).toBe('2026-01-01T08:00');
+  });
+
+  it('says where the pass started once it reached the end', () => {
+    const covered: SearchCoverage = {
+      passes: 1, scanned: 500, matched: 1, elapsedMs: 10,
+      exhausted: true, stopReason: 'EXHAUSTED',
+    };
+    expect(describeCoverage(covered, criteria({ startMode: 'OFFSET', fromOffset: '128000' })))
+      .toBe('Read to the end from offset 128000');
+    expect(describeCoverage(covered, criteria({ startMode: 'TIMESTAMP', fromTime: '2026-08-05T14:02' })))
+      .toBe('Read to the end from that date');
+  });
+
+  /** Élargir le budget ne bouge pas un point de départ fixe : ce serait relire la même chose. */
+  it('offers no deepening once a chosen start has been read to the end', () => {
+    const covered: SearchCoverage = {
+      passes: 1, scanned: 500, matched: 0, elapsedMs: 10,
+      exhausted: true, stopReason: 'EXHAUSTED',
+    };
+    expect(nextScanAction(covered, criteria({ startMode: 'OFFSET', fromOffset: '10' }))).toBeNull();
+    expect(nextScanAction(covered, criteria({ startMode: 'TIMESTAMP', fromTime: '2026-08-05T14:02' }))?.kind)
+      .toBe('DEEPEN');
+  });
+});
+
+describe('raiseHitCapAction', () => {
+  const cappedAt = (stopReason: string): SearchCoverage => ({
+    passes: 1, scanned: 20_000, matched: 340, elapsedMs: 900, exhausted: false, stopReason,
+  });
+
+  /**
+   * Reprendre repart *après* la zone lue : les matches sautés au-delà du plafond y restent hors
+   * d'atteinte pour toujours. Relever le plafond est le seul geste qui les ramène.
+   */
+  it('offers a higher cap only when the cap is what stopped the pass', () => {
+    const action = raiseHitCapAction(cappedAt('MAX_HITS'), criteria());
+    expect(action?.maxHits).toBe(400);
+    expect(action?.hint).toMatch(/continuing/);
+    expect(raiseHitCapAction(cappedAt('MAX_SCAN'), criteria())).toBeNull();
+  });
+
+  it('counts from the cap the pass actually ran with, and stops at the server maximum', () => {
+    expect(raiseHitCapAction(cappedAt('MAX_HITS'), criteria({ maxHits: 250 }))?.maxHits).toBe(1_000);
+    expect(raiseHitCapAction(cappedAt('MAX_HITS'), criteria({ maxHits: 1_000 }))).toBeNull();
+  });
+
+  it('travels in the request body and round-trips through the URL', () => {
+    expect(buildSearchBody(criteria({ query: 'x', maxHits: 500 })).maxHits).toBe(500);
+    expect(buildSearchBody(criteria({ query: 'x' })).maxHits).toBeNull();
+
+    const capped = criteria({ mode: 'CONTAINS', query: 'x', maxHits: 500 });
+    expect(criteriaFromQuery(buildSearchQuery(capped))).toEqual(capped);
+  });
+});
+
+describe('help texts', () => {
+  /** Un mode sans explication, c'est le mode qu'on choisit mal sans jamais savoir pourquoi. */
+  it('explains every mode and every operator it offers', () => {
+    for (const mode of SEARCH_MODES) {
+      expect(describeMode(mode).length).toBeGreaterThan(20);
+    }
+    for (const operator of OPERATORS) {
+      expect(describeOperator(operator.value).length).toBeGreaterThan(10);
+    }
+  });
+
+  /** Les comparaisons numériques ne matchent jamais une valeur texte : le dire vaut mieux. */
+  it('warns that a numeric comparison ignores anything that is not a number', () => {
+    for (const operator of ['GT', 'GTE', 'LT', 'LTE']) {
+      expect(describeOperator(operator)).toMatch(/not a number/);
+    }
+    expect(describeOperator('EXISTS')).toMatch(/nothing is compared/);
+  });
+
+  /** Le bandeau donne un état ; ce qu'il faut savoir, c'est ce que le bouton d'à côté fera. */
+  it('explains every stop reason, cap included', () => {
+    for (const reason of ['MAX_HITS', 'MAX_SCAN', 'TIMEOUT', 'EXHAUSTED', 'ERROR']) {
+      expect(describeStopReason(reason).length).toBeGreaterThan(20);
+    }
+    expect(describeStopReason('MAX_HITS')).toMatch(/higher cap|cap/);
+    expect(describeStopReason('WHATEVER')).toBe('The scan stopped.');
+  });
+});
+
+describe('record permalink', () => {
+  const message: TopicMessage = {
+    partition: 2, offset: 88, timestamp: 0, key: null, headers: {},
+    value: '{}', valueBytes: 2, truncated: false,
+  };
+
+  it('reads and writes a record link', () => {
+    expect(recordFromQuery('?record=2:88')).toEqual({ partition: 2, offset: 88 });
+    expect(recordParam({ partition: 2, offset: 88 })).toBe('2:88');
+    expect(buildRecordLink('https://kse.example', '/topic/orders', message))
+      .toBe('https://kse.example/topic/orders?record=2%3A88');
+  });
+
+  /** Une URL ordinaire, ou des coordonnées qui n'en sont pas, n'ouvrent rien. */
+  it('ignores anything that is not a pair of coordinates', () => {
+    expect(recordFromQuery('')).toBeNull();
+    expect(recordFromQuery('?mode=CONTAINS&q=x')).toBeNull();
+    expect(recordFromQuery('?record=')).toBeNull();
+    expect(recordFromQuery('?record=2')).toBeNull();
+    expect(recordFromQuery('?record=2:notanoffset')).toBeNull();
+    expect(recordFromQuery('?record=-1:5')).toBeNull();
+  });
+
+  /** L'URL décrit la recherche *et* le message ouvert : l'une n'efface pas l'autre. */
+  it('sits alongside a search criterion without disturbing it', () => {
+    const search = buildSearchQuery(criteria({ mode: 'CONTAINS', query: 'ORD-42' }));
+    const both = withRecord(search, { partition: 2, offset: 88 });
+
+    expect(recordFromQuery(both)).toEqual({ partition: 2, offset: 88 });
+    expect(criteriaFromQuery(both)?.query).toBe('ORD-42');
+
+    const without = withRecord(both, null);
+    expect(recordFromQuery(without)).toBeNull();
+    expect(criteriaFromQuery(without)?.query).toBe('ORD-42');
+  });
+
+  /** Un lien vers un message seul ne déclenche aucune recherche. */
+  it('does not read as a search on its own', () => {
+    expect(criteriaFromQuery('?record=2:88')).toBeNull();
+    expect(withRecord('', null)).toBe('');
+  });
+});
+
+describe('follow', () => {
+  /** Reprendre au curseur *est* un tail : sans curseur, il n'y a rien à reprendre. */
+  it('needs a cursor to have anything to resume', () => {
+    expect(canFollow({ '0': 42 })).toBe(true);
+    expect(canFollow({})).toBe(false);
+    expect(canFollow(null)).toBe(false);
+    expect(canFollow(undefined)).toBe(false);
+  });
+
+  /** Jamais « en direct » : ce mode ne ramène que ce qui arrive après le point déjà lu. */
+  it('says what it actually brings back', () => {
+    expect(describeFollow(false, null)).toMatch(/every few seconds/);
+    const following = describeFollow(true, {
+      passes: 3, scanned: 10, matched: 1, elapsedMs: 5, exhausted: true, stopReason: 'EXHAUSTED',
+    });
+    expect(following).toMatch(/new records only/);
+    expect(following).toMatch(/3 passes/);
+  });
+});
+
+describe('valuesAtPath', () => {
+  const sample = (value: string): TopicMessage => ({
+    partition: 0, offset: 0, timestamp: 0, key: null, headers: {},
+    value, valueBytes: value.length, truncated: false,
+  });
+
+  /** On ne sait pas de mémoire si le statut s'écrit SHIPPED, shipped ou Shipped. */
+  it('collects the distinct values a path carries in the samples', () => {
+    const samples = [
+      sample('{"order":{"status":"NEW"}}'),
+      sample('{"order":{"status":"SHIPPED"}}'),
+      sample('{"order":{"status":"NEW"}}'),
+      sample('{"order":{"total":12}}'),
+    ];
+    expect(valuesAtPath(samples, 'order.status')).toEqual(['NEW', 'SHIPPED']);
+    expect(valuesAtPath(samples, '$.order.status')).toEqual(['NEW', 'SHIPPED']);
+    expect(valuesAtPath(samples, 'order.total')).toEqual(['12']);
+  });
+
+  it('suggests nothing rather than the wrong thing', () => {
+    const samples = [sample('{"items":[{"sku":"A"}]}'), sample('not json'), sample('{"a":{"b":1}}')];
+    // Un chemin qui traverse un tableau ne désigne pas une valeur.
+    expect(valuesAtPath(samples, 'items[].sku')).toEqual([]);
+    expect(valuesAtPath(samples, '')).toEqual([]);
+    // Un nœud objet n'est pas une valeur comparable.
+    expect(valuesAtPath(samples, 'a')).toEqual([]);
+    expect(valuesAtPath(samples, 'a.b')).toEqual(['1']);
+  });
+
+  it('stops at the cap', () => {
+    const samples = Array.from({ length: 40 }, (_, i) => sample(`{"id":${i}}`));
+    expect(valuesAtPath(samples, 'id', 5)).toHaveLength(5);
+  });
+});
+
+describe('pinned searches', () => {
+  beforeEach(() => localStorage.clear());
+
+  /** L'historique se dévide ; un critère qu'on rejoue à chaque incident ne doit pas en dépendre. */
+  it('pins, reports and unpins the same criterion', () => {
+    const criterion = criteria({ mode: 'FIELD', field: 'order.id', value: 'ORD-42' });
+
+    expect(isPinned(readPinned('orders'), criterion)).toBe(false);
+    const after = togglePinned('orders', criterion);
+    expect(after).toHaveLength(1);
+    expect(isPinned(after, criterion)).toBe(true);
+    expect(isPinned(readPinned('orders'), criterion)).toBe(true);
+
+    expect(togglePinned('orders', criterion)).toHaveLength(0);
+  });
+
+  it('keeps each topic to itself', () => {
+    togglePinned('orders', criteria({ query: 'a' }));
+    togglePinned('payments', criteria({ query: 'b' }));
+
+    expect(readPinned('orders')).toHaveLength(1);
+    expect(readPinned('payments')[0].criteria.query).toBe('b');
+    expect(readPinned('shipments')).toEqual([]);
+  });
+
+  it('survives a corrupted store', () => {
+    localStorage.setItem(PINNED_KEY, '{oops');
+    expect(readPinned('orders')).toEqual([]);
+  });
+});
+
+describe('keyboard', () => {
+  const hits = rankHits([0, 1, 2].map(offset => ({
+    partition: 0, offset, timestamp: 0, key: null, headers: {},
+    value: '{}', valueBytes: 2, truncated: false,
+  })));
+
+  /** Le déplacement suit la liste *affichée* : `j` ne doit pas sauter à un record filtré. */
+  it('moves through the displayed hits and stops at the ends', () => {
+    expect(nextSelectedRank(hits, null, 1)).toBe(1);
+    expect(nextSelectedRank(hits, null, -1)).toBe(3);
+    expect(nextSelectedRank(hits, 1, 1)).toBe(2);
+    expect(nextSelectedRank(hits, 3, 1)).toBe(3);
+    expect(nextSelectedRank(hits, 1, -1)).toBe(1);
+    expect(nextSelectedRank([], 1, 1)).toBeNull();
+    // Une sélection sortie du filtre repart du début plutôt que de rester introuvable.
+    expect(nextSelectedRank(hits, 99, 1)).toBe(1);
+  });
+
+  /** Un raccourci à une touche pendant la saisie transformerait « j » en commande. */
+  it('leaves a keystroke to the field that has the focus', () => {
+    const input = document.createElement('input');
+    const div = document.createElement('div');
+    const editable = document.createElement('div');
+    editable.contentEditable = 'true';
+
+    expect(isTypingTarget(input)).toBe(true);
+    expect(isTypingTarget(document.createElement('textarea'))).toBe(true);
+    expect(isTypingTarget(document.createElement('select'))).toBe(true);
+    expect(isTypingTarget(div)).toBe(false);
+    expect(isTypingTarget(null)).toBe(false);
+  });
+});
+
+describe('announceResult', () => {
+  /** La disparition de « Searching… » ne dit rien à qui ne voit pas l'écran. */
+  it('states the outcome once the pass is over', () => {
+    const covered = coverageOf(response({ matched: 12, exhausted: true, stopReason: 'EXHAUSTED' }), null, false);
+
+    expect(announceResult(true, covered, criteria(), 12)).toBe('Searching…');
+    const done = announceResult(false, covered, criteria(), 12);
+    expect(done).toMatch(/^12 matches, 20,000 records scanned/);
+    expect(done).toMatch(/Newest/);
+    expect(announceResult(false, null, null, 0)).toBe('');
+  });
+
+  it('agrees in number on a single match', () => {
+    const covered = coverageOf(response({ matched: 1 }), null, false);
+    expect(announceResult(false, covered, criteria(), 1)).toMatch(/^1 match,/);
   });
 });
 
