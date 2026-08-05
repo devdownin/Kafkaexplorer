@@ -108,6 +108,64 @@ export const OPERATORS: { value: string; label: string }[] = [
 const NUMERIC_OPERATORS = ['GT', 'GTE', 'LT', 'LTE'];
 
 /**
+ * Ce que chaque mode compare réellement.
+ *
+ * Cinq boutons nommés « Text / Regex / Field / Header / Key » disent où l'on cherche, pas ce que
+ * cela implique — qu'une recherche par champ ne s'applique qu'à un payload structuré, ou qu'une
+ * recherche par clé est une comparaison entière et non une sous-chaîne. C'est exactement ce qui
+ * fait choisir le mauvais mode et lire un zéro sans comprendre pourquoi.
+ */
+export const MODE_HELP: Record<SearchMode, string> = {
+  CONTAINS: 'Looks for your text anywhere in the record — no parsing, so it works on any payload, '
+    + 'structured or not.',
+  REGEX: 'Matches the record against a regular expression. It is compiled here before the scan '
+    + 'starts, so a broken pattern is reported instead of scanned for.',
+  FIELD: 'Compares one field of a JSON or XML payload, by dot path. Records the path cannot be '
+    + 'applied to are counted and reported — not silently treated as misses.',
+  HEADER: 'Compares one named Kafka header. A correlation id very often travels there and nowhere '
+    + 'else, so a payload-only search would never find it.',
+  KEY: 'Compares the record key itself, not the payload. The whole key is compared, unlike a text '
+    + 'search that would also match a record merely mentioning it.',
+};
+
+export const describeMode = (mode: SearchMode): string => MODE_HELP[mode];
+
+/** Ce que chaque opérateur fait, y compris quand il ne matche jamais. */
+export const OPERATOR_HELP: Record<string, string> = {
+  EQ: 'The value is exactly what you type.',
+  NEQ: 'The value differs from what you type. A record without the field does not match.',
+  CONTAINS: 'The value contains what you type, anywhere inside it.',
+  REGEX: 'The value matches the pattern.',
+  GT: 'Numeric comparison: greater than. A value that is not a number never matches.',
+  GTE: 'Numeric comparison: greater than or equal. A value that is not a number never matches.',
+  LT: 'Numeric comparison: less than. A value that is not a number never matches.',
+  LTE: 'Numeric comparison: less than or equal. A value that is not a number never matches.',
+  EXISTS: 'The field is present, whatever it holds — nothing is compared.',
+};
+
+export const describeOperator = (operator: string): string =>
+  OPERATOR_HELP[operator] ?? 'Compares the value.';
+
+/**
+ * Pourquoi le scan s'est arrêté, et ce que cela laisse faire. Le bandeau donne un état
+ * (« hit limit reached ») ; ce qu'il faut savoir, c'est ce que le bouton d'à côté fera.
+ */
+export const STOP_REASON_HELP: Record<string, string> = {
+  MAX_HITS: 'The pass stopped once it had gathered its cap of matches. Continuing reads on past '
+    + 'the records it already scanned, so the matches it skipped there need a higher cap, not a '
+    + 'longer scan.',
+  MAX_SCAN: 'The pass read as many records as its budget allowed. There may be more matches '
+    + 'beyond — continue, or raise the scan budget.',
+  TIMEOUT: 'The pass ran out of time before running out of records. Continuing picks up exactly '
+    + 'where it stopped.',
+  EXHAUSTED: 'Every record in the range was read. Nothing was skipped inside it.',
+  ERROR: 'The scan failed; the message above is the server’s own reason.',
+};
+
+export const describeStopReason = (stopReason: string): string =>
+  STOP_REASON_HELP[stopReason] ?? 'The scan stopped.';
+
+/**
  * Les opérateurs qu'un mode peut réellement porter.
  *
  * `EXISTS` disparaît en mode KEY : côté serveur il répond vrai sans rien comparer, donc une

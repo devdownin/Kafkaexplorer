@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event';
 import {
   Button, Badge, Field, Input, EmptyState, ErrorPanel, Stat,
   Table, TableHead, TableBody, TableRow, Th, Td, TableSkeleton,
+  Tooltip, HelpTip,
 } from './index';
 
 describe('Button', () => {
@@ -32,6 +33,50 @@ describe('Button', () => {
     const ref = createRef<HTMLButtonElement>();
     render(<Button ref={ref}>Focus me</Button>);
     expect(ref.current).toBeInstanceOf(HTMLButtonElement);
+  });
+});
+
+describe('Tooltip', () => {
+  /**
+   * Le point de tout l'exercice : `title=""` n'apparaît qu'à la souris. Une explication qui
+   * n'atteint pas le clavier n'explique rien à qui navigue au clavier.
+   */
+  it('opens on focus, not only on hover', async () => {
+    render(<Tooltip content="Compares the record key itself"><button>Key</button></Tooltip>);
+    const tip = screen.getByRole('tooltip');
+
+    expect(tip).toHaveClass('opacity-0');
+    await userEvent.tab();
+    expect(screen.getByRole('button', { name: 'Key' })).toHaveFocus();
+    expect(tip).toHaveClass('opacity-100');
+  });
+
+  it('closes again on Escape', async () => {
+    render(<Tooltip content="Explanation"><button>Key</button></Tooltip>);
+    await userEvent.tab();
+    expect(screen.getByRole('tooltip')).toHaveClass('opacity-100');
+
+    await userEvent.keyboard('{Escape}');
+    expect(screen.getByRole('tooltip')).toHaveClass('opacity-0');
+  });
+
+  /** La description reste montée : un `aria-describedby` qui pointe dans le vide n'est rien. */
+  it('describes its trigger whether it is open or not', () => {
+    render(<Tooltip content="Explanation"><button>Key</button></Tooltip>);
+    const trigger = screen.getByRole('button', { name: 'Key' });
+    const tip = screen.getByRole('tooltip');
+
+    expect(trigger).toHaveAttribute('aria-describedby', tip.id);
+    expect(tip).toHaveTextContent('Explanation');
+  });
+
+  it('gives a HelpTip an accessible name of its own', async () => {
+    render(<HelpTip label="More information about the scan budget" content="How many records." />);
+    const button = screen.getByRole('button', { name: 'More information about the scan budget' });
+
+    await userEvent.tab();
+    expect(button).toHaveFocus();
+    expect(screen.getByRole('tooltip')).toHaveClass('opacity-100');
   });
 });
 

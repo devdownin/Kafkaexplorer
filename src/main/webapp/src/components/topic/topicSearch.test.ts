@@ -3,8 +3,13 @@ import {
   PINNED_KEY,
   SEARCH_HISTORY_KEY,
   VIEW_KEY,
+  OPERATORS,
+  SEARCH_MODES,
   analyzeHits,
   announceResult,
+  describeMode,
+  describeOperator,
+  describeStopReason,
   buildRecordLink,
   recordFromQuery,
   recordParam,
@@ -762,6 +767,35 @@ describe('raiseHitCapAction', () => {
 
     const capped = criteria({ mode: 'CONTAINS', query: 'x', maxHits: 500 });
     expect(criteriaFromQuery(buildSearchQuery(capped))).toEqual(capped);
+  });
+});
+
+describe('help texts', () => {
+  /** Un mode sans explication, c'est le mode qu'on choisit mal sans jamais savoir pourquoi. */
+  it('explains every mode and every operator it offers', () => {
+    for (const mode of SEARCH_MODES) {
+      expect(describeMode(mode).length).toBeGreaterThan(20);
+    }
+    for (const operator of OPERATORS) {
+      expect(describeOperator(operator.value).length).toBeGreaterThan(10);
+    }
+  });
+
+  /** Les comparaisons numériques ne matchent jamais une valeur texte : le dire vaut mieux. */
+  it('warns that a numeric comparison ignores anything that is not a number', () => {
+    for (const operator of ['GT', 'GTE', 'LT', 'LTE']) {
+      expect(describeOperator(operator)).toMatch(/not a number/);
+    }
+    expect(describeOperator('EXISTS')).toMatch(/nothing is compared/);
+  });
+
+  /** Le bandeau donne un état ; ce qu'il faut savoir, c'est ce que le bouton d'à côté fera. */
+  it('explains every stop reason, cap included', () => {
+    for (const reason of ['MAX_HITS', 'MAX_SCAN', 'TIMEOUT', 'EXHAUSTED', 'ERROR']) {
+      expect(describeStopReason(reason).length).toBeGreaterThan(20);
+    }
+    expect(describeStopReason('MAX_HITS')).toMatch(/higher cap|cap/);
+    expect(describeStopReason('WHATEVER')).toBe('The scan stopped.');
   });
 });
 

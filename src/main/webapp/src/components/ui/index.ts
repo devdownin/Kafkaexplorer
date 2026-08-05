@@ -13,6 +13,8 @@ export type { BadgeProps, BadgeTone } from './Badge';
 export { EmptyState } from './EmptyState';
 export type { EmptyStateProps } from './EmptyState';
 export { ErrorPanel } from './ErrorPanel';
+export { Tooltip, HelpTip } from './Tooltip';
+export type { TooltipProps, HelpTipProps } from './Tooltip';
 export type { ErrorPanelProps } from './ErrorPanel';
 export { PageHeader } from './PageHeader';
 export type { PageHeaderProps } from './PageHeader';
