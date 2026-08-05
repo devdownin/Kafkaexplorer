@@ -431,6 +431,23 @@ export function coverageOf(
   };
 }
 
+/**
+ * Les avertissements de toutes les passes, dédoublonnés dans leur ordre d'apparition.
+ *
+ * N'afficher que ceux de la dernière réponse effaçait, à la reprise, un avertissement qui
+ * décrivait toujours une partie des résultats affichés — « aucun des 50 records scannés n'est du
+ * JSON » disparaissait dès que la passe suivante ne rencontrait pas le cas. Même règle que la
+ * couverture : une reprise ajoute, une relecture remplace.
+ */
+export function mergeWarnings(
+  previous: string[],
+  incoming: string[],
+  accumulate: boolean,
+): string[] {
+  const merged = accumulate ? [...previous, ...incoming] : [...incoming];
+  return [...new Set(merged)];
+}
+
 const STOP_REASONS: Record<string, string> = {
   MAX_HITS: 'hit limit reached',
   MAX_SCAN: 'scan budget reached',
@@ -534,6 +551,22 @@ export function highlightFor(criteria: TopicSearchCriteria): SearchHighlight {
 /** Le header dont la valeur a décidé du match, quand la recherche en vise un seul. */
 export function highlightedHeader(criteria: TopicSearchCriteria): string | null {
   return criteria.mode === 'HEADER' && criteria.field.trim() ? criteria.field.trim() : null;
+}
+
+/**
+ * Le chemin comparé, en notation pointée, quand il désigne un nœud unique de l'arbre — de quoi
+ * marquer le champ lui-même dans la vue structurée, et pas seulement sa valeur dans la vue brute.
+ *
+ * Un chemin qui traverse un tableau, un prédicat ou une descente récursive rend `null` : marquer
+ * à côté serait pire que ne rien marquer.
+ */
+export function highlightedPath(criteria: TopicSearchCriteria): string | null {
+  if (criteria.mode !== 'FIELD') return null;
+  const path = criteria.field.trim().replace(/^\$\.?/, '');
+  if (!path || /[[\]()*@?$]/.test(path)) return null;
+  // Un segment vide, c'est `$..id` : une descente récursive, qui ne désigne pas un nœud.
+  if (path.split('.').some(segment => segment.length === 0)) return null;
+  return path;
 }
 
 /** Vrai quand les headers font partie de la réponse et doivent donc être visibles sur le hit. */
@@ -649,6 +682,183 @@ export function describeCriterion(criteria: TopicSearchCriteria): string {
     default:
       return criteria.query.trim();
   }
+}
+
+// ── Options avancées ──────────────────────────────────────────────────────
+
+export const ADVANCED_KEY = 'kse:topic-search-advanced';
+
+/**
+ * Direction, budget et partitions se replient : chacun se justifie, et tous ensemble ils font une
+ * barre de recherche que l'œil ne balaye plus. Repliés, ils restent annoncés par `describeAdvanced`
+ * — une option active qu'on ne voit pas est exactement ce qu'il ne faut pas.
+ */
+export function readAdvancedOpen(): boolean {
+  try {
+    return localStorage.getItem(ADVANCED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function writeAdvancedOpen(open: boolean): void {
+  try {
+    localStorage.setItem(ADVANCED_KEY, open ? '1' : '0');
+  } catch {
+    // Mode privé ou quota : la préférence est un confort, pas une condition d'affichage.
+  }
+}
+
+/** Ce que les options avancées changent par rapport au défaut ; vide quand elles n'y touchent pas. */
+export function describeAdvanced(criteria: TopicSearchCriteria): string[] {
+  const notes: string[] = [];
+  if (criteria.direction !== emptyCriteria.direction) {
+    notes.push(DIRECTIONS.find(d => d.value === criteria.direction)?.label ?? criteria.direction);
+  }
+  if (criteria.maxScan > 0) {
+    notes.push(SCAN_BUDGETS.find(b => b.value === criteria.maxScan)?.label
+      ?? `scan ${criteria.maxScan.toLocaleString()}`);
+  }
+  const scope = describePartitionScope(criteria);
+  if (scope) notes.push(scope);
+  return notes;
+}
+
+// ── Lecture des résultats ─────────────────────────────────────────────────
+
+/**
+ * Un hit garde son rang d'origine : c'est l'ordre dans lequel le scan l'a rencontré, et il doit
+ * survivre au tri comme au filtre — demander « le plus ancien » et lire « #1 » en tête sur une
+ * colonne triée par date ne dirait rien.
+ */
+export interface RankedHit extends TopicMessage {
+  rank: number;
+}
+
+export const rankHits = (messages: TopicMessage[]): RankedHit[] =>
+  messages.map((message, index) => ({ ...message, rank: index + 1 }));
+
+/** Resserre sur les hits déjà ramenés — instantané, là où relancer une passe coûte dix secondes. */
+export function filterHits(hits: RankedHit[], query: string): RankedHit[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return hits;
+  return hits.filter(hit =>
+    (hit.key ?? '').toLowerCase().includes(needle)
+    || (hit.value ?? '').toLowerCase().includes(needle)
+    || `p${hit.partition}`.includes(needle)
+    || String(hit.offset).includes(needle)
+    || Object.entries(hit.headers ?? {}).some(([name, value]) =>
+      name.toLowerCase().includes(needle) || (value ?? '').toLowerCase().includes(needle)));
+}
+
+export type HitSortKey = 'rank' | 'partition' | 'offset' | 'timestamp' | 'key';
+
+export function sortHits(hits: RankedHit[], key: HitSortKey, desc: boolean): RankedHit[] {
+  const direction = desc ? -1 : 1;
+  return [...hits].sort((a, b) => {
+    switch (key) {
+      case 'partition':
+        // À partition égale, l'offset est le seul ordre qui ait un sens.
+        return (a.partition - b.partition) * direction || a.offset - b.offset;
+      case 'offset':
+        return (a.offset - b.offset) * direction;
+      case 'timestamp':
+        return (a.timestamp - b.timestamp) * direction || a.rank - b.rank;
+      case 'key':
+        return (a.key ?? '').localeCompare(b.key ?? '') * direction || a.rank - b.rank;
+      default:
+        return (a.rank - b.rank) * direction;
+    }
+  });
+}
+
+/** Ce que les hits disent d'eux-mêmes, une fois posés côte à côte. */
+export interface HitInsight {
+  total: number;
+  /** Partitions représentées, la plus fournie en tête. */
+  partitions: { partition: number; count: number }[];
+  firstAt: number | null;
+  lastAt: number | null;
+  spanMs: number | null;
+  distinctKeys: number;
+  /** Clés vues plus d'une fois, la plus fréquente en tête. */
+  repeatedKeys: { key: string; count: number }[];
+}
+
+export function analyzeHits(hits: TopicMessage[]): HitInsight {
+  const byPartition = new Map<number, number>();
+  const byKey = new Map<string, number>();
+  let firstAt: number | null = null;
+  let lastAt: number | null = null;
+
+  for (const hit of hits) {
+    byPartition.set(hit.partition, (byPartition.get(hit.partition) ?? 0) + 1);
+    if (hit.key) byKey.set(hit.key, (byKey.get(hit.key) ?? 0) + 1);
+    if (hit.timestamp > 0) {
+      firstAt = firstAt === null ? hit.timestamp : Math.min(firstAt, hit.timestamp);
+      lastAt = lastAt === null ? hit.timestamp : Math.max(lastAt, hit.timestamp);
+    }
+  }
+
+  return {
+    total: hits.length,
+    partitions: [...byPartition.entries()]
+      .map(([partition, count]) => ({ partition, count }))
+      .sort((a, b) => b.count - a.count || a.partition - b.partition),
+    firstAt,
+    lastAt,
+    spanMs: firstAt !== null && lastAt !== null ? lastAt - firstAt : null,
+    distinctKeys: byKey.size,
+    repeatedKeys: [...byKey.entries()]
+      .filter(([, count]) => count > 1)
+      .map(([key, count]) => ({ key, count }))
+      .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key)),
+  };
+}
+
+function formatSpan(ms: number): string {
+  if (ms < 1_000) return `${ms} ms`;
+  const seconds = Math.round(ms / 1_000);
+  if (seconds < 60) return `${seconds} s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min ${seconds % 60} s`;
+  const hours = Math.floor(minutes / 60);
+  return hours < 24 ? `${hours} h ${minutes % 60} min` : `${Math.floor(hours / 24)} d ${hours % 24} h`;
+}
+
+/**
+ * Lit les hits au lieu de laisser les lire. Un tableau de quarante lignes ne montre pas de lui-même
+ * que trente-huit sont sur la même partition, ni qu'elles tiennent dans quatre minutes — ce sont
+ * pourtant les deux premières choses qu'on cherche à savoir.
+ *
+ * @param partitionCount partitions du topic : « toutes sur p0 » sur un topic mono-partition n'est
+ *   pas une observation.
+ */
+export function describeHitInsight(insight: HitInsight, partitionCount: number): string[] {
+  const notes: string[] = [];
+  if (insight.total === 0) return notes;
+
+  const [busiest] = insight.partitions;
+  if (partitionCount > 1 && busiest && insight.total > 1) {
+    notes.push(insight.partitions.length === 1
+      ? `all on partition ${busiest.partition}`
+      : `${busiest.count} of ${insight.total} on partition ${busiest.partition}`
+        + ` (${insight.partitions.length} partitions)`);
+  }
+  if (insight.spanMs !== null && insight.total > 1) {
+    notes.push(insight.spanMs === 0
+      ? 'all within the same millisecond'
+      : `spanning ${formatSpan(insight.spanMs)}`);
+  }
+  if (insight.repeatedKeys.length > 0) {
+    const [first] = insight.repeatedKeys;
+    notes.push(insight.repeatedKeys.length === 1
+      ? `key ${first.key} appears ${first.count} times`
+      : `${insight.repeatedKeys.length} keys appear more than once (${first.key} ×${first.count})`);
+  } else if (insight.distinctKeys > 0 && insight.total > 1) {
+    notes.push(`${insight.distinctKeys} distinct keys`);
+  }
+  return notes;
 }
 
 // ── Affichage des messages ────────────────────────────────────────────────

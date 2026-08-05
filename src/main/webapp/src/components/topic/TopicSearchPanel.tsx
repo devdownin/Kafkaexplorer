@@ -5,6 +5,7 @@ import {
   DIRECTIONS,
   SCAN_BUDGETS,
   SCOPES,
+  describeAdvanced,
   describeCoverage,
   describeCriterion,
   describePartitionScope,
@@ -47,6 +48,8 @@ interface Props {
   onExport: (format: 'csv' | 'json') => void;
   onApply: (criteria: TopicSearchCriteria) => void;
   history: SearchHistoryEntry[];
+  advancedOpen: boolean;
+  onToggleAdvanced: (open: boolean) => void;
   searching: boolean;
   active: boolean;
   coverage: SearchCoverage | null;
@@ -65,8 +68,8 @@ interface Props {
 
 const TopicSearchPanel: React.FC<Props> = ({
   schemaPaths, partitionCount, topicSize, criteria, onChange, onSearch, onContinue, onCancel,
-  onCopyLink, onClear, onExport, onApply, history, searching, active, coverage, ranCriteria,
-  warnings, error, errors, stopped, loadedHits,
+  onCopyLink, onClear, onExport, onApply, history, advancedOpen, onToggleAdvanced, searching,
+  active, coverage, ranCriteria, warnings, error, errors, stopped, loadedHits,
 }) => {
   const set = <K extends keyof TopicSearchCriteria>(key: K, value: TopicSearchCriteria[K]) =>
     onChange({ ...criteria, [key]: value });
@@ -81,6 +84,7 @@ const TopicSearchPanel: React.FC<Props> = ({
   const suggestions = active && ranCriteria && loadedHits === 0 && !searching
     ? suggestWidenings(ranCriteria)
     : [];
+  const advanced = describeAdvanced(criteria);
 
   const togglePartition = (partition: number) => {
     const next = criteria.partitions.includes(partition)
@@ -127,34 +131,6 @@ const TopicSearchPanel: React.FC<Props> = ({
         >
           {SCOPES.map(scope => (
             <option key={scope.value} value={scope.value}>{scope.label}</option>
-          ))}
-        </Select>
-
-        {/* Par quel bout le scan entre. Le budget de scan est borné, donc ce choix décide de ce
-            qui sera lu — et non simplement de l'ordre dans lequel on le lit. */}
-        <Select
-          value={criteria.direction}
-          onChange={e => set('direction', e.target.value as TopicSearchCriteria['direction'])}
-          aria-label="Scan direction"
-          className="w-36"
-          title={criteria.direction === 'NEWEST'
-            ? 'Reads back from the most recent records. Older ones are only reached by scanning further back.'
-            : 'Reads forward from the oldest record in range. On a large topic the scan budget is spent on the oldest history.'}
-        >
-          {DIRECTIONS.map(direction => (
-            <option key={direction.value} value={direction.value}>{direction.label}</option>
-          ))}
-        </Select>
-
-        <Select
-          value={String(criteria.maxScan)}
-          onChange={e => set('maxScan', Number(e.target.value))}
-          aria-label="Scan budget"
-          className="w-40"
-          title="How many records one pass may read before giving up. A larger budget is slower but reaches deeper."
-        >
-          {SCAN_BUDGETS.map(budget => (
-            <option key={budget.value} value={budget.value}>{budget.label}</option>
           ))}
         </Select>
 
@@ -311,42 +287,103 @@ const TopicSearchPanel: React.FC<Props> = ({
         </div>
       )}
 
-      {/* Partitions : on arrive souvent avec un numéro déjà en main. */}
-      {partitionCount > 1 && (
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-[11px] text-on-surface-variant mr-0.5">Partitions</span>
+      {/* Options avancées. Repliées par défaut : chacune se justifie, toutes ensemble elles font
+          une barre que l'œil ne balaye plus. Ce qui n'est pas au défaut reste annoncé ici. */}
+      <div className="border-t border-outline-variant/60 pt-2.5">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={() => set('partitions', [])}
-            aria-pressed={criteria.partitions.length === 0}
-            className={`px-2 h-6 rounded text-[11px] font-mono border transition-colors ${
-              criteria.partitions.length === 0
-                ? 'border-primary/40 bg-primary/15 text-primary'
-                : 'border-outline-variant text-on-surface-variant hover:text-on-surface'
-            }`}
+            onClick={() => onToggleAdvanced(!advancedOpen)}
+            aria-expanded={advancedOpen}
+            aria-controls="topic-search-advanced"
+            className="flex items-center gap-1 text-[12px] font-medium text-on-surface-variant hover:text-on-surface transition-colors"
           >
-            all
+            <span aria-hidden="true" className="material-symbols-outlined text-[16px]">
+              {advancedOpen ? 'expand_more' : 'chevron_right'}
+            </span>
+            Scan options
           </button>
-          {Array.from({ length: partitionCount }, (_, partition) => {
-            const selected = criteria.partitions.includes(partition);
-            return (
-              <button
-                key={partition}
-                type="button"
-                onClick={() => togglePartition(partition)}
-                aria-pressed={selected}
-                className={`px-2 h-6 rounded text-[11px] font-mono border transition-colors ${
-                  selected
-                    ? 'border-primary/40 bg-primary/15 text-primary'
-                    : 'border-outline-variant text-on-surface-variant hover:text-on-surface'
-                }`}
-              >
-                p{partition}
-              </button>
-            );
-          })}
+          {!advancedOpen && advanced.map(note => (
+            <span
+              key={note}
+              className="px-2 h-6 inline-flex items-center rounded border border-outline-variant text-[11px] text-on-surface-variant"
+            >
+              {note}
+            </span>
+          ))}
         </div>
-      )}
+
+        {advancedOpen && (
+          <div id="topic-search-advanced" className="mt-2.5 space-y-2.5">
+            <div className="flex flex-wrap items-center gap-3">
+              {/* Par quel bout le scan entre. Le budget est borné, donc ce choix décide de ce qui
+                  sera lu — et non simplement de l'ordre dans lequel on le lit. */}
+              <Select
+                value={criteria.direction}
+                onChange={e => set('direction', e.target.value as TopicSearchCriteria['direction'])}
+                aria-label="Scan direction"
+                className="w-40"
+                title={criteria.direction === 'NEWEST'
+                  ? 'Reads back from the most recent records. Older ones are only reached by scanning further back.'
+                  : 'Reads forward from the oldest record in range. On a large topic the scan budget is spent on the oldest history.'}
+              >
+                {DIRECTIONS.map(direction => (
+                  <option key={direction.value} value={direction.value}>{direction.label}</option>
+                ))}
+              </Select>
+
+              <Select
+                value={String(criteria.maxScan)}
+                onChange={e => set('maxScan', Number(e.target.value))}
+                aria-label="Scan budget"
+                className="w-44"
+                title="How many records one pass may read before giving up. A larger budget is slower but reaches deeper."
+              >
+                {SCAN_BUDGETS.map(budget => (
+                  <option key={budget.value} value={budget.value}>{budget.label}</option>
+                ))}
+              </Select>
+            </div>
+
+            {/* Partitions : on arrive souvent avec un numéro déjà en main. */}
+            {partitionCount > 1 && (
+              <div role="group" aria-label="Partitions" className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] text-on-surface-variant mr-0.5">Partitions</span>
+                <button
+                  type="button"
+                  onClick={() => set('partitions', [])}
+                  aria-pressed={criteria.partitions.length === 0}
+                  className={`px-2 h-6 rounded text-[11px] font-mono border transition-colors ${
+                    criteria.partitions.length === 0
+                      ? 'border-primary/40 bg-primary/15 text-primary'
+                      : 'border-outline-variant text-on-surface-variant hover:text-on-surface'
+                  }`}
+                >
+                  all
+                </button>
+                {Array.from({ length: partitionCount }, (_, partition) => {
+                  const selected = criteria.partitions.includes(partition);
+                  return (
+                    <button
+                      key={partition}
+                      type="button"
+                      onClick={() => togglePartition(partition)}
+                      aria-pressed={selected}
+                      className={`px-2 h-6 rounded text-[11px] font-mono border transition-colors ${
+                        selected
+                          ? 'border-primary/40 bg-primary/15 text-primary'
+                          : 'border-outline-variant text-on-surface-variant hover:text-on-surface'
+                      }`}
+                    >
+                      p{partition}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Historique : un critère de champ se retape sinon à chaque incident. */}
       {history.length > 0 && !active && (

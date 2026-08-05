@@ -2,7 +2,15 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   SEARCH_HISTORY_KEY,
   VIEW_KEY,
+  analyzeHits,
+  describeAdvanced,
   describeCriterion,
+  describeHitInsight,
+  filterHits,
+  highlightedPath,
+  mergeWarnings,
+  rankHits,
+  sortHits,
   describePartitionScope,
   describeScanShare,
   effectiveScanBudget,
@@ -619,6 +627,117 @@ describe('export', () => {
     expect(parsed.coverage.summary).toContain('Newest');
     expect(parsed.warnings).toEqual(['careful']);
     expect(parsed.hits).toHaveLength(1);
+  });
+});
+
+describe('mergeWarnings', () => {
+  /** Ceux de la seule dernière réponse s'effaçaient à la reprise, alors qu'ils décrivaient
+   *  toujours une partie des résultats affichés. */
+  it('keeps what an earlier pass reported when the scan resumes', () => {
+    expect(mergeWarnings(['no JSON in the 50 records scanned'], ['partition 3 only'], true))
+      .toEqual(['no JSON in the 50 records scanned', 'partition 3 only']);
+  });
+
+  it('de-duplicates a warning both passes reported', () => {
+    expect(mergeWarnings(['same'], ['same', 'new'], true)).toEqual(['same', 'new']);
+  });
+
+  /** Une relecture depuis le même bout remplace : ses avertissements décrivent tout l'affiché. */
+  it('replaces when the pass re-reads the same ground', () => {
+    expect(mergeWarnings(['old'], ['fresh'], false)).toEqual(['fresh']);
+    expect(mergeWarnings(['old'], [], false)).toEqual([]);
+  });
+});
+
+describe('reading the hits', () => {
+  const hitAt = (over: Partial<TopicMessage> = {}): TopicMessage => ({
+    partition: 0, offset: 1, timestamp: 1_700_000_000_000, key: null,
+    headers: {}, value: '{}', valueBytes: 2, truncated: false, ...over,
+  });
+
+  it('ranks hits in scan order, and the rank survives filter and sort', () => {
+    const ranked = rankHits([hitAt({ offset: 9 }), hitAt({ offset: 4 }), hitAt({ offset: 7 })]);
+    expect(ranked.map(h => h.rank)).toEqual([1, 2, 3]);
+    expect(sortHits(ranked, 'offset', false).map(h => h.rank)).toEqual([2, 3, 1]);
+    expect(sortHits(ranked, 'offset', true).map(h => h.rank)).toEqual([1, 3, 2]);
+    expect(sortHits(ranked, 'rank', false).map(h => h.rank)).toEqual([1, 2, 3]);
+  });
+
+  it('sorts by partition, then offset within a partition', () => {
+    const ranked = rankHits([
+      hitAt({ partition: 1, offset: 5 }), hitAt({ partition: 0, offset: 9 }),
+      hitAt({ partition: 0, offset: 2 }),
+    ]);
+    expect(sortHits(ranked, 'partition', false).map(h => [h.partition, h.offset]))
+      .toEqual([[0, 2], [0, 9], [1, 5]]);
+  });
+
+  it('filters on anything visible on the row', () => {
+    const ranked = rankHits([
+      hitAt({ key: 'ORD-42', value: '{"status":"NEW"}' }),
+      hitAt({ partition: 3, offset: 88, key: 'ORD-7', value: '{"status":"SHIPPED"}',
+        headers: { 'correlation-id': 'abc' } }),
+    ]);
+    expect(filterHits(ranked, 'ORD-42').map(h => h.rank)).toEqual([1]);
+    expect(filterHits(ranked, 'shipped').map(h => h.rank)).toEqual([2]);
+    expect(filterHits(ranked, 'correlation').map(h => h.rank)).toEqual([2]);
+    expect(filterHits(ranked, 'p3').map(h => h.rank)).toEqual([2]);
+    expect(filterHits(ranked, '  ')).toHaveLength(2);
+  });
+
+  /** Quarante lignes ne montrent pas d'elles-mêmes que trente-huit sont sur la même partition. */
+  it('reads the hits instead of leaving them to be read', () => {
+    const hits = [
+      hitAt({ partition: 3, timestamp: 1_000, key: 'ORD-42' }),
+      hitAt({ partition: 3, timestamp: 61_000, key: 'ORD-42' }),
+      hitAt({ partition: 1, timestamp: 31_000, key: 'ORD-7' }),
+    ];
+    const insight = analyzeHits(hits);
+
+    expect(insight.total).toBe(3);
+    expect(insight.partitions[0]).toEqual({ partition: 3, count: 2 });
+    expect(insight.spanMs).toBe(60_000);
+    expect(insight.distinctKeys).toBe(2);
+    expect(insight.repeatedKeys).toEqual([{ key: 'ORD-42', count: 2 }]);
+
+    const notes = describeHitInsight(insight, 4);
+    expect(notes[0]).toBe('2 of 3 on partition 3 (2 partitions)');
+    expect(notes[1]).toBe('spanning 1 min 0 s');
+    expect(notes[2]).toBe('key ORD-42 appears 2 times');
+  });
+
+  /** « Toutes sur p0 » sur un topic mono-partition n'est pas une observation. */
+  it('says nothing about partitions the topic does not have', () => {
+    const insight = analyzeHits([hitAt({ timestamp: 5 }), hitAt({ timestamp: 5 })]);
+    expect(describeHitInsight(insight, 1)).not.toContain('all on partition 0');
+    expect(describeHitInsight(insight, 1)).toContain('all within the same millisecond');
+    expect(describeHitInsight(analyzeHits([]), 4)).toEqual([]);
+  });
+});
+
+describe('highlightedPath', () => {
+  it('designates the compared node when the path is a plain dot path', () => {
+    expect(highlightedPath(criteria({ mode: 'FIELD', field: 'order.id', value: 'x' })))
+      .toBe('order.id');
+    expect(highlightedPath(criteria({ mode: 'FIELD', field: '$.order.id', value: 'x' })))
+      .toBe('order.id');
+  });
+
+  /** Marquer à côté serait pire que ne rien marquer. */
+  it('gives up on a path that does not designate a single node', () => {
+    expect(highlightedPath(criteria({ mode: 'FIELD', field: 'items[].sku', value: 'x' }))).toBeNull();
+    expect(highlightedPath(criteria({ mode: 'FIELD', field: '$..id', value: 'x' }))).toBeNull();
+    expect(highlightedPath(criteria({ mode: 'HEADER', field: 'correlation-id', value: 'x' }))).toBeNull();
+    expect(highlightedPath(criteria({ mode: 'CONTAINS', query: 'x' }))).toBeNull();
+  });
+});
+
+describe('describeAdvanced', () => {
+  /** Une option active qu'on ne voit pas est exactement ce qu'il ne faut pas replier en silence. */
+  it('announces only what departs from the default', () => {
+    expect(describeAdvanced(criteria())).toEqual([]);
+    expect(describeAdvanced(criteria({ direction: 'OLDEST', maxScan: 100_000, partitions: [2] })))
+      .toEqual(['Oldest first', 'Scan 100 000', 'partition 2 only']);
   });
 });
 
