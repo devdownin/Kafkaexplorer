@@ -169,8 +169,13 @@ services:
 
   # Conteneur interactif : ne tourne pas en permanence, on l'appelle à la
   # demande — `docker compose --profile cli run --rm ksqldb-cli`.
+  #
+  # Version épinglée à part, et non sur CONFLUENT_VERSION : Confluent ne publie
+  # plus cp-ksqldb-cli au-delà de 8.0.x (8.1, 8.2 et 8.3 n'existent pas sur le
+  # registre). La CLI dialogue avec le serveur en REST, l'écart de version est
+  # sans conséquence ici — elle signale simplement la différence au démarrage.
   ksqldb-cli:
-    image: ${REGISTRY:-nx-repo.vinci-autoroutes.com/docker-group}/confluentinc/cp-ksqldb-cli:${CONFLUENT_VERSION:-8.3.0}
+    image: ${REGISTRY:-nx-repo.vinci-autoroutes.com/docker-group}/confluentinc/cp-ksqldb-cli:${KSQLDB_CLI_VERSION:-8.0.6}
     container_name: ksqldb-cli
     profiles: ["cli"]
     networks:
@@ -218,7 +223,7 @@ services:
   # ══════════════════════════════════════════════════════════════════════════
 
   akhq:
-    image: ${REGISTRY:-nx-repo.vinci-autoroutes.com/docker-group}/tchiotludo/akhq:${AKHQ_VERSION:-0.26.0}
+    image: ${REGISTRY:-nx-repo.vinci-autoroutes.com/docker-group}/tchiotludo/akhq:${AKHQ_VERSION:-0.27.1}
     hostname: akhq
     container_name: akhq
     restart: unless-stopped
@@ -305,7 +310,7 @@ services:
   # ══════════════════════════════════════════════════════════════════════════
 
   prometheus:
-    image: ${REGISTRY:-nx-repo.vinci-autoroutes.com/docker-group}/prom/prometheus:${PROMETHEUS_VERSION:-v3.5.0}
+    image: ${REGISTRY:-nx-repo.vinci-autoroutes.com/docker-group}/prom/prometheus:${PROMETHEUS_VERSION:-v3.13.2}
     hostname: prometheus
     container_name: prometheus
     profiles: ["observability"]
@@ -332,7 +337,7 @@ services:
       - '--web.enable-lifecycle'
 
   grafana:
-    image: ${REGISTRY:-nx-repo.vinci-autoroutes.com/docker-group}/grafana/grafana:${GRAFANA_VERSION:-12.1.0}
+    image: ${REGISTRY:-nx-repo.vinci-autoroutes.com/docker-group}/grafana/grafana:${GRAFANA_VERSION:-13.1.2}
     hostname: grafana
     container_name: grafana
     profiles: ["observability"]

@@ -167,11 +167,44 @@ son propre quorum.
 
 ---
 
-## 5. Points restants à décider
+## 5. Versions épinglées
+
+Relevé sur le registre public le 2026-08-06 (à recouper avec ce que miroite
+`nx-repo` ; tout est surchargeable par `.env`).
+
+| Image | Tag | Remarque |
+|---|---|---|
+| `confluentinc/cp-kafka` | `8.3.0` | dernier 8.x publié — CP 8.3 = Kafka 4.2 |
+| `confluentinc/cp-ksqldb-server` | `8.3.0` | |
+| `confluentinc/cp-kafka-rest` | `8.3.0` | |
+| `confluentinc/cp-schema-registry` | `8.3.0` | |
+| `confluentinc/cp-ksqldb-cli` | **`8.0.6`** | voir ci-dessous |
+| `tchiotludo/akhq` | `0.27.1` | dernière release, digest identique à `latest` |
+| `prom/prometheus` | `v3.13.2` | digest identique à `latest` |
+| `grafana/grafana` | `13.1.2` | digest identique à `latest` |
+
+**`cp-ksqldb-cli` s'arrête à 8.0.x.** Confluent ne publie plus cette image
+au-delà : `8.1.4`, `8.2.2` et `8.3.0` renvoient 404 sur le registre, alors que
+le serveur ksqlDB, lui, est bien en 8.3.0. D'où une variable dédiée
+(`KSQLDB_CLI_VERSION`) plutôt que `CONFLUENT_VERSION` — sans quoi le profil
+`cli` échouerait au premier `docker compose run`. La CLI dialogue avec le
+serveur par son API REST, elle signale l'écart de version au démarrage et
+fonctionne.
+
+C'est un signe de plus du statut de ksqlDB chez Confluent (cf. point suivant).
+
+Un mot sur AKHQ : `0.27.1` est bien la dernière version publiée. Les notes de
+release ne détaillent pas la version de `kafka-clients` embarquée et le dépôt
+upstream est hors du périmètre GitHub de cette session, donc ce point n'est pas
+vérifié ici — sans enjeu pratique, un client Kafka ≥ 2.1 suffit à parler à un
+broker 4.x, et AKHQ est très au-delà de ce plancher depuis longtemps.
+
+## 6. Points restants à décider
 
 * **ksqlDB** est en mode maintenance chez Confluent (l'investissement va vers
-  Flink). Il est conservé ici à l'identique ; si les requêtes doivent évoluer,
-  Flink SQL est le chemin vers lequel regarder.
+  Flink) — l'image CLI figée en 8.0.x le confirme assez nettement. Il est
+  conservé ici à l'identique ; si les requêtes doivent évoluer, Flink SQL est le
+  chemin vers lequel regarder.
 * **Nœud unique, `replication.factor: 1`** : conforme à un environnement de dev,
   aucune tolérance de panne. Un quorum de 3 controllers demanderait de dupliquer
   le service et d'allonger `KAFKA_CONTROLLER_QUORUM_VOTERS`.
