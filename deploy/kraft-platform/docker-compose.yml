@@ -38,7 +38,18 @@ services:
     user: root
     volumes:
       - kafka-00-kraft-data:/var/lib/kafka/data
-    entrypoint: ["sh", "-c", "chown -R appuser:appuser /var/lib/kafka/data"]
+    # Repli sur l'uid 1000 si le compte `appuser` venait à changer de nom dans
+    # une future image : un `chown: invalid user` ferait échouer ce one-shot, et
+    # `kafka-00` refuserait alors de démarrer sur une dépendance en erreur.
+    entrypoint:
+      - sh
+      - -c
+      - |
+        if id -u appuser >/dev/null 2>&1; then
+          chown -R appuser:appuser /var/lib/kafka/data
+        else
+          chown -R 1000:1000 /var/lib/kafka/data
+        fi
     networks:
       - dip
 
@@ -119,7 +130,12 @@ services:
       # ── Métriques ─────────────────────────────────────────────────────────
       # Agent in-process : pas besoin d'ouvrir un port JMX/RMI distant, d'où la
       # disparition de KAFKA_JMX_PORT / KAFKA_JMX_HOSTNAME.
-      KAFKA_OPTS: '-javaagent:/usr/share/jmx_exporter/${JMX_AGENT_JAR:-jmx_prometheus_javaagent-0.20.0.jar}=9200:/usr/share/jmx_exporter/kafka-broker.yml'
+      #
+      # ⚠️ Le jar DOIT être présent dans ./jmx-exporter/ (`./fetch-jmx-agent.sh`).
+      # Sans lui la JVM ne démarre pas du tout — « Error opening zip file or JAR
+      # manifest missing » — et le conteneur sort immédiatement en code 1.
+      # Pour démarrer sans métriques : KAFKA_JMX_AGENT_OPTS= (vide) dans .env.
+      KAFKA_OPTS: ${KAFKA_JMX_AGENT_OPTS--javaagent:/usr/share/jmx_exporter/jmx_prometheus_javaagent-0.20.0.jar=9200:/usr/share/jmx_exporter/kafka-broker.yml}
 
       # Supprimé avec ZooKeeper / Control Center :
       #   KAFKA_ZOOKEEPER_CONNECT, KAFKA_BROKER_ID,

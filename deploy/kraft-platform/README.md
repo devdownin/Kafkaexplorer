@@ -4,9 +4,8 @@ Migration de la stack `cp-kafka:7.9.2` + ZooKeeper vers **Confluent Platform 8.3
 (= Apache Kafka 4.2), en mode KRaft**, sans ZooKeeper.
 
 ```bash
-cp .env.example .env                              # ajuster REGISTRY / KAFKA_EXTERNAL_HOST
-curl -sSLo jmx-exporter/jmx_prometheus_javaagent-0.20.0.jar \
-  https://repo1.maven.org/maven2/io/prometheus/jmx/jmx_prometheus_javaagent/0.20.0/jmx_prometheus_javaagent-0.20.0.jar
+cp .env.example .env       # ajuster REGISTRY / KAFKA_EXTERNAL_HOST
+./fetch-jmx-agent.sh       # OBLIGATOIRE : sans le jar, la JVM du broker ne démarre pas
 
 docker compose up -d                              # broker + ksqlDB + AKHQ + REST
 docker compose --profile observability up -d      # + Prometheus + Grafana
@@ -199,7 +198,52 @@ upstream est hors du périmètre GitHub de cette session, donc ce point n'est pa
 vérifié ici — sans enjeu pratique, un client Kafka ≥ 2.1 suffit à parler à un
 broker 4.x, et AKHQ est très au-delà de ce plancher depuis longtemps.
 
-## 6. Points restants à décider
+## 6. Le broker ne démarre pas
+
+```bash
+docker compose ps                                  # état + code de sortie
+docker compose logs --no-color --tail=100 kafka-00 # la cause est dans les 30 premières lignes
+docker compose config                              # ce que compose a réellement interpolé
+```
+
+Par ordre de fréquence, avec la signature à chercher dans les logs :
+
+| Signature | Cause | Correctif |
+|---|---|---|
+| `Error opening zip file or JAR manifest missing : /usr/share/jmx_exporter/…` — le conteneur sort en quelques secondes, aucun log Kafka | Le jar de l'agent JMX est absent de `./jmx-exporter/` (il n'est pas versionné). La JVM échoue sur `-javaagent` avant de lire quoi que ce soit. | `./fetch-jmx-agent.sh`, ou `KAFKA_JMX_AGENT_OPTS=` (vide) dans `.env` pour démarrer sans métriques |
+| `The Cluster ID … doesn't match stored clusterId … in meta.properties` | `CLUSTER_ID` a changé après le formatage du volume (typiquement : premier `up` sans `.env`, puis ajout du `.env`) | remettre l'identifiant d'origine, ou repartir à neuf : `docker compose down -v` |
+| `Permission denied` / `Error while writing to checkpoint file` sur `/var/lib/kafka/data` | Le volume nommé n'appartient pas à l'utilisateur de l'image | vérifier que `kafka-00-data-init` s'est terminé en code 0 : `docker compose logs kafka-00-data-init` |
+| `Bind for 0.0.0.0:9200 failed: port is already allocated` (erreur de compose, pas de Kafka) | 9200 est aussi le port par défaut d'Elasticsearch | changer le mapping hôte : `- "19200:9200"` |
+| Le broker boucle sur des tentatives de connexion au quorum, ou les clients ne résolvent rien | Le service a été **renommé** sans propager le nom | voir ci-dessous |
+| `java.lang.OutOfMemoryError` au démarrage | 512 Mo trop juste en mode combiné avec beaucoup de partitions | `KAFKA_HEAP_OPTS: '-Xmx1G -Xms1G'` |
+
+### Renommer le broker
+
+Le nom du service est utilisé comme **hostname réseau** : le renommer sans
+propager laisse le nœud incapable de joindre son propre quorum, et les clients
+incapables de le résoudre. Sept endroits, tous à changer ensemble :
+
+```
+docker-compose.yml   service kafka-00, hostname, container_name
+                     KAFKA_CONTROLLER_QUORUM_VOTERS   0@<nom>:9093
+                     KAFKA_ADVERTISED_LISTENERS       INTERNAL://<nom>:29092
+                     KSQL_BOOTSTRAP_SERVERS           <nom>:29092
+                     KAFKA_REST_BOOTSTRAP_SERVERS     <nom>:29092
+                     AKHQ_CONFIGURATION → bootstrap.servers "<nom>:29092"
+                     SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS
+prometheus/config/prometheus.yml   targets ["<nom>:9200"]
+```
+
+`KAFKA_NODE_ID` et l'identifiant dans `CONTROLLER_QUORUM_VOTERS` (`0@…`) doivent
+rester cohérents entre eux, mais ils n'ont pas à suivre le nom : un nœud nommé
+`kafka-09` peut parfaitement porter `KAFKA_NODE_ID: 0`. S'il porte `9`, alors le
+quorum s'écrit `9@kafka-09:9093`.
+
+Attention : changer `KAFKA_NODE_ID` sur un volume **déjà formaté** échoue
+(`Stored node id … doesn't match`). Renommer se fait sur un volume neuf, ou avec
+un `docker compose down -v`.
+
+## 7. Points restants à décider
 
 * **ksqlDB** est en mode maintenance chez Confluent (l'investissement va vers
   Flink) — l'image CLI figée en 8.0.x le confirme assez nettement. Il est
