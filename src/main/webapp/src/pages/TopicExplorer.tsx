@@ -1091,7 +1091,9 @@ const TopicExplorer: React.FC = () => {
     () => (criteria.mode === 'FIELD' ? valuesAtPath(data?.samples ?? [], criteria.field) : []),
     [criteria.mode, criteria.field, data]);
   const announcement = announceResult(searching, coverage, ranCriteria, hits.length);
-  displayedMessagesRef.current = displayedMessages;
+  // Écrire la ref pendant le rendu marche, mais c'est un effet de bord dans une fonction qui
+  // doit rester pure — et `react-hooks/refs` a raison de le dire.
+  useEffect(() => { displayedMessagesRef.current = displayedMessages; }, [displayedMessages]);
   /** Le hit ouvert en vue tableau, retrouvé par son rang : un index ne survivrait pas au tri. */
   const selectedHit = useMemo(
     () => displayedMessages.find(message => message.rank === selectedRank) ?? null,

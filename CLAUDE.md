@@ -99,7 +99,7 @@ cd src/main/webapp
 npm install          # Install dependencies
 npm run dev          # Dev server with hot reload (proxies /api to localhost:8080)
 npm run build        # Production build (tsc + vite) → src/main/resources/static/
-npm run lint         # ESLint (TS/TSX, --max-warnings 0)
+npm run lint         # ESLint (flat config, --max-warnings 0)
 npm test             # Vitest (jsdom + @testing-library/react); test:watch for watch mode
 ```
 
@@ -288,6 +288,8 @@ The SPA lives in `src/main/webapp/src/`. Stack: React 19 + TypeScript + Vite + T
 - `ProcessMining` (`/process-mining`) — 4-step pipeline: topic selection → Claude profiling → schema validation → snapshot/live analysis with Mermaid flowchart + anomaly table. Sub-components in `components/processmining/`
 
 The live status bar (`components/processmining/LiveStatusBar.tsx`) renders the `WINDOW_STATS` ingestion counters — volume read, distinct payload structures, messages dropped to backpressure, unparsed payloads — so an operator can see that big payloads are being sampled rather than silently lost.
+
+**Lint** — ESLint 10 in flat config (`eslint.config.js`; `.eslintrc` is no longer read, and `--ext` no longer exists — the `files` of each block decide which extensions are covered). `eslint-plugin-react-hooks` 7 adds a React-Compiler rule family to its recommended set: it reports 36 occurrences across a dozen files (21 `set-state-in-effect`, 5 `refs`, 4 `static-components`, 3 `preserve-manual-memoization`, 2 `purity`, 1 `immutability`). Those rules are explicitly switched off **with their counts** rather than drowned in a raised `--max-warnings`, because clearing them means restructuring effects one by one — a piece of work, not the side effect of a version bump. `rules-of-hooks` and `exhaustive-deps`, which catch real defects, stay errors.
 
 **Tests** — Vitest + `@testing-library/react` on jsdom (`src/test/setup.ts`): `navigation.test.ts`, `components/ui/ui.test.tsx`, `forms.test.tsx`, `ConfirmDialog.test.tsx`, `ScrollList.test.tsx`, `useVirtualRows.test.ts`, `pages/queryError.test.ts`, `pages/sqlScope.test.ts`, `pages/windowSql.test.ts`, `pages/resultExport.test.ts`, `pages/streamFlow.test.ts`, `components/topic/topicSearch.test.ts`. Run with `npm test`.
 
