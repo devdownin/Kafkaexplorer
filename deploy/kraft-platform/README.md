@@ -192,6 +192,32 @@ fonctionne.
 
 C'est un signe de plus du statut de ksqlDB chez Confluent (cf. point suivant).
 
+### Agent jmx_exporter : 1.6.0, et il ne se télécharge plus au même endroit
+
+`./fetch-jmx-agent.sh` récupère **1.6.0** (2026-06-07), et non plus la 0.20.0 de
+l'ancienne stack. Le jar ne vient plus de Maven Central : depuis que l'agent est
+shadé (1.2.0), il n'est publié que comme **asset de release GitHub**. Sur Maven
+Central, `io.prometheus.jmx:jmx_prometheus_javaagent` s'arrête à 1.0.1, alors que
+le reste du projet (`collector`, entre autres) y est bien publié jusqu'en
+1.6.0 — de quoi conclure à tort que 1.0.1 est la dernière version. Le script
+choisit la bonne source selon la version demandée, et `AGENT_BASE_URL=` permet de
+pointer un miroir interne si GitHub est filtré. Le jar est passé de 577 Ko à
+10,7 Mo, effet du shading.
+
+`kafka-broker.yml` a été chargé **réellement** par les deux agents pour le
+vérifier : parsing sans erreur, `jmx_scrape_error = 0`, et les règles maison
+produisent bien leurs séries. Deux points relevés à cette occasion :
+
+* **Le suffixe `_total` est rabotté par la 1.x.** Une règle nommée
+  `probe_requests_total` ressort en `probe_requests` sur la 1.6.0, là où la
+  0.20.x conservait le nom. `_count` est en revanche préservé par les deux, ce
+  qui vaut pour `…metadata_apply_error_count` utilisé dans les alertes. Aucune
+  règle de ce fichier n'utilise `_total`, mais un dashboard Grafana existant
+  bâti sur des noms en `_total` issus d'une 0.x est à vérifier.
+* **Deux règles GC maison ne produisaient rien**, sur les deux agents — l'agent
+  expose déjà `jvm_gc_collection_seconds_{count,sum}` par collecteur via ses
+  métriques JVM intégrées. Elles ont été retirées.
+
 Un mot sur AKHQ : `0.27.1` est bien la dernière version publiée. Les notes de
 release ne détaillent pas la version de `kafka-clients` embarquée et le dépôt
 upstream est hors du périmètre GitHub de cette session, donc ce point n'est pas
@@ -254,6 +280,5 @@ un `docker compose down -v`.
   le service et d'allonger `KAFKA_CONTROLLER_QUORUM_VOTERS`.
 * **Aucune authentification** (PLAINTEXT partout, Grafana en anonyme Admin) —
   identique à l'ancienne stack, à réserver à un réseau fermé.
-* **Agent JMX en 0.20.0**, comme avant. La ligne maintenue est la 1.x : déposer
-  le jar dans `jmx-exporter/` et changer `JMX_AGENT_JAR` dans `.env` suffit, la
-  configuration `kafka-broker.yml` fournie est valide pour les deux.
+* **Agent JMX en 1.6.0**, et non plus la 0.20.0 de l'ancienne stack — voir
+  ci-dessous, la mise à jour n'est pas neutre sur les dashboards existants.

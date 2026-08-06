@@ -49,7 +49,7 @@ services:
     environment:
       # Exactement la valeur passée au broker : ce qui est vérifié ici est ce
       # qui sera réellement chargé.
-      KAFKA_JMX_AGENT_OPTS: ${KAFKA_JMX_AGENT_OPTS--javaagent:/usr/share/jmx_exporter/jmx_prometheus_javaagent-0.20.0.jar=9200:/usr/share/jmx_exporter/kafka-broker.yml}
+      KAFKA_JMX_AGENT_OPTS: ${KAFKA_JMX_AGENT_OPTS--javaagent:/usr/share/jmx_exporter/jmx_prometheus_javaagent-1.6.0.jar=9200:/usr/share/jmx_exporter/kafka-broker.yml}
     entrypoint: ["sh", "/opt/preflight.sh"]
     networks:
       - dip
@@ -136,7 +136,7 @@ services:
       # Sans lui la JVM ne démarre pas du tout — « Error opening zip file or JAR
       # manifest missing » — et le conteneur sort immédiatement en code 1.
       # Pour démarrer sans métriques : KAFKA_JMX_AGENT_OPTS= (vide) dans .env.
-      KAFKA_OPTS: ${KAFKA_JMX_AGENT_OPTS--javaagent:/usr/share/jmx_exporter/jmx_prometheus_javaagent-0.20.0.jar=9200:/usr/share/jmx_exporter/kafka-broker.yml}
+      KAFKA_OPTS: ${KAFKA_JMX_AGENT_OPTS--javaagent:/usr/share/jmx_exporter/jmx_prometheus_javaagent-1.6.0.jar=9200:/usr/share/jmx_exporter/kafka-broker.yml}
 
       # Supprimé avec ZooKeeper / Control Center :
       #   KAFKA_ZOOKEEPER_CONNECT, KAFKA_BROKER_ID,
