@@ -210,9 +210,9 @@ Par ordre de fréquence, avec la signature à chercher dans les logs :
 
 | Signature | Cause | Correctif |
 |---|---|---|
-| `Error opening zip file or JAR manifest missing : /usr/share/jmx_exporter/…` — le conteneur sort en quelques secondes, aucun log Kafka | Le jar de l'agent JMX est absent de `./jmx-exporter/` (il n'est pas versionné). La JVM échoue sur `-javaagent` avant de lire quoi que ce soit. | `./fetch-jmx-agent.sh`, ou `KAFKA_JMX_AGENT_OPTS=` (vide) dans `.env` pour démarrer sans métriques |
+| `ERREUR — agent Prometheus introuvable : …` (émis par `kafka-00-preflight`, `kafka-00` ne démarre pas) | Le jar de l'agent JMX est absent de `./jmx-exporter/` — il n'est pas versionné. Sans le préflight, la JVM échouerait sur `-javaagent` avec un `Error opening zip file or JAR manifest missing`, et le conteneur sortirait en code 1 **sans un seul log Kafka**. | `./fetch-jmx-agent.sh`, ou `KAFKA_JMX_AGENT_OPTS=` (vide) dans `.env` pour démarrer sans métriques |
 | `The Cluster ID … doesn't match stored clusterId … in meta.properties` | `CLUSTER_ID` a changé après le formatage du volume (typiquement : premier `up` sans `.env`, puis ajout du `.env`) | remettre l'identifiant d'origine, ou repartir à neuf : `docker compose down -v` |
-| `Permission denied` / `Error while writing to checkpoint file` sur `/var/lib/kafka/data` | Le volume nommé n'appartient pas à l'utilisateur de l'image | vérifier que `kafka-00-data-init` s'est terminé en code 0 : `docker compose logs kafka-00-data-init` |
+| `Permission denied` / `Error while writing to checkpoint file` sur `/var/lib/kafka/data` | Le volume nommé n'appartient pas à l'utilisateur de l'image | vérifier que `kafka-00-preflight` s'est terminé en code 0 : `docker compose logs kafka-00-preflight` |
 | `Bind for 0.0.0.0:9200 failed: port is already allocated` (erreur de compose, pas de Kafka) | 9200 est aussi le port par défaut d'Elasticsearch | changer le mapping hôte : `- "19200:9200"` |
 | Le broker boucle sur des tentatives de connexion au quorum, ou les clients ne résolvent rien | Le service a été **renommé** sans propager le nom | voir ci-dessous |
 | `java.lang.OutOfMemoryError` au démarrage | 512 Mo trop juste en mode combiné avec beaucoup de partitions | `KAFKA_HEAP_OPTS: '-Xmx1G -Xms1G'` |

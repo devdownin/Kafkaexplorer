@@ -31,25 +31,26 @@ services:
   #  CLUSTER 1 — nœud unique combiné broker + controller (KRaft)
   # ══════════════════════════════════════════════════════════════════════════
 
-  # Docker crée un volume nommé vide appartenant à root, alors que l'image CP
-  # tourne en `appuser` (uid 1000). One-shot, avant le broker.
-  kafka-00-data-init:
+  # One-shot avant le broker, deux rôles :
+  #
+  #  1. Docker crée un volume nommé vide appartenant à root, alors que l'image
+  #     CP tourne en `appuser` (uid 1000) — d'où le chown.
+  #  2. Vérifier que le jar de l'agent JMX est bien là. Sans lui la JVM du
+  #     broker meurt sur `-javaagent` avant d'écrire la moindre ligne de log :
+  #     un « fail to start » sans aucun message Kafka pour l'expliquer. Le dire
+  #     ici coûte trois lignes et rend le diagnostic immédiat.
+  kafka-00-preflight:
     image: ${REGISTRY:-nx-repo.vinci-autoroutes.com/docker-group}/confluentinc/cp-kafka:${CONFLUENT_VERSION:-8.3.0}
     user: root
     volumes:
       - kafka-00-kraft-data:/var/lib/kafka/data
-    # Repli sur l'uid 1000 si le compte `appuser` venait à changer de nom dans
-    # une future image : un `chown: invalid user` ferait échouer ce one-shot, et
-    # `kafka-00` refuserait alors de démarrer sur une dépendance en erreur.
-    entrypoint:
-      - sh
-      - -c
-      - |
-        if id -u appuser >/dev/null 2>&1; then
-          chown -R appuser:appuser /var/lib/kafka/data
-        else
-          chown -R 1000:1000 /var/lib/kafka/data
-        fi
+      - ./jmx-exporter:/usr/share/jmx_exporter:ro
+      - ./preflight.sh:/opt/preflight.sh:ro
+    environment:
+      # Exactement la valeur passée au broker : ce qui est vérifié ici est ce
+      # qui sera réellement chargé.
+      KAFKA_JMX_AGENT_OPTS: ${KAFKA_JMX_AGENT_OPTS--javaagent:/usr/share/jmx_exporter/jmx_prometheus_javaagent-0.20.0.jar=9200:/usr/share/jmx_exporter/kafka-broker.yml}
+    entrypoint: ["sh", "/opt/preflight.sh"]
     networks:
       - dip
 
@@ -67,7 +68,7 @@ services:
       # strictement interne au quorum KRaft. L'exposer = exposer le plan de
       # contrôle du cluster.
     depends_on:
-      kafka-00-data-init:
+      kafka-00-preflight:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 > /dev/null 2>&1"]
