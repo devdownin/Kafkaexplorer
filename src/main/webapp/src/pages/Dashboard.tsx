@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { useToast } from '../components/Toast';
@@ -34,6 +34,47 @@ interface DashboardData {
   topicLastMessages: Record<string, number | null>;
 }
 
+/**
+ * En-tête de colonne triable. Défini au niveau du module : à l'intérieur du composant, chaque
+ * rendu en créait un *type* neuf, que React démonte et remonte au lieu de le mettre à jour.
+ */
+const SortButton: React.FC<{
+  k: SortKey;
+  sortKey: SortKey;
+  sortDir: SortDir;
+  onToggle: (k: SortKey) => void;
+  className?: string;
+  children: React.ReactNode;
+}> = ({ k, sortKey, sortDir, onToggle, className, children }) => (
+  <button
+    onClick={() => onToggle(k)}
+    className={`flex items-center gap-1 hover:text-on-surface transition-colors ${className ?? ''}`}
+  >
+    {children}
+    {sortKey !== k ? (
+      <span className="material-symbols-outlined text-[15px] opacity-30">unfold_more</span>
+    ) : sortDir === 'asc' ? (
+      <span className="material-symbols-outlined text-[15px] text-primary">arrow_upward</span>
+    ) : (
+      <span className="material-symbols-outlined text-[15px] text-primary">arrow_downward</span>
+    )}
+  </button>
+);
+
+/**
+ * « il y a 5 min » se calcule depuis un instant de référence *passé en paramètre* : appeler
+ * `Date.now()` en plein rendu rend celui-ci impur, et fait dépendre l'affichage du moment où
+ * React a choisi de re-rendre plutôt que de la fraîcheur des données.
+ */
+function formatLastMessage(ts: number | null | undefined, now: number): string {
+  if (!ts) return '—';
+  const diff = now - ts;
+  if (diff < 60_000) return '< 1 min ago';
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} min ago`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+  return new Date(ts).toLocaleDateString(undefined, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
 const Dashboard: React.FC = () => {
   const { toast } = useToast();
   const confirm = useConfirm();
@@ -49,15 +90,18 @@ const Dashboard: React.FC = () => {
   const [killingJob, setKillingJob] = useState<string | null>(null);
   const [hideEmpty, setHideEmpty] = useState(false);
   const [hideDlt, setHideDlt] = useState(false);
-  // Topic count from the previous visit, read once on mount. Reading/writing
-  // localStorage during render overwrote the baseline on every re-render (every
-  // 5s poll), so the "since last visit" trend always showed "No change".
-  const previousVisitTopicCount = useRef<number | null>(null);
-
-  useEffect(() => {
+  /**
+   * Compte des topics à la visite précédente, lu une seule fois. C'était une ref écrite dans un
+   * effet et lue pendant le rendu — un état à initialisation paresseuse dit la même chose sans
+   * lire une ref là où elle n'a pas encore de valeur. (Le relire à chaque rendu écrasait la
+   * référence à chaque sondage de 5 s, et la tendance affichait toujours « No change ».)
+   */
+  const [previousVisitTopicCount] = useState<number | null>(() => {
     const stored = localStorage.getItem(TOPIC_COUNT_KEY);
-    previousVisitTopicCount.current = stored !== null ? Number(stored) : null;
-  }, []);
+    return stored !== null ? Number(stored) : null;
+  });
+  /** Instant de la dernière réponse : c'est lui qui date les « il y a 5 min », pas le rendu. */
+  const [fetchedAt, setFetchedAt] = useState(() => Date.now());
 
   useEffect(() => {
     if (data) {
@@ -80,34 +124,55 @@ const Dashboard: React.FC = () => {
     return 'neutral';
   };
 
-  const fetchData = async (silent = false) => {
-    if (!silent) {
-      setLoading(true);
-      setError(null);
-    }
+  /**
+   * @param showSpinner remet la page en chargement *avant* l'appel — réservé à une relance
+   *   manuelle. Le premier chargement ne le fait pas : la page démarre déjà en `loading`, et
+   *   poser un état en plein corps d'effet déclenche un rendu en cascade avant la première peinture.
+   * @param reportErrors faux pour le sondage de fond : un aller-retour raté en tâche de fond ne
+   *   doit pas remplacer l'écran par une bannière d'erreur.
+   */
+  /** Le chargement lui-même : rien n'y est posé avant le premier `await`. */
+  const loadDashboard = async (reportErrors: boolean) => {
     try {
       const response = await axios.get('/api/dashboard');
       setData(response.data);
-      if (!silent) {
+      // `loadDashboard` ne tourne que depuis un effet ou un gestionnaire, jamais pendant le
+      // rendu — ce que la règle, qui raisonne sur la portée du composant, ne peut pas voir.
+      // eslint-disable-next-line react-hooks/purity -- appelé hors rendu
+      setFetchedAt(Date.now());
+      if (reportErrors) {
         setError(null);
       }
     } catch {
-      if (!silent) {
+      if (reportErrors) {
         setError('Failed to fetch dashboard data');
       }
     } finally {
-      if (!silent) {
-        setLoading(false);
-      }
+      setLoading(false);
     }
   };
 
+  const fetchData = ({ showSpinner = false, reportErrors = true } = {}) => {
+    if (showSpinner) {
+      setLoading(true);
+      setError(null);
+    }
+    return loadDashboard(reportErrors);
+  };
+
   useEffect(() => {
-    fetchData();
+    /*
+     * Charger au montage *est* un effet, et il finit forcément par poser un état : la règle ne
+     * peut pas être satisfaite en restructurant, seulement en confiant le chargement à une
+     * bibliothèque de données ou à Suspense — une réarchitecture, pas une correction de lint.
+     * L'exception est donc posée ici, à l'endroit qu'elle concerne, plutôt qu'éteinte partout.
+     */
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- chargement initial
+    void loadDashboard(true);
 
     const refresh = () => {
       if (document.visibilityState === 'visible') {
-        fetchData(true);
+        void loadDashboard(false);
       }
     };
 
@@ -130,7 +195,7 @@ const Dashboard: React.FC = () => {
       <TableSkeleton rows={8} columns={5} />
     </div>
   );
-  if (error || !data) return <ErrorBanner message={error ?? 'Failed to load dashboard'} onRetry={fetchData} />;
+  if (error || !data) return <ErrorBanner message={error ?? 'Failed to load dashboard'} onRetry={() => void fetchData({ showSpinner: true })} />;
 
   const getState = (topic: string) =>
     data.topicSizes[topic] === 0 ? 'empty'
@@ -180,7 +245,7 @@ const Dashboard: React.FC = () => {
     try {
       await axios.post(`/api/query/jobs/${jobId}/cancel`);
       toast('Job cancelled', 'success');
-      fetchData(true);
+      void fetchData({ reportErrors: false });
     } catch {
       toast('Failed to cancel job', 'error');
     } finally {
@@ -193,19 +258,6 @@ const Dashboard: React.FC = () => {
     setPage(0);
   };
 
-  const SortButton = ({ k, children, className }: { k: SortKey; children: React.ReactNode; className?: string }) => (
-    <button onClick={() => toggleSort(k)} className={`flex items-center gap-1 hover:text-on-surface transition-colors ${className ?? ''}`}>
-      {children}
-      {sortKey !== k ? (
-        <span className="material-symbols-outlined text-[15px] opacity-30">unfold_more</span>
-      ) : sortDir === 'asc' ? (
-        <span className="material-symbols-outlined text-[15px] text-primary">arrow_upward</span>
-      ) : (
-        <span className="material-symbols-outlined text-[15px] text-primary">arrow_downward</span>
-      )}
-    </button>
-  );
-
   // Page number list (show max 7 buttons)
   const pageNumbers = (() => {
     if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i);
@@ -214,23 +266,13 @@ const Dashboard: React.FC = () => {
     return [0, -1, page - 1, page, page + 1, -2, totalPages - 1];
   })();
 
-  const prevCount = previousVisitTopicCount.current ?? data.topics.length;
+  const prevCount = previousVisitTopicCount ?? data.topics.length;
   const topicDiff = data.topics.length - prevCount;
   const topicTrend = topicDiff > 0 ? `+${topicDiff} since last visit`
                    : topicDiff < 0 ? `${topicDiff} since last visit`
                    : 'No change since last visit';
 
   const activeJobCount = data.jobs.length;
-
-  function formatLastMessage(ts: number | null | undefined): string {
-    if (!ts) return '—';
-    const now = Date.now();
-    const diff = now - ts;
-    if (diff < 60_000) return '< 1 min ago';
-    if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} min ago`;
-    if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
-    return new Date(ts).toLocaleDateString(undefined, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
-  }
 
   function formatCount(num: number) {
     if (num >= 1000000000) return (num / 1000000000).toFixed(1) + 'B';
@@ -252,7 +294,7 @@ const Dashboard: React.FC = () => {
         title="Dashboard"
         description="Live overview of your Kafka cluster — topics, throughput and running Flink jobs."
         actions={
-          <Button variant="secondary" icon="refresh" onClick={() => fetchData()}>Refresh</Button>
+          <Button variant="secondary" icon="refresh" onClick={() => void fetchData({ showSpinner: true })}>Refresh</Button>
         }
       />
 
@@ -349,10 +391,10 @@ const Dashboard: React.FC = () => {
         <Table>
           <TableHead>
             <tr>
-              <Th className="w-1/2"><SortButton k="name">Topic Name</SortButton></Th>
-              <Th><SortButton k="size">Messages</SortButton></Th>
-              <Th><SortButton k="state">State</SortButton></Th>
-              <Th><SortButton k="lastMessage">Last Message</SortButton></Th>
+              <Th className="w-1/2"><SortButton k="name" sortKey={sortKey} sortDir={sortDir} onToggle={toggleSort}>Topic Name</SortButton></Th>
+              <Th><SortButton k="size" sortKey={sortKey} sortDir={sortDir} onToggle={toggleSort}>Messages</SortButton></Th>
+              <Th><SortButton k="state" sortKey={sortKey} sortDir={sortDir} onToggle={toggleSort}>State</SortButton></Th>
+              <Th><SortButton k="lastMessage" sortKey={sortKey} sortDir={sortDir} onToggle={toggleSort}>Last Message</SortButton></Th>
               <Th className="text-right">Actions</Th>
             </tr>
           </TableHead>
@@ -367,7 +409,7 @@ const Dashboard: React.FC = () => {
                 <Td className="text-on-surface-variant tabular-nums">{(data.topicSizes[topic] ?? 0).toLocaleString()}</Td>
                 <Td>{stateBadge(getState(topic))}</Td>
                 <Td className="text-on-surface-variant tabular-nums" title={data.topicLastMessages?.[topic] ? new Date(data.topicLastMessages[topic]!).toLocaleString() : undefined}>
-                  {formatLastMessage(data.topicLastMessages?.[topic])}
+                  {formatLastMessage(data.topicLastMessages?.[topic], fetchedAt)}
                 </Td>
                 <Td className="text-right">
                   <Link to={`/topic/${topic}`} className="inline-flex text-on-surface-variant hover:text-primary transition-colors" title="Explore topic" aria-label={`Explore ${topic}`}>

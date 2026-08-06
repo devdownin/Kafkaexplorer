@@ -252,6 +252,7 @@ const Lineage: React.FC = () => {
   }, [connectedOnly]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- chargement du graphe
     fetchLineage();
     return () => abortRef.current?.abort();
   }, [fetchLineage]);

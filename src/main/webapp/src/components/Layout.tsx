@@ -106,12 +106,12 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
         </main>
       </div>
 
-      <CommandPalette
-        open={paletteOpen}
+      {/* Montée seulement ouverte : le remontage remet la recherche à zéro, sans effet dédié. */}
+      {paletteOpen && <CommandPalette
         onClose={() => setPaletteOpen(false)}
         topics={searchTopics}
         tables={searchTables}
-      />
+      />}
     </div>
   );
 };

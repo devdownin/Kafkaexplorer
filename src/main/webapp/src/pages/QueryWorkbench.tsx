@@ -337,7 +337,14 @@ const QueryWorkbench: React.FC = () => {
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [showErrorDetails, setShowErrorDetails] = useState(false);
-  useEffect(() => { setShowErrorDetails(false); }, [results, panelError]);
+  // Une nouvelle erreur (ou un nouveau résultat) referme le détail : ajusté pendant le rendu,
+  // le motif documenté pour un état dérivé, plutôt qu'un effet qui laissait le détail de
+  // l'erreur précédente ouvert le temps d'un rendu.
+  const [errorSource, setErrorSource] = useState<unknown>(null);
+  if (errorSource !== (panelError ?? results)) {
+    setErrorSource(panelError ?? results);
+    setShowErrorDetails(false);
+  }
 
   const sortedRows = useMemo(() => {
     if (!results?.rows || !sortCol) return results?.rows ?? [];
@@ -346,7 +353,7 @@ const QueryWorkbench: React.FC = () => {
       const cmp = va.localeCompare(vb, undefined, { numeric: true });
       return sortDir === 'asc' ? cmp : -cmp;
     });
-  }, [results?.rows, sortCol, sortDir]);
+  }, [results, sortCol, sortDir]);
 
   // Erreur classée (titre lisible + piste + position) — voir queryError.ts.
   // Une requête rejetée avant exécution (mode, validateur backend) passe par le même
@@ -357,7 +364,7 @@ const QueryWorkbench: React.FC = () => {
     if (!info) return null;
     // Ramène la position dans le repère du document quand seule la sélection a été exécutée.
     return { ...info, location: offsetLocation(info.location, runOrigin ?? undefined) };
-  }, [panelError, results?.error, runOrigin]);
+  }, [panelError, results, runOrigin]);
 
   // Le résultat bute sur son propre plafond → il est probablement incomplet.
   const truncated = !!results && !results.error && results.rows.length >= resultLimit;
@@ -388,16 +395,18 @@ const QueryWorkbench: React.FC = () => {
     }] : []);
   }, [monaco, queryError]);
 
-  // Efface le marqueur et le rejet pré-vol dès que l'utilisateur édite le SQL :
-  // ils pointeraient sinon une position et une requête devenues obsolètes.
-  useEffect(() => {
+  /**
+   * Toute modification du SQL passe par ici. Le marqueur d'erreur et le rejet pré-vol désignent
+   * une position et une requête qui n'existent déjà plus à la première frappe : ils s'effacent
+   * donc *avec* l'édition, au lieu d'être rattrapés par un effet au rendu suivant.
+   */
+  const updateSql = useCallback((next: string) => {
+    setSql(next);
     setPanelError(null);
     setRunOrigin(null);
-    if (!monaco || !editorRef.current) return;
-    const model = editorRef.current.getModel();
-    if (model) monaco.editor.setModelMarkers(model, 'kse-sql-error', []);
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- se déclenche à chaque édition du SQL
-  }, [sql]);
+    const model = editorRef.current?.getModel();
+    if (monaco && model) monaco.editor.setModelMarkers(model, 'kse-sql-error', []);
+  }, [monaco, setSql]);
 
   // ── Virtualisation de la grille de résultats ────────────────────────────────
   const resultsScrollRef = useRef<HTMLDivElement>(null);
@@ -482,9 +491,6 @@ const QueryWorkbench: React.FC = () => {
   // d'être.
 
   // ── Actions ───────────────────────────────────────────────────────────────────
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- fetch once on mount
-  useEffect(() => { fetchSchema(); }, []);
-
   const fetchSchema = async () => {
     setSchemaLoading(true);
     try {
@@ -639,7 +645,8 @@ const QueryWorkbench: React.FC = () => {
       runningQueryIdRef.current = null;
     }
   };
-  runQueryRef.current = runQuery;
+  // Idem : la ref se met à jour dans un effet, pas au milieu du rendu.
+  useEffect(() => { runQueryRef.current = runQuery; });
 
   /**
    * Arrête la requête en cours. Deux effets distincts, et seul le premier est garanti :
@@ -714,7 +721,7 @@ const QueryWorkbench: React.FC = () => {
     const editor = editorRef.current;
     const selection = editor?.getSelection();
     if (!editor || !selection) {
-      setSql(sql ? `${sql}\n\n${generated}` : generated);
+      updateSql(sql ? `${sql}\n\n${generated}` : generated);
       toast('Window query appended', 'success');
       return;
     }
@@ -760,7 +767,7 @@ const QueryWorkbench: React.FC = () => {
                 Copy
               </Button>
               <Button variant="primary" size="sm" icon="edit_note" disabled={!ddlPreview}
-                onClick={() => { if (ddlPreview) { setSql(ddlPreview); setDdlPreviewTopic(null); toast('DDL inserted in editor', 'success'); } }}>
+                onClick={() => { if (ddlPreview) { updateSql(ddlPreview); setDdlPreviewTopic(null); toast('DDL inserted in editor', 'success'); } }}>
                 Insert in editor
               </Button>
             </div>
@@ -811,7 +818,7 @@ const QueryWorkbench: React.FC = () => {
                         <span className={`material-symbols-outlined text-xs text-on-surface-variant transition-transform duration-200 shrink-0 ${expandedTables[table] ? 'rotate-90' : ''}`}>chevron_right</span>
                         <span className="text-xs text-on-surface truncate font-mono">{table}</span>
                       </div>
-                      <button onClick={() => setSql(`SELECT * FROM ${table} LIMIT 50`)}
+                      <button onClick={() => updateSql(`SELECT * FROM ${table} LIMIT 50`)}
                         className="opacity-0 group-hover/tbl:opacity-100 text-outline hover:text-primary transition-all shrink-0 ml-1" title="SELECT from this table">
                         <span className="material-symbols-outlined text-sm">play_arrow</span>
                       </button>
@@ -851,7 +858,7 @@ const QueryWorkbench: React.FC = () => {
                   <ScrollList count={schema?.topics.length ?? 0} className="space-y-0.5">
                     {schema?.topics.map(topic => (
                       <div key={topic} className="flex items-center py-1 px-2 rounded hover:bg-primary/5 transition-colors group/topic">
-                        <div onClick={() => setSql(`SELECT * FROM ${topic.replace(/[.-]/g, '_')} LIMIT 50`)} className="flex-1 min-w-0 cursor-pointer">
+                        <div onClick={() => updateSql(`SELECT * FROM ${topic.replace(/[.-]/g, '_')} LIMIT 50`)} className="flex-1 min-w-0 cursor-pointer">
                           <span className="text-xs text-on-surface-variant hover:text-primary font-mono truncate block">{topic}</span>
                         </div>
                         <button onClick={e => { e.stopPropagation(); fetchDdlPreview(topic); }}
@@ -984,7 +991,7 @@ const QueryWorkbench: React.FC = () => {
                   </div>
                   {history.length === 0 ? <p className="p-4 text-[12px] text-outline">No history yet</p>
                     : history.map((h, i) => (
-                      <button key={i} onClick={() => { setSql(h.sql); setShowHistory(false); }}
+                      <button key={i} onClick={() => { updateSql(h.sql); setShowHistory(false); }}
                         className="w-full text-left px-3 py-2 hover:bg-primary/10 border-b border-outline-variant/40 last:border-0 transition-colors">
                         <p className="font-mono text-[12px] text-on-surface truncate">{h.sql.replace(/\s+/g, ' ')}</p>
                         <p className="text-[11px] text-outline mt-0.5">{new Date(h.ts).toLocaleString()}</p>
@@ -1073,7 +1080,7 @@ const QueryWorkbench: React.FC = () => {
                   defaultLanguage="sql"
                   theme="vs-dark"
                   value={sql}
-                  onChange={val => setSql(val || '')}
+                  onChange={val => updateSql(val || '')}
                   onMount={editor => {
                     editorRef.current = editor;
                     // Le bouton doit annoncer ce qu'il va exécuter — tout l'onglet ou la sélection.

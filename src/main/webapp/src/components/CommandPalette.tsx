@@ -5,7 +5,6 @@ import { NAV_ITEMS, CONFIG_ITEM, HELP_ITEM } from '../navigation';
 import { buildTraceLinkForKey } from '../pages/streamFlow';
 
 interface CommandPaletteProps {
-  open: boolean;
   onClose: () => void;
   topics: string[];
   tables: string[];
@@ -27,22 +26,23 @@ interface Command {
  * pilotable au clavier (↑ ↓ Entrée Échap). Remplace la recherche inline du
  * header — une seule surface de recherche pour toute l'application.
  */
-const CommandPalette: FC<CommandPaletteProps> = ({ open, onClose, topics, tables }) => {
+const CommandPalette: FC<CommandPaletteProps> = ({ onClose, topics, tables }) => {
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
-  const [active, setActive] = useState(0);
+  const [rawActive, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
-  // Réinitialise à l'ouverture et donne le focus au champ.
+  /*
+   * La palette n'est montée que lorsqu'elle est ouverte (voir `Layout`), donc elle repart
+   * naturellement d'une saisie vide : c'est le remontage qui réinitialise, là où un effet devait
+   * remettre à zéro deux états à chaque ouverture. Il ne reste qu'à donner le focus, une fois le
+   * portail monté — ce qui ne pose aucun état.
+   */
   useEffect(() => {
-    if (open) {
-      setQuery('');
-      setActive(0);
-      // Laisse le temps au portail de se monter avant de focus.
-      requestAnimationFrame(() => inputRef.current?.focus());
-    }
-  }, [open]);
+    const frame = requestAnimationFrame(() => inputRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, []);
 
   const go = (path: string) => { navigate(path); onClose(); };
 
@@ -105,15 +105,15 @@ const CommandPalette: FC<CommandPaletteProps> = ({ open, onClose, topics, tables
     );
   }, [commands, query]);
 
-  // Garde l'index actif dans les bornes quand la liste change.
-  useEffect(() => { setActive(a => Math.min(a, Math.max(0, filtered.length - 1))); }, [filtered.length]);
+  // Borné à la lecture : la liste rétrécit en tapant, et corriger l'index par un effet coûtait
+  // un rendu de plus pour montrer, entre-temps, un surlignage hors de la liste.
+  const active = Math.min(rawActive, Math.max(0, filtered.length - 1));
 
   // Fait défiler l'élément actif dans la vue.
   useEffect(() => {
     listRef.current?.querySelector<HTMLElement>(`[data-idx="${active}"]`)?.scrollIntoView({ block: 'nearest' });
   }, [active]);
 
-  if (!open) return null;
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') { e.preventDefault(); setActive(a => Math.min(a + 1, filtered.length - 1)); }

@@ -85,7 +85,7 @@ const Cluster: React.FC = () => {
     }
   };
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- fetch once on mount
+  // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect -- chargement au montage
   useEffect(() => { fetchConfigs(); }, []);
 
   const getConfig = (key: string, defaultValue = '—') => configs.get(key) || defaultValue;

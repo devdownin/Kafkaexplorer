@@ -39,7 +39,12 @@ export const Combobox: FC<ComboboxProps> = ({
   const inputId = id ?? generatedId;
   const listId = `${inputId}-listbox`;
   const [open, setOpen] = useState(false);
-  const [active, setActive] = useState(-1);
+  /**
+   * Index surligné. Il est *borné à la lecture* plutôt que corrigé par un effet : la liste
+   * rétrécit en tapant, et remettre l'index dans ses bornes après coup coûtait un rendu de plus
+   * pour afficher, le temps de celui-ci, un surlignage sur du vide.
+   */
+  const [rawActive, setActive] = useState(-1);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
   const matches = useMemo(() => {
@@ -52,8 +57,7 @@ export const Combobox: FC<ComboboxProps> = ({
     return pool.slice(0, maxVisible);
   }, [options, value, maxVisible]);
 
-  // La liste rétrécit en tapant : garder un index au-delà surlignerait le vide.
-  useEffect(() => { setActive(a => Math.min(a, matches.length - 1)); }, [matches.length]);
+  const active = Math.min(rawActive, matches.length - 1);
 
   // Clic à l'extérieur : referme sans toucher à la valeur saisie.
   useEffect(() => {

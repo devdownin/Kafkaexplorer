@@ -51,6 +51,9 @@ interface MetricLabelPreview {
 }
 
 // ── Metric template metadata (mirrors the backend TEMPLATE_DESCRIPTORS) ──────
+/** Hauteurs de l'ornement affiché tant qu'aucune donnée n'est arrivée. */
+const PLACEHOLDER_BARS = [35, 58, 24, 71, 46, 88, 30, 62, 41, 77, 19, 54, 66, 28, 83, 37, 49, 74, 22, 60];
+
 const RAW_SQL = 'RAW_SQL';
 
 const DELTA_OPERATIONS: Array<{ value: string; label: string }> = [
@@ -486,8 +489,10 @@ const MetricCard: React.FC<{
         })() : (
           <div className="rounded-lg border border-outline-variant/60 bg-background-dark/60 h-24 flex flex-col items-center justify-center gap-1.5">
             <div className="flex items-end gap-0.5 h-6 opacity-20">
-              {Array.from({ length: 20 }).map((_, i) => (
-                <div key={i} className="w-1 bg-primary rounded-sm" style={{ height: `${Math.random() * 100}%` }} />
+              {/* Ornement « en attente » : des hauteurs fixes plutôt qu'un tirage au sort à
+                  chaque rendu, qui rendait le rendu impur et faisait frémir les barres. */}
+              {PLACEHOLDER_BARS.map((height, i) => (
+                <div key={i} className="w-1 bg-primary rounded-sm" style={{ height: `${height}%` }} />
               ))}
             </div>
             <span className="text-[10px] text-outline uppercase tracking-wider">Waiting for data…</span>
@@ -650,7 +655,7 @@ const Metrics: React.FC = () => {
   // Erreur de prévisualisation classée (titre lisible + piste) — voir queryError.ts.
   const previewError = useMemo(
     () => (previewResult?.error ? describeQueryError(previewResult.error) : null),
-    [previewResult?.error],
+    [previewResult],
   );
   const [templates, setTemplates]       = useState<MetricTemplateDescriptor[]>([]);
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
@@ -678,6 +683,7 @@ const Metrics: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- chargement au montage
     fetchMetrics();
     axios.get<Record<string, string[]>>('/api/metrics/metadata').then(r => setMetadata(r.data)).catch(() => { toast('Failed to load table metadata', 'error'); });
     axios.get<{ bootstrapServers: string }>('/api/config').then(r => {
@@ -694,6 +700,7 @@ const Metrics: React.FC = () => {
 
   useEffect(() => {
     if (!isModalOpen || !selectedTopic) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- prévisualisation demandée au serveur
       setLabelPreview(null);
       setLabelPreviewLoading(false);
       return;

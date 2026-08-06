@@ -377,8 +377,10 @@ const Audit: React.FC = () => {
 
   // L'historique vient de Kafka : il survit à un redémarrage, contrairement à /last. Rechargé
   // quand un run se termine, puisqu'il vient d'y ajouter une ligne.
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- chargement de l'historique
   useEffect(() => { void fetchHistory(); }, [fetchHistory]);
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- rechargement quand un run se termine
     if (report && report.status !== 'RUNNING') void fetchHistory();
   }, [report?.auditId, report?.status, fetchHistory]); // eslint-disable-line react-hooks/exhaustive-deps
 

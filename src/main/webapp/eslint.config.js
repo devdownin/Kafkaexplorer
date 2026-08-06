@@ -42,24 +42,14 @@ export default tseslint.config(
     rules: {
       ...reactHooks.configs.recommended.rules,
       /*
-       * `eslint-plugin-react-hooks` 7 ajoute à son jeu « recommended » une famille de règles
-       * issues du React Compiler. Elles ne signalent pas de régression : elles décrivent un
-       * modèle plus strict que celui sur lequel l'app est écrite, et en relèvent 36 occurrences
-       * réparties sur une douzaine de fichiers — 21 `set-state-in-effect`, 5 `refs`,
-       * 4 `static-components`, 3 `preserve-manual-memoization`, 2 `purity`, 1 `immutability`.
-       *
-       * Les traiter demande de restructurer des effets un par un, avec le risque que cela
-       * comporte : c'est un chantier, pas l'effet de bord d'une montée de version. Elles sont
-       * donc explicitement éteintes ici, avec leur décompte, plutôt que noyées dans un
-       * `--max-warnings` relevé — et `rules-of-hooks` comme `exhaustive-deps`, qui attrapent de
-       * vrais défauts, restent des erreurs.
+       * Les règles issues du React Compiler sont actives. Ce qu'elles décrivaient a été corrigé
+       * là où c'était corrigeable — composants hissés hors du rendu, état dérivé au lieu d'être
+       * rattrapé par un effet, refs écrites dans un effet, rendu rendu pur. Restent les effets
+       * de chargement, de mesure et d'abonnement : ils finissent forcément par poser un état, et
+       * seule une bibliothèque de données ou Suspense les en dispenserait. Chacun porte donc une
+       * exception nominative à son point d'appel, ce que `--report-unused-disable-directives`
+       * garde honnête : une exception devenue inutile fait échouer le lint.
        */
-      'react-hooks/set-state-in-effect': 'off',
-      'react-hooks/refs': 'off',
-      'react-hooks/static-components': 'off',
-      'react-hooks/preserve-manual-memoization': 'off',
-      'react-hooks/purity': 'off',
-      'react-hooks/immutability': 'off',
       // Composants + hook/provider co-localisés (Toast, ConfirmDialog, Field…) :
       // motif volontaire du design system, pas un problème de HMR.
       'react-refresh/only-export-components': 'off',
