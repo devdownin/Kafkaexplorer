@@ -1,6 +1,6 @@
 import { lazy, Suspense } from 'react';
 import type { FC } from 'react';
-import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
+import { createBrowserRouter, Link, Outlet, RouterProvider } from 'react-router-dom';
 import Layout from './components/Layout';
 import { ToastProvider } from './components/Toast';
 import { ProgressBar, ConfirmProvider } from './components/ui';
@@ -44,32 +44,51 @@ const NotFound: FC = () => (
   </div>
 );
 
+/** Coquille commune à toutes les routes : le `Layout` et la frontière de chargement. */
+const Shell: FC = () => (
+  <Layout>
+    <Suspense fallback={<PageFallback />}>
+      <Outlet />
+    </Suspense>
+  </Layout>
+);
+
+/*
+ * Routeur « data » (`createBrowserRouter`) plutôt que `<BrowserRouter>`. Aucun loader n'est
+ * utilisé, mais `useBlocker` — le seul moyen d'intercepter une navigation *interne* avant qu'elle
+ * n'ait lieu — n'existe que là : sous `<BrowserRouter>` il lève une invariant. C'est ce qui permet
+ * à un écran aux réglages non enregistrés de demander confirmation au lieu de les perdre en
+ * silence, `beforeunload` ne couvrant que le rechargement et la fermeture d'onglet.
+ *
+ * Créé au niveau du module : le reconstruire à chaque rendu réinitialiserait l'historique.
+ */
+const router = createBrowserRouter([
+  {
+    element: <Shell />,
+    children: [
+      { path: '/', element: <Dashboard /> },
+      { path: '/query', element: <QueryWorkbench /> },
+      { path: '/topic/:name', element: <TopicExplorer /> },
+      { path: '/compare', element: <Compare /> },
+      { path: '/lineage', element: <Lineage /> },
+      { path: '/metrics', element: <Metrics /> },
+      { path: '/metrics/help', element: <MetricsHelp /> },
+      { path: '/audit', element: <Audit /> },
+      { path: '/stream-flow', element: <StreamFlow /> },
+      { path: '/config', element: <Config /> },
+      { path: '/help', element: <Help /> },
+      { path: '/cluster', element: <Cluster /> },
+      { path: '/process-mining', element: <ProcessMining /> },
+      { path: '*', element: <NotFound /> },
+    ],
+  },
+]);
+
 const App: FC = () => {
   return (
     <ToastProvider>
       <ConfirmProvider>
-      <Router>
-        <Layout>
-          <Suspense fallback={<PageFallback />}>
-            <Routes>
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/query" element={<QueryWorkbench />} />
-              <Route path="/topic/:name" element={<TopicExplorer />} />
-              <Route path="/compare" element={<Compare />} />
-              <Route path="/lineage" element={<Lineage />} />
-              <Route path="/metrics" element={<Metrics />} />
-              <Route path="/metrics/help" element={<MetricsHelp />} />
-              <Route path="/audit" element={<Audit />} />
-              <Route path="/stream-flow" element={<StreamFlow />} />
-              <Route path="/config" element={<Config />} />
-              <Route path="/help" element={<Help />} />
-              <Route path="/cluster" element={<Cluster />} />
-              <Route path="/process-mining" element={<ProcessMining />} />
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          </Suspense>
-        </Layout>
-      </Router>
+        <RouterProvider router={router} />
       </ConfirmProvider>
     </ToastProvider>
   );

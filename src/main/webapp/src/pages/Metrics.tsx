@@ -16,6 +16,7 @@ import {
   ErrorPanel,
 } from '../components/ui';
 import { describeQueryError } from './queryError';
+import { clearDraft, readDraft, writeDraft } from '../draftStore';
 
 interface MetricConfig {
   id: string;
@@ -632,6 +633,17 @@ const TemplateParamsEditor: React.FC<{
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Clé du brouillon de l'éditeur — voir `draftStore.ts`. */
+const EDITOR_DRAFT = 'metrics:editor';
+
+/** Ce qu'il faut pour rouvrir le modal exactement là où il a été quitté. */
+interface EditorDraft {
+  metric: Partial<MetricConfig>;
+  topic: string;
+  tab: 'metric' | 'ddl';
+  nameIsAuto: boolean;
+}
+
 const EMPTY_METRIC: Partial<MetricConfig> = {
   name: '', type: 'GAUGE',
   sql: 'SELECT COUNT(*) AS metric_value FROM my_table',
@@ -656,10 +668,16 @@ const Metrics: React.FC = () => {
   const { topics } = useCatalog();
   const [bootstrapServers, setBootstrapServers] = useState<string>('localhost:9092');
   const [loading, setLoading]           = useState(true);
-  const [isModalOpen, setIsModalOpen]   = useState(false);
-  const [editingMetric, setEditingMetric] = useState<Partial<MetricConfig>>(EMPTY_METRIC);
-  const [selectedTopic, setSelectedTopic] = useState<string>('');
-  const [editorTab, setEditorTab]       = useState<'metric' | 'ddl'>('metric');
+  /*
+   * L'éditeur de métrique est du SQL écrit à la main, parfois long, et il vivait entièrement dans
+   * l'état du modal : aller vérifier un nom de colonne dans l'explorateur de topics le perdait.
+   * Le brouillon est relu au montage et rouvre le modal tel qu'il était.
+   */
+  const [restoredEditor] = useState(() => readDraft<EditorDraft | null>(EDITOR_DRAFT, null));
+  const [isModalOpen, setIsModalOpen]   = useState(restoredEditor !== null);
+  const [editingMetric, setEditingMetric] = useState<Partial<MetricConfig>>(restoredEditor?.metric ?? EMPTY_METRIC);
+  const [selectedTopic, setSelectedTopic] = useState<string>(restoredEditor?.topic ?? '');
+  const [editorTab, setEditorTab]       = useState<'metric' | 'ddl'>(restoredEditor?.tab ?? 'metric');
   const [saving, setSaving]             = useState(false);
   const [previewing, setPreviewing]     = useState(false);
   const [previewResult, setPreviewResult] = useState<{ value?: unknown; rows?: unknown[]; error?: string; summary?: Record<string, unknown> } | null>(null);
@@ -672,7 +690,7 @@ const Metrics: React.FC = () => {
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
   const [filterType, setFilterType]     = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
-  const [nameIsAuto, setNameIsAuto]     = useState(false);
+  const [nameIsAuto, setNameIsAuto]     = useState(restoredEditor?.nameIsAuto ?? false);
   const [labelPreview, setLabelPreview] = useState<MetricLabelPreview | null>(null);
   const [labelPreviewLoading, setLabelPreviewLoading] = useState(false);
 
@@ -738,6 +756,21 @@ const Metrics: React.FC = () => {
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- toast is stable
   }, [isModalOpen, selectedTopic]);
+
+  /*
+   * Le brouillon ne vit qu'avec le modal : fermer, c'est renoncer, et un modal qui se rouvrirait
+   * tout seul sur une métrique abandonnée serait une surprise, pas un service. L'enregistrement
+   * ferme le modal, donc efface aussi.
+   */
+  useEffect(() => {
+    if (isModalOpen) {
+      writeDraft(EDITOR_DRAFT, {
+        metric: editingMetric, topic: selectedTopic, tab: editorTab, nameIsAuto,
+      } satisfies EditorDraft);
+    } else {
+      clearDraft(EDITOR_DRAFT);
+    }
+  }, [isModalOpen, editingMetric, selectedTopic, editorTab, nameIsAuto]);
 
   // U9 — close the modal on Escape.
   useEffect(() => {

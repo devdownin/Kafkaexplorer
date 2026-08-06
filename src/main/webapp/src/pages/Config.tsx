@@ -2,7 +2,10 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import axios from 'axios';
 import {
   PageHeader, Button, CardSkeleton, Field, Input, NumberInput, PasswordInput, useConfirm,
+  useUnsavedGuard,
 } from '../components/ui';
+import { clearDraft, readDraft, writeDraft } from '../draftStore';
+import { draftableOnly, mergeDraft } from './configDraft';
 
 interface ClusterConfig {
   bootstrapServers: string;
@@ -75,6 +78,9 @@ const LLM_PROVIDERS = [
   { value: 'SPECTRA', label: 'SpectraLLM', description: 'Local SpectraLLM instance (RAG + fine-tuned models)' },
 ] as const;
 
+/** Clé du brouillon (voir `configDraft.ts` — les secrets n'y entrent pas). */
+const DRAFT_KEY = 'config';
+
 const Config: React.FC = () => {
   const confirm = useConfirm();
   const [config, setConfig] = useState<ClusterConfig>({
@@ -100,20 +106,27 @@ const Config: React.FC = () => {
   const savedRef = useRef<string>('');
   const [dirty, setDirty] = useState(false);
 
+  /*
+   * Le serveur donne la base — c'est lui qui dit ce qui est réellement en vigueur, et lui seul
+   * connaît les secrets — puis la saisie non enregistrée repasse par-dessus. `savedRef` reste
+   * calé sur la réponse du serveur : c'est ce qui fait que le formulaire restauré s'affiche
+   * modifié, avec ses boutons actifs, plutôt que de se croire à jour.
+   */
   useEffect(() => {
     const fetchConfig = async () => {
+      let saved: ClusterConfig | null = null;
       try {
         const res = await axios.get<ClusterConfig>('/api/config');
-        setConfig(prev => {
-          const next = { ...prev, ...res.data };
-          savedRef.current = JSON.stringify(next);
-          return next;
-        });
+        saved = res.data;
       } catch {
         // Backend may not expose REST config yet - use defaults
-      } finally {
-        setLoading(false);
       }
+      setConfig(prev => {
+        const server = { ...prev, ...(saved ?? {}) };
+        savedRef.current = saved ? JSON.stringify(server) : '';
+        return mergeDraft(server, readDraft<Partial<ClusterConfig> | null>(DRAFT_KEY, null));
+      });
+      setLoading(false);
     };
     fetchConfig();
   }, []);
@@ -122,14 +135,26 @@ const Config: React.FC = () => {
     setDirty(savedRef.current !== '' && JSON.stringify(config) !== savedRef.current);
   }, [config]);
 
-  // Un rechargement ou une fermeture d'onglet avec des réglages non enregistrés perdait tout
-  // sans un mot. La navigation interne (react-router) n'est pas couverte par cet événement.
+  /*
+   * Le brouillon n'est écrit que lorsqu'il y a quelque chose à garder : sans cette condition, un
+   * simple passage sur la page recopierait la configuration du serveur dans `localStorage`, et
+   * une modification faite ailleurs se retrouverait masquée par ce faux brouillon.
+   */
   useEffect(() => {
-    if (!dirty) return;
-    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); };
-    window.addEventListener('beforeunload', warn);
-    return () => window.removeEventListener('beforeunload', warn);
-  }, [dirty]);
+    if (loading) return;
+    if (dirty) writeDraft(DRAFT_KEY, draftableOnly(config));
+    else clearDraft(DRAFT_KEY);
+  }, [dirty, config, loading]);
+
+  // Deux sorties, deux gardes : `beforeunload` pour le rechargement et la fermeture d'onglet,
+  // `useBlocker` pour la navigation interne, que le navigateur ne voit jamais passer.
+  useUnsavedGuard(dirty, {
+    title: 'Leave the settings without saving?',
+    description:
+      'These settings have not been applied — the cluster stays on its current connection. Most '
+      + 'of the form is kept as a draft, but passwords and API keys are never stored and will '
+      + 'have to be typed again.',
+  });
 
   /**
    * Le serveur refuse de repointer le cluster tant qu'un audit, un job Flink ou une session

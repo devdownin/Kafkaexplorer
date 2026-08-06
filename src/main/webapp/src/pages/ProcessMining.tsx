@@ -9,6 +9,9 @@ import AnomalyTable, { AnomalyReport } from '../components/processmining/Anomaly
 import LiveStatusBar, { LiveWindowStats } from '../components/processmining/LiveStatusBar';
 import AnomalyFeed, { LiveAnomaly } from '../components/processmining/AnomalyFeed';
 import { PageHeader, Button, Field, Textarea } from '../components/ui';
+import { clearDraft, readDraft, usePersistentState, writeDraft } from '../draftStore';
+import { describeResume, resumableStep } from './processMiningDraft';
+import type { AnalysisMode, Step } from './processMiningDraft';
 
 // ---- Types ----
 
@@ -53,8 +56,24 @@ const ROLE_LABELS: Record<string, string> = {
   AMOUNT: 'amount',
 };
 
-type Step = 'SELECT' | 'PROFILING' | 'VALIDATE' | 'ANALYZE' | 'RESULTS';
-type AnalysisMode = 'SNAPSHOT' | 'LIVE';
+/**
+ * Clés des brouillons. Seuls les acquis du pipeline sont conservés ; l'état d'une session live
+ * (flux SSE, fenêtre glissante, anomalies reçues) n'est jamais écrit — un flux fermé ne se reprend
+ * pas, et le restaurer donnerait à un instantané mort l'apparence d'un direct.
+ */
+const DRAFT = {
+  step: 'pm:step',
+  topics: 'pm:topics',
+  depth: 'pm:depth',
+  profile: 'pm:profile',
+  mapping: 'pm:mapping',
+  mode: 'pm:mode',
+  snapshot: 'pm:snapshot',
+  audits: 'pm:audits',
+  prompt: 'pm:prompt',
+} as const;
+
+const DRAFT_KEYS = Object.values(DRAFT);
 
 // ---- Step indicator ----
 
@@ -124,19 +143,40 @@ const StepIndicator: React.FC<{ current: Step }> = ({ current }) => (
 // ---- Main component ----
 
 const ProcessMining: React.FC = () => {
-  const [step, setStep] = useState<Step>('SELECT');
-  const [selectedTopics, setSelectedTopics] = useState<string[]>([]);
-  const [depth, setDepth] = useState<SnapshotConfig>({ mode: 'LATEST_N', maxMessages: 500 });
-  const [profileResult, setProfileResult] = useState<FieldProfileResult | null>(null);
-  const [fieldMappingId, setFieldMappingId] = useState<string | null>(null);
-  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('SNAPSHOT');
-  const [snapshotResult, setSnapshotResult] = useState<ProcessMiningResult | null>(null);
+  /*
+   * L'étape reprise n'est pas forcément celle qui a été quittée : `resumableStep` ramène en
+   * arrière celles qui dépendent d'une opération morte avec la page (la requête de profilage,
+   * la session SSE) ou d'une donnée absente du brouillon.
+   */
+  const [restored] = useState(() => {
+    const asked = readDraft<Step>(DRAFT.step, 'SELECT');
+    const step = resumableStep({
+      step: asked,
+      analysisMode: readDraft<AnalysisMode>(DRAFT.mode, 'SNAPSHOT'),
+      hasProfile: readDraft<FieldProfileResult | null>(DRAFT.profile, null) !== null,
+      hasMapping: readDraft<string | null>(DRAFT.mapping, null) !== null,
+      hasSnapshot: readDraft<ProcessMiningResult | null>(DRAFT.snapshot, null) !== null,
+    });
+    // Réécrit tout de suite : `usePersistentState` relit le brouillon et rendrait l'étape
+    // assainie sans effet si la valeur d'origine y était encore.
+    writeDraft(DRAFT.step, step);
+    return { step, notice: describeResume(step, asked) };
+  });
+
+  const [step, setStep] = usePersistentState<Step>(DRAFT.step, restored.step);
+  const [selectedTopics, setSelectedTopics] = usePersistentState<string[]>(DRAFT.topics, []);
+  const [depth, setDepth] = usePersistentState<SnapshotConfig>(DRAFT.depth, { mode: 'LATEST_N', maxMessages: 500 });
+  const [profileResult, setProfileResult] = usePersistentState<FieldProfileResult | null>(DRAFT.profile, null);
+  const [fieldMappingId, setFieldMappingId] = usePersistentState<string | null>(DRAFT.mapping, null);
+  const [analysisMode, setAnalysisMode] = usePersistentState<AnalysisMode>(DRAFT.mode, 'SNAPSHOT');
+  const [snapshotResult, setSnapshotResult] = usePersistentState<ProcessMiningResult | null>(DRAFT.snapshot, null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [llmInfo, setLlmInfo] = useState<RuntimeLlmInfo | null>(null);
   const [auditTemplates, setAuditTemplates] = useState<AuditTemplate[]>([]);
-  const [selectedAuditIds, setSelectedAuditIds] = useState<string[]>([]);
-  const [customAuditPrompt, setCustomAuditPrompt] = useState('');
+  const [selectedAuditIds, setSelectedAuditIds] = usePersistentState<string[]>(DRAFT.audits, []);
+  const [customAuditPrompt, setCustomAuditPrompt] = usePersistentState(DRAFT.prompt, '');
+  const [resumeNotice, setResumeNotice] = useState<string | null>(restored.notice);
 
   // Live mode state
   const [liveConnected, setLiveConnected] = useState(false);
@@ -377,8 +417,14 @@ const ProcessMining: React.FC = () => {
 
   const resetAll = () => {
     stopLiveSession();
+    // « Start over » veut dire ce qu'il dit : les brouillons partent avec l'état, sinon le
+    // pipeline reviendrait au rechargement suivant.
+    DRAFT_KEYS.forEach(clearDraft);
+    setResumeNotice(null);
     setStep('SELECT');
     setSelectedTopics([]);
+    setDepth({ mode: 'LATEST_N', maxMessages: 500 });
+    setAnalysisMode('SNAPSHOT');
     setProfileResult(null);
     setFieldMappingId(null);
     setSnapshotResult(null);
@@ -407,6 +453,23 @@ const ProcessMining: React.FC = () => {
 
       {/* Step indicator */}
       <StepIndicator current={step} />
+
+      {/* Un pipeline rouvert à mi-parcours doit dire qu'il vient d'un brouillon : sans cela il
+          passe pour l'état courant, alors qu'il date de la visite précédente. */}
+      {resumeNotice && (
+        <div className="bg-primary/5 border border-primary/20 rounded-xl p-3 flex items-start gap-3">
+          <span aria-hidden="true" className="material-symbols-outlined text-primary text-lg flex-shrink-0">history</span>
+          <p className="text-xs text-on-surface-variant">{resumeNotice}</p>
+          <button
+            type="button"
+            aria-label="Dismiss"
+            onClick={() => setResumeNotice(null)}
+            className="ml-auto text-on-surface-variant hover:text-on-surface"
+          >
+            <span aria-hidden="true" className="material-symbols-outlined text-base">close</span>
+          </button>
+        </div>
+      )}
 
       {llmInfo && (
         <div className={`rounded-xl border p-4 ${

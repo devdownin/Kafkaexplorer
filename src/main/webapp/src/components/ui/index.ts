@@ -38,6 +38,8 @@ export { Spinner, ProgressBar } from './Spinner';
 export type { SpinnerProps } from './Spinner';
 export { ConfirmProvider, useConfirm } from './ConfirmDialog';
 export type { ConfirmOptions } from './ConfirmDialog';
+export { useUnsavedGuard } from './useUnsavedGuard';
+export type { UnsavedGuardOptions } from './useUnsavedGuard';
 export { useVirtualRows } from './useVirtualRows';
 export type { VirtualWindow } from './useVirtualRows';
 export { ScrollList } from './ScrollList';
