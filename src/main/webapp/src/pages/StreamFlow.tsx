@@ -171,6 +171,7 @@ const StreamFlow: React.FC = () => {
   // la moitié d'une chaîne de sept topics hors écran. Replier le panneau de critères élargit
   // la vue de 18 rem : sans recadrage, le graphe resterait collé à gauche.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- recadrage : dépend de la géométrie rendue
     if (nodes.length > 0) fitView();
   }, [nodes, panelOpen, fitView]);
 
@@ -491,6 +492,7 @@ const StreamFlow: React.FC = () => {
   useEffect(() => {
     if (autoRan.current) return;
     autoRan.current = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- trace relancée depuis l'URL au montage
     if (initial.messageKey.trim()) void runTrace(initial);
     // Le garde se relève au démontage. Sans cela, le double montage de StrictMode annulait la
     // requête (le nettoyage `abortRef`) puis refusait de la relancer : un lien partagé ouvrait

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { FC, InputHTMLAttributes } from 'react';
 import { Input } from './Field';
 
@@ -25,12 +25,18 @@ export const NumberInput: FC<NumberInputProps> = ({
   value, onChange, fallback, min, max, invalid, ...props
 }) => {
   const [draft, setDraft] = useState(String(value));
+  const [lastValue, setLastValue] = useState(value);
 
   // Suit les changements venus d'ailleurs (chargement de la config, reset), sans écraser la
-  // saisie en cours lorsque le brouillon désigne déjà cette valeur.
-  useEffect(() => {
-    setDraft(current => (Number(current) === value ? current : String(value)));
-  }, [value]);
+  // saisie en cours lorsque le brouillon désigne déjà cette valeur. Ajusté pendant le rendu —
+  // le motif que React documente pour un état dérivé d'une prop — plutôt que dans un effet, qui
+  // affichait l'ancienne valeur le temps d'un rendu avant de la corriger.
+  if (value !== lastValue) {
+    setLastValue(value);
+    if (Number(draft) !== value) {
+      setDraft(String(value));
+    }
+  }
 
   const commit = () => {
     const parsed = Number(draft);

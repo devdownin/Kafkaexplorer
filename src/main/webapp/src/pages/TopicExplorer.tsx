@@ -699,6 +699,7 @@ const TopicExplorer: React.FC = () => {
 
   useEffect(() => () => abortRef.current?.abort(), []);
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- historique et épingles relus pour ce topic
     setHistory(readSearchHistory(name ?? ''));
     setPinned(readPinned(name ?? ''));
   }, [name]);
@@ -706,7 +707,8 @@ const TopicExplorer: React.FC = () => {
   // Mémoïsés parce que `MessageCard` l'est : une callback recréée à chaque rendu annulerait la
   // comparaison de props et la carte re-parserait son payload comme avant.
   const linkedCoordinates = useMemo(() => recordFromQuery(location.search), [location.search]);
-  linkedCoordinatesRef.current = linkedCoordinates;
+  // Écrire une ref pendant le rendu est un effet de bord dans une fonction censée être pure.
+  useEffect(() => { linkedCoordinatesRef.current = linkedCoordinates; }, [linkedCoordinates]);
 
   // Mémoïsés parce que `MessageCard` l'est : une callback recréée à chaque rendu annulerait la
   // comparaison de props et la carte re-parserait son payload comme avant.
@@ -758,6 +760,7 @@ const TopicExplorer: React.FC = () => {
     // Guard against out-of-order responses: toggling read mode quickly fires several requests,
     // and without this a slower one could overwrite the newer result with stale data.
     let active = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- chargement du topic
     setLoading(true);
     axios.get(`/api/topic/${encodeURIComponent(name ?? '')}?readMode=${readMode}`)
       .then(res => { if (active) setData(res.data); })
@@ -993,6 +996,7 @@ const TopicExplorer: React.FC = () => {
     lastAppliedSearch.current = location.search;
     const preset = criteriaFromQuery(location.search);
     if (!preset) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- recherche portée par l'URL
     setCriteria(preset);
     void runSearch({}, preset);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- réagit au seul critère porté par l'URL
@@ -1007,6 +1011,7 @@ const TopicExplorer: React.FC = () => {
   const linkedKey = linkedCoordinates ? recordParam(linkedCoordinates) : '';
   useEffect(() => {
     if (!linkedCoordinates) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- lecture du record désigné par l'URL
       setLinkedRecord(null);
       setLinkedError(null);
       return;

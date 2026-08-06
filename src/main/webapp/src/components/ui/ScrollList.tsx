@@ -47,6 +47,7 @@ export function ScrollList({
   const [measured, setMeasured] = useState<number | undefined>(undefined);
 
   useLayoutEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- mesure du DOM, connue seulement après la peinture
     if (!scrollable || maxHeight != null) { setMeasured(undefined); return; }
     const el = ref.current;
     if (!el) return;

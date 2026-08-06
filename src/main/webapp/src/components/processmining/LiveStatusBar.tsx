@@ -31,6 +31,7 @@ const LiveStatusBar: React.FC<LiveStatusBarProps> = ({ connected, windowSize, st
 
   useEffect(() => {
     if (!lastUpdate) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- horloge relative : l'écoulement est l'état
       setElapsed('--');
       return;
     }
