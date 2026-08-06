@@ -1,0 +1,363 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Plateforme Kafka de dev — Kafka 4.2 en mode KRaft (sans ZooKeeper)
+#
+#  Migration de l'ancienne stack `cp-kafka:7.9.2` + ZooKeeper.
+#  Voir README.md pour le détail des changements et le chemin de migration
+#  des données.
+#
+#  Démarrage :
+#      docker compose up -d                        # broker + ksqlDB + AKHQ + REST
+#      docker compose --profile observability up -d  # + Prometheus + Grafana
+#      docker compose --profile schema-registry up -d
+#      docker compose --profile cli run --rm ksqldb-cli
+#
+#  Toutes les versions et le préfixe de registre sont dans .env (cf .env.example).
+# ─────────────────────────────────────────────────────────────────────────────
+
+volumes:
+  # Volume NEUF : le volume `kafka-data-00` de la stack ZooKeeper n'est pas
+  # réutilisable tel quel par un cluster KRaft (cf README, § Données).
+  kafka-00-kraft-data:
+  prometheus-data:
+  grafana-storage:
+
+networks:
+  dip:
+    driver: bridge
+
+services:
+
+  # ══════════════════════════════════════════════════════════════════════════
+  #  CLUSTER 1 — nœud unique combiné broker + controller (KRaft)
+  # ══════════════════════════════════════════════════════════════════════════
+
+  # Docker crée un volume nommé vide appartenant à root, alors que l'image CP
+  # tourne en `appuser` (uid 1000). One-shot, avant le broker.
+  kafka-00-data-init:
+    image: ${REGISTRY:-nx-repo.vinci-autoroutes.com/docker-group}/confluentinc/cp-kafka:${CONFLUENT_VERSION:-8.3.0}
+    user: root
+    volumes:
+      - kafka-00-kraft-data:/var/lib/kafka/data
+    entrypoint: ["sh", "-c", "chown -R appuser:appuser /var/lib/kafka/data"]
+    networks:
+      - dip
+
+  kafka-00:
+    image: ${REGISTRY:-nx-repo.vinci-autoroutes.com/docker-group}/confluentinc/cp-kafka:${CONFLUENT_VERSION:-8.3.0}
+    hostname: kafka-00
+    container_name: kafka-00
+    restart: unless-stopped
+    networks:
+      - dip
+    ports:
+      - "9092:9092"   # listener OUTSIDE (clients hors du réseau dip)
+      - "9200:9200"   # jmx_exporter (scrape Prometheus)
+      # 9093 n'est PLUS publié : c'est désormais le listener CONTROLLER,
+      # strictement interne au quorum KRaft. L'exposer = exposer le plan de
+      # contrôle du cluster.
+    depends_on:
+      kafka-00-data-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    environment:
+      # ── Identité KRaft ─────────────────────────────────────────────────────
+      # L'image CP formate le répertoire de données au premier démarrage avec
+      # ce CLUSTER_ID ; il doit rester stable pour que le volume soit réutilisé.
+      CLUSTER_ID: ${KAFKA_CLUSTER_ID:-4L6g3nShT-eMCtK--X86sw}
+      KAFKA_NODE_ID: 0
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '0@kafka-00:9093'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+
+      # ── Listeners ──────────────────────────────────────────────────────────
+      # On écoute sur 0.0.0.0 (et non sur le hostname) : le healthcheck peut
+      # ainsi interroger localhost, et les advertised listeners restent la
+      # seule source de vérité pour les clients.
+      KAFKA_LISTENERS: 'INTERNAL://0.0.0.0:29092,OUTSIDE://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093'
+      KAFKA_ADVERTISED_LISTENERS: 'INTERNAL://kafka-00:29092,OUTSIDE://${KAFKA_EXTERNAL_HOST:-kafkadev}:9092'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'INTERNAL:PLAINTEXT,OUTSIDE:PLAINTEXT,CONTROLLER:PLAINTEXT'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'INTERNAL'
+
+      # ── Topologie / topics ────────────────────────────────────────────────
+      KAFKA_NUM_PARTITIONS: '3'
+      KAFKA_COMPRESSION_TYPE: 'lz4'
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: '1'
+      # Nœud unique : 1 partition de __consumer_offsets au lieu des 50 par
+      # défaut (démarrage nettement plus rapide). À retirer pour une stack
+      # multi-brokers qui doit ressembler à la prod.
+      KAFKA_OFFSETS_TOPIC_NUM_PARTITIONS: '1'
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: '0'
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: '1'
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: '1'
+      # Share groups (KIP-932, Kafka 4.x) : facteurs de réplication du topic
+      # d'état, au cas où la feature soit activée (`share.version`).
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: '1'
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: '1'
+      # Protocole de rebalancing : `consumer` = KIP-848, disponible en 4.x.
+      KAFKA_GROUP_COORDINATOR_REBALANCE_PROTOCOLS: 'classic,consumer'
+
+      # ── Tailles de message ────────────────────────────────────────────────
+      KAFKA_MESSAGE_MAX_BYTES: '2098049'
+      # Corrigé : l'ancienne stack définissait `KAFKA_REPLIQUA_MAX_BYTES`, qui
+      # n'est pas une propriété Kafka et n'a donc jamais rien fait. Le fetch de
+      # réplication doit être >= message.max.bytes, sinon un gros message peut
+      # bloquer la réplication.
+      KAFKA_REPLICA_FETCH_MAX_BYTES: '2098049'
+
+      # ── Stockage & JVM ────────────────────────────────────────────────────
+      KAFKA_LOG_DIRS: '/var/lib/kafka/data'
+      # Mode combiné (broker + controller dans la même JVM) : 512M tient pour
+      # un dev, monter à 1G si les topics se multiplient.
+      KAFKA_HEAP_OPTS: '-Xmx512M -Xms512M'
+
+      # ── Métriques ─────────────────────────────────────────────────────────
+      # Agent in-process : pas besoin d'ouvrir un port JMX/RMI distant, d'où la
+      # disparition de KAFKA_JMX_PORT / KAFKA_JMX_HOSTNAME.
+      KAFKA_OPTS: '-javaagent:/usr/share/jmx_exporter/${JMX_AGENT_JAR:-jmx_prometheus_javaagent-0.20.0.jar}=9200:/usr/share/jmx_exporter/kafka-broker.yml'
+
+      # Supprimé avec ZooKeeper / Control Center :
+      #   KAFKA_ZOOKEEPER_CONNECT, KAFKA_BROKER_ID,
+      #   KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND (sans authorizer, sans effet),
+      #   KAFKA_CONFLUENT_SUPPORT_METRICS_ENABLE, CONFLUENT_METRICS_*
+    volumes:
+      - ./jmx-exporter:/usr/share/jmx_exporter:ro
+      - kafka-00-kraft-data:/var/lib/kafka/data
+
+  # ══════════════════════════════════════════════════════════════════════════
+  #  ksqlDB
+  # ══════════════════════════════════════════════════════════════════════════
+
+  ksqldb-server:
+    image: ${REGISTRY:-nx-repo.vinci-autoroutes.com/docker-group}/confluentinc/cp-ksqldb-server:${CONFLUENT_VERSION:-8.3.0}
+    hostname: ksqldb-server
+    container_name: ksqldb-server
+    restart: unless-stopped
+    networks:
+      - dip
+    ports:
+      - "8088:8088"
+    depends_on:
+      kafka-00:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8088/info > /dev/null || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 45s
+    volumes:
+      - ./ksql:/data
+    environment:
+      KSQL_BOOTSTRAP_SERVERS: 'kafka-00:29092'
+      KSQL_HOST_NAME: ksqldb-server
+      KSQL_LISTENERS: 'http://0.0.0.0:8088'
+      KSQL_KSQL_SERVICE_ID: ksqldb-server-dev
+      KSQL_KSQL_HIDDEN_TOPICS: '^_.*,default_ksql_processing_log'
+      KSQL_KSQL_STREAMS_CACHE_MAX_BYTES_BUFFERING: 0
+      KSQL_KSQL_LOGGING_PROCESSING_TOPIC_REPLICATION_FACTOR: 1
+      KSQL_KSQL_LOGGING_PROCESSING_TOPIC_AUTO_CREATE: 'true'
+      KSQL_KSQL_LOGGING_PROCESSING_STREAM_AUTO_CREATE: 'true'
+      KSQL_CONFIG_DIR: '/etc/ksql'
+      # Décommenter avec le profil `schema-registry` :
+      # KSQL_KSQL_SCHEMA_REGISTRY_URL: 'http://schema-registry:8081'
+
+  # Conteneur interactif : ne tourne pas en permanence, on l'appelle à la
+  # demande — `docker compose --profile cli run --rm ksqldb-cli`.
+  ksqldb-cli:
+    image: ${REGISTRY:-nx-repo.vinci-autoroutes.com/docker-group}/confluentinc/cp-ksqldb-cli:${CONFLUENT_VERSION:-8.3.0}
+    container_name: ksqldb-cli
+    profiles: ["cli"]
+    networks:
+      - dip
+    depends_on:
+      ksqldb-server:
+        condition: service_healthy
+    volumes:
+      - ./ksql:/data
+    entrypoint: /bin/sh
+    tty: true
+    stdin_open: true
+
+  # ══════════════════════════════════════════════════════════════════════════
+  #  API REST
+  # ══════════════════════════════════════════════════════════════════════════
+
+  kafka-rest:
+    image: ${REGISTRY:-nx-repo.vinci-autoroutes.com/docker-group}/confluentinc/cp-kafka-rest:${CONFLUENT_VERSION:-8.3.0}
+    hostname: kafka-rest
+    container_name: kafka-rest
+    restart: unless-stopped
+    networks:
+      - dip
+    ports:
+      - "8082:8082"
+    depends_on:
+      kafka-00:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8082/v3/clusters > /dev/null || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    environment:
+      KAFKA_REST_HOST_NAME: kafka-rest
+      KAFKA_REST_LISTENERS: 'http://0.0.0.0:8082'
+      KAFKA_REST_BOOTSTRAP_SERVERS: 'kafka-00:29092'
+      # Décommenter avec le profil `schema-registry` :
+      # KAFKA_REST_SCHEMA_REGISTRY_URL: 'http://schema-registry:8081'
+
+  # ══════════════════════════════════════════════════════════════════════════
+  #  Outils d'exploitation
+  # ══════════════════════════════════════════════════════════════════════════
+
+  akhq:
+    image: ${REGISTRY:-nx-repo.vinci-autoroutes.com/docker-group}/tchiotludo/akhq:${AKHQ_VERSION:-0.26.0}
+    hostname: akhq
+    container_name: akhq
+    restart: unless-stopped
+    networks:
+      - dip
+    ports:
+      - "9922:8080"
+    depends_on:
+      kafka-00:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health > /dev/null || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
+    environment:
+      # Configuration nettoyée : l'ancienne déclarait `topic-data` deux fois
+      # (le second bloc écrasait le premier en silence) et plaçait des clés
+      # inventées — `kafka-max-message-length`, `kafka-properties-max-request-size` —
+      # là où AKHQ attend les propriétés client Kafka telles quelles.
+      AKHQ_CONFIGURATION: |
+        akhq:
+          topic-data:
+            size: 60                      # nb max d'enregistrements par page
+            poll-timeout: 1000            # ms d'attente si le buffer est vide
+            max-message-length: 2000000   # taille max renvoyée à l'UI, en octets
+
+          clients-defaults:
+            producer:
+              properties:
+                max.request.size: 2496019
+                compression.type: lz4
+            consumer:
+              properties:
+                max.partition.fetch.bytes: 2496019
+
+          connections:
+            cluster-kafka-1:
+              properties:
+                bootstrap.servers: "kafka-00:29092"
+              ksqldb:
+                - name: "ksqldb"
+                  url: "http://ksqldb-server:8088"
+              # Décommenter avec le profil `schema-registry` :
+              # schema-registry:
+              #   url: "http://schema-registry:8081"
+
+  # Optionnel (profil `schema-registry`) : absent de l'ancienne stack, où il
+  # n'était que commenté. Requis pour Avro/Protobuf dans AKHQ, ksqlDB et REST.
+  schema-registry:
+    image: ${REGISTRY:-nx-repo.vinci-autoroutes.com/docker-group}/confluentinc/cp-schema-registry:${CONFLUENT_VERSION:-8.3.0}
+    hostname: schema-registry
+    container_name: schema-registry
+    profiles: ["schema-registry"]
+    restart: unless-stopped
+    networks:
+      - dip
+    ports:
+      - "8081:8081"
+    depends_on:
+      kafka-00:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8081/subjects > /dev/null || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_LISTENERS: 'http://0.0.0.0:8081'
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'kafka-00:29092'
+      SCHEMA_REGISTRY_KAFKASTORE_TOPIC_REPLICATION_FACTOR: 1
+
+  # ══════════════════════════════════════════════════════════════════════════
+  #  Observabilité (profil `observability`)
+  #
+  #  D'après le commentaire de l'ancien fichier, Prometheus et Grafana tournent
+  #  désormais sur drvdvpjir : ils sont donc derrière un profil, la stack de
+  #  base ne les démarre plus. Les blocs `deploy:` (replicas / placement /
+  #  restart_policy) ont sauté — c'est du Swarm, purement ignoré par
+  #  `docker compose up`, ce qui donnait l'illusion d'une politique de restart.
+  # ══════════════════════════════════════════════════════════════════════════
+
+  prometheus:
+    image: ${REGISTRY:-nx-repo.vinci-autoroutes.com/docker-group}/prom/prometheus:${PROMETHEUS_VERSION:-v3.5.0}
+    hostname: prometheus
+    container_name: prometheus
+    profiles: ["observability"]
+    restart: unless-stopped
+    networks:
+      - dip
+    ports:
+      - "9090:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # Corrigé : le volume était monté sur /opt/bitnami/prometheus/data (chemin
+      # de l'image Bitnami) alors que l'image prom/prometheus écrit dans
+      # /prometheus — la rétention n'a jamais survécu à un redémarrage.
+      - prometheus-data:/prometheus
+      - ./prometheus/config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules/rules.yml:/etc/prometheus/rules/rules.yml:ro
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+
+  grafana:
+    image: ${REGISTRY:-nx-repo.vinci-autoroutes.com/docker-group}/grafana/grafana:${GRAFANA_VERSION:-12.1.0}
+    hostname: grafana
+    container_name: grafana
+    profiles: ["observability"]
+    restart: unless-stopped
+    networks:
+      - dip
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    volumes:
+      # Le volume grafana-storage était déclaré mais monté nulle part :
+      # dashboards et annotations disparaissaient à chaque recréation.
+      - grafana-storage:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_DEFAULT_APP_MODE: development
+      # Accès anonyme en Admin : à ne garder que sur un réseau de dev fermé.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      # Sans guillemets : ils étaient auparavant inclus dans la valeur, et le
+      # premier nom de plugin devenait `"jdbranham-diagram-panel` — jamais chargé.
+      GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS: jdbranham-diagram-panel,albertowd-oraclegrafana-datasource
+      # `metrsSummary` (faute de frappe) retiré ; les toggles restants existent
+      # toujours en Grafana 12.
+      GF_FEATURE_TOGGLES_ENABLE: flameGraph traceqlSearch traceQLStreaming correlations traceqlEditor traceToMetrics traceToProfiles datatrails

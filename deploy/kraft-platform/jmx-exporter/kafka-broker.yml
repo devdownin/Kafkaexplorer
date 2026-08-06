@@ -1,0 +1,108 @@
+# Configuration jmx_prometheus_javaagent pour un nœud Kafka 4.x en KRaft
+# (rôles broker + controller dans la même JVM).
+#
+# Compatible agent 0.20.x et 1.x. Placer le jar de l'agent dans ce même
+# répertoire ; son nom est passé au broker par la variable JMX_AGENT_JAR.
+#
+#   curl -sSLo jmx_prometheus_javaagent-1.4.0.jar \
+#     https://repo1.maven.org/maven2/io/prometheus/jmx/jmx_prometheus_javaagent/1.4.0/jmx_prometheus_javaagent-1.4.0.jar
+#
+# Différence avec la configuration ZooKeeper : les métriques du plan de contrôle
+# (quorum RAFT, application des métadonnées) sont désormais exposées par le
+# broker lui-même — il n'y a plus de JVM ZooKeeper à scraper.
+
+lowercaseOutputName: true
+lowercaseOutputLabelNames: true
+
+rules:
+  # ── Quorum KRaft (remplace la supervision ZooKeeper) ────────────────────────
+  - pattern: "kafka.server<type=raft-metrics><>(.+):"
+    name: kafka_server_raft_metrics_$1
+    type: GAUGE
+
+  - pattern: "kafka.server<type=raft-channel-metrics><>(.+):"
+    name: kafka_server_raft_channel_metrics_$1
+    type: GAUGE
+
+  # Application du log de métadonnées côté broker : last-applied-record-lag-ms
+  # est l'indicateur à surveiller (le broker diverge du controller).
+  - pattern: "kafka.server<type=broker-metadata-metrics><>(.+):"
+    name: kafka_server_broker_metadata_metrics_$1
+    type: GAUGE
+
+  - pattern: "kafka.controller<type=KafkaController, name=(.+)><>Value"
+    name: kafka_controller_kafkacontroller_$1
+    type: GAUGE
+
+  # ── Débit : par topic, et agrégé ───────────────────────────────────────────
+  - pattern: "kafka.server<type=BrokerTopicMetrics, name=(.+), topic=(.+)><>(Count|OneMinuteRate)"
+    name: kafka_server_brokertopicmetrics_$1_$3
+    labels:
+      topic: "$2"
+
+  - pattern: "kafka.server<type=BrokerTopicMetrics, name=(.+)><>(Count|OneMinuteRate)"
+    name: kafka_server_brokertopicmetrics_$1_$2
+
+  # ── Réplication / partitions ───────────────────────────────────────────────
+  - pattern: "kafka.server<type=ReplicaManager, name=(.+)><>Value"
+    name: kafka_server_replicamanager_$1
+    type: GAUGE
+
+  - pattern: "kafka.cluster<type=Partition, name=(.+), topic=(.+), partition=(.+)><>Value"
+    name: kafka_cluster_partition_$1
+    labels:
+      topic: "$2"
+      partition: "$3"
+    type: GAUGE
+
+  - pattern: "kafka.log<type=Log, name=(.+), topic=(.+), partition=(.+)><>Value"
+    name: kafka_log_$1
+    labels:
+      topic: "$2"
+      partition: "$3"
+    type: GAUGE
+
+  # ── Groupes de consommateurs (offsets, share groups) ───────────────────────
+  - pattern: "kafka.coordinator.group<type=GroupMetadataManager, name=(.+)><>Value"
+    name: kafka_coordinator_group_$1
+    type: GAUGE
+
+  # ── Latences des requêtes ──────────────────────────────────────────────────
+  - pattern: "kafka.network<type=RequestMetrics, name=(.+), request=(.+), version=(.+)><>(Count|Mean|50thPercentile|95thPercentile|99thPercentile)"
+    name: kafka_network_requestmetrics_$1_$4
+    labels:
+      request: "$2"
+
+  - pattern: "kafka.network<type=RequestMetrics, name=(.+), request=(.+)><>(Count|Mean|50thPercentile|95thPercentile|99thPercentile)"
+    name: kafka_network_requestmetrics_$1_$3
+    labels:
+      request: "$2"
+
+  - pattern: "kafka.network<type=(Processor|SocketServer), name=(.+)><>Value"
+    name: kafka_network_$1_$2
+    type: GAUGE
+
+  # ── Threads, purgatoire, IO ────────────────────────────────────────────────
+  - pattern: "kafka.server<type=DelayedOperationPurgatory, delayedOperation=(.+), name=(.+)><>Value"
+    name: kafka_server_delayedoperationpurgatory_$2
+    labels:
+      operation: "$1"
+    type: GAUGE
+
+  - pattern: "kafka.server<type=KafkaRequestHandlerPool, name=(.+)><>(Count|OneMinuteRate)"
+    name: kafka_server_kafkarequesthandlerpool_$1_$2
+
+  # ── JVM ────────────────────────────────────────────────────────────────────
+  - pattern: "java.lang<type=Memory><HeapMemoryUsage>(\\w+)"
+    name: jvm_memory_heap_$1
+    type: GAUGE
+
+  - pattern: "java.lang<type=GarbageCollector, name=(.+)><>CollectionCount"
+    name: jvm_gc_collection_count
+    labels:
+      gc: "$1"
+
+  - pattern: "java.lang<type=GarbageCollector, name=(.+)><>CollectionTime"
+    name: jvm_gc_collection_time_ms
+    labels:
+      gc: "$1"

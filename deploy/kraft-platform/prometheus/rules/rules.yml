@@ -1,0 +1,53 @@
+groups:
+  - name: kafka-kraft
+    rules:
+      # Le broker ne répond plus au scrape.
+      - alert: KafkaBrokerDown
+        expr: up{job="kafka-broker"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Broker Kafka injoignable ({{ $labels.instance }})"
+
+      # En mode combiné, perdre le controller actif revient à perdre le cluster.
+      - alert: KafkaNoActiveController
+        expr: sum(kafka_controller_kafkacontroller_activecontrollercount) < 1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Aucun controller KRaft actif"
+
+      - alert: KafkaOfflinePartitions
+        expr: sum(kafka_controller_kafkacontroller_offlinepartitionscount) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $value }} partition(s) hors ligne"
+
+      - alert: KafkaUnderReplicatedPartitions
+        expr: sum(kafka_server_replicamanager_underreplicatedpartitions) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} partition(s) sous-répliquée(s)"
+
+      # Le broker n'applique plus le log de métadonnées assez vite : il diverge
+      # de la vue du controller. Sans équivalent dans la supervision ZooKeeper.
+      - alert: KraftMetadataLagHigh
+        expr: kafka_server_broker_metadata_metrics_last_applied_record_lag_ms > 60000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Métadonnées KRaft en retard de {{ $value }} ms sur le controller"
+
+      - alert: KraftMetadataApplyErrors
+        expr: increase(kafka_server_broker_metadata_metrics_metadata_apply_error_count[15m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Erreurs d'application des métadonnées KRaft sur {{ $labels.instance }}"
