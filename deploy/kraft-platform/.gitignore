@@ -1,0 +1,4 @@
+# Configuration locale (copie de .env.example)
+.env
+# Agent jmx_exporter téléchargé localement (cf README)
+jmx-exporter/*.jar

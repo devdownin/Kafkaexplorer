@@ -1,0 +1,22 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: dip-dev
+
+rule_files:
+  - /etc/prometheus/rules/rules.yml
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Broker + controller KRaft : un seul processus, donc un seul endpoint.
+  # Le job `zookeeper` de l'ancienne configuration n'a plus lieu d'être.
+  - job_name: kafka-broker
+    static_configs:
+      - targets: ["kafka-00:9200"]
+        labels:
+          broker: kafka-00
+          node_id: "0"
