@@ -19,6 +19,8 @@ import org.mockito.Mockito;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -569,21 +571,50 @@ class StreamFlowServiceTest {
         assertEquals(3, partial.stats().topicsInScope());
     }
 
-    /** A client that hangs up stops the scan instead of leaving workers reading for nobody. */
+    /**
+     * A client that hangs up stops the scan instead of leaving workers reading for nobody.
+     *
+     * <p>Both facts this pins down — the hit is kept, the rest is not read — used to rest on an
+     * ordering nothing guarantees. The topics all start at once on a ten-thread pool and
+     * {@code scanTopic} reads the cancel flag on entry, so raising it "once one topic has
+     * completed" could raise it on an *empty* one that won the race: {@code a} then returned
+     * without searching, and the graph came back empty. It failed exactly that way on a loaded
+     * runner. So the flag is now raised by the only event that means the hit is recorded — a
+     * partial graph with a node in it — and the empty topics block until then, which is what makes
+     * "the remaining topics were never read" true rather than likely: with more topics than
+     * threads, the ones still queued when the flag goes up never start.</p>
+     */
     @Test
     void cancellingStopsTheScanAndKeepsWhatWasFound() throws Exception {
-        when(kafkaAdminService.listTopics()).thenReturn(List.of("a", "b", "c", "d"));
-        onSearch("a", found(List.of(message(0, 1L, 100L, "K-1", "x")), 1));
-        onSearch("b", nothing());
-        onSearch("c", nothing());
-        onSearch("d", nothing());
+        // Plus de topics que le pool n'a de fils (10) : les derniers sont en file, pas en vol.
+        List<String> topics = new java.util.ArrayList<>(List.of("a"));
+        for (int i = 0; i < 14; i++) {
+            topics.add("empty-" + i);
+        }
+        when(kafkaAdminService.listTopics()).thenReturn(topics);
 
-        // Raised as soon as the first topic has been recorded.
         AtomicBoolean cancelled = new AtomicBoolean();
+        CountDownLatch hitRecorded = new CountDownLatch(1);
+
+        onSearch("a", found(List.of(message(0, 1L, 100L, "K-1", "x")), 1));
+        for (String topic : topics.subList(1, topics.size())) {
+            // Un topic vide ne peut pas terminer avant que le hit soit enregistré : sans cela,
+            // c'est lui qui déclencherait l'annulation, et le hit ne serait jamais lu.
+            when(topicSearchService.search(eq(topic), any())).thenAnswer(invocation -> {
+                hitRecorded.await(5, TimeUnit.SECONDS);
+                return nothing();
+            });
+        }
+
         RecordingListener listener = new RecordingListener() {
-            @Override public void onProgress(StreamFlowProgress p) {
-                super.onProgress(p);
-                if (p.topicsCompleted() >= 1) cancelled.set(true);
+            @Override public void onPartialFlow(StreamFlowResponse flow) {
+                super.onPartialFlow(flow);
+                // Le seul événement qui signifie « quelque chose a été trouvé » : le graphe
+                // partiel n'est republié que lorsqu'un topic vient d'y ajouter un saut.
+                if (!flow.nodes().isEmpty()) {
+                    cancelled.set(true);
+                    hitRecorded.countDown();
+                }
             }
         };
 
@@ -592,7 +623,8 @@ class StreamFlowServiceTest {
 
         assertEquals("CANCELLED", result.stats().stopReason());
         assertEquals(1, result.nodes().size(), "what was found before the stop is kept");
-        assertTrue(result.stats().topicsScanned() < 4, "the remaining topics were never read");
+        assertTrue(result.stats().topicsScanned() < topics.size(),
+            "the topics still queued when the flag went up were never read");
         assertTrue(result.warnings().stream().anyMatch(w -> w.contains("Stopped early")),
             "expected the partial scan to be stated, got " + result.warnings());
         // Nommés, pas seulement comptés : sans leurs noms, impossible de savoir si les topics
