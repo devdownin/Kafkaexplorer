@@ -8,6 +8,9 @@ import { useToast } from '../components/Toast';
 import { useCatalog } from '../catalogStore';
 import { describeApiError, type QueryErrorInfo } from './queryError';
 import {
+  // Recharts exporte lui aussi un `Tooltip` (celui des graphes) : le nôtre est aliasé pour que
+  // le fichier dise lequel des deux il utilise à chaque endroit.
+  Tooltip as InfoTooltip,
   PageHeader, Button, Stat, Select, EmptyState, CardSkeleton, TopicInput,
   Field, Input, Textarea, useConfirm,
   ErrorPanel,
@@ -383,28 +386,32 @@ const MetricCard: React.FC<{
             {metric.type}
           </span>
           {metric.createTableSql && (
-            <span title="Has attached CREATE TABLE DDL"
-              className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase shrink-0 bg-surface-container-high text-on-surface-variant">
-              DDL
-            </span>
+            <InfoTooltip content="This metric carries a CREATE TABLE statement, run before its own SQL.">
+              <span tabIndex={0}
+                className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase shrink-0 bg-surface-container-high text-on-surface-variant">
+                DDL
+              </span>
+            </InfoTooltip>
           )}
           {(metric.labelFields?.length ?? 0) > 0 && (
-            <span title="Latest-message labels configured"
-              className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase shrink-0 bg-primary/10 text-primary">
-              {metric.labelFields!.length} labels
-            </span>
+            <InfoTooltip content="Prometheus labels taken from the latest message, so the metric can be split by one of its fields.">
+              <span tabIndex={0}
+                className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase shrink-0 bg-primary/10 text-primary">
+                {metric.labelFields!.length} labels
+              </span>
+            </InfoTooltip>
           )}
         </div>
         <div className="flex items-center gap-1 shrink-0">
-          <button onClick={onRefresh} disabled={refreshing} title="Refresh now"
+          <button onClick={onRefresh} disabled={refreshing} title="Refresh now" aria-label="Refresh this metric now"
             className="p-1 text-on-surface-variant hover:text-primary transition-colors disabled:opacity-40">
             <span className={`material-symbols-outlined text-base ${refreshing ? 'animate-spin' : ''}`}>refresh</span>
           </button>
-          <button onClick={onEdit} title="Edit"
+          <button onClick={onEdit} title="Edit" aria-label="Edit this metric"
             className="p-1 text-on-surface-variant hover:text-primary transition-colors">
             <span className="material-symbols-outlined text-base">edit</span>
           </button>
-          <button onClick={onDelete} title="Delete"
+          <button onClick={onDelete} title="Delete" aria-label="Delete this metric"
             className="p-1 text-on-surface-variant hover:text-error transition-colors">
             <span className="material-symbols-outlined text-base">delete</span>
           </button>
@@ -432,10 +439,14 @@ const MetricCard: React.FC<{
           )}
         </div>
         {metric.errorMessage && (
-          // Titre lisible (voir queryError.ts) ; le message brut reste dans le tooltip.
-          <p className="text-[10px] text-error mt-1 line-clamp-2" title={metric.errorMessage}>
-            <span className="material-symbols-outlined text-[11px] align-middle">error</span>{' '}{describeQueryError(metric.errorMessage).title}
-          </p>
+          // Titre lisible (voir queryError.ts) ; le message brut du serveur, qui dit *quelle*
+          // colonne ou quelle table pose problème, se lit dans l'infobulle — au survol comme au
+          // focus, puisque c'est souvent la seule information exploitable.
+          <InfoTooltip content={metric.errorMessage}>
+            <p tabIndex={0} className="text-[10px] text-error mt-1 line-clamp-2 rounded">
+              <span className="material-symbols-outlined text-[11px] align-middle">error</span>{' '}{describeQueryError(metric.errorMessage).title}
+            </p>
+          </InfoTooltip>
         )}
       </div>
 
@@ -507,7 +518,7 @@ const MetricCard: React.FC<{
           {metric.sql.replace(/\s+/g, ' ')}
         </pre>
         <button onClick={() => { navigator.clipboard.writeText(metric.sql); toast('SQL copied', 'success'); }}
-          title="Copy SQL" className="shrink-0 text-outline hover:text-primary transition-colors opacity-0 group-hover:opacity-100">
+          title="Copy SQL" aria-label="Copy the metric SQL" className="shrink-0 text-outline hover:text-primary transition-colors opacity-0 group-hover:opacity-100">
           <span className="material-symbols-outlined text-base">content_copy</span>
         </button>
       </div>
@@ -1156,7 +1167,7 @@ const Metrics: React.FC = () => {
                     ) : (
                       <button
                         type="button"
-                        title="Regenerate name from type + topic"
+                        aria-label="Regenerate the name from the metric type and topic"
                         onClick={() => {
                           setNameIsAuto(true);
                           setEditingMetric(m => ({ ...m, name: buildAutoName(m.type ?? 'GAUGE', selectedTopic) }));
@@ -1284,7 +1295,7 @@ const Metrics: React.FC = () => {
                             .finally(() => setLabelPreviewLoading(false));
                         }}
                         className="shrink-0 text-on-surface-variant hover:text-primary transition-colors"
-                        title="Refresh latest message"
+                        title="Refresh latest message" aria-label="Refresh the latest message"
                       >
                         <span className={`material-symbols-outlined text-base ${labelPreviewLoading ? 'animate-spin' : ''}`}>refresh</span>
                       </button>
@@ -1516,7 +1527,8 @@ const Metrics: React.FC = () => {
                       : 'border-success/20 bg-success/5 text-success'
                   }`}>
                     {previewError ? (
-                      <div className="flex items-start gap-2" title={previewError.raw}>
+                      <InfoTooltip content={previewError.raw}>
+                      <div tabIndex={0} className="flex items-start gap-2 rounded">
                         <span className="material-symbols-outlined text-sm mt-0.5 shrink-0">error</span>
                         <span className="min-w-0">
                           <span className="font-semibold">{previewError.title}</span>
@@ -1525,6 +1537,7 @@ const Metrics: React.FC = () => {
                           )}
                         </span>
                       </div>
+                      </InfoTooltip>
                     ) : (
                       <div className="space-y-1.5">
                         <span className="flex items-center gap-2">
