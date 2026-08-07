@@ -4,7 +4,7 @@ import {
   PageHeader, Button, CardSkeleton, Field, Input, NumberInput, PasswordInput, useConfirm,
   useUnsavedGuard,
 } from '../components/ui';
-import { clearDraft, readDraft, writeDraft } from '../draftStore';
+import { clearDraft, readDraft, useDraftConflict, writeDraft } from '../draftStore';
 import { draftableOnly, mergeDraft } from './configDraft';
 
 interface ClusterConfig {
@@ -80,6 +80,7 @@ const LLM_PROVIDERS = [
 
 /** Clé du brouillon (voir `configDraft.ts` — les secrets n'y entrent pas). */
 const DRAFT_KEY = 'config';
+const DRAFT_KEYS = [DRAFT_KEY];
 
 const Config: React.FC = () => {
   const confirm = useConfirm();
@@ -105,6 +106,7 @@ const Config: React.FC = () => {
   /** Dernier état persisté, pour savoir si le formulaire a été modifié. */
   const savedRef = useRef<string>('');
   const [dirty, setDirty] = useState(false);
+  const draftConflict = useDraftConflict(DRAFT_KEYS);
 
   /*
    * Le serveur donne la base — c'est lui qui dit ce qui est réellement en vigueur, et lui seul
@@ -731,6 +733,11 @@ const Config: React.FC = () => {
           {testing ? 'Testing…' : 'Test connection'}
         </Button>
         <div className="flex items-center gap-3">
+          {draftConflict && (
+            <span className="text-[12px] text-warning">
+              Also open in another tab — the last one to type owns the saved draft
+            </span>
+          )}
           {dirty && !saving && (
             <span className="text-[12px] text-on-surface-variant">Unsaved changes</span>
           )}

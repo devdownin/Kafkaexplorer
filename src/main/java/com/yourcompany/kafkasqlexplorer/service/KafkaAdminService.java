@@ -3,8 +3,11 @@
 package com.yourcompany.kafkasqlexplorer.service;
 
 import com.yourcompany.kafkasqlexplorer.config.KafkaConfig;
+import com.yourcompany.kafkasqlexplorer.domain.ConsumerGroupLag;
 import com.yourcompany.kafkasqlexplorer.domain.KafkaMessage;
 import com.yourcompany.kafkasqlexplorer.domain.MessageFormat;
+import com.yourcompany.kafkasqlexplorer.domain.PartitionLag;
+import com.yourcompany.kafkasqlexplorer.domain.TopicConsumers;
 import com.yourcompany.kafkasqlexplorer.domain.TopicDescriptor;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.DescribeClusterOptions;
@@ -30,9 +33,15 @@ import org.apache.kafka.clients.admin.DescribeFeaturesResult;
 import org.apache.kafka.clients.admin.DescribeMetadataQuorumOptions;
 import org.apache.kafka.clients.admin.FeatureMetadata;
 import org.apache.kafka.clients.admin.FinalizedVersionRange;
+import org.apache.kafka.clients.admin.ConsumerGroupDescription;
 import org.apache.kafka.clients.admin.GroupListing;
+import org.apache.kafka.clients.admin.ListConsumerGroupOffsetsSpec;
 import org.apache.kafka.clients.admin.ListGroupsOptions;
+import org.apache.kafka.clients.admin.ListOffsetsResult;
+import org.apache.kafka.clients.admin.MemberDescription;
+import org.apache.kafka.clients.admin.OffsetSpec;
 import org.apache.kafka.clients.admin.QuorumInfo;
+import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.clients.admin.SupportedVersionRange;
 import org.springframework.stereotype.Service;
 import io.confluent.kafka.schemaregistry.client.CachedSchemaRegistryClient;
@@ -66,6 +75,15 @@ public class KafkaAdminService {
      * We initialize it once and reuse it across multiple requests.
      */
     private AdminClient adminClient;
+
+    /**
+     * Test seam — {@code KafkaAdminServiceConsumerLagTest} drives a mocked AdminClient through it.
+     * The real one is built in {@link #init()} from the connection settings, which a unit test has
+     * no way to satisfy without a broker.
+     */
+    void setAdminClientForTest(AdminClient adminClient) {
+        this.adminClient = adminClient;
+    }
     private SchemaRegistryClient schemaRegistryClient;
     private KafkaAvroDeserializer avroDeserializer;
 
@@ -391,6 +409,205 @@ public class KafkaAdminService {
             details.put("error", e.getMessage());
         }
         return details;
+    }
+
+    /**
+     * Who reads a topic, and how far behind they are.
+     *
+     * <p>Four admin calls, in this order and for a reason: list the groups, describe the
+     * candidates (members and their assignments), read their committed offsets restricted to this
+     * topic's partitions, and only <em>then</em> the log end offsets. Reading the end offsets last
+     * means a consumer committing between the two calls can only make the lag look larger, never
+     * negative — so a negative lag that does survive is a real one (an offset reset past the end,
+     * a topic recreated under the same name) and is reported rather than clamped away.
+     *
+     * <p>SHARE groups (KIP-932) are excluded: their state lives in the share-group coordinator,
+     * not in {@code __consumer_offsets}, so {@code listConsumerGroupOffsets} answers empty for
+     * them and listing them would only manufacture "0 lag" rows for groups nobody measured.
+     *
+     * <p>Bounded by {@code explorer.consumer-group-max-groups}: a cluster can hold thousands of
+     * groups and each one costs a coordinator lookup. The response says how many were examined
+     * against how many exist, because an empty list must not read as "nobody consumes this topic"
+     * when it means "we looked at the first two hundred of three thousand".
+     *
+     * <p>Cached (30s) like the other metadata reads — the page polls, and the numbers move on
+     * every produce anyway.
+     */
+    @Cacheable(value = "topicConsumers", key = "#topic")
+    public TopicConsumers getTopicConsumers(String topic, int maxGroups) {
+        List<TopicPartition> partitions;
+        try {
+            TopicDescription description = adminClient.describeTopics(List.of(topic))
+                    .allTopicNames().get(5, TimeUnit.SECONDS).get(topic);
+            if (description == null) {
+                return TopicConsumers.unavailable(topic, "Topic '" + topic + "' does not exist.");
+            }
+            partitions = description.partitions().stream()
+                    .map(p -> new TopicPartition(topic, p.partition()))
+                    .toList();
+        } catch (Exception e) {
+            return TopicConsumers.unavailable(topic, "Could not describe the topic: " + rootMessage(e));
+        }
+
+        List<GroupListing> candidates;
+        int inCluster;
+        int shareGroups;
+        try {
+            Collection<GroupListing> all = adminClient
+                    .listGroups(new ListGroupsOptions().timeoutMs(5000))
+                    .all().get(5, TimeUnit.SECONDS);
+            inCluster = all.size();
+            candidates = all.stream()
+                    .filter(g -> !"SHARE".equals(g.type().map(Enum::name).orElse("UNKNOWN")))
+                    .sorted(Comparator.comparing(GroupListing::groupId))
+                    .toList();
+            shareGroups = inCluster - candidates.size();
+        } catch (Exception e) {
+            // Not "no consumers": the question could not be asked at all.
+            return TopicConsumers.unavailable(topic,
+                    "Could not list the cluster's groups: " + rootMessage(e));
+        }
+
+        List<String> warnings = new ArrayList<>();
+        if (shareGroups > 0) {
+            warnings.add(shareGroups + " share group(s) were skipped: their positions live in the "
+                    + "share-group coordinator, not in committed offsets, so no lag can be derived "
+                    + "from them here.");
+        }
+        boolean truncated = candidates.size() > maxGroups;
+        if (truncated) {
+            warnings.add("Only the first " + maxGroups + " of the " + candidates.size()
+                    + " eligible groups were read (alphabetical order) — a group past that point "
+                    + "would not appear here even if it were the one lagging.");
+            candidates = candidates.subList(0, maxGroups);
+        }
+        if (candidates.isEmpty()) {
+            return new TopicConsumers(topic, List.of(), 0, inCluster, truncated, warnings);
+        }
+
+        List<String> groupIds = candidates.stream().map(GroupListing::groupId).toList();
+        Map<String, String> typeOf = candidates.stream().collect(Collectors.toMap(
+                GroupListing::groupId, g -> g.type().map(Enum::name).orElse("UNKNOWN"), (a, b) -> a));
+
+        Map<String, ConsumerGroupDescription> descriptions = Map.of();
+        try {
+            descriptions = adminClient.describeConsumerGroups(groupIds).all().get(10, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            // Degraded, not fatal: without descriptions there are no members, but the offsets —
+            // which carry the lag itself — may still be readable.
+            warnings.add("Group members could not be read (" + rootMessage(e)
+                    + "); lag is still reported, assignments are not.");
+        }
+
+        Map<String, ListConsumerGroupOffsetsSpec> specs = new LinkedHashMap<>();
+        for (String groupId : groupIds) {
+            specs.put(groupId, new ListConsumerGroupOffsetsSpec().topicPartitions(partitions));
+        }
+        Map<String, Map<TopicPartition, OffsetAndMetadata>> committed;
+        try {
+            committed = adminClient.listConsumerGroupOffsets(specs).all().get(15, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            return TopicConsumers.unavailable(topic,
+                    "Could not read committed offsets: " + rootMessage(e));
+        }
+
+        Map<TopicPartition, Long> endOffsets;
+        try {
+            Map<TopicPartition, OffsetSpec> request = new LinkedHashMap<>();
+            partitions.forEach(tp -> request.put(tp, OffsetSpec.latest()));
+            Map<TopicPartition, ListOffsetsResult.ListOffsetsResultInfo> ends =
+                    adminClient.listOffsets(request).all().get(10, TimeUnit.SECONDS);
+            endOffsets = ends.entrySet().stream()
+                    .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().offset()));
+        } catch (Exception e) {
+            return TopicConsumers.unavailable(topic,
+                    "Could not read the topic's end offsets: " + rootMessage(e));
+        }
+
+        List<ConsumerGroupLag> groups = new ArrayList<>();
+        boolean negativeLag = false;
+        for (String groupId : groupIds) {
+            Map<TopicPartition, OffsetAndMetadata> offsets = committed.get(groupId);
+            if (offsets == null || offsets.values().stream().allMatch(Objects::isNull)) {
+                continue; // this group has no position on this topic — not a consumer of it
+            }
+            ConsumerGroupDescription description = descriptions.get(groupId);
+            Map<Integer, MemberDescription> holders = assignmentsOn(topic, description);
+
+            List<PartitionLag> perPartition = new ArrayList<>();
+            long totalLag = 0L;
+            int withoutCommit = 0;
+            boolean any = false;
+            for (TopicPartition tp : partitions) {
+                OffsetAndMetadata offset = offsets.get(tp);
+                long end = endOffsets.getOrDefault(tp, 0L);
+                Long position = offset == null ? null : offset.offset();
+                Long lag = position == null ? null : end - position;
+                if (position == null) {
+                    withoutCommit++;
+                } else {
+                    any = true;
+                    totalLag += lag;
+                    if (lag < 0) negativeLag = true;
+                }
+                MemberDescription holder = holders.get(tp.partition());
+                perPartition.add(new PartitionLag(tp.partition(), position, end, lag,
+                        holder == null ? null : holder.consumerId(),
+                        holder == null ? null : holder.clientId(),
+                        holder == null ? null : holder.host()));
+            }
+            if (!any) continue;
+
+            groups.add(new ConsumerGroupLag(
+                    groupId,
+                    typeOf.getOrDefault(groupId, "UNKNOWN"),
+                    description == null ? "UNKNOWN" : description.groupState().name(),
+                    description == null ? 0 : description.members().size(),
+                    (int) holders.values().stream().map(MemberDescription::consumerId).distinct().count(),
+                    totalLag,
+                    withoutCommit,
+                    perPartition,
+                    null));
+        }
+
+        if (negativeLag) {
+            warnings.add("A committed offset sits past the end of its partition. The end offsets "
+                    + "are read after the committed ones, so this is not a race: it is what an "
+                    + "offset reset to a future position, or a topic recreated under the same "
+                    + "name, leaves behind.");
+        }
+        groups.sort(Comparator.comparingLong(ConsumerGroupLag::totalLag).reversed()
+                .thenComparing(ConsumerGroupLag::groupId));
+        return new TopicConsumers(topic, groups, groupIds.size(), inCluster, truncated, warnings);
+    }
+
+    /** Which member holds each partition of {@code topic}, empty when the group was not described. */
+    private static Map<Integer, MemberDescription> assignmentsOn(String topic, ConsumerGroupDescription description) {
+        if (description == null) return Map.of();
+        Map<Integer, MemberDescription> holders = new HashMap<>();
+        for (MemberDescription member : description.members()) {
+            for (TopicPartition tp : member.assignment().topicPartitions()) {
+                if (tp.topic().equals(topic)) holders.put(tp.partition(), member);
+            }
+        }
+        return holders;
+    }
+
+    /**
+     * The innermost message of a cause chain. An admin future wraps the useful text inside an
+     * {@code ExecutionException} whose own message is the wrapped class name — and a bare
+     * {@code getMessage()} is null on some of them, which would put "null" in a warning.
+     */
+    private static String rootMessage(Throwable e) {
+        Throwable cursor = e;
+        String best = null;
+        while (cursor != null) {
+            if (cursor.getMessage() != null && !cursor.getMessage().isBlank()) {
+                best = cursor.getMessage();
+            }
+            cursor = cursor.getCause();
+        }
+        return best != null ? best : e.getClass().getSimpleName();
     }
 
     /**

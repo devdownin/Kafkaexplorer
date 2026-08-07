@@ -9,7 +9,7 @@ import AnomalyTable, { AnomalyReport } from '../components/processmining/Anomaly
 import LiveStatusBar, { LiveWindowStats } from '../components/processmining/LiveStatusBar';
 import AnomalyFeed, { LiveAnomaly } from '../components/processmining/AnomalyFeed';
 import { PageHeader, Button, Field, Textarea } from '../components/ui';
-import { clearDraft, readDraft, usePersistentState, writeDraft } from '../draftStore';
+import { clearDraft, readDraft, useDraftConflict, usePersistentState, writeDraft } from '../draftStore';
 import { describeResume, resumableStep } from './processMiningDraft';
 import type { AnalysisMode, Step } from './processMiningDraft';
 
@@ -157,9 +157,10 @@ const ProcessMining: React.FC = () => {
       hasMapping: readDraft<string | null>(DRAFT.mapping, null) !== null,
       hasSnapshot: readDraft<ProcessMiningResult | null>(DRAFT.snapshot, null) !== null,
     });
-    // Réécrit tout de suite : `usePersistentState` relit le brouillon et rendrait l'étape
-    // assainie sans effet si la valeur d'origine y était encore.
-    writeDraft(DRAFT.step, step);
+    // Réécrit tout de suite quand l'étape a dû être ramenée en arrière : `usePersistentState`
+    // relit le brouillon, et l'assainissement resterait sans effet si l'ancienne valeur y était
+    // encore. Rien à écrire dans le cas courant — une simple visite ne sème pas de brouillon.
+    if (step !== asked) writeDraft(DRAFT.step, step);
     return { step, notice: describeResume(step, asked) };
   });
 
@@ -177,6 +178,7 @@ const ProcessMining: React.FC = () => {
   const [selectedAuditIds, setSelectedAuditIds] = usePersistentState<string[]>(DRAFT.audits, []);
   const [customAuditPrompt, setCustomAuditPrompt] = usePersistentState(DRAFT.prompt, '');
   const [resumeNotice, setResumeNotice] = useState<string | null>(restored.notice);
+  const draftConflict = useDraftConflict(DRAFT_KEYS);
 
   // Live mode state
   const [liveConnected, setLiveConnected] = useState(false);
@@ -453,6 +455,19 @@ const ProcessMining: React.FC = () => {
 
       {/* Step indicator */}
       <StepIndicator current={step} />
+
+      {/* Deux onglets partagent les mêmes clés et rien ne les arbitre : le dernier qui écrit
+          gagne. Synchroniser écraserait une saisie en cours — le dire laisse le choix. */}
+      {draftConflict && (
+        <div className="bg-warning/5 border border-warning/30 rounded-xl p-3 flex items-start gap-3">
+          <span aria-hidden="true" className="material-symbols-outlined text-warning text-lg flex-shrink-0">tab_duplicate</span>
+          <p className="text-xs text-on-surface-variant">
+            This pipeline is also open in another tab, which has just written its own draft.
+            Whichever tab writes last is the one that will be restored — this one keeps what is on
+            screen until you reload.
+          </p>
+        </div>
+      )}
 
       {/* Un pipeline rouvert à mi-parcours doit dire qu'il vient d'un brouillon : sans cela il
           passe pour l'état courant, alors qu'il date de la visite précédente. */}
