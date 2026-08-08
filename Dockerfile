@@ -1,13 +1,21 @@
 # syntax=docker/dockerfile:1.7
 # BuildKit is required (Docker 23+ uses it by default) for the `RUN --mount=type=cache`
-# lines below. They are what makes a rebuild cheap: the Maven repository and the npm
-# cache live in build caches shared across builds instead of inside image layers, so
-# editing one Java file no longer re-downloads the Flink / Kafka / Spring dependency
-# tree — several hundred MB that used to be fetched on every single build, because the
-# sources were copied in before any dependency resolution had happened.
+# line in the frontend stage.
+#
+# What makes a rebuild cheap is that dependencies are resolved *before* the sources are
+# copied in — originally they were not, so editing one Java file re-downloaded the whole
+# Flink / Kafka / Spring tree, several hundred megabytes, on every build. The two stages
+# reach that differently on purpose: npm uses a cache mount, Maven uses a layer keyed on
+# pom.xml (see the backend stage — a cache mount is invisible to `cache-to: type=gha`,
+# which is what CI reuses between runs).
+#
+# Base images are pinned by digest so the same commit always builds on the same JRE and
+# Node; Dependabot's `docker` ecosystem proposes the bumps (.github/dependabot.yml).
+# Keep the human-readable tag in front of the digest — it is the only thing that says
+# what the digest is.
 
 # --- Stage 1: Build Frontend ---
-FROM node:24.0.0-alpine AS frontend-builder
+FROM node:24.0.0-alpine@sha256:7804c7734b3e0cf647ab8273a1d4cda776123145da5952732f3dca9e742ddca0 AS frontend-builder
 WORKDIR /app
 
 # Manifest first: this layer is reused as long as the dependencies do not move.
@@ -34,11 +42,26 @@ RUN ./node_modules/.bin/tsc \
  && ./node_modules/.bin/vite build --outDir /app/dist --emptyOutDir
 
 # --- Stage 2: Build Backend ---
-FROM maven:3.9-eclipse-temurin-21 AS backend-builder
+FROM maven:3.9-eclipse-temurin-21@sha256:c07f7ccfb8ca6c9fa29ee523f00afa7d2ca6132c92f8652c4aebb5ee3491f502 AS backend-builder
 WORKDIR /app
 
-# Copier le pom.xml
+# The dependency tree resolved in its own layer, keyed on pom.xml alone, so it is
+# re-fetched only when the pom actually moves.
+#
+# This used to be a `RUN --mount=type=cache,target=/root/.m2` on the package step. That
+# makes a *local* rebuild cheap but does nothing for CI: BuildKit cache mounts are not
+# exported with the image layers, so `cache-to: type=gha` carried none of it and the
+# docker job of ci.yml re-downloaded the whole Flink/Kafka/Spring tree on every single
+# run. A layer is the one form of cache that survives between runners — hence the
+# in-image repository (`-Dmaven.repo.local`) rather than a mount. This stage is
+# discarded, so its size costs nothing in the published image.
+#
+# `|| true` is deliberate: go-offline is advisory here. It misses plugin dependencies
+# that only resolve later and fails outright on some plugin combinations, while the
+# `package` below runs online and simply fetches whatever was missed. A cache-warming
+# step must never be able to fail a build.
 COPY pom.xml ./
+RUN mvn -B -Dmaven.repo.local=/app/.m2repo -P '!build-frontend' dependency:go-offline || true
 
 # Copier les sources backend
 COPY src/main/java ./src/main/java
@@ -52,8 +75,7 @@ COPY --from=frontend-builder /app/dist ./src/main/resources/static
 # to clean, and it cannot help correctness. The frontend profile is off because the SPA
 # was already built in stage 1; leaving it on would download a second Node toolchain
 # and rebuild the very same bundle.
-RUN --mount=type=cache,target=/root/.m2,sharing=locked \
-    mvn -B package -P '!build-frontend' -DskipTests
+RUN mvn -B -Dmaven.repo.local=/app/.m2repo package -P '!build-frontend' -DskipTests
 
 # Split the fat JAR into Spring Boot's four standard layers, ordered from the most stable
 # to the least: `dependencies` (Flink, Kafka, Spring — hundreds of megabytes that move
@@ -68,7 +90,7 @@ RUN cp target/kafka-sql-explorer-*.jar app.jar \
  && java -Djarmode=tools -jar app.jar extract --layers --launcher --destination extracted
 
 # --- Stage 3: Runtime ---
-FROM eclipse-temurin:21-jre-alpine
+FROM eclipse-temurin:21-jre-alpine@sha256:3f08b13888f595cc49edabea7250ba69499ba25602b267da591720769400e08c
 WORKDIR /app
 
 # The app writes two things under its working directory: logs/kafkaexplorer.log
@@ -100,10 +122,11 @@ EXPOSE 8080
 # JAVA_TOOL_OPTIONS is picked up by the JVM itself, so the entrypoint stays exec-form.
 ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75.0"
 
-# `management.endpoints.web.exposure.include` already exposes health. The start period
-# is generous on purpose: the embedded Flink runtime takes its time on a cold start,
-# and a container reported unhealthy while it is still legitimately booting is worse
-# than no healthcheck at all.
+# `management.endpoints.web.exposure.include` already exposes health, groups included.
+# The start period is generous on purpose: the embedded Flink runtime takes its time on
+# a cold start, and a container reported unhealthy while it is still legitimately booting
+# is worse than no healthcheck at all.
+#
 # Liveness, not the aggregate `/actuator/health`. The aggregate carries the Kafka
 # readiness indicator, so a broker restart would flip the container to `unhealthy` — and
 # the app is still perfectly alive then, still serving its UI, still able to be repointed

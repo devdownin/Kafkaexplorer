@@ -3,7 +3,7 @@ services:
     image: apache/kafka:4.2.0
     container_name: kafka
     ports:
-      - "${BIND_ADDR:-127.0.0.1}:9092:9092"
+      - "${BIND_ADDR:-127.0.0.1}:${KAFKA_PORT:-9092}:9092"
     # A stopping KRaft node flushes its logs and closes the group / share-state
     # coordinators cleanly. Docker's default grace period is 10s, past which the broker is
     # SIGKILLed mid-flush and the next start has to recover the log segments — on a seeded
@@ -30,7 +30,7 @@ services:
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
       KAFKA_LISTENERS: PLAINTEXT://:29092,CONTROLLER://:9093,PLAINTEXT_HOST://:9092
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:${KAFKA_PORT:-9092}
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
@@ -75,7 +75,7 @@ services:
       kafka:
         condition: service_healthy
     ports:
-      - "${BIND_ADDR:-127.0.0.1}:8081:8081"
+      - "${BIND_ADDR:-127.0.0.1}:${SCHEMA_REGISTRY_PORT:-8081}:8081"
     environment:
       SCHEMA_REGISTRY_HOST_NAME: schema-registry
       SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'kafka:29092'
@@ -99,7 +99,7 @@ services:
       # and `POST /api/config` can repoint the Kafka cluster at runtime, so binding it to
       # 0.0.0.0 — the Docker default — offered it to the whole LAN. Set BIND_ADDR to expose
       # it deliberately: `BIND_ADDR=0.0.0.0 docker compose up -d`.
-      - "${BIND_ADDR:-127.0.0.1}:8080:8080"
+      - "${BIND_ADDR:-127.0.0.1}:${EXPLORER_PORT:-8080}:8080"
     # Not on `demo-setup`: the app has no need of the demo data to boot, and waiting for
     # the seed left the UI unreachable for the minute-plus it takes. Topics appear in the
     # Dashboard as they are created.

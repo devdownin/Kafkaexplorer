@@ -117,7 +117,8 @@ cluster, une trace Stream Flow sur tout le cluster (budget 60 s), un SELECT Flin
 au niveau socket ne fait pas qu'échouer la requête : un audit interrompu ainsi ne passe pas par sa
 propre voie d'annulation coopérative et n'écrit donc pas son rapport partiel.
 
-`server.shutdown: graceful` + `spring.lifecycle.timeout-per-shutdown-phase: 20s`.
+`server.shutdown: graceful` + `spring.lifecycle.timeout-per-shutdown-phase` (20 s à ce
+stade, ramené à 15 s par S4).
 
 ### A2 — `stop_grace_period` n'existait nulle part, et le budget d'arrêt le dépasse ✅
 
@@ -139,7 +140,8 @@ personne n'avait accordé au conteneur le temps correspondant. En pratique le ca
 vol) est instantané, mais le cas qui compte — on arrête la stack pendant un audit — est exactement
 celui qui atteignait le SIGKILL, au milieu de l'écriture du rapport dans `internal.audit.history`.
 
-`stop_grace_period: 45s` sur le service applicatif de toutes les stacks.
+`stop_grace_period: 45s` sur le service applicatif de toutes les stacks — une accommodation,
+pas une correction : **S4 supprime le cumul lui-même** et ramène ce délai à 35 s.
 
 **Côté broker.** Un nœud KRaft qui s'arrête vide ses logs et referme proprement les coordinateurs de
 groupes et de share-state. SIGKILLé à 10 s en plein flush, il laisse des segments à rejouer : le
@@ -325,17 +327,66 @@ un `docker compose up`. Tous les ports publiés (8080, 9092, 8081, 11434, 5173, 
 
 ---
 
-## 5. Constaté, non traité
+## 5. Troisième lot — reproductibilité et ergonomie
 
-### 📋 N2 — Les dépendances Maven ne sont pas une couche d'image
+### T1 — Ports paramétrables, `.env.example` ✅
 
-L'étape backend du `Dockerfile` copie `pom.xml` puis les sources, puis lance un unique
-`mvn package`. En local le `RUN --mount=type=cache,target=/root/.m2` rend le second build rapide,
-mais **les caches de montage ne sont pas exportés vers le cache GHA** (`cache-to: type=gha` ne
-transporte que des couches) : le build d'image de `ci.yml` retélécharge donc tout l'arbre
-Flink/Kafka/Spring à chaque exécution. Un `RUN mvn dependency:go-offline` intercalé, dont la couche
-ne dépend que de `pom.xml`, en ferait un cache hit. Non appliqué : `go-offline` est notoirement
-capricieux avec certains plugins, et ce n'est pas vérifiable sans démon Docker.
+8080 et 9092 sont les deux ports les plus disputés d'un poste de développeur, et en changer voulait
+dire éditer six fichiers. Ils passent tous par des variables — `EXPLORER_PORT`, `KAFKA_PORT`,
+`SCHEMA_REGISTRY_PORT`, `OLLAMA_PORT`, `VITE_PORT` — avec les mêmes valeurs par défaut qu'avant, et
+`.env.example` documente l'ensemble (Compose lit `.env` à la racine automatiquement ; un
+`EXPLORER_PORT=9080 docker compose up -d` suffit pour un cas ponctuel).
+
+Un détail qui aurait rendu le paramétrage trompeur : `KAFKA_ADVERTISED_LISTENERS` réécrit lui aussi
+`PLAINTEXT_HOST://localhost:${KAFKA_PORT}`. Sans cela, un client hôte à qui l'on dit de se connecter
+sur le nouveau port se serait fait renvoyer vers 9092 par le broker lui-même — un port publié qui ne
+sert à rien, et un diagnostic pénible. Le listener interne (`kafka:29092`), lui, ne bouge pas : c'est
+celui que l'application utilise.
+
+### T2 — Les dépendances Maven sont une couche d'image ✅ (ex-N2)
+
+L'étape backend copiait `pom.xml` puis les sources, puis lançait un unique `mvn package` sous
+`RUN --mount=type=cache,target=/root/.m2`. Ce montage rend un rebuild **local** rapide et ne fait
+**rien** pour la CI : les caches de montage BuildKit ne sont pas exportés avec les couches, donc
+`cache-to: type=gha` n'en transportait rien et le job `docker` retéléchargeait tout l'arbre
+Flink/Kafka/Spring à chaque exécution.
+
+`dependency:go-offline` est désormais une étape à part, dont la couche ne dépend que de `pom.xml`, et
+le dépôt Maven vit **dans l'image** (`-Dmaven.repo.local`) et non dans un montage — une couche est la
+seule forme de cache qui survive d'un runner à l'autre. L'étape étant jetée, sa taille ne coûte rien
+dans l'image publiée.
+
+Deux choix explicites. `|| true` : `go-offline` est purement du préchauffage, il rate des
+dépendances de plugins qui ne se résolvent que plus tard et échoue franchement sur certaines
+combinaisons — le `package` qui suit tourne en ligne et récupère ce qui manque, donc une étape de
+cache ne doit jamais pouvoir casser un build. Et la contrepartie assumée : un build local qui
+**modifie le pom** retélécharge l'arbre, là où le montage l'évitait. C'est le cas rare ; le cas
+fréquent (CI, et tout build dont le pom n'a pas bougé) y gagne.
+
+### T3 — Images de base épinglées par digest + Dependabot ✅ (ex-N5)
+
+`maven:3.9-eclipse-temurin-21` et `eclipse-temurin:21-jre-alpine` flottaient : deux builds du même
+commit pouvaient embarquer des JRE différents. Les cinq `FROM` des deux Dockerfiles portent
+maintenant `tag@sha256:…` — le tag reste devant, il est la seule chose qui dise *ce que* le digest
+est.
+
+Épingler sans automatiser serait un mauvais échange : on gagne la reproductibilité et on gèle les
+correctifs de sécurité du JRE. `.github/dependabot.yml` gagne donc l'écosystème `docker`, groupé —
+les trois images bougent indépendamment mais un build marche sur l'ensemble ou pas du tout, et les
+deux Dockerfiles doivent être bumpés ensemble puisque leurs étages d'exécution sont volontairement
+identiques.
+
+`ollama/ollama:latest` est passé à `0.32.6` au passage : c'était le dernier tag réellement flottant
+de l'arbre, dans une stack censée être reproductible.
+
+Les images de service des stacks Compose (`apache/kafka:4.2.0`, `cp-schema-registry:7.6.0`) gardent
+leur tag de version, déjà exact. Elles pourraient l'être aussi par digest via l'écosystème
+`docker-compose` de Dependabot — non fait ici pour ne pas ajouter une configuration dont la prise en
+charge dépend de l'instance.
+
+---
+
+## 6. Constaté, non traité
 
 ### 📋 N3 — Noms de conteneurs fixes, projet Compose implicite
 
@@ -359,14 +410,6 @@ démonstration sur poste de travail, où une limite arbitraire gênerait plus qu
 déploiement réel, la limite doit venir de l'orchestrateur, et `MaxRAMPercentage` fera alors ce pour
 quoi il est là.
 
-### 📋 N5 — Tags d'images flottants
-
-`maven:3.9-eclipse-temurin-21`, `eclipse-temurin:21-jre-alpine` et `node:24.0.0-alpine` (celui-là
-épinglé au patch) ne sont pas épinglés par digest : deux builds du même commit peuvent embarquer des
-JRE différents. `deploy/kraft-platform/` traite le sujet par des variables dans `.env`. Un
-épinglage par digest, avec Dependabot pour le faire vivre, serait la suite logique — hors périmètre
-de cet audit.
-
 ### 📋 N6 — `deploy/kraft-platform/` sans `stop_grace_period`
 
 Cette stack (broker + ksqlDB + AKHQ + REST + Prometheus/Grafana) porte bien `restart: unless-stopped`
@@ -377,7 +420,7 @@ partie du déploiement de Kafka Explorer lui-même. À traiter avec elle.
 
 ---
 
-## 6. Validation
+## 7. Validation
 
 Pas de démon Docker dans l'environnement de cet audit. Ce qui a pu être vérifié ici l'a été :
 

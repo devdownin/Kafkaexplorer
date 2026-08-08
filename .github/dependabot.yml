@@ -9,6 +9,23 @@ updates:
     schedule:
       interval: "weekly"
 
+  # The base images of Dockerfile / Dockerfile.release are pinned by digest, which is what
+  # makes a given commit build on a given JRE — and which also freezes that JRE's security
+  # patches until something proposes the bump. This is that something; without it, pinning
+  # would trade reproducibility for a stale runtime, which is a bad trade.
+  #
+  # Grouped: node, maven and eclipse-temurin move independently but a build either works
+  # on the whole set or does not, and the two Dockerfiles must be bumped together — their
+  # runtime stages are deliberately identical.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      base-images:
+        patterns:
+          - "*"
+
   # The frontend was unwatched: only the Maven tree and the workflow actions were.
   # React, Vite, Monaco, axios and the rest of src/main/webapp therefore never got a
   # security or version bump, even though they ship inside the published jar and image.
