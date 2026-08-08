@@ -16,7 +16,8 @@ import {
   fitTransform, formatAbsoluteTime, formatDwell, formatLatency, formatRelativeTime, hitsToRows,
   HIT_EXPORT_COLUMNS, isNodeVisible, parseFlowResponse, parseSseBuffer, parseTopicList,
   clampEvidencePct, MAX_EVIDENCE_PCT, MIN_EVIDENCE_PCT,
-  parseTraceParams, progressRatio, pushTraceHistory, readEvidencePct, readPanelOpen,
+  isBlankTraceParams, parseTraceParams, progressRatio, pushTraceHistory, readEvidencePct,
+  readPanelOpen, readTraceParamsDraft, saveTraceParamsDraft,
   readTraceHistory, sameCriterion, slowestDivergence, sortHits, suggestWidenings, traceToJson,
   validateSearchPath, writeEvidencePct, writePanelOpen, zoomAt,
   type FlowHit, type FormErrors, type HitSortKey, type ParsedFlow, type TraceContinuation,
@@ -65,8 +66,15 @@ const StreamFlow: React.FC = () => {
   /** Déjà alimenté par le sondage de `Layout` : étendre `orders.*` ne coûte aucune requête. */
   const catalog = useCatalog();
 
-  // Le formulaire s'initialise depuis l'URL : une trace se partage telle quelle.
-  const initial = useMemo(() => parseTraceParams(location.search), []); // eslint-disable-line react-hooks/exhaustive-deps
+  /*
+   * Le formulaire s'initialise depuis l'URL : une trace se partage telle quelle. À défaut d'URL
+   * qui décrive une recherche, le critère non lancé de la visite précédente reprend sa place —
+   * l'URL l'emporte toujours, sinon un lien partagé écraserait le formulaire de son destinataire.
+   */
+  const initial = useMemo(() => {
+    const fromUrl = parseTraceParams(location.search);
+    return isBlankTraceParams(fromUrl) ? (readTraceParamsDraft() ?? fromUrl) : fromUrl;
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [messageKey, setMessageKey]         = useState(initial.messageKey);
   const [searchPath, setSearchPath]         = useState(initial.searchPath);
@@ -161,6 +169,11 @@ const StreamFlow: React.FC = () => {
     searchHeaders,
   }), [messageKey, searchPath, selectedTopics, windowMode, timeLimitMinutes, maxMessages,
     useRegex, exactKey, caseSensitive, searchHeaders]);
+
+  // Le brouillon suit la saisie, et s'efface de lui-même quand le formulaire revient à vide.
+  useEffect(() => {
+    saveTraceParamsDraft(currentParams());
+  }, [currentParams]);
 
   const fitView = useCallback(() => {
     const box = viewport();

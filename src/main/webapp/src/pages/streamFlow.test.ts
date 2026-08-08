@@ -9,7 +9,7 @@ import {
   formatLatency, formatRelativeTime, hitsToRows, HISTORY_KEY, HIT_EXPORT_COLUMNS, PANEL_KEY,
   parseFlowResponse, parseTraceParams, pushTraceHistory, readPanelOpen, readTraceHistory,
   sameCriterion, searchScopeOf, suggestWidenings, traceToJson, validateSearchPath, writePanelOpen,
-  zoomAt,
+  zoomAt, DEFAULT_TRACE_PARAMS, isBlankTraceParams, readTraceParamsDraft, saveTraceParamsDraft,
   type FlowHit, type FlowStats, type TraceParams,
 } from './streamFlow';
 import { toCsv } from './resultExport';
@@ -915,5 +915,42 @@ describe('describeCoverage', () => {
 
   it('is empty without stats', () => {
     expect(describeCoverage(null)).toBe('');
+  });
+});
+
+describe('brouillon du critère de trace', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('restitue un critère non lancé', () => {
+    const params = { ...DEFAULT_TRACE_PARAMS, messageKey: 'ORD-42', searchPath: '$.id' };
+    saveTraceParamsDraft(params);
+    expect(readTraceParamsDraft()).toEqual(params);
+  });
+
+  it('ne garde rien quand le formulaire ne décrit aucune recherche', () => {
+    saveTraceParamsDraft({ ...DEFAULT_TRACE_PARAMS, maxMessages: 750, useRegex: true });
+    // Des réglages sans critère ne sont pas une recherche : rien à rouvrir.
+    expect(readTraceParamsDraft()).toBeNull();
+  });
+
+  it('efface le brouillon quand le critère est effacé', () => {
+    saveTraceParamsDraft({ ...DEFAULT_TRACE_PARAMS, messageKey: 'ORD-42' });
+    saveTraceParamsDraft(DEFAULT_TRACE_PARAMS);
+    expect(readTraceParamsDraft()).toBeNull();
+  });
+
+  it('complète un brouillon écrit par une version antérieure', () => {
+    localStorage.setItem('kse:draft:stream-flow',
+      JSON.stringify({ v: 1, at: Date.now(), value: { messageKey: 'ORD-42' } }));
+    const restored = readTraceParamsDraft();
+    expect(restored?.messageKey).toBe('ORD-42');
+    expect(restored?.topics).toEqual([]);
+    expect(restored?.maxMessages).toBe(DEFAULT_TRACE_PARAMS.maxMessages);
+  });
+
+  it('reconnaît un critère vide, un topic ciblé suffisant à ne pas l\'être', () => {
+    expect(isBlankTraceParams(DEFAULT_TRACE_PARAMS)).toBe(true);
+    expect(isBlankTraceParams({ ...DEFAULT_TRACE_PARAMS, topics: ['demo.orders'] })).toBe(false);
+    expect(isBlankTraceParams({ ...DEFAULT_TRACE_PARAMS, messageKey: '  ' })).toBe(true);
   });
 });
