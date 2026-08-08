@@ -5,9 +5,10 @@ les quatre `Dockerfile*`, `.dockerignore`, les deux workflows GitHub, la platefo
 `deploy/kraft-platform/`, et le cycle de vie applicatif côté JVM (`@PreDestroy`, pools d'exécution,
 producteurs Kafka, émetteurs SSE).
 
-Ce document décrit l'**état d'avant correction** et la décision prise pour chaque point. Les items
-marqués ✅ sont corrigés dans le même commit ; ceux marqués 📋 sont constatés et volontairement
-laissés ouverts, avec la raison.
+Ce document décrit l'**état d'avant correction** et la décision prise pour chaque point. Il a été
+étendu par lots successifs (§ 4 à 7) ; tous les points relevés sont désormais traités, chacun avec
+la raison du choix retenu — y compris les deux que j'avais d'abord recommandé de laisser ouverts,
+et où c'est la solution envisagée, non le constat, qui posait problème (voir Q1 et Q2).
 
 ---
 
@@ -418,29 +419,64 @@ réserver à un réseau fermé ». C'est une décision d'exploitation, pas un d�
 
 ---
 
-## 7. Constaté, non traité
+## 7. Cinquième lot — les deux derniers points ouverts
 
-### 📋 N3 — Noms de conteneurs fixes, projet Compose implicite
+### Q1 — `container_name` retiré, service applicatif renommé ✅ (ex-N3)
 
-Toutes les stacks racine posent `container_name: kafka` et `container_name: kafka-sql-explorer`, qui
-sont globaux au démon : deux stacks ne peuvent pas tourner en parallèle. Aucune ne déclare de `name:`
-au niveau racine (sauf Spectra), elles partagent donc le nom de projet dérivé du répertoire, et donc
-le volume `kafka_data`.
+`container_name` est un nom **global au démon** : les stacks racine posaient toutes
+`kafka` et `kafka-sql-explorer`, donc deux d'entre elles ne pouvaient jamais tourner
+ensemble, et passer de `docker-compose.yml` à `docker-compose-kafka4.yml` sans `down`
+préalable échouait sur une collision de nom.
 
-Laissé tel quel volontairement : ces fichiers sont des **alternatives** (on lance l'un *ou* l'autre),
-la configuration du broker y est identique, et le partage du volume est ce qui permet de passer de
-`docker-compose.yml` à `docker-compose-kafka4.yml` en conservant ses topics `internal.*`. Leur donner
-des `name:` distincts scinderait ce volume et ferait « disparaître » les données des utilisateurs
-existants. La contrepartie — pas de stacks simultanées — est documentée ici plutôt que corrigée.
+L'objection que j'avais formulée contre ce point tenait à la solution envisagée, pas au
+constat : donner un `name:` distinct à chaque fichier aurait scindé le volume `kafka_data`
+et fait « disparaître » les topics des utilisateurs existants. Retirer `container_name`
+n'a pas cet effet — le nom de projet reste celui du répertoire, donc le volume garde son
+nom — et suffit : Compose dérive `<projet>-<service>-<n>`, et `docker compose -p autre …
+up` donne une seconde stack entièrement indépendante.
 
-### 📋 N4 — Pas de limites de ressources
+Contrepartie : on s'adresse aux services par leur nom de service, `docker compose logs
+kafka` plutôt que `docker logs kafka`. C'est de toute façon la bonne habitude, et le
+smoke test de la CI résout désormais le conteneur par `docker compose ps -q explorer`.
 
-Aucune stack ne pose de `mem_limit`/`cpus`. `JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=75.0` est bien
-présent dans les deux images, mais sans limite mémoire de conteneur les 75 % portent sur la RAM de
-**l'hôte** : sur un poste à 32 Go, la JVM se croit autorisée à 24 Go. Ce sont des stacks de
-démonstration sur poste de travail, où une limite arbitraire gênerait plus qu'elle n'aiderait ; en
-déploiement réel, la limite doit venir de l'orchestrateur, et `MaxRAMPercentage` fera alors ce pour
-quoi il est là.
+Le service applicatif s'appelait `app` dans deux fichiers et `explorer` dans trois : il
+est `explorer` partout. Outre l'incohérence, un overlay ne peut pas viser un service dont
+le nom change d'une stack à l'autre — Compose créerait l'autre nom comme un nouveau
+service sans image et ferait échouer le `up` entier. C'est ce qui rend Q2 possible.
+
+`deploy/kraft-platform/` garde ses `container_name` : c'est une plateforme partagée dont
+il n'existe qu'une instance par hôte, et sa documentation s'adresse déjà aux services
+(`docker compose exec kafka-00 …`).
+
+### Q2 — Limites de ressources, en overlay ✅ (ex-N4)
+
+Là encore, le constat était juste et c'est la manière qui posait problème : une limite
+trop basse est pire que pas de limite du tout — la JVM est tuée par l'OOM killer au lieu
+de déclencher un GC — et personne ne peut choisir le bon chiffre d'avance pour une stack
+de démonstration qui lit le cluster d'un inconnu.
+
+`docker-compose.limits.yml` est donc un overlay explicite :
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.limits.yml up -d
+```
+
+Ce qu'il corrige réellement : les deux images posent
+`JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=75.0`, et ce drapeau lit la limite mémoire **du
+conteneur** — en son absence, celle de l'hôte. Sur un poste à 32 Go, la JVM se croit donc
+autorisée à 24 Go, soit exactement le contraire de ce pour quoi le drapeau est là. C'est
+`mem_limit` qui lui donne un sens.
+
+`mem_limit` / `cpus`, et non un bloc `deploy:` : ce dernier est de la syntaxe Swarm,
+ignorée en silence par `docker compose up` — la plateforme KRaft en a porté un pendant des
+années, qui donnait l'illusion d'une politique jamais appliquée.
+
+Les valeurs sont dans `.env.example` (`EXPLORER_MEM_LIMIT`, `KAFKA_MEM_LIMIT`, et les CPU),
+avec la règle d'usage : un conteneur tué en 137 sous charge signifie que la limite a été
+atteinte — c'est une information, on augmente la valeur plutôt que de retirer l'overlay.
+
+---
+
 ## 8. Validation
 
 Pas de démon Docker dans l'environnement de cet audit. Ce qui a pu être vérifié ici l'a été :

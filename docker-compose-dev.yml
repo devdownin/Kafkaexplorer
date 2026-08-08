@@ -1,7 +1,15 @@
 services:
+  # No `container_name`. It is a *daemon-global* name, so two stacks could never run
+  # side by side — and these files share it (`kafka`, `kafka-sql-explorer`), which also
+  # made switching between them without a `down` first fail on a name collision. Compose
+  # derives `<project>-<service>-<n>` instead, so `docker compose -p other … up` is enough
+  # to get a second, fully independent stack.
+  #
+  # The project name still defaults to the directory, so `kafka_data` keeps its name and
+  # the topics you already seeded are still there. Address services by service name:
+  # `docker compose logs kafka`, `docker compose exec explorer sh`.
   kafka:
     image: apache/kafka:4.2.0
-    container_name: kafka-dev
     ports:
       - "${BIND_ADDR:-127.0.0.1}:${KAFKA_PORT:-9092}:9092"
     # A stopping KRaft node flushes its logs and closes the group / share-state
@@ -60,7 +68,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.dev-backend
-    container_name: kafka-explorer-backend
     ports:
       # Published on the loopback interface only. This application has no authentication
       # and `POST /api/config` can repoint the Kafka cluster at runtime, so binding it to
@@ -93,7 +100,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.dev-frontend
-    container_name: kafka-explorer-frontend
     ports:
       - "${BIND_ADDR:-127.0.0.1}:${VITE_PORT:-5173}:5173"
     volumes:

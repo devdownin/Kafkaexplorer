@@ -1,7 +1,15 @@
 services:
+  # No `container_name`. It is a *daemon-global* name, so two stacks could never run
+  # side by side — and these files share it (`kafka`, `kafka-sql-explorer`), which also
+  # made switching between them without a `down` first fail on a name collision. Compose
+  # derives `<project>-<service>-<n>` instead, so `docker compose -p other … up` is enough
+  # to get a second, fully independent stack.
+  #
+  # The project name still defaults to the directory, so `kafka_data` keeps its name and
+  # the topics you already seeded are still there. Address services by service name:
+  # `docker compose logs kafka`, `docker compose exec explorer sh`.
   kafka:
     image: apache/kafka:4.2.0
-    container_name: kafka
     ports:
       - "${BIND_ADDR:-127.0.0.1}:${KAFKA_PORT:-9092}:9092"
     # A stopping KRaft node flushes its logs and closes the group / share-state
@@ -72,7 +80,6 @@ services:
     # A pinned version, not `latest`: the only floating tag left in the tree, and one
     # that silently changes the model runtime under a stack meant to be reproducible.
     image: ollama/ollama:0.32.6
-    container_name: ollama
     ports:
       - "${BIND_ADDR:-127.0.0.1}:${OLLAMA_PORT:-11434}:11434"
     volumes:
@@ -90,7 +97,6 @@ services:
 
   ollama-pull-model:
     image: curlimages/curl:latest
-    container_name: ollama-pull-model
     depends_on:
       ollama:
         condition: service_healthy
@@ -98,7 +104,6 @@ services:
 
   explorer:
     build: .
-    container_name: kafka-sql-explorer
     ports:
       # Published on the loopback interface only. This application has no authentication
       # and `POST /api/config` can repoint the Kafka cluster at runtime, so binding it to

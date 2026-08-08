@@ -134,10 +134,15 @@ jobs:
 
       - name: Wait for the app to report healthy
         # The image's own HEALTHCHECK decides, so this also tests the healthcheck.
+        # The container is resolved through compose, not by a fixed name: the stacks
+        # carry no `container_name` any more, precisely so two of them can coexist.
         run: |
           set -euo pipefail
+          explorer=$(docker compose ps -q explorer)
+          [ -n "$explorer" ] || { echo "::error::no explorer container"; exit 1; }
+          echo "EXPLORER_CID=$explorer" >> "$GITHUB_ENV"
           for _ in $(seq 1 72); do
-            status=$(docker inspect -f '{{.State.Health.Status}}' kafka-sql-explorer 2>/dev/null || echo missing)
+            status=$(docker inspect -f '{{.State.Health.Status}}' "$explorer" 2>/dev/null || echo missing)
             case "$status" in
               healthy)   echo "healthy"; exit 0 ;;
               unhealthy) echo "::error::the container reported unhealthy"; exit 1 ;;
@@ -186,7 +191,7 @@ jobs:
         run: |
           set -euo pipefail
           docker compose stop
-          code=$(docker inspect -f '{{.State.ExitCode}}' kafka-sql-explorer)
+          code=$(docker inspect -f '{{.State.ExitCode}}' "$EXPLORER_CID")
           # 0, or 143 = 128+SIGTERM for a JVM that ran its shutdown hooks. 137 is
           # 128+SIGKILL: the grace period expired mid-shutdown, which is the failure this
           # whole `stop_grace_period` / graceful-shutdown pairing exists to prevent.

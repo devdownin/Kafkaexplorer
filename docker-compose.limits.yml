@@ -1,0 +1,40 @@
+# Opt-in resource limits, layered over any of the bundled stacks:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.limits.yml up -d
+#   docker compose -f docker-compose-kafka4.yml -f docker-compose.limits.yml up -d
+#
+# Why this is not in the stacks themselves. A limit that is too low is worse than none:
+# the JVM is OOM-killed rather than running a GC, and on a demo stack that reads a
+# stranger's cluster nobody can pick the right number in advance. So the numbers are here,
+# tunable, and applied only when asked for.
+#
+# Why it exists at all. Both images set `JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=75.0`, and
+# that flag reads the *container's* memory limit — with no limit set it reads the host's.
+# On a 32 GB workstation the JVM therefore believes it may grow to 24 GB, which is exactly
+# the opposite of what the flag is there for. `mem_limit` is what gives it a meaning.
+#
+# `mem_limit` / `cpus`, not a `deploy:` block: the latter is Docker Swarm syntax, silently
+# ignored by `docker compose up` — the KRaft platform stack carried one for years and it
+# gave the illusion of a policy that was never applied.
+#
+# If the app is killed with exit code 137 under load, raise EXPLORER_MEM_LIMIT rather than
+# dropping this file: 137 here means the limit was hit, which is information.
+# Applies to the stacks whose services are named `explorer` and `kafka`:
+# docker-compose.yml, -kafka4, -llm and .release. Not to docker-compose-dev.yml (its
+# backend is a `spring-boot:run` under Maven, where a memory cap only produces confusing
+# build failures) nor to -spectra (its broker is `explorer-kafka`). A service listed here
+# but absent from the base file would be created as a new, imageless one and fail the
+# whole `up`, which is why this file names exactly two.
+services:
+  # The app: an embedded Flink runtime, the Kafka clients, and a heap sized at 75% of
+  # whatever is set here. 2g leaves ~1.5g of heap, which covers an audit of a few hundred
+  # topics and a Process Mining window of 1 MB payloads.
+  explorer:
+    mem_limit: ${EXPLORER_MEM_LIMIT:-2g}
+    cpus: ${EXPLORER_CPUS:-2.0}
+
+  # The broker's own heap is 1g by default in the apache/kafka image. The rest is page
+  # cache, which lives outside the JVM and is what makes Kafka fast — hence the headroom.
+  kafka:
+    mem_limit: ${KAFKA_MEM_LIMIT:-1500m}
+    cpus: ${KAFKA_CPUS:-1.5}
