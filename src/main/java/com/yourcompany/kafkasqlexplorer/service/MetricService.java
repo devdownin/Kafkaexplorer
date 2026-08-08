@@ -1242,7 +1242,9 @@ public class MetricService {
     private synchronized void closeConfigProducer() {
         if (configProducer != null) {
             try {
-                configProducer.close();
+                // Bounded: the no-arg close() waits indefinitely for buffered records, and
+                // this runs at shutdown, when the broker is often already gone.
+                configProducer.close(Duration.ofSeconds(5));
             } catch (Exception ignored) {
             }
             configProducer = null;

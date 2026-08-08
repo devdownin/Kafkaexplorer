@@ -1,6 +1,20 @@
+server:
+  # On SIGTERM — every `docker compose down`, every container replacement — the default
+  # `immediate` cuts in-flight requests at the socket. This application has requests that
+  # legitimately run for tens of seconds: a cluster audit, a whole-cluster stream-flow
+  # trace, a Flink SELECT. Graceful lets them finish (or hit their own budget) instead of
+  # answering a truncated response, and the compose stacks give the container a
+  # `stop_grace_period` long enough to cover this plus bean destruction.
+  shutdown: graceful
+
 spring:
   application:
     name: kafka-sql-explorer
+
+  lifecycle:
+    # Upper bound on the graceful phase above. Long enough for a query at the 10s default
+    # timeout and its teardown, short enough that `docker compose down` stays brisk.
+    timeout-per-shutdown-phase: 20s
 
   cache:
     type: caffeine

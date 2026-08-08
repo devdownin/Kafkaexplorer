@@ -59,8 +59,17 @@ RUN --mount=type=cache,target=/root/.m2,sharing=locked \
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 
+# The app writes two things under its working directory: logs/kafkaexplorer.log
+# (logging.file.name) and data/flink-jobs.json (explorer.flink-job-store-path). They are
+# created and owned here so the process does not need root to write them — a named volume
+# mounted on either path inherits this ownership, which a bind-mounted host file would not.
+RUN addgroup -g 10001 -S app \
+ && adduser -u 10001 -S -G app -h /app app \
+ && mkdir -p /app/logs /app/data \
+ && chown -R 10001:10001 /app
+
 # Copie du JAR généré
-COPY --from=backend-builder /app/target/kafka-sql-explorer-*.jar app.jar
+COPY --from=backend-builder --chown=10001:10001 /app/target/kafka-sql-explorer-*.jar app.jar
 
 EXPOSE 8080
 
@@ -80,9 +89,11 @@ ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75.0"
 HEALTHCHECK --interval=15s --timeout=3s --start-period=60s --retries=10 \
   CMD wget -q -O - http://127.0.0.1:8080/actuator/health | grep -q '"status":"UP"' || exit 1
 
-# Deliberately still root. Dropping to a non-root user is the right thing to do, but not
-# here: `logging.file.name: logs/kafkaexplorer.log` makes the app write under /app, and
-# docker-compose.yml bind-mounts a host path onto /app/logs/kafkaexplorer.log — a host
-# file Docker creates root-owned. Switching users without also reworking that mount
-# trades a build improvement for broken logging.
+# Non-root, by numeric id so a Kubernetes `runAsNonRoot` admission check can see it. What
+# used to keep this image on root was docker-compose.yml bind-mounting a host file onto
+# /app/logs/kafkaexplorer.log; that mount was broken anyway (the host file does not exist,
+# so Docker created a directory and Logback could not open its log) and is now a named
+# volume, which inherits the ownership set above.
+USER 10001:10001
+
 ENTRYPOINT ["java", "-jar", "app.jar"]

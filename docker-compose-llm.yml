@@ -4,12 +4,26 @@ services:
     container_name: kafka
     ports:
       - "9092:9092"
+    # A stopping KRaft node flushes its logs and closes the group / share-state
+    # coordinators cleanly. Docker's default grace period is 10s, past which the broker is
+    # SIGKILLed mid-flush and the next start has to recover the log segments — on a seeded
+    # demo volume that turns a ten-second boot into a much longer one.
+    stop_grace_period: 30s
+    # `unless-stopped`, not the absent default: after a host reboot or a Docker daemon
+    # restart the broker comes back with the app, which does carry a restart policy. It
+    # did not, so the stack came back up as an explorer pointed at nothing.
+    restart: unless-stopped
+    # `kafka-broker-api-versions.sh` starts a whole JVM. At the previous `interval: 5s`
+    # that cost ran every five seconds for the entire life of the stack — roughly a fifth
+    # of a core, permanently, to re-answer a question settled during the first minute.
+    # The interval now describes the steady state and `start_period` covers the boot,
+    # during which failures do not count against `retries`.
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092"]
-      interval: 5s
+      interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 15s
+      start_period: 30s
     environment:
       # KRaft settings
       KAFKA_NODE_ID: 1
@@ -63,9 +77,14 @@ services:
       - ollama_data:/root/.ollama
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:11434/api/tags || exit 1"]
-      interval: 10s
+      interval: 30s
       timeout: 5s
       retries: 10
+      start_period: 30s
+    # A model load can take a while to unwind; and like the broker, it should come back
+    # with the app after a daemon restart.
+    stop_grace_period: 30s
+    restart: unless-stopped
 
   ollama-pull-model:
     image: curlimages/curl:latest
@@ -80,15 +99,15 @@ services:
     container_name: kafka-sql-explorer
     ports:
       - "8080:8080"
+    # Neither the demo seed nor the model pull is needed to boot: the app starts with the
+    # broker, and the LLM is only reached when Process Mining is actually used. Waiting on
+    # `ollama-pull-model` in particular held the UI back for the whole multi-gigabyte
+    # download of qwen2.5-coder:7b.
     depends_on:
       kafka:
         condition: service_healthy
-      demo-setup:
-        condition: service_completed_successfully
       ollama:
         condition: service_healthy
-      ollama-pull-model:
-        condition: service_completed_successfully
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       # Bundled broker is Kafka 4.2 — use the KIP-848 rebalance protocol for the live consumer
@@ -97,8 +116,12 @@ services:
       - CLAUDE_BASE_URL=http://ollama:11434/v1
       - CLAUDE_MODEL=qwen2.5-coder:7b
     volumes:
-      - ./Kafkaexplorer.log:/app/logs/kafkaexplorer.log
-    restart: always
+      # See docker-compose.yml: the bind mount this replaces pointed at a file that does
+      # not exist in the checkout, so Docker created a directory and file logging failed.
+      - explorer_logs:/app/logs
+      - explorer_data:/app/data
+    stop_grace_period: 45s
+    restart: unless-stopped
 
   demo-setup:
     image: apache/kafka:4.2.0
@@ -107,8 +130,12 @@ services:
         condition: service_healthy
     volumes:
       - ./setup-demo.sh:/data/setup-demo.sh
-    entrypoint: [ "sh", "-c", "cp /data/setup-demo.sh /tmp/setup-demo.sh && sed -i 's/\\r$//' /tmp/setup-demo.sh && echo 'Waiting for Kafka...' && until /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka:29092 > /dev/null 2>&1; do sleep 2; done && bash /tmp/setup-demo.sh kafka:29092" ]
+      - ./seed-demo-once.sh:/data/seed-demo-once.sh
+    # Idempotent: see seed-demo-once.sh.
+    entrypoint: [ "sh", "-c", "sed 's/\\r$//' /data/seed-demo-once.sh > /tmp/seed-demo-once.sh && sh /tmp/seed-demo-once.sh kafka:29092" ]
 
 volumes:
   ollama_data:
   kafka_data:
+  explorer_logs:
+  explorer_data:

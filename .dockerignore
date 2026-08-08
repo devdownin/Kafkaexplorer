@@ -19,3 +19,19 @@ src/main/resources/static/
 # Build/run artefacts and unrelated payloads that only make the context bigger.
 *.log
 clusterui.zip
+
+# Nothing the image build reads. The backend stage copies src/main/java and
+# src/main/resources only, and the whole context is uploaded to the daemon on every
+# build — half a megabyte of documentation and tooling was travelling with it each time.
+src/test/
+docs/
+deploy/
+*.md
+*.skill
+*.ps1
+*.bat
+.claude/
+.gemini
+.mvn/
+mvnw
+mvnw.cmd

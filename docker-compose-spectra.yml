@@ -44,12 +44,26 @@ services:
     container_name: explorer-kafka
     ports:
       - "9092:9092"
+    # A stopping KRaft node flushes its logs and closes the group / share-state
+    # coordinators cleanly. Docker's default grace period is 10s, past which the broker is
+    # SIGKILLed mid-flush and the next start has to recover the log segments — on a seeded
+    # demo volume that turns a ten-second boot into a much longer one.
+    stop_grace_period: 30s
+    # `unless-stopped`, not the absent default: after a host reboot or a Docker daemon
+    # restart the broker comes back with the app, which does carry a restart policy. It
+    # did not, so the stack came back up as an explorer pointed at nothing.
+    restart: unless-stopped
+    # `kafka-broker-api-versions.sh` starts a whole JVM. At the previous `interval: 5s`
+    # that cost ran every five seconds for the entire life of the stack — roughly a fifth
+    # of a core, permanently, to re-answer a question settled during the first minute.
+    # The interval now describes the steady state and `start_period` covers the boot,
+    # during which failures do not count against `retries`.
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092"]
-      interval: 5s
+      interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 15s
+      start_period: 30s
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
@@ -101,7 +115,10 @@ services:
         condition: service_healthy
     volumes:
       - ./setup-demo.sh:/data/setup-demo.sh
-    entrypoint: ["sh", "-c", "cp /data/setup-demo.sh /tmp/setup-demo.sh && sed -i 's/\\r$$//' /tmp/setup-demo.sh && echo 'Waiting for Kafka...' && until /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server explorer-kafka:29092 > /dev/null 2>&1; do sleep 2; done && bash /tmp/setup-demo.sh explorer-kafka:29092"]
+      - ./seed-demo-once.sh:/data/seed-demo-once.sh
+    # Idempotent: see seed-demo-once.sh. `$$` escapes the `$` for compose interpolation,
+    # which this file needs (it uses ${SPECTRALLM_DIR}) and the others do not.
+    entrypoint: ["sh", "-c", "sed 's/\\r$$//' /data/seed-demo-once.sh > /tmp/seed-demo-once.sh && sh /tmp/seed-demo-once.sh explorer-kafka:29092"]
 
   # ── Kafka Explorer, auditing via SpectraLLM ───────────────────────────────
   explorer:
@@ -109,11 +126,11 @@ services:
     container_name: kafka-sql-explorer
     ports:
       - "8090:8080"   # SpectraLLM API already publishes host 8080
+    # Not on `demo-setup`: seeding runs alongside the app instead of in front of it, so
+    # the UI is up in seconds rather than after the whole seed.
     depends_on:
       explorer-kafka:
         condition: service_healthy
-      demo-setup:
-        condition: service_completed_successfully
       spectra-api:
         condition: service_healthy
     environment:
@@ -123,7 +140,13 @@ services:
       - CLAUDE_PROVIDER=SPECTRA
       - CLAUDE_BASE_URL=http://spectra-api:8080
       - CLAUDE_USE_RAG=false
-    restart: always
+    volumes:
+      - explorer_logs:/app/logs
+      - explorer_data:/app/data
+    stop_grace_period: 45s
+    restart: unless-stopped
 
 volumes:
   kafka_data:
+  explorer_logs:
+  explorer_data:

@@ -43,6 +43,7 @@ import org.apache.avro.generic.GenericRecord;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -93,7 +94,12 @@ public class KafkaAdminService {
     @PreDestroy
     public void close() {
         if (adminClient != null) {
-            adminClient.close();
+            // Bounded on purpose. The no-arg close() waits for pending calls with no
+            // deadline, so a describe still retrying against an unreachable broker — the
+            // ordinary case when the whole stack is going down, or when the app has been
+            // repointed at a cluster that is gone — would hold shutdown until Docker's
+            // grace period expired and SIGKILLed the JVM mid-teardown.
+            adminClient.close(Duration.ofSeconds(5));
         }
     }
 

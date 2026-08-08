@@ -120,6 +120,13 @@ jobs:
       # `Dockerfile` now uses `RUN --mount=type=cache`, which is BuildKit-only. This job
       # builds Dockerfile.release, which does not — but ci.yml builds the other one, and
       # runners defaulting to BuildKit is a default, not a guarantee.
+      # Needed by the arm64 half of the multi-arch build below: Dockerfile.release runs a
+      # `RUN` (creating the non-root user and its directories), which executes under the
+      # target architecture. Without binfmt registered that step fails with "exec format
+      # error" on the runner's amd64 kernel.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v4
 
@@ -135,16 +142,23 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository }}
+          # `latest` was a bare `type=raw`, so it moved on *any* tag: pushing v1.3.0-rc1
+          # made a pre-release what `docker run ghcr.io/devdownin/kafkaexplorer` pulls.
+          # The guard is the semver pre-release marker — a hyphen in the tag name.
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile.release
+          # arm64 costs nothing here and there is no cross-compilation involved: the image
+          # is a JRE base plus a COPY of an architecture-independent JAR. Without it an
+          # Apple Silicon or Graviton host ran the whole JVM under QEMU emulation.
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

@@ -4,12 +4,26 @@ services:
     container_name: kafka-dev
     ports:
       - "9092:9092"
+    # A stopping KRaft node flushes its logs and closes the group / share-state
+    # coordinators cleanly. Docker's default grace period is 10s, past which the broker is
+    # SIGKILLed mid-flush and the next start has to recover the log segments — on a seeded
+    # demo volume that turns a ten-second boot into a much longer one.
+    stop_grace_period: 30s
+    # `unless-stopped`, not the absent default: after a host reboot or a Docker daemon
+    # restart the broker comes back with the app, which does carry a restart policy. It
+    # did not, so the stack came back up as an explorer pointed at nothing.
+    restart: unless-stopped
+    # `kafka-broker-api-versions.sh` starts a whole JVM. At the previous `interval: 5s`
+    # that cost ran every five seconds for the entire life of the stack — roughly a fifth
+    # of a core, permanently, to re-answer a question settled during the first minute.
+    # The interval now describes the steady state and `start_period` covers the boot,
+    # during which failures do not count against `retries`.
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092"]
-      interval: 5s
+      interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 15s
+      start_period: 30s
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
@@ -63,6 +77,10 @@ services:
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       - KAFKA_CONSUMER_GROUP_PROTOCOL=consumer
+    # Same reason as the packaged app: the JVM's bean destruction plus the graceful web
+    # shutdown outlast Docker's default 10s. No restart policy on purpose — a backend that
+    # fails to compile should stay down and say so, not loop.
+    stop_grace_period: 45s
     depends_on:
       kafka:
         condition: service_healthy

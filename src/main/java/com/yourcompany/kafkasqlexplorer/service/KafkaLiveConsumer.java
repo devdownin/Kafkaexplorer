@@ -357,10 +357,15 @@ public class KafkaLiveConsumer {
         sessions.forEach((sessionId, session) -> {
             session.cancelTasks();
             try {
-                session.consumer.close();
+                session.consumer.close(Duration.ofSeconds(5));
             } catch (Exception e) {
                 log.warn("Error closing live consumer for session {} at shutdown: {}", sessionId, e.getMessage());
             }
+            // finishSession() is what normally completes the emitter, and these are exactly
+            // the sessions whose polling task never got to run it. Without this the browser
+            // is left holding an SSE stream that simply dies with the socket, which the page
+            // reads as a network glitch rather than as the server going down.
+            sseEmitterManager.complete(sessionId);
         });
         sessions.clear();
     }

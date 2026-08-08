@@ -4,12 +4,26 @@ services:
     container_name: kafka
     ports:
       - "9092:9092"
+    # A stopping KRaft node flushes its logs and closes the group / share-state
+    # coordinators cleanly. Docker's default grace period is 10s, past which the broker is
+    # SIGKILLed mid-flush and the next start has to recover the log segments — on a seeded
+    # demo volume that turns a ten-second boot into a much longer one.
+    stop_grace_period: 30s
+    # `unless-stopped`, not the absent default: after a host reboot or a Docker daemon
+    # restart the broker comes back with the app, which does carry a restart policy. It
+    # did not, so the stack came back up as an explorer pointed at nothing.
+    restart: unless-stopped
+    # `kafka-broker-api-versions.sh` starts a whole JVM. At the previous `interval: 5s`
+    # that cost ran every five seconds for the entire life of the stack — roughly a fifth
+    # of a core, permanently, to re-answer a question settled during the first minute.
+    # The interval now describes the steady state and `start_period` covers the boot,
+    # during which failures do not count against `retries`.
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092"]
-      interval: 5s
+      interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 15s
+      start_period: 30s
     environment:
       # KRaft settings
       KAFKA_NODE_ID: 1
@@ -59,18 +73,34 @@ services:
     container_name: kafka-sql-explorer
     ports:
       - "8080:8080"
+    # Only the broker. The app used to wait for `demo-setup` to complete as well, which
+    # meant the UI was unreachable for the whole minute-plus the seeding takes — for data
+    # it does not need to boot: the Dashboard polls every 30s, so the demo topics simply
+    # appear as they are created. Seeding now runs alongside the app rather than in front
+    # of it.
     depends_on:
       kafka:
         condition: service_healthy
-      demo-setup:
-        condition: service_completed_successfully
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       # Bundled broker is Kafka 4.2 — use the KIP-848 rebalance protocol for the live consumer
       - KAFKA_CONSUMER_GROUP_PROTOCOL=consumer
     volumes:
-      - ./Kafkaexplorer.log:/app/logs/kafkaexplorer.log
-    restart: always
+      # Named volumes, not a bind mount. `./Kafkaexplorer.log:/app/logs/kafkaexplorer.log`
+      # mounted a *file* that does not exist in the checkout (it is gitignored), so Docker
+      # created a directory of that name at the repository root and Logback then failed to
+      # open its log file: file logging was dead in this stack, and the root-owned mount is
+      # what kept the image running as root. Logs also go to stdout — `docker compose logs
+      # explorer` is the first place to look.
+      - explorer_logs:/app/logs
+      # flink-job-store-path (data/flink-jobs.json): job history survives a recreate.
+      - explorer_data:/app/data
+    # Bean destruction is sequential and each pool waits up to 5s for work in flight
+    # (queries, audit, stream-flow, live sessions), on top of the graceful web shutdown
+    # configured in application.yml. Docker's default 10s would SIGKILL the JVM in the
+    # middle of that — losing the audit report being written to internal.audit.history.
+    stop_grace_period: 45s
+    restart: unless-stopped
 
   demo-setup:
     image: apache/kafka:4.2.0
@@ -79,7 +109,13 @@ services:
         condition: service_healthy
     volumes:
       - ./setup-demo.sh:/data/setup-demo.sh
-    entrypoint: [ "sh", "-c", "cp /data/setup-demo.sh /tmp/setup-demo.sh && sed -i 's/\\r$//' /tmp/setup-demo.sh && echo 'Waiting for Kafka...' && until /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka:29092 > /dev/null 2>&1; do sleep 2; done && bash /tmp/setup-demo.sh kafka:29092" ]
+      - ./seed-demo-once.sh:/data/seed-demo-once.sh
+    # See seed-demo-once.sh: it waits for the broker and seeds only if the marker topic is
+    # absent, so restarting the stack no longer replays ~400 records into topics that
+    # already hold them.
+    entrypoint: [ "sh", "-c", "sed 's/\\r$//' /data/seed-demo-once.sh > /tmp/seed-demo-once.sh && sh /tmp/seed-demo-once.sh kafka:29092" ]
 
 volumes:
   kafka_data:
+  explorer_logs:
+  explorer_data:

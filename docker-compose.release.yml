@@ -4,12 +4,26 @@ services:
     container_name: kafka
     ports:
       - "9092:9092"
+    # A stopping KRaft node flushes its logs and closes the group / share-state
+    # coordinators cleanly. Docker's default grace period is 10s, past which the broker is
+    # SIGKILLed mid-flush and the next start has to recover the log segments — on a seeded
+    # demo volume that turns a ten-second boot into a much longer one.
+    stop_grace_period: 30s
+    # `unless-stopped`, not the absent default: after a host reboot or a Docker daemon
+    # restart the broker comes back with the app, which does carry a restart policy. It
+    # did not, so the stack came back up as an explorer pointed at nothing.
+    restart: unless-stopped
+    # `kafka-broker-api-versions.sh` starts a whole JVM. At the previous `interval: 5s`
+    # that cost ran every five seconds for the entire life of the stack — roughly a fifth
+    # of a core, permanently, to re-answer a question settled during the first minute.
+    # The interval now describes the steady state and `start_period` covers the boot,
+    # during which failures do not count against `retries`.
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092"]
-      interval: 5s
+      interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 15s
+      start_period: 30s
     environment:
       # KRaft settings
       KAFKA_NODE_ID: 1
@@ -68,7 +82,17 @@ services:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       # Bundled broker is Kafka 4.2 — use the KIP-848 rebalance protocol for the live consumer
       - KAFKA_CONSUMER_GROUP_PROTOCOL=consumer
-    restart: always
+    volumes:
+      # Logs and the Flink job store survive `up --build` replacing the container, which
+      # update.ps1 does on every release.
+      - explorer_logs:/app/logs
+      - explorer_data:/app/data
+    # See docker-compose.yml: bean destruction plus the graceful web shutdown needs more
+    # than Docker's default 10s before the JVM is SIGKILLed.
+    stop_grace_period: 45s
+    restart: unless-stopped
 
 volumes:
   kafka_data:
+  explorer_logs:
+  explorer_data:
