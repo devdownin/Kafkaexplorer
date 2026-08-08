@@ -79,6 +79,12 @@ public class ExplorerConfig {
      * meant by leaving the field empty.
      */
     private int streamFlowMaxTopics = 250;
+    /**
+     * Consumer groups whose committed offsets are read when reporting a topic's lag. Each group
+     * costs a coordinator lookup, and a cluster can hold thousands; past this cap the response
+     * says so rather than pretending the list is complete.
+     */
+    private int consumerGroupMaxGroups = 200;
     private String flinkJobStorePath = "data/flink-jobs.json";
     private long flinkJobRetentionHours = 24;
 
@@ -256,6 +262,14 @@ public class ExplorerConfig {
 
     public void setStreamFlowMaxTopics(int streamFlowMaxTopics) {
         this.streamFlowMaxTopics = streamFlowMaxTopics;
+    }
+
+    public int getConsumerGroupMaxGroups() {
+        return consumerGroupMaxGroups;
+    }
+
+    public void setConsumerGroupMaxGroups(int consumerGroupMaxGroups) {
+        this.consumerGroupMaxGroups = consumerGroupMaxGroups;
     }
 
     public String getFlinkJobStorePath() {

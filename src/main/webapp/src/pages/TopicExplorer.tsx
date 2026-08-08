@@ -8,6 +8,7 @@ import ErrorBanner from '../components/ErrorBanner';
 import { Button, Badge, Stat, EmptyState, ErrorPanel, StatGridSkeleton, TableSkeleton, Table, useVirtualRows } from '../components/ui';
 import { buildTraceLinkForKey } from './streamFlow';
 import TopicSearchPanel, { FIELD_IDS } from '../components/topic/TopicSearchPanel';
+import TopicConsumersPanel from '../components/topic/TopicConsumersPanel';
 import { describeApiError, type QueryErrorInfo } from './queryError';
 import { toCsv } from './resultExport';
 import {
@@ -644,7 +645,7 @@ const TopicExplorer: React.FC = () => {
   const [data, setData] = useState<TopicDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [readMode, setReadMode] = useState('earliest-offset');
-  const [activeTab, setActiveTab] = useState<'samples' | 'ddl' | 'schema' | 'partitions'>('samples');
+  const [activeTab, setActiveTab] = useState<'samples' | 'ddl' | 'schema' | 'partitions' | 'consumers'>('samples');
   const [selectedFields, setSelectedFields] = useState<string[]>([]);
 
   // Server-side search state. `hits` accumulates across passes so "continue scanning"
@@ -1162,6 +1163,7 @@ const TopicExplorer: React.FC = () => {
           { key: 'ddl', label: 'Flink DDL', icon: 'code' },
           { key: 'schema', label: `Schema (${Object.keys(data.schema).length} fields)`, icon: 'list_alt' },
           { key: 'partitions', label: `Partitions (${data.topic.partitions})`, icon: 'device_hub' },
+          { key: 'consumers', label: 'Consumers', icon: 'groups' },
         ] as const).map(tab => (
           <button
             key={tab.key}
@@ -1470,6 +1472,11 @@ const TopicExplorer: React.FC = () => {
             </tfoot>
         </Table>
       )}
+
+      {/* Consumers Tab — monté seulement quand il est ouvert : la lecture des offsets committés
+          coûte plusieurs allers-retours au coordinateur, et personne ne les paye en arrivant sur
+          la page pour lire des messages. */}
+      {activeTab === 'consumers' && <TopicConsumersPanel topic={name!} />}
 
       {/* Schema Tab */}
       {activeTab === 'schema' && (

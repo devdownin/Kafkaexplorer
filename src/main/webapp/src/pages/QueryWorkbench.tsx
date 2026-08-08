@@ -6,7 +6,7 @@ import '../monaco-setup';
 import axios from 'axios';
 import { useToast } from '../components/Toast';
 import {
-  Button, Badge, Input, Select, Field, NumberInput, EmptyState, useConfirm, cn,
+  Button, Badge, Input, Select, Field, NumberInput, EmptyState, Tooltip, useConfirm, cn,
   useVirtualRows, ScrollList,
 } from '../components/ui';
 import {
@@ -819,7 +819,7 @@ const QueryWorkbench: React.FC = () => {
                         <span className="text-xs text-on-surface truncate font-mono">{table}</span>
                       </div>
                       <button onClick={() => updateSql(`SELECT * FROM ${table} LIMIT 50`)}
-                        className="opacity-0 group-hover/tbl:opacity-100 text-outline hover:text-primary transition-all shrink-0 ml-1" title="SELECT from this table">
+                        className="opacity-0 group-hover/tbl:opacity-100 text-outline hover:text-primary transition-all shrink-0 ml-1" title="SELECT from this table" aria-label="SELECT from this table">
                         <span className="material-symbols-outlined text-sm">play_arrow</span>
                       </button>
                     </div>
@@ -862,7 +862,7 @@ const QueryWorkbench: React.FC = () => {
                           <span className="text-xs text-on-surface-variant hover:text-primary font-mono truncate block">{topic}</span>
                         </div>
                         <button onClick={e => { e.stopPropagation(); fetchDdlPreview(topic); }}
-                          className="opacity-0 group-hover/topic:opacity-100 text-outline hover:text-primary transition-all shrink-0 ml-1" title="Preview DDL">
+                          className="opacity-0 group-hover/topic:opacity-100 text-outline hover:text-primary transition-all shrink-0 ml-1" title="Preview DDL" aria-label="Preview the generated DDL">
                           <span className="material-symbols-outlined text-sm">code</span>
                         </button>
                       </div>
@@ -918,7 +918,7 @@ const QueryWorkbench: React.FC = () => {
                         <p className="text-[10px] text-outline">{new Date(q.savedAt).toLocaleDateString()}</p>
                       </div>
                       <button onClick={() => deleteSavedQuery(q.id)}
-                        className="opacity-0 group-hover/saved:opacity-100 text-outline hover:text-error transition-all shrink-0" title="Delete">
+                        className="opacity-0 group-hover/saved:opacity-100 text-outline hover:text-error transition-all shrink-0" title="Delete" aria-label="Delete this saved query">
                         <span className="material-symbols-outlined text-sm">delete</span>
                       </button>
                     </div>
@@ -1047,11 +1047,13 @@ const QueryWorkbench: React.FC = () => {
                         className="bg-transparent border-none outline-none text-[12px] font-medium w-24 text-primary"
                       />
                     ) : (
-                      <span
-                        className="text-[12px] font-medium"
-                        onDoubleClick={e => startRename(tab, e)}
-                        title="Double-click to rename"
-                      >{tab.name}</span>
+                      <Tooltip content="Double-click to rename this tab.">
+                        <span
+                          tabIndex={0}
+                          className="text-[12px] font-medium rounded"
+                          onDoubleClick={e => startRename(tab, e)}
+                        >{tab.name}</span>
+                      </Tooltip>
                     )}
                     {tabs.length > 1 && (
                       <button onClick={e => closeTab(tab.id, e)} aria-label="Close tab"
@@ -1066,11 +1068,13 @@ const QueryWorkbench: React.FC = () => {
                 </button>
                 {/* Format button pushed to the right */}
                 <div className="ml-auto px-3 flex items-center">
+                  <Tooltip content="Reformats the SQL in the editor. Shortcut: Shift + Alt + F.">
                   <button onClick={() => editorRef.current?.getAction('editor.action.formatDocument')?.run()}
-                    className="flex items-center gap-1 text-[12px] text-on-surface-variant hover:text-on-surface transition-colors" title="Format SQL (Shift+Alt+F)">
+                    className="flex items-center gap-1 text-[12px] text-on-surface-variant hover:text-on-surface transition-colors">
                     <span className="material-symbols-outlined text-[16px]">auto_fix_high</span>
                     Format
                   </button>
+                  </Tooltip>
                 </div>
               </div>
 
@@ -1199,21 +1203,24 @@ const QueryWorkbench: React.FC = () => {
                         locale d'avant ne suivait pas `explorer.default-max-rows` côté serveur. */}
                     Rows <span className={`tabular-nums ${truncated ? 'text-warning' : 'text-on-surface'}`}>{results?.rows.length ?? 0}</span>
                     {truncated && (
-                      <span className="ml-1.5 text-[10px] text-warning font-medium"
-                        title={`Stopped at the ${resultLimit.toLocaleString()}-row limit — raise "Rows" to fetch more`}>limit reached</span>
+                      <Tooltip content={`The scan stopped at the ${resultLimit.toLocaleString()}-row limit, so this result is probably incomplete — raise "Rows" to fetch more.`}>
+                        <span tabIndex={0} className="ml-1.5 text-[10px] text-warning font-medium rounded">limit reached</span>
+                      </Tooltip>
                     )}
                   </span>
                 </div>
                 {(results?.engine || (executionMode === 'SYNC_READ' && (results || executing))) && (
-                  <span title={
+                  <Tooltip content={
                     (results?.engine ?? 'KAFKA_DIRECT') === 'KAFKA_DIRECT'
-                      ? 'Kafka Direct: bounded scan over Kafka messages. Supports SELECT, WHERE, aggregates and TUMBLE windows. No multi-topic JOINs.'
+                      ? 'Kafka Direct: a bounded scan over Kafka messages. It supports SELECT, WHERE, aggregates and TUMBLE windows — but no multi-topic JOIN, which is the limit worth knowing before reading these rows.'
                       : 'Flink: executed by the embedded Flink SQL engine (EXPLAIN / DDL).'
                   }>
+                  <span tabIndex={0} className="rounded">
                     <Badge tone={(results?.engine ?? 'KAFKA_DIRECT') === 'KAFKA_DIRECT' ? 'primary' : 'secondary'}>
                       {results?.engine ?? 'Kafka Direct'}
                     </Badge>
                   </span>
+                  </Tooltip>
                 )}
               </div>
               <div className="flex items-center gap-3 shrink-0">
@@ -1279,7 +1286,7 @@ const QueryWorkbench: React.FC = () => {
                       )}
                     </div>
                     <button onClick={() => navigator.clipboard.writeText(queryError.raw || queryError.title).then(() => toast('Error copied', 'success'))}
-                      className="text-outline hover:text-on-surface shrink-0 transition-colors" title="Copy error">
+                      className="text-outline hover:text-on-surface shrink-0 transition-colors" title="Copy error" aria-label="Copy the error message">
                       <span className="material-symbols-outlined text-sm">content_copy</span>
                     </button>
                   </div>

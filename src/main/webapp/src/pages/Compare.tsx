@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useToast } from '../components/Toast';
 import { Button } from '../components/ui';
+import { usePersistentState } from '../draftStore';
 
 // Parse JSON safely, return null on failure
 function tryParse(s: string): Record<string, unknown> | null {
@@ -112,10 +113,10 @@ const TopicPane: React.FC<{
 const Compare: React.FC = () => {
   const { toast } = useToast();
   const [topics, setTopics] = useState<string[]>([]);
-  const [topicA, setTopicA] = useState('');
-  const [topicB, setTopicB] = useState('');
-  const [syncCursors, setSyncCursors] = useState(true);
-  const [showDiffOnly, setShowDiffOnly] = useState(false);
+  const [topicA, setTopicA] = usePersistentState('compare:topicA', '');
+  const [topicB, setTopicB] = usePersistentState('compare:topicB', '');
+  const [syncCursors, setSyncCursors] = usePersistentState('compare:sync', true);
+  const [showDiffOnly, setShowDiffOnly] = usePersistentState('compare:diffOnly', false);
   const [loading, setLoading] = useState(false);
   const [samplesA, setSamplesA] = useState<string[]>([]);
   const [samplesB, setSamplesB] = useState<string[]>([]);
@@ -125,10 +126,16 @@ const Compare: React.FC = () => {
     axios.get<string[]>('/api/compare/topics')
       .then(res => {
         setTopics(res.data);
-        if (res.data.length >= 2) {
-          setTopicA(res.data[0]);
-          setTopicB(res.data[1]);
-        }
+        /*
+         * La pré-sélection ne s'applique qu'à défaut de choix conservé — sinon revenir sur la
+         * page remplacerait les deux topics qu'on venait de comparer par les deux premiers de la
+         * liste. Un topic disparu du cluster retombe sur ce défaut : le laisser sélectionné
+         * afficherait un `<select>` vide sans dire pourquoi.
+         */
+        const keep = (drafted: string, fallback: string | undefined) =>
+          drafted && res.data.includes(drafted) ? drafted : (fallback ?? '');
+        setTopicA(prev => keep(prev, res.data[0]));
+        setTopicB(prev => keep(prev, res.data[1]));
       })
       .catch(() => toast('Failed to load topics', 'error'));
   // eslint-disable-next-line react-hooks/exhaustive-deps -- fetch once on mount; toast is stable

@@ -4,6 +4,7 @@ package com.yourcompany.kafkasqlexplorer.web;
 
 import com.yourcompany.kafkasqlexplorer.config.ExplorerConfig;
 import com.yourcompany.kafkasqlexplorer.domain.MessageFormat;
+import com.yourcompany.kafkasqlexplorer.domain.TopicConsumers;
 import com.yourcompany.kafkasqlexplorer.domain.TopicDescriptor;
 import com.yourcompany.kafkasqlexplorer.domain.TopicDetailResponse;
 import com.yourcompany.kafkasqlexplorer.domain.TopicMessage;
@@ -102,6 +103,16 @@ public class TopicController {
                     + " — it may have been compacted or aged out.");
         }
         return record;
+    }
+
+    /**
+     * Who reads this topic and how far behind they are. Never 404s on "no consumer": an empty
+     * list is a legitimate answer, and the payload carries the scope of the read so it cannot be
+     * confused with a failed one.
+     */
+    @GetMapping("/{name}/consumers")
+    public TopicConsumers getConsumers(@PathVariable String name) {
+        return kafkaAdminService.getTopicConsumers(name, explorerConfig.getConsumerGroupMaxGroups());
     }
 
     @GetMapping(value = "/{name}/ddl", produces = "text/plain")
