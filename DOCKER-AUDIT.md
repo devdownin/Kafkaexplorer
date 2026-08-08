@@ -1,8 +1,9 @@
 # Audit du déploiement Docker — démarrage et arrêt des services (2026-08)
 
 Audit ciblé de la **surface de déploiement** : les six stacks `docker-compose*.yml` de la racine,
-les quatre `Dockerfile*`, `.dockerignore`, le job `docker` de `release.yml`, et le cycle de vie
-applicatif côté JVM (`@PreDestroy`, pools d'exécution, producteurs Kafka, émetteurs SSE).
+les quatre `Dockerfile*`, `.dockerignore`, les deux workflows GitHub, la plateforme
+`deploy/kraft-platform/`, et le cycle de vie applicatif côté JVM (`@PreDestroy`, pools d'exécution,
+producteurs Kafka, émetteurs SSE).
 
 Ce document décrit l'**état d'avant correction** et la décision prise pour chaque point. Les items
 marqués ✅ sont corrigés dans le même commit ; ceux marqués 📋 sont constatés et volontairement
@@ -386,7 +387,38 @@ charge dépend de l'instance.
 
 ---
 
-## 6. Constaté, non traité
+## 6. Quatrième lot — la plateforme `deploy/kraft-platform`
+
+### P1 — Arrêt et coût du healthcheck ✅
+
+Cette stack (broker + ksqlDB + AKHQ + REST + Prometheus/Grafana) est par ailleurs bien tenue —
+`restart: unless-stopped` et healthchecks partout, versions épinglées, profils — mais elle portait
+les deux mêmes défauts que les stacks principales.
+
+`stop_grace_period` sur les **trois services qui ont un état** : `kafka-00` (flush des logs et des
+index), `ksqldb-server` (validation des offsets Kafka Streams, fermeture de RocksDB) et `prometheus`
+(écriture du head block ; interrompu, il rejoue le WAL sur 15 jours de rétention au démarrage
+suivant). 30 s chacun. `kafka-rest`, `akhq`, `schema-registry` et `grafana` gardent le défaut : ce
+sont des façades dont l'état vit ailleurs, il n'y a rien à vider.
+
+Healthcheck du broker : `interval: 10s` sur `kafka-broker-api-versions`, donc une JVM toutes les dix
+secondes pour la vie du conteneur → 30 s, `start_period` inchangé. Les autres healthchecks sont des
+`curl` locaux et restent à 15 s.
+
+Le détail est repris dans le README de la stack, qui est là que ses opérateurs regardent.
+
+**Non touché, et délibérément** : les ports publiés sur `0.0.0.0`. Contrairement aux stacks
+principales, celle-ci est une plateforme *partagée* — `KAFKA_EXTERNAL_HOST=kafkadev` et le listener
+`OUTSIDE` annoncé existent pour que d'autres machines s'y connectent ; la lier à la loopback lui
+retirerait sa raison d'être. Le README assume déjà explicitement l'absence d'authentification
+(PLAINTEXT partout, Grafana en anonyme Admin, AKHQ et le REST Proxy ouverts) comme un choix « à
+réserver à un réseau fermé ». C'est une décision d'exploitation, pas un défaut de configuration.
+
+---
+
+---
+
+## 7. Constaté, non traité
 
 ### 📋 N3 — Noms de conteneurs fixes, projet Compose implicite
 
@@ -409,18 +441,7 @@ présent dans les deux images, mais sans limite mémoire de conteneur les 75 % p
 démonstration sur poste de travail, où une limite arbitraire gênerait plus qu'elle n'aiderait ; en
 déploiement réel, la limite doit venir de l'orchestrateur, et `MaxRAMPercentage` fera alors ce pour
 quoi il est là.
-
-### 📋 N6 — `deploy/kraft-platform/` sans `stop_grace_period`
-
-Cette stack (broker + ksqlDB + AKHQ + REST + Prometheus/Grafana) porte bien `restart: unless-stopped`
-et des healthchecks partout, mais aucun `stop_grace_period` : son broker Confluent est exposé au même
-SIGKILL à 10 s que A2 décrit, avec des volumes plus gros. Non modifiée ici : elle a sa propre
-documentation, son propre cycle de migration (elle vient d'être portée en KRaft) et ne fait pas
-partie du déploiement de Kafka Explorer lui-même. À traiter avec elle.
-
----
-
-## 7. Validation
+## 8. Validation
 
 Pas de démon Docker dans l'environnement de cet audit. Ce qui a pu être vérifié ici l'a été :
 
