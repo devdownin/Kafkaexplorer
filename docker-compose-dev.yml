@@ -3,7 +3,7 @@ services:
     image: apache/kafka:4.2.0
     container_name: kafka-dev
     ports:
-      - "9092:9092"
+      - "${BIND_ADDR:-127.0.0.1}:9092:9092"
     # A stopping KRaft node flushes its logs and closes the group / share-state
     # coordinators cleanly. Docker's default grace period is 10s, past which the broker is
     # SIGKILLed mid-flush and the next start has to recover the log segments — on a seeded
@@ -62,7 +62,11 @@ services:
       dockerfile: Dockerfile.dev-backend
     container_name: kafka-explorer-backend
     ports:
-      - "8080:8080"
+      # Published on the loopback interface only. This application has no authentication
+      # and `POST /api/config` can repoint the Kafka cluster at runtime, so binding it to
+      # 0.0.0.0 — the Docker default — offered it to the whole LAN. Set BIND_ADDR to expose
+      # it deliberately: `BIND_ADDR=0.0.0.0 docker compose up -d`.
+      - "${BIND_ADDR:-127.0.0.1}:8080:8080"
     volumes:
       - .:/app
       # `~/.m2` was bind-mounted from the host — the one thing this stack exists to
@@ -80,7 +84,7 @@ services:
     # Same reason as the packaged app: the JVM's bean destruction plus the graceful web
     # shutdown outlast Docker's default 10s. No restart policy on purpose — a backend that
     # fails to compile should stay down and say so, not loop.
-    stop_grace_period: 45s
+    stop_grace_period: 35s
     depends_on:
       kafka:
         condition: service_healthy
@@ -91,7 +95,7 @@ services:
       dockerfile: Dockerfile.dev-frontend
     container_name: kafka-explorer-frontend
     ports:
-      - "5173:5173"
+      - "${BIND_ADDR:-127.0.0.1}:5173:5173"
     volumes:
       - ./src/main/webapp:/app
       # Shadows the bind mount: the container's Linux-native dependencies stay in the

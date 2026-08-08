@@ -3,7 +3,7 @@ services:
     image: apache/kafka:4.2.0
     container_name: kafka
     ports:
-      - "9092:9092"
+      - "${BIND_ADDR:-127.0.0.1}:9092:9092"
     # A stopping KRaft node flushes its logs and closes the group / share-state
     # coordinators cleanly. Docker's default grace period is 10s, past which the broker is
     # SIGKILLed mid-flush and the next start has to recover the log segments — on a seeded
@@ -74,7 +74,11 @@ services:
       dockerfile: Dockerfile.release
     container_name: kafka-sql-explorer
     ports:
-      - "8080:8080"
+      # Published on the loopback interface only. This application has no authentication
+      # and `POST /api/config` can repoint the Kafka cluster at runtime, so binding it to
+      # 0.0.0.0 — the Docker default — offered it to the whole LAN. Set BIND_ADDR to expose
+      # it deliberately: `BIND_ADDR=0.0.0.0 docker compose up -d`.
+      - "${BIND_ADDR:-127.0.0.1}:8080:8080"
     depends_on:
       kafka:
         condition: service_healthy
@@ -87,9 +91,9 @@ services:
       # update.ps1 does on every release.
       - explorer_logs:/app/logs
       - explorer_data:/app/data
-    # See docker-compose.yml: bean destruction plus the graceful web shutdown needs more
-    # than Docker's default 10s before the JVM is SIGKILLed.
-    stop_grace_period: 45s
+    # See docker-compose.yml: graceful web shutdown plus bean destruction needs more than
+    # Docker's default 10s before the JVM is SIGKILLed.
+    stop_grace_period: 35s
     restart: unless-stopped
 
 volumes:

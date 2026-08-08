@@ -232,29 +232,100 @@ que `src/main/java` et `src/main/resources`. Exclus.
 
 ---
 
-## 4. Constaté, non traité
+## 4. Second lot — la stack est exécutée, plus seulement construite
 
-### 📋 N1 — Le JAR n'est pas superposé en couches (`layered jar`)
+Les cinq points ci-dessous ont été traités dans un deuxième temps, sur la base des « non traités »
+du premier lot.
 
-`Dockerfile.release` fait un `COPY app.jar` d'un fat-jar : chaque version publiée pousse une couche
-unique de plusieurs centaines de mégaoctets, sans aucune réutilisation entre deux versions, alors que
-la quasi-totalité de son contenu (Flink, Kafka, Spring) ne bouge pas. L'extraction en couches de
-Spring Boot le corrigerait :
+### S1 — Rien n'exécutait jamais le déploiement ✅
 
-```dockerfile
-RUN java -Djarmode=tools -jar app.jar extract --layers --launcher --destination extracted
-COPY extracted/dependencies/ ./
-COPY extracted/spring-boot-loader/ ./
-COPY extracted/snapshot-dependencies/ ./
-COPY extracted/application/ ./
-ENTRYPOINT ["java", "org.springframework.boot.loader.launch.JarLauncher"]
-```
+C'est le manque structurant, et l'explication commune des trois bugs les plus bêtes de la section 1 :
+`ci.yml` **construisait** l'image et s'arrêtait là. Un déploiement peut se construire parfaitement et
+être cassé — un montage de log qui devient un répertoire, une app séquestrée derrière le seeding, un
+délai de grâce plus court que l'arrêt qu'il doit couvrir : rien de tout cela n'apparaît à la
+construction.
 
-(`jarmode=tools`, et non l'ancien `layertools`, sur Spring Boot 4.) Non appliqué : c'est le chemin
-qui **publie** les images, il change l'`ENTRYPOINT`, et aucun démon Docker n'est disponible ici pour
-le valider. `CLAUDE.md` impose par ailleurs que les deux surfaces d'exécution (`Dockerfile` étape 3
-et `Dockerfile.release`) restent identiques, donc c'est les deux ou aucune. À faire dans un commit
-dédié, validé par un build réel.
+Le job `docker` démarre désormais la stack (`docker-compose.ci.yml` fournit l'image construite au lieu
+de la reconstruire) et vérifie, chaque assertion correspondant à un bug de la section 1 :
+
+| Assertion | Régression couverte |
+|---|---|
+| le conteneur devient `healthy` | D1, D3 (et le `HEALTHCHECK` lui-même) |
+| `/actuator/health/{liveness,readiness}` répondent `UP` | S3 |
+| `GET /api/dashboard` répond 200 | joignabilité réelle du broker |
+| `id -u` = 10001 | I2 |
+| `/app/logs/kafkaexplorer.log` est non vide | **I1** |
+| le seeder ressort « already present » au second passage | **D2** |
+| le code de sortie n'est pas 137 | **A1, A2** — 137 = SIGKILL, exactement ce que le couple arrêt gracieux / `stop_grace_period` existe pour éviter |
+
+Un second job, `release-image`, construit `Dockerfile.release` à partir du JAR du job `build` et le
+démarre **sans broker** : jusqu'ici ce fichier n'était bâti que par `release.yml`, donc toute
+modification y était étrennée par la publication elle-même — précisément ce que `CLAUDE.md` interdit
+en demandant que les deux surfaces d'exécution ne divergent pas.
+
+### S2 — JAR découpé en couches ✅ (ex-N1)
+
+`COPY app.jar` d'un fat-jar : chaque version publiée poussait une couche unique de plusieurs centaines
+de mégaoctets sans aucune réutilisation, alors que ~95 % de son contenu (Flink, Kafka, Spring) est
+identique d'une version à l'autre. Les deux images extraient maintenant les quatre couches standard —
+`dependencies`, `spring-boot-loader`, `snapshot-dependencies`, `application` — de la plus stable à la
+moins stable, en quatre `COPY` donc quatre couches : une version corrective ne republie que la
+dernière.
+
+`-Djarmode=tools` est l'entrée Spring Boot 3.3+ (`layertools` n'existe plus), `--launcher` produit la
+disposition exécutable, et l'`ENTRYPOINT` devient
+`java org.springframework.boot.loader.launch.JarLauncher` — il n'y a plus de fat-jar dans l'image.
+La commande, la disposition produite et le démarrage par `JarLauncher` ont été vérifiés localement
+contre un JAR Spring Boot 4.1.0 réel avant d'être écrits ici ; S1 les vérifie désormais à chaque
+exécution de CI.
+
+Dans `Dockerfile.release`, l'étape d'extraction est épinglée à `--platform=$BUILDPLATFORM` : elle ne
+fait que réarranger du bytecode indépendant de l'architecture, donc la variante arm64 du build
+multi-arch n'a aucune raison de la rejouer sous QEMU.
+
+### S3 — `liveness` et `readiness` séparés ✅
+
+Le projet n'utilise pas `spring-kafka` mais `kafka-clients` directement : Spring Boot
+n'auto-configure donc **aucun** indicateur de santé Kafka, et `/actuator/health` répondait `UP` tant
+que le contexte était debout, quoi que fasse le broker. Le healthcheck du conteneur qualifiait de
+« saine » une application incapable de joindre le moindre cluster.
+
+`KafkaHealthIndicator` (bean `kafka`, sonde bornée à 2 s sur `describeCluster().clusterId()`) est
+versé au groupe **readiness** uniquement, et le `HEALTHCHECK` des deux images vise désormais
+`/actuator/health/liveness`.
+
+La séparation n'est pas cosmétique : un broker injoignable ne veut pas dire que ce processus doit
+être redémarré ou retiré du service — l'UI sert toujours, et la page Settings permet justement de
+repointer l'application ailleurs, ce dont on a précisément besoin à cet instant. Cela veut dire
+« pas prêt à répondre à des requêtes », ce qui est la définition de readiness. `HealthProbesTest`
+vérifie sur le contexte réel que les deux groupes existent, que readiness contient `kafka` et que
+liveness ne le contient pas — une faute de frappe dans le `include` laisserait sinon le groupe
+silencieusement absent et le `HEALTHCHECK` lirait un 404 comme un conteneur mort.
+
+### S4 — Budget d'arrêt partagé, au lieu de cumulé ✅
+
+A2 constatait ~35 s d'attentes additives (six pools à 5 s, destruction séquentielle) et y répondait
+par un `stop_grace_period: 45s` — accommoder le problème, pas le corriger. `ShutdownBudget` donne
+maintenant **une seule échéance de 10 s partagée** par tous les pools : le premier détruit démarre
+l'horloge, les suivants héritent de ce qu'il en reste, avec un plancher de 500 ms chacun pour que le
+dernier ne soit pas systématiquement interrompu à la seconde où le budget s'épuise. Le cas courant
+(rien en vol) est inchangé et instantané.
+
+Conséquence en cascade : `timeout-per-shutdown-phase` passe de 20 s à 15 s (une requête au timeout
+par défaut de 10 s plus sa fin), et `stop_grace_period` de 45 s à **35 s** — 15 + 10 + la sortie de
+la JVM. Et surtout le budget cesse de grandir de cinq secondes à chaque service qui gagne un pool.
+
+### S5 — Ports publiés sur la loopback ✅
+
+`- "8080:8080"` publie sur `0.0.0.0` : une application **sans authentification**, dont
+`POST /api/config` peut repointer le cluster Kafka à chaud, était offerte à tout le réseau local dès
+un `docker compose up`. Tous les ports publiés (8080, 9092, 8081, 11434, 5173, 8090) passent à
+`${BIND_ADDR:-127.0.0.1}` — la loopback par défaut, une seule variable pour exposer délibérément :
+`BIND_ADDR=0.0.0.0 docker compose up -d`.
+
+---
+
+## 5. Constaté, non traité
 
 ### 📋 N2 — Les dépendances Maven ne sont pas une couche d'image
 
@@ -306,11 +377,21 @@ partie du déploiement de Kafka Explorer lui-même. À traiter avec elle.
 
 ---
 
-## 5. Validation
+## 6. Validation
 
-Pas de démon Docker dans l'environnement de cet audit : les fichiers Compose et le workflow sont
-validés syntaxiquement (parse YAML), `seed-demo-once.sh` par `sh -n`, et les modifications Java par
-le harnais hors-ligne — `./verify-offline.sh`, **324 tests, 0 échec** (4 ignorés, préexistants).
-Les changements d'image (utilisateur non-root, création des répertoires) et le build multi-arch
-demandent un build réel : c'est `ci.yml` qui construit le `Dockerfile` multi-étapes à chaque
-exécution, et le job `docker` de `release.yml` qui exercera `Dockerfile.release` au prochain tag.
+Pas de démon Docker dans l'environnement de cet audit. Ce qui a pu être vérifié ici l'a été :
+
+* parse YAML de tous les fichiers Compose et des deux workflows, `sh -n` sur `seed-demo-once.sh` ;
+* modifications Java par le harnais hors-ligne — `./verify-offline.sh`, **329 tests, 0 échec**
+  (4 ignorés, préexistants), dont `ShutdownBudgetTest`, `KafkaHealthIndicatorTest` et
+  `HealthProbesTest`, ce dernier montant le contexte Spring réel pour vérifier les groupes de santé ;
+* l'extraction en couches (S2) : commande `-Djarmode=tools … extract --layers --launcher`,
+  disposition produite et démarrage par `JarLauncher`, joués localement contre un JAR Spring Boot
+  4.1.0 réel — le point le plus risqué du lot, et celui qui touche le chemin de publication ;
+* la borne d'`AdminClient.close()` (A3) est observable dans les logs d'`ApplicationContextTest`, qui
+  démarre sans broker : `Timed out 74 remaining operation(s) during close`, puis l'arrêt se poursuit.
+
+Ce qui demande un vrai démon — construction des images, non-root, multi-arch, temps de démarrage,
+code de sortie à l'arrêt — est désormais couvert par la CI elle-même (S1) : le job `docker` démarre
+la stack à chaque exécution et le job `release-image` construit et démarre `Dockerfile.release`. Ces
+deux jobs sont la validation de ce document autant que sa conséquence.

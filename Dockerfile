@@ -55,6 +55,18 @@ COPY --from=frontend-builder /app/dist ./src/main/resources/static
 RUN --mount=type=cache,target=/root/.m2,sharing=locked \
     mvn -B package -P '!build-frontend' -DskipTests
 
+# Split the fat JAR into Spring Boot's four standard layers, ordered from the most stable
+# to the least: `dependencies` (Flink, Kafka, Spring — hundreds of megabytes that move
+# only when the pom does), `spring-boot-loader`, `snapshot-dependencies`, `application`
+# (our own classes and the SPA, a few megabytes). Copied as four separate COPY lines
+# below, they become four image layers, so a code change re-pushes and re-pulls only the
+# last one instead of the whole JAR again.
+#
+# `-Djarmode=tools` is the Spring Boot 3.3+ entry point; the older `layertools` no longer
+# exists. `--launcher` extracts the runnable layout, which JarLauncher starts.
+RUN cp target/kafka-sql-explorer-*.jar app.jar \
+ && java -Djarmode=tools -jar app.jar extract --layers --launcher --destination extracted
+
 # --- Stage 3: Runtime ---
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
@@ -68,8 +80,14 @@ RUN addgroup -g 10001 -S app \
  && mkdir -p /app/logs /app/data \
  && chown -R 10001:10001 /app
 
-# Copie du JAR généré
-COPY --from=backend-builder --chown=10001:10001 /app/target/kafka-sql-explorer-*.jar app.jar
+# The four layers, most stable first — the order is the whole point, a COPY invalidates
+# every layer after it. `snapshot-dependencies` is empty on a release build; COPY of an
+# empty directory is a no-op, and keeping the line means a SNAPSHOT dependency lands in
+# its own layer rather than in the application one.
+COPY --from=backend-builder --chown=10001:10001 /app/extracted/dependencies/ ./
+COPY --from=backend-builder --chown=10001:10001 /app/extracted/spring-boot-loader/ ./
+COPY --from=backend-builder --chown=10001:10001 /app/extracted/snapshot-dependencies/ ./
+COPY --from=backend-builder --chown=10001:10001 /app/extracted/application/ ./
 
 EXPOSE 8080
 
@@ -86,8 +104,13 @@ ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75.0"
 # is generous on purpose: the embedded Flink runtime takes its time on a cold start,
 # and a container reported unhealthy while it is still legitimately booting is worse
 # than no healthcheck at all.
+# Liveness, not the aggregate `/actuator/health`. The aggregate carries the Kafka
+# readiness indicator, so a broker restart would flip the container to `unhealthy` — and
+# the app is still perfectly alive then, still serving its UI, still able to be repointed
+# at another cluster from the Settings page. Liveness answers "is this process able to
+# serve", which is the only question Docker acts on.
 HEALTHCHECK --interval=15s --timeout=3s --start-period=60s --retries=10 \
-  CMD wget -q -O - http://127.0.0.1:8080/actuator/health | grep -q '"status":"UP"' || exit 1
+  CMD wget -q -O - http://127.0.0.1:8080/actuator/health/liveness | grep -q '"status":"UP"' || exit 1
 
 # Non-root, by numeric id so a Kubernetes `runAsNonRoot` admission check can see it. What
 # used to keep this image on root was docker-compose.yml bind-mounting a host file onto
@@ -96,4 +119,5 @@ HEALTHCHECK --interval=15s --timeout=3s --start-period=60s --retries=10 \
 # volume, which inherits the ownership set above.
 USER 10001:10001
 
-ENTRYPOINT ["java", "-jar", "app.jar"]
+# The extracted layout, not `-jar app.jar` — there is no fat JAR in this image any more.
+ENTRYPOINT ["java", "org.springframework.boot.loader.launch.JarLauncher"]

@@ -3,7 +3,7 @@ services:
     image: apache/kafka:4.2.0
     container_name: kafka
     ports:
-      - "9092:9092"
+      - "${BIND_ADDR:-127.0.0.1}:9092:9092"
     # A stopping KRaft node flushes its logs and closes the group / share-state
     # coordinators cleanly. Docker's default grace period is 10s, past which the broker is
     # SIGKILLed mid-flush and the next start has to recover the log segments — on a seeded
@@ -72,7 +72,7 @@ services:
     image: ollama/ollama:latest
     container_name: ollama
     ports:
-      - "11434:11434"
+      - "${BIND_ADDR:-127.0.0.1}:11434:11434"
     volumes:
       - ollama_data:/root/.ollama
     healthcheck:
@@ -98,7 +98,11 @@ services:
     build: .
     container_name: kafka-sql-explorer
     ports:
-      - "8080:8080"
+      # Published on the loopback interface only. This application has no authentication
+      # and `POST /api/config` can repoint the Kafka cluster at runtime, so binding it to
+      # 0.0.0.0 — the Docker default — offered it to the whole LAN. Set BIND_ADDR to expose
+      # it deliberately: `BIND_ADDR=0.0.0.0 docker compose up -d`.
+      - "${BIND_ADDR:-127.0.0.1}:8080:8080"
     # Neither the demo seed nor the model pull is needed to boot: the app starts with the
     # broker, and the LLM is only reached when Process Mining is actually used. Waiting on
     # `ollama-pull-model` in particular held the UI back for the whole multi-gigabyte
@@ -120,7 +124,7 @@ services:
       # not exist in the checkout, so Docker created a directory and file logging failed.
       - explorer_logs:/app/logs
       - explorer_data:/app/data
-    stop_grace_period: 45s
+    stop_grace_period: 35s
     restart: unless-stopped
 
   demo-setup:

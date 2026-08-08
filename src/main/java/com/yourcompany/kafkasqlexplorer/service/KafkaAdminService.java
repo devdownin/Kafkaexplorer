@@ -77,7 +77,9 @@ public class KafkaAdminService {
     @PostConstruct
     public void init() {
         if (this.adminClient != null) {
-            this.adminClient.close();
+            // Bounded for the same reason as close() below: this runs when the cluster is
+            // repointed, which is very often *because* the previous one stopped answering.
+            this.adminClient.close(Duration.ofSeconds(5));
         }
         Properties props = new Properties();
         props.putAll(kafkaConfig.getKafkaProperties());
@@ -101,6 +103,19 @@ public class KafkaAdminService {
             // grace period expired and SIGKILLed the JVM mid-teardown.
             adminClient.close(Duration.ofSeconds(5));
         }
+    }
+
+    /**
+     * Cheapest possible reachability probe: the cluster id, which the AdminClient answers
+     * from the metadata it already holds. Used by the readiness health indicator, so it is
+     * deliberately not cached and deliberately bounded — a readiness check that blocks is
+     * worse than one that reports DOWN.
+     *
+     * @return the cluster id
+     * @throws Exception when the cluster cannot be reached within {@code timeoutMs}
+     */
+    public String probeClusterId(long timeoutMs) throws Exception {
+        return adminClient.describeCluster().clusterId().get(timeoutMs, TimeUnit.MILLISECONDS);
     }
 
     public Map<String, String> getBrokerConfigs() {

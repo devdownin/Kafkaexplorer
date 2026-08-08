@@ -769,21 +769,10 @@ public class AuditService {
 
     @PreDestroy
     public void shutdown() {
-        shutdownExecutor(auditExecutor);
-        shutdownExecutor(topicAuditExecutor);
+        // Two pools, one shared deadline with every other service's — see ShutdownBudget.
+        ShutdownBudget.shutdown(auditExecutor);
+        ShutdownBudget.shutdown(topicAuditExecutor);
         closeHistoryProducer();
-    }
-
-    private void shutdownExecutor(ExecutorService executor) {
-        executor.shutdown();
-        try {
-            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
-                executor.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            executor.shutdownNow();
-            Thread.currentThread().interrupt();
-        }
     }
 
     protected void persistAuditHistory(AuditReport report) {

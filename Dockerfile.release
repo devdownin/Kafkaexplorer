@@ -7,7 +7,31 @@
 # asset to differ. The image now contains exactly the JAR you can download.
 #
 # Kept deliberately identical to the runtime stage of `Dockerfile`, which stays the
-# from-source path used by the compose stacks and by `docker build .`.
+# from-source path used by the compose stacks and by `docker build .`. ci.yml builds this
+# file on every run too, so the two cannot drift unnoticed until a tag is pushed.
+
+# --- Stage 1: split the fat JAR into layers ---
+#
+# `--platform=$BUILDPLATFORM` pins this stage to the builder's own architecture. The
+# extraction only rearranges architecture-independent bytecode, so running it once
+# natively is right — under the multi-arch build of release.yml the arm64 variant would
+# otherwise re-run this whole step through QEMU emulation for an identical result.
+FROM --platform=$BUILDPLATFORM eclipse-temurin:21-jre-alpine AS extractor
+WORKDIR /build
+
+# Expected at the root of the build context, named app.jar (release.yml stages it
+# there; update.ps1 downloads it there).
+COPY app.jar app.jar
+
+# Spring Boot's four standard layers, ordered from most to least stable. Copied as four
+# COPY lines below they become four image layers, so a patch release re-pushes only the
+# small `application` one instead of a fresh few-hundred-megabyte blob whose contents are
+# ~95% identical to the previous version's.
+#
+# `-Djarmode=tools` is the Spring Boot 3.3+ entry point; the older `layertools` is gone.
+RUN java -Djarmode=tools -jar app.jar extract --layers --launcher --destination extracted
+
+# --- Stage 2: runtime ---
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 
@@ -18,9 +42,14 @@ RUN addgroup -g 10001 -S app \
  && mkdir -p /app/logs /app/data \
  && chown -R 10001:10001 /app
 
-# Expected at the root of the build context, named app.jar (release.yml stages it
-# there; update.ps1 downloads it there).
-COPY --chown=10001:10001 app.jar app.jar
+# Most stable first — the order is the whole point, a COPY invalidates every layer after
+# it. `snapshot-dependencies` is empty on a release build; COPY of an empty directory is a
+# no-op, and keeping the line means a SNAPSHOT dependency lands in its own layer rather
+# than in the application one.
+COPY --from=extractor --chown=10001:10001 /build/extracted/dependencies/ ./
+COPY --from=extractor --chown=10001:10001 /build/extracted/spring-boot-loader/ ./
+COPY --from=extractor --chown=10001:10001 /build/extracted/snapshot-dependencies/ ./
+COPY --from=extractor --chown=10001:10001 /build/extracted/application/ ./
 
 EXPOSE 8080
 
@@ -28,10 +57,14 @@ EXPOSE 8080
 # container memory limit means being OOM-killed rather than running a GC.
 ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75.0"
 
+# Liveness, not the aggregate `/actuator/health`: the aggregate carries the Kafka
+# readiness indicator, so a broker restart would flip the container to `unhealthy` while
+# the app is still perfectly alive and still able to be repointed elsewhere.
 HEALTHCHECK --interval=15s --timeout=3s --start-period=60s --retries=10 \
-  CMD wget -q -O - http://127.0.0.1:8080/actuator/health | grep -q '"status":"UP"' || exit 1
+  CMD wget -q -O - http://127.0.0.1:8080/actuator/health/liveness | grep -q '"status":"UP"' || exit 1
 
 # Kept in step with Dockerfile's runtime stage.
 USER 10001:10001
 
-ENTRYPOINT ["java", "-jar", "app.jar"]
+# The extracted layout, not `-jar app.jar` — there is no fat JAR in this image any more.
+ENTRYPOINT ["java", "org.springframework.boot.loader.launch.JarLauncher"]

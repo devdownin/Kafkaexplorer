@@ -352,8 +352,8 @@ public class KafkaLiveConsumer {
         // polling task can touch a consumer anymore, so closing the leftovers from this
         // thread is safe (their finishSession tick may never have had a chance to run).
         sessions.keySet().forEach(this::stopSession);
-        shutdownExecutor(scheduler);
-        shutdownExecutor(analysisExecutor);
+        ShutdownBudget.shutdown(scheduler);
+        ShutdownBudget.shutdown(analysisExecutor);
         sessions.forEach((sessionId, session) -> {
             session.cancelTasks();
             try {
@@ -370,17 +370,6 @@ public class KafkaLiveConsumer {
         sessions.clear();
     }
 
-    private void shutdownExecutor(ExecutorService executor) {
-        executor.shutdown();
-        try {
-            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
-                executor.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            executor.shutdownNow();
-            Thread.currentThread().interrupt();
-        }
-    }
 
     private Properties buildConsumerProps(String sessionId) {
         Properties props = new Properties();

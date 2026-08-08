@@ -3,7 +3,7 @@ services:
     image: apache/kafka:4.2.0
     container_name: kafka
     ports:
-      - "9092:9092"
+      - "${BIND_ADDR:-127.0.0.1}:9092:9092"
     # A stopping KRaft node flushes its logs and closes the group / share-state
     # coordinators cleanly. Docker's default grace period is 10s, past which the broker is
     # SIGKILLed mid-flush and the next start has to recover the log segments — on a seeded
@@ -72,7 +72,11 @@ services:
     build: .
     container_name: kafka-sql-explorer
     ports:
-      - "8080:8080"
+      # Published on the loopback interface only. This application has no authentication
+      # and `POST /api/config` can repoint the Kafka cluster at runtime, so binding it to
+      # 0.0.0.0 — the Docker default — offered it to the whole LAN. Set BIND_ADDR to expose
+      # it deliberately: `BIND_ADDR=0.0.0.0 docker compose up -d`.
+      - "${BIND_ADDR:-127.0.0.1}:8080:8080"
     # Only the broker. The app used to wait for `demo-setup` to complete as well, which
     # meant the UI was unreachable for the whole minute-plus the seeding takes — for data
     # it does not need to boot: the Dashboard polls every 30s, so the demo topics simply
@@ -95,11 +99,11 @@ services:
       - explorer_logs:/app/logs
       # flink-job-store-path (data/flink-jobs.json): job history survives a recreate.
       - explorer_data:/app/data
-    # Bean destruction is sequential and each pool waits up to 5s for work in flight
-    # (queries, audit, stream-flow, live sessions), on top of the graceful web shutdown
-    # configured in application.yml. Docker's default 10s would SIGKILL the JVM in the
-    # middle of that — losing the audit report being written to internal.audit.history.
-    stop_grace_period: 45s
+    # 15s of graceful web shutdown (spring.lifecycle.timeout-per-shutdown-phase) then
+    # ~10s of bean destruction (ShutdownBudget, one deadline shared by every executor
+    # pool), plus the JVM's exit. Docker's default 10s would SIGKILL in the middle of
+    # that — losing the audit report being written to internal.audit.history.
+    stop_grace_period: 35s
     restart: unless-stopped
 
   demo-setup:

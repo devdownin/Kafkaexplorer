@@ -198,14 +198,6 @@ public class FlinkRuntimeCoordinator {
 
     @PreDestroy
     public void shutdown() {
-        mutationExecutor.shutdown();
-        try {
-            if (!mutationExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
-                mutationExecutor.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            mutationExecutor.shutdownNow();
-        }
+        ShutdownBudget.shutdown(mutationExecutor);
     }
 }
