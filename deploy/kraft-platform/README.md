@@ -114,6 +114,44 @@ service_healthy` (ksqlDB et REST démarraient contre un broker pas encore prêt 
 se contentaient de boucler en erreur), versions épinglées via `.env` au lieu de
 `:latest`, profils `observability` / `schema-registry` / `cli`.
 
+### Arrêt : `stop_grace_period` sur les trois services qui ont un état
+
+Repris de l'audit du déploiement Docker de l'application (`DOCKER-AUDIT.md` à la
+racine du dépôt, § N6). Docker laisse **10 secondes** par défaut entre le SIGTERM
+et le SIGKILL, ce qui est plus court que ce que l'arrêt propre demande ici :
+
+* **`kafka-00` (30 s)** — un nœud KRaft qui s'arrête vide ses logs, écrit ses
+  index et referme les coordinateurs de groupes. SIGKILLé en plein flush, il
+  oblige le démarrage suivant à récupérer les segments : un boot de quinze
+  secondes devient plusieurs minutes sur un volume qui a vécu.
+* **`ksqldb-server` (30 s)** — les topologies Kafka Streams valident leurs
+  offsets et referment RocksDB. Sans cela, la reprise se fait en restaurant
+  l'état depuis les topics de changelog, d'autant plus long qu'il y a de
+  requêtes persistantes.
+* **`prometheus` (30 s)** — au SIGTERM il écrit son head block sur disque.
+  Interrompu, il rejoue le WAL au démarrage : sur 15 jours de rétention, cela se
+  compte en minutes pendant lesquelles il ne répond pas.
+
+`kafka-rest`, `akhq` et `schema-registry` gardent le défaut : ce sont des façades
+HTTP dont l'état vit dans Kafka, il n'y a rien à vider chez elles. Grafana aussi
+— ses écritures SQLite sont transactionnelles et immédiates.
+
+### Le healthcheck du broker démarrait une JVM toutes les 10 secondes
+
+`kafka-broker-api-versions` démarre une JVM complète, et Docker exécute un
+healthcheck pendant **toute la vie** du conteneur, pas seulement au démarrage :
+à `interval: 10s`, la plateforme payait ce lancement toutes les dix secondes,
+indéfiniment, pour re-répondre à une question tranchée dans la première minute.
+
+L'intervalle passe à 30 s — il décrit le régime établi — et `start_period: 30s`
+couvre le démarrage, où les échecs ne consomment pas `retries`. Contrepartie : le
+broker est déclaré sain vers t≈30 s au lieu de t≈20 s, donc ksqlDB, REST et AKHQ
+démarrent une dizaine de secondes plus tard. Sur une plateforme partagée qui
+tourne en continu, c'est un échange évident.
+
+Les healthchecks des autres services restent à 15 s : ce sont des `curl` sur un
+endpoint HTTP local, pas un démarrage de JVM.
+
 ---
 
 ## 3. Données : le volume de l'ancien cluster n'est pas réutilisable

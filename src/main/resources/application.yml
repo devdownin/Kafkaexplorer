@@ -1,6 +1,23 @@
+server:
+  # On SIGTERM — every `docker compose down`, every container replacement — the default
+  # `immediate` cuts in-flight requests at the socket. This application has requests that
+  # legitimately run for tens of seconds: a cluster audit, a whole-cluster stream-flow
+  # trace, a Flink SELECT. Graceful lets them finish (or hit their own budget) instead of
+  # answering a truncated response, and the compose stacks give the container a
+  # `stop_grace_period` long enough to cover this plus bean destruction.
+  shutdown: graceful
+
 spring:
   application:
     name: kafka-sql-explorer
+
+  lifecycle:
+    # Upper bound on the graceful phase above: enough for a query at the 10s default
+    # timeout plus its teardown. It is also half of the container's stop budget — the
+    # stacks allow 35s, which is this phase followed by ~10s of bean destruction
+    # (ShutdownBudget) and the JVM's own exit. Raising it means raising
+    # `stop_grace_period` too, or Docker will SIGKILL what this was meant to protect.
+    timeout-per-shutdown-phase: 15s
 
   cache:
     type: caffeine
@@ -93,6 +110,18 @@ management:
       exposure:
         include: health,info,prometheus
   endpoint:
+    health:
+      # Exposes /actuator/health/liveness and /actuator/health/readiness. The container
+      # HEALTHCHECK targets liveness — "is this process able to serve" — while readiness
+      # additionally requires a reachable broker (KafkaHealthIndicator, bean id `kafka`).
+      # Keeping them apart matters: a broker restart must not flip the container to
+      # `unhealthy`, since the app is still serving its UI and can be repointed at another
+      # cluster from the Settings page, which is exactly what one needs at that moment.
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,kafka
     prometheus:
       enabled: true
   metrics:

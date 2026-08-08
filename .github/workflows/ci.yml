@@ -79,6 +79,16 @@ jobs:
         retention-days: 7
         if-no-files-found: ignore
 
+    - name: Upload JAR
+      # Consumed by the `release-image` job below, so Dockerfile.release is exercised on
+      # every run rather than for the first time at tag time.
+      uses: actions/upload-artifact@v7
+      with:
+        name: jar
+        path: target/*.jar
+        retention-days: 1
+        if-no-files-found: error
+
   # Nothing here ever built the image, so a broken Dockerfile stayed invisible until a
   # tag was pushed — which is exactly how it went: `vite.config.ts` gained
   # `build.outDir: '../resources/static'`, the frontend stage stopped producing
@@ -88,21 +98,158 @@ jobs:
   #
   # Deliberately not `needs: build`: it runs in parallel, so it costs wall-clock time
   # only if it is the slowest job. It never pushes — publishing stays release.yml's job.
+  #
+  # Building it is not enough, either: a deployment can build perfectly and still be
+  # broken. Three bugs lived in these files for months because nothing ever *ran* them —
+  # a bind-mounted log file that Docker turned into a directory (so file logging was
+  # dead), an app gated behind the demo seeding (so the UI was unreachable for minutes),
+  # and a stop grace period shorter than the shutdown it had to cover. Each assertion in
+  # the smoke test below corresponds to one of them.
   docker:
-    name: Build Docker image (no push)
+    name: Build image and smoke-test the stack
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
+    env:
+      # Read by every `docker compose` invocation in this job, so the overlay does not
+      # have to be repeated on each line.
+      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml
     steps:
       - uses: actions/checkout@v7
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v4
+
       - name: Build image from source
         uses: docker/build-push-action@v7
         with:
           context: .
           push: false
+          # Into the runner's daemon, so the compose overlay can run this exact image.
+          load: true
+          tags: kafka-sql-explorer:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Start the stack
+        run: docker compose up -d --no-build
+
+      - name: Wait for the app to report healthy
+        # The image's own HEALTHCHECK decides, so this also tests the healthcheck.
+        # The container is resolved through compose, not by a fixed name: the stacks
+        # carry no `container_name` any more, precisely so two of them can coexist.
+        run: |
+          set -euo pipefail
+          explorer=$(docker compose ps -q explorer)
+          [ -n "$explorer" ] || { echo "::error::no explorer container"; exit 1; }
+          echo "EXPLORER_CID=$explorer" >> "$GITHUB_ENV"
+          for _ in $(seq 1 72); do
+            status=$(docker inspect -f '{{.State.Health.Status}}' "$explorer" 2>/dev/null || echo missing)
+            case "$status" in
+              healthy)   echo "healthy"; exit 0 ;;
+              unhealthy) echo "::error::the container reported unhealthy"; exit 1 ;;
+            esac
+            sleep 5
+          done
+          echo "::error::the app never became healthy"
+          exit 1
+
+      - name: Assert the deployment contract
+        run: |
+          set -euo pipefail
+          # Serves, and separately: can reach the broker. readiness carries the Kafka
+          # indicator, liveness does not — that split is the point.
+          curl -fsS http://127.0.0.1:8080/actuator/health/liveness  | grep -q '"status":"UP"'
+          curl -fsS http://127.0.0.1:8080/actuator/health/readiness | grep -q '"status":"UP"'
+          curl -fsS http://127.0.0.1:8080/api/dashboard > /dev/null
+
+          # Runs unprivileged.
+          uid=$(docker compose exec -T explorer id -u | tr -d '[:space:]')
+          [ "$uid" = "10001" ] || { echo "::error::running as uid $uid, expected 10001"; exit 1; }
+
+          # File logging actually produces a file. Mounting a *file* that did not exist on
+          # the host made Docker create a directory here, and Logback failed silently.
+          docker compose exec -T explorer sh -c 'test -s /app/logs/kafkaexplorer.log' \
+            || { echo "::error::no log file written"; exit 1; }
+
+      - name: Wait for the demo seeding, then assert it is idempotent
+        run: |
+          set -euo pipefail
+          seeder=$(docker compose ps -aq demo-setup)
+          for _ in $(seq 1 72); do
+            [ "$(docker inspect -f '{{.State.Status}}' "$seeder")" = exited ] && break
+            sleep 5
+          done
+          code=$(docker inspect -f '{{.State.ExitCode}}' "$seeder")
+          [ "$code" = "0" ] || { docker logs "$seeder" | tail -50; echo "::error::seeder exited $code"; exit 1; }
+
+          # A second run must skip: Kafka data outlives `down`, and re-seeding adds a
+          # generation of duplicates to a dataset calibrated to report a known value.
+          docker compose run --rm --no-deps demo-setup 2>&1 | tee /tmp/reseed.log
+          grep -q "already present" /tmp/reseed.log \
+            || { echo "::error::the seeder re-seeded an already-seeded cluster"; exit 1; }
+
+      - name: Stop the stack and assert a clean shutdown
+        run: |
+          set -euo pipefail
+          docker compose stop
+          code=$(docker inspect -f '{{.State.ExitCode}}' "$EXPLORER_CID")
+          # 0, or 143 = 128+SIGTERM for a JVM that ran its shutdown hooks. 137 is
+          # 128+SIGKILL: the grace period expired mid-shutdown, which is the failure this
+          # whole `stop_grace_period` / graceful-shutdown pairing exists to prevent.
+          case "$code" in
+            0|143) echo "clean exit ($code)" ;;
+            *)     echo "::error::explorer exited $code (137 means it was SIGKILLed)"; exit 1 ;;
+          esac
+
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail 200 || true
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v || true
+
+  # Dockerfile.release is what a tag actually publishes, and until now nothing built it
+  # outside release.yml — so a change to it (the layered extraction, for one) was first
+  # exercised by the release itself. It is cheap here: the JAR already exists.
+  release-image:
+    name: Build and boot the release image
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Download JAR
+        uses: actions/download-artifact@v8
+        with:
+          name: jar
+          path: dist/
+      - name: Stage the JAR
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          jars=(dist/*.jar)
+          [ ${#jars[@]} -eq 1 ] || { echo "::error::expected one JAR, found ${#jars[@]}"; exit 1; }
+          cp "${jars[0]}" app.jar
+      - name: Build the release image
+        run: docker build -f Dockerfile.release -t kafka-explorer-release:ci .
+      - name: Boot it
+        # No broker: the app must still start and answer liveness. Readiness is expected
+        # to be DOWN here, which is precisely what makes the split worth having.
+        run: |
+          set -euo pipefail
+          docker run -d --name release-probe -p 127.0.0.1:8080:8080 kafka-explorer-release:ci
+          for _ in $(seq 1 36); do
+            if curl -fsS http://127.0.0.1:8080/actuator/health/liveness 2>/dev/null | grep -q '"status":"UP"'; then
+              uid=$(docker exec release-probe id -u | tr -d '[:space:]')
+              [ "$uid" = "10001" ] || { echo "::error::release image runs as uid $uid"; exit 1; }
+              docker rm -f release-probe
+              exit 0
+            fi
+            sleep 5
+          done
+          docker logs release-probe | tail -100
+          echo "::error::the release image never answered liveness"
+          exit 1
 
   deploy:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'

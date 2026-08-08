@@ -352,30 +352,24 @@ public class KafkaLiveConsumer {
         // polling task can touch a consumer anymore, so closing the leftovers from this
         // thread is safe (their finishSession tick may never have had a chance to run).
         sessions.keySet().forEach(this::stopSession);
-        shutdownExecutor(scheduler);
-        shutdownExecutor(analysisExecutor);
+        ShutdownBudget.shutdown(scheduler);
+        ShutdownBudget.shutdown(analysisExecutor);
         sessions.forEach((sessionId, session) -> {
             session.cancelTasks();
             try {
-                session.consumer.close();
+                session.consumer.close(Duration.ofSeconds(5));
             } catch (Exception e) {
                 log.warn("Error closing live consumer for session {} at shutdown: {}", sessionId, e.getMessage());
             }
+            // finishSession() is what normally completes the emitter, and these are exactly
+            // the sessions whose polling task never got to run it. Without this the browser
+            // is left holding an SSE stream that simply dies with the socket, which the page
+            // reads as a network glitch rather than as the server going down.
+            sseEmitterManager.complete(sessionId);
         });
         sessions.clear();
     }
 
-    private void shutdownExecutor(ExecutorService executor) {
-        executor.shutdown();
-        try {
-            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
-                executor.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            executor.shutdownNow();
-            Thread.currentThread().interrupt();
-        }
-    }
 
     private Properties buildConsumerProps(String sessionId) {
         Properties props = new Properties();

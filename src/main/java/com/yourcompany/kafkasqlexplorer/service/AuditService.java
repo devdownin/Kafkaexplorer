@@ -16,6 +16,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import jakarta.annotation.PreDestroy;
 
+import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -768,21 +769,10 @@ public class AuditService {
 
     @PreDestroy
     public void shutdown() {
-        shutdownExecutor(auditExecutor);
-        shutdownExecutor(topicAuditExecutor);
+        // Two pools, one shared deadline with every other service's — see ShutdownBudget.
+        ShutdownBudget.shutdown(auditExecutor);
+        ShutdownBudget.shutdown(topicAuditExecutor);
         closeHistoryProducer();
-    }
-
-    private void shutdownExecutor(ExecutorService executor) {
-        executor.shutdown();
-        try {
-            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
-                executor.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            executor.shutdownNow();
-            Thread.currentThread().interrupt();
-        }
     }
 
     protected void persistAuditHistory(AuditReport report) {
@@ -816,7 +806,12 @@ public class AuditService {
     private synchronized void closeHistoryProducer() {
         if (historyProducer != null) {
             try {
-                historyProducer.close();
+                // KafkaProducer.close() with no argument blocks until every buffered record
+                // is acknowledged, however long that takes. This is called from @PreDestroy
+                // and from the failure path of persistAuditHistory() — both of which run
+                // precisely when the broker may be unreachable, so an unbounded close would
+                // hang shutdown until Docker SIGKILLed the JVM.
+                historyProducer.close(Duration.ofSeconds(5));
             } catch (Exception ignored) {
             }
             historyProducer = null;

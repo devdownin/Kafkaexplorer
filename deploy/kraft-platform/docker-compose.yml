@@ -70,9 +70,21 @@ services:
     depends_on:
       kafka-00-preflight:
         condition: service_completed_successfully
+    # Un nœud KRaft qui s'arrête vide ses logs, écrit ses index et referme les
+    # coordinateurs de groupes. Le défaut Docker est de 10 s, après quoi il est
+    # SIGKILLé en plein flush : le démarrage suivant doit alors récupérer les
+    # segments, ce qui transforme un boot de quinze secondes en plusieurs minutes
+    # sur un volume qui a vécu.
+    stop_grace_period: 30s
+    # `kafka-broker-api-versions` démarre une JVM complète, et Docker exécute un
+    # healthcheck pendant TOUTE la vie du conteneur : à 10 s d'intervalle, cette
+    # stack payait un lancement de JVM toutes les dix secondes, indéfiniment, pour
+    # re-répondre à une question tranchée dans la première minute. L'intervalle
+    # décrit le régime établi, `start_period` couvre le démarrage — les échecs y
+    # sont gratuits, ils ne consomment pas `retries`.
     healthcheck:
       test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 > /dev/null 2>&1"]
-      interval: 10s
+      interval: 30s
       timeout: 10s
       retries: 10
       start_period: 30s
@@ -162,6 +174,11 @@ services:
     depends_on:
       kafka-00:
         condition: service_healthy
+    # ksqlDB porte des topologies Kafka Streams : un arrêt propre valide les
+    # offsets et referme RocksDB. SIGKILLé à 10 s, il repart en restaurant son
+    # état depuis les topics de changelog — d'autant plus long qu'il y a de
+    # requêtes persistantes.
+    stop_grace_period: 30s
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8088/info > /dev/null || exit 1"]
       interval: 15s
@@ -338,6 +355,10 @@ services:
       - "9090:9090"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # Au SIGTERM, Prometheus écrit son head block sur disque. SIGKILLé avant la
+    # fin, il rejoue le WAL au démarrage suivant — sur 15 jours de rétention,
+    # cela se compte en minutes pendant lesquelles il ne répond pas.
+    stop_grace_period: 30s
     volumes:
       # Corrigé : le volume était monté sur /opt/bitnami/prometheus/data (chemin
       # de l'image Bitnami) alors que l'image prom/prometheus écrit dans

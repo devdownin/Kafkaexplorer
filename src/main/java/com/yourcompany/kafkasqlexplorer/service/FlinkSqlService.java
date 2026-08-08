@@ -1455,15 +1455,8 @@ public class FlinkSqlService {
 
     @PreDestroy
     public void shutdown() {
-        queryExecutor.shutdown();
-        try {
-            if (!queryExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
-                queryExecutor.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            queryExecutor.shutdownNow();
-            Thread.currentThread().interrupt();
-        }
+        // Shared deadline, not another private five seconds — see ShutdownBudget.
+        ShutdownBudget.shutdown(queryExecutor);
     }
 
     /**

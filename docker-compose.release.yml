@@ -1,22 +1,44 @@
 services:
+  # No `container_name`. It is a *daemon-global* name, so two stacks could never run
+  # side by side — and these files share it (`kafka`, `kafka-sql-explorer`), which also
+  # made switching between them without a `down` first fail on a name collision. Compose
+  # derives `<project>-<service>-<n>` instead, so `docker compose -p other … up` is enough
+  # to get a second, fully independent stack.
+  #
+  # The project name still defaults to the directory, so `kafka_data` keeps its name and
+  # the topics you already seeded are still there. Address services by service name:
+  # `docker compose logs kafka`, `docker compose exec explorer sh`.
   kafka:
     image: apache/kafka:4.2.0
-    container_name: kafka
     ports:
-      - "9092:9092"
+      - "${BIND_ADDR:-127.0.0.1}:${KAFKA_PORT:-9092}:9092"
+    # A stopping KRaft node flushes its logs and closes the group / share-state
+    # coordinators cleanly. Docker's default grace period is 10s, past which the broker is
+    # SIGKILLed mid-flush and the next start has to recover the log segments — on a seeded
+    # demo volume that turns a ten-second boot into a much longer one.
+    stop_grace_period: 30s
+    # `unless-stopped`, not the absent default: after a host reboot or a Docker daemon
+    # restart the broker comes back with the app, which does carry a restart policy. It
+    # did not, so the stack came back up as an explorer pointed at nothing.
+    restart: unless-stopped
+    # `kafka-broker-api-versions.sh` starts a whole JVM. At the previous `interval: 5s`
+    # that cost ran every five seconds for the entire life of the stack — roughly a fifth
+    # of a core, permanently, to re-answer a question settled during the first minute.
+    # The interval now describes the steady state and `start_period` covers the boot,
+    # during which failures do not count against `retries`.
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092"]
-      interval: 5s
+      interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 15s
+      start_period: 30s
     environment:
       # KRaft settings
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
       KAFKA_LISTENERS: PLAINTEXT://:29092,CONTROLLER://:9093,PLAINTEXT_HOST://:9092
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:${KAFKA_PORT:-9092}
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
@@ -54,13 +76,20 @@ services:
       - kafka_data:/var/lib/kafka/data
     entrypoint: ["sh", "-c", "chown -R appuser:appuser /var/lib/kafka/data"]
 
-  app:
+  # Named `explorer` in every stack. Two of these files called it `app` and three called
+  # it `explorer`, so `docker compose logs <name>` depended on which file you had opened,
+  # and an overlay (docker-compose.limits.yml) cannot target a service whose name changes
+  # between stacks — compose would treat the other name as a new, imageless service.
+  explorer:
     build:
       context: .
       dockerfile: Dockerfile.release
-    container_name: kafka-sql-explorer
     ports:
-      - "8080:8080"
+      # Published on the loopback interface only. This application has no authentication
+      # and `POST /api/config` can repoint the Kafka cluster at runtime, so binding it to
+      # 0.0.0.0 — the Docker default — offered it to the whole LAN. Set BIND_ADDR to expose
+      # it deliberately: `BIND_ADDR=0.0.0.0 docker compose up -d`.
+      - "${BIND_ADDR:-127.0.0.1}:${EXPLORER_PORT:-8080}:8080"
     depends_on:
       kafka:
         condition: service_healthy
@@ -68,7 +97,17 @@ services:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       # Bundled broker is Kafka 4.2 — use the KIP-848 rebalance protocol for the live consumer
       - KAFKA_CONSUMER_GROUP_PROTOCOL=consumer
-    restart: always
+    volumes:
+      # Logs and the Flink job store survive `up --build` replacing the container, which
+      # update.ps1 does on every release.
+      - explorer_logs:/app/logs
+      - explorer_data:/app/data
+    # See docker-compose.yml: graceful web shutdown plus bean destruction needs more than
+    # Docker's default 10s before the JVM is SIGKILLed.
+    stop_grace_period: 35s
+    restart: unless-stopped
 
 volumes:
   kafka_data:
+  explorer_logs:
+  explorer_data:

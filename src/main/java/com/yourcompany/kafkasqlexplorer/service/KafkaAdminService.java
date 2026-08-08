@@ -52,6 +52,7 @@ import org.apache.avro.generic.GenericRecord;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -94,7 +95,9 @@ public class KafkaAdminService {
     @PostConstruct
     public void init() {
         if (this.adminClient != null) {
-            this.adminClient.close();
+            // Bounded for the same reason as close() below: this runs when the cluster is
+            // repointed, which is very often *because* the previous one stopped answering.
+            this.adminClient.close(Duration.ofSeconds(5));
         }
         Properties props = new Properties();
         props.putAll(kafkaConfig.getKafkaProperties());
@@ -111,8 +114,26 @@ public class KafkaAdminService {
     @PreDestroy
     public void close() {
         if (adminClient != null) {
-            adminClient.close();
+            // Bounded on purpose. The no-arg close() waits for pending calls with no
+            // deadline, so a describe still retrying against an unreachable broker — the
+            // ordinary case when the whole stack is going down, or when the app has been
+            // repointed at a cluster that is gone — would hold shutdown until Docker's
+            // grace period expired and SIGKILLed the JVM mid-teardown.
+            adminClient.close(Duration.ofSeconds(5));
         }
+    }
+
+    /**
+     * Cheapest possible reachability probe: the cluster id, which the AdminClient answers
+     * from the metadata it already holds. Used by the readiness health indicator, so it is
+     * deliberately not cached and deliberately bounded — a readiness check that blocks is
+     * worse than one that reports DOWN.
+     *
+     * @return the cluster id
+     * @throws Exception when the cluster cannot be reached within {@code timeoutMs}
+     */
+    public String probeClusterId(long timeoutMs) throws Exception {
+        return adminClient.describeCluster().clusterId().get(timeoutMs, TimeUnit.MILLISECONDS);
     }
 
     public Map<String, String> getBrokerConfigs() {
