@@ -206,3 +206,11 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # This build had no cache whatsoever: every tag re-pulled both base images and
+          # re-ran the runtime stage from zero, the arm64 half of it through QEMU. The
+          # scope is shared with ci.yml's `release-image` job, which builds this same
+          # Dockerfile on every run — and GitHub lets any ref read the default branch's
+          # caches, so a push to main leaves this build warm before the tag is even cut.
+          # Read-only on purpose: a release must consume the cache CI maintains, not
+          # rewrite it from a ref that builds twice a year.
+          cache-from: type=gha,scope=release-image

@@ -126,8 +126,15 @@ jobs:
           # Into the runner's daemon, so the compose overlay can run this exact image.
           load: true
           tags: kafka-sql-explorer:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Scoped per Dockerfile. `type=gha` defaults to a single shared scope, so this
+          # from-source build and the release image below — two unrelated layer sets, one
+          # of them carrying the Maven repository and node_modules — were rewriting the
+          # same cache manifest in turn, each `mode=max` export invalidating the other's.
+          # `mode=max` is right here and only here: the expensive layers are the builder
+          # stages (npm ci, dependency:go-offline, mvn package), which `mode=min` would
+          # not keep at all.
+          cache-from: type=gha,scope=source-image
+          cache-to: type=gha,mode=max,scope=source-image
 
       - name: Start the stack
         run: docker compose up -d --no-build
@@ -230,8 +237,31 @@ jobs:
           jars=(dist/*.jar)
           [ ${#jars[@]} -eq 1 ] || { echo "::error::expected one JAR, found ${#jars[@]}"; exit 1; }
           cp "${jars[0]}" app.jar
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
       - name: Build the release image
-        run: docker build -f Dockerfile.release -t kafka-explorer-release:ci .
+        # Was a bare `docker build`, which runs on the default `docker` driver and can
+        # therefore use no exportable cache at all — this was the one image in the whole
+        # repository built cold every single time. Through Buildx it shares a cache scope
+        # with the identical build release.yml runs on a tag; GitHub makes the default
+        # branch's caches readable from every other ref, so a push to main warms exactly
+        # what the next release consumes, including the runtime stage's `RUN adduser`,
+        # which release.yml would otherwise re-run under QEMU for the arm64 variant.
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.release
+          push: false
+          # Into the runner's daemon — the next step boots this exact image.
+          load: true
+          tags: kafka-explorer-release:ci
+          # `mode=min`, unlike the from-source build above: this Dockerfile has no
+          # expensive intermediate stage, and its one builder step (the layer extraction)
+          # is invalidated by every new JAR anyway. What is worth keeping is the final
+          # image's stable layers, which is precisely what min exports.
+          cache-from: type=gha,scope=release-image
+          cache-to: type=gha,mode=min,scope=release-image
       - name: Boot it
         # No broker: the app must still start and answer liveness. Readiness is expected
         # to be DOWN here, which is precisely what makes the split worth having.
