@@ -137,11 +137,45 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Docker Hub is an *optional* second registry: a fork, or this repository before the
+      # two secrets exist, must still be able to cut a release to GHCR rather than fail on
+      # a login it never asked for. The `secrets` context is not available in a job-level
+      # `if`, so the decision is taken once here and every Docker Hub step keys off this
+      # output. Secrets go through `env` — interpolating them straight into the script
+      # would build them into the command line.
+      - name: Is Docker Hub configured?
+        id: hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${DOCKERHUB_USERNAME:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ]; then
+            echo 'enabled=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'enabled=false' >> "$GITHUB_OUTPUT"
+            echo "::notice::DOCKERHUB_USERNAME / DOCKERHUB_TOKEN are not set — publishing to GHCR only."
+          fi
+
+      - name: Log in to Docker Hub
+        if: steps.hub.outputs.enabled == 'true'
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ghcr.io/${{ github.repository }}
+          # Both registries get the same tag set from a single build below — the image is
+          # built once and the manifests are pushed to each. Adding a second
+          # build-push-action would rebuild it, and two builds can drift.
+          # The Docker Hub repository is a variable so a fork publishes under its own
+          # namespace without editing this file.
+          images: |
+            ghcr.io/${{ github.repository }}
+            name=docker.io/${{ vars.DOCKERHUB_REPOSITORY || 'devdownin/kafkaexplorer' }},enable=${{ steps.hub.outputs.enabled }}
           # `latest` was a bare `type=raw`, so it moved on *any* tag: pushing v1.3.0-rc1
           # made a pre-release what `docker run ghcr.io/devdownin/kafkaexplorer` pulls.
           # The guard is the semver pre-release marker — a hyphen in the tag name.
@@ -149,8 +183,18 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+          # Docker Hub reads these off the manifest for the tag listing, and GHCR uses
+          # `image.source` to link the package back to this repository. metadata-action
+          # derives source/revision/created on its own; the rest is ours to state.
+          labels: |
+            org.opencontainers.image.title=Kafka SQL Explorer
+            org.opencontainers.image.description=Explore Kafka, query it in Flink SQL, audit it with AI — one container, one URL.
+            org.opencontainers.image.licenses=AGPL-3.0-or-later
+            org.opencontainers.image.documentation=https://github.com/devdownin/Kafkaexplorer/blob/main/docs/DOCKERHUB.md
 
       - name: Build and push Docker image
+        # One build, pushed to every registry in `meta.outputs.tags` — GHCR always,
+        # Docker Hub when its secrets are configured.
         uses: docker/build-push-action@v7
         with:
           context: .
