@@ -135,7 +135,9 @@ jobs:
     # The image build is now a COPY of an already-built JAR, not a full recompile.
     timeout-minutes: 15
     permissions:
-      contents: read
+      # `write`, because the last step appends the published digest to the Release notes
+      # the `build` job created. Nothing else here writes to the repository.
+      contents: write
       packages: write
 
     steps:
@@ -216,6 +218,15 @@ jobs:
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v6
+        # Labels are written into each platform's image *config*, and a multi-arch push
+        # publishes an image *index* on top of those — which carries none of them. GHCR
+        # reads `org.opencontainers.image.source` off the index to link the package back to
+        # this repository, and a registry showing "no description" for an image whose
+        # metadata is demonstrably set is the symptom. Annotations are the index-level
+        # equivalent; `manifest,index` writes both, since which one a registry reads is the
+        # registry's business and this image goes to two of them.
+        env:
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
         with:
           # Both registries get the same tag set from a single build below — the image is
           # built once and the manifests are pushed to each. Adding a second
@@ -235,6 +246,11 @@ jobs:
           # Docker Hub reads these off the manifest for the tag listing, and GHCR uses
           # `image.source` to link the package back to this repository. metadata-action
           # derives source/revision/created on its own; the rest is ours to state.
+          # `image.description` below is kept identical to `short-description` in
+          # dockerhub-description.yml, which is the same sentence shown in Docker Hub search
+          # results — change one and change the other, or the registry contradicts itself.
+          # (This has to be a real YAML comment: every line of the block below is parsed as
+          # a `name=value` label.)
           labels: |
             org.opencontainers.image.title=Kafka SQL Explorer
             org.opencontainers.image.description=Explore Kafka, query it in Flink SQL, audit it with AI — one container, one URL.
@@ -244,6 +260,7 @@ jobs:
       - name: Build and push Docker image
         # One build, pushed to every registry in `meta.outputs.tags` — GHCR always,
         # Docker Hub when its secrets are configured.
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -255,6 +272,19 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # The index-level half of the metadata — see the `env` on the meta step above.
+          annotations: ${{ steps.meta.outputs.annotations }}
+          # Declared rather than left to buildx's default, which for a multi-platform push
+          # attaches attestations either way. What is being chosen here is what they
+          # contain, and the cost is visible: an attestation travels as an extra manifest
+          # in the index, which Docker Hub and GHCR both render as an `unknown/unknown`
+          # platform row next to amd64 and arm64. That row looks like a broken build to
+          # anyone reading the tag list, and it is the price of the image being able to say
+          # what went into it — a full SLSA provenance and an SBOM, for a JAR whose exact
+          # bytes are also attached to the Release. Reversing the trade is `provenance:
+          # false` + `sbom: false` on these two lines and nothing else.
+          provenance: mode=max
+          sbom: true
           # This build had no cache whatsoever: every tag re-pulled both base images and
           # re-ran the runtime stage from zero, the arm64 half of it through QEMU. The
           # scope is shared with ci.yml's `release-image` job, which builds this same
@@ -263,3 +293,52 @@ jobs:
           # Read-only on purpose: a release must consume the cache CI maintains, not
           # rewrite it from a ref that builds twice a year.
           cache-from: type=gha,scope=release-image
+
+      # `platforms: linux/amd64,linux/arm64` above is a request, and nothing has ever
+      # checked what came back. The overview page promises arm64 runs "natively, not under
+      # emulation", so an index that silently shipped one platform would be a claim on a
+      # public page with nothing behind it — the same shape as v1.2 shipping a Release JAR
+      # with no image behind it. Booting the arm64 variant is ci.yml's job (before a tag
+      # exists, where a failure costs nothing); this only asserts it is in the index, which
+      # costs one API call.
+      - name: Assert both platforms are in the published index
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY,,}@${DIGEST}"
+          echo "Inspecting $image"
+          platforms=$(docker buildx imagetools inspect --raw "$image" \
+            | jq -r '.manifests[]
+                     | select(.platform.os != "unknown")
+                     | "\(.platform.os)/\(.platform.architecture)"' \
+            | sort -u)
+          echo "$platforms"
+          for want in linux/amd64 linux/arm64; do
+            grep -qx "$want" <<<"$platforms" \
+              || { echo "::error::$want is missing from the published image index"; exit 1; }
+          done
+
+      # The Release carries SHA256SUMS.txt for the JAR, so the one file a user downloads can
+      # be verified — while the image, the artefact most people actually consume, offered
+      # nothing to pin. A tag is mutable (nothing re-pushes one here, but that is a promise,
+      # not a property); the digest is the only immutable reference, and docs/DOCKERHUB.md
+      # points at these notes for it.
+      - name: Append the image digest to the Release notes
+        uses: softprops/action-gh-release@v3
+        with:
+          append_body: true
+          body: |
+
+            ---
+
+            **Container image** — `${{ steps.build.outputs.digest }}`
+
+            ```bash
+            docker pull ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}
+            ```
+
+            Same digest on every registry this tag was pushed to. Pin it in production:
+            a tag can be moved, a digest cannot.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

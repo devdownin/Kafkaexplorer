@@ -1,20 +1,6 @@
-<!--
-  This file IS the Docker Hub overview page of `compagnonsdudev/kafkaexplorer`.
-
-  It is pushed there by .github/workflows/dockerhub-description.yml — editing the page in
-  the Docker Hub web UI is therefore pointless, the next sync overwrites it.
-
-  Two constraints that do not apply to README.md:
-    - Docker Hub renders this file outside the repository, so every link must be absolute.
-      A relative `docs/FEATURES.md` resolves to nothing there.
-    - No image in the repository is reachable either. The screenshots are therefore served
-      from GitHub Pages (https://devdownin.github.io/Kafkaexplorer/img/…), which publishes
-      ./docs on every push to main — the same files as docs/img/, at an absolute URL Docker
-      Hub can fetch. A repository-relative path renders as a broken image here.
-
-  The screenshots are generated, not taken by hand: docs/screenshots/ drives the compiled SPA
-  over canned API responses. Re-run it after a UI change rather than re-photographing.
--->
+<!-- This file IS the Docker Hub overview page; the web UI is overwritten by the next sync.
+     Editing it: every link and image must be ABSOLUTE (it renders outside the repository),
+     and docs/check-links.py enforces that. Full notes at the bottom of this file. -->
 
 # ⚡ Kafka SQL Explorer
 
@@ -41,12 +27,15 @@ Kafka client, so there is nothing to deploy on your brokers.
 Against a broker you already have:
 
 ```bash
-docker run --rm -p 8080:8080 \
+docker run --rm -p 127.0.0.1:8080:8080 \
   -e KAFKA_BOOTSTRAP_SERVERS=your-broker:9092 \
   compagnonsdudev/kafkaexplorer:latest
 ```
 
 Open **http://localhost:8080**.
+
+The port is published on the loopback interface deliberately — this image ships no
+authentication. See **Before you expose it** below.
 
 No broker at hand? The snippet below starts Kafka 4.2 (KRaft, no Zookeeper) next to it:
 
@@ -76,6 +65,9 @@ services:
     # No authentication in the box — see "Before you expose it" below.
     ports:
       - "127.0.0.1:8080:8080"
+    # Not optional. The JVM runs with -XX:MaxRAMPercentage=75, which without a limit
+    # reads the *host's* memory: on a 32 GB machine it believes it may take 24.
+    mem_limit: 2g
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       KAFKA_CONSUMER_GROUP_PROTOCOL: consumer   # KIP-848, Kafka 4.x brokers only
@@ -149,14 +141,30 @@ Mining**.
 | Tag | What it is |
 |---|---|
 | `latest` | The newest **stable** release. Pre-releases (`v1.3.0-rc1`…) never move it. |
-| `1.2.3` | An exact version. Use this in production — it is immutable. |
-| `1.2` | The latest patch of that minor line. |
+| `1.2.3` | An exact version. Nothing here ever re-pushes one. |
+| `1.2` | The latest patch of that minor line — it moves. |
 
 Architectures: **`linux/amd64`** and **`linux/arm64`** (Apple Silicon, Graviton — natively,
-not under emulation).
+not under emulation). CI builds *and boots* both before a version is cut.
 
-The same image is also published on GHCR as
-[`ghcr.io/devdownin/kafkaexplorer`](https://github.com/devdownin/Kafkaexplorer/pkgs/container/kafkaexplorer).
+**In production, pin the digest, not the tag.** "We never re-push `1.2.3`" is a promise;
+`@sha256:…` is a property. Every [release](https://github.com/devdownin/Kafkaexplorer/releases)
+publishes its digest with the pull command:
+
+```bash
+docker pull compagnonsdudev/kafkaexplorer@sha256:<digest-from-the-release-notes>
+```
+
+The same image, same digest, is also published on GHCR:
+
+```bash
+docker pull ghcr.io/devdownin/kafkaexplorer:latest
+```
+
+Images carry a full SLSA provenance attestation and an SBOM
+(`docker buildx imagetools inspect --format '{{json .Provenance}}' …`). If Docker Hub's
+tag listing shows a third, `unknown/unknown` platform next to the two above, that is those
+attestations — an extra manifest in the index, not a broken build.
 
 ## ⚙️ Configuration
 
@@ -194,9 +202,16 @@ a model.
 
 ### Runtime
 
+**Give the container ~2 GB and a real limit** (`mem_limit: 2g`, `--memory=2g`, or a
+Kubernetes memory limit). The image embeds a Flink runtime, and the JVM sizes its heap
+from the memory it can *see*: with no limit set that is the host's, so on a 32 GB machine
+it believes it may take 24 GB. 2 GB is what the project's own
+[limits overlay](https://github.com/devdownin/Kafkaexplorer/blob/main/docker-compose.limits.yml)
+allocates; a cluster audit over thousands of topics is the workload that wants more.
+
 | Variable | Default | Meaning |
 |---|---|---|
-| `JAVA_TOOL_OPTIONS` | `-XX:MaxRAMPercentage=75.0` | Set a container **memory limit** or this reads the *host's* memory: on a 32 GB machine the JVM believes it may take 24 GB. |
+| `JAVA_TOOL_OPTIONS` | `-XX:MaxRAMPercentage=75.0` | Replaced wholesale if you set it — re-state the percentage alongside whatever you add. |
 | `EXPLORER_DEFAULT_MAX_ROWS` | `50` | Rows a query returns by default. |
 | `EXPLORER_DEFAULT_QUERY_TIMEOUT_MS` | `10000` | Per-query wall clock. |
 | `EXPLORER_AUDIT_MAX_DURATION_MS` | `1800000` | Budget for one full cluster audit; `0` disables it. |
@@ -214,6 +229,40 @@ a model.
 | **Readiness** | `GET /actuator/health/readiness` — liveness **plus** a reachable broker. An unreachable broker means "cannot answer queries", not "restart me": the UI still serves and can be repointed. |
 | **Metrics** | `GET /actuator/prometheus` — JVM, HTTP, KRaft quorum lag, and any SQL query you turn into a metric from the UI. |
 
+## 🩹 If something looks wrong
+
+**The container is `healthy` but the UI shows no topics.** That is the design, not a bug:
+the healthcheck polls *liveness*, which asks "can this process serve", and a broker it
+cannot reach does not make it dead — the UI still serves and the Settings page can repoint
+it, which is exactly what you need at that moment. Ask readiness for the other half:
+
+```bash
+docker exec <container> wget -qO- http://127.0.0.1:8080/actuator/health/readiness
+```
+
+`{"status":"DOWN"}` with a `kafka` component means the broker is unreachable from *inside*
+the container — nearly always `localhost` in `KAFKA_BOOTSTRAP_SERVERS` (which is the
+container, not your host: use the service name on a compose network, or
+`host.docker.internal`), or a broker advertising a listener the container cannot route to.
+
+**It still connects to `localhost:9092` however I set the variable.** The variable is
+`KAFKA_BOOTSTRAP_SERVERS`. `SPRING_KAFKA_BOOTSTRAP_SERVERS` binds to nothing here — this
+app uses `kafka-clients` directly, not `spring-kafka`, so the property prefix is `kafka.`
+and not `spring.kafka.`.
+
+**Nothing in `/app/logs`.** Mount a **named volume**, never a host file. Bind-mounting a
+path that does not exist on the host makes Docker create a *directory* where the log file
+should be, and Logback then fails to open it — silently.
+
+**The JVM is OOM-killed under load.** See the memory note above: a container with no limit
+lets `MaxRAMPercentage` size the heap from the host's RAM.
+
+**Startup takes a while.** The embedded Flink runtime is why the image's own healthcheck
+allows a 60-second start period before the first failure counts.
+
+Anything else — `docker logs <container>`, then
+[open an issue](https://github.com/devdownin/Kafkaexplorer/issues) with what it printed.
+
 ## 🔒 Before you expose it
 
 **This image ships no authentication.** It is built for an internal, controlled network,
@@ -222,7 +271,7 @@ the port can point it at another broker of theirs.
 
 - Publish on the loopback (`-p 127.0.0.1:8080:8080`) or behind an authenticating reverse proxy. `-p 8080:8080` binds `0.0.0.0` and hands the app to your whole LAN.
 - SQL is whitelisted to `SELECT` / `EXPLAIN` / `CREATE TABLE`; XML parsing is XXE-hardened; credentials are redacted from every DDL the UI displays.
-- The container runs as **uid 10001**, non-root, on an `eclipse-temurin:21-jre-alpine` base pinned by digest.
+- The container runs as **uid 10001**, non-root, on an `eclipse-temurin:25-jre-alpine` base pinned by digest and bumped by Dependabot.
 
 Vulnerability reports: **[SECURITY.md](https://github.com/devdownin/Kafkaexplorer/blob/main/SECURITY.md)**.
 
@@ -253,3 +302,39 @@ built and tested once by CI, then copied in, never recompiled unverified inside 
 
 [AGPL v3](https://github.com/devdownin/Kafkaexplorer/blob/main/LICENSE) — free to use,
 study, share and improve.
+
+<!--
+  ── Maintainer notes ─────────────────────────────────────────────────────────────────
+  (Below the fold on purpose: this is the payload Docker Hub renders, and the first bytes
+  of it should be the page, not a memo. Docker Hub drops HTML comments, but "normally
+  dropped" is not a reason to put seventeen lines of internal notes at the top of the
+  shop window.)
+
+  This file IS the Docker Hub overview page of `compagnonsdudev/kafkaexplorer`, pushed by
+  .github/workflows/dockerhub-description.yml on every push to main that touches it.
+  Editing the page on hub.docker.com is pointless — the next sync overwrites it.
+
+  Three constraints that do not apply to README.md:
+
+    - Docker Hub renders this file *outside* the repository, so every link must be
+      absolute. A relative `docs/FEATURES.md` resolves to nothing there. `check-links.py`
+      (ci.yml, job `docs-links`) resolves all of them back into the repository, because a
+      rotten link here is invisible until a visitor lands on a 404.
+    - No image in the repository is reachable either. The screenshots are served from
+      GitHub Pages (https://devdownin.github.io/Kafkaexplorer/img/…), which publishes
+      ./docs on every push to main — the same files as docs/img/, at an absolute URL
+      Docker Hub can fetch. A repository-relative path renders as a broken image.
+    - `enable-url-completion` is off in the sync workflow, so nothing rewrites a relative
+      link into a working one behind your back. Absolute or broken.
+
+  The env-var tables and the base-image line are checked by `check-config-table.py`
+  (same CI job) against application.yml and the Dockerfiles. That check exists because
+  this page once advertised a JRE two majors out of date, and nothing noticed.
+
+  The screenshots are generated, not photographed: docs/screenshots/ drives the compiled
+  SPA over canned API responses. Re-run it after a UI change rather than re-shooting.
+
+  Size limits: 25 000 bytes for this file, 100 bytes for the `short-description` in the
+  workflow (both are bytes, and the em dash is three of them).
+-->
+
