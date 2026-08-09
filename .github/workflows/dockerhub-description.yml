@@ -1,0 +1,84 @@
+# Pushes docs/DOCKERHUB.md to the Docker Hub repository overview.
+#
+# The overview page is the only documentation most people see before `docker pull`, and
+# Docker Hub has no way of reading a file out of a repository by itself: without this,
+# the page stays whatever was last pasted into the web UI, and drifts from the image it
+# describes one release at a time. The file in git is therefore the source of truth —
+# editing the page on hub.docker.com is pointless, the next run overwrites it.
+#
+# Deliberately not part of release.yml: fixing a sentence on the overview page must not
+# require cutting a version, and republishing the page costs nothing.
+#
+# Prerequisites (Settings → Secrets and variables → Actions):
+#   - secret DOCKERHUB_USERNAME  — the account, not the organisation
+#   - secret DOCKERHUB_TOKEN     — a Personal Access Token with **Read, Write, Delete**
+#                                  scope. The description API rejects a read-only one,
+#                                  and the failure reads as a 401 on an otherwise valid
+#                                  token.
+#   - variable DOCKERHUB_REPOSITORY (optional) — defaults to devdownin/kafkaexplorer.
+#     Same variable as release.yml, so a fork repoints both at once.
+#
+# The Docker Hub repository must exist before its description can be set — it is created
+# by the first `docker push`, i.e. by the first release. Until then this workflow fails
+# with a 404, which is the truth and not something to paper over.
+#
+# The screenshots in that page are loaded from GitHub Pages by absolute URL (Docker Hub
+# cannot reach repository files). Pages is deployed by ci.yml's `deploy` job on the same
+# push, so a brand-new image may 404 for the few seconds between the two — it resolves on
+# its own and is not worth serialising the workflows for.
+
+name: Docker Hub description
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/DOCKERHUB.md'
+      - '.github/workflows/dockerhub-description.yml'
+  workflow_dispatch:
+
+# A second push while one sync is in flight would race for the same page.
+concurrency:
+  group: dockerhub-description
+  cancel-in-progress: true
+
+jobs:
+  description:
+    name: Sync overview page
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      # Same guard as release.yml, and for the same reason: a fork of this repository
+      # inherits the workflow but not the secrets, and must skip rather than fail.
+      - name: Is Docker Hub configured?
+        id: hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${DOCKERHUB_USERNAME:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ]; then
+            echo 'enabled=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'enabled=false' >> "$GITHUB_OUTPUT"
+            echo "::notice::DOCKERHUB_USERNAME / DOCKERHUB_TOKEN are not set — nothing to sync."
+          fi
+
+      - name: Push the overview page
+        if: steps.hub.outputs.enabled == 'true'
+        uses: peter-evans/dockerhub-description@v5
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ vars.DOCKERHUB_REPOSITORY || 'devdownin/kafkaexplorer' }}
+          readme-filepath: docs/DOCKERHUB.md
+          # Docker Hub truncates this at 100 characters and shows it in search results.
+          short-description: 'Explore Kafka, query it in Flink SQL, audit it with AI — one container, one URL.'
+          # Rewrites bare repository references into Docker Hub links in the rendered page.
+          enable-url-completion: true

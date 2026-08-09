@@ -1,0 +1,19 @@
+# Build context for Dockerfile.release — and only for it.
+#
+# BuildKit reads `<dockerfile>.dockerignore` in preference to the root `.dockerignore`
+# when the build is invoked with `-f Dockerfile.release`. It *replaces* it rather than
+# adding to it, which is why this file excludes everything explicitly instead of listing
+# a few extra paths.
+#
+# Dockerfile.release copies exactly one file, `app.jar`. Everything else in the context is
+# uploaded to the builder for nothing — and one of those things is expensive: both CI and
+# release.yml download the release artefact into `dist/` and then `cp` it to `app.jar`, so
+# the same few hundred megabytes travelled twice in every context. The sources are small
+# by comparison (~3 MB), but they have no business here either: a runtime image built from
+# a finished JAR must not be able to depend on them.
+#
+# An older Docker without this feature simply falls back to the root `.dockerignore` — a
+# context that is a superset of what is needed, i.e. exactly today's behaviour. The gain
+# degrades, the build does not break.
+*
+!app.jar

@@ -6,7 +6,8 @@
 
 [![CI](https://github.com/devdownin/Kafkaexplorer/actions/workflows/ci.yml/badge.svg)](https://github.com/devdownin/Kafkaexplorer/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
-[![Docker](https://img.shields.io/badge/ghcr.io-kafkaexplorer-2496ED?logo=docker&logoColor=white)](https://github.com/devdownin/Kafkaexplorer/pkgs/container/kafkaexplorer)
+[![Docker Hub](https://img.shields.io/docker/pulls/devdownin/kafkaexplorer?logo=docker&logoColor=white&label=docker%20pulls)](https://hub.docker.com/r/devdownin/kafkaexplorer)
+[![GHCR](https://img.shields.io/badge/ghcr.io-kafkaexplorer-2496ED?logo=github&logoColor=white)](https://github.com/devdownin/Kafkaexplorer/pkgs/container/kafkaexplorer)
 [![Java 21](https://img.shields.io/badge/Java-21-orange)](pom.xml)
 [![Kafka 4.2](https://img.shields.io/badge/Kafka-4.2_KRaft-231F20?logo=apachekafka)](https://kafka.apache.org/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
@@ -20,6 +21,30 @@
 **Arrêtez de plisser les yeux devant un console consumer.** Kafka SQL Explorer est une application web qui transforme n'importe quel cluster Kafka en quelque chose que l'on peut *voir et interroger* : parcourez les topics, cliquez sur un champ d'un message, et obtenez une requête Flink SQL prête à exécuter — pas de DDL à écrire, pas de schéma à deviner, pas de gymnastique CLI. Un JAR, une URL, zéro installation côté cluster.
 
 Pensé pour les data engineers, les architectes, et tous ceux qui se sont un jour demandé *« qu'est-ce qui circule vraiment dans ce topic ? »*
+
+![Le tableau de bord : chaque topic, son nombre de messages, son état et la date de son dernier message](docs/img/dashboard.png)
+
+<details>
+<summary>Autres écrans — Topic Explorer, Éditeur SQL, Stream Flow, Audit, Cluster</summary>
+
+**Topic Explorer** — cherchez dans tout le topic, et lisez ce qui a réellement été couvert.
+![Topic Explorer](docs/img/topic-explorer.png)
+
+**Éditeur SQL** — Monaco, complétion limitée aux tables citées, et le moteur qui a répondu affiché sur le résultat.
+![Éditeur SQL](docs/img/sql-editor.png)
+
+**Stream Flow** — une clé d'enregistrement à travers le cluster, avec la latence de chaque saut et un tableau de preuves vérifiable.
+![Stream Flow](docs/img/stream-flow.png)
+
+**Audit du cluster** — constats gradués, et chaque run énonce son propre périmètre.
+![Audit du cluster](docs/img/audit.png)
+
+**Cluster** — quorum de contrôleurs KRaft, groupes clients, versions de fonctionnalités.
+![Cluster](docs/img/cluster.png)
+
+Ces captures sont générées, pas prises à la main : `docs/screenshots/` pilote le SPA compilé au-dessus de réponses d'API figées, calquées sur le jeu de données de démo. Voir son [README](docs/screenshots/README.md) pour les régénérer après un changement d'UI.
+
+</details>
 
 ## ✨ Points forts
 
@@ -55,7 +80,12 @@ Ouvrez ensuite **http://localhost:8080** et commencez à cliquer. C'est tout.
   docker compose -f docker-compose-build.yml run --rm frontend  # ESLint + Vitest seuls
   ```
 - **Stack de dev avec rechargement à chaud** (backend + Vite + Kafka, toujours sans installation locale) : `docker compose -f docker-compose-dev.yml up`
-- **Image précompilée** : `docker run -p 8080:8080 -e SPRING_KAFKA_BOOTSTRAP_SERVERS=votre-broker:9092 ghcr.io/devdownin/kafkaexplorer:latest`
+- **Image précompilée** (Docker Hub ou GHCR, même image, `linux/amd64` + `linux/arm64`) :
+  ```bash
+  docker run -p 127.0.0.1:8080:8080 -e KAFKA_BOOTSTRAP_SERVERS=votre-broker:9092 devdownin/kafkaexplorer:latest
+  # ou : ghcr.io/devdownin/kafkaexplorer:latest
+  ```
+  Tags, variables d'environnement, volumes et sondes : **[docs/DOCKERHUB.md](docs/DOCKERHUB.md)** — la page publiée comme [présentation Docker Hub](https://hub.docker.com/r/devdownin/kafkaexplorer).
 - **Sur votre propre cluster** : pointez `kafka.bootstrap-servers` vers n'importe quel broker Kafka 2.1+ (PLAIN, SSL ou Confluent Cloud) — rien à installer côté cluster.
 
 </details>

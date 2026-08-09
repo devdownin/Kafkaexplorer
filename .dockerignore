@@ -20,6 +20,12 @@ src/main/resources/static/
 *.log
 clusterui.zip
 
+# Where CI and release.yml download the release artefact before staging it as ./app.jar.
+# No Dockerfile reads it, and it is a few hundred megabytes — left in, every build context
+# carried the JAR twice. Dockerfile.release.dockerignore trims that context further still;
+# this line is what covers a build that predates per-Dockerfile ignore files.
+dist/
+
 # Nothing the image build reads. The backend stage copies src/main/java and
 # src/main/resources only, and the whole context is uploaded to the daemon on every
 # build — half a megabyte of documentation and tooling was travelling with it each time.
