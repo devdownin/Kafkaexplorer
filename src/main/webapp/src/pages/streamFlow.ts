@@ -6,6 +6,7 @@
  * ce qui décrit ses limites (fenêtre lue, topics ignorés, latences entre sauts) se
  * calcule ici plutôt que dans du JSX.
  */
+import { clearDraft, readDraft, writeDraft } from '../draftStore';
 
 export interface FlowNode {
   id: string;
@@ -399,6 +400,34 @@ export interface TraceHistoryEntry extends TraceParams {
   ranAt: number;
   /** Nombre de topics trouvés, pour distinguer deux traces voisines dans la liste. */
   topicsFound: number;
+}
+
+/**
+ * Le critère **non lancé**, conservé d'une page à l'autre.
+ *
+ * L'URL porte une trace *exécutée* — c'est ce qui la rend partageable et rejouable. Ce qu'elle ne
+ * porte pas, c'est un critère en cours de saisie qu'on quitte pour aller regarder un topic dans
+ * l'explorateur : celui-là mourait avec la page. Une URL qui décrit déjà une trace l'emporte
+ * toujours, sinon un lien partagé ouvrirait le formulaire de son destinataire.
+ */
+const PARAMS_DRAFT = 'stream-flow';
+
+/** `true` quand le formulaire ne décrit aucune recherche — rien à garder, rien à restituer. */
+export function isBlankTraceParams(params: TraceParams): boolean {
+  return !params.messageKey.trim() && !params.searchPath.trim() && params.topics.length === 0;
+}
+
+export function readTraceParamsDraft(): TraceParams | null {
+  const draft = readDraft<Partial<TraceParams> | null>(PARAMS_DRAFT, null);
+  if (!draft) return null;
+  // Complété sur le défaut : un brouillon d'une version antérieure n'a pas tous les champs.
+  const params = { ...DEFAULT_TRACE_PARAMS, ...draft, topics: draft.topics ?? [] };
+  return isBlankTraceParams(params) ? null : params;
+}
+
+export function saveTraceParamsDraft(params: TraceParams): void {
+  if (isBlankTraceParams(params)) clearDraft(PARAMS_DRAFT);
+  else writeDraft(PARAMS_DRAFT, params);
 }
 
 export function readTraceHistory(): TraceHistoryEntry[] {

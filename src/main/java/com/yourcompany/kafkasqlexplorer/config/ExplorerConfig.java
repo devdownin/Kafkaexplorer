@@ -5,6 +5,9 @@ package com.yourcompany.kafkasqlexplorer.config;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 
+import java.util.ArrayList;
+import java.util.List;
+
 @Configuration
 @ConfigurationProperties(prefix = "explorer")
 public class ExplorerConfig {
@@ -85,6 +88,18 @@ public class ExplorerConfig {
      * says so rather than pretending the list is complete.
      */
     private int consumerGroupMaxGroups = 200;
+    /**
+     * Topics whose consumer lag is exported as Prometheus gauges. Named explicitly rather than
+     * discovered: a series per group × topic is how a metrics backend gets killed, and the topics
+     * worth alerting on are a short, deliberate list. Empty (the default) registers no gauge and
+     * starts no polling thread.
+     */
+    private List<String> lagMetricsTopics = new ArrayList<>();
+    /**
+     * Hard ceiling on the number of lag series, whatever the topic list turns out to contain.
+     * Reaching it is logged once — a silently truncated metric is worse than an absent one.
+     */
+    private int lagMetricsMaxSeries = 500;
     private String flinkJobStorePath = "data/flink-jobs.json";
     private long flinkJobRetentionHours = 24;
 
@@ -270,6 +285,22 @@ public class ExplorerConfig {
 
     public void setConsumerGroupMaxGroups(int consumerGroupMaxGroups) {
         this.consumerGroupMaxGroups = consumerGroupMaxGroups;
+    }
+
+    public List<String> getLagMetricsTopics() {
+        return lagMetricsTopics;
+    }
+
+    public void setLagMetricsTopics(List<String> lagMetricsTopics) {
+        this.lagMetricsTopics = lagMetricsTopics;
+    }
+
+    public int getLagMetricsMaxSeries() {
+        return lagMetricsMaxSeries;
+    }
+
+    public void setLagMetricsMaxSeries(int lagMetricsMaxSeries) {
+        this.lagMetricsMaxSeries = lagMetricsMaxSeries;
     }
 
     public String getFlinkJobStorePath() {

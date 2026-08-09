@@ -23,6 +23,8 @@ import {
   buildSearchQuery,
   coverageOf,
   criteriaFromQuery,
+  readCriteriaDraft,
+  saveCriteriaDraft,
   describeHitInsight,
   effectiveScanBudget,
   emptyCriteria,
@@ -650,7 +652,13 @@ const TopicExplorer: React.FC = () => {
 
   // Server-side search state. `hits` accumulates across passes so "continue scanning"
   // appends instead of replacing what the user is already reading.
-  const [criteria, setCriteria] = useState<TopicSearchCriteria>(emptyCriteria);
+  /*
+   * Le critère non lancé survit au changement de page : l'URL ne porte qu'une recherche
+   * *exécutée*, donc un critère à moitié tapé qu'on quitte pour aller vérifier un nom de champ
+   * ailleurs disparaissait. Une recherche portée par l'URL passe par-dessus, plus bas.
+   */
+  const [criteria, setCriteria] = useState<TopicSearchCriteria>(
+    () => readCriteriaDraft(name ?? '') ?? emptyCriteria);
   const [searchResult, setSearchResult] = useState<TopicSearchResponse | null>(null);
   const [coverage, setCoverage] = useState<SearchCoverage | null>(null);
   /** Le critère de la passe affichée : le formulaire peut avoir bougé depuis. */
@@ -984,6 +992,12 @@ const TopicExplorer: React.FC = () => {
     setSortKey(key);
     setSortDesc(false);
   };
+
+  // Le brouillon suit la frappe, et s'efface de lui-même quand le formulaire revient à vide.
+  useEffect(() => {
+    if (!name) return;
+    saveCriteriaDraft(name, criteria);
+  }, [name, criteria]);
 
   /**
    * Une recherche décrite dans l'URL s'applique et s'exécute à l'ouverture : c'est ce qui permet

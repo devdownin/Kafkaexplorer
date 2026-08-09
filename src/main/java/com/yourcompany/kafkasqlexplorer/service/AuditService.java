@@ -440,6 +440,11 @@ public class AuditService {
             notes.add("Flow latency correlates the last " + LATENCY_SCAN_MAX_MESSAGES
                 + " messages of each pair of consecutive topics on a shared \"id\" field.");
         }
+        if (options.checkConsumerLag()) {
+            notes.add("Consumer lag reads at most " + explorerConfig.getConsumerGroupMaxGroups()
+                + " of the cluster's groups per topic, and reports only what no amount of waiting "
+                + "would resolve — a group that is simply behind on a live topic is not a finding.");
+        }
         long degraded = topicAudits.stream()
             .filter(t -> t.issues().stream().anyMatch(i -> i.message().startsWith("Audit failed")))
             .count();
@@ -528,12 +533,66 @@ public class AuditService {
                 + duplicateScan.scanned() + " message(s)."));
         }
 
+        if (options.checkConsumerLag()) {
+            issues.addAll(consumerLagIssues(topicName));
+        }
+
         HealthStatus status = issues.stream()
             .map(TopicIssue::severity)
             .reduce(HealthStatus.HEALTHY, HealthStatus::max);
 
         return new TopicAudit(topicName, exactCount, format, poisonCount,
             duplicateScan.duplicateKeys(), status, issues);
+    }
+
+    /**
+     * What the topic's consumer groups say about it.
+     *
+     * <p>Deliberately not a threshold on the lag itself: a large but draining backlog is ordinary
+     * on a live topic, and any number one picked would be arbitrary — the same reason a message
+     * count moving is not a finding here. What is reported is structural, and each case means
+     * something a number could not say:
+     *
+     * <ul>
+     *   <li><b>STALLED</b> — records waiting with no member assigned to this topic. Nothing will
+     *       drain them however long one waits, so this is CRITICAL.</li>
+     *   <li><b>PARTIAL</b> — never committed on some partitions. The reported lag does not count
+     *       what the group ignores, so the backlog is larger than it looks.</li>
+     *   <li><b>AHEAD</b> — a committed offset past the end of the log, which an offset reset or a
+     *       recreated topic leaves behind. The group will skip whatever arrives before it.</li>
+     * </ul>
+     *
+     * <p>A group that could not be read is reported as a degraded measurement rather than
+     * dropped: silence would be indistinguishable from "this topic is fine".
+     */
+    private List<TopicIssue> consumerLagIssues(String topicName) {
+        TopicConsumers consumers;
+        try {
+            consumers = kafkaAdminService.getTopicConsumers(topicName, explorerConfig.getConsumerGroupMaxGroups());
+        } catch (Exception e) {
+            return List.of(TopicIssue.warning("Consumer groups could not be read ("
+                + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()) + ")."));
+        }
+
+        List<TopicIssue> found = new ArrayList<>();
+        for (ConsumerGroupLag group : consumers.groups()) {
+            switch (group.health()) {
+                case STALLED -> found.add(TopicIssue.critical("Consumer group '" + group.groupId()
+                    + "' is " + group.totalLag() + " message(s) behind with no member assigned to this "
+                    + "topic — nothing is draining it."));
+                case PARTIAL -> found.add(TopicIssue.warning("Consumer group '" + group.groupId()
+                    + "' has never committed on " + group.partitionsWithoutCommit() + " of this topic's "
+                    + group.partitions().size() + " partition(s); their backlog is not counted in its lag."));
+                case AHEAD -> found.add(TopicIssue.warning("Consumer group '" + group.groupId()
+                    + "' has a committed offset past the end of the log — it will skip whatever "
+                    + "arrives before it catches back up."));
+                case UNKNOWN -> found.add(TopicIssue.warning("Consumer group '" + group.groupId()
+                    + "' could not be read (" + group.error() + ")."));
+                // BEHIND and CAUGHT_UP are what a healthy live topic looks like.
+                case BEHIND, CAUGHT_UP -> { }
+            }
+        }
+        return found;
     }
 
     /** Format shared by most of the sample, used when the schema pass is disabled. */

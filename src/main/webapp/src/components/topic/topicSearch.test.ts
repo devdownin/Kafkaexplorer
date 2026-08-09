@@ -67,6 +67,9 @@ import {
   type SearchCoverage,
   type TopicSearchCriteria,
   type TopicSearchResponse,
+  readCriteriaDraft,
+  saveCriteriaDraft,
+  isEmptyCriteria,
 } from './topicSearch';
 import { buildTopicSearchQuery, parseTraceParams } from '../../pages/streamFlow';
 
@@ -1123,5 +1126,44 @@ describe('suggestWidenings', () => {
     const ids = suggestWidenings(criteria({ mode: 'CONTAINS', query: 'x', partitions: [1] }))
       .map(s => s.id);
     expect(ids).toContain('all-partitions');
+  });
+});
+
+describe('brouillon du critère', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('restitue le critère non lancé du même topic', () => {
+    const criteria = { ...emptyCriteria, mode: 'FIELD' as const, field: 'status', value: 'SHIPPED' };
+    saveCriteriaDraft('demo.orders', criteria);
+    expect(readCriteriaDraft('demo.orders')).toEqual(criteria);
+  });
+
+  it('ne restitue pas le brouillon d\'un autre topic', () => {
+    saveCriteriaDraft('demo.orders', { ...emptyCriteria, query: 'ORD-42' });
+    // Un critère parlant d'un autre topic est pire qu'un formulaire vide.
+    expect(readCriteriaDraft('demo.payments')).toBeNull();
+  });
+
+  it('efface le brouillon quand le formulaire revient à vide', () => {
+    saveCriteriaDraft('demo.orders', { ...emptyCriteria, query: 'ORD-42' });
+    saveCriteriaDraft('demo.orders', emptyCriteria);
+    expect(readCriteriaDraft('demo.orders')).toBeNull();
+  });
+
+  it('complète un brouillon écrit par une version antérieure', () => {
+    const partial = { topic: 'demo.orders', criteria: { mode: 'REGEX', query: 'ORD-\\d+' } };
+    localStorage.setItem('kse:draft:topic-search',
+      JSON.stringify({ v: 1, at: Date.now(), value: partial }));
+    const restored = readCriteriaDraft('demo.orders');
+    expect(restored?.query).toBe('ORD-\\d+');
+    // Les champs absents prennent leur valeur par défaut plutôt que `undefined`.
+    expect(restored?.direction).toBe(emptyCriteria.direction);
+    expect(restored?.partitions).toEqual([]);
+  });
+
+  it('reconnaît un critère vide, tableaux compris', () => {
+    expect(isEmptyCriteria(emptyCriteria)).toBe(true);
+    expect(isEmptyCriteria({ ...emptyCriteria, partitions: [0] })).toBe(false);
+    expect(isEmptyCriteria({ ...emptyCriteria, query: 'x' })).toBe(false);
   });
 });

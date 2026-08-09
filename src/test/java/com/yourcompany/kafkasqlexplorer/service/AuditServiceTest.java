@@ -45,6 +45,11 @@ class AuditServiceTest {
                 // Skip Kafka persistence in unit tests
             }
         };
+
+        // Default for the consumer-lag check, which AuditOptions.all() enables: no group reads the
+        // topic. The tests that care about lag override this with groups of their own.
+        when(kafkaAdminService.getTopicConsumers(anyString(), anyInt()))
+                .thenAnswer(inv -> new TopicConsumers(inv.getArgument(0), List.of(), 0, 0, false, List.of()));
     }
 
     @Test
@@ -184,7 +189,7 @@ class AuditServiceTest {
         when(flinkSqlService.executeSql(any(QueryRequest.class)))
                 .thenReturn(new QueryResult(List.of("EXPR$0"), List.of(Map.of("EXPR$0", 10L)), 10, null));
 
-        AuditOptions opts = new AuditOptions(true, true, true, true, true, "orders.");
+        AuditOptions opts = new AuditOptions(true, true, true, true, true, false, "orders.");
         auditService.runAuditAsync("pref", opts);
 
         AuditReport report = auditService.getAuditReport("pref");
@@ -219,7 +224,7 @@ class AuditServiceTest {
         when(flinkSqlService.listTables()).thenReturn(List.of("orders_created"));
 
         // Schema + poison checks only, so no Flink count and no duplicate scan interfere.
-        auditService.runAuditAsync("sample", new AuditOptions(true, true, false, false, false, null));
+        auditService.runAuditAsync("sample", new AuditOptions(true, true, false, false, false, false, null));
 
         assertEquals(AuditStatus.COMPLETED, auditService.getAuditReport("sample").status());
         // Previously: detectFormat, inferSchema and the poison check each opened their own consumer.
@@ -235,7 +240,7 @@ class AuditServiceTest {
                 .thenReturn(List.of("{\"id\":\"1\"}", "{\"id\":\"2\"}", "{\"id\":"));
 
         // checkSchema is OFF: the format used to stay AUTO and the check found nothing at all.
-        auditService.runAuditAsync("poison", new AuditOptions(false, true, false, false, false, null));
+        auditService.runAuditAsync("poison", new AuditOptions(false, true, false, false, false, false, null));
 
         TopicAudit audit = auditService.getAuditReport("poison").topicAudits().get(0);
         assertEquals(1, audit.poisonMessageCount(), "the truncated JSON payload is poison");
@@ -253,7 +258,7 @@ class AuditServiceTest {
                 record("orders.created", 2, "k2", "not json")));
 
         // No schema pass → no id-like field. The scan used to give up and report a clean 0.
-        auditService.runAuditAsync("dupes", new AuditOptions(false, false, true, false, false, null));
+        auditService.runAuditAsync("dupes", new AuditOptions(false, false, true, false, false, false, null));
 
         TopicAudit audit = auditService.getAuditReport("dupes").topicAudits().get(0);
         assertEquals(1, audit.duplicateCount(), "k1 appears twice");
@@ -272,7 +277,7 @@ class AuditServiceTest {
         when(flinkSqlService.executeSql(any(QueryRequest.class)))
                 .thenReturn(new QueryResult(List.of(), List.of(), 0, "Table 'orders_created' not found"));
 
-        auditService.runAuditAsync("count", new AuditOptions(false, false, false, false, true, null));
+        auditService.runAuditAsync("count", new AuditOptions(false, false, false, false, true, false, null));
 
         TopicAudit audit = auditService.getAuditReport("count").topicAudits().get(0);
         assertEquals(42L, audit.messageCount(), "falls back to the offset estimate");
@@ -325,7 +330,7 @@ class AuditServiceTest {
         when(kafkaAdminService.getRecentRecords(eq("a.warning"), anyInt())).thenReturn(List.of(
                 record("a.warning", 0, "k1", "{}"), record("a.warning", 1, "k1", "{}")));
 
-        auditService.runAuditAsync("sev", new AuditOptions(false, true, true, false, false, null));
+        auditService.runAuditAsync("sev", new AuditOptions(false, true, true, false, false, false, null));
 
         AuditReport report = auditService.getAuditReport("sev");
         assertEquals(HealthStatus.CRITICAL, topic(report, "a.critical").healthStatus());
@@ -346,7 +351,7 @@ class AuditServiceTest {
         when(kafkaAdminService.getRecentRecords(eq("mixed.topic"), anyInt())).thenReturn(List.of(
                 record("mixed.topic", 0, "k1", "{}"), record("mixed.topic", 1, "k1", "{}")));
 
-        auditService.runAuditAsync("mixed", new AuditOptions(false, true, true, false, false, null));
+        auditService.runAuditAsync("mixed", new AuditOptions(false, true, true, false, false, false, null));
 
         TopicAudit audit = auditService.getAuditReport("mixed").topicAudits().get(0);
         assertEquals(2, audit.issues().size(), "one warning (duplicates) and one critical (poison)");
@@ -361,7 +366,7 @@ class AuditServiceTest {
         when(flinkSqlService.executeSql(any(QueryRequest.class)))
                 .thenReturn(new QueryResult(List.of("EXPR$0"), List.of(Map.of("EXPR$0", 42L)), 10, null));
 
-        auditService.runAuditAsync("totals", new AuditOptions(false, false, false, false, true, null));
+        auditService.runAuditAsync("totals", new AuditOptions(false, false, false, false, true, false, null));
 
         AuditReport report = auditService.getAuditReport("totals");
         assertEquals(42L, report.topicAudits().get(0).messageCount());
@@ -428,7 +433,7 @@ class AuditServiceTest {
         });
 
         AuditService.AuditStart start = auditService.startAudit(
-                new AuditOptions(false, true, false, false, false, null));
+                new AuditOptions(false, true, false, false, false, false, null));
         assertTrue(aTopicStarted.await(5, TimeUnit.SECONDS), "the run should have reached a topic");
 
         assertEquals(AuditService.CancelResult.CANCELLING, auditService.cancelAudit(start.auditId()));
@@ -486,7 +491,7 @@ class AuditServiceTest {
         when(kafkaAdminService.getRecentRecords(eq("orders.created"), anyInt())).thenReturn(List.of(
                 record("orders.created", 0, "k1", "{}"), record("orders.created", 1, "k1", "{}")));
 
-        auditService.runAuditAsync("recent", new AuditOptions(false, false, true, false, false, null));
+        auditService.runAuditAsync("recent", new AuditOptions(false, false, true, false, false, false, null));
 
         // Every other check samples recent messages; scanning from the start judged the oldest
         // surviving records, which on a topic with retention answers a different question.
@@ -506,7 +511,7 @@ class AuditServiceTest {
         when(kafkaAdminService.getEarliestRecords(eq("orders.created"), anyInt())).thenReturn(List.of(
                 record("orders.created", 0, "k1", "{}"), record("orders.created", 1, "k1", "{}")));
 
-        auditService.runAuditAsync("earliest", new AuditOptions(false, false, true, false, false, null));
+        auditService.runAuditAsync("earliest", new AuditOptions(false, false, true, false, false, false, null));
 
         verify(kafkaAdminService).getEarliestRecords(eq("orders.created"), anyInt());
         TopicAudit audit = auditService.getAuditReport("earliest").topicAudits().get(0);
@@ -561,11 +566,131 @@ class AuditServiceTest {
         when(kafkaAdminService.listTopics()).thenReturn(List.of("a.one"));
         when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("a.one", 1L));
 
-        auditService.runAuditAsync("nobudget", new AuditOptions(false, false, false, false, false, null));
+        auditService.runAuditAsync("nobudget", new AuditOptions(false, false, false, false, false, false, null));
 
         AuditReport report = auditService.getAuditReport("nobudget");
         assertEquals(AuditStatus.COMPLETED, report.status());
         assertNull(report.globalStats().get("stopReason"));
+    }
+
+    // ---- consumer lag ---------------------------------------------------------------------
+
+    private static TopicConsumers consumers(ConsumerGroupLag... groups) {
+        return new TopicConsumers("orders.created", List.of(groups), groups.length, groups.length,
+                false, List.of());
+    }
+
+    private static ConsumerGroupLag lagging(String groupId, long totalLag, int assignedMembers,
+                                            int partitionsWithoutCommit, PartitionLag... partitions) {
+        return new ConsumerGroupLag(groupId, "CLASSIC", "STABLE", assignedMembers, assignedMembers,
+                totalLag, partitionsWithoutCommit, List.of(partitions), null);
+    }
+
+    private static PartitionLag lagOf(int partition, Long committed, long end, Long lag) {
+        return new PartitionLag(partition, committed, end, lag, null, null, null);
+    }
+
+    @Test
+    void reportsAGroupThatNothingIsDrainingAsCritical() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders.created"));
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("orders.created", 500L));
+        when(kafkaAdminService.getTopicConsumers(eq("orders.created"), anyInt())).thenReturn(
+                consumers(lagging("enricher", 4200L, 0, 0, lagOf(0, 100L, 4300L, 4200L))));
+
+        auditService.runAuditAsync("lag", new AuditOptions(false, false, false, false, false, true, null));
+
+        TopicAudit audit = auditService.getAuditReport("lag").topicAudits().get(0);
+        assertEquals(HealthStatus.CRITICAL, audit.healthStatus(),
+                "records waiting with nothing assigned to read them is not a warning");
+        assertTrue(audit.issues().stream().anyMatch(i -> i.message().contains("enricher")
+                        && i.message().contains("no member assigned")),
+                "the issue must name the group and why it is stuck: " + audit.issues());
+    }
+
+    @Test
+    void doesNotTurnAnOrdinaryBacklogIntoAFinding() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders.created"));
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("orders.created", 500L));
+        // Behind by a lot, but draining: any threshold one picked here would be arbitrary.
+        when(kafkaAdminService.getTopicConsumers(eq("orders.created"), anyInt())).thenReturn(
+                consumers(lagging("orders-api", 900_000L, 3, 0, lagOf(0, 100L, 900_100L, 900_000L))));
+
+        auditService.runAuditAsync("lag", new AuditOptions(false, false, false, false, false, true, null));
+
+        TopicAudit audit = auditService.getAuditReport("lag").topicAudits().get(0);
+        assertEquals(HealthStatus.HEALTHY, audit.healthStatus());
+        assertTrue(audit.issues().isEmpty(), "a group that is reading is not a defect: " + audit.issues());
+    }
+
+    @Test
+    void warnsWhenAGroupIgnoresPartOfTheTopic() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders.created"));
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("orders.created", 500L));
+        when(kafkaAdminService.getTopicConsumers(eq("orders.created"), anyInt())).thenReturn(
+                consumers(lagging("partial", 10L, 1, 2,
+                        lagOf(0, 90L, 100L, 10L), lagOf(1, null, 100L, null), lagOf(2, null, 100L, null))));
+
+        auditService.runAuditAsync("lag", new AuditOptions(false, false, false, false, false, true, null));
+
+        TopicAudit audit = auditService.getAuditReport("lag").topicAudits().get(0);
+        assertEquals(HealthStatus.WARNING, audit.healthStatus());
+        assertTrue(audit.issues().stream().anyMatch(i -> i.message().contains("never committed on 2")),
+                "the backlog it ignores is what makes this worth saying: " + audit.issues());
+    }
+
+    @Test
+    void warnsWhenACommittedOffsetIsPastTheEndOfTheLog() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders.created"));
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("orders.created", 500L));
+        when(kafkaAdminService.getTopicConsumers(eq("orders.created"), anyInt())).thenReturn(
+                consumers(lagging("reset", -400L, 1, 0, lagOf(0, 500L, 100L, -400L))));
+
+        auditService.runAuditAsync("lag", new AuditOptions(false, false, false, false, false, true, null));
+
+        TopicAudit audit = auditService.getAuditReport("lag").topicAudits().get(0);
+        assertEquals(HealthStatus.WARNING, audit.healthStatus());
+        assertTrue(audit.issues().stream().anyMatch(i -> i.message().contains("past the end of the log")));
+    }
+
+    @Test
+    void reportsThatTheGroupsCouldNotBeReadRatherThanStayingSilent() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders.created"));
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("orders.created", 500L));
+        when(kafkaAdminService.getTopicConsumers(eq("orders.created"), anyInt()))
+                .thenThrow(new IllegalStateException("coordinator unavailable"));
+
+        auditService.runAuditAsync("lag", new AuditOptions(false, false, false, false, false, true, null));
+
+        TopicAudit audit = auditService.getAuditReport("lag").topicAudits().get(0);
+        // Silence here would be indistinguishable from "this topic is fine".
+        assertEquals(HealthStatus.WARNING, audit.healthStatus());
+        assertTrue(audit.issues().stream().anyMatch(i -> i.message().contains("coordinator unavailable")));
+    }
+
+    @Test
+    void doesNotReadTheGroupsWhenTheCheckIsOff() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders.created"));
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("orders.created", 500L));
+
+        auditService.runAuditAsync("nolag", new AuditOptions(false, false, false, false, false, false, null));
+
+        awaitTerminal("nolag");
+        verify(kafkaAdminService, never()).getTopicConsumers(anyString(), anyInt());
+    }
+
+    @Test
+    void statesTheBoundsOfTheConsumerLagScan() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders.created"));
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("orders.created", 500L));
+        when(kafkaAdminService.getTopicConsumers(eq("orders.created"), anyInt())).thenReturn(consumers());
+
+        auditService.runAuditAsync("lag", new AuditOptions(false, false, false, false, false, true, null));
+
+        AuditReport report = awaitTerminal("lag");
+        @SuppressWarnings("unchecked")
+        List<String> notes = (List<String>) report.globalStats().get("scopeNotes");
+        assertTrue(notes.stream().anyMatch(n -> n.contains("Consumer lag reads at most")),
+                "the reader has to know what the check did and did not cover: " + notes);
     }
 
     /** Polls until the run leaves RUNNING, so the assertions do not race the audit thread. */

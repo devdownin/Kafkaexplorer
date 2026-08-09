@@ -160,6 +160,7 @@ interface AuditOptions {
   checkDuplicates: boolean;
   checkFlows: boolean;
   checkExactCount: boolean;
+  checkConsumerLag: boolean;
 }
 
 const CHECK_LABELS: { key: keyof AuditOptions; label: string; description: string; icon: string; requires?: keyof AuditOptions }[] = [
@@ -168,16 +169,17 @@ const CHECK_LABELS: { key: keyof AuditOptions; label: string; description: strin
   { key: 'checkPoisonMessages', label: 'Poison messages',     description: 'Parse 10 recent messages per topic and flag unparseable payloads', icon: 'bug_report' },
   { key: 'checkDuplicates',     label: 'Duplicate detection', description: 'Group the first 10 000 messages by id field (or record key) and count repeats', icon: 'content_copy' },
   { key: 'checkFlows',          label: 'Flow analysis',       description: 'Group topics by naming convention and compute inter-step latency', icon: 'account_tree' },
+  { key: 'checkConsumerLag',    label: 'Consumer lag',        description: 'Read each topic\u2019s consumer groups and flag the ones nothing is draining \u2014 a group merely behind on a live topic is not a finding', icon: 'groups' },
 ];
 
 const ALL_CHECKED: AuditOptions = {
   checkSchema: true, checkPoisonMessages: true,
-  checkDuplicates: true, checkFlows: true, checkExactCount: true,
+  checkDuplicates: true, checkFlows: true, checkExactCount: true, checkConsumerLag: true,
 };
 
 const NONE_CHECKED: AuditOptions = {
   checkSchema: false, checkPoisonMessages: false,
-  checkDuplicates: false, checkFlows: false, checkExactCount: false,
+  checkDuplicates: false, checkFlows: false, checkExactCount: false, checkConsumerLag: false,
 };
 
 type SortKey = 'name' | 'messageCount' | 'poisonMessageCount' | 'duplicateCount';

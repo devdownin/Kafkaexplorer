@@ -4,6 +4,7 @@
  * Tout ce qui est testable sans DOM vit ici — `TopicSearchPanel` ne fait que rendre ce que ce
  * module décide, et `TopicExplorer` ne fait qu'enchaîner les passes.
  */
+import { clearDraft, readDraft, writeDraft } from '../../draftStore';
 
 /** One Kafka record with its coordinates — what /api/topic returns and what a search hit is. */
 export interface TopicMessage {
@@ -1122,6 +1123,53 @@ export function writeViewMode(view: MessageView): void {
 export function previewOf(value: string | null, max = 240): string {
   const flat = (value ?? '').replace(/\s+/g, ' ').trim();
   return flat.length > max ? `${flat.slice(0, max)}…` : flat;
+}
+
+// ── Brouillon du critère ──────────────────────────────────────────────────
+
+/**
+ * Le critère **non lancé**, conservé d'une page à l'autre.
+ *
+ * L'URL porte déjà une recherche *exécutée* — c'est ce qui rend un lien partageable et ce qui
+ * amène un saut depuis Stream Flow directement sur les messages. Ce qu'elle ne porte pas, c'est un
+ * critère à moitié tapé qu'on quitte pour aller vérifier un nom de champ ailleurs : celui-là
+ * disparaissait avec la page, exactement comme les formulaires que `draftStore` a rattrapés.
+ *
+ * **Un seul emplacement**, avec le topic auquel il appartient. Une clé par topic ferait grossir
+ * `localStorage` sans borne pour un cas qui, en pratique, est toujours « je reviens sur le topic
+ * que je viens de quitter » ; passer d'un topic à l'autre perd le brouillon du premier, ce que le
+ * champ `topic` rend explicite au lieu de restituer un critère qui parlerait d'autre chose.
+ */
+const CRITERIA_DRAFT = 'topic-search';
+
+interface CriteriaDraft {
+  topic: string;
+  criteria: TopicSearchCriteria;
+}
+
+/** Le critère gardé pour ce topic, ou `null` — un brouillon d'un autre topic n'est pas restitué. */
+export function readCriteriaDraft(topic: string): TopicSearchCriteria | null {
+  const draft = readDraft<CriteriaDraft | null>(CRITERIA_DRAFT, null);
+  if (!draft || draft.topic !== topic || !draft.criteria) return null;
+  // Un brouillon d'une version antérieure n'a pas tous les champs : le compléter vaut mieux que
+  // le rejeter, et bien mieux que rouvrir un formulaire troué.
+  return { ...emptyCriteria, ...draft.criteria };
+}
+
+/** Écrit le brouillon, ou l'efface quand le formulaire est revenu à vide — il n'y a rien à garder. */
+export function saveCriteriaDraft(topic: string, criteria: TopicSearchCriteria): void {
+  if (isEmptyCriteria(criteria)) clearDraft(CRITERIA_DRAFT);
+  else writeDraft(CRITERIA_DRAFT, { topic, criteria } satisfies CriteriaDraft);
+}
+
+/** `true` quand le formulaire ne dit rien de plus que son état initial. */
+export function isEmptyCriteria(criteria: TopicSearchCriteria): boolean {
+  return (Object.keys(emptyCriteria) as (keyof TopicSearchCriteria)[]).every(key => {
+    const a = criteria[key];
+    const b = emptyCriteria[key];
+    if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length;
+    return a === b;
+  });
 }
 
 // ── Historique ────────────────────────────────────────────────────────────

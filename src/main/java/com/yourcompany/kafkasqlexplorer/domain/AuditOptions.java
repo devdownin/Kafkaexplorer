@@ -13,10 +13,16 @@ public record AuditOptions(
     boolean checkDuplicates,
     boolean checkFlows,
     boolean checkExactCount,
+    /**
+     * Reads each topic's consumer groups and reports the ones nothing will drain. Costs several
+     * coordinator round trips per topic, hence its own switch — but it is the check that answers
+     * "why is this piling up?", which none of the others could.
+     */
+    boolean checkConsumerLag,
     String topicPrefix
 ) {
     public static AuditOptions all() {
-        return new AuditOptions(true, true, true, true, true, null);
+        return new AuditOptions(true, true, true, true, true, true, null);
     }
 
     /** Trimmed prefix, or {@code null} when no topic filter should apply. */
