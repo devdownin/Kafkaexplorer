@@ -23,7 +23,7 @@
 		<java.version>21</java.version>
 		<flink.version>2.3.0</flink.version>
 		<kafka.version>4.2.0</kafka.version>
-		<confluent.version>8.3.0</confluent.version>
+		<confluent.version>8.3.1</confluent.version>
 		<!--
 			Surefire's own default, declared explicitly so `${skipTests}` always resolves:
 			the frontend test execution reads it to mirror -DskipTests, and an undefined
