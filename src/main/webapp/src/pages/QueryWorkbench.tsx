@@ -505,6 +505,22 @@ const QueryWorkbench: React.FC = () => {
   };
 
   /**
+   * Charge le catalogue à l'arrivée sur la page.
+   *
+   * Il ne l'était nulle part : `fetchSchema` n'était appelé que par le bouton de
+   * rafraîchissement de la sidebar et après un `CREATE TABLE`. Ouvrir l'éditeur affichait donc
+   * « Engine offline · 0 tables · 0 topics » — et une sidebar vide — sur un moteur parfaitement
+   * sain, jusqu'à ce que l'on pense à cliquer une icône qui ne s'annonce pas comme le seul
+   * moyen de peupler l'écran. L'autocomplétion des colonnes en dépend aussi : elle ne demande
+   * le schéma que des tables que le catalogue connaît.
+   */
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- chargement initial du catalogue
+    void fetchSchema();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- au montage seulement : fetchSchema est recréé à chaque rendu
+  }, []);
+
+  /**
    * Charge le schéma des tables citées par la requête en cours, pour que l'autocomplétion
    * connaisse leurs colonnes sans que l'utilisateur ait à déplier la sidebar.
    *
