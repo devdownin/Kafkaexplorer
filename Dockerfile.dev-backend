@@ -1,4 +1,4 @@
-FROM maven:3.9-eclipse-temurin-21
+FROM maven:3-eclipse-temurin-26
 WORKDIR /app
 # `build-frontend` is activeByDefault, so a plain `mvn spring-boot:run` downloaded a
 # whole Node v24 toolchain into target/ and rebuilt the SPA on every container start —

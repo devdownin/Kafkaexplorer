@@ -1,4 +1,4 @@
-FROM node:24.0.0-alpine
+FROM node:26.6.0-alpine
 WORKDIR /app
 # npm's cache lives in a named volume (see docker-compose-dev.yml) rather than in the
 # container's writable layer, so a rebuilt container does not re-download the tree.
