@@ -1,5 +1,5 @@
 <!--
-  This file IS the Docker Hub overview page of `devdownin/kafkaexplorer`.
+  This file IS the Docker Hub overview page of `compagnonsdudev/kafkaexplorer`.
 
   It is pushed there by .github/workflows/dockerhub-description.yml — editing the page in
   the Docker Hub web UI is therefore pointless, the next sync overwrites it.
@@ -20,8 +20,8 @@
 
 ### See your Kafka. Query it like a database. Audit it with AI.
 
-[![Docker Pulls](https://img.shields.io/docker/pulls/devdownin/kafkaexplorer?logo=docker&logoColor=white)](https://hub.docker.com/r/devdownin/kafkaexplorer)
-[![Image Size](https://img.shields.io/docker/image-size/devdownin/kafkaexplorer/latest?logo=docker&logoColor=white)](https://hub.docker.com/r/devdownin/kafkaexplorer/tags)
+[![Docker Pulls](https://img.shields.io/docker/pulls/compagnonsdudev/kafkaexplorer?logo=docker&logoColor=white)](https://hub.docker.com/r/compagnonsdudev/kafkaexplorer)
+[![Image Size](https://img.shields.io/docker/image-size/compagnonsdudev/kafkaexplorer/latest?logo=docker&logoColor=white)](https://hub.docker.com/r/compagnonsdudev/kafkaexplorer/tags)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://github.com/devdownin/Kafkaexplorer/blob/main/LICENSE)
 [![Source](https://img.shields.io/badge/source-GitHub-181717?logo=github&logoColor=white)](https://github.com/devdownin/Kafkaexplorer)
 
@@ -43,7 +43,7 @@ Against a broker you already have:
 ```bash
 docker run --rm -p 8080:8080 \
   -e KAFKA_BOOTSTRAP_SERVERS=your-broker:9092 \
-  devdownin/kafkaexplorer:latest
+  compagnonsdudev/kafkaexplorer:latest
 ```
 
 Open **http://localhost:8080**.
@@ -72,7 +72,7 @@ services:
       CLUSTER_ID: MkU2OhlMTT69sPFvS1n16g
 
   explorer:
-    image: devdownin/kafkaexplorer:latest
+    image: compagnonsdudev/kafkaexplorer:latest
     # No authentication in the box — see "Before you expose it" below.
     ports:
       - "127.0.0.1:8080:8080"

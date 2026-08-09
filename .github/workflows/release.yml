@@ -175,7 +175,7 @@ jobs:
           # namespace without editing this file.
           images: |
             ghcr.io/${{ github.repository }}
-            name=docker.io/${{ vars.DOCKERHUB_REPOSITORY || 'devdownin/kafkaexplorer' }},enable=${{ steps.hub.outputs.enabled }}
+            name=docker.io/${{ vars.DOCKERHUB_REPOSITORY || 'compagnonsdudev/kafkaexplorer' }},enable=${{ steps.hub.outputs.enabled }}
           # `latest` was a bare `type=raw`, so it moved on *any* tag: pushing v1.3.0-rc1
           # made a pre-release what `docker run ghcr.io/devdownin/kafkaexplorer` pulls.
           # The guard is the semver pre-release marker — a hyphen in the tag name.

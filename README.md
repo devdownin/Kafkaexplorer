@@ -6,7 +6,7 @@
 
 [![CI](https://github.com/devdownin/Kafkaexplorer/actions/workflows/ci.yml/badge.svg)](https://github.com/devdownin/Kafkaexplorer/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
-[![Docker Hub](https://img.shields.io/docker/pulls/devdownin/kafkaexplorer?logo=docker&logoColor=white&label=docker%20pulls)](https://hub.docker.com/r/devdownin/kafkaexplorer)
+[![Docker Hub](https://img.shields.io/docker/pulls/compagnonsdudev/kafkaexplorer?logo=docker&logoColor=white&label=docker%20pulls)](https://hub.docker.com/r/compagnonsdudev/kafkaexplorer)
 [![GHCR](https://img.shields.io/badge/ghcr.io-kafkaexplorer-2496ED?logo=github&logoColor=white)](https://github.com/devdownin/Kafkaexplorer/pkgs/container/kafkaexplorer)
 [![Java 21](https://img.shields.io/badge/Java-21-orange)](pom.xml)
 [![Kafka 4.2](https://img.shields.io/badge/Kafka-4.2_KRaft-231F20?logo=apachekafka)](https://kafka.apache.org/)
@@ -82,10 +82,10 @@ Then open **http://localhost:8080** and start clicking. That's it.
 - **Hot-reload dev stack** (backend + Vite + Kafka, still nothing installed locally): `docker compose -f docker-compose-dev.yml up`
 - **Prebuilt image** (Docker Hub or GHCR, same image, `linux/amd64` + `linux/arm64`):
   ```bash
-  docker run -p 127.0.0.1:8080:8080 -e KAFKA_BOOTSTRAP_SERVERS=your-broker:9092 devdownin/kafkaexplorer:latest
+  docker run -p 127.0.0.1:8080:8080 -e KAFKA_BOOTSTRAP_SERVERS=your-broker:9092 compagnonsdudev/kafkaexplorer:latest
   # or: ghcr.io/devdownin/kafkaexplorer:latest
   ```
-  Tags, environment variables, volumes and probes: **[docs/DOCKERHUB.md](docs/DOCKERHUB.md)** — the page published as the [Docker Hub overview](https://hub.docker.com/r/devdownin/kafkaexplorer).
+  Tags, environment variables, volumes and probes: **[docs/DOCKERHUB.md](docs/DOCKERHUB.md)** — the page published as the [Docker Hub overview](https://hub.docker.com/r/compagnonsdudev/kafkaexplorer).
 - **Against your own cluster**: point `kafka.bootstrap-servers` at any Kafka 2.1+ broker (PLAIN, SSL or Confluent Cloud) — nothing to install cluster-side.
 
 </details>
