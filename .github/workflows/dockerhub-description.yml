@@ -20,9 +20,25 @@
 #     the DOCKERHUB_USERNAME account (or an organisation it belongs to): note that it is
 #     deliberately not the GitHub org, which only governs the GHCR name.
 #
-# The Docker Hub repository must exist before its description can be set — it is created
-# by the first `docker push`, i.e. by the first release. Until then this workflow fails
-# with a 404, which is the truth and not something to paper over.
+# Reading a failure of this workflow: the step it dies on says which problem it is, and
+# they are not the same problem.
+#
+#   404, setting the description — the Docker Hub repository does not exist yet. It is
+#   created by the first `docker push`, i.e. by the first release, so a sync that runs
+#   before any release legitimately fails this way. That is the truth, not something to
+#   paper over.
+#
+#   401 at `Acquiring token` — the login itself is refused, before the description API is
+#   ever reached, and the repository may well exist. Both secrets are necessarily set (the
+#   guard below would otherwise have skipped the step), so the token is present and
+#   rejected: a read-only PAT (the API needs Read, Write, Delete — this is the first
+#   suspect), a DOCKERHUB_USERNAME that is not the login account (an organisation, or the
+#   repository namespace), an account password instead of a PAT on a 2FA account, or
+#   whitespace pasted into the secret.
+#
+# This file used to predict the 404 for the first sync and nothing else, which is exactly
+# the run it got wrong: the repository had been created by hand, and three consecutive runs
+# failed 401 while the comment explained a 404.
 #
 # The screenshots in that page are loaded from GitHub Pages by absolute URL (Docker Hub
 # cannot reach repository files). Pages is deployed by ci.yml's `deploy` job on the same
