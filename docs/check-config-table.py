@@ -44,7 +44,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-DOCS = ['docs/DOCKERHUB.md']
+# The Docker Hub page is the reason this exists, but the READMEs quote the same variables
+# and drift exactly as quietly. A file with no configuration table simply contributes no
+# rows — the first cell of a row has to be a code span holding an ALL_CAPS name, which a
+# prose table never is.
+DOCS = ['docs/DOCKERHUB.md', 'README.md', 'README.fr.md']
 YAML = ROOT / 'src/main/resources/application.yml'
 CONFIG_DIR = ROOT / 'src/main/java/com/yourcompany/kafkasqlexplorer/config'
 DOCKERFILES = [ROOT / 'Dockerfile', ROOT / 'Dockerfile.release']
