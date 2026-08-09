@@ -332,6 +332,12 @@ jobs:
           npm install -g playwright@1
           playwright install --with-deps chromium
 
+      # capture.mjs quantises each shot when it finds this, and silently ships images three
+      # times larger when it does not. Installing it here is what keeps that path exercised,
+      # and makes the uploaded artefact the same weight as what a developer would commit.
+      - name: Install pngquant
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq pngquant
+
       - name: Capture
         run: |
           set -euo pipefail

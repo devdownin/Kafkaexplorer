@@ -19,6 +19,14 @@ install chromium`). The capture exits non-zero if any screen fails — five scre
 six means the sixth silently disappears from the documentation, so a partial run is a failed
 run.
 
+**Install `pngquant` too** (`apt install pngquant`, `brew install pngquant`, or point
+`PNGQUANT` at a binary). Each shot is quantised to an 8-bit palette, which on flat UI colour
+and text is visually indistinguishable from the original and takes the six from ~1.8 MB to
+~600 kB. That is not repository housekeeping: the Docker Hub overview loads five of them from
+GitHub Pages on every view. Without the binary the run still succeeds and says so at the end
+— compression is not what this script is for, but nobody should discover the omission from a
+commit diff either.
+
 ## What is real and what is not
 
 **The UI is real.** Every pixel is the compiled `src/main/webapp` — the same components,

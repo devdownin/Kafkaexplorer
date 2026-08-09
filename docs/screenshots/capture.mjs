@@ -10,6 +10,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 
 // playwright is not a dependency of this project — it is whatever the environment provides
@@ -108,7 +109,42 @@ async function scrollBy(page, px) {
   await page.waitForTimeout(400);
 }
 
+/**
+ * Quantises a capture in place, when a pngquant is available.
+ *
+ * A UI screenshot is flat colour and text: an 8-bit palette is visually indistinguishable
+ * from the 24-bit original here and cuts the file to about a third (1.8 MB → 600 kB across
+ * the six). That matters because these are not repository decoration — the Docker Hub
+ * overview loads five of them from GitHub Pages on every view.
+ *
+ * Optional on purpose. Compression is not what this script is for, so a missing binary
+ * leaves bigger but correct images rather than failing the run; it is reported at the end so
+ * "nobody noticed it was skipped" is not an option either. `PNGQUANT` overrides the lookup —
+ * the binary is often installed as a package dependency rather than on PATH.
+ */
+function quantise(file) {
+  const bin = process.env.PNGQUANT ?? 'pngquant';
+  const tmp = `${file}.tmp`;
+  const before = fs.statSync(file).size;
+  const run = spawnSync(bin, [
+    '--quality', '70-92', '--speed', '1', '--strip', '--force', '--output', tmp, file,
+  ], { stdio: 'ignore' });
+
+  // ENOENT: no pngquant here. 98/99: it could not hit the quality floor and wrote nothing,
+  // which is the tool refusing to degrade the image — keep the original in both cases.
+  if (run.error || run.status !== 0) {
+    fs.rmSync(tmp, { force: true });
+    return { before, after: before, skipped: run.error?.code === 'ENOENT' };
+  }
+  const after = fs.statSync(tmp).size;
+  fs.renameSync(tmp, file);
+  return { before, after, skipped: false };
+}
+
 const failures = [];
+let quantised = 0;
+let savedFrom = 0;
+let savedTo = 0;
 
 const browser = await chromium.launch();
 fs.mkdirSync(outDir, { recursive: true });
@@ -143,7 +179,9 @@ for (const screen of SCREENS) {
     await page.waitForTimeout(700);
     const file = path.join(outDir, `${screen.name}.png`);
     await page.screenshot({ path: file });
-    const kb = Math.round(fs.statSync(file).size / 1024);
+    const { before, after, skipped } = quantise(file);
+    if (!skipped) { quantised++; savedFrom += before; savedTo += after; }
+    const kb = Math.round(after / 1024);
     console.log(`✓ ${screen.name}  ${kb} kB${errors.length ? `  (${errors.length} console error(s))` : ''}`);
   } catch (e) {
     // A screen that could not be reached must fail the run: silently shipping five of six
@@ -162,3 +200,10 @@ if (failures.length) {
   process.exit(1);
 }
 console.log(`\nAll ${SCREENS.length} screens captured into ${outDir}/`);
+if (quantised === 0) {
+  console.log('pngquant not found — images left uncompressed (roughly 3× larger than they need to be).');
+  console.log('Install it (apt install pngquant / brew install pngquant) or point PNGQUANT at a binary.');
+} else {
+  const pct = Math.round((1 - savedTo / savedFrom) * 100);
+  console.log(`pngquant: ${Math.round(savedFrom / 1024)} kB → ${Math.round(savedTo / 1024)} kB (−${pct}%)`);
+}
