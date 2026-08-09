@@ -283,6 +283,43 @@ jobs:
           echo "::error::the release image never answered liveness"
           exit 1
 
+      # The release now ships an SBOM, and nothing read it. A pinned-by-digest JRE base is
+      # what makes a build reproducible and is also what freezes its security patches
+      # between Dependabot bumps — so the one thing worth knowing is what is actually
+      # inside the image being published, and that was nobody's output.
+      #
+      # `exit-code: 0` on purpose: this reports, it does not gate. A scanner wired to fail
+      # a build starts failing it for a CVE in a transitive dependency with no fix
+      # available, on a morning nobody chose — and the reflex that follows is to ignore the
+      # job, which is worse than not having it. It writes to the step summary, where a
+      # human reads it when a release is being cut. Turning it into a gate later is
+      # `exit-code: 1` plus `ignore-unfixed`, once the baseline is known to be clean.
+      - name: Scan the release image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: kafka-explorer-release:ci
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '0'
+          output: trivy.txt
+
+      - name: Publish the scan to the job summary
+        if: always()
+        run: |
+          set -euo pipefail
+          {
+            echo '## Image vulnerability scan (HIGH/CRITICAL, fixable only)'
+            echo
+            if [ -s trivy.txt ]; then
+              echo '```'
+              cat trivy.txt
+              echo '```'
+            else
+              echo 'No fixable HIGH or CRITICAL vulnerability reported.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
       # release.yml publishes linux/amd64 *and* linux/arm64, and docs/DOCKERHUB.md sells the
       # second one ("natively, not under emulation"). Nothing in this repository had ever
       # started it: every boot test above, and every build anywhere, was amd64. The JAR is

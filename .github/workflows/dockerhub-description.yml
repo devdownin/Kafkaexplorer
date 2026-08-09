@@ -53,6 +53,15 @@ on:
     paths:
       - 'docs/DOCKERHUB.md'
       - '.github/workflows/dockerhub-description.yml'
+  # After a release, because of the 404 above: the Docker Hub repository does not exist
+  # until the first `docker push` creates it, so the sync that runs before any release
+  # fails legitimately — and then never retries, since only an edit to the page triggers
+  # it. The page therefore stays absent until somebody happens to touch the file. Here
+  # that was patched up by hand; on a fork it would not be. This closes the loop: the
+  # release creates the repository, and the description follows it.
+  workflow_run:
+    workflows: ["Create Release"]
+    types: [completed]
   workflow_dispatch:
 
 # A second push while one sync is in flight would race for the same page.
@@ -63,6 +72,10 @@ concurrency:
 jobs:
   description:
     name: Sync overview page
+    # A `workflow_run` fires whatever the release did, failure included — and a release
+    # that failed may well have pushed no image, so there would be nothing to describe.
+    # The other triggers carry no such event and must not be filtered out by it.
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
