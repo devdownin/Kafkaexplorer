@@ -22,6 +22,30 @@
 
 Built for data engineers, architects and anyone who has ever asked *"what's actually flowing through this topic?"*
 
+![The dashboard: every topic, its message count, its state and when it last received something](docs/img/dashboard.png)
+
+<details>
+<summary>More screens — Topic Explorer, SQL Editor, Stream Flow, Audit, Cluster</summary>
+
+**Topic Explorer** — search the whole topic and see what was actually covered.
+![Topic Explorer](docs/img/topic-explorer.png)
+
+**SQL Editor** — Monaco, scoped completion, and the engine that answered stated on the result.
+![SQL Editor](docs/img/sql-editor.png)
+
+**Stream Flow** — one record key across the cluster, with per-hop latency and a checkable evidence table.
+![Stream Flow](docs/img/stream-flow.png)
+
+**Cluster Audit** — graded findings, and every run states its own scope.
+![Cluster Audit](docs/img/audit.png)
+
+**Cluster** — KRaft controller quorum, client groups, feature versions.
+![Cluster](docs/img/cluster.png)
+
+These are generated, not photographed: `docs/screenshots/` drives the compiled SPA over canned API responses shaped like the demo dataset. See its [README](docs/screenshots/README.md) to regenerate them after a UI change.
+
+</details>
+
 ## ✨ Highlights
 
 - 🖱️ **Click-to-query** — click a JSON key or XML tag in a message preview and it lands in your `SELECT`/`WHERE`, with `JSON_VALUE`/XPath generated for you.

@@ -22,6 +22,30 @@
 
 Pensé pour les data engineers, les architectes, et tous ceux qui se sont un jour demandé *« qu'est-ce qui circule vraiment dans ce topic ? »*
 
+![Le tableau de bord : chaque topic, son nombre de messages, son état et la date de son dernier message](docs/img/dashboard.png)
+
+<details>
+<summary>Autres écrans — Topic Explorer, Éditeur SQL, Stream Flow, Audit, Cluster</summary>
+
+**Topic Explorer** — cherchez dans tout le topic, et lisez ce qui a réellement été couvert.
+![Topic Explorer](docs/img/topic-explorer.png)
+
+**Éditeur SQL** — Monaco, complétion limitée aux tables citées, et le moteur qui a répondu affiché sur le résultat.
+![Éditeur SQL](docs/img/sql-editor.png)
+
+**Stream Flow** — une clé d'enregistrement à travers le cluster, avec la latence de chaque saut et un tableau de preuves vérifiable.
+![Stream Flow](docs/img/stream-flow.png)
+
+**Audit du cluster** — constats gradués, et chaque run énonce son propre périmètre.
+![Audit du cluster](docs/img/audit.png)
+
+**Cluster** — quorum de contrôleurs KRaft, groupes clients, versions de fonctionnalités.
+![Cluster](docs/img/cluster.png)
+
+Ces captures sont générées, pas prises à la main : `docs/screenshots/` pilote le SPA compilé au-dessus de réponses d'API figées, calquées sur le jeu de données de démo. Voir son [README](docs/screenshots/README.md) pour les régénérer après un changement d'UI.
+
+</details>
+
 ## ✨ Points forts
 
 - 🖱️ **Cliquer, c'est requêter** — cliquez sur une clé JSON ou une balise XML dans l'aperçu d'un message et elle atterrit dans votre `SELECT`/`WHERE`, `JSON_VALUE`/XPath générés pour vous.

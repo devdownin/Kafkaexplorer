@@ -21,6 +21,11 @@
 # The Docker Hub repository must exist before its description can be set — it is created
 # by the first `docker push`, i.e. by the first release. Until then this workflow fails
 # with a 404, which is the truth and not something to paper over.
+#
+# The screenshots in that page are loaded from GitHub Pages by absolute URL (Docker Hub
+# cannot reach repository files). Pages is deployed by ci.yml's `deploy` job on the same
+# push, so a brand-new image may 404 for the few seconds between the two — it resolves on
+# its own and is not worth serialising the workflows for.
 
 name: Docker Hub description
 

@@ -7,7 +7,13 @@
   Two constraints that do not apply to README.md:
     - Docker Hub renders this file outside the repository, so every link must be absolute.
       A relative `docs/FEATURES.md` resolves to nothing there.
-    - No image in the repository is reachable either; only external URLs (shields.io) are.
+    - No image in the repository is reachable either. The screenshots are therefore served
+      from GitHub Pages (https://devdownin.github.io/Kafkaexplorer/img/…), which publishes
+      ./docs on every push to main — the same files as docs/img/, at an absolute URL Docker
+      Hub can fetch. A repository-relative path renders as a broken image here.
+
+  The screenshots are generated, not taken by hand: docs/screenshots/ drives the compiled SPA
+  over canned API responses. Re-run it after a UI change rather than re-photographing.
 -->
 
 # ⚡ Kafka SQL Explorer
@@ -25,6 +31,8 @@ runnable Flink SQL query — no DDL to write, no schema to guess, no CLI gymnast
 
 One container, one URL, **zero cluster-side installation**: it connects as an ordinary
 Kafka client, so there is nothing to deploy on your brokers.
+
+![The dashboard: every topic, its message count, its state and when it last received something](https://devdownin.github.io/Kafkaexplorer/img/dashboard.png)
 
 ---
 
@@ -102,6 +110,39 @@ window, plus duplicates and poison records for the audit to find.
 - 🔭 **Kafka 4 native** — KRaft controller quorum, KIP-848 consumer groups, share groups (KIP-932) and feature versions, in the UI and on `/actuator/prometheus`.
 
 Full feature tour: **[docs/FEATURES.md](https://github.com/devdownin/Kafkaexplorer/blob/main/docs/FEATURES.md)**
+
+## 🖼️ A look around
+
+**Topic Explorer** — search the whole topic (text, regex, field path, JSONPath, XPath, record
+key or Kafka header), see the matches highlighted, and read exactly what was covered: how many
+records were scanned, why the pass stopped, and whether it can be continued.
+
+![Topic Explorer: a text search over demo.orders.5.shipped, two matches highlighted, with the coverage strip stating 4,318 records scanned](https://devdownin.github.io/Kafkaexplorer/img/topic-explorer.png)
+
+**SQL Editor** — Monaco, with the topics and Flink tables in the sidebar, completion scoped to
+the tables the query actually cites, and the engine that answered stated on the result
+(`FLINK` here, `KAFKA_DIRECT` when the planner falls back).
+
+![SQL Editor: a SELECT over demo_orders_5_shipped, ten rows returned in 11 ms by the Flink engine](https://devdownin.github.io/Kafkaexplorer/img/sql-editor.png)
+
+**Stream Flow** — follow one record key across the cluster. The chain is drawn from first
+sightings, each hop carries its latency from the previous one, the slowest is called out, and
+the evidence table underneath gives partition, offset and payload for every hop, so the graph
+can be checked rather than believed.
+
+![Stream Flow: key ORD-1042 traced across six topics, with per-hop latencies and the slowest hop into demo.orders.5.shipped highlighted](https://devdownin.github.io/Kafkaexplorer/img/stream-flow.png)
+
+**Cluster Audit** — one click, whole cluster: message formats, poison payloads, duplicate
+keys, flow drop-off and latency, graded `HEALTHY` / `WARNING` / `CRITICAL`. Every run states
+its own scope, because a check that quietly sampled ten messages must not read like a verdict
+on a million.
+
+![Cluster Audit: 28 topics, 2 critical and 3 warning, health score 89%, with the per-topic table and its findings](https://devdownin.github.io/Kafkaexplorer/img/audit.png)
+
+Also there and not pictured here: **Cluster**
+([screenshot](https://devdownin.github.io/Kafkaexplorer/img/cluster.png)) with the KRaft
+controller quorum and client groups, **Lineage**, **Metrics**, **Compare** and **Process
+Mining**.
 
 ## 🏷️ Tags
 
