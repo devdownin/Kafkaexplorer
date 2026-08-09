@@ -56,10 +56,10 @@ const SCREENS = [
     name: 'sql-editor',
     url: `/query?sql=${encodeURIComponent(SQL)}`,
     settle: async page => {
-      // The schema browser has no mount-time fetch: it is populated by its own refresh
-      // control (and after a CREATE TABLE). Clicking it is what a user does on arriving,
-      // and without it the panel would be captured empty over a healthy engine.
-      await page.getByRole('button', { name: /refresh schema/i }).click();
+      // Waiting on the catalogue rather than on the editor: the schema browser loads it on
+      // mount, and "Engine connected" is the last thing that call turns on. This used to
+      // need a click on the refresh control — the page had no mount-time fetch and opened
+      // on "Engine offline · 0 tables · 0 topics" over a healthy engine.
       await page.getByText('Engine connected').waitFor();
       // Monaco mounts asynchronously; the run button is live before it has painted.
       await page.waitForTimeout(1200);
