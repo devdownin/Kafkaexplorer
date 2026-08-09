@@ -80,7 +80,15 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           repository: ${{ vars.DOCKERHUB_REPOSITORY || 'compagnonsdudev/kafkaexplorer' }}
           readme-filepath: docs/DOCKERHUB.md
-          # Docker Hub truncates this at 100 characters and shows it in search results.
+          # Docker Hub truncates this at 100 *bytes* and shows it in search results (the
+          # em dash is three of them). Kept identical to `org.opencontainers.image.description`
+          # in release.yml, which is the same sentence read off the image manifest — change
+          # one and change the other, or the registry contradicts itself.
           short-description: 'Explore Kafka, query it in Flink SQL, audit it with AI — one container, one URL.'
-          # Rewrites bare repository references into Docker Hub links in the rendered page.
-          enable-url-completion: true
+          # `enable-url-completion` is deliberately off. It rewrites relative links into
+          # absolute ones, which this page has no use for — every link in it is already
+          # absolute, and docs/check-links.py fails the build if one is not — while its
+          # documented failure modes (inline code, links containing brackets) apply to a page
+          # made almost entirely of both. It was buying nothing and risking a mangled render
+          # of the only documentation most people ever read.
+          enable-url-completion: false

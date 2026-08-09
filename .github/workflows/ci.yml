@@ -222,7 +222,9 @@ jobs:
     name: Build and boot the release image
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 15 was sized for the amd64 boot alone. The arm64 boot below runs a whole JVM through
+    # QEMU, which is slower by a large multiple.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - name: Download JAR
@@ -279,6 +281,65 @@ jobs:
           done
           docker logs release-probe | tail -100
           echo "::error::the release image never answered liveness"
+          exit 1
+
+      # release.yml publishes linux/amd64 *and* linux/arm64, and docs/DOCKERHUB.md sells the
+      # second one ("natively, not under emulation"). Nothing in this repository had ever
+      # started it: every boot test above, and every build anywhere, was amd64. The JAR is
+      # architecture-independent, so what is actually unverified is the other half of the
+      # runtime image — the arm64 JRE base, the `RUN adduser` that executes under the target
+      # architecture, and the `wget` the HEALTHCHECK calls.
+      #
+      # Here rather than in release.yml on purpose: a tag's image is already pushed by the
+      # time it could be probed, so a failure there is a red release over an image the world
+      # can already pull. Here it fails before the tag exists, which is the only moment the
+      # information is still actionable. release.yml asserts the platform is *present* in the
+      # index; this asserts it *runs*.
+      #
+      # Not on pull requests: the JVM starts under QEMU emulation, which takes minutes rather
+      # than seconds, and the arm64 runtime stage moves only when a base image digest does —
+      # a Dependabot bump lands on main and is caught there.
+      - name: Set up QEMU
+        if: github.event_name != 'pull_request'
+        uses: docker/setup-qemu-action@v4
+
+      - name: Build the release image for arm64
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.release
+          platforms: linux/arm64
+          push: false
+          load: true
+          tags: kafka-explorer-release:ci-arm64
+          # Reads the same scope as the amd64 build above and does not write it: the layers
+          # differ by architecture, and letting a QEMU build rewrite the manifest the release
+          # consumes would be the cache-scope collision this repository already fixed once.
+          cache-from: type=gha,scope=release-image
+
+      - name: Boot it under emulation
+        if: github.event_name != 'pull_request'
+        # Same contract as the amd64 boot — liveness UP with no broker, running as uid 10001
+        # — with a much longer budget, because every instruction is being translated.
+        run: |
+          set -euo pipefail
+          docker run -d --name release-probe-arm64 --platform linux/arm64 \
+            -p 127.0.0.1:8081:8080 kafka-explorer-release:ci-arm64
+          for _ in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:8081/actuator/health/liveness 2>/dev/null | grep -q '"status":"UP"'; then
+              arch=$(docker exec release-probe-arm64 uname -m | tr -d '[:space:]')
+              [ "$arch" = "aarch64" ] || { echo "::error::probe ran as $arch, not aarch64"; exit 1; }
+              uid=$(docker exec release-probe-arm64 id -u | tr -d '[:space:]')
+              [ "$uid" = "10001" ] || { echo "::error::arm64 image runs as uid $uid"; exit 1; }
+              echo "arm64 image booted and answered liveness"
+              docker rm -f release-probe-arm64
+              exit 0
+            fi
+            sleep 10
+          done
+          docker logs release-probe-arm64 | tail -100
+          echo "::error::the arm64 release image never answered liveness"
           exit 1
 
   # docs/DOCKERHUB.md is rendered by Docker Hub, outside the repository: every link in it is
