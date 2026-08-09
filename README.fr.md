@@ -6,7 +6,7 @@
 
 [![CI](https://github.com/devdownin/Kafkaexplorer/actions/workflows/ci.yml/badge.svg)](https://github.com/devdownin/Kafkaexplorer/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
-[![Docker Hub](https://img.shields.io/docker/pulls/devdownin/kafkaexplorer?logo=docker&logoColor=white&label=docker%20pulls)](https://hub.docker.com/r/devdownin/kafkaexplorer)
+[![Docker Hub](https://img.shields.io/docker/pulls/compagnonsdudev/kafkaexplorer?logo=docker&logoColor=white&label=docker%20pulls)](https://hub.docker.com/r/compagnonsdudev/kafkaexplorer)
 [![GHCR](https://img.shields.io/badge/ghcr.io-kafkaexplorer-2496ED?logo=github&logoColor=white)](https://github.com/devdownin/Kafkaexplorer/pkgs/container/kafkaexplorer)
 [![Java 21](https://img.shields.io/badge/Java-21-orange)](pom.xml)
 [![Kafka 4.2](https://img.shields.io/badge/Kafka-4.2_KRaft-231F20?logo=apachekafka)](https://kafka.apache.org/)
@@ -82,10 +82,10 @@ Ouvrez ensuite **http://localhost:8080** et commencez à cliquer. C'est tout.
 - **Stack de dev avec rechargement à chaud** (backend + Vite + Kafka, toujours sans installation locale) : `docker compose -f docker-compose-dev.yml up`
 - **Image précompilée** (Docker Hub ou GHCR, même image, `linux/amd64` + `linux/arm64`) :
   ```bash
-  docker run -p 127.0.0.1:8080:8080 -e KAFKA_BOOTSTRAP_SERVERS=votre-broker:9092 devdownin/kafkaexplorer:latest
+  docker run -p 127.0.0.1:8080:8080 -e KAFKA_BOOTSTRAP_SERVERS=votre-broker:9092 compagnonsdudev/kafkaexplorer:latest
   # ou : ghcr.io/devdownin/kafkaexplorer:latest
   ```
-  Tags, variables d'environnement, volumes et sondes : **[docs/DOCKERHUB.md](docs/DOCKERHUB.md)** — la page publiée comme [présentation Docker Hub](https://hub.docker.com/r/devdownin/kafkaexplorer).
+  Tags, variables d'environnement, volumes et sondes : **[docs/DOCKERHUB.md](docs/DOCKERHUB.md)** — la page publiée comme [présentation Docker Hub](https://hub.docker.com/r/compagnonsdudev/kafkaexplorer).
 - **Sur votre propre cluster** : pointez `kafka.bootstrap-servers` vers n'importe quel broker Kafka 2.1+ (PLAIN, SSL ou Confluent Cloud) — rien à installer côté cluster.
 
 </details>

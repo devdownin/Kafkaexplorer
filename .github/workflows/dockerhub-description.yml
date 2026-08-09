@@ -15,8 +15,10 @@
 #                                  scope. The description API rejects a read-only one,
 #                                  and the failure reads as a 401 on an otherwise valid
 #                                  token.
-#   - variable DOCKERHUB_REPOSITORY (optional) — defaults to devdownin/kafkaexplorer.
-#     Same variable as release.yml, so a fork repoints both at once.
+#   - variable DOCKERHUB_REPOSITORY (optional) — defaults to compagnonsdudev/kafkaexplorer.
+#     Same variable as release.yml, so a fork repoints both at once. Its namespace must be
+#     the DOCKERHUB_USERNAME account (or an organisation it belongs to): note that it is
+#     deliberately not the GitHub org, which only governs the GHCR name.
 #
 # The Docker Hub repository must exist before its description can be set — it is created
 # by the first `docker push`, i.e. by the first release. Until then this workflow fails
@@ -76,7 +78,7 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: ${{ vars.DOCKERHUB_REPOSITORY || 'devdownin/kafkaexplorer' }}
+          repository: ${{ vars.DOCKERHUB_REPOSITORY || 'compagnonsdudev/kafkaexplorer' }}
           readme-filepath: docs/DOCKERHUB.md
           # Docker Hub truncates this at 100 characters and shows it in search results.
           short-description: 'Explore Kafka, query it in Flink SQL, audit it with AI — one container, one URL.'
