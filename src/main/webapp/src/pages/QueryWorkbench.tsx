@@ -16,6 +16,7 @@ import {
 import { resolveScope, toTableName } from './sqlScope';
 import { buildWindowSql, windowCaveat, guessTimeColumn, type WindowKind, type WindowUnit } from './windowSql';
 import { toCsv, toJson } from './resultExport';
+import { randomId } from '../randomId';
 
 /** Contrôle segmenté compact (mode d'exécution, offset). */
 function Segmented<T extends string>({ value, onChange, options, ariaLabel }: {
@@ -212,7 +213,7 @@ const QueryWorkbench: React.FC = () => {
 
   const saveQuery = () => {
     const name = saveInputName.trim() || activeTab.name;
-    const entry: SavedQuery = { id: crypto.randomUUID(), name, sql, savedAt: Date.now() };
+    const entry: SavedQuery = { id: randomId(), name, sql, savedAt: Date.now() };
     persistSaved([entry, ...savedQueries]);
     setSaveInputVisible(false);
     setSaveInputName('');
@@ -605,12 +606,17 @@ const QueryWorkbench: React.FC = () => {
       }
     } catch { /* let execution handle it */ }
 
-    setExecuting(true); setResults(null); setSubmittedJob(null); setSortCol(null);
+    // L'identifiant et le contrôleur sont créés *avant* de passer l'écran en « exécution ».
+    // Dans l'autre ordre, une exception ici laissait `executing` à true sans jamais
+    // atteindre le `finally` : la requête n'aboutissait pas et Stop n'avait ni contrôleur
+    // ni id à utiliser. C'est exactement ce que faisait `crypto.randomUUID()` sur une
+    // origine non sécurisée (http://hôte), où la méthode n'existe pas.
     const start = Date.now();
-    const queryId = crypto.randomUUID();
+    const queryId = randomId();
     const controller = new AbortController();
     runningQueryIdRef.current = queryId;
     abortRef.current = controller;
+    setExecuting(true); setResults(null); setSubmittedJob(null); setSortCol(null);
     try {
       if (executionMode === 'ASYNC_JOB') {
         const response = await axios.post<FlinkJobSubmission>('/api/query/jobs', { sql: sqlToRun },
@@ -672,12 +678,23 @@ const QueryWorkbench: React.FC = () => {
    */
   const cancelRunningQuery = useCallback(() => {
     const queryId = runningQueryIdRef.current;
-    abortRef.current?.abort();
+    const controller = abortRef.current;
+    controller?.abort();
     if (queryId) {
       axios.post(`/api/query/cancel/${encodeURIComponent(queryId)}`)
         .catch(() => { /* best-effort : l'UI est déjà rendue à l'utilisateur */ });
     }
-    toast('Query cancelled', 'info');
+    // Ne confirmer que ce qui a réellement eu lieu. Sans contrôleur ni id, ce bouton n'a
+    // rien annulé du tout, et annoncer « Query cancelled » là-dessus est précisément ce qui
+    // fait décrire le symptôme comme « le bouton est inactif » plutôt que « l'écran est
+    // resté bloqué » — le message détournait le diagnostic. On remet aussi l'écran dans un
+    // état cohérent, sans quoi il reste en « exécution » indéfiniment.
+    if (controller || queryId) {
+      toast('Query cancelled', 'info');
+    } else {
+      setExecuting(false);
+      toast('No query was running', 'info');
+    }
   }, [toast]);
 
   const handleSortColumn = (col: string) => {
