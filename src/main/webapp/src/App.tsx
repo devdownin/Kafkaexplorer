@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react';
 import type { FC } from 'react';
 import { createBrowserRouter, Link, Outlet, RouterProvider } from 'react-router-dom';
 import Layout from './components/Layout';
+import RouteError from './components/RouteError';
 import { ToastProvider } from './components/Toast';
 import { ProgressBar, ConfirmProvider } from './components/ui';
 
@@ -65,6 +66,12 @@ const Shell: FC = () => (
 const router = createBrowserRouter([
   {
     element: <Shell />,
+    /* Sans `errorElement`, react-router affiche le sien : la trace d'erreur, suivie d'un
+       « 💿 Hey developer 👋 » adressé à qui a écrit l'application et montré à qui s'en sert.
+       Le cas qui arrive vraiment en production est le chunk paresseux disparu après un
+       redéploiement — `RouteError` le reconnaît et recharge, au lieu d'exiger de
+       l'utilisateur qu'il devine que F5 est la réponse. */
+    errorElement: <RouteError />,
     children: [
       { path: '/', element: <Dashboard /> },
       { path: '/query', element: <QueryWorkbench /> },

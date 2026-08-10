@@ -58,3 +58,7 @@ yarn-error.log*
 
 # Runtime logs (logging.file.name: logs/kafkaexplorer.log)
 logs/
+
+# Bytecode Python des vérificateurs de docs/ — généré à chaque exécution locale.
+__pycache__/
+*.py[cod]
