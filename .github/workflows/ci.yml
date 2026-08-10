@@ -168,6 +168,20 @@ jobs:
           curl -fsS http://127.0.0.1:8080/actuator/health/readiness | grep -q '"status":"UP"'
           curl -fsS http://127.0.0.1:8080/api/dashboard > /dev/null
 
+          # The SPA's cache policy, which is a deployment contract and not a detail: a
+          # browser reusing yesterday's index.html asks for lazy chunks this build no longer
+          # has, the dynamic import fails, and the page dies on "Failed to fetch dynamically
+          # imported module". index.html must revalidate; the content-hashed assets it names
+          # can be cached forever. Asserted here because the assets only exist in a built
+          # image — there is nothing to serve in a source checkout.
+          curl -fsSI http://127.0.0.1:8080/ | grep -iq 'cache-control:.*no-cache' \
+            || { echo "::error::index.html is not served no-cache — a stale one breaks lazy chunks after every deploy"; exit 1; }
+
+          asset=$(curl -fsS http://127.0.0.1:8080/ | grep -o '/assets/[^"]*\.js' | head -1)
+          [ -n "$asset" ] || { echo "::error::no hashed asset referenced by index.html"; exit 1; }
+          curl -fsSI "http://127.0.0.1:8080$asset" | grep -iq 'cache-control:.*immutable' \
+            || { echo "::error::$asset is not served immutable"; exit 1; }
+
           # Runs unprivileged.
           uid=$(docker compose exec -T explorer id -u | tr -d '[:space:]')
           [ "$uid" = "10001" ] || { echo "::error::running as uid $uid, expected 10001"; exit 1; }

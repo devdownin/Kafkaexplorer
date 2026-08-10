@@ -8,7 +8,9 @@ import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.cache.caffeine.CaffeineCacheManager;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.CacheControl;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
+import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 import java.util.concurrent.TimeUnit;
@@ -16,6 +18,35 @@ import java.util.concurrent.TimeUnit;
 @Configuration
 @EnableCaching
 public class WebConfig implements WebMvcConfigurer {
+
+    /**
+     * Cache policy for the SPA's own files. Nothing set one before, so Spring sent no
+     * {@code Cache-Control} at all and every browser applied its own heuristic — including
+     * to {@code index.html}, the one file that must never be stale.
+     *
+     * <p>That asymmetry is the whole point. Vite emits content-hashed asset names
+     * ({@code Metrics-axy9HlH6.js}), so a given URL's content can never change: caching it
+     * for a year is free and correct. {@code index.html} is the opposite — it is the index
+     * <em>of</em> those hashes, and a browser reusing yesterday's copy asks for chunks this
+     * build no longer has. The dynamic import then fails with "Failed to fetch dynamically
+     * imported module" and the page dies on an error the user cannot act on.
+     *
+     * <p>This does not cover a tab left open across a redeploy, which no header can reach —
+     * the document is already loaded and already names the old chunks. That case is handled
+     * in the SPA, by {@code staleChunk.ts}. The two are complementary, not alternatives.
+     */
+    @Override
+    public void addResourceHandlers(ResourceHandlerRegistry registry) {
+        registry.addResourceHandler("/assets/**")
+                .addResourceLocations("classpath:/static/assets/")
+                .setCacheControl(CacheControl.maxAge(365, TimeUnit.DAYS).immutable());
+
+        // Everything else, index.html above all: revalidate on every load. `noCache` still
+        // allows a 304, so this costs one conditional request, not a re-download.
+        registry.addResourceHandler("/**")
+                .addResourceLocations("classpath:/static/")
+                .setCacheControl(CacheControl.noCache());
+    }
 
     @Override
     public void addCorsMappings(CorsRegistry registry) {
