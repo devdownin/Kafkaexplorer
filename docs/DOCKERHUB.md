@@ -260,17 +260,24 @@ docker run --rm eclipse-temurin:25-jre-alpine java -version
 ```
 
 If that fails too, no image will start on that host until the policy is changed. On RHEL,
-Rocky, Alma and derivatives it is almost always SELinux:
+Rocky, Alma and derivatives it is almost always SELinux. Settle it in three commands,
+without going near the audit log:
 
 ```bash
-getsebool -a | grep execmem                      # which boolean this policy has
-sudo ausearch -m avc -ts recent | grep execmem   # the denial itself, with a timestamp
-sudo setsebool -P allow_execmem 1                # or: setsebool -P deny_execmem 0
+sudo setenforce 0 && docker run --rm eclipse-temurin:25-jre-alpine java -version
+sudo setenforce 1                    # put it back immediately, whatever the result
+getsebool -a | grep execmem          # which boolean this policy version has
+sudo setsebool -P allow_execmem 1    # the durable fix — or: setsebool -P deny_execmem 0
 ```
 
-No `execmem` denial in the audit log? Then suspect a restrictive seccomp profile: if
-`docker run --security-opt seccomp=unconfined …` starts, that is the cause — and the fix is
-to update Docker, whose older profiles block syscalls current JVMs use, not to run
+Permissive mode is the discriminator rather than `ausearch`, deliberately: a missing `AVC`
+record is weak evidence. `auditd` may not be running, and its event queue can silently drop
+records when `q_depth` in `/etc/audit/auditd.conf` is small — so "no denial found" and "no
+denial happened" are not the same statement.
+
+Still failing under permissive? SELinux is not the cause. Suspect a restrictive seccomp
+profile: if `docker run --security-opt seccomp=unconfined …` starts, that is it — and the
+fix is to update Docker, whose older profiles block syscalls current JVMs use, not to run
 unconfined in production.
 
 **Nothing in `/app/logs`.** Mount a **named volume**, never a host file. Bind-mounting a
