@@ -250,6 +250,29 @@ container, not your host: use the service name on a compose network, or
 app uses `kafka-clients` directly, not `spring-kafka`, so the property prefix is `kafka.`
 and not `spring.kafka.`.
 
+**The container exits at once with `Failed to mark memory page as executable — check if
+grsecurity/PaX is enabled`.** This is the host, not the image: the JVM asked the kernel to
+make its JIT code cache executable and was refused, during VM initialisation, before any of
+this application runs. Prove it in one command — the base image, with nothing of ours in it:
+
+```bash
+docker run --rm eclipse-temurin:25-jre-alpine java -version
+```
+
+If that fails too, no image will start on that host until the policy is changed. On RHEL,
+Rocky, Alma and derivatives it is almost always SELinux:
+
+```bash
+getsebool -a | grep execmem                      # which boolean this policy has
+sudo ausearch -m avc -ts recent | grep execmem   # the denial itself, with a timestamp
+sudo setsebool -P allow_execmem 1                # or: setsebool -P deny_execmem 0
+```
+
+No `execmem` denial in the audit log? Then suspect a restrictive seccomp profile: if
+`docker run --security-opt seccomp=unconfined …` starts, that is the cause — and the fix is
+to update Docker, whose older profiles block syscalls current JVMs use, not to run
+unconfined in production.
+
 **Nothing in `/app/logs`.** Mount a **named volume**, never a host file. Bind-mounting a
 path that does not exist on the host makes Docker create a *directory* where the log file
 should be, and Logback then fails to open it — silently.
