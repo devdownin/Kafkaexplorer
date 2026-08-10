@@ -72,6 +72,7 @@ import {
   type TopicSearchCriteria,
   type TopicSearchResponse,
 } from '../components/topic/topicSearch';
+import { copyText } from '../clipboard';
 
 interface TopicDetail {
   topic: {
@@ -728,8 +729,8 @@ const TopicExplorer: React.FC = () => {
   }, []);
 
   const copyToClipboard = React.useCallback((text: string) => {
-    navigator.clipboard.writeText(text);
-    toast('Copied to clipboard', 'success');
+    void copyText(text).then(ok =>
+      toast(ok ? 'Copied to clipboard' : 'Could not copy to the clipboard', ok ? 'success' : 'error'));
   }, [toast]);
 
   /**
@@ -743,9 +744,9 @@ const TopicExplorer: React.FC = () => {
     [name]);
 
   const copyRecordLink = React.useCallback((message: TopicMessage) => {
-    void navigator.clipboard.writeText(
-      buildRecordLink(window.location.origin, location.pathname, message));
-    toast(`Link to p${message.partition}@${message.offset} copied`, 'success');
+    void copyText(buildRecordLink(window.location.origin, location.pathname, message)).then(ok =>
+      toast(ok ? `Link to p${message.partition}@${message.offset} copied` : 'Could not copy to the clipboard',
+        ok ? 'success' : 'error'));
   }, [location.pathname, toast]);
 
   const loadFullRecord = React.useCallback(async (message: TopicMessage) => {
@@ -894,8 +895,8 @@ const TopicExplorer: React.FC = () => {
   const copySearchLink = () => {
     const target = ranCriteria ?? criteria;
     const url = `${window.location.origin}${location.pathname}${buildSearchQuery(target)}`;
-    void navigator.clipboard.writeText(url);
-    toast('Search link copied', 'success');
+    void copyText(url).then(ok =>
+      toast(ok ? 'Search link copied' : 'Could not copy to the clipboard', ok ? 'success' : 'error'));
   };
 
   /** Applique un critère (historique, relance suggérée) et l'exécute d'un trait. */

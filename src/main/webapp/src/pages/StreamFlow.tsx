@@ -23,6 +23,7 @@ import {
   type FlowHit, type FormErrors, type HitSortKey, type ParsedFlow, type TraceContinuation,
   type TraceHistoryEntry, type TraceParams, type TraceProgress, type Transform,
 } from './streamFlow';
+import { copyText } from '../clipboard';
 
 /** Filet de sécurité côté client : le backend borne déjà la trace (explorer.stream-flow-timeout-ms). */
 const REQUEST_TIMEOUT_MS = 120_000;
@@ -575,8 +576,9 @@ const StreamFlow: React.FC = () => {
   const copyLink = async () => {
     const url = `${window.location.origin}${window.location.pathname}${buildTraceQuery(ranParams ?? currentParams())}`;
     try {
-      await navigator.clipboard.writeText(url);
-      toast('Trace link copied', 'success');
+      const ok = await copyText(url);
+      toast(ok ? 'Trace link copied' : 'Could not copy — the browser refused clipboard access',
+        ok ? 'success' : 'error');
     } catch {
       toast('Could not copy — the browser refused clipboard access', 'error');
     }
