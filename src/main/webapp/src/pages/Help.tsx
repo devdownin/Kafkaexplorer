@@ -4,6 +4,7 @@ import {
   PageHeader, Card, Button, Badge, type BadgeTone,
   Table, TableHead, TableBody, TableRow, Th, Td,
 } from '../components/ui';
+import { copyText } from '../clipboard';
 
 /**
  * Uniquement des raccourcis qui existent : la ligne « Ctrl + S — Save query (coming soon) »
@@ -83,8 +84,7 @@ const Help: React.FC = () => {
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
 
   const copy = (sql: string, idx: number) => {
-    navigator.clipboard.writeText(sql);
-    setCopiedIdx(idx);
+    void copyText(sql).then(ok => { if (ok) { setCopiedIdx(idx); } });
     setTimeout(() => setCopiedIdx(null), 1500);
   };
 

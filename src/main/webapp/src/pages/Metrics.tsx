@@ -17,6 +17,7 @@ import {
 } from '../components/ui';
 import { describeQueryError } from './queryError';
 import { clearDraft, readDraft, writeDraft } from '../draftStore';
+import { copyText } from '../clipboard';
 
 interface MetricConfig {
   id: string;
@@ -518,7 +519,8 @@ const MetricCard: React.FC<{
         <pre className="flex-1 text-[10px] font-mono text-on-surface-variant truncate leading-relaxed whitespace-nowrap overflow-hidden">
           {metric.sql.replace(/\s+/g, ' ')}
         </pre>
-        <button onClick={() => { navigator.clipboard.writeText(metric.sql); toast('SQL copied', 'success'); }}
+        <button onClick={() => void copyText(metric.sql).then(ok =>
+            toast(ok ? 'SQL copied' : 'Could not copy to the clipboard', ok ? 'success' : 'error'))}
           title="Copy SQL" aria-label="Copy the metric SQL" className="shrink-0 text-outline hover:text-primary transition-colors opacity-0 group-hover:opacity-100">
           <span className="material-symbols-outlined text-base">content_copy</span>
         </button>

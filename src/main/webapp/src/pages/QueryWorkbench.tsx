@@ -17,6 +17,7 @@ import { resolveScope, toTableName } from './sqlScope';
 import { buildWindowSql, windowCaveat, guessTimeColumn, type WindowKind, type WindowUnit } from './windowSql';
 import { toCsv, toJson } from './resultExport';
 import { randomId } from '../randomId';
+import { copyText } from '../clipboard';
 
 /** Contrôle segmenté compact (mode d'exécution, offset). */
 function Segmented<T extends string>({ value, onChange, options, ariaLabel }: {
@@ -704,7 +705,8 @@ const QueryWorkbench: React.FC = () => {
 
   const copyCell = (value: unknown) => {
     const text = typeof value === 'object' ? JSON.stringify(value) : String(value ?? '');
-    navigator.clipboard.writeText(text).then(() => toast('Copied', 'success'));
+    void copyText(text).then(ok =>
+      toast(ok ? 'Copied' : 'Could not copy to the clipboard', ok ? 'success' : 'error'));
   };
 
   const exportResults = (format: 'csv' | 'json') => {
@@ -796,7 +798,8 @@ const QueryWorkbench: React.FC = () => {
             </div>
             <div className="p-4 border-t border-outline-variant flex items-center justify-end gap-2">
               <Button variant="outline" size="sm" icon="content_copy" disabled={!ddlPreview}
-                onClick={() => { if (ddlPreview) { navigator.clipboard.writeText(ddlPreview); toast('DDL copied', 'success'); } }}>
+                onClick={() => { if (ddlPreview) void copyText(ddlPreview).then(ok =>
+                  toast(ok ? 'DDL copied' : 'Could not copy to the clipboard', ok ? 'success' : 'error')); }}>
                 Copy
               </Button>
               <Button variant="primary" size="sm" icon="edit_note" disabled={!ddlPreview}
@@ -1318,7 +1321,8 @@ const QueryWorkbench: React.FC = () => {
                         <pre className="mt-2 text-[10px] text-on-surface-variant font-mono whitespace-pre-wrap overflow-x-auto leading-relaxed border-t border-error/20 pt-2">{queryError.raw}</pre>
                       )}
                     </div>
-                    <button onClick={() => navigator.clipboard.writeText(queryError.raw || queryError.title).then(() => toast('Error copied', 'success'))}
+                    <button onClick={() => void copyText(queryError.raw || queryError.title).then(ok =>
+                      toast(ok ? 'Error copied' : 'Could not copy to the clipboard', ok ? 'success' : 'error'))}
                       className="text-outline hover:text-on-surface shrink-0 transition-colors" title="Copy error" aria-label="Copy the error message">
                       <span className="material-symbols-outlined text-sm">content_copy</span>
                     </button>

@@ -256,6 +256,10 @@ jobs:
           # the build below pushes to GHCR alone instead of failing on a registry nobody
           # can reach. `outcome` is the pre-continue-on-error result — `conclusion` would
           # read `success` for a step that just failed.
+          # `github.repository` keeps the repository's casing (`devdownin/Kafkaexplorer`)
+          # and a container reference must be lowercase — metadata-action normalises it
+          # here, which is why this line is correct as written. Anywhere the reference is
+          # built by hand it has to be lowercased explicitly; see the `index` step.
           images: |
             ghcr.io/${{ github.repository }}
             name=docker.io/${{ vars.DOCKERHUB_REPOSITORY || 'compagnonsdudev/kafkaexplorer' }},enable=${{ steps.hub_login.outcome == 'success' }}
@@ -325,11 +329,19 @@ jobs:
       # exists, where a failure costs nothing); this only asserts it is in the index, which
       # costs one API call.
       - name: Assert both platforms are in the published index
+        id: index
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           set -euo pipefail
+          # Lowercased: a container reference must be, and `github.repository` keeps the
+          # GitHub repository's casing — here `devdownin/Kafkaexplorer`, with a capital K.
+          # Exported so the release notes below quote a command that actually runs;
+          # writing that reference by hand a second time is precisely how they came to
+          # publish `ghcr.io/devdownin/Kafkaexplorer@sha256:…`, which docker rejects with
+          # "repository name must be lowercase".
           image="ghcr.io/${GITHUB_REPOSITORY,,}@${DIGEST}"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
           echo "Inspecting $image"
           platforms=$(docker buildx imagetools inspect --raw "$image" \
             | jq -r '.manifests[]
@@ -358,7 +370,7 @@ jobs:
             **Container image** — `${{ steps.build.outputs.digest }}`
 
             ```bash
-            docker pull ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}
+            docker pull ${{ steps.index.outputs.image }}
             ```
 
             Same digest on every registry this tag was pushed to. Pin it in production:
