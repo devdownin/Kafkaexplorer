@@ -13,6 +13,7 @@ import com.yourcompany.kafkasqlexplorer.service.FlinkJobService;
 import com.yourcompany.kafkasqlexplorer.service.FlinkSqlService;
 import com.yourcompany.kafkasqlexplorer.service.KafkaAdminService;
 import com.yourcompany.kafkasqlexplorer.service.SchemaInferenceService;
+import com.yourcompany.kafkasqlexplorer.service.SqlErrorClassifier;
 import com.yourcompany.kafkasqlexplorer.service.SqlExplorationService;
 import com.yourcompany.kafkasqlexplorer.service.SqlQueryValidator;
 import org.springframework.http.HttpStatus;
@@ -125,7 +126,7 @@ public class QueryController {
     }
 
     @GetMapping("/ddl-preview")
-    public Map<String, String> ddlPreview(@RequestParam String topic) {
+    public Map<String, String> ddlPreview(@RequestParam("topic") String topic) {
         try {
             MessageFormat format = schemaInferenceService.detectFormat(topic);
             Map<String, String> schema = schemaInferenceService.inferSchema(topic, format);
@@ -133,7 +134,13 @@ public class QueryController {
                     ddlGeneratorService.generateDdl(topic, schema, format));
             return Map.of("ddl", ddl);
         } catch (Exception e) {
-            return Map.of("error", e.getMessage());
+            // SqlErrorClassifier.explain, not e.getMessage(): that is null for a
+            // NullPointerException, and Map.of rejects a null value — so the one failure mode
+            // where the caller most needs a reason turned this handler's own error path into a
+            // 500, which the UI could only report as a generic "Failed to generate DDL preview".
+            // explain() is documented never to return null or blank, and it flattens the cause
+            // chain, where schema inference habitually keeps the useful text.
+            return Map.of("error", SqlErrorClassifier.explain(e));
         }
     }
 

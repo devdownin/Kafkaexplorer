@@ -6,7 +6,7 @@ import '../monaco-setup';
 import axios from 'axios';
 import { useToast } from '../components/Toast';
 import {
-  Button, Badge, Input, Select, Field, NumberInput, EmptyState, Tooltip, useConfirm, cn,
+  Button, Badge, Input, Select, Field, NumberInput, EmptyState, ErrorPanel, Tooltip, useConfirm, cn,
   useVirtualRows, ScrollList,
 } from '../components/ui';
 import {
@@ -21,6 +21,7 @@ import {
   writeStored, readStored, removeStored,
   readLayout, clamp, LAYOUT_STORAGE_KEY, DEFAULT_LAYOUT,
   SPLIT_MIN, SPLIT_MAX, SIDEBAR_MIN, SIDEBAR_MAX, type WorkbenchLayout,
+  starterQueries, pushHistory, describeHistoryEntry, formatDuration, type HistoryEntry,
 } from './queryWorkbench';
 import { randomId } from '../randomId';
 import { copyText } from '../clipboard';
@@ -174,7 +175,19 @@ const SAVED_STORAGE_KEY = 'kse:saved-queries';
  * ne change rien à ce qui est conservé — la dernière frappe est écrite, comme avant.
  */
 const TABS_PERSIST_DEBOUNCE_MS = 400;
-const DEFAULT_SQL = "SELECT\n  window_start, window_end, product_id,\n  SUM(quantity) AS total_sales\nFROM orders_stream\nWINDOW TUMBLING (SIZE 5 MINUTES)\nGROUP BY\n  window_start, window_end, product_id\nEMIT CHANGES;";
+/**
+ * L'onglet initial part **vide**.
+ *
+ * Il était semé d'une requête écrite en dur qui ne pouvait pas s'exécuter : `WINDOW TUMBLING
+ * (SIZE 5 MINUTES) … EMIT CHANGES` est de la syntaxe ksqlDB, pas du Flink SQL, et `orders_stream`
+ * n'existe dans aucun jeu de données de ce dépôt. Le premier geste évident — ouvrir l'éditeur,
+ * appuyer sur Run — échouait donc, sur une erreur de parser depuis que les erreurs utilisateur ne
+ * retombent plus sur le lecteur direct. Les propositions de départ sont désormais bâties sur le
+ * catalogue réellement chargé (`starterQueries`) et affichées dans le panneau de résultats, où le
+ * regard va déjà : elles ne peuvent pas citer une table absente, et il n'y en a aucune quand le
+ * catalogue est vide.
+ */
+const DEFAULT_SQL = '';
 // Au-delà de ce nombre de lignes, la grille passe en rendu virtualisé (seules
 // les lignes visibles sont montées). En-deçà, on garde le rendu classique —
 // aucun changement d'apparence ni de comportement pour le cas courant.
@@ -621,6 +634,7 @@ const QueryWorkbench: React.FC = () => {
   // ── DDL preview ───────────────────────────────────────────────────────────────
   const [ddlPreviewTopic, setDdlPreviewTopic] = useState<string | null>(null);
   const [ddlPreview, setDdlPreview] = useState<string | null>(null);
+  const [ddlPreviewError, setDdlPreviewError] = useState<QueryErrorInfo | null>(null);
   const [ddlPreviewLoading, setDdlPreviewLoading] = useState(false);
 
   /**
@@ -645,24 +659,32 @@ const QueryWorkbench: React.FC = () => {
     ddlOpenerRef.current = document.activeElement as HTMLElement | null;
     setDdlPreviewTopic(topicName);
     setDdlPreview(null);
+    setDdlPreviewError(null);
     setDdlPreviewLoading(true);
     try {
       const res = await axios.get<{ ddl?: string; error?: string }>(`/api/query/ddl-preview?topic=${encodeURIComponent(topicName)}`);
       setDdlPreview(res.data.ddl ?? null);
-      if (res.data.error) toast(`DDL preview failed: ${res.data.error}`, 'error');
-    } catch { toast('Failed to generate DDL preview', 'error'); }
+      // Le motif s'affiche *dans* la boîte, pas dans un toast qui s'efface derrière elle en trois
+      // secondes en emportant la seule chose utile — pourquoi l'inférence n'a rien donné.
+      if (res.data.error) setDdlPreviewError(describeQueryError(res.data.error));
+    } catch (e) { setDdlPreviewError(describeApiError(e, 'Failed to generate DDL preview')); }
     finally { setDdlPreviewLoading(false); }
   };
 
   // ── History ───────────────────────────────────────────────────────────────────
   const [showHistory, setShowHistory] = useState(false);
   const historyRef = useRef<HTMLDivElement>(null);
-  const [history, setHistory] = useState<{ sql: string; ts: number }[]>(
-    () => readStored<{ sql: string; ts: number }[]>(HISTORY_STORAGE_KEY, []),
+  const [history, setHistory] = useState<HistoryEntry[]>(
+    () => readStored<HistoryEntry[]>(HISTORY_STORAGE_KEY, []),
   );
-  const saveToHistory = (sqlStr: string) => {
-    const entry = { sql: sqlStr.trim(), ts: Date.now() };
-    const next = [entry, ...history.filter(h => h.sql !== entry.sql)].slice(0, 20);
+  /**
+   * Une entrée porte maintenant ce que la requête a donné — durée, lignes, moteur, succès. Elle ne
+   * portait que le SQL et l'heure, et **les échecs n'y entraient pas** : retrouver « celle qui
+   * avait marché » demandait de relire vingt requêtes, et celle qu'on voulait rouvrir pour la
+   * corriger n'y était même pas.
+   */
+  const saveToHistory = (entry: HistoryEntry) => {
+    const next = pushHistory(history, entry);
     setHistory(next);
     writeStored(HISTORY_STORAGE_KEY, next);
   };
@@ -925,21 +947,32 @@ const QueryWorkbench: React.FC = () => {
       if (executionMode === 'ASYNC_JOB') {
         const response = await axios.post<FlinkJobSubmission>('/api/query/jobs', { sql: sqlToRun },
           { signal: controller.signal });
-        setExecutionMs(Date.now() - start);
+        const ms = Date.now() - start;
+        setExecutionMs(ms);
         setSubmittedJob(response.data);
         setResults(null);
-        saveToHistory(sqlToRun);
+        saveToHistory({ sql: sqlToRun, ts: Date.now(), ms, ok: true, engine: 'FLINK JOB' });
         toast(`Streaming job submitted: ${response.data.status}`, 'success');
       } else {
         const readMode = offsetMode === 'LATEST' ? 'latest-offset' : 'earliest-offset';
         const limit = maxRows;
         const response = await axios.post<QueryResult>('/api/query/run-sync',
           { sql: sqlToRun, readMode, maxRows: limit, queryId }, { signal: controller.signal });
-        setExecutionMs(Date.now() - start);
+        const ms = Date.now() - start;
+        setExecutionMs(ms);
         setResultLimit(limit);
         setResults(response.data);
+        // Une requête qui a échoué entre aussi dans l'historique : c'est très souvent celle-là
+        // que l'on veut rouvrir pour la corriger, et elle n'y était pas.
+        saveToHistory({
+          sql: sqlToRun,
+          ts: Date.now(),
+          ms,
+          ok: !response.data.error,
+          rows: response.data.error ? undefined : response.data.rows.length,
+          engine: response.data.error ? undefined : response.data.engine,
+        });
         if (!response.data.error) {
-          saveToHistory(sqlToRun);
           // Refresh the schema browser when:
           // 1. The user explicitly ran a CREATE TABLE statement.
           // 2. The backend auto-registered a Flink table during query execution.
@@ -950,13 +983,16 @@ const QueryWorkbench: React.FC = () => {
         }
       }
     } catch (error) {
-      setExecutionMs(Date.now() - start);
-      // Une annulation demandée par l'utilisateur n'est pas un échec : pas de panneau rouge.
+      const ms = Date.now() - start;
+      setExecutionMs(ms);
+      // Une annulation demandée par l'utilisateur n'est pas un échec : pas de panneau rouge, et
+      // rien dans l'historique — on n'a appris rien de la requête, seulement qu'on l'a arrêtée.
       if (axios.isCancel(error)) {
         setResults(null);
         setSubmittedJob(null);
         return;
       }
+      saveToHistory({ sql: sqlToRun, ts: Date.now(), ms, ok: false });
       // describeApiError couvre aussi ce que le corps de réponse ne dit pas : backend
       // injoignable, requête interrompue. Sans lui, une panne de transport s'affichait
       // « Query execution failed », qui n'apprend rien.
@@ -1074,6 +1110,8 @@ const QueryWorkbench: React.FC = () => {
     return selection.isEmpty() ? ('inserted' as const) : ('replaced' as const);
   }, [sql, updateSql]);
 
+  const starters = useMemo(() => starterQueries(schema), [schema]);
+
   /** Table visée par l'assistant : celle que la requête cite, sinon la première du catalogue. */
   const windowTable = useMemo(
     () => resolveScope(sql, [...(schema?.tables ?? []), ...(schema?.topics ?? [])])[0]
@@ -1112,7 +1150,6 @@ const QueryWorkbench: React.FC = () => {
     }[where], 'success');
   };
 
-  const formatMs = (ms: number) => ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
 
   // ── Render ────────────────────────────────────────────────────────────────────
   return (
@@ -1140,7 +1177,10 @@ const QueryWorkbench: React.FC = () => {
                 ? <div className="flex items-center gap-2 text-on-surface-variant py-4"><span className="material-symbols-outlined animate-spin text-[16px]">progress_activity</span><span className="text-[13px]">Inferring schema…</span></div>
                 : ddlPreview
                   ? <pre className="text-[12px] font-mono text-on-surface whitespace-pre-wrap leading-relaxed">{ddlPreview}</pre>
-                  : <p className="text-[13px] text-on-surface-variant">Failed to generate DDL</p>
+                  : ddlPreviewError
+                    ? <ErrorPanel error={ddlPreviewError}
+                        onRetry={ddlPreviewTopic ? () => void fetchDdlPreview(ddlPreviewTopic) : undefined} />
+                    : <p className="text-[13px] text-on-surface-variant">Failed to generate DDL</p>
               }
             </div>
             <div className="p-4 border-t border-outline-variant flex items-center justify-end gap-2">
@@ -1412,8 +1452,21 @@ const QueryWorkbench: React.FC = () => {
                         onClick={() => { openSql(h.sql); setShowHistory(false); }}
                         title={h.sql}
                         className="w-full text-left px-3 py-2 hover:bg-primary/10 border-b border-outline-variant/40 last:border-0 transition-colors">
-                        <p className="font-mono text-[12px] text-on-surface truncate">{h.sql.replace(/\s+/g, ' ')}</p>
-                        <p className="text-[11px] text-outline mt-0.5">{new Date(h.ts).toLocaleString()}</p>
+                        <div className="flex items-start gap-2">
+                          {/* Une entrée dit maintenant ce que la requête a donné : sans issue,
+                              retrouver « celle qui avait marché » demandait de toutes les relire. */}
+                          <span aria-hidden="true" className={cn(
+                            'material-symbols-outlined text-[14px] mt-0.5 shrink-0',
+                            h.ok === false ? 'text-error' : h.ok ? 'text-success' : 'text-outline',
+                          )}>{h.ok === false ? 'error' : h.ok ? 'check_circle' : 'schedule'}</span>
+                          <div className="min-w-0 flex-1">
+                            <p className="font-mono text-[12px] text-on-surface truncate">{h.sql.replace(/\s+/g, ' ')}</p>
+                            <p className="text-[11px] text-outline mt-0.5">
+                              {new Date(h.ts).toLocaleString()}
+                              {describeHistoryEntry(h) && <> · {describeHistoryEntry(h)}</>}
+                            </p>
+                          </div>
+                        </div>
                       </button>
                     ))
                   }
@@ -1651,7 +1704,7 @@ const QueryWorkbench: React.FC = () => {
               <div className="flex items-center gap-5 min-w-0">
                 <div className="flex items-center gap-1.5">
                   <span className="material-symbols-outlined text-[16px] text-on-surface-variant">timer</span>
-                  <span className="text-[11px] text-on-surface-variant">Execution <span className="text-on-surface tabular-nums">{executing ? '…' : executionMs !== null ? formatMs(executionMs) : '—'}</span></span>
+                  <span className="text-[11px] text-on-surface-variant">Execution <span className="text-on-surface tabular-nums">{executing ? '…' : executionMs !== null ? formatDuration(executionMs) : '—'}</span></span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <span className="material-symbols-outlined text-[16px] text-on-surface-variant">list_alt</span>
@@ -1804,11 +1857,36 @@ const QueryWorkbench: React.FC = () => {
                   measureRow={measureRow}
                 />
               ) : (
-                <EmptyState
-                  icon="terminal"
-                  title={executionMode === 'ASYNC_JOB' ? 'No job submitted yet' : 'No results yet'}
-                  description={executionMode === 'ASYNC_JOB' ? 'Submit an INSERT INTO statement to launch a streaming job and track it here.' : 'Run a query with ⌘↵ to see results in this panel.'}
-                />
+                <div className="p-4">
+                  <EmptyState
+                    icon="terminal"
+                    title={executionMode === 'ASYNC_JOB' ? 'No job submitted yet' : 'No results yet'}
+                    description={executionMode === 'ASYNC_JOB' ? 'Submit an INSERT INTO statement to launch a streaming job and track it here.' : 'Run a query with ⌘↵ to see results in this panel.'}
+                  />
+                  {/* Propositions de départ, bâties sur le catalogue réellement chargé — donc
+                      jamais sur une table absente. L'onglet initial portait à leur place une
+                      requête écrite en dur, en syntaxe ksqlDB et sur un `orders_stream` qui
+                      n'existe nulle part : le tout premier Run échouait. */}
+                  {executionMode === 'SYNC_READ' && !sql.trim() && starters.length > 0 && (
+                    <div className="mx-auto mt-2 max-w-lg">
+                      <p className="text-[11px] font-medium text-on-surface-variant uppercase tracking-[0.05em] mb-2">Start from your cluster</p>
+                      <div className="space-y-1.5">
+                        {starters.map(s => (
+                          <button key={s.label} type="button"
+                            onClick={() => { openSql(s.sql); editorRef.current?.focus(); }}
+                            className="w-full text-left px-3 py-2 rounded-lg border border-outline-variant hover:border-primary/50 hover:bg-primary/5 transition-colors group/starter">
+                            <div className="flex items-center gap-2">
+                              <span aria-hidden="true" className="material-symbols-outlined text-[16px] text-primary">play_arrow</span>
+                              <span className="text-[12px] font-medium text-on-surface">{s.label}</span>
+                            </div>
+                            <p className="font-mono text-[11px] text-on-surface-variant truncate mt-1">{s.sql}</p>
+                            <p className="text-[11px] text-outline mt-0.5">{s.hint}</p>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           </div>

@@ -7,7 +7,8 @@ reliability, ergonomics, optimisation, UI quality — and they are the four sect
 
 Everything listed as **fixed** is fixed on this branch. What was found and deliberately left is in
 *Constaté, non traité* at the end, with the reason. The pure logic extracted along the way lives in
-`pages/queryWorkbench.ts` and is covered by `pages/queryWorkbench.test.ts` (41 cases).
+`pages/queryWorkbench.ts` and is covered by `pages/queryWorkbench.test.ts` (56 cases); the one
+backend fix is pinned by `QueryControllerDdlPreviewTest`.
 
 ---
 
@@ -79,6 +80,30 @@ clicked again. Both are wired, plus `aria-expanded` / `role="menu"`.
 
 ## 2. Ergonomics
 
+### E0 — the seeded query could not run, and it is the first screen *(fixed)*
+
+`DEFAULT_SQL` shipped the first tab with:
+
+```sql
+SELECT window_start, window_end, product_id, SUM(quantity) AS total_sales
+FROM orders_stream
+WINDOW TUMBLING (SIZE 5 MINUTES)
+GROUP BY window_start, window_end, product_id
+EMIT CHANGES;
+```
+
+Two independent problems. `WINDOW TUMBLING (SIZE …) … EMIT CHANGES` is **ksqlDB syntax**, not
+Flink SQL — Flink writes `TABLE(TUMBLE(TABLE t, DESCRIPTOR(ts), INTERVAL '5' MINUTE))`. And
+`orders_stream` exists nowhere: `setup-demo.sh` seeds `demo.orders.1.received` … `demo.orders.6.delivered`,
+`demo.orders.nested`, `demo.iot.sensors`; a grep finds the name only in that literal and in one
+`queryError` test fixture. So the most natural first gesture — open the editor, press Run — failed,
+and since user errors stopped falling back to the direct reader it failed on a planner error.
+
+The first tab now opens empty, and the results panel offers **starter queries built from the
+catalogue that actually loaded** (`starterQueries`, pure and tested): they cannot cite a table that
+is not there, `internal.*` topics are skipped since the app writes those to itself, and when the
+catalogue is empty there are no suggestions at all — an empty screen beats an example that lies.
+
 ### E1 — four different controls silently destroyed the tab you were writing in *(fixed)*
 
 `updateSql()` replaces the **whole active tab**. It was called by the sidebar's "SELECT from this
@@ -132,7 +157,32 @@ marks its graph the same way, for the same reason.
 
 Saving now offers to replace, and refuses to save an empty tab.
 
-### E7 — the workbench layout reset on every visit *(fixed)*
+### E7 — the history said nothing about what a query had done *(fixed)*
+
+Each entry carried `{sql, ts}` and nothing else, so finding "the one that worked" meant re-reading
+twenty queries and guessing — and **failures never entered it at all**, although a query you want to
+reopen is very often precisely the one that failed. An entry now carries duration, row count,
+engine and outcome (`HistoryEntry`, `pushHistory`, `describeHistoryEntry`), rendered as a status
+icon plus a compact `1.2s · 50 rows · Kafka Direct` line. Every result field is optional, so an
+entry written by an earlier version reads back and simply shows less. A cancelled run is *not*
+recorded: stopping a query teaches nothing about it.
+
+### E8 — a failed DDL preview lost its reason *(fixed, front and back)*
+
+`QueryController.ddlPreview` returned `Map.of("error", e.getMessage())`. **`Map.of` rejects a null
+value and `getMessage()` is null for a `NullPointerException`** — so the one failure mode where a
+caller most needs a reason turned the handler's own error path into a 500, which the UI could only
+report as a generic toast. It goes through `SqlErrorClassifier.explain()`, documented never to
+return null or blank and already used for exactly this on the query paths;
+`QueryControllerDdlPreviewTest` pins all three cases including the message-less throwable. The
+`@RequestParam` is named explicitly while we are there, so the handler resolves without relying on
+`-parameters` being on the compiler command line.
+
+On the front, the reason now renders in an `ErrorPanel` **inside the modal**, with a retry, rather
+than in a toast that faded behind the dialog in three seconds carrying the only useful part — the
+same fix the Metrics editor already received.
+
+### E9 — the workbench layout reset on every visit *(fixed)*
 
 Pages are unmounted on navigation, so an editor pane widened to write a long query came back at 55 %
 after a trip to the Dashboard, and the sidebar back to 288 px. Both are persisted under

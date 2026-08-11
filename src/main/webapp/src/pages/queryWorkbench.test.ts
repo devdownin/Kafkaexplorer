@@ -3,6 +3,8 @@ import {
   formatSql, tokenizeSql, sortRows, sortKeyOf, cellText, nextActiveTabId,
   isResultStale, writeStored, readStored, removeStored,
   readLayout, LAYOUT_STORAGE_KEY, DEFAULT_LAYOUT, SPLIT_MIN, SIDEBAR_MAX,
+  starterTable, starterQueries, pushHistory, describeHistoryEntry, formatDuration,
+  type HistoryEntry,
 } from './queryWorkbench';
 
 describe('tokenizeSql', () => {
@@ -216,6 +218,92 @@ describe('storage helpers', () => {
   it('falls back on unreadable content', () => {
     localStorage.setItem('kse:test', '{not json');
     expect(readStored('kse:test', 'fallback')).toBe('fallback');
+  });
+});
+
+describe('starterTable / starterQueries', () => {
+  it('prefers a Flink table over a topic', () => {
+    expect(starterTable({ tables: ['orders'], topics: ['demo.payments'] })).toBe('orders');
+  });
+
+  it('falls back to a topic, normalized to its table name', () => {
+    expect(starterTable({ tables: [], topics: ['demo.orders.1.received'] }))
+      .toBe('demo_orders_1_received');
+  });
+
+  it('skips the internal topics the app writes to itself', () => {
+    expect(starterTable({ tables: [], topics: ['internal.audit.history', 'demo.customers'] }))
+      .toBe('demo_customers');
+  });
+
+  it('offers nothing at all rather than an example that cannot run', () => {
+    expect(starterTable({ tables: [], topics: [] })).toBeNull();
+    expect(starterTable(null)).toBeNull();
+    expect(starterQueries({ tables: [], topics: [] })).toEqual([]);
+    expect(starterQueries(null)).toEqual([]);
+  });
+
+  it('builds every suggestion on a table the catalogue actually holds', () => {
+    const queries = starterQueries({ tables: [], topics: ['demo.orders.nested'] });
+    expect(queries).toHaveLength(2);
+    for (const q of queries) expect(q.sql).toContain('demo_orders_nested');
+  });
+
+  it('aliases the aggregate, which the direct engine requires', () => {
+    const count = starterQueries({ tables: ['orders'], topics: [] })[1];
+    expect(count.sql).toBe('SELECT COUNT(*) AS metric_value FROM orders');
+  });
+});
+
+describe('pushHistory', () => {
+  const entry = (sql: string, ts = 1): HistoryEntry => ({ sql, ts });
+
+  it('puts the newest first', () => {
+    const out = pushHistory([entry('a')], entry('b', 2));
+    expect(out.map(h => h.sql)).toEqual(['b', 'a']);
+  });
+
+  it('replaces an identical query rather than stacking it', () => {
+    const out = pushHistory([{ sql: 'a', ts: 1, rows: 5 }], { sql: 'a', ts: 2, rows: 9 });
+    expect(out).toEqual([{ sql: 'a', ts: 2, rows: 9 }]);
+  });
+
+  it('honours the cap', () => {
+    const many = Array.from({ length: 20 }, (_, i) => entry(`q${i}`));
+    expect(pushHistory(many, entry('new')).length).toBe(20);
+    expect(pushHistory(many, entry('new'), 3).map(h => h.sql)).toEqual(['new', 'q0', 'q1']);
+  });
+
+  it('ignores a blank query and trims what it stores', () => {
+    expect(pushHistory([], entry('   '))).toEqual([]);
+    expect(pushHistory([], entry('  SELECT 1  '))[0].sql).toBe('SELECT 1');
+  });
+});
+
+describe('describeHistoryEntry', () => {
+  it('says nothing when the entry carries no outcome', () => {
+    expect(describeHistoryEntry({ sql: 'SELECT 1', ts: 1 })).toBe('');
+  });
+
+  it('summarises a successful run', () => {
+    expect(describeHistoryEntry({ sql: 'q', ts: 1, ms: 1200, rows: 50, engine: 'KAFKA_DIRECT' }))
+      .toBe('1.2s · 50 rows · Kafka Direct');
+  });
+
+  it('leads with the failure', () => {
+    expect(describeHistoryEntry({ sql: 'q', ts: 1, ms: 340, ok: false })).toBe('failed · 340ms');
+  });
+
+  it('does not pluralise a single row, and keeps a zero visible', () => {
+    expect(describeHistoryEntry({ sql: 'q', ts: 1, rows: 1 })).toBe('1 row');
+    expect(describeHistoryEntry({ sql: 'q', ts: 1, rows: 0 })).toBe('0 rows');
+  });
+});
+
+describe('formatDuration', () => {
+  it('switches unit at the second', () => {
+    expect(formatDuration(999)).toBe('999ms');
+    expect(formatDuration(1000)).toBe('1.0s');
   });
 });
 

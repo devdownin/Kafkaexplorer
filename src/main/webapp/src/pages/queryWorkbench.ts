@@ -6,6 +6,7 @@
  * d'une cellule, l'écriture défensive dans `localStorage`. Même raison que `streamFlow.ts` et
  * `topicSearch.ts` — une page de 1 400 lignes n'est testable que par ce qu'on en a sorti.
  */
+import { toTableName } from './sqlScope';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Formatage SQL
@@ -452,6 +453,128 @@ export function removeStored(key: string): boolean {
   } catch {
     return false;
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Requêtes de départ
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * L'onglet initial était semé d'une requête écrite en dur qui **ne pouvait pas s'exécuter** :
+ *
+ * ```sql
+ * SELECT window_start, … FROM orders_stream
+ * WINDOW TUMBLING (SIZE 5 MINUTES) … EMIT CHANGES;
+ * ```
+ *
+ * `WINDOW TUMBLING (…) … EMIT CHANGES` est de la syntaxe ksqlDB, pas du Flink SQL (qui écrit
+ * `TABLE(TUMBLE(TABLE t, DESCRIPTOR(ts), INTERVAL '5' MINUTE))`), et `orders_stream` n'existe nulle
+ * part — le jeu de démo sème `demo.orders.1.received` et compagnie. Le geste le plus naturel du
+ * nouvel arrivant, ouvrir l'éditeur et appuyer sur Run, échouait donc ; et depuis que les erreurs
+ * utilisateur ne retombent plus sur le lecteur direct, il échoue sur une erreur de parser.
+ *
+ * Les propositions sont désormais **dérivées du catalogue réellement chargé**, donc elles ne
+ * peuvent pas citer une table absente. Quand le catalogue est vide, il n'y en a aucune : mieux
+ * vaut un écran qui n'offre rien qu'un exemple qui ment.
+ */
+export interface StarterQuery { label: string; sql: string; hint: string }
+
+export interface CatalogLike { tables: string[]; topics: string[] }
+
+/**
+ * Table sur laquelle bâtir les propositions : une table Flink si le catalogue en a une, sinon le
+ * premier topic. Les topics `internal.*` sont ceux que l'application s'écrit à elle-même (historique
+ * d'audit, configuration des métriques) — une première impression bâtie dessus n'apprend rien du
+ * cluster que l'on vient explorer.
+ */
+export function starterTable(catalog: CatalogLike | null | undefined): string | null {
+  if (!catalog) return null;
+  const table = catalog.tables.find(t => !t.startsWith('internal'));
+  if (table) return table;
+  const topic = catalog.topics.find(t => !t.startsWith('internal.'));
+  return topic ? toTableName(topic) : null;
+}
+
+export function starterQueries(catalog: CatalogLike | null | undefined): StarterQuery[] {
+  const table = starterTable(catalog);
+  if (!table) return [];
+  return [
+    {
+      label: 'Read the latest rows',
+      sql: `SELECT * FROM ${table} LIMIT 50`,
+      hint: `Reads ${table} through the direct Kafka reader.`,
+    },
+    {
+      label: 'Count the rows',
+      sql: `SELECT COUNT(*) AS metric_value FROM ${table}`,
+      // L'alias n'est pas cosmétique : le moteur direct lit la première valeur numérique d'une
+      // ligne aliasée, et un agrégat sans alias ne remonte rien.
+      hint: 'An aggregate has to be aliased — the direct engine reads the aliased column.',
+    },
+  ];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Historique
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Une entrée d'historique dit maintenant ce que la requête a **donné**.
+ *
+ * Elle ne portait que `{sql, ts}` : pour retrouver « celle qui avait marché », il fallait relire
+ * vingt requêtes et deviner. Les échecs n'y entraient même pas — or c'est souvent celle qui a
+ * échoué que l'on veut rouvrir pour la corriger.
+ *
+ * Tous les champs de résultat sont optionnels : une entrée écrite par une version antérieure se
+ * relit telle quelle et n'affiche simplement rien de plus.
+ */
+export interface HistoryEntry {
+  sql: string;
+  ts: number;
+  /** Durée mesurée côté client, en millisecondes. */
+  ms?: number;
+  /** Lignes rendues (lecture synchrone seulement). */
+  rows?: number;
+  /** `FLINK` ou `KAFKA_DIRECT`, tel que rapporté par le moteur. */
+  engine?: string;
+  /** Faux quand la requête a échoué. Absent sur une entrée d'une version antérieure. */
+  ok?: boolean;
+}
+
+export const HISTORY_CAP = 20;
+
+/**
+ * Ajoute une entrée en tête, en dédupliquant sur le SQL : relancer la même requête met à jour son
+ * résultat plutôt que d'accumuler des lignes identiques dont seule l'heure diffère.
+ */
+export function pushHistory(
+  history: readonly HistoryEntry[],
+  entry: HistoryEntry,
+  cap = HISTORY_CAP,
+): HistoryEntry[] {
+  const sql = entry.sql.trim();
+  if (!sql) return [...history];
+  return [{ ...entry, sql }, ...history.filter(h => h.sql !== sql)].slice(0, cap);
+}
+
+/** `1.2s` sous la seconde près, `340ms` en deçà. */
+export function formatDuration(ms: number): string {
+  return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
+}
+
+/**
+ * Résumé compact d'une entrée, pour la ligne sous le SQL. Chaîne vide quand l'entrée ne porte
+ * aucune information de résultat — ne rien afficher vaut mieux qu'afficher des zéros inventés.
+ */
+export function describeHistoryEntry(entry: HistoryEntry): string {
+  const parts: string[] = [];
+  if (entry.ok === false) parts.push('failed');
+  if (typeof entry.ms === 'number') parts.push(formatDuration(entry.ms));
+  if (typeof entry.rows === 'number') {
+    parts.push(`${entry.rows.toLocaleString()} ${entry.rows === 1 ? 'row' : 'rows'}`);
+  }
+  if (entry.engine) parts.push(entry.engine === 'KAFKA_DIRECT' ? 'Kafka Direct' : entry.engine);
+  return parts.join(' · ');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
