@@ -51,33 +51,51 @@ public class QueryController {
         this.ddlGeneratorService = ddlGeneratorService;
     }
 
+    /**
+     * The schema browser's payload — and, when it comes back empty, the reason.
+     *
+     * <p>Both halves used to end in an empty catch ({@code // Ignore and show empty list}), so an
+     * unreachable broker, a wrong bootstrap address and a Flink runtime still starting up all
+     * rendered as "Engine offline · 0 tables · 0 topics" with nothing to diagnose from. The two
+     * probes stay independent — Flink being unavailable must not hide the topic list, and the
+     * reverse — but each now reports what stopped it.
+     */
     @GetMapping("/init")
     public QueryInitResponse init() {
-        boolean isConnected = false;
         List<String> topics = Collections.emptyList();
         List<String> tables = Collections.emptyList();
+        String kafkaError = null;
+        String flinkError = null;
 
-        try {
-            isConnected = kafkaAdminService.ping();
-            if (isConnected) {
+        KafkaAdminService.PingResult ping = kafkaAdminService.pingDetail();
+        boolean isConnected = ping.reachable();
+        if (!isConnected) {
+            kafkaError = ping.error();
+        } else {
+            try {
                 List<String> allTopics = kafkaAdminService.listTopics();
                 Map<String, Long> sizes = kafkaAdminService.getTopicsSize(allTopics);
                 topics = allTopics.stream()
                         .filter(t -> sizes.getOrDefault(t, 0L) > 0)
                         .sorted()
                         .collect(Collectors.toList());
+            } catch (Exception e) {
+                // Reachable but unreadable — a metadata call can fail on its own (authorisation,
+                // a timeout on a very large cluster). That is not the same as "offline", so the
+                // health flag stays true and the reason is reported beside it.
+                kafkaError = SqlErrorClassifier.explain(e);
             }
-        } catch (Exception e) {
-            // Ignore and show empty list
         }
 
         try {
             tables = flinkSqlService.listTables();
         } catch (Exception e) {
-            // Flink might be starting up
+            // Flink might be starting up — which the caller can now say, instead of showing an
+            // empty catalogue that looks like a cluster with no tables in it.
+            flinkError = SqlErrorClassifier.explain(e);
         }
 
-        return new QueryInitResponse(topics, tables, isConnected);
+        return new QueryInitResponse(topics, tables, isConnected, kafkaError, flinkError);
     }
 
     @PostMapping(produces = "application/json")

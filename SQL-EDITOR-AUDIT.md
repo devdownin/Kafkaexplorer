@@ -7,8 +7,8 @@ reliability, ergonomics, optimisation, UI quality — and they are the four sect
 
 Everything listed as **fixed** is fixed on this branch. What was found and deliberately left is in
 *Constaté, non traité* at the end, with the reason. The pure logic extracted along the way lives in
-`pages/queryWorkbench.ts` and is covered by `pages/queryWorkbench.test.ts` (77 cases); the one
-backend fix is pinned by `QueryControllerDdlPreviewTest`.
+`pages/queryWorkbench.ts` and is covered by `pages/queryWorkbench.test.ts` (77 cases); the two
+backend fixes are pinned by `QueryControllerTest`.
 
 ---
 
@@ -71,7 +71,24 @@ and the file came out in the engine's order with nothing saying so. Both now com
 array, the row count is stated in the confirmation, and the file is named after the tab and stamped
 — three exports in a row no longer pile up as `query-results (2).csv`.
 
-### R8 — the history dropdown never closed on its own *(fixed)*
+### R8 — `/api/query/init` swallowed both of its failures *(fixed)*
+
+The endpoint that fills the schema browser ended each of its two probes in an empty catch
+(`// Ignore and show empty list`, `// Flink might be starting up`). An unreachable broker, a
+bootstrap address pointing nowhere, an authorisation failure and a Flink runtime still starting up
+therefore produced exactly the same screen — "Engine offline · 0 tables · 0 topics" — with nothing
+to tell them apart and nothing to act on. `KafkaAdminService.ping()` was the third empty catch on
+that path: a bare boolean, so no caller *could* say why.
+
+`pingDetail()` keeps the reason (`ping()` stays as the shorthand for callers that only want the
+flag), and `QueryInitResponse` carries `kafkaError` / `flinkError`. The two probes stay independent
+— Flink being down must not empty the topic list, and the reverse. The sidebar states each reason
+where the empty list is, "No topics with messages" is only claimed when the cluster could actually
+be read, and the health dot has **three** states: a broker that answers the probe but refuses a
+metadata call is *degraded*, not offline — sending an operator to check a connection that works is
+the worst possible lead. `QueryControllerTest` covers the four combinations.
+
+### R9 — the history dropdown never closed on its own *(fixed)*
 
 No outside-click handler, no `Escape`. It stayed open over the results panel until the button was
 clicked again. Both are wired, plus `aria-expanded` / `role="menu"`.
@@ -80,7 +97,7 @@ clicked again. Both are wired, plus `aria-expanded` / `role="menu"`.
 
 ## 2. Ergonomics
 
-### E0 — the seeded query could not run, and it is the first screen *(fixed)*
+### E1 — the seeded query could not run, and it is the first screen *(fixed)*
 
 `DEFAULT_SQL` shipped the first tab with:
 
@@ -104,7 +121,7 @@ catalogue that actually loaded** (`starterQueries`, pure and tested): they canno
 is not there, `internal.*` topics are skipped since the app writes those to itself, and when the
 catalogue is empty there are no suggestions at all — an empty screen beats an example that lies.
 
-### E0b — Run sent the whole tab, whatever the cursor was in *(fixed)*
+### E2 — Run sent the whole tab, whatever the cursor was in *(fixed)*
 
 A tab can hold several statements separated by `;` — the formatter lays them out, the editor accepts
 them — but Run sent the entire text and the backend classified on the first word. Selecting by hand
@@ -119,7 +136,7 @@ it is what DataGrip and DBeaver do. `runOrigin` carries the statement's offset s
 line/column still land on the right line of the document. The toolbar states `Statement 2/3` before
 you press: "Run statement" without saying which one would be the worrying half of the feature.
 
-### E1 — four different controls silently destroyed the tab you were writing in *(fixed)*
+### E3 — four different controls silently destroyed the tab you were writing in *(fixed)*
 
 `updateSql()` replaces the **whole active tab**. It was called by the sidebar's "SELECT from this
 table" button, by every Kafka topic in the sidebar, by every history entry, and by the DDL preview's
@@ -131,7 +148,7 @@ One rule now, in `openSql`: an empty tab is filled, a tab with content is left a
 opens in a new tab, which is what loading a *saved* query already did. The Window Assistant keeps
 its own behaviour (insert at the cursor) because it produces a fragment, not a statement.
 
-### E2 — the Format button never formatted anything *(fixed)*
+### E4 — the Format button never formatted anything *(fixed)*
 
 It ran `editor.action.formatDocument`. **Monaco ships no SQL formatter** — for this language it
 provides Monarch tokenisation and nothing else (`monaco-editor/esm/vs/languages/definitions/sql/`
@@ -147,32 +164,32 @@ names are upper-cased from a **closed** list, because an unknown one is most lik
 does not promise case-insensitive resolution for those: recasing `XmlExtract` would break the query
 we claimed to be tidying.
 
-### E3 — reading `Rows` and `Offset` was impossible on a narrow window *(fixed)*
+### E5 — reading `Rows` and `Offset` was impossible on a narrow window *(fixed)*
 
 `Offset` was hidden below `md`, `Rows` below `lg` — and both kept applying. On a laptop with a
 narrow window the query ran EARLIEST/50 with no way to see it, let alone change it. The toolbar's
 left group scrolls horizontally instead of dropping controls: a setting nobody can see is the worst
 of both worlds. Both also gained a tooltip explaining what they actually select.
 
-### E4 — the results grid did not distinguish NULL from the empty string *(fixed)*
+### E6 — the results grid did not distinguish NULL from the empty string *(fixed)*
 
 `String(row[col] ?? '')` rendered a SQL NULL and a zero-length string identically. On a result grid
 that is the distinction that says whether a LEFT JOIN found its row. `cellText` returns the flag,
 NULL renders as a dimmed italic `NULL`, and copying a NULL cell still copies the empty string —
 the value, not its rendering.
 
-### E5 — nothing said the displayed rows no longer answered the query on screen *(fixed)*
+### E7 — nothing said the displayed rows no longer answered the query on screen *(fixed)*
 
 The grid kept the previous run's rows while the next query was being typed, silently. A `Stale —
 rerun` control now appears when the editor's SQL has drifted from what produced the rows
 (`isResultStale`, whitespace-insensitive so re-indenting does not invalidate a result). Stream Flow
 marks its graph the same way, for the same reason.
 
-### E6 — saving twice under one name made two indistinguishable entries *(fixed)*
+### E8 — saving twice under one name made two indistinguishable entries *(fixed)*
 
 Saving now offers to replace, and refuses to save an empty tab.
 
-### E7 — the history said nothing about what a query had done *(fixed)*
+### E9 — the history said nothing about what a query had done *(fixed)*
 
 Each entry carried `{sql, ts}` and nothing else, so finding "the one that worked" meant re-reading
 twenty queries and guessing — and **failures never entered it at all**, although a query you want to
@@ -182,14 +199,14 @@ icon plus a compact `1.2s · 50 rows · Kafka Direct` line. Every result field i
 entry written by an earlier version reads back and simply shows less. A cancelled run is *not*
 recorded: stopping a query teaches nothing about it.
 
-### E8 — a failed DDL preview lost its reason *(fixed, front and back)*
+### E10 — a failed DDL preview lost its reason *(fixed, front and back)*
 
 `QueryController.ddlPreview` returned `Map.of("error", e.getMessage())`. **`Map.of` rejects a null
 value and `getMessage()` is null for a `NullPointerException`** — so the one failure mode where a
 caller most needs a reason turned the handler's own error path into a 500, which the UI could only
 report as a generic toast. It goes through `SqlErrorClassifier.explain()`, documented never to
 return null or blank and already used for exactly this on the query paths;
-`QueryControllerDdlPreviewTest` pins all three cases including the message-less throwable. The
+`QueryControllerTest` pins all three cases including the message-less throwable. The
 `@RequestParam` is named explicitly while we are there, so the handler resolves without relying on
 `-parameters` being on the compiler command line.
 
@@ -197,7 +214,7 @@ On the front, the reason now renders in an `ErrorPanel` **inside the modal**, wi
 than in a toast that faded behind the dialog in three seconds carrying the only useful part — the
 same fix the Metrics editor already received.
 
-### E9 — a long or nested value was only reachable through a hover tooltip *(fixed)*
+### E11 — a long or nested value was only reachable through a hover tooltip *(fixed)*
 
 The grid renders one line per row, and once virtualised each cell is forced onto a single line: a
 long value was truncated with a `title` for its only recourse, and a nested JSON document stayed a
@@ -209,14 +226,14 @@ Clicking a cell used to copy it, blind; copy moves into the panel, where you can
 copying. The panel closes on `Escape`, steps between rows with its own controls, and closes itself
 when a sort reorders the grid — the index it holds would otherwise point at a different row.
 
-### E10 — the Window Assistant took 288 px permanently *(fixed)*
+### E12 — the Window Assistant took 288 px permanently *(fixed)*
 
 For a tool used occasionally, with no way to fold it. It folds to a rail that reopens it, and the
 state travels in `kse:query-layout` with the rest of the layout. Open by default: that is how it has
 always been, and folding should be a decision rather than a surprise on upgrade. This was listed as
 deliberately left open in the first pass — the layout contract it needed now exists.
 
-### E11 — the workbench layout reset on every visit *(fixed)*
+### E13 — the workbench layout reset on every visit *(fixed)*
 
 Pages are unmounted on navigation, so an editor pane widened to write a long query came back at 55 %
 after a trip to the Dashboard, and the sidebar back to 288 px. Both are persisted under
@@ -294,7 +311,7 @@ Everything below was unreachable without a mouse. All fixed.
   loaded table. It is bounded by the size of the catalogue actually loaded, so it has not been a
   problem in practice; memoising it on the model's version id is the fix if it becomes one.
 - **The page has no mobile story.** Fixed-width sidebar, split panes, Monaco: it targets a desktop,
-  and the fix for E3 makes the toolbar usable on a narrow window without pretending otherwise.
+  and the fix for E5 makes the toolbar usable on a narrow window without pretending otherwise.
 - **`detectStatementType` duplicates the backend's own detection** to gate the execution modes. The
   two agree today. Sharing one definition would mean an endpoint that classifies a statement, which
   is a round trip to answer a question the client can answer instantly.

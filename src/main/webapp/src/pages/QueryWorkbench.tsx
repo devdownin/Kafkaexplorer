@@ -217,7 +217,19 @@ const RowDetail: React.FC<RowDetailProps> = ({
   </aside>
 );
 
-interface SchemaInfo { topics: string[]; tables: string[]; health: boolean; }
+interface SchemaInfo {
+  topics: string[];
+  tables: string[];
+  health: boolean;
+  /**
+   * Pourquoi la liste correspondante est vide, quand elle l'est. `/api/query/init` avalait ses deux
+   * échecs dans des `catch` vides : un broker injoignable et un runtime Flink encore en démarrage
+   * donnaient exactement le même écran — « Engine offline · 0 tables · 0 topics » — sans rien pour
+   * les distinguer ni sur quoi agir.
+   */
+  kafkaError?: string | null;
+  flinkError?: string | null;
+}
 interface QueryResult {
   columns: string[];
   rows: Record<string, unknown>[];
@@ -901,13 +913,25 @@ const QueryWorkbench: React.FC = () => {
   const fetchSchema = async () => {
     setSchemaLoading(true);
     try {
-      const r = await axios.get('/api/query/init');
+      const r = await axios.get<SchemaInfo>('/api/query/init');
       setSchema(r.data);
       // Le catalogue a changé (CREATE TABLE, auto-enregistrement) : une table dont le schéma
       // avait échoué faute d'existence mérite une nouvelle tentative.
       schemaFetchAttempted.current.clear();
     }
-    catch { toast('Failed to load schema', 'error'); }
+    catch (e) {
+      // L'endpoint ne tombe plus sur un échec de Kafka ou de Flink — il les rapporte. S'il tombe
+      // quand même, c'est le transport, et le motif vaut mieux qu'un « Failed to load schema »
+      // qui n'apprend rien : on le range là où l'écran regarde déjà.
+      const info = describeApiError(e, 'Failed to load the catalogue');
+      setSchema(prev => ({
+        topics: prev?.topics ?? [],
+        tables: prev?.tables ?? [],
+        health: false,
+        kafkaError: info.title,
+        flinkError: null,
+      }));
+    }
     finally { setSchemaLoading(false); }
   };
 
@@ -924,7 +948,8 @@ const QueryWorkbench: React.FC = () => {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- chargement initial du catalogue
     void fetchSchema();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- au montage seulement : fetchSchema est recréé à chaque rendu
+    // Au montage seulement : `fetchSchema` est recréé à chaque rendu, le mettre en dépendance
+    // relancerait la requête en boucle.
   }, []);
 
   /**
@@ -1392,6 +1417,31 @@ const QueryWorkbench: React.FC = () => {
             </button>
           </div>
 
+          {/* Ce qui n'a pas répondu, et pourquoi. Une liste vide sans motif se lit comme « ce
+              cluster n'a rien », qui est une tout autre information. */}
+          {(schema?.kafkaError || schema?.flinkError) && (
+            <div className="mb-3 rounded-lg border border-warning/30 bg-warning/10 px-2.5 py-2" role="status">
+              {schema.kafkaError && (
+                <div className="flex items-start gap-1.5">
+                  <span aria-hidden="true" className="material-symbols-outlined text-warning text-[14px] mt-px shrink-0">warning</span>
+                  <p className="text-[11px] text-on-surface-variant leading-snug min-w-0">
+                    <span className="font-semibold text-warning">Kafka: </span>
+                    <span className="break-words">{schema.kafkaError}</span>
+                  </p>
+                </div>
+              )}
+              {schema.flinkError && (
+                <div className={cn('flex items-start gap-1.5', schema.kafkaError && 'mt-1.5')}>
+                  <span aria-hidden="true" className="material-symbols-outlined text-warning text-[14px] mt-px shrink-0">warning</span>
+                  <p className="text-[11px] text-on-surface-variant leading-snug min-w-0">
+                    <span className="font-semibold text-warning">Flink: </span>
+                    <span className="break-words">{schema.flinkError}</span>
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="space-y-1">
             {/* Flink Tables */}
             <details className="group" open>
@@ -1401,6 +1451,11 @@ const QueryWorkbench: React.FC = () => {
                 <span className="text-sm font-medium">Flink Tables</span>
                 <span className="ml-auto text-[10px] bg-surface-container-highest px-1.5 py-0.5 rounded-full text-on-surface-variant tabular-nums">{schema?.tables.length ?? 0}</span>
               </summary>
+              {schema?.tables.length === 0 && (
+                <p className="text-[10px] text-outline px-2 py-2 pl-6">
+                  {schema.flinkError ? 'Tables could not be listed — see above' : 'No Flink tables registered yet'}
+                </p>
+              )}
               <ScrollList count={schema?.tables.length ?? 0} className="pl-4 pt-1 space-y-0.5">
                 {schema?.tables.map(table => (
                   <div key={table}>
@@ -1448,7 +1503,11 @@ const QueryWorkbench: React.FC = () => {
                     <span className="text-xs">Loading…</span>
                   </div>
                 ) : schema?.topics.length === 0 ? (
-                  <p className="text-[10px] text-outline px-2 py-2">No topics with messages</p>
+                  // « Aucun topic avec des messages » est une affirmation sur le cluster ; elle
+                  // n'a de sens que si on a pu le lire.
+                  <p className="text-[10px] text-outline px-2 py-2">
+                    {schema.kafkaError ? 'Topics could not be listed — see above' : 'No topics with messages'}
+                  </p>
                 ) : (
                   <ScrollList count={schema?.topics.length ?? 0} className="space-y-0.5">
                     {schema?.topics.map(topic => (
@@ -1526,9 +1585,14 @@ const QueryWorkbench: React.FC = () => {
         </div>
 
         <div className="p-3 border-t border-outline-variant/60 flex items-center gap-2 text-[11px] text-on-surface-variant">
-          <span className={`w-1.5 h-1.5 rounded-full ${schema?.health ? 'bg-success' : 'bg-outline'}`} />
-          <span>{schema?.health ? 'Engine connected' : 'Engine offline'}</span>
-          <span className="ml-auto tabular-nums">{schema?.tables.length ?? 0} tables · {schema?.topics.length ?? 0} topics</span>
+          {/* Trois états, pas deux : un broker qui répond à la sonde mais refuse l'appel de
+              métadonnées n'est pas « hors ligne », et envoyer quelqu'un vérifier une connexion qui
+              marche est la pire des pistes. */}
+          <span className={cn('w-1.5 h-1.5 rounded-full shrink-0',
+            !schema?.health ? 'bg-outline' : (schema.kafkaError || schema.flinkError) ? 'bg-warning' : 'bg-success')} />
+          <span>{!schema?.health ? 'Engine offline'
+            : (schema.kafkaError || schema.flinkError) ? 'Engine degraded' : 'Engine connected'}</span>
+          <span className="ml-auto tabular-nums shrink-0">{schema?.tables.length ?? 0} tables · {schema?.topics.length ?? 0} topics</span>
         </div>
       </aside>
 
