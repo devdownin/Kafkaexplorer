@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import Editor, { useMonaco } from '@monaco-editor/react';
 import type { editor, languages } from 'monaco-editor';
 import '../monaco-setup';
@@ -16,6 +16,12 @@ import {
 import { resolveScope, toTableName } from './sqlScope';
 import { buildWindowSql, windowCaveat, guessTimeColumn, type WindowKind, type WindowUnit } from './windowSql';
 import { toCsv, toJson } from './resultExport';
+import {
+  formatSql, sortRows, cellText, nextActiveTabId, isResultStale,
+  writeStored, readStored, removeStored,
+  readLayout, clamp, LAYOUT_STORAGE_KEY, DEFAULT_LAYOUT,
+  SPLIT_MIN, SPLIT_MAX, SIDEBAR_MIN, SIDEBAR_MAX, type WorkbenchLayout,
+} from './queryWorkbench';
 import { randomId } from '../randomId';
 import { copyText } from '../clipboard';
 
@@ -41,6 +47,91 @@ function Segmented<T extends string>({ value, onChange, options, ariaLabel }: {
     </div>
   );
 }
+
+/**
+ * Grille de résultats, mémoïsée et définie **hors** de la page.
+ *
+ * Elle était rendue en ligne dans `QueryWorkbench` : chaque frappe dans l'éditeur — donc chaque
+ * `setTabs` — reconstruisait jusqu'à deux cents lignes de cellules, avec la sérialisation de
+ * chaque valeur, alors que rien du résultat n'avait bougé. Sortie du composant parent et
+ * `React.memo`-ée, elle ne re-rend que lorsque les lignes, le tri ou la fenêtre de virtualisation
+ * changent réellement.
+ */
+interface ResultsGridProps {
+  columns: string[];
+  rows: Record<string, unknown>[];
+  virtualized: boolean;
+  window: { start: number; padTop: number; padBottom: number };
+  sortCol: string | null;
+  sortDir: 'asc' | 'desc';
+  onSort: (col: string) => void;
+  onCopyCell: (value: unknown) => void;
+  measureRow: (tr: HTMLTableRowElement | null) => void;
+}
+
+const ResultsGrid = React.memo(function ResultsGrid({
+  columns, rows, virtualized, window: vwin, sortCol, sortDir, onSort, onCopyCell, measureRow,
+}: ResultsGridProps) {
+  return (
+    <table className={cn('w-full text-left border-collapse', virtualized && 'table-fixed')}>
+      <thead className="sticky top-0 bg-surface-container-high/90 backdrop-blur-sm z-10">
+        <tr>
+          {columns.map(col => (
+            // `aria-sort` sur l'en-tête et un vrai `<button>` dedans : l'en-tête était un `<th>`
+            // cliquable, donc un tri inatteignable au clavier et un ordre jamais annoncé.
+            <th key={col} scope="col"
+              aria-sort={sortCol === col ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
+              className="px-4 py-2.5 border-b border-outline-variant/60 text-[11px] font-medium text-on-surface-variant uppercase tracking-[0.05em] whitespace-nowrap">
+              <button type="button" onClick={() => onSort(col)}
+                className="flex items-center gap-1 hover:text-on-surface select-none transition-colors rounded">
+                {col}
+                {sortCol === col
+                  ? <span aria-hidden="true" className="material-symbols-outlined text-[14px] text-primary">{sortDir === 'asc' ? 'arrow_upward' : 'arrow_downward'}</span>
+                  : <span aria-hidden="true" className="material-symbols-outlined text-[14px] text-outline">unfold_more</span>}
+              </button>
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-outline-variant/40">
+        {/* Cale supérieure : préserve la hauteur des lignes non montées. */}
+        {virtualized && vwin.padTop > 0 && (
+          <tr aria-hidden="true" className="border-t-0"><td colSpan={columns.length} style={{ height: vwin.padTop, padding: 0 }} /></tr>
+        )}
+        {rows.map((row, i) => {
+          const absIndex = virtualized ? vwin.start + i : i;
+          return (
+            <tr key={absIndex} ref={virtualized && i === 0 ? measureRow : undefined} className="hover:bg-surface-container-high/40 transition-colors">
+              {columns.map(col => {
+                const { text, isNull } = cellText(row[col]);
+                return (
+                  <td key={col} onClick={() => onCopyCell(row[col])}
+                    className={cn(
+                      'px-4 py-2.5 text-[12px] font-mono cursor-pointer hover:text-primary transition-colors',
+                      // Un NULL SQL et une chaîne vide se rendaient tous deux par une cellule
+                      // vide — c'est pourtant la distinction qui dit si une jointure a trouvé
+                      // sa ligne.
+                      isNull ? 'text-outline italic' : 'text-on-surface',
+                      // En mode virtualisé, les lignes doivent rester à hauteur constante :
+                      // on force chaque cellule sur une seule ligne (troncature + tooltip).
+                      virtualized && 'whitespace-nowrap max-w-md truncate',
+                    )}
+                    title={virtualized ? text : 'Click to copy'}>
+                    {text}
+                  </td>
+                );
+              })}
+            </tr>
+          );
+        })}
+        {/* Cale inférieure. */}
+        {virtualized && vwin.padBottom > 0 && (
+          <tr aria-hidden="true" className="border-t-0"><td colSpan={columns.length} style={{ height: vwin.padBottom, padding: 0 }} /></tr>
+        )}
+      </tbody>
+    </table>
+  );
+});
 
 interface SchemaInfo { topics: string[]; tables: string[]; health: boolean; }
 interface QueryResult {
@@ -74,6 +165,15 @@ type ExecutionMode = 'SYNC_READ' | 'ASYNC_JOB';
 const ROW_LIMITS = [50, 100, 500, 1000, 5000] as const;
 const DEFAULT_LIMIT = 50;
 const TABS_STORAGE_KEY = 'kse:tabs';
+const HISTORY_STORAGE_KEY = 'kse:query-history';
+const SAVED_STORAGE_KEY = 'kse:saved-queries';
+/**
+ * Délai d'écriture des onglets. Ils étaient sérialisés à *chaque frappe* : un `JSON.stringify` de
+ * tous les onglets suivi d'une écriture `localStorage` synchrone sur le thread principal, à chaque
+ * caractère. Un demi-mégaoctet de requêtes sauvegardées, et la frappe se met à traîner. Ce délai
+ * ne change rien à ce qui est conservé — la dernière frappe est écrite, comme avant.
+ */
+const TABS_PERSIST_DEBOUNCE_MS = 400;
 const DEFAULT_SQL = "SELECT\n  window_start, window_end, product_id,\n  SUM(quantity) AS total_sales\nFROM orders_stream\nWINDOW TUMBLING (SIZE 5 MINUTES)\nGROUP BY\n  window_start, window_end, product_id\nEMIT CHANGES;";
 // Au-delà de ce nombre de lignes, la grille passe en rendu virtualisé (seules
 // les lignes visibles sont montées). En-deçà, on garde le rendu classique —
@@ -93,24 +193,23 @@ const newTab = (sql = ''): Tab => ({ id: String(++tabCounter), name: `Query ${ta
  * cet avertissement inutile.
  *
  * Un `?sql=` dans l'URL ouvre un onglet supplémentaire au lieu d'écraser le premier —
- * arriver depuis TopicExplorer ne doit pas effacer ce qui était en cours.
+ * arriver depuis TopicExplorer ne doit pas effacer ce qui était en cours. Le paramètre est ensuite
+ * retiré de l'URL par l'appelant (`consumedUrlSql`) : les onglets étant persistés, le laisser en
+ * place faisait rouvrir un onglet identique **à chaque rechargement**, indéfiniment.
  */
-function restoreTabs(urlSql: string | null): { tabs: Tab[]; activeTabId: string } {
+function restoreTabs(urlSql: string | null): { tabs: Tab[]; activeTabId: string; consumedUrlSql: boolean } {
   let tabs: Tab[] = [];
   let activeTabId = '';
-  try {
-    const parsed = JSON.parse(localStorage.getItem(TABS_STORAGE_KEY) || 'null');
-    const stored: unknown = parsed?.tabs;
-    if (Array.isArray(stored)) {
-      tabs = stored.filter((t): t is Tab =>
-        !!t && typeof t.id === 'string' && typeof t.name === 'string' && typeof t.sql === 'string');
-      activeTabId = typeof parsed.activeTabId === 'string' ? parsed.activeTabId : '';
-    }
-  } catch { /* stockage corrompu ou indisponible — on repart d'un onglet neuf */ }
+  const parsed = readStored<{ tabs?: unknown; activeTabId?: unknown } | null>(TABS_STORAGE_KEY, null);
+  if (Array.isArray(parsed?.tabs)) {
+    tabs = parsed.tabs.filter((t): t is Tab =>
+      !!t && typeof t.id === 'string' && typeof t.name === 'string' && typeof t.sql === 'string');
+    activeTabId = typeof parsed.activeTabId === 'string' ? parsed.activeTabId : '';
+  }
 
   if (!tabs.length) {
     tabs = [{ id: '1', name: 'Query 1', sql: urlSql ? decodeURIComponent(urlSql) : DEFAULT_SQL }];
-    return { tabs, activeTabId: '1' };
+    return { tabs, activeTabId: '1', consumedUrlSql: !!urlSql };
   }
 
   // Les ids restaurés viennent d'un compteur d'une session précédente : on le repositionne
@@ -118,14 +217,20 @@ function restoreTabs(urlSql: string | null): { tabs: Tab[]; activeTabId: string 
   tabCounter = Math.max(tabCounter, ...tabs.map(t => Number(t.id) || 0));
 
   if (urlSql) {
-    const fromUrl = newTab(decodeURIComponent(urlSql));
-    return { tabs: [...tabs, fromUrl], activeTabId: fromUrl.id };
+    const incoming = decodeURIComponent(urlSql);
+    // Le même SQL déjà ouvert ne mérite pas un onglet de plus : on active celui qui l'a.
+    const existing = tabs.find(t => t.sql.trim() === incoming.trim());
+    if (existing) return { tabs, activeTabId: existing.id, consumedUrlSql: true };
+    const fromUrl = newTab(incoming);
+    return { tabs: [...tabs, fromUrl], activeTabId: fromUrl.id, consumedUrlSql: true };
   }
   return {
     tabs,
     activeTabId: tabs.some(t => t.id === activeTabId) ? activeTabId : tabs[0].id,
+    consumedUrlSql: false,
   };
 }
+
 const detectStatementType = (sql: string) => {
   const stripped = sql.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, '').trim().toUpperCase();
   if (stripped.startsWith('INSERT INTO')) return 'INSERT';
@@ -139,6 +244,7 @@ const QueryWorkbench: React.FC = () => {
   const { toast } = useToast();
   const confirm = useConfirm();
   const location = useLocation();
+  const navigate = useNavigate();
 
   // ── Schema state ──────────────────────────────────────────────────────────────
   const [schema, setSchema] = useState<SchemaInfo | null>(null);
@@ -159,11 +265,25 @@ const QueryWorkbench: React.FC = () => {
   const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
   const [renamingName, setRenamingName] = useState('');
 
+  // Écriture différée : voir TABS_PERSIST_DEBOUNCE_MS. Un `localStorage` saturé n'invalide pas
+  // l'édition en cours, mais il faut le dire une fois — sinon la reprise est perdue en silence.
+  const storageWarned = useRef(false);
   useEffect(() => {
-    try {
-      localStorage.setItem(TABS_STORAGE_KEY, JSON.stringify({ tabs, activeTabId }));
-    } catch { /* quota dépassé : l'édition en cours reste valide, seule la reprise est perdue */ }
-  }, [tabs, activeTabId]);
+    const handle = setTimeout(() => {
+      if (writeStored(TABS_STORAGE_KEY, { tabs, activeTabId }) || storageWarned.current) return;
+      storageWarned.current = true;
+      toast('Browser storage is full — open tabs will not be restored next time.', 'error');
+    }, TABS_PERSIST_DEBOUNCE_MS);
+    return () => clearTimeout(handle);
+  }, [tabs, activeTabId, toast]);
+
+  // Le `?sql=` est consommé une fois, puis retiré de l'URL : les onglets étant persistés, le
+  // laisser en place rouvrait le même onglet à chaque F5.
+  useEffect(() => {
+    if (!restored.consumedUrlSql) return;
+    navigate(`${location.pathname}${location.hash}`, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- une seule fois, au montage
+  }, []);
 
   const activeTab = tabs.find(t => t.id === activeTabId) ?? tabs[0];
   const sql = activeTab.sql;
@@ -171,21 +291,35 @@ const QueryWorkbench: React.FC = () => {
     setTabs(prev => prev.map(t => t.id === activeTabId ? { ...t, sql: newSql } : t));
   }, [activeTabId]);
 
-  const addTab = () => {
-    const t = newTab();
+  const addTab = useCallback((sqlText = '', name?: string) => {
+    const t = newTab(sqlText);
+    if (name) t.name = name;
     setTabs(prev => [...prev, t]);
     setActiveTabId(t.id);
-  };
+    return t;
+  }, []);
 
-  const closeTab = (id: string, e: React.MouseEvent) => {
+  /**
+   * Ferme un onglet. Le SQL qu'il portait n'est plus nulle part — d'où la confirmation dès qu'il
+   * y a quelque chose à perdre, comme partout ailleurs dans l'application (`useConfirm`). Le
+   * calcul de l'onglet suivant est sorti de l'updater : celui-ci doit être pur.
+   */
+  const closeTab = useCallback(async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    setTabs(prev => {
-      if (prev.length === 1) return prev;
-      const next = prev.filter(t => t.id !== id);
-      if (activeTabId === id) setActiveTabId(next[Math.max(0, prev.findIndex(t => t.id === id) - 1)].id);
-      return next;
-    });
-  };
+    const tab = tabs.find(t => t.id === id);
+    if (tabs.length === 1 || !tab) return;
+    if (tab.sql.trim()) {
+      const ok = await confirm({
+        title: 'Close this tab?',
+        description: <>“{tab.name}” holds SQL that is not saved anywhere else. Save it first if you want to keep it.</>,
+        confirmLabel: 'Close',
+        tone: 'danger',
+      });
+      if (!ok) return;
+    }
+    setActiveTabId(prev => nextActiveTabId(tabs, id, prev));
+    setTabs(prev => prev.filter(t => t.id !== id));
+  }, [tabs, confirm]);
 
   const startRename = (tab: Tab, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -201,24 +335,40 @@ const QueryWorkbench: React.FC = () => {
   };
 
   // ── Named saved queries ───────────────────────────────────────────────────────
-  const [savedQueries, setSavedQueries] = useState<SavedQuery[]>(() => {
-    try { return JSON.parse(localStorage.getItem('kse:saved-queries') || '[]'); } catch { return []; }
-  });
+  const [savedQueries, setSavedQueries] = useState<SavedQuery[]>(
+    () => readStored<SavedQuery[]>(SAVED_STORAGE_KEY, []),
+  );
   const [saveInputVisible, setSaveInputVisible] = useState(false);
   const [saveInputName, setSaveInputName] = useState('');
 
-  const persistSaved = (next: SavedQuery[]) => {
+  // Retourne ce que l'écriture a donné : une sauvegarde qui n'a pas été écrite ne doit pas
+  // s'annoncer « Saved » — elle disparaîtra au rechargement.
+  const persistSaved = (next: SavedQuery[]): boolean => {
     setSavedQueries(next);
-    localStorage.setItem('kse:saved-queries', JSON.stringify(next));
+    return writeStored(SAVED_STORAGE_KEY, next);
   };
 
-  const saveQuery = () => {
+  const saveQuery = async () => {
     const name = saveInputName.trim() || activeTab.name;
-    const entry: SavedQuery = { id: randomId(), name, sql, savedAt: Date.now() };
-    persistSaved([entry, ...savedQueries]);
+    if (!sql.trim()) { toast('Nothing to save — the tab is empty', 'info'); return; }
+    // Enregistrer deux fois sous le même nom laissait deux entrées indiscernables dans la liste.
+    const existing = savedQueries.find(q => q.name === name);
+    if (existing && existing.sql !== sql) {
+      const ok = await confirm({
+        title: `Replace “${name}”?`,
+        description: <>A saved query already goes by that name. Its SQL will be overwritten.</>,
+        confirmLabel: 'Replace',
+      });
+      if (!ok) return;
+    }
+    const entry: SavedQuery = { id: existing?.id ?? randomId(), name, sql, savedAt: Date.now() };
+    const written = persistSaved([entry, ...savedQueries.filter(q => q.id !== entry.id)]);
     setSaveInputVisible(false);
     setSaveInputName('');
-    toast(`Saved "${name}"`, 'success');
+    toast(
+      written ? `Saved "${name}"` : `"${name}" is listed but could not be stored — browser storage is full`,
+      written ? 'success' : 'error',
+    );
   };
 
   const deleteSavedQuery = async (id: string) => {
@@ -234,10 +384,7 @@ const QueryWorkbench: React.FC = () => {
   };
 
   const loadSavedQuery = (q: SavedQuery) => {
-    const t = newTab(q.sql);
-    t.name = q.name;
-    setTabs(prev => [...prev, t]);
-    setActiveTabId(t.id);
+    addTab(q.sql, q.name);
     toast(`Loaded "${q.name}" in new tab`, 'success');
   };
 
@@ -246,9 +393,36 @@ const QueryWorkbench: React.FC = () => {
   const monaco = useMonaco();
   const runQueryRef = useRef<() => void>(() => {});
 
+  /**
+   * Le raccourci ⌘↵ était enregistré dans un effet dépendant du seul `monaco`, qui abandonnait si
+   * `editorRef.current` était encore nul. Monaco étant désormais empaqueté localement
+   * (`monaco-setup`), `useMonaco()` résout très tôt — souvent avant que `<Editor>` ait monté — et
+   * l'effet ne se rejouait jamais ensuite : le raccourci documenté sur la barre d'outils ne
+   * s'installait pas. On l'enregistre au montage de l'éditeur, seul instant où l'instance existe
+   * à coup sûr.
+   */
+  const registerEditorCommands = useCallback((ed: editor.IStandaloneCodeEditor, m: typeof monaco) => {
+    if (!m) return;
+    ed.addCommand(m.KeyMod.CtrlCmd | m.KeyCode.Enter, () => runQueryRef.current());
+    ed.addCommand(m.KeyMod.CtrlCmd | m.KeyMod.Shift | m.KeyCode.KeyF, () => {
+      void ed.getAction('editor.action.formatDocument')?.run();
+    });
+  }, []);
+
+  /**
+   * Monaco n'a **pas** de formateur SQL (voir `formatSql`). Le bouton « Format » appelait
+   * `editor.action.formatDocument`, qui sans fournisseur enregistré ne reformate rien et se
+   * contente d'un message discret dans l'éditeur : le bouton était décoratif depuis toujours.
+   */
   useEffect(() => {
-    if (!editorRef.current || !monaco) return;
-    editorRef.current.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => runQueryRef.current());
+    if (!monaco) return;
+    const disp = monaco.languages.registerDocumentFormattingEditProvider('sql', {
+      provideDocumentFormattingEdits: model => [{
+        range: model.getFullModelRange(),
+        text: formatSql(model.getValue()),
+      }],
+    });
+    return () => disp.dispose();
   }, [monaco]);
 
   // Auto-completion provider
@@ -316,7 +490,14 @@ const QueryWorkbench: React.FC = () => {
   const [results, setResults] = useState<QueryResult | null>(null);
   const [submittedJob, setSubmittedJob] = useState<FlinkJobSubmission | null>(null);
   const [executing, setExecuting] = useState(false);
+  // Miroir synchrone de `executing` : un état React n'est pas encore à jour quand deux ⌘↵ se
+  // suivent dans le même tick, et c'est précisément ce qu'il faut refuser.
+  const executingRef = useRef(false);
   const [executionMs, setExecutionMs] = useState<number | null>(null);
+  /** SQL de la requête qui a produit `results` — sert à marquer l'affichage périmé. */
+  const [ranSql, setRanSql] = useState<string | null>(null);
+  /** Dernier SQL que le validateur backend a accepté, pour ne pas le lui redemander à l'identique. */
+  const validatedSqlRef = useRef<string | null>(null);
   // Plafond de lignes réellement envoyé au backend. Il était figé à 50 côté serveur
   // (`explorer.default-max-rows`) et deviné côté UI par une constante du même nom.
   const [maxRows, setMaxRows] = useState<number>(DEFAULT_LIMIT);
@@ -348,14 +529,10 @@ const QueryWorkbench: React.FC = () => {
     setShowErrorDetails(false);
   }
 
-  const sortedRows = useMemo(() => {
-    if (!results?.rows || !sortCol) return results?.rows ?? [];
-    return [...results.rows].sort((a, b) => {
-      const va = String(a[sortCol] ?? ''), vb = String(b[sortCol] ?? '');
-      const cmp = va.localeCompare(vb, undefined, { numeric: true });
-      return sortDir === 'asc' ? cmp : -cmp;
-    });
-  }, [results, sortCol, sortDir]);
+  const sortedRows = useMemo(
+    () => (results?.rows ? sortRows(results.rows, sortCol, sortDir) : []),
+    [results, sortCol, sortDir],
+  );
 
   // Erreur classée (titre lisible + piste + position) — voir queryError.ts.
   // Une requête rejetée avant exécution (mode, validateur backend) passe par le même
@@ -370,6 +547,14 @@ const QueryWorkbench: React.FC = () => {
 
   // Le résultat bute sur son propre plafond → il est probablement incomplet.
   const truncated = !!results && !results.error && results.rows.length >= resultLimit;
+
+  /**
+   * Les lignes affichées ne répondent plus au SQL en cours d'édition. La grille gardait le
+   * résultat précédent sans rien dire pendant qu'on écrivait la requête suivante — on lit alors
+   * un tableau en croyant qu'il répond au texte sous les yeux. Stream Flow marque son graphe
+   * exactement de la même façon.
+   */
+  const staleResults = !executing && !!results && isResultStale(ranSql, sql);
 
   // Place le curseur sur la position fautive et la révèle dans l'éditeur.
   const jumpToError = useCallback((loc: QueryErrorLocation) => {
@@ -422,14 +607,42 @@ const QueryWorkbench: React.FC = () => {
     const h = tr.getBoundingClientRect().height;
     if (h > 0) setRowHeight(prev => (Math.abs(prev - h) > 0.5 ? h : prev));
   }, []);
-  const visibleRows = virtualized ? sortedRows.slice(vwin.start, vwin.end) : sortedRows;
+  // Mémoïsés sur leurs valeurs primitives : `useVirtualRows` rend un objet neuf à chaque rendu et
+  // `slice` un tableau neuf, ce qui ferait tomber le `React.memo` de la grille à chaque frappe.
+  const visibleRows = useMemo(
+    () => (virtualized ? sortedRows.slice(vwin.start, vwin.end) : sortedRows),
+    [virtualized, sortedRows, vwin.start, vwin.end],
+  );
+  const gridWindow = useMemo(
+    () => ({ start: vwin.start, padTop: vwin.padTop, padBottom: vwin.padBottom }),
+    [vwin.start, vwin.padTop, vwin.padBottom],
+  );
 
   // ── DDL preview ───────────────────────────────────────────────────────────────
   const [ddlPreviewTopic, setDdlPreviewTopic] = useState<string | null>(null);
   const [ddlPreview, setDdlPreview] = useState<string | null>(null);
   const [ddlPreviewLoading, setDdlPreviewLoading] = useState(false);
 
+  /**
+   * Le modal DDL était une boîte maison sans échappement, sans rendu du focus et sans piège à
+   * focus : ouvert au clavier, il laissait le focus derrière lui dans la page, et `Escape` — le
+   * geste réflexe pour fermer une boîte — ne faisait rien. Le reste de l'application ferme sur
+   * `Escape` (`ConfirmDialog`, le modal de Metrics, la palette de commandes).
+   */
+  const ddlOpenerRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!ddlPreviewTopic) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setDdlPreviewTopic(null); };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      ddlOpenerRef.current?.focus();
+      ddlOpenerRef.current = null;
+    };
+  }, [ddlPreviewTopic]);
+
   const fetchDdlPreview = async (topicName: string) => {
+    ddlOpenerRef.current = document.activeElement as HTMLElement | null;
     setDdlPreviewTopic(topicName);
     setDdlPreview(null);
     setDdlPreviewLoading(true);
@@ -443,15 +656,34 @@ const QueryWorkbench: React.FC = () => {
 
   // ── History ───────────────────────────────────────────────────────────────────
   const [showHistory, setShowHistory] = useState(false);
-  const [history, setHistory] = useState<{ sql: string; ts: number }[]>(() => {
-    try { return JSON.parse(localStorage.getItem('kse:query-history') || '[]'); } catch { return []; }
-  });
+  const historyRef = useRef<HTMLDivElement>(null);
+  const [history, setHistory] = useState<{ sql: string; ts: number }[]>(
+    () => readStored<{ sql: string; ts: number }[]>(HISTORY_STORAGE_KEY, []),
+  );
   const saveToHistory = (sqlStr: string) => {
     const entry = { sql: sqlStr.trim(), ts: Date.now() };
     const next = [entry, ...history.filter(h => h.sql !== entry.sql)].slice(0, 20);
     setHistory(next);
-    localStorage.setItem('kse:query-history', JSON.stringify(next));
+    writeStored(HISTORY_STORAGE_KEY, next);
   };
+
+  /**
+   * Un menu déroulant se ferme au clic à côté et à l'échappement — il restait ouvert par-dessus la
+   * grille de résultats jusqu'à ce qu'on repense à recliquer son bouton.
+   */
+  useEffect(() => {
+    if (!showHistory) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (!historyRef.current?.contains(e.target as Node)) setShowHistory(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setShowHistory(false); };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [showHistory]);
 
   // ── Window assistant ──────────────────────────────────────────────────────────
   const [windowType, setWindowType] = useState<WindowKind>('TUMBLE');
@@ -462,30 +694,75 @@ const QueryWorkbench: React.FC = () => {
   const [windowPartitionBy, setWindowPartitionBy] = useState('');
 
   // ── Resize: split pane (vertical) + sidebar (horizontal) ─────────────────────
+  /**
+   * Trois défauts corrigés d'un coup ici.
+   *
+   * 1. **La largeur de la sidebar était lue en coordonnées écran** : `setSidebarWidth(e.clientX)`
+   *    suppose que ce panneau commence au bord gauche de la fenêtre. Il n'y a jamais commencé — la
+   *    navigation globale de `Layout` occupe 68 px repliée, 256 px dépliée — donc saisir la
+   *    poignée faisait sauter la largeur de cet écart, dans un sens ou dans l'autre selon l'état
+   *    de la navigation. On mesure désormais depuis le bord réel du panneau.
+   * 2. **`mousedown`/`mousemove` n'existent pas au doigt** : sur une tablette, aucune des deux
+   *    poignées ne bougeait. Les événements *pointer* couvrent souris, stylet et doigt — c'est ce
+   *    que Stream Flow et Lineage utilisent déjà, pour la même raison.
+   * 3. **Ni clavier, ni sémantique** : ce sont des séparateurs, donc des `role="separator"`
+   *    focusables que les flèches déplacent, comme le split de Stream Flow.
+   */
   const containerRef = useRef<HTMLDivElement>(null);
-  const isDragging = useRef(false);
-  const isSidebarDragging = useRef(false);
-  const [splitPercent, setSplitPercent] = useState(55);
-  const [sidebarWidth, setSidebarWidth] = useState(288);
+  const asideRef = useRef<HTMLElement>(null);
+  const dragging = useRef<'split' | 'sidebar' | null>(null);
+  const [layout, setLayout] = useState<WorkbenchLayout>(readLayout);
+  const { splitPercent, sidebarWidth } = layout;
+
+  const setSplitPercent = useCallback((next: number | ((p: number) => number)) => {
+    setLayout(prev => ({
+      ...prev,
+      splitPercent: clamp(typeof next === 'function' ? next(prev.splitPercent) : next, SPLIT_MIN, SPLIT_MAX),
+    }));
+  }, []);
+  const setSidebarWidth = useCallback((next: number | ((p: number) => number)) => {
+    setLayout(prev => ({
+      ...prev,
+      sidebarWidth: clamp(typeof next === 'function' ? next(prev.sidebarWidth) : next, SIDEBAR_MIN, SIDEBAR_MAX),
+    }));
+  }, []);
 
   useEffect(() => {
-    const onMouseMove = (e: MouseEvent) => {
-      if (isDragging.current && containerRef.current) {
+    const handle = setTimeout(() => writeStored(LAYOUT_STORAGE_KEY, layout), 300);
+    return () => clearTimeout(handle);
+  }, [layout]);
+
+  useEffect(() => {
+    const onPointerMove = (e: PointerEvent) => {
+      if (dragging.current === 'split' && containerRef.current) {
         const rect = containerRef.current.getBoundingClientRect();
-        setSplitPercent(Math.max(20, Math.min(80, ((e.clientY - rect.top) / rect.height) * 100)));
+        setSplitPercent(((e.clientY - rect.top) / rect.height) * 100);
       }
-      if (isSidebarDragging.current) {
-        setSidebarWidth(Math.max(200, Math.min(480, e.clientX)));
+      if (dragging.current === 'sidebar' && asideRef.current) {
+        setSidebarWidth(e.clientX - asideRef.current.getBoundingClientRect().left);
       }
     };
-    const onMouseUp = () => {
-      isDragging.current = false;
-      isSidebarDragging.current = false;
+    const onPointerUp = () => {
+      dragging.current = null;
       document.body.style.cursor = '';
+      document.body.style.userSelect = '';
     };
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
-    return () => { document.removeEventListener('mousemove', onMouseMove); document.removeEventListener('mouseup', onMouseUp); };
+    document.addEventListener('pointermove', onPointerMove);
+    document.addEventListener('pointerup', onPointerUp);
+    document.addEventListener('pointercancel', onPointerUp);
+    return () => {
+      document.removeEventListener('pointermove', onPointerMove);
+      document.removeEventListener('pointerup', onPointerUp);
+      document.removeEventListener('pointercancel', onPointerUp);
+    };
+  }, [setSplitPercent, setSidebarWidth]);
+
+  const startDrag = useCallback((which: 'split' | 'sidebar', cursor: string, e: React.PointerEvent) => {
+    dragging.current = which;
+    document.body.style.cursor = cursor;
+    // Sans cela, le glissement sélectionne le texte des deux panneaux qu'il traverse.
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
   }, []);
 
   // Plus de garde-fou `beforeunload` : les onglets sont persistés à chaque frappe, donc
@@ -559,6 +836,16 @@ const QueryWorkbench: React.FC = () => {
   };
 
   const runQuery = async () => {
+    /**
+     * Le bouton Run se désactive pendant l'exécution, mais ⌘↵ appelle cette fonction *directement*
+     * : deux frappes rapides lançaient deux requêtes. La seconde écrasait `abortRef` et
+     * `runningQueryIdRef`, si bien que Stop n'annulait plus la première, dont le `finally`
+     * repassait ensuite l'écran en « Complete » alors qu'une requête était toujours en vol.
+     */
+    if (executingRef.current) {
+      toast('A query is already running — stop it first', 'info');
+      return;
+    }
     setPanelError(null);
 
     // N'exécuter que la sélection quand il y en a une — habitude universelle des éditeurs SQL,
@@ -596,16 +883,28 @@ const QueryWorkbench: React.FC = () => {
       return;
     }
 
-    try {
-      const vRes = await axios.post<{ valid: boolean; error?: string }>('/api/query/validate', { sql: sqlToRun });
-      if (!vRes.data.valid) {
-        // Rejet avant exécution : le backend renvoie déjà le texte du parser (avec sa
-        // ligne/colonne quand il en a une), on le classe comme n'importe quelle erreur.
-        setResults(null); setSubmittedJob(null);
-        setPanelError(describeQueryError(vRes.data.error ?? 'SQL validation failed'));
-        return;
-      }
-    } catch { /* let execution handle it */ }
+    /*
+     * Pré-vol : `/api/query/validate` refuse une faute de syntaxe avant que la requête n'ouvre
+     * le moindre consommateur Kafka. Ce contrôle n'est pas gratuit — il exécute `explainSql`,
+     * donc une passe complète du planner Flink sous le verrou de lecture du runtime, avant
+     * l'exécution qui en fera une seconde. On ne le repaie donc pas pour un SQL déjà validé tel
+     * quel : relancer la même requête après avoir changé le plafond de lignes ou l'offset est le
+     * geste le plus courant de cet écran, et il n'a aucune syntaxe nouvelle à vérifier.
+     */
+    if (validatedSqlRef.current !== sqlToRun) {
+      try {
+        const vRes = await axios.post<{ valid: boolean; error?: string }>('/api/query/validate', { sql: sqlToRun });
+        if (!vRes.data.valid) {
+          // Rejet avant exécution : le backend renvoie déjà le texte du parser (avec sa
+          // ligne/colonne quand il en a une), on le classe comme n'importe quelle erreur.
+          validatedSqlRef.current = null;
+          setResults(null); setSubmittedJob(null);
+          setPanelError(describeQueryError(vRes.data.error ?? 'SQL validation failed'));
+          return;
+        }
+        validatedSqlRef.current = sqlToRun;
+      } catch { /* let execution handle it */ }
+    }
 
     // L'identifiant et le contrôleur sont créés *avant* de passer l'écran en « exécution ».
     // Dans l'autre ordre, une exception ici laissait `executing` à true sans jamais
@@ -617,7 +916,11 @@ const QueryWorkbench: React.FC = () => {
     const controller = new AbortController();
     runningQueryIdRef.current = queryId;
     abortRef.current = controller;
+    executingRef.current = true;
     setExecuting(true); setResults(null); setSubmittedJob(null); setSortCol(null);
+    // Ce qui a réellement été exécuté — c'est lui, et non le contenu courant de l'onglet, qui dit
+    // si les lignes affichées répondent encore au texte sous les yeux.
+    setRanSql(sqlToRun);
     try {
       if (executionMode === 'ASYNC_JOB') {
         const response = await axios.post<FlinkJobSubmission>('/api/query/jobs', { sql: sqlToRun },
@@ -664,6 +967,7 @@ const QueryWorkbench: React.FC = () => {
       toast(info.title, 'error');
     } finally {
       setExecuting(false);
+      executingRef.current = false;
       abortRef.current = null;
       runningQueryIdRef.current = null;
     }
@@ -698,29 +1002,77 @@ const QueryWorkbench: React.FC = () => {
     }
   }, [toast]);
 
-  const handleSortColumn = (col: string) => {
-    if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+  const handleSortColumn = useCallback((col: string) => {
+    if (sortCol === col) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
     else { setSortCol(col); setSortDir('asc'); }
-  };
+  }, [sortCol]);
 
-  const copyCell = (value: unknown) => {
-    const text = typeof value === 'object' ? JSON.stringify(value) : String(value ?? '');
+  const copyCell = useCallback((value: unknown) => {
+    // Un NULL se copie comme la chaîne vide : c'est la valeur, pas son rendu, que l'on emporte.
+    const text = value === null || value === undefined
+      ? ''
+      : typeof value === 'object' ? JSON.stringify(value) : String(value);
     void copyText(text).then(ok =>
       toast(ok ? 'Copied' : 'Could not copy to the clipboard', ok ? 'success' : 'error'));
-  };
+  }, [toast]);
 
+  /**
+   * Exporte **ce qui est affiché**, tri compris. L'export partait de `results.rows` pendant que la
+   * grille rendait `sortedRows` : trier une colonne puis exporter donnait un fichier dans un autre
+   * ordre que l'écran, sans que rien ne le signale.
+   */
   const exportResults = (format: 'csv' | 'json') => {
     if (!results?.rows.length) return;
     const [content, mime, ext] = format === 'json'
-      ? [toJson(results.rows), 'application/json', 'json']
-      : [toCsv(results.columns, results.rows), 'text/csv', 'csv'];
+      ? [toJson(sortedRows), 'application/json', 'json']
+      : [toCsv(results.columns, sortedRows), 'text/csv', 'csv'];
     const blob = new Blob([content], { type: mime });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = `query-results.${ext}`; a.click();
+    // Un nom horodaté : trois exports successifs se retrouvaient sous « query-results (2).csv ».
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    a.href = url; a.download = `${activeTab.name.replace(/[^\w.-]+/g, '_')}-${stamp}.${ext}`; a.click();
     URL.revokeObjectURL(url);
-    toast(`Exported as ${ext.toUpperCase()}`, 'success');
+    toast(`Exported ${sortedRows.length.toLocaleString()} rows as ${ext.toUpperCase()}`, 'success');
   };
+
+  /**
+   * Pose du SQL dans l'espace de travail sans jamais détruire ce qui s'y trouve.
+   *
+   * La barre latérale, l'historique et l'aperçu DDL appelaient tous `updateSql(...)`, qui remplace
+   * *tout l'onglet actif*. Cliquer un topic pour voir sa forme effaçait donc la requête en cours
+   * d'écriture, sans confirmation ni annulation — le défaut même qui avait été corrigé sur
+   * l'assistant de fenêtrage, et laissé partout ailleurs. Un onglet vide est rempli, un onglet
+   * qui contient quelque chose reste intact et le SQL part dans un nouvel onglet.
+   */
+  const openSql = useCallback((sqlText: string, name?: string) => {
+    if (!activeTab.sql.trim()) {
+      updateSql(sqlText);
+      if (name) setTabs(prev => prev.map(t => t.id === activeTabId ? { ...t, name } : t));
+      return 'current' as const;
+    }
+    addTab(sqlText, name);
+    return 'new' as const;
+  }, [activeTab.sql, activeTabId, addTab, updateSql]);
+
+  /** Le raccourci « SELECT * FROM … » de la barre latérale, sans écraser l'onglet en cours. */
+  const openSelectFor = useCallback((table: string) => {
+    const where = openSql(`SELECT * FROM ${table} LIMIT ${maxRows}`, table);
+    if (where === 'new') toast(`Opened ${table} in a new tab`, 'success');
+  }, [openSql, maxRows, toast]);
+
+  /** Insère à la position du curseur — utilisé par les fragments (assistant de fenêtrage). */
+  const insertSql = useCallback((text: string) => {
+    const ed = editorRef.current;
+    const selection = ed?.getSelection();
+    if (!ed || !selection) {
+      updateSql(sql ? `${sql}\n\n${text}` : text);
+      return 'appended' as const;
+    }
+    ed.executeEdits('kse-insert', [{ range: selection, text }]);
+    ed.focus();
+    return selection.isEmpty() ? ('inserted' as const) : ('replaced' as const);
+  }, [sql, updateSql]);
 
   /** Table visée par l'assistant : celle que la requête cite, sinon la première du catalogue. */
   const windowTable = useMemo(
@@ -752,17 +1104,12 @@ const QueryWorkbench: React.FC = () => {
    * Elle écrasait auparavant tout l'onglet — le travail en cours était perdu sans confirmation.
    */
   const applyWindowLogic = () => {
-    const generated = buildWindowSql(windowSpec);
-    const editor = editorRef.current;
-    const selection = editor?.getSelection();
-    if (!editor || !selection) {
-      updateSql(sql ? `${sql}\n\n${generated}` : generated);
-      toast('Window query appended', 'success');
-      return;
-    }
-    editor.executeEdits('window-assistant', [{ range: selection, text: generated }]);
-    editor.focus();
-    toast(selection.isEmpty() ? 'Window query inserted at cursor' : 'Window query replaced the selection', 'success');
+    const where = insertSql(buildWindowSql(windowSpec));
+    toast({
+      appended: 'Window query appended',
+      inserted: 'Window query inserted at cursor',
+      replaced: 'Window query replaced the selection',
+    }[where], 'success');
   };
 
   const formatMs = (ms: number) => ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
@@ -803,7 +1150,12 @@ const QueryWorkbench: React.FC = () => {
                 Copy
               </Button>
               <Button variant="primary" size="sm" icon="edit_note" disabled={!ddlPreview}
-                onClick={() => { if (ddlPreview) { updateSql(ddlPreview); setDdlPreviewTopic(null); toast('DDL inserted in editor', 'success'); } }}>
+                onClick={() => {
+                  if (!ddlPreview) return;
+                  const where = openSql(ddlPreview, `DDL ${ddlPreviewTopic}`);
+                  setDdlPreviewTopic(null);
+                  toast(where === 'new' ? 'DDL opened in a new tab' : 'DDL inserted in editor', 'success');
+                }}>
                 Insert in editor
               </Button>
             </div>
@@ -812,11 +1164,24 @@ const QueryWorkbench: React.FC = () => {
       )}
 
       {/* ── Schema Browser Sidebar (resizable) ──────────────────────────────── */}
-      <aside className="relative flex-shrink-0 flex flex-col border-r border-outline-variant/60 bg-surface-container-low" style={{ width: sidebarWidth }}>
+      <aside ref={asideRef} className="relative flex-shrink-0 flex flex-col border-r border-outline-variant/60 bg-surface-container-low" style={{ width: sidebarWidth }}>
         {/* Sidebar drag handle */}
         <div
-          onMouseDown={e => { isSidebarDragging.current = true; document.body.style.cursor = 'col-resize'; e.preventDefault(); }}
-          className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/40 transition-colors z-10"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize the schema browser"
+          aria-valuenow={Math.round(sidebarWidth)}
+          aria-valuemin={SIDEBAR_MIN}
+          aria-valuemax={SIDEBAR_MAX}
+          tabIndex={0}
+          onPointerDown={e => startDrag('sidebar', 'col-resize', e)}
+          onKeyDown={e => {
+            if (e.key === 'ArrowLeft') { setSidebarWidth(w => w - 16); e.preventDefault(); }
+            if (e.key === 'ArrowRight') { setSidebarWidth(w => w + 16); e.preventDefault(); }
+            if (e.key === 'Home') { setSidebarWidth(DEFAULT_LAYOUT.sidebarWidth); e.preventDefault(); }
+          }}
+          style={{ touchAction: 'none' }}
+          className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/40 focus-visible:bg-primary/60 transition-colors z-10"
         />
 
         <div className="p-4 flex items-center gap-3 border-b border-outline-variant/60">
@@ -850,12 +1215,16 @@ const QueryWorkbench: React.FC = () => {
                 {schema?.tables.map(table => (
                   <div key={table}>
                     <div className="flex items-center py-1 px-2 rounded hover:bg-primary/5 transition-colors group/tbl">
-                      <div onClick={() => toggleTable(table)} className="flex-1 flex items-center gap-1 min-w-0 cursor-pointer">
+                      {/* Un `<div onClick>` n'est ni tabulable ni actionnable au clavier : toute la
+                          barre latérale était inatteignable sans souris. */}
+                      <button type="button" onClick={() => toggleTable(table)}
+                        aria-expanded={!!expandedTables[table]}
+                        className="flex-1 flex items-center gap-1 min-w-0 text-left rounded">
                         <span className={`material-symbols-outlined text-xs text-on-surface-variant transition-transform duration-200 shrink-0 ${expandedTables[table] ? 'rotate-90' : ''}`}>chevron_right</span>
                         <span className="text-xs text-on-surface truncate font-mono">{table}</span>
-                      </div>
-                      <button onClick={() => updateSql(`SELECT * FROM ${table} LIMIT 50`)}
-                        className="opacity-0 group-hover/tbl:opacity-100 text-outline hover:text-primary transition-all shrink-0 ml-1" title="SELECT from this table" aria-label="SELECT from this table">
+                      </button>
+                      <button type="button" onClick={() => openSelectFor(table)}
+                        className="opacity-0 group-hover/tbl:opacity-100 focus-visible:opacity-100 text-outline hover:text-primary transition-all shrink-0 ml-1" title="SELECT from this table" aria-label={`SELECT from ${table}`}>
                         <span className="material-symbols-outlined text-sm">play_arrow</span>
                       </button>
                     </div>
@@ -894,11 +1263,12 @@ const QueryWorkbench: React.FC = () => {
                   <ScrollList count={schema?.topics.length ?? 0} className="space-y-0.5">
                     {schema?.topics.map(topic => (
                       <div key={topic} className="flex items-center py-1 px-2 rounded hover:bg-primary/5 transition-colors group/topic">
-                        <div onClick={() => updateSql(`SELECT * FROM ${topic.replace(/[.-]/g, '_')} LIMIT 50`)} className="flex-1 min-w-0 cursor-pointer">
+                        <button type="button" onClick={() => openSelectFor(toTableName(topic))}
+                          className="flex-1 min-w-0 text-left rounded" aria-label={`SELECT from ${topic}`}>
                           <span className="text-xs text-on-surface-variant hover:text-primary font-mono truncate block">{topic}</span>
-                        </div>
-                        <button onClick={e => { e.stopPropagation(); fetchDdlPreview(topic); }}
-                          className="opacity-0 group-hover/topic:opacity-100 text-outline hover:text-primary transition-all shrink-0 ml-1" title="Preview DDL" aria-label="Preview the generated DDL">
+                        </button>
+                        <button type="button" onClick={e => { e.stopPropagation(); fetchDdlPreview(topic); }}
+                          className="opacity-0 group-hover/topic:opacity-100 focus-visible:opacity-100 text-outline hover:text-primary transition-all shrink-0 ml-1" title="Preview DDL" aria-label={`Preview the generated DDL for ${topic}`}>
                           <span className="material-symbols-outlined text-sm">code</span>
                         </button>
                       </div>
@@ -976,8 +1346,13 @@ const QueryWorkbench: React.FC = () => {
       <main className="flex-1 flex flex-col min-w-0">
         {/* Toolbar */}
         <header className="h-14 border-b border-outline-variant/60 flex items-center px-4 md:px-6 justify-between gap-4 bg-surface-container-low/40 shrink-0">
-          <div className="flex items-center gap-4 min-w-0">
-            <div className="flex items-center gap-2">
+          {/* Les réglages de lecture défilent au lieu de disparaître. « Offset » était masqué sous
+              `md`, « Rows » sous `lg` — mais ils continuaient de s'appliquer : sur une fenêtre
+              étroite, la requête partait en EARLIEST/50 sans qu'aucun des deux ne soit visible,
+              ni modifiable. Un réglage actif que personne ne peut voir est le pire des deux
+              mondes. */}
+          <div className="flex items-center gap-4 min-w-0 overflow-x-auto custom-scrollbar">
+            <div className="flex items-center gap-2 shrink-0">
               <span className="text-[12px] text-on-surface-variant hidden sm:inline">Mode</span>
               <Segmented
                 ariaLabel="Execution mode"
@@ -988,8 +1363,10 @@ const QueryWorkbench: React.FC = () => {
             </div>
             {executionMode === 'SYNC_READ' && (
               <>
-                <div className="hidden md:flex items-center gap-2">
-                  <span className="text-[12px] text-on-surface-variant">Offset</span>
+                <div className="flex items-center gap-2 shrink-0">
+                  <Tooltip content="Which end of each topic the direct reader starts from. Earliest replays history; Latest reads what arrives from now on.">
+                    <span tabIndex={0} className="text-[12px] text-on-surface-variant rounded">Offset</span>
+                  </Tooltip>
                   <Segmented
                     ariaLabel="Offset mode"
                     value={offsetMode}
@@ -997,7 +1374,7 @@ const QueryWorkbench: React.FC = () => {
                     options={[{ value: 'EARLIEST', label: 'Earliest' }, { value: 'LATEST', label: 'Latest' }]}
                   />
                 </div>
-                <div className="hidden lg:flex items-center gap-2">
+                <div className="flex items-center gap-2 shrink-0">
                   <label htmlFor="kse-max-rows" className="text-[12px] text-on-surface-variant">Rows</label>
                   <Select
                     id="kse-max-rows"
@@ -1013,21 +1390,27 @@ const QueryWorkbench: React.FC = () => {
             )}
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            <div className="relative">
+            <div className="relative" ref={historyRef}>
               <button onClick={() => setShowHistory(h => !h)} aria-label="Query history"
+                aria-expanded={showHistory} aria-haspopup="menu"
                 className="inline-flex items-center gap-1.5 h-9 px-3 text-on-surface-variant hover:text-on-surface border border-outline-variant rounded-md hover:bg-surface-container-high transition-colors" title="Query history">
                 <span className="material-symbols-outlined text-[18px]">history</span>
                 {history.length > 0 && <span className="text-[10px] bg-primary text-on-primary font-semibold px-1.5 rounded-full tabular-nums">{history.length}</span>}
               </button>
               {showHistory && (
-                <div className="absolute right-0 top-full mt-1.5 w-96 max-h-64 overflow-y-auto bg-surface-container-high border border-outline-variant rounded-xl shadow-2xl z-30 animate-slide-up">
+                <div role="menu" className="absolute right-0 top-full mt-1.5 w-96 max-h-64 overflow-y-auto bg-surface-container-high border border-outline-variant rounded-xl shadow-2xl z-30 animate-slide-up">
                   <div className="px-3 py-2 border-b border-outline-variant/60 flex items-center justify-between sticky top-0 bg-surface-container-high">
                     <span className="text-[11px] font-medium text-on-surface-variant uppercase tracking-[0.05em]">Recent Queries</span>
-                    <button onClick={() => { setHistory([]); localStorage.removeItem('kse:query-history'); }} className="text-[11px] text-outline hover:text-error transition-colors">Clear</button>
+                    <button onClick={() => { setHistory([]); removeStored(HISTORY_STORAGE_KEY); }} className="text-[11px] text-outline hover:text-error transition-colors">Clear</button>
                   </div>
                   {history.length === 0 ? <p className="p-4 text-[12px] text-outline">No history yet</p>
-                    : history.map((h, i) => (
-                      <button key={i} onClick={() => { updateSql(h.sql); setShowHistory(false); }}
+                    : history.map(h => (
+                      // Une entrée d'historique est une requête entière : elle remplaçait tout
+                      // l'onglet actif au clic, effaçant sans préavis ce qu'on était en train
+                      // d'écrire. Elle suit désormais la même règle que les requêtes sauvegardées.
+                      <button key={`${h.ts}-${h.sql}`} role="menuitem"
+                        onClick={() => { openSql(h.sql); setShowHistory(false); }}
+                        title={h.sql}
                         className="w-full text-left px-3 py-2 hover:bg-primary/10 border-b border-outline-variant/40 last:border-0 transition-colors">
                         <p className="font-mono text-[12px] text-on-surface truncate">{h.sql.replace(/\s+/g, ' ')}</p>
                         <p className="text-[11px] text-outline mt-0.5">{new Date(h.ts).toLocaleString()}</p>
@@ -1037,7 +1420,9 @@ const QueryWorkbench: React.FC = () => {
                 </div>
               )}
             </div>
-            <span className="text-[11px] text-outline hidden lg:block font-mono">⌘↵</span>
+            <Tooltip content="Run the query, or just the selection when there is one. Shortcut: ⌘↵ / Ctrl+Enter.">
+              <span tabIndex={0} className="text-[11px] text-outline hidden lg:block font-mono rounded">⌘↵</span>
+            </Tooltip>
             {executing && (
               <Button variant="secondary" onClick={cancelRunningQuery} icon="stop_circle">
                 Stop
@@ -1064,12 +1449,15 @@ const QueryWorkbench: React.FC = () => {
             <div className="flex-1 flex flex-col min-w-0 bg-surface/40">
 
               {/* ── Tab bar ── */}
-              <div className="flex items-center border-b border-outline-variant/60 bg-surface-container-low/60 shrink-0 overflow-x-auto">
-                {tabs.map(tab => (
+              {/* Une barre d'onglets est un `tablist` : les onglets étaient des `<div onClick>`,
+                  donc ni tabulables ni actionnables au clavier, et sans état annoncé. Le motif
+                  standard veut un seul arrêt de tabulation, les flèches naviguant à l'intérieur. */}
+              <div role="tablist" aria-label="Query tabs"
+                className="flex items-center border-b border-outline-variant/60 bg-surface-container-low/60 shrink-0 overflow-x-auto">
+                {tabs.map((tab, index) => (
                   <div
                     key={tab.id}
-                    onClick={() => setActiveTabId(tab.id)}
-                    className={`group/tab flex items-center gap-1.5 px-3 py-2 border-r border-outline-variant/40 cursor-pointer shrink-0 transition-colors ${tab.id === activeTabId ? 'bg-surface text-on-surface border-b-2 border-b-primary' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high/50'}`}
+                    className={`group/tab flex items-center gap-1.5 border-r border-outline-variant/40 shrink-0 transition-colors ${tab.id === activeTabId ? 'bg-surface text-on-surface border-b-2 border-b-primary' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high/50'}`}
                   >
                     {renamingTabId === tab.id ? (
                       <input
@@ -1079,34 +1467,49 @@ const QueryWorkbench: React.FC = () => {
                         onChange={e => setRenamingName(e.target.value)}
                         onBlur={commitRename}
                         onKeyDown={e => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setRenamingTabId(null); }}
-                        onClick={e => e.stopPropagation()}
-                        className="bg-transparent border-none outline-none text-[12px] font-medium w-24 text-primary"
+                        className="bg-transparent border-none outline-none text-[12px] font-medium w-24 text-primary mx-3 my-2"
                       />
                     ) : (
                       <Tooltip content="Double-click to rename this tab.">
-                        <span
-                          tabIndex={0}
-                          className="text-[12px] font-medium rounded"
+                        <button
+                          type="button"
+                          role="tab"
+                          id={`kse-tab-${tab.id}`}
+                          aria-selected={tab.id === activeTabId}
+                          aria-controls="kse-editor-pane"
+                          tabIndex={tab.id === activeTabId ? 0 : -1}
+                          onClick={() => setActiveTabId(tab.id)}
                           onDoubleClick={e => startRename(tab, e)}
-                        >{tab.name}</span>
+                          onKeyDown={e => {
+                            if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                              const step = e.key === 'ArrowRight' ? 1 : -1;
+                              const next = tabs[(index + step + tabs.length) % tabs.length];
+                              setActiveTabId(next.id);
+                              requestAnimationFrame(() => document.getElementById(`kse-tab-${next.id}`)?.focus());
+                              e.preventDefault();
+                            }
+                            if (e.key === 'F2') { startRename(tab, e as unknown as React.MouseEvent); e.preventDefault(); }
+                          }}
+                          className="text-[12px] font-medium pl-3 py-2 rounded"
+                        >{tab.name}</button>
                       </Tooltip>
                     )}
                     {tabs.length > 1 && (
-                      <button onClick={e => closeTab(tab.id, e)} aria-label="Close tab"
-                        className="opacity-0 group-hover/tab:opacity-100 text-outline hover:text-on-surface transition-all">
+                      <button type="button" onClick={e => void closeTab(tab.id, e)} aria-label={`Close ${tab.name}`}
+                        className="opacity-0 group-hover/tab:opacity-100 focus-visible:opacity-100 text-outline hover:text-on-surface transition-all pr-3 py-2">
                         <span className="material-symbols-outlined text-[14px]">close</span>
                       </button>
                     )}
                   </div>
                 ))}
-                <button onClick={addTab} className="px-2.5 py-2 text-outline hover:text-on-surface transition-colors shrink-0" title="New tab" aria-label="New tab">
+                <button type="button" onClick={() => addTab()} className="px-2.5 py-2 text-outline hover:text-on-surface transition-colors shrink-0" title="New tab" aria-label="New tab">
                   <span className="material-symbols-outlined text-[16px]">add</span>
                 </button>
                 {/* Format button pushed to the right */}
                 <div className="ml-auto px-3 flex items-center">
-                  <Tooltip content="Reformats the SQL in the editor. Shortcut: Shift + Alt + F.">
-                  <button onClick={() => editorRef.current?.getAction('editor.action.formatDocument')?.run()}
-                    className="flex items-center gap-1 text-[12px] text-on-surface-variant hover:text-on-surface transition-colors">
+                  <Tooltip content="Reformats the SQL in the editor: one clause per line, one select item per line, keywords upper-cased. String literals and comments are left untouched. Shortcut: Shift + Alt + F.">
+                  <button type="button" onClick={() => void editorRef.current?.getAction('editor.action.formatDocument')?.run()}
+                    className="flex items-center gap-1 text-[12px] text-on-surface-variant hover:text-on-surface transition-colors rounded">
                     <span className="material-symbols-outlined text-[16px]">auto_fix_high</span>
                     Format
                   </button>
@@ -1114,15 +1517,19 @@ const QueryWorkbench: React.FC = () => {
                 </div>
               </div>
 
-              <div className="flex-1 overflow-hidden">
+              <div className="flex-1 overflow-hidden" id="kse-editor-pane" role="tabpanel"
+                aria-labelledby={`kse-tab-${activeTabId}`}>
                 <Editor
                   height="100%"
                   defaultLanguage="sql"
                   theme="vs-dark"
                   value={sql}
                   onChange={val => updateSql(val || '')}
-                  onMount={editor => {
+                  onMount={(editor, monacoApi) => {
                     editorRef.current = editor;
+                    // `onMount` reçoit l'API Monaco en second argument : elle est garantie prête
+                    // à cet instant, là où `useMonaco()` peut l'être avant ou après le montage.
+                    registerEditorCommands(editor, monacoApi);
                     // Le bouton doit annoncer ce qu'il va exécuter — tout l'onglet ou la sélection.
                     editor.onDidChangeCursorSelection(e => setHasSelection(!e.selection.isEmpty()));
                   }}
@@ -1219,8 +1626,22 @@ const QueryWorkbench: React.FC = () => {
           </div>
 
           {/* Drag handle */}
-          <div onMouseDown={e => { isDragging.current = true; document.body.style.cursor = 'row-resize'; e.preventDefault(); }}
-            className="h-2 border-y border-outline-variant/60 bg-surface-container-low/60 hover:bg-primary/10 cursor-row-resize flex items-center justify-center transition-colors shrink-0 group">
+          <div
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Resize the editor and results panes"
+            aria-valuenow={Math.round(splitPercent)}
+            aria-valuemin={SPLIT_MIN}
+            aria-valuemax={SPLIT_MAX}
+            tabIndex={0}
+            onPointerDown={e => startDrag('split', 'row-resize', e)}
+            onKeyDown={e => {
+              if (e.key === 'ArrowUp') { setSplitPercent(p => p - 4); e.preventDefault(); }
+              if (e.key === 'ArrowDown') { setSplitPercent(p => p + 4); e.preventDefault(); }
+              if (e.key === 'Home') { setSplitPercent(DEFAULT_LAYOUT.splitPercent); e.preventDefault(); }
+            }}
+            style={{ touchAction: 'none' }}
+            className="h-2 border-y border-outline-variant/60 bg-surface-container-low/60 hover:bg-primary/10 focus-visible:bg-primary/20 cursor-row-resize flex items-center justify-center transition-colors shrink-0 group">
             <div className="w-16 h-0.5 bg-primary/20 group-hover:bg-primary/50 rounded-full transition-colors" />
           </div>
 
@@ -1266,6 +1687,17 @@ const QueryWorkbench: React.FC = () => {
                     <span className="text-outline">·</span>
                     <button onClick={() => exportResults('json')} className="flex items-center gap-1 text-[11px] text-on-surface-variant hover:text-on-surface transition-colors"><span className="material-symbols-outlined text-[16px]">download</span>JSON</button>
                   </div>
+                )}
+                {/* La grille gardait les lignes de la requête précédente pendant qu'on écrivait la
+                    suivante, sans rien dire. Le bouton relance la requête *affichée*. */}
+                {staleResults && !queryError && (
+                  <Tooltip content="The SQL in the editor has changed since these rows were fetched. Run again to refresh them.">
+                    <button type="button" onClick={runQuery}
+                      className="inline-flex items-center gap-1 text-[11px] font-medium text-warning hover:underline rounded">
+                      <span aria-hidden="true" className="material-symbols-outlined text-[14px]">sync_problem</span>
+                      Stale — rerun
+                    </button>
+                  </Tooltip>
                 )}
                 <Badge tone={executing ? 'primary' : (queryError ? 'error' : (results || submittedJob) ? 'success' : 'neutral')} dot>
                   {executing ? 'Running' : queryError ? 'Error' : submittedJob ? 'Job submitted' : results ? 'Complete' : 'Idle'}
@@ -1360,55 +1792,17 @@ const QueryWorkbench: React.FC = () => {
                   </div>
                 </div>
               ) : results?.columns.length ? (
-                <table className={cn('w-full text-left border-collapse', virtualized && 'table-fixed')}>
-                  <thead className="sticky top-0 bg-surface-container-high/90 backdrop-blur-sm z-10">
-                    <tr>
-                      {results.columns.map(col => (
-                        <th key={col} onClick={() => handleSortColumn(col)} scope="col"
-                          className="px-4 py-2.5 border-b border-outline-variant/60 text-[11px] font-medium text-on-surface-variant uppercase tracking-[0.05em] cursor-pointer hover:text-on-surface select-none transition-colors whitespace-nowrap">
-                          <span className="flex items-center gap-1">
-                            {col}
-                            {sortCol === col
-                              ? <span className="material-symbols-outlined text-[14px] text-primary">{sortDir === 'asc' ? 'arrow_upward' : 'arrow_downward'}</span>
-                              : <span className="material-symbols-outlined text-[14px] text-outline">unfold_more</span>}
-                          </span>
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-outline-variant/40">
-                    {/* Cale supérieure : préserve la hauteur des lignes non montées. */}
-                    {virtualized && vwin.padTop > 0 && (
-                      <tr aria-hidden="true" className="border-t-0"><td colSpan={results.columns.length} style={{ height: vwin.padTop, padding: 0 }} /></tr>
-                    )}
-                    {visibleRows.map((row, i) => {
-                      const absIndex = virtualized ? vwin.start + i : i;
-                      return (
-                        <tr key={absIndex} ref={virtualized && i === 0 ? measureRow : undefined} className="hover:bg-surface-container-high/40 transition-colors">
-                          {results.columns.map(col => {
-                            const text = typeof row[col] === 'object' ? JSON.stringify(row[col]) : String(row[col] ?? '');
-                            return (
-                              <td key={col} onClick={() => copyCell(row[col])}
-                                className={cn(
-                                  'px-4 py-2.5 text-[12px] font-mono text-on-surface cursor-pointer hover:text-primary transition-colors',
-                                  // En mode virtualisé, les lignes doivent rester à hauteur constante :
-                                  // on force chaque cellule sur une seule ligne (troncature + tooltip).
-                                  virtualized && 'whitespace-nowrap max-w-md truncate',
-                                )}
-                                title={virtualized ? text : 'Click to copy'}>
-                                {text}
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      );
-                    })}
-                    {/* Cale inférieure. */}
-                    {virtualized && vwin.padBottom > 0 && (
-                      <tr aria-hidden="true" className="border-t-0"><td colSpan={results.columns.length} style={{ height: vwin.padBottom, padding: 0 }} /></tr>
-                    )}
-                  </tbody>
-                </table>
+                <ResultsGrid
+                  columns={results.columns}
+                  rows={visibleRows}
+                  virtualized={virtualized}
+                  window={gridWindow}
+                  sortCol={sortCol}
+                  sortDir={sortDir}
+                  onSort={handleSortColumn}
+                  onCopyCell={copyCell}
+                  measureRow={measureRow}
+                />
               ) : (
                 <EmptyState
                   icon="terminal"
