@@ -22,6 +22,7 @@ import {
   readLayout, clamp, LAYOUT_STORAGE_KEY, DEFAULT_LAYOUT,
   SPLIT_MIN, SPLIT_MAX, SIDEBAR_MIN, SIDEBAR_MAX, type WorkbenchLayout,
   starterQueries, pushHistory, describeHistoryEntry, formatDuration, type HistoryEntry,
+  splitStatements, statementIndexAt, positionAt, detailValue,
 } from './queryWorkbench';
 import { randomId } from '../randomId';
 import { copyText } from '../clipboard';
@@ -66,12 +67,14 @@ interface ResultsGridProps {
   sortCol: string | null;
   sortDir: 'asc' | 'desc';
   onSort: (col: string) => void;
-  onCopyCell: (value: unknown) => void;
+  /** Ouvre le détail de la ligne, cadré sur la colonne cliquée. */
+  onOpenRow: (index: number, column: string) => void;
+  selectedIndex: number | null;
   measureRow: (tr: HTMLTableRowElement | null) => void;
 }
 
 const ResultsGrid = React.memo(function ResultsGrid({
-  columns, rows, virtualized, window: vwin, sortCol, sortDir, onSort, onCopyCell, measureRow,
+  columns, rows, virtualized, window: vwin, sortCol, sortDir, onSort, onOpenRow, selectedIndex, measureRow,
 }: ResultsGridProps) {
   return (
     <table className={cn('w-full text-left border-collapse', virtualized && 'table-fixed')}>
@@ -101,12 +104,18 @@ const ResultsGrid = React.memo(function ResultsGrid({
         )}
         {rows.map((row, i) => {
           const absIndex = virtualized ? vwin.start + i : i;
+          const selected = selectedIndex === absIndex;
           return (
-            <tr key={absIndex} ref={virtualized && i === 0 ? measureRow : undefined} className="hover:bg-surface-container-high/40 transition-colors">
+            <tr key={absIndex} ref={virtualized && i === 0 ? measureRow : undefined}
+              aria-selected={selected}
+              className={cn('transition-colors', selected ? 'bg-primary/10' : 'hover:bg-surface-container-high/40')}>
               {columns.map(col => {
                 const { text, isNull } = cellText(row[col]);
                 return (
-                  <td key={col} onClick={() => onCopyCell(row[col])}
+                  // Le clic ouvre le détail de la ligne au lieu de copier à l'aveugle : une valeur
+                  // longue était tronquée avec un `title` pour seul recours, et un JSON imbriqué
+                  // restait une ligne de texte. La copie vit dans le panneau, par valeur.
+                  <td key={col} onClick={() => onOpenRow(absIndex, col)}
                     className={cn(
                       'px-4 py-2.5 text-[12px] font-mono cursor-pointer hover:text-primary transition-colors',
                       // Un NULL SQL et une chaîne vide se rendaient tous deux par une cellule
@@ -117,7 +126,7 @@ const ResultsGrid = React.memo(function ResultsGrid({
                       // on force chaque cellule sur une seule ligne (troncature + tooltip).
                       virtualized && 'whitespace-nowrap max-w-md truncate',
                     )}
-                    title={virtualized ? text : 'Click to copy'}>
+                    title={virtualized ? text : 'Open this row'}>
                     {text}
                   </td>
                 );
@@ -133,6 +142,80 @@ const ResultsGrid = React.memo(function ResultsGrid({
     </table>
   );
 });
+
+/**
+ * Détail d'une ligne de résultat.
+ *
+ * La grille rend une ligne par enregistrement, tronquée sur une seule ligne dès qu'elle est
+ * virtualisée : une valeur longue n'était atteignable que par le `title` au survol, et un JSON
+ * imbriqué y restait une chaîne. Ce panneau montre toutes les colonnes de la ligne choisie, met en
+ * forme ce qui est structuré (`detailValue`, y compris le JSON arrivé sous forme de texte, ce que
+ * le moteur direct renvoie couramment) et porte la copie, valeur par valeur.
+ */
+interface RowDetailProps {
+  columns: string[];
+  row: Record<string, unknown>;
+  index: number;
+  total: number;
+  focusColumn: string | null;
+  onClose: () => void;
+  onStep: (delta: number) => void;
+  onCopy: (value: unknown) => void;
+}
+
+const RowDetail: React.FC<RowDetailProps> = ({
+  columns, row, index, total, focusColumn, onClose, onStep, onCopy,
+}) => (
+  <aside aria-label="Row detail"
+    className="w-80 xl:w-96 shrink-0 border-l border-outline-variant/60 bg-surface-container-low/60 flex flex-col overflow-hidden">
+    <div className="h-10 px-3 flex items-center gap-1 border-b border-outline-variant/60 shrink-0">
+      <span className="text-[11px] font-medium text-on-surface-variant uppercase tracking-[0.05em]">
+        Row <span className="tabular-nums text-on-surface">{index + 1}</span> of <span className="tabular-nums">{total.toLocaleString()}</span>
+      </span>
+      <div className="ml-auto flex items-center">
+        <button type="button" onClick={() => onStep(-1)} disabled={index === 0}
+          aria-label="Previous row" title="Previous row"
+          className="p-1 rounded-md text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high disabled:opacity-30 disabled:pointer-events-none transition-colors">
+          <span aria-hidden="true" className="material-symbols-outlined text-[18px]">keyboard_arrow_up</span>
+        </button>
+        <button type="button" onClick={() => onStep(1)} disabled={index >= total - 1}
+          aria-label="Next row" title="Next row"
+          className="p-1 rounded-md text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high disabled:opacity-30 disabled:pointer-events-none transition-colors">
+          <span aria-hidden="true" className="material-symbols-outlined text-[18px]">keyboard_arrow_down</span>
+        </button>
+        <button type="button" onClick={onClose} aria-label="Close the row detail" title="Close"
+          className="p-1 ml-1 rounded-md text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors">
+          <span aria-hidden="true" className="material-symbols-outlined text-[18px]">close</span>
+        </button>
+      </div>
+    </div>
+    <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-3">
+      {columns.map(col => {
+        const { text, json, isNull } = detailValue(row[col]);
+        return (
+          <div key={col} className={cn(
+            'rounded-lg border px-2.5 py-2',
+            col === focusColumn ? 'border-primary/50 bg-primary/5' : 'border-outline-variant/50',
+          )}>
+            <div className="flex items-center gap-2">
+              <p className="text-[11px] font-medium text-on-surface-variant truncate">{col}</p>
+              {json && <span className="text-[9px] uppercase tracking-wide text-primary/70 shrink-0">json</span>}
+              <button type="button" onClick={() => onCopy(row[col])}
+                aria-label={`Copy ${col}`} title="Copy"
+                className="ml-auto shrink-0 text-outline hover:text-primary transition-colors">
+                <span aria-hidden="true" className="material-symbols-outlined text-[14px]">content_copy</span>
+              </button>
+            </div>
+            <pre className={cn(
+              'mt-1 text-[11px] font-mono whitespace-pre-wrap break-words leading-relaxed',
+              isNull ? 'text-outline italic' : 'text-on-surface',
+            )}>{text}</pre>
+          </div>
+        );
+      })}
+    </div>
+  </aside>
+);
 
 interface SchemaInfo { topics: string[]; tables: string[]; health: boolean; }
 interface QueryResult {
@@ -527,11 +610,30 @@ const QueryWorkbench: React.FC = () => {
   const [runOrigin, setRunOrigin] = useState<QueryErrorLocation | null>(null);
   // Reflète la présence d'une sélection non vide, pour libeller le bouton en conséquence.
   const [hasSelection, setHasSelection] = useState(false);
+  /**
+   * Décalage du curseur dans le document, pour désigner l'instruction à exécuter. Écrit à chaque
+   * mouvement du curseur : React abandonne le rendu quand la valeur ne change pas, et ce qui en
+   * dépend (l'index d'instruction) ne change qu'en franchissant un `;`.
+   */
+  const [cursorOffset, setCursorOffset] = useState(0);
+  const statements = useMemo(() => splitStatements(sql), [sql]);
+  const cursorStatement = useMemo(
+    () => statementIndexAt(statements, cursorOffset),
+    [statements, cursorOffset],
+  );
   const [executionMode, setExecutionMode] = useState<ExecutionMode>('SYNC_READ');
   const [offsetMode, setOffsetMode] = useState<'EARLIEST' | 'LATEST'>('EARLIEST');
   const [panelError, setPanelError] = useState<QueryErrorInfo | null>(null);
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  /**
+   * Ligne ouverte dans le panneau de détail, par index dans `sortedRows`. Un index, et non la
+   * ligne elle-même : deux lignes identiques existent, et c'est la position affichée qui doit
+   * répondre aux flèches. Il est remis à zéro dès que le tri ou le résultat change, l'index
+   * n'ayant plus le même sens.
+   */
+  const [detailIndex, setDetailIndex] = useState<number | null>(null);
+  const [detailColumn, setDetailColumn] = useState<string | null>(null);
   const [showErrorDetails, setShowErrorDetails] = useState(false);
   // Une nouvelle erreur (ou un nouveau résultat) referme le détail : ajusté pendant le rendu,
   // le motif documenté pour un état dérivé, plutôt qu'un effet qui laissait le détail de
@@ -734,7 +836,11 @@ const QueryWorkbench: React.FC = () => {
   const asideRef = useRef<HTMLElement>(null);
   const dragging = useRef<'split' | 'sidebar' | null>(null);
   const [layout, setLayout] = useState<WorkbenchLayout>(readLayout);
-  const { splitPercent, sidebarWidth } = layout;
+  const { splitPercent, sidebarWidth, assistantOpen } = layout;
+  const toggleAssistant = useCallback(
+    () => setLayout(prev => ({ ...prev, assistantOpen: !prev.assistantOpen })),
+    [],
+  );
 
   const setSplitPercent = useCallback((next: number | ((p: number) => number)) => {
     setLayout(prev => ({
@@ -870,19 +976,40 @@ const QueryWorkbench: React.FC = () => {
     }
     setPanelError(null);
 
-    // N'exécuter que la sélection quand il y en a une — habitude universelle des éditeurs SQL,
-    // et le seul moyen de lancer une requête parmi plusieurs dans le même onglet. L'onglet
-    // garde son contenu entier ; seule la portion envoyée change.
+    /*
+     * Que faut-il exécuter ?
+     *
+     * 1. La sélection quand il y en a une — habitude universelle des éditeurs SQL, et le moyen de
+     *    forcer n'importe quel fragment.
+     * 2. Sinon **l'instruction sous le curseur**. Un onglet peut en contenir plusieurs, séparées
+     *    par `;` : le formateur les met en forme et l'éditeur les accepte, mais Run envoyait le
+     *    texte entier et le backend classait sur le premier mot. Sélectionner à la main était le
+     *    contournement.
+     * 3. Sur un document d'une seule instruction — le cas courant — les deux reviennent au même.
+     *
+     * L'onglet garde son contenu entier dans tous les cas ; seule la portion envoyée change, et
+     * `runOrigin` reporte les positions d'erreur du moteur dans le repère du document.
+     */
     const editor = editorRef.current;
     const selection = editor?.getSelection();
     const selected = selection && !selection.isEmpty()
       ? editor?.getModel()?.getValueInRange(selection) ?? ''
       : '';
     const runningSelection = selected.trim().length > 0;
-    const sqlToRun = runningSelection ? selected : sql;
-    setRunOrigin(runningSelection && selection
-      ? { line: selection.startLineNumber, column: selection.startColumn }
-      : null);
+
+    let sqlToRun = sql;
+    let origin: QueryErrorLocation | null = null;
+    if (runningSelection && selection) {
+      sqlToRun = selected;
+      origin = { line: selection.startLineNumber, column: selection.startColumn };
+    } else {
+      const statement = statements[cursorStatement];
+      if (statement && statements.length > 1) {
+        sqlToRun = statement.text;
+        origin = positionAt(sql, statement.start);
+      }
+    }
+    setRunOrigin(origin);
 
     const statementType = detectStatementType(sqlToRun);
 
@@ -939,7 +1066,7 @@ const QueryWorkbench: React.FC = () => {
     runningQueryIdRef.current = queryId;
     abortRef.current = controller;
     executingRef.current = true;
-    setExecuting(true); setResults(null); setSubmittedJob(null); setSortCol(null);
+    setExecuting(true); setResults(null); setSubmittedJob(null); setSortCol(null); setDetailIndex(null);
     // Ce qui a réellement été exécuté — c'est lui, et non le contenu courant de l'onglet, qui dit
     // si les lignes affichées répondent encore au texte sous les yeux.
     setRanSql(sqlToRun);
@@ -1041,7 +1168,30 @@ const QueryWorkbench: React.FC = () => {
   const handleSortColumn = useCallback((col: string) => {
     if (sortCol === col) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
     else { setSortCol(col); setSortDir('asc'); }
+    // Après un tri, l'index ouvert désigne une autre ligne : le panneau se referme plutôt que de
+    // montrer silencieusement autre chose que ce qu'on avait choisi.
+    setDetailIndex(null);
   }, [sortCol]);
+
+  const openRowDetail = useCallback((index: number, column: string) => {
+    setDetailIndex(index);
+    setDetailColumn(column);
+  }, []);
+
+  const stepRowDetail = useCallback((delta: number) => {
+    setDetailIndex(prev => (prev === null ? prev : clamp(prev + delta, 0, sortedRows.length - 1)));
+  }, [sortedRows.length]);
+
+  // Le panneau de détail se ferme sur Escape, comme toute surface superposée de l'application.
+  useEffect(() => {
+    if (detailIndex === null) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setDetailIndex(null); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [detailIndex]);
+
+  /** La ligne ouverte, ou `null` si l'index ne désigne plus rien (nouveau résultat, plus court). */
+  const detailRow = detailIndex !== null ? sortedRows[detailIndex] ?? null : null;
 
   const copyCell = useCallback((value: unknown) => {
     // Un NULL se copie comme la chaîne vide : c'est la valeur, pas son rendu, que l'on emporte.
@@ -1481,6 +1631,15 @@ const QueryWorkbench: React.FC = () => {
                 Stop
               </Button>
             )}
+            {/* Ce que Run va envoyer, dit avant d'appuyer. « Run statement » sans dire laquelle
+                serait la moitié inquiétante de la fonctionnalité. */}
+            {!hasSelection && statements.length > 1 && executionMode === 'SYNC_READ' && (
+              <Tooltip content="This tab holds several statements. ⌘↵ runs the one the cursor is in — select a fragment to run something else.">
+                <span tabIndex={0} className="text-[11px] text-on-surface-variant tabular-nums rounded hidden md:block">
+                  Statement {cursorStatement + 1}/{statements.length}
+                </span>
+              </Tooltip>
+            )}
             <Button
               variant="primary"
               onClick={runQuery}
@@ -1489,7 +1648,8 @@ const QueryWorkbench: React.FC = () => {
             >
               {executing ? 'Running…'
                 : executionMode === 'ASYNC_JOB' ? 'Submit job'
-                : hasSelection ? 'Run selection' : 'Run query'}
+                : hasSelection ? 'Run selection'
+                : statements.length > 1 ? 'Run statement' : 'Run query'}
             </Button>
           </div>
         </header>
@@ -1583,8 +1743,13 @@ const QueryWorkbench: React.FC = () => {
                     // `onMount` reçoit l'API Monaco en second argument : elle est garantie prête
                     // à cet instant, là où `useMonaco()` peut l'être avant ou après le montage.
                     registerEditorCommands(editor, monacoApi);
-                    // Le bouton doit annoncer ce qu'il va exécuter — tout l'onglet ou la sélection.
-                    editor.onDidChangeCursorSelection(e => setHasSelection(!e.selection.isEmpty()));
+                    // Le bouton doit annoncer ce qu'il va exécuter — tout l'onglet, la sélection,
+                    // ou l'instruction sous le curseur.
+                    editor.onDidChangeCursorSelection(e => {
+                      setHasSelection(!e.selection.isEmpty());
+                      const model = editor.getModel();
+                      if (model) setCursorOffset(model.getOffsetAt(e.selection.getPosition()));
+                    });
                   }}
                   options={{
                     fontSize: 14, fontFamily: 'JetBrains Mono', minimap: { enabled: false },
@@ -1596,11 +1761,31 @@ const QueryWorkbench: React.FC = () => {
               </div>
             </div>
 
-            {/* Window Assistant */}
-            <div className="w-72 border-l border-outline-variant/60 bg-surface-container-low/40 p-4 flex flex-col gap-4 overflow-y-auto shrink-0">
+            {/* Window Assistant — repliable. Il prenait 288 px à l'éditeur en permanence pour un
+                outil occasionnel ; replié, il laisse un rail qui le rouvre, et l'état voyage avec
+                le reste de la disposition (`kse:query-layout`). */}
+            {!assistantOpen ? (
+              <div className="w-10 border-l border-outline-variant/60 bg-surface-container-low/40 flex flex-col items-center pt-3 shrink-0">
+                <Tooltip content="Open the Window Assistant — it builds a TUMBLE / HOP / SESSION query over a table.">
+                  <button type="button" onClick={toggleAssistant}
+                    aria-expanded={false} aria-controls="kse-window-assistant"
+                    className="p-1.5 rounded-md text-on-surface-variant hover:text-primary hover:bg-surface-container-high transition-colors"
+                    aria-label="Open the Window Assistant">
+                    <span aria-hidden="true" className="material-symbols-outlined text-[20px]">magic_button</span>
+                  </button>
+                </Tooltip>
+                <span aria-hidden="true" className="mt-3 text-[10px] tracking-[0.08em] uppercase text-outline [writing-mode:vertical-rl]">Window</span>
+              </div>
+            ) : (
+            <div id="kse-window-assistant" className="w-72 border-l border-outline-variant/60 bg-surface-container-low/40 p-4 flex flex-col gap-4 overflow-y-auto shrink-0">
               <div className="flex items-center gap-2">
-                <span className="material-symbols-outlined text-primary text-[20px]">magic_button</span>
+                <span aria-hidden="true" className="material-symbols-outlined text-primary text-[20px]">magic_button</span>
                 <h3 className="text-[14px] font-semibold text-on-surface">Window Assistant</h3>
+                <button type="button" onClick={toggleAssistant} aria-expanded
+                  className="ml-auto p-1 rounded-md text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors"
+                  aria-label="Fold the Window Assistant" title="Fold">
+                  <span aria-hidden="true" className="material-symbols-outlined text-[18px]">right_panel_close</span>
+                </button>
               </div>
               <p className="text-[12px] text-on-surface-variant leading-relaxed">
                 Builds a windowed aggregation over <span className="font-mono text-on-surface">{windowTable}</span>.
@@ -1676,6 +1861,7 @@ const QueryWorkbench: React.FC = () => {
                 </Button>
               </div>
             </div>
+            )}
           </div>
 
           {/* Drag handle */}
@@ -1778,7 +1964,10 @@ const QueryWorkbench: React.FC = () => {
               </div>
             )}
 
-            <div ref={resultsScrollRef} className="flex-1 overflow-auto custom-scrollbar">
+            {/* La grille et le détail se partagent la hauteur restante : le panneau se pose à côté
+                plutôt que par-dessus, pour qu'on garde la ligne dans son contexte. */}
+            <div className="flex-1 flex min-h-0 overflow-hidden">
+            <div ref={resultsScrollRef} className="flex-1 min-w-0 overflow-auto custom-scrollbar">
               {queryError ? (
                 <div className="p-4">
                   <div className="flex items-start gap-3 p-3 rounded-lg border border-error/30 bg-error/10" role="alert">
@@ -1853,7 +2042,8 @@ const QueryWorkbench: React.FC = () => {
                   sortCol={sortCol}
                   sortDir={sortDir}
                   onSort={handleSortColumn}
-                  onCopyCell={copyCell}
+                  onOpenRow={openRowDetail}
+                  selectedIndex={detailIndex}
                   measureRow={measureRow}
                 />
               ) : (
@@ -1888,6 +2078,21 @@ const QueryWorkbench: React.FC = () => {
                   )}
                 </div>
               )}
+            </div>
+            {/* `!!…length`, pas `…length` : un `&&` sur un nombre rend le littéral `0` dans le DOM
+                quand il vaut zéro, au lieu de ne rien rendre. */}
+            {detailRow && detailIndex !== null && !!results?.columns.length && (
+              <RowDetail
+                columns={results.columns}
+                row={detailRow}
+                index={detailIndex}
+                total={sortedRows.length}
+                focusColumn={detailColumn}
+                onClose={() => setDetailIndex(null)}
+                onStep={stepRowDetail}
+                onCopy={copyCell}
+              />
+            )}
             </div>
           </div>
         </div>

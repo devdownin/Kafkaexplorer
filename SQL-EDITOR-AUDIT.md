@@ -7,7 +7,7 @@ reliability, ergonomics, optimisation, UI quality — and they are the four sect
 
 Everything listed as **fixed** is fixed on this branch. What was found and deliberately left is in
 *Constaté, non traité* at the end, with the reason. The pure logic extracted along the way lives in
-`pages/queryWorkbench.ts` and is covered by `pages/queryWorkbench.test.ts` (56 cases); the one
+`pages/queryWorkbench.ts` and is covered by `pages/queryWorkbench.test.ts` (77 cases); the one
 backend fix is pinned by `QueryControllerDdlPreviewTest`.
 
 ---
@@ -104,6 +104,21 @@ catalogue that actually loaded** (`starterQueries`, pure and tested): they canno
 is not there, `internal.*` topics are skipped since the app writes those to itself, and when the
 catalogue is empty there are no suggestions at all — an empty screen beats an example that lies.
 
+### E0b — Run sent the whole tab, whatever the cursor was in *(fixed)*
+
+A tab can hold several statements separated by `;` — the formatter lays them out, the editor accepts
+them — but Run sent the entire text and the backend classified on the first word. Selecting by hand
+was the workaround. `⌘↵` now runs **the statement the cursor is in**, which is the standard
+affordance of every SQL editor; a selection still forces any fragment, and a single-statement
+document behaves exactly as before.
+
+`splitStatements` walks strings, quoted identifiers and both comment forms, so a `;` inside any of
+them separates nothing. `statementIndexAt` picks the statement *just finished* when the cursor
+follows its semicolon — typing the terminator then running means running what you just wrote, and
+it is what DataGrip and DBeaver do. `runOrigin` carries the statement's offset so the engine's
+line/column still land on the right line of the document. The toolbar states `Statement 2/3` before
+you press: "Run statement" without saying which one would be the worrying half of the feature.
+
 ### E1 — four different controls silently destroyed the tab you were writing in *(fixed)*
 
 `updateSql()` replaces the **whole active tab**. It was called by the sidebar's "SELECT from this
@@ -182,7 +197,26 @@ On the front, the reason now renders in an `ErrorPanel` **inside the modal**, wi
 than in a toast that faded behind the dialog in three seconds carrying the only useful part — the
 same fix the Metrics editor already received.
 
-### E9 — the workbench layout reset on every visit *(fixed)*
+### E9 — a long or nested value was only reachable through a hover tooltip *(fixed)*
+
+The grid renders one line per row, and once virtualised each cell is forced onto a single line: a
+long value was truncated with a `title` for its only recourse, and a nested JSON document stayed a
+run of text. Clicking a cell now opens a **row detail panel** beside the grid — every column of the
+selected row, structured values indented, and copy per value. `detailValue` also indents JSON that
+arrived **as a string**, which is what the direct engine commonly returns for a sub-document.
+
+Clicking a cell used to copy it, blind; copy moves into the panel, where you can see what you are
+copying. The panel closes on `Escape`, steps between rows with its own controls, and closes itself
+when a sort reorders the grid — the index it holds would otherwise point at a different row.
+
+### E10 — the Window Assistant took 288 px permanently *(fixed)*
+
+For a tool used occasionally, with no way to fold it. It folds to a rail that reopens it, and the
+state travels in `kse:query-layout` with the rest of the layout. Open by default: that is how it has
+always been, and folding should be a decision rather than a surprise on upgrade. This was listed as
+deliberately left open in the first pass — the layout contract it needed now exists.
+
+### E11 — the workbench layout reset on every visit *(fixed)*
 
 Pages are unmounted on navigation, so an editor pane widened to write a long query came back at 55 %
 after a trip to the Dashboard, and the sidebar back to 288 px. Both are persisted under
@@ -259,10 +293,6 @@ Everything below was unreachable without a mouse. All fixed.
   `resolveScope` pass with two regexes over the full document and one `push` per column of every
   loaded table. It is bounded by the size of the catalogue actually loaded, so it has not been a
   problem in practice; memoising it on the model's version id is the fix if it becomes one.
-- **The Window Assistant is a permanently mounted 288 px panel.** It costs that width to the editor
-  at all times for a tool used occasionally, and there is no way to fold it. Folding it is a real
-  improvement, but it changes the page's layout contract (the editor pane is currently sized against
-  it), so it is left as a separate change rather than smuggled into an audit.
 - **The page has no mobile story.** Fixed-width sidebar, split panes, Monaco: it targets a desktop,
   and the fix for E3 makes the toolbar usable on a narrow window without pretending otherwise.
 - **`detectStatementType` duplicates the backend's own detection** to gate the execution modes. The

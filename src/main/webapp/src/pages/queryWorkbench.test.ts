@@ -4,6 +4,7 @@ import {
   isResultStale, writeStored, readStored, removeStored,
   readLayout, LAYOUT_STORAGE_KEY, DEFAULT_LAYOUT, SPLIT_MIN, SIDEBAR_MAX,
   starterTable, starterQueries, pushHistory, describeHistoryEntry, formatDuration,
+  splitStatements, statementIndexAt, positionAt, detailValue,
   type HistoryEntry,
 } from './queryWorkbench';
 
@@ -95,6 +96,116 @@ describe('formatSql', () => {
   it('is idempotent — formatting formatted SQL changes nothing', () => {
     const once = formatSql('select a, b from orders where a = 1 group by a, b order by a');
     expect(formatSql(once)).toBe(once);
+  });
+});
+
+describe('splitStatements', () => {
+  it('returns one statement for a plain query, without a trailing semicolon', () => {
+    expect(splitStatements('SELECT 1 FROM t;')).toEqual([{ start: 0, end: 14, text: 'SELECT 1 FROM t' }]);
+  });
+
+  it('splits on top-level semicolons', () => {
+    expect(splitStatements('SELECT 1;\nSELECT 2').map(s => s.text)).toEqual(['SELECT 1', 'SELECT 2']);
+  });
+
+  it('does not split on a semicolon inside a string literal', () => {
+    expect(splitStatements("SELECT * FROM t WHERE a = 'x;y'").map(s => s.text))
+      .toEqual(["SELECT * FROM t WHERE a = 'x;y'"]);
+  });
+
+  it('does not split on a semicolon inside a comment', () => {
+    expect(splitStatements('SELECT 1 -- and; then\nFROM t').map(s => s.text))
+      .toEqual(['SELECT 1 -- and; then\nFROM t']);
+    expect(splitStatements('SELECT 1 /* a; b */ FROM t').map(s => s.text))
+      .toEqual(['SELECT 1 /* a; b */ FROM t']);
+  });
+
+  it('does not split on a semicolon inside a quoted identifier', () => {
+    expect(splitStatements('SELECT * FROM `weird;name`').map(s => s.text))
+      .toEqual(['SELECT * FROM `weird;name`']);
+  });
+
+  it('drops chunks that hold no SQL', () => {
+    expect(splitStatements(';;  ;')).toEqual([]);
+    expect(splitStatements('-- only a comment')).toEqual([]);
+    expect(splitStatements('SELECT 1;;\n\n;SELECT 2;').map(s => s.text)).toEqual(['SELECT 1', 'SELECT 2']);
+  });
+
+  it('points start at the first useful character, past leading blanks', () => {
+    const [first, second] = splitStatements('SELECT 1;\n\n   SELECT 2');
+    expect(first.start).toBe(0);
+    expect(second.start).toBe(14);
+    expect('SELECT 1;\n\n   SELECT 2'.slice(second.start)).toBe('SELECT 2');
+  });
+
+  it('handles an unterminated literal without running away', () => {
+    expect(() => splitStatements("SELECT 'oops")).not.toThrow();
+    expect(splitStatements("SELECT 'oops").map(s => s.text)).toEqual(["SELECT 'oops"]);
+  });
+});
+
+describe('statementIndexAt', () => {
+  const sql = 'SELECT 1;\nSELECT 2;\nSELECT 3';
+  const statements = splitStatements(sql);
+
+  it('finds the statement the cursor sits in', () => {
+    expect(statementIndexAt(statements, 3)).toBe(0);
+    expect(statementIndexAt(statements, 13)).toBe(1);
+    expect(statementIndexAt(statements, 25)).toBe(2);
+  });
+
+  it('picks the statement just finished when the cursor follows its semicolon', () => {
+    // Offset 9 is right after the `;` of `SELECT 1` — you typed the terminator, you mean that one.
+    expect(statementIndexAt(statements, 9)).toBe(0);
+  });
+
+  it('picks the first statement when the cursor precedes them all', () => {
+    const leading = splitStatements('\n\n   SELECT 1');
+    expect(statementIndexAt(leading, 0)).toBe(0);
+  });
+
+  it('clamps past the end', () => {
+    expect(statementIndexAt(statements, 9999)).toBe(2);
+  });
+
+  it('reports nothing to run on an empty document', () => {
+    expect(statementIndexAt([], 0)).toBe(-1);
+  });
+});
+
+describe('positionAt', () => {
+  it('is 1-based on both axes', () => {
+    expect(positionAt('abc', 0)).toEqual({ line: 1, column: 1 });
+    expect(positionAt('abc', 2)).toEqual({ line: 1, column: 3 });
+  });
+
+  it('counts lines', () => {
+    expect(positionAt('a\nbc\nd', 5)).toEqual({ line: 3, column: 1 });
+  });
+
+  it('clamps out-of-range offsets', () => {
+    expect(positionAt('ab', -5)).toEqual({ line: 1, column: 1 });
+    expect(positionAt('ab', 99)).toEqual({ line: 1, column: 3 });
+  });
+});
+
+describe('detailValue', () => {
+  it('indents an object', () => {
+    expect(detailValue({ a: 1 })).toEqual({ text: '{\n  "a": 1\n}', json: true, isNull: false });
+  });
+
+  it('indents JSON that arrived as a string — what the direct engine returns', () => {
+    expect(detailValue('{"a":1}').text).toBe('{\n  "a": 1\n}');
+    expect(detailValue('{"a":1}').json).toBe(true);
+  });
+
+  it('leaves text that merely starts like JSON alone', () => {
+    expect(detailValue('{not json')).toEqual({ text: '{not json', json: false, isNull: false });
+  });
+
+  it('keeps NULL distinct', () => {
+    expect(detailValue(null)).toEqual({ text: 'NULL', json: false, isNull: true });
+    expect(detailValue('')).toEqual({ text: '', json: false, isNull: false });
   });
 });
 
@@ -315,17 +426,22 @@ describe('readLayout', () => {
   });
 
   it('round-trips a stored layout', () => {
-    writeStored(LAYOUT_STORAGE_KEY, { splitPercent: 70, sidebarWidth: 320 });
-    expect(readLayout()).toEqual({ splitPercent: 70, sidebarWidth: 320 });
+    writeStored(LAYOUT_STORAGE_KEY, { splitPercent: 70, sidebarWidth: 320, assistantOpen: false });
+    expect(readLayout()).toEqual({ splitPercent: 70, sidebarWidth: 320, assistantOpen: false });
   });
 
   it('clamps a value that would make a pane unusable', () => {
     writeStored(LAYOUT_STORAGE_KEY, { splitPercent: 2, sidebarWidth: 9000 });
-    expect(readLayout()).toEqual({ splitPercent: SPLIT_MIN, sidebarWidth: SIDEBAR_MAX });
+    expect(readLayout()).toMatchObject({ splitPercent: SPLIT_MIN, sidebarWidth: SIDEBAR_MAX });
   });
 
   it('ignores a value of the wrong shape rather than propagating NaN', () => {
     writeStored(LAYOUT_STORAGE_KEY, { splitPercent: 'wide', sidebarWidth: null });
     expect(readLayout()).toEqual(DEFAULT_LAYOUT);
+  });
+
+  it('reads a layout written before the assistant could fold as open', () => {
+    writeStored(LAYOUT_STORAGE_KEY, { splitPercent: 60, sidebarWidth: 300 });
+    expect(readLayout().assistantOpen).toBe(true);
   });
 });

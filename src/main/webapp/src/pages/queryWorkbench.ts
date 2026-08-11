@@ -283,6 +283,124 @@ export function formatSql(sql: string): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Découpage en instructions
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Un onglet peut contenir plusieurs instructions séparées par `;` — le formateur les met en forme,
+ * l'éditeur les accepte — mais Run envoyait le texte entier et le backend classait sur le premier
+ * mot. Sélectionner à la main était le contournement. L'affordance standard d'un éditeur SQL, c'est
+ * que `⌘↵` exécute l'instruction **où se trouve le curseur**, la sélection ne servant qu'à forcer
+ * autre chose.
+ */
+export interface SqlStatement {
+  /** Décalage du premier caractère utile, dans le document. */
+  start: number;
+  /** Décalage du dernier caractère utile (inclus). */
+  end: number;
+  /** Le texte de l'instruction, sans le `;` terminal ni les espaces de bord. */
+  text: string;
+}
+
+/** Le `;` d'un littéral ou d'un commentaire ne sépare rien : le découpage doit les traverser. */
+function isBlankSql(text: string): boolean {
+  return !text
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/--[^\n]*/g, ' ')
+    .trim();
+}
+
+export function splitStatements(sql: string): SqlStatement[] {
+  const statements: SqlStatement[] = [];
+  let chunkStart = 0;
+  let i = 0;
+
+  const pushChunk = (endExclusive: number) => {
+    const raw = sql.slice(chunkStart, endExclusive);
+    if (isBlankSql(raw)) return;
+    // Les bornes désignent le texte utile, pas le fragment brut : c'est `start` qui reporte les
+    // positions d'erreur du moteur dans le repère du document.
+    const leading = raw.length - raw.trimStart().length;
+    const trailing = raw.length - raw.trimEnd().length;
+    statements.push({
+      start: chunkStart + leading,
+      end: endExclusive - trailing - 1,
+      text: raw.trim(),
+    });
+  };
+
+  while (i < sql.length) {
+    const c = sql[i];
+    if (c === '-' && sql[i + 1] === '-') {
+      const end = sql.indexOf('\n', i);
+      i = end === -1 ? sql.length : end;
+      continue;
+    }
+    if (c === '/' && sql[i + 1] === '*') {
+      const end = sql.indexOf('*/', i + 2);
+      i = end === -1 ? sql.length : end + 2;
+      continue;
+    }
+    if (c === "'") {
+      i += 1;
+      while (i < sql.length) {
+        if (sql[i] === "'") {
+          if (sql[i + 1] === "'") { i += 2; continue; }
+          i += 1;
+          break;
+        }
+        i += 1;
+      }
+      continue;
+    }
+    if (c === '`' || c === '"') {
+      const end = sql.indexOf(c, i + 1);
+      i = end === -1 ? sql.length : end + 1;
+      continue;
+    }
+    if (c === ';') {
+      pushChunk(i);
+      chunkStart = i + 1;
+      i += 1;
+      continue;
+    }
+    i += 1;
+  }
+  pushChunk(sql.length);
+  return statements;
+}
+
+/**
+ * Index de l'instruction visée par un curseur, ou `-1` s'il n'y en a aucune.
+ *
+ * Le curseur posé *après* le `;` d'une instruction désigne celle-ci, pas la suivante : venir de
+ * taper le point-virgule puis lancer, c'est vouloir exécuter ce que l'on vient de finir. C'est
+ * aussi le comportement de DataGrip et de DBeaver.
+ */
+export function statementIndexAt(statements: readonly SqlStatement[], offset: number): number {
+  if (!statements.length) return -1;
+  for (let i = 0; i < statements.length; i += 1) {
+    const s = statements[i];
+    if (offset >= s.start && offset <= s.end) return i;
+    // Le curseur est tombé dans l'espace qui précède cette instruction : il appartient à celle
+    // d'avant, dont il suit le point-virgule. Avant la toute première, il n'y a rien d'antérieur.
+    if (offset < s.start) return Math.max(0, i - 1);
+  }
+  return statements.length - 1;
+}
+
+/** Ligne et colonne (base 1) d'un décalage — le repère que Monaco et le planner emploient. */
+export function positionAt(text: string, offset: number): { line: number; column: number } {
+  const clamped = Math.max(0, Math.min(offset, text.length));
+  let line = 1;
+  let lineStart = 0;
+  for (let i = 0; i < clamped; i += 1) {
+    if (text[i] === '\n') { line += 1; lineStart = i + 1; }
+  }
+  return { line, column: clamped - lineStart + 1 };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tri de la grille de résultats
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -365,6 +483,34 @@ export function cellText(value: unknown): CellText {
   if (value === null || value === undefined) return { text: 'NULL', isNull: true };
   if (typeof value === 'object') return { text: JSON.stringify(value) ?? '', isNull: false };
   return { text: String(value), isNull: false };
+}
+
+/**
+ * Valeur d'une cellule telle que le panneau de détail la montre : mise en forme quand elle est
+ * structurée, brute sinon.
+ *
+ * Dans la grille, une valeur longue est tronquée sur une ligne et un JSON imbriqué est une chaîne
+ * de texte — un `title` au survol était le seul recours, et il ne met rien en forme. Un objet est
+ * donc indenté ici, y compris quand il arrive sous forme de **chaîne** contenant du JSON, ce qui
+ * est le cas courant : le moteur direct renvoie un sous-document comme du texte.
+ */
+export interface DetailValue { text: string; json: boolean; isNull: boolean }
+
+export function detailValue(value: unknown): DetailValue {
+  if (value === null || value === undefined) return { text: 'NULL', json: false, isNull: true };
+  if (typeof value === 'object') {
+    return { text: JSON.stringify(value, null, 2) ?? '', json: true, isNull: false };
+  }
+  const text = String(value);
+  const trimmed = text.trim();
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try {
+      // Reformaté seulement si cela parse réellement : un texte qui commence par `{` sans être du
+      // JSON doit rester tel quel plutôt que d'être signalé comme structuré.
+      return { text: JSON.stringify(JSON.parse(trimmed), null, 2), json: true, isNull: false };
+    } catch { /* pas du JSON — on garde le texte brut */ }
+  }
+  return { text, json: false, isNull: false };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -588,10 +734,20 @@ export function describeHistoryEntry(entry: HistoryEntry): string {
  * revenait à 55 % au retour de la Dashboard, comme la barre latérale à 288 px. Stream Flow persiste
  * déjà son split (`kse:flow-evidence`) exactement pour cette raison.
  */
-export interface WorkbenchLayout { splitPercent: number; sidebarWidth: number }
+export interface WorkbenchLayout {
+  splitPercent: number;
+  sidebarWidth: number;
+  /**
+   * L'assistant de fenêtrage prenait 288 px à l'éditeur en permanence, pour un outil occasionnel,
+   * et rien ne permettait de le replier. Replié il laisse un rail, et l'état voyage avec le reste
+   * de la disposition. Ouvert par défaut : c'est ainsi qu'il a toujours été, et le replier doit
+   * rester une décision, pas une surprise à la mise à jour.
+   */
+  assistantOpen: boolean;
+}
 
 export const LAYOUT_STORAGE_KEY = 'kse:query-layout';
-export const DEFAULT_LAYOUT: WorkbenchLayout = { splitPercent: 55, sidebarWidth: 288 };
+export const DEFAULT_LAYOUT: WorkbenchLayout = { splitPercent: 55, sidebarWidth: 288, assistantOpen: true };
 export const SPLIT_MIN = 20, SPLIT_MAX = 80;
 export const SIDEBAR_MIN = 200, SIDEBAR_MAX = 480;
 
@@ -609,5 +765,8 @@ export function readLayout(): WorkbenchLayout {
       ? clamp(stored!.splitPercent as number, SPLIT_MIN, SPLIT_MAX) : DEFAULT_LAYOUT.splitPercent,
     sidebarWidth: Number.isFinite(stored?.sidebarWidth)
       ? clamp(stored!.sidebarWidth as number, SIDEBAR_MIN, SIDEBAR_MAX) : DEFAULT_LAYOUT.sidebarWidth,
+    // Une disposition écrite avant que ce champ existe n'en porte pas : elle vaut « ouvert ».
+    assistantOpen: typeof stored?.assistantOpen === 'boolean'
+      ? stored.assistantOpen : DEFAULT_LAYOUT.assistantOpen,
   };
 }
