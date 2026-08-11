@@ -9,6 +9,32 @@ on:
       # by hand, and no workflow ever ran — with no signal anywhere that it hadn't.
       - 'v*'
       - 'V*'
+  # A tag push is not the only way a release starts, and the two cases it misses are both
+  # silent — the failure mode this file keeps being bitten by:
+  #   - publishing a Release from the GitHub UI on a tag that already exists emits no push
+  #     event at all, so nothing would build;
+  #   - a tag pushed by an Action using GITHUB_TOKEN does not trigger further workflows, by
+  #     GitHub's anti-recursion rule, so any future automation around tagging would silently
+  #     stop releasing.
+  # That same anti-recursion rule is what makes this trigger safe: the Release *this*
+  # workflow creates is created with GITHUB_TOKEN, so it cannot fire this trigger and loop.
+  release:
+    types: [published]
+
+# Publishing a Release from the UI *with a new tag* fires both triggers at once, and two
+# concurrent runs would push the same tags twice and append the digest block to the notes
+# twice — a visible duplication. Grouping on the tag keeps one run; `cancel-in-progress`
+# lets the later one (the release event, which carries the fuller context) supersede the
+# earlier rather than queue behind it and redo everything.
+concurrency:
+  group: release-${{ github.event.release.tag_name || github.ref_name }}
+  cancel-in-progress: true
+
+# The tag being released, resolved once. `github.ref_name` is the tag on both events, but
+# only by virtue of a release event's ref pointing at it — reading the release payload
+# first states what is meant instead of relying on that equivalence holding.
+env:
+  RELEASE_TAG: ${{ github.event.release.tag_name || github.ref_name }}
 
 jobs:
   # Nothing is built before the tag name is known to be usable. Three silent failures have
@@ -29,10 +55,12 @@ jobs:
     steps:
       - name: Check the tag is a lowercase semver
         id: check
-        env:
-          TAG: ${{ github.ref_name }}
+        # `$RELEASE_TAG` vient du `env:` de workflow, exporté dans le shell — pas de
+        # contexte `env` à résoudre dans une clé `env:` d'étape, dont la disponibilité
+        # dépend de la position.
         run: |
           set -euo pipefail
+          TAG="$RELEASE_TAG"
           if [[ "$TAG" =~ ^V ]]; then
             echo "::error::tag '$TAG' starts with an uppercase V. Release tags are lowercase — GitHub tag filters are case-sensitive, so this tag would otherwise trigger nothing at all. Re-tag as 'v${TAG#V}'."
             exit 1
@@ -269,7 +297,7 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+            type=raw,value=latest,enable=${{ !contains(github.event.release.tag_name || github.ref_name, '-') }}
           # Docker Hub reads these off the manifest for the tag listing, and GHCR uses
           # `image.source` to link the package back to this repository. metadata-action
           # derives source/revision/created on its own; the rest is ours to state.

@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react';
 import type { FC } from 'react';
 import { createBrowserRouter, Link, Outlet, RouterProvider } from 'react-router-dom';
 import Layout from './components/Layout';
+import GlobalErrorReporter from './components/GlobalErrorReporter';
 import RouteError from './components/RouteError';
 import { ToastProvider } from './components/Toast';
 import { ProgressBar, ConfirmProvider } from './components/ui';
@@ -94,6 +95,11 @@ const router = createBrowserRouter([
 const App: FC = () => {
   return (
     <ToastProvider>
+      {/* Dans le ToastProvider, parce que c'est la seule place d'où l'on atteint useToast.
+          Ne rend rien : il branche les écouteurs `error` / `unhandledrejection`, que rien
+          n'écoutait — d'où deux bugs signalés comme « le bouton est inactif » alors qu'une
+          exception était levée dans le gestionnaire de clic, en silence. */}
+      <GlobalErrorReporter />
       <ConfirmProvider>
         <RouterProvider router={router} />
       </ConfirmProvider>
