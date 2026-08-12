@@ -22,6 +22,7 @@ import {
   SPLIT_MIN, SPLIT_MAX, SIDEBAR_MIN, SIDEBAR_MAX, type WorkbenchLayout,
   starterQueries, pushHistory, describeHistoryEntry, formatDuration, type HistoryEntry,
   splitStatements, statementIndexAt, positionAt, withoutLeadingCte,
+  readSqlParam, buildQueryLink,
 } from './queryWorkbench';
 import { ResultsGrid } from '../components/query/ResultsGrid';
 import { WindowAssistant } from '../components/query/WindowAssistant';
@@ -128,6 +129,10 @@ const newTab = (sql = ''): Tab => ({ id: String(++tabCounter), name: `Query ${ta
  * arriver depuis TopicExplorer ne doit pas effacer ce qui était en cours. Le paramètre est ensuite
  * retiré de l'URL par l'appelant (`consumedUrlSql`) : les onglets étant persistés, le laisser en
  * place faisait rouvrir un onglet identique **à chaque rechargement**, indéfiniment.
+ *
+ * Le SQL arrive **déjà décodé** (`readSqlParam`). Il était redécodé une seconde fois ici, ce qui
+ * levait `URIError` sur tout `%` — donc sur n'importe quel `LIKE '%foo%'` — et faisait échouer le
+ * montage de la page, l'appel ayant lieu dans un initialiseur `useState`.
  */
 function restoreTabs(urlSql: string | null): { tabs: Tab[]; activeTabId: string; consumedUrlSql: boolean } {
   let tabs: Tab[] = [];
@@ -140,7 +145,7 @@ function restoreTabs(urlSql: string | null): { tabs: Tab[]; activeTabId: string;
   }
 
   if (!tabs.length) {
-    tabs = [{ id: '1', name: 'Query 1', sql: urlSql ? decodeURIComponent(urlSql) : DEFAULT_SQL }];
+    tabs = [{ id: '1', name: 'Query 1', sql: urlSql ?? DEFAULT_SQL }];
     return { tabs, activeTabId: '1', consumedUrlSql: !!urlSql };
   }
 
@@ -149,7 +154,7 @@ function restoreTabs(urlSql: string | null): { tabs: Tab[]; activeTabId: string;
   tabCounter = Math.max(tabCounter, ...tabs.map(t => Number(t.id) || 0));
 
   if (urlSql) {
-    const incoming = decodeURIComponent(urlSql);
+    const incoming = urlSql;
     // Le même SQL déjà ouvert ne mérite pas un onglet de plus : on active celui qui l'a.
     const existing = tabs.find(t => t.sql.trim() === incoming.trim());
     if (existing) return { tabs, activeTabId: existing.id, consumedUrlSql: true };
@@ -195,7 +200,7 @@ const QueryWorkbench: React.FC = () => {
   // ── Tabs ──────────────────────────────────────────────────────────────────────
   // Une seule restauration, au premier rendu : relire le stockage à chaque rendu
   // ressusciterait les onglets fermés.
-  const [restored] = useState(() => restoreTabs(new URLSearchParams(location.search).get('sql')));
+  const [restored] = useState(() => restoreTabs(readSqlParam(location.search)));
   const [tabs, setTabs] = useState<Tab[]>(restored.tabs);
   const [activeTabId, setActiveTabId] = useState(restored.activeTabId);
   const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
@@ -472,6 +477,8 @@ const QueryWorkbench: React.FC = () => {
   const [executionMs, setExecutionMs] = useState<number | null>(null);
   /** SQL de la requête qui a produit `results` — sert à marquer l'affichage périmé. */
   const [ranSql, setRanSql] = useState<string | null>(null);
+  /** Progression d'un « Run all », ou `null` — un exécuteur muet sur dix instructions inquiète. */
+  const [runningAll, setRunningAll] = useState<{ index: number; total: number } | null>(null);
   /** Dernier SQL que le validateur backend a accepté, pour ne pas le lui redemander à l'identique. */
   const validatedSqlRef = useRef<string | null>(null);
   // Plafond de lignes réellement envoyé au backend. Il était figé à 50 côté serveur
@@ -898,8 +905,19 @@ const QueryWorkbench: React.FC = () => {
         origin = positionAt(sql, statement.start);
       }
     }
-    setRunOrigin(origin);
+    return executeStatement(sqlToRun, origin);
+  };
 
+  /**
+   * Exécute **une** instruction : gardes de mode, pré-vol, envoi, résultat.
+   *
+   * Sortie de `runQuery` pour que « Run all » la réutilise telle quelle — un exécuteur séquentiel
+   * qui recopierait ces gardes finirait par en diverger, et c'est précisément sur elles que se joue
+   * ce qui part au moteur. Rend `true` quand l'instruction a abouti, ce qui est ce dont la boucle a
+   * besoin pour s'arrêter à la première erreur.
+   */
+  const executeStatement = async (sqlToRun: string, origin: QueryErrorLocation | null): Promise<boolean> => {
+    setRunOrigin(origin);
     const statementType = detectStatementType(sqlToRun);
 
     if (executionMode === 'SYNC_READ' && statementType === 'INSERT') {
@@ -909,7 +927,7 @@ const QueryWorkbench: React.FC = () => {
         hint: 'Switch the execution mode to Flink Job — Read mode returns rows, so it only accepts SELECT, EXPLAIN and CREATE TABLE.',
         raw: 'INSERT INTO must be submitted in Flink Job mode.',
       });
-      return;
+      return false;
     }
     if (executionMode === 'ASYNC_JOB' && statementType !== 'INSERT') {
       setResults(null); setSubmittedJob(null);
@@ -918,7 +936,7 @@ const QueryWorkbench: React.FC = () => {
         hint: `This statement is ${statementType || 'not an INSERT'}. Switch back to Read mode to run it and see the rows.`,
         raw: 'Flink Job mode only accepts INSERT INTO statements.',
       });
-      return;
+      return false;
     }
 
     /*
@@ -938,7 +956,7 @@ const QueryWorkbench: React.FC = () => {
           validatedSqlRef.current = null;
           setResults(null); setSubmittedJob(null);
           setPanelError(describeQueryError(vRes.data.error ?? 'SQL validation failed'));
-          return;
+          return false;
         }
         validatedSqlRef.current = sqlToRun;
       } catch { /* let execution handle it */ }
@@ -955,6 +973,7 @@ const QueryWorkbench: React.FC = () => {
     runningQueryIdRef.current = queryId;
     abortRef.current = controller;
     executingRef.current = true;
+    let succeeded = false;
     setExecuting(true); setResults(null); setSubmittedJob(null); setSortCol(null); setDetailIndex(null);
     // Ce qui a réellement été exécuté — c'est lui, et non le contenu courant de l'onglet, qui dit
     // si les lignes affichées répondent encore au texte sous les yeux.
@@ -968,6 +987,7 @@ const QueryWorkbench: React.FC = () => {
         setSubmittedJob(response.data);
         setResults(null);
         saveToHistory({ sql: sqlToRun, ts: Date.now(), ms, ok: true, engine: 'FLINK JOB' });
+        succeeded = true;
         toast(`Streaming job submitted: ${response.data.status}`, 'success');
       } else {
         const readMode = offsetMode === 'LATEST' ? 'latest-offset' : 'earliest-offset';
@@ -988,6 +1008,7 @@ const QueryWorkbench: React.FC = () => {
           rows: response.data.error ? undefined : response.data.rows.length,
           engine: response.data.error ? undefined : response.data.engine,
         });
+        succeeded = !response.data.error;
         if (!response.data.error) {
           // Refresh the schema browser when:
           // 1. The user explicitly ran a CREATE TABLE statement.
@@ -1006,7 +1027,7 @@ const QueryWorkbench: React.FC = () => {
       if (axios.isCancel(error)) {
         setResults(null);
         setSubmittedJob(null);
-        return;
+        return false;
       }
       saveToHistory({ sql: sqlToRun, ts: Date.now(), ms, ok: false });
       // describeApiError couvre aussi ce que le corps de réponse ne dit pas : backend
@@ -1023,7 +1044,52 @@ const QueryWorkbench: React.FC = () => {
       abortRef.current = null;
       runningQueryIdRef.current = null;
     }
+    return succeeded;
   };
+
+  /**
+   * Exécute toutes les instructions de l'onglet, dans l'ordre, en s'arrêtant à la première qui
+   * échoue.
+   *
+   * Depuis que Run vise l'instruction sous le curseur, un onglet qui contient `CREATE TABLE …;`
+   * puis `SELECT …;` doit être lancé morceau par morceau. Avant, Run envoyait tout le texte — mais
+   * le backend classait sur le premier mot, donc le cas n'a jamais été servi non plus. Or créer une
+   * table puis la lire est exactement ce que le flux d'auto-enregistrement encourage.
+   *
+   * L'arrêt à la première erreur est délibéré : les instructions d'un même onglet se suivent
+   * généralement parce que la suivante dépend de la précédente, et enchaîner sur une table qui n'a
+   * pas été créée produirait une seconde erreur qui masquerait la première. Le résultat affiché est
+   * celui de la dernière instruction exécutée, et le message dit **laquelle** a échoué.
+   */
+  const runAllStatements = async () => {
+    if (executingRef.current) {
+      toast('A query is already running — stop it first', 'info');
+      return;
+    }
+    setPanelError(null);
+    for (let i = 0; i < statements.length; i += 1) {
+      const statement = statements[i];
+      setRunningAll({ index: i, total: statements.length });
+      const ok = await executeStatement(statement.text, positionAt(sql, statement.start));
+      if (!ok) {
+        setRunningAll(null);
+        // Le panneau porte déjà l'erreur du moteur ; ce toast dit seulement où l'on s'est arrêté.
+        toast(`Stopped at statement ${i + 1} of ${statements.length}`, 'error');
+        return;
+      }
+    }
+    setRunningAll(null);
+    toast(`Ran ${statements.length} statements`, 'success');
+  };
+
+  /** Lien rejouable vers la requête de l'onglet courant. */
+  const copyQueryLink = useCallback(() => {
+    const link = buildQueryLink(`${window.location.origin}${location.pathname}`, sql);
+    if (!link) { toast('Nothing to link — the tab is empty', 'info'); return; }
+    void copyText(link).then(ok =>
+      toast(ok ? 'Link copied' : 'Could not copy to the clipboard', ok ? 'success' : 'error'));
+  }, [sql, location.pathname, toast]);
+
   // Idem : la ref se met à jour dans un effet, pas au milieu du rendu.
   useEffect(() => { runQueryRef.current = runQuery; });
 
@@ -1344,11 +1410,23 @@ const QueryWorkbench: React.FC = () => {
             {/* Ce que Run va envoyer, dit avant d'appuyer. « Run statement » sans dire laquelle
                 serait la moitié inquiétante de la fonctionnalité. */}
             {!hasSelection && statements.length > 1 && executionMode === 'SYNC_READ' && (
-              <Tooltip content="This tab holds several statements. ⌘↵ runs the one the cursor is in — select a fragment to run something else.">
-                <span tabIndex={0} className="text-[11px] text-on-surface-variant tabular-nums rounded hidden md:block">
-                  Statement {cursorStatement + 1}/{statements.length}
-                </span>
-              </Tooltip>
+              <>
+                <Tooltip content="This tab holds several statements. ⌘↵ runs the one the cursor is in — select a fragment to run something else.">
+                  <span tabIndex={0} className="text-[11px] text-on-surface-variant tabular-nums rounded hidden md:block">
+                    {runningAll
+                      ? `Running ${runningAll.index + 1}/${runningAll.total}`
+                      : `Statement ${cursorStatement + 1}/${statements.length}`}
+                  </span>
+                </Tooltip>
+                {/* Créer une table puis la lire est ce que l'auto-enregistrement encourage, et
+                    depuis que Run vise une seule instruction, cela demandait deux gestes. */}
+                <Tooltip content="Runs every statement in this tab, in order, stopping at the first one that fails.">
+                  <Button variant="secondary" onClick={() => void runAllStatements()}
+                    disabled={executing} icon="playlist_play">
+                    Run all
+                  </Button>
+                </Tooltip>
+              </>
             )}
             <Button
               variant="primary"
@@ -1428,8 +1506,19 @@ const QueryWorkbench: React.FC = () => {
                 <button type="button" onClick={() => addTab()} className="px-2.5 py-2 text-outline hover:text-on-surface transition-colors shrink-0" title="New tab" aria-label="New tab">
                   <span className="material-symbols-outlined text-[16px]">add</span>
                 </button>
-                {/* Format button pushed to the right */}
-                <div className="ml-auto px-3 flex items-center">
+                {/* Format + Link pushed to the right */}
+                <div className="ml-auto px-3 flex items-center gap-3">
+                  {/* L'éditeur acceptait un `?sql=` sans jamais en produire — à rebours de Stream
+                      Flow et du Topic Explorer, qui portent tous deux un « Link ». Les requêtes
+                      sauvegardées vivant dans un seul navigateur, montrer une requête à quelqu'un
+                      passait par un copier-coller. */}
+                  <Tooltip content="Copies a link that reopens this query in the editor. The tab's whole content travels in the URL.">
+                    <button type="button" onClick={copyQueryLink}
+                      className="flex items-center gap-1 text-[12px] text-on-surface-variant hover:text-on-surface transition-colors rounded">
+                      <span aria-hidden="true" className="material-symbols-outlined text-[16px]">link</span>
+                      Link
+                    </button>
+                  </Tooltip>
                   <Tooltip content="Reformats the SQL in the editor: one clause per line, one select item per line, keywords upper-cased. String literals and comments are left untouched. Shortcut: Shift + Alt + F.">
                   <button type="button" onClick={() => void editorRef.current?.getAction('editor.action.formatDocument')?.run()}
                     className="flex items-center gap-1 text-[12px] text-on-surface-variant hover:text-on-surface transition-colors rounded">

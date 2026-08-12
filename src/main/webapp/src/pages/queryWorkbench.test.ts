@@ -3,6 +3,7 @@ import {
   formatSql, tokenizeSql, sortRows, sortKeyOf, cellText, nextActiveTabId,
   isResultStale, writeStored, readStored, removeStored,
   readLayout, LAYOUT_STORAGE_KEY, DEFAULT_LAYOUT, SPLIT_MIN, SIDEBAR_MAX,
+  readSqlParam, buildQueryLink,
   starterTable, starterQueries, pushHistory, describeHistoryEntry, formatDuration,
   splitStatements, statementIndexAt, positionAt, detailValue, withoutLeadingCte,
   type HistoryEntry,
@@ -479,5 +480,37 @@ describe('withoutLeadingCte', () => {
 
   it('does not match an identifier that merely begins with "with"', () => {
     expect(withoutLeadingCte('SELECT withdrawal FROM t')).toBe('SELECT withdrawal FROM t');
+  });
+});
+
+describe('readSqlParam / buildQueryLink', () => {
+  it('round-trips SQL containing a percent sign', () => {
+    // The regression: URLSearchParams.get already decodes, and the caller decoded a second time —
+    // which throws URIError on `LIKE '%foo%'` and took the whole page down with it, the read
+    // happening inside a useState initializer.
+    const sql = "SELECT * FROM t WHERE name LIKE '%foo%'";
+    const link = buildQueryLink('https://host/query', sql);
+    expect(readSqlParam(new URL(link).search)).toBe(sql);
+  });
+
+  it('round-trips ampersands, plus signs and newlines', () => {
+    const sql = 'SELECT a\nFROM t\nWHERE b = 1 + 2 AND c = 3';
+    expect(readSqlParam(new URL(buildQueryLink('https://host/query', sql)).search)).toBe(sql);
+  });
+
+  it('returns null when there is no usable parameter', () => {
+    expect(readSqlParam('')).toBeNull();
+    expect(readSqlParam('?other=1')).toBeNull();
+    expect(readSqlParam('?sql=')).toBeNull();
+    expect(readSqlParam('?sql=%20%20')).toBeNull();
+  });
+
+  it('builds nothing from an empty tab', () => {
+    expect(buildQueryLink('https://host/query', '')).toBe('');
+    expect(buildQueryLink('https://host/query', '   ')).toBe('');
+  });
+
+  it('never throws on a malformed query string', () => {
+    expect(() => readSqlParam('?sql=%')).not.toThrow();
   });
 });

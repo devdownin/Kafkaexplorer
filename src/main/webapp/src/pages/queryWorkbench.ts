@@ -809,6 +809,45 @@ export function describeHistoryEntry(entry: HistoryEntry): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Partage par lien
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Le SQL porté par une query string, ou `null`.
+ *
+ * **`URLSearchParams.get()` décode déjà.** L'appelant enchaînait un `decodeURIComponent` par-dessus,
+ * et cette seconde passe *lève* dès que le SQL contient un `%` : `LIKE '%foo%'` ressort de `get()`
+ * en `%foo%`, que `decodeURIComponent` rejette avec `URIError: URI malformed`. Comme la lecture a
+ * lieu dans un initialiseur `useState`, l'exception partait pendant le rendu et **la page entière ne
+ * montait pas** — un écran d'erreur à la place de l'éditeur. Le prédicat le plus banal d'un outil
+ * d'exploration était donc précisément celui qu'un lien ne pouvait pas transporter.
+ */
+export function readSqlParam(search: string): string | null {
+  try {
+    const value = new URLSearchParams(search).get('sql');
+    return value && value.trim() ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Lien rejouable vers une requête. Vide si le SQL l'est — un lien qui n'ouvre rien ne se partage pas.
+ *
+ * L'éditeur *acceptait* un `?sql=` sans jamais en produire, à rebours de la convention du dépôt
+ * (Stream Flow et le Topic Explorer font l'aller-retour complet de leur état et portent un bouton
+ * « Link »). Les requêtes sauvegardées vivant dans le `localStorage` d'un seul navigateur, montrer
+ * une requête à quelqu'un passait par un copier-coller.
+ */
+export function buildQueryLink(baseUrl: string, sql: string): string {
+  const trimmed = (sql ?? '').trim();
+  if (!trimmed) return '';
+  const params = new URLSearchParams();
+  params.set('sql', trimmed);
+  return `${baseUrl}?${params.toString()}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Disposition du plan de travail
 // ─────────────────────────────────────────────────────────────────────────────
 

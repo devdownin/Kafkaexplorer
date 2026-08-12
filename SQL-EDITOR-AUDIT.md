@@ -9,15 +9,16 @@ Everything listed as **fixed** is fixed on this branch. What was found and delib
 *Constaté, non traité* at the end, with the reason.
 
 The pure logic extracted along the way lives in `pages/queryWorkbench.ts`, covered by
-`pages/queryWorkbench.test.ts` (77 cases); the backend fixes are pinned by `QueryControllerTest`.
+`pages/queryWorkbench.test.ts` (102 cases); the backend fixes are pinned by `QueryControllerTest`
+and `SqlStatementsTest`.
 **The wiring has its own tests** — `pages/QueryWorkbench.test.tsx`, the first component test of any
 page in this repository. It exists because most of what was fixed here *is* wiring: whether Run
 sends what `splitStatements` designated, whether clicking a topic still destroys the tab you are
 writing in, whether the detail panel closes when a sort invalidates the index it holds. Monaco is
 mocked away — 4 MB of editor jsdom cannot lay out, and none of the behaviour under test needs a real
 one. With that net in place the page was split into `components/query/` (`SchemaBrowser`,
-`ResultsGrid`, `RowDetail`, `WindowAssistant`, `DdlPreviewModal`), taking it from 2 168 lines to
-1 661 — in that order, since refactoring what you have just corrected, with no test, is the surest
+`ResultsGrid`, `RowDetail`, `WindowAssistant`, `DdlPreviewModal`), taking it from 2 168 lines down
+— in that order, since refactoring what you have just corrected, with no test, is the surest
 way to un-correct it.
 
 ---
@@ -181,6 +182,42 @@ the first `FROM` sits inside the CTE body, which is exactly the source topic to 
 **never falls back to the direct Kafka reader**: that reader regex-matches a table name out of
 `FROM`, so it would return rows read from whichever name it matched, silently ignoring the `WITH`
 clause. Wrong rows are worse than a refusal — the same reason user errors stopped falling back.
+
+### E2c — a shared `?sql=` link crashed the page whenever the SQL held a `%` *(fixed)*
+
+`restoreTabs` ran `decodeURIComponent` on a value **`URLSearchParams.get()` had already decoded**.
+That second pass throws on any lone `%`: `LIKE '%foo%'` comes back from `get()` as `%foo%`, which
+`decodeURIComponent` rejects with `URIError: URI malformed`. The read happens inside a `useState`
+initializer, so the exception was thrown during render and **the whole editor failed to mount** — an
+error screen instead of a page, on the most ordinary predicate an exploration tool has.
+
+It was latent only because nothing produced such a link: the Topic Explorer's "open in editor" emits
+`SELECT … LIMIT 50`, which has no `%`. Adding a Link button is exactly what would have made it live.
+`readSqlParam` now does the single decode `URLSearchParams` already performs, and `buildQueryLink`
+is its inverse; the round trip is pinned on `%`, `&`, `+` and newlines.
+
+### E2d — no way to share a query *(fixed)*
+
+The editor *accepted* a `?sql=` and never produced one, against the repository's own convention —
+Stream Flow and the Topic Explorer round-trip their whole state through the query string and each
+carry a `Link` button. Saved queries live in one browser's `localStorage`, so showing a colleague a
+query meant copy-pasting it into a chat. A `Link` button now copies a replayable URL; stripping the
+parameter after it is consumed, added earlier in this branch, is what keeps the link from stacking a
+duplicate tab on every open.
+
+### E2e — no way to run a script *(fixed)*
+
+Since Run targets the statement under the cursor, a tab holding `CREATE TABLE …;` then `SELECT …;`
+had to be run piece by piece. Before, Run sent the whole text — but the backend classified on the
+first word, so the case was never served either. Creating a table and then reading it is exactly what
+the auto-registration flow encourages.
+
+`Run all` executes them in order and **stops at the first failure**, naming which one stopped it.
+Stopping is deliberate: statements in one tab usually follow because each depends on the last, so
+carrying on into a table that was never created would produce a second error that buries the first.
+The execution of a single statement was extracted (`executeStatement`) rather than duplicated — a
+sequential runner that re-implemented the mode guards and the pre-flight would drift from them, and
+those guards are exactly what decides what reaches the engine.
 
 ### E3 — four different controls silently destroyed the tab you were writing in *(fixed)*
 

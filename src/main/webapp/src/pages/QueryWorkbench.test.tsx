@@ -254,6 +254,69 @@ describe('QueryWorkbench — what Run sends', () => {
   });
 });
 
+describe('QueryWorkbench — running every statement', () => {
+  beforeEach(() => {
+    post.mockImplementation((url: string) => url === '/api/query/validate'
+      ? Promise.resolve({ data: { valid: true } })
+      : Promise.resolve({ data: { columns: ['id'], rows: [{ id: 'A' }], error: null, engine: 'KAFKA_DIRECT' } }));
+  });
+
+  const sentSql = () => post.mock.calls
+    .filter(c => c[0] === '/api/query/run-sync')
+    .map(c => (c[1] as { sql: string }).sql);
+
+  it('runs them in order', async () => {
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.clear(editor());
+    await userEvent.paste('SELECT 1 FROM a;\nSELECT 2 FROM b;');
+    setCursor(0);
+
+    await userEvent.click(await screen.findByRole('button', { name: /Run all/ }));
+    await waitFor(() => expect(sentSql()).toEqual(['SELECT 1 FROM a', 'SELECT 2 FROM b']));
+  });
+
+  it('stops at the first failure instead of running on a table that was never created', async () => {
+    post.mockImplementation((url: string, body: unknown) => {
+      if (url === '/api/query/validate') return Promise.resolve({ data: { valid: true } });
+      const { sql } = body as { sql: string };
+      return Promise.resolve(sql.includes('FROM a')
+        ? { data: { columns: [], rows: [], error: "Object 'a' not found" } }
+        : { data: { columns: ['id'], rows: [], error: null } });
+    });
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.clear(editor());
+    await userEvent.paste('SELECT 1 FROM a;\nSELECT 2 FROM b;');
+    setCursor(0);
+
+    await userEvent.click(await screen.findByRole('button', { name: /Run all/ }));
+    await waitFor(() => expect(sentSql()).toEqual(['SELECT 1 FROM a']));
+    expect(await screen.findByText(/Stopped at statement 1 of 2/)).toBeInTheDocument();
+  });
+
+  it('is not offered for a single statement', async () => {
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.type(editor(), 'SELECT 1');
+    expect(screen.queryByRole('button', { name: /Run all/ })).not.toBeInTheDocument();
+  });
+});
+
+describe('QueryWorkbench — sharing by link', () => {
+  it('reopens a query whose SQL contains a percent sign', async () => {
+    // The double-decode this replaced threw URIError inside a useState initializer, so the page
+    // did not mount at all — on the most ordinary predicate an exploration tool has.
+    const sql = "SELECT * FROM t WHERE name LIKE '%foo%'";
+    const router = createMemoryRouter(
+      [{ path: '/query', element: <ToastProvider><ConfirmProvider><QueryWorkbench /></ConfirmProvider></ToastProvider> }],
+      { initialEntries: [`/query?sql=${encodeURIComponent(sql)}`] },
+    );
+    render(<RouterProvider router={router} />);
+    await waitFor(() => expect(editor().value).toBe(sql));
+  });
+});
+
 describe('QueryWorkbench — the results grid', () => {
   const RESULT = {
     columns: ['customerId', 'note'],
