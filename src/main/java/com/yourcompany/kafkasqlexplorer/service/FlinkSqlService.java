@@ -1405,28 +1405,45 @@ public class FlinkSqlService {
         return null;
     }
 
-    public void cancelQuery(String queryId) {
+    /**
+     * What a cancellation request actually achieved.
+     *
+     * <p>{@code cancelQuery} used to return {@code void}, and the endpoint above it answered 200
+     * either way, so a caller could not tell "the Flink job was cancelled" from "there was nothing
+     * to cancel". The distinction is not academic here: a {@code KAFKA_DIRECT} scan has no Flink
+     * job <em>by construction</em>, so the honest message depends on which engine ran — and the UI
+     * had already had to learn, on its own side, not to claim more than it did.
+     */
+    public enum CancelOutcome {
+        /** A live {@code JobClient} was found and asked to cancel. */
+        CANCELLED,
+        /** No live job under that id: already finished, never a Flink job, or an unknown id. */
+        NO_ACTIVE_JOB
+    }
+
+    public CancelOutcome cancelQuery(String queryId) {
         JobInfo info = activeJobs.get(queryId);
         if (info != null) {
             info.markCancelRequested();
             persistJobSnapshot(info, buildJobSummary(info), "Cancellation requested by user", null);
             info.client().cancel();
-        } else {
-            flinkJobStore.update(
-                queryId,
-                "UNKNOWN",
-                "Cancellation requested but no live Flink JobClient was available",
-                null,
-                true,
-                System.currentTimeMillis(),
-                null,
-                null
-            );
+            return CancelOutcome.CANCELLED;
         }
+        flinkJobStore.update(
+            queryId,
+            "UNKNOWN",
+            "Cancellation requested but no live Flink JobClient was available",
+            null,
+            true,
+            System.currentTimeMillis(),
+            null,
+            null
+        );
+        return CancelOutcome.NO_ACTIVE_JOB;
     }
 
-    public void cancelJob(String queryId) {
-        cancelQuery(queryId);
+    public CancelOutcome cancelJob(String queryId) {
+        return cancelQuery(queryId);
     }
 
     public List<FlinkJobSummary> getActiveJobs() {

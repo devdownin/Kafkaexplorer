@@ -133,14 +133,30 @@ public class QueryController {
         return flinkSqlService.getTableSchema(tableName);
     }
 
+    /**
+     * Cancels a running query, and <em>says what that achieved</em>.
+     *
+     * <p>Both endpoints used to return {@code void} and answer 200 whatever happened, so the caller
+     * could not tell a cancelled Flink job from an id with no live job behind it. That is a real
+     * distinction rather than a detail: a {@code KAFKA_DIRECT} scan has no Flink job by
+     * construction, so a UI that reports "cancelled" on the strength of a 200 promises more than
+     * took place — which is exactly the trap the editor's own Stop button had to be fixed for.
+     *
+     * <p>Still 200 in both cases: "there was nothing to cancel" is a legitimate outcome of a
+     * well-formed request, not a client error, and the caller has aborted its own HTTP request
+     * regardless.
+     */
     @PostMapping("/cancel/{queryId}")
-    public void cancel(@PathVariable String queryId) {
-        flinkJobService.cancel(queryId);
+    public Map<String, Object> cancel(@PathVariable("queryId") String queryId) {
+        FlinkSqlService.CancelOutcome outcome = flinkJobService.cancel(queryId);
+        return Map.of(
+            "cancelled", outcome == FlinkSqlService.CancelOutcome.CANCELLED,
+            "outcome", outcome.name());
     }
 
     @PostMapping("/jobs/{queryId}/cancel")
-    public void cancelJob(@PathVariable String queryId) {
-        flinkJobService.cancel(queryId);
+    public Map<String, Object> cancelJob(@PathVariable("queryId") String queryId) {
+        return cancel(queryId);
     }
 
     @GetMapping("/ddl-preview")

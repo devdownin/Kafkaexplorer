@@ -23,12 +23,13 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * The two endpoints of this controller that answer when something has gone wrong — both of which
- * shipped without a test, and both of which threw the reason away.
+ * The endpoints of this controller that answer when something has gone wrong — none of which had a
+ * test, and each of which threw away what the caller needed to know.
  *
  * <p>{@code /ddl-preview} used to return {@code Map.of("error", e.getMessage())}. {@code Map.of}
  * rejects a null value and {@code getMessage()} is null for a {@link NullPointerException}, so an
@@ -39,6 +40,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * list}), so an unreachable broker and a Flink runtime still starting up produced exactly the same
  * screen with nothing to tell them apart.
  *
+ * <p>{@code /cancel} returned {@code void} and answered 200 whatever happened, so a caller could
+ * not tell a cancelled Flink job from an id with no live job behind it — and a {@code KAFKA_DIRECT}
+ * scan has no Flink job by construction, which makes that the common case rather than the edge one.
+ *
  * <p>Standalone MockMvc: nothing here needs a Spring context.
  */
 class QueryControllerTest {
@@ -47,6 +52,7 @@ class QueryControllerTest {
     private DdlGeneratorService ddlGeneratorService;
     private KafkaAdminService kafkaAdminService;
     private FlinkSqlService flinkSqlService;
+    private FlinkJobService flinkJobService;
     private MockMvc mockMvc;
 
     @BeforeEach
@@ -55,10 +61,11 @@ class QueryControllerTest {
         ddlGeneratorService = Mockito.mock(DdlGeneratorService.class);
         kafkaAdminService = Mockito.mock(KafkaAdminService.class);
         flinkSqlService = Mockito.mock(FlinkSqlService.class);
+        flinkJobService = Mockito.mock(FlinkJobService.class);
         QueryController controller = new QueryController(
             flinkSqlService,
             Mockito.mock(SqlExplorationService.class),
-            Mockito.mock(FlinkJobService.class),
+            flinkJobService,
             kafkaAdminService,
             Mockito.mock(SqlQueryValidator.class),
             schemaInferenceService,
@@ -152,6 +159,42 @@ class QueryControllerTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.health").value(true))
             .andExpect(jsonPath("$.kafkaError").value("Not authorized to access topics"));
+    }
+
+    // ── POST /cancel ─────────────────────────────────────────────────────────────
+    //
+    // Both cancel endpoints returned void and answered 200 whatever happened, so a caller could not
+    // tell a cancelled Flink job from an id with no live job behind it — and a KAFKA_DIRECT scan
+    // has no Flink job by construction, so that is the common case, not the edge one.
+
+    @Test
+    void reportsThatAJobWasActuallyCancelled() throws Exception {
+        when(flinkJobService.cancel("q-1")).thenReturn(FlinkSqlService.CancelOutcome.CANCELLED);
+
+        mockMvc.perform(post("/api/query/cancel/q-1"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.cancelled").value(true))
+            .andExpect(jsonPath("$.outcome").value("CANCELLED"));
+    }
+
+    @Test
+    void reportsThatThereWasNoJobToCancel() throws Exception {
+        when(flinkJobService.cancel("q-2")).thenReturn(FlinkSqlService.CancelOutcome.NO_ACTIVE_JOB);
+
+        mockMvc.perform(post("/api/query/cancel/q-2"))
+            // Still 200: "nothing to cancel" is a legitimate outcome of a well-formed request.
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.cancelled").value(false))
+            .andExpect(jsonPath("$.outcome").value("NO_ACTIVE_JOB"));
+    }
+
+    @Test
+    void theJobScopedCancelAnswersTheSameContract() throws Exception {
+        when(flinkJobService.cancel("q-3")).thenReturn(FlinkSqlService.CancelOutcome.CANCELLED);
+
+        mockMvc.perform(post("/api/query/jobs/q-3/cancel"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.cancelled").value(true));
     }
 
     @Test

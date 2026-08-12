@@ -31,7 +31,7 @@ public class FlinkJobService {
         return flinkSqlService.getJob(queryId);
     }
 
-    public void cancel(String queryId) {
-        flinkSqlService.cancelJob(queryId);
+    public FlinkSqlService.CancelOutcome cancel(String queryId) {
+        return flinkSqlService.cancelJob(queryId);
     }
 }

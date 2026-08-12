@@ -88,7 +88,21 @@ be read, and the health dot has **three** states: a broker that answers the prob
 metadata call is *degraded*, not offline — sending an operator to check a connection that works is
 the worst possible lead. `QueryControllerTest` covers the four combinations.
 
-### R9 — the history dropdown never closed on its own *(fixed)*
+### R9 — `POST /api/query/cancel/{queryId}` never said what it had achieved *(fixed)*
+
+`FlinkSqlService.cancelQuery` returned `void` and the endpoint answered 200 whether it had found a
+live `JobClient` or nothing at all, so the caller could not tell a cancelled Flink job from an id
+with no job behind it. That is the common case rather than the edge one: a `KAFKA_DIRECT` scan has
+**no Flink job by construction**, and its in-flight fetch finishes server-side whatever the client
+does. The editor's Stop button had already had to learn this on its own side — "only confirm what
+actually happened" — while the endpoint it called still could not tell it.
+
+`cancelQuery` returns a `CancelOutcome` (`CANCELLED` / `NO_ACTIVE_JOB`), both endpoints report it,
+and Stop now says either "Flink job cancelled" or "Request aborted — no Flink job to cancel, the
+server finishes its in-flight read". Still 200 in both cases: nothing to cancel is a legitimate
+outcome of a well-formed request, and the client has aborted its own HTTP request regardless.
+
+### R10 — the history dropdown never closed on its own *(fixed)*
 
 No outside-click handler, no `Escape`. It stayed open over the results panel until the button was
 clicked again. Both are wired, plus `aria-expanded` / `role="menu"`.
@@ -163,6 +177,12 @@ is what makes a formatter safe, and `WHERE label = 'group by'` is the test that 
 names are upper-cased from a **closed** list, because an unknown one is most likely a UDF and Flink
 does not promise case-insensitive resolution for those: recasing `XmlExtract` would break the query
 we claimed to be tidying.
+
+The provider is registered in **`monaco-setup.ts`**, not in the page. The first pass put it in a
+`QueryWorkbench` effect, disposed on unmount — and the provider is global to the Monaco instance, so
+the app's three other SQL editors (two in `Metrics`, one in `TopicExplorer`) still had none: the
+same symptom, in the same places, under a fix that thought it was finished. That module is imported
+by each of those pages and evaluated once, which is exactly the scope wanted.
 
 ### E5 — reading `Rows` and `Offset` was impossible on a narrow window *(fixed)*
 
@@ -294,6 +314,11 @@ Everything below was unreachable without a mouse. All fixed.
   `Escape`.
 - **Drag no longer selects text** across the panes it crosses (`user-select` suspended for the
   gesture).
+- **Result column headers are no longer CSS-uppercased.** A column name is *data*, not a label: it
+  comes from the engine, and `customerId` rendered as `CUSTOMERID` is no longer the identifier to
+  retype into the next query — on an engine that distinguishes case, it is a false lead. The wide
+  letter-spacing went with it, since it only existed to make capitals legible, and the header takes
+  the monospace of the values it sits above.
 
 ---
 

@@ -17,7 +17,7 @@ import { resolveScope, toTableName } from './sqlScope';
 import { buildWindowSql, windowCaveat, guessTimeColumn, type WindowKind, type WindowUnit } from './windowSql';
 import { toCsv, toJson } from './resultExport';
 import {
-  formatSql, sortRows, cellText, nextActiveTabId, isResultStale,
+  sortRows, cellText, nextActiveTabId, isResultStale,
   writeStored, readStored, removeStored,
   readLayout, clamp, LAYOUT_STORAGE_KEY, DEFAULT_LAYOUT,
   SPLIT_MIN, SPLIT_MAX, SIDEBAR_MIN, SIDEBAR_MAX, type WorkbenchLayout,
@@ -83,9 +83,14 @@ const ResultsGrid = React.memo(function ResultsGrid({
           {columns.map(col => (
             // `aria-sort` sur l'en-tête et un vrai `<button>` dedans : l'en-tête était un `<th>`
             // cliquable, donc un tri inatteignable au clavier et un ordre jamais annoncé.
+            // Le nom de colonne n'est **pas un libellé, c'est une donnée** : il vient du moteur, et
+            // le passer en majuscules par CSS le déforme. `customerId` s'affichait `CUSTOMERID`,
+            // ce qui n'est plus l'identifiant à réécrire dans la requête suivante — et sur un
+            // moteur qui distingue la casse, c'est une piste fausse. L'interlettrage part avec :
+            // il n'existait que pour rendre les capitales lisibles.
             <th key={col} scope="col"
               aria-sort={sortCol === col ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
-              className="px-4 py-2.5 border-b border-outline-variant/60 text-[11px] font-medium text-on-surface-variant uppercase tracking-[0.05em] whitespace-nowrap">
+              className="px-4 py-2.5 border-b border-outline-variant/60 text-[11px] font-medium font-mono text-on-surface-variant whitespace-nowrap">
               <button type="button" onClick={() => onSort(col)}
                 className="flex items-center gap-1 hover:text-on-surface select-none transition-colors rounded">
                 {col}
@@ -517,21 +522,8 @@ const QueryWorkbench: React.FC = () => {
     });
   }, []);
 
-  /**
-   * Monaco n'a **pas** de formateur SQL (voir `formatSql`). Le bouton « Format » appelait
-   * `editor.action.formatDocument`, qui sans fournisseur enregistré ne reformate rien et se
-   * contente d'un message discret dans l'éditeur : le bouton était décoratif depuis toujours.
-   */
-  useEffect(() => {
-    if (!monaco) return;
-    const disp = monaco.languages.registerDocumentFormattingEditProvider('sql', {
-      provideDocumentFormattingEdits: model => [{
-        range: model.getFullModelRange(),
-        text: formatSql(model.getValue()),
-      }],
-    });
-    return () => disp.dispose();
-  }, [monaco]);
+  // Le fournisseur de formatage SQL vit dans `monaco-setup` : il est global à l'instance Monaco,
+  // et l'enregistrer depuis cette page le retirait des trois autres éditeurs SQL de l'application.
 
   // Auto-completion provider
   useEffect(() => {
@@ -1169,24 +1161,39 @@ const QueryWorkbench: React.FC = () => {
    * l'appel au backend annule en plus le job Flink quand il y en a un (le lecteur Kafka
    * direct, lui, n'a pas de job à annuler et terminera son fetch en cours côté serveur).
    */
-  const cancelRunningQuery = useCallback(() => {
+  const cancelRunningQuery = useCallback(async () => {
     const queryId = runningQueryIdRef.current;
     const controller = abortRef.current;
     controller?.abort();
-    if (queryId) {
-      axios.post(`/api/query/cancel/${encodeURIComponent(queryId)}`)
-        .catch(() => { /* best-effort : l'UI est déjà rendue à l'utilisateur */ });
-    }
+
     // Ne confirmer que ce qui a réellement eu lieu. Sans contrôleur ni id, ce bouton n'a
     // rien annulé du tout, et annoncer « Query cancelled » là-dessus est précisément ce qui
     // fait décrire le symptôme comme « le bouton est inactif » plutôt que « l'écran est
     // resté bloqué » — le message détournait le diagnostic. On remet aussi l'écran dans un
     // état cohérent, sans quoi il reste en « exécution » indéfiniment.
-    if (controller || queryId) {
-      toast('Query cancelled', 'info');
-    } else {
+    if (!controller && !queryId) {
       setExecuting(false);
       toast('No query was running', 'info');
+      return;
+    }
+    if (!queryId) { toast('Query cancelled', 'info'); return; }
+
+    /*
+     * Le serveur dit maintenant ce que l'annulation a obtenu, et les deux cas ne veulent pas dire
+     * la même chose : un scan `KAFKA_DIRECT` n'a **aucun** job Flink par construction, donc
+     * « NO_ACTIVE_JOB » y est le cas normal, pas l'anomalie — la requête HTTP est bien abandonnée,
+     * mais le fetch en cours se termine côté serveur. Annoncer « annulée » dans les deux cas
+     * promettait plus que ce qui s'était produit.
+     */
+    try {
+      const res = await axios.post<{ cancelled: boolean; outcome: string }>(
+        `/api/query/cancel/${encodeURIComponent(queryId)}`);
+      toast(res.data.cancelled
+        ? 'Flink job cancelled'
+        : 'Request aborted — no Flink job to cancel, the server finishes its in-flight read', 'info');
+    } catch {
+      // L'abandon HTTP a bien eu lieu : c'est la seule chose garantie, et la seule à annoncer.
+      toast('Request aborted — the server could not be reached to cancel the job', 'info');
     }
   }, [toast]);
 
@@ -1691,7 +1698,7 @@ const QueryWorkbench: React.FC = () => {
               <span tabIndex={0} className="text-[11px] text-outline hidden lg:block font-mono rounded">⌘↵</span>
             </Tooltip>
             {executing && (
-              <Button variant="secondary" onClick={cancelRunningQuery} icon="stop_circle">
+              <Button variant="secondary" onClick={() => void cancelRunningQuery()} icon="stop_circle">
                 Stop
               </Button>
             )}
