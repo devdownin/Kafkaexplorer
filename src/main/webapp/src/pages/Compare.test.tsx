@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import axios from 'axios';
@@ -114,6 +114,53 @@ describe('Compare', () => {
     await user.click(screen.getByRole('button', { name: /run compare/i }));
 
     await waitFor(() => expect(screen.getAllByText('<Order id="1"/>').length).toBe(2));
+  });
+
+  /*
+   * « Sync scroll » était persisté dans localStorage et lu par rien : le bouton basculait, et
+   * les deux panneaux continuaient de défiler chacun de leur côté.
+   */
+  it('scrolls both panes together while Sync scroll is on', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => expect(screen.getByLabelText('Topic A')).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: /run compare/i }));
+    await waitFor(() => expect(screen.getAllByText(/p0 · offset 1/).length).toBe(2));
+
+    const paneA = screen.getByTestId('pane-A');
+    const paneB = screen.getByTestId('pane-B');
+
+    paneA.scrollTop = 240;
+    fireEvent.scroll(paneA);
+    expect(paneB.scrollTop).toBe(240);
+
+    // Et dans l'autre sens, ce qui n'irait pas de soi si le garde anti-écho bloquait le miroir.
+    paneB.scrollTop = 90;
+    fireEvent.scroll(paneB);
+    await waitFor(() => expect(paneA.scrollTop).toBe(90));
+  });
+
+  it('leaves the panes independent when Sync scroll is off', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => expect(screen.getByLabelText('Topic A')).toBeInTheDocument());
+    await user.click(screen.getByRole('switch', { name: /sync scroll/i }));
+    await user.click(screen.getByRole('button', { name: /run compare/i }));
+    await waitFor(() => expect(screen.getAllByText(/p0 · offset 1/).length).toBe(2));
+
+    const paneA = screen.getByTestId('pane-A');
+    const paneB = screen.getByTestId('pane-B');
+    paneA.scrollTop = 240;
+    fireEvent.scroll(paneA);
+    expect(paneB.scrollTop).toBe(0);
+  });
+
+  /* Le champ « Shared Filter Context » n'était relié à rien : il est retiré, pas laissé décoratif. */
+  it('offers no control that does nothing', async () => {
+    renderPage();
+    await waitFor(() => expect(screen.getByLabelText('Topic A')).toBeInTheDocument());
+    expect(screen.queryByLabelText(/shared filter/i)).toBeNull();
+    expect(screen.queryByPlaceholderText(/filter applied to both topics/i)).toBeNull();
   });
 
   it('survives a response with no samples at all', async () => {

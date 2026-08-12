@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import axios from 'axios';
 import { useToast } from '../components/Toast';
 import { Button } from '../components/ui';
@@ -90,11 +90,52 @@ const Toggle: React.FC<{ label: string; on: boolean; onClick: () => void }> = ({
   </label>
 );
 
+/**
+ * Défilement synchronisé des deux panneaux.
+ *
+ * Le bouton « Sync scroll » existait, était persisté dans `localStorage`… et lu par rien. Deux
+ * colonnes qu'on compare ligne à ligne doivent descendre ensemble, sinon la comparaison se fait
+ * de mémoire.
+ *
+ * Écrire `scrollTop` sur l'autre panneau y déclenche un `scroll`, qui voudrait à son tour piloter
+ * le premier. La chaîne s'arrête d'elle-même parce qu'écrire une position **déjà atteinte** ne
+ * déclenche aucun événement : le seul garde nécessaire est donc de ne pas réécrire ce qui est déjà
+ * là. Une tolérance d'un pixel évite le va-et-vient sur les positions fractionnaires.
+ *
+ * C'est plus simple qu'un verrou « qui pilote », et surtout correct : un tel verrou, relâché au
+ * tick suivant, fait ignorer un défilement de l'autre panneau survenu entre-temps.
+ */
+function useSyncedScroll(enabled: boolean) {
+  const paneA = useRef<HTMLDivElement>(null);
+  const paneB = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const nodes = [paneA.current, paneB.current].filter((n): n is HTMLDivElement => n !== null);
+    if (nodes.length < 2) return;
+
+    const detach = nodes.map((node, index) => {
+      const other = nodes[1 - index];
+      const onScroll = () => {
+        if (Math.abs(other.scrollTop - node.scrollTop) <= 1) return;
+        other.scrollTop = node.scrollTop;
+      };
+      node.addEventListener('scroll', onScroll, { passive: true });
+      return () => node.removeEventListener('scroll', onScroll);
+    });
+
+    return () => detach.forEach(off => off());
+  }, [enabled]);
+
+  return { paneA, paneB };
+}
+
 const TopicPane: React.FC<{
   side: 'A' | 'B'; topic: string; setTopic: (t: string) => void; count: number;
   /** Les deux panneaux reçoivent **les mêmes** paires : c'est ce qui les garde alignés. */
   pairs: ComparePair[]; topics: string[]; hasResult: boolean;
-}> = ({ side, topic, setTopic, count, pairs, topics, hasResult }) => (
+  scrollRef?: React.Ref<HTMLDivElement>;
+}> = ({ side, topic, setTopic, count, pairs, topics, hasResult, scrollRef }) => (
   <div className="flex-1 flex flex-col rounded-xl bg-surface-container ring-1 ring-white/[0.045] overflow-hidden">
     <div className="p-3 border-b border-outline-variant/60 flex items-center justify-between bg-surface-container-high/60">
       <div className="flex flex-col gap-0.5 min-w-0">
@@ -110,7 +151,7 @@ const TopicPane: React.FC<{
       </div>
       <span className="text-[12px] text-on-surface-variant tabular-nums shrink-0">{count} msgs</span>
     </div>
-    <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-2">
+    <div ref={scrollRef} data-testid={`pane-${side}`} className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-2">
       {!hasResult && (
         <div className="p-8 text-center text-outline text-[12px]">Select topics and run compare</div>
       )}
@@ -191,21 +232,20 @@ const Compare: React.FC = () => {
   const shown = useMemo(() => visiblePairs(pairs, showDiffOnly), [pairs, showDiffOnly]);
   const diffCount = useMemo(() => countDiffs(pairs), [pairs]);
   const comparedCount = useMemo(() => countCompared(pairs), [pairs]);
+  const { paneA, paneB } = useSyncedScroll(syncCursors);
 
   return (
     <div className="flex-1 flex flex-col p-4 gap-4 overflow-hidden h-full">
-      {/* Query bar */}
+      {/*
+        Le bandeau portait un « Shared Filter Context (optional) » : une zone de saisie SQL sans
+        `value`, sans `onChange` et sans `ref`. On y tapait un filtre, il ne partait nulle part, et
+        rien ne le disait. Le câbler voudrait dire exécuter du SQL par topic — c'est le métier de
+        l'éditeur, pas de cette page, qui lit des échantillons de messages. Une commande qui ne fait
+        rien coûte plus cher que son absence.
+      */}
       <section className="flex flex-col">
         <div className="flex flex-col rounded-xl overflow-hidden bg-surface-container ring-1 ring-white/[0.045]">
-          <div className="flex bg-surface-container-high/60 px-4 py-2.5 border-b border-outline-variant/60 items-center justify-between">
-            <span className="text-[11px] uppercase tracking-[0.05em] text-on-surface-variant">Shared Filter Context (optional)</span>
-          </div>
-          <textarea
-            aria-label="Shared filter SQL"
-            className="w-full bg-transparent border-none focus:outline-none font-mono text-[13px] p-4 h-16 text-on-surface resize-none placeholder:text-outline"
-            placeholder="-- Optional: filter applied to both topics&#10;SELECT * FROM TABLE WHERE event_type = 'ORDER_CREATED'"
-          />
-          <div className="flex justify-between items-center gap-3 p-3 bg-surface-container-high/40 border-t border-outline-variant/60">
+          <div className="flex justify-between items-center gap-3 p-3 bg-surface-container-high/40">
             <div className="flex items-center gap-5">
               <Toggle label="Sync scroll" on={syncCursors} onClick={() => setSyncCursors(!syncCursors)} />
               <Toggle label="Diff only" on={showDiffOnly} onClick={() => setShowDiffOnly(!showDiffOnly)} />
@@ -219,8 +259,8 @@ const Compare: React.FC = () => {
 
       {/* Side-by-side */}
       <section className="flex-1 flex gap-4 overflow-hidden">
-        <TopicPane side="A" topic={topicA} setTopic={setTopicA} count={samplesA.length} pairs={shown} topics={topics} hasResult={hasResult} />
-        <TopicPane side="B" topic={topicB} setTopic={setTopicB} count={samplesB.length} pairs={shown} topics={topics} hasResult={hasResult} />
+        <TopicPane side="A" topic={topicA} setTopic={setTopicA} count={samplesA.length} pairs={shown} topics={topics} hasResult={hasResult} scrollRef={paneA} />
+        <TopicPane side="B" topic={topicB} setTopic={setTopicB} count={samplesB.length} pairs={shown} topics={topics} hasResult={hasResult} scrollRef={paneB} />
       </section>
 
       {/* Diff Summary Bar */}
