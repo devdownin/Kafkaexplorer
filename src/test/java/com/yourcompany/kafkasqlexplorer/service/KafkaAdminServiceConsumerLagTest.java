@@ -26,6 +26,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.concurrent.ExecutionException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -36,6 +37,8 @@ import java.util.stream.IntStream;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -74,18 +77,34 @@ class KafkaAdminServiceConsumerLagTest {
         when(admin.describeTopics(anyCollection())).thenReturn(result);
     }
 
+    private ListConsumerGroupOffsetsResult offsetsResult;
+    private Map<String, KafkaFuture<ConsumerGroupDescription>> describeFutures = new LinkedHashMap<>();
+
     private void groups(GroupListing... listings) {
         ListGroupsResult result = mock(ListGroupsResult.class);
         when(result.all()).thenReturn(KafkaFuture.completedFuture(List.of(listings)));
         when(admin.listGroups(any())).thenReturn(result);
     }
 
+    /** Un groupe sans membre : EMPTY est ce qu'un groupe abandonné laisse derrière lui. */
+    private static GroupListing dormantGroup(String id) {
+        return new GroupListing(id, Optional.of(GroupType.CLASSIC), GroupType.CLASSIC.toString(),
+                Optional.of(GroupState.EMPTY));
+    }
+
     private static GroupListing group(String id, GroupType type) {
         return new GroupListing(id, Optional.of(type), type.toString(), Optional.of(GroupState.STABLE));
     }
 
+    /*
+     * Un futur par groupe : le service ne lit plus `.all()`, qui échouait en bloc dès qu'un seul
+     * groupe échouait — et coûtait alors les membres des deux cents autres.
+     */
     private void described(Map<String, ConsumerGroupDescription> descriptions) {
         DescribeConsumerGroupsResult result = mock(DescribeConsumerGroupsResult.class);
+        describeFutures = new LinkedHashMap<>();
+        descriptions.forEach((id, description) -> describeFutures.put(id, KafkaFuture.completedFuture(description)));
+        when(result.describedGroups()).thenReturn(describeFutures);
         when(result.all()).thenReturn(KafkaFuture.completedFuture(descriptions));
         when(admin.describeConsumerGroups(anyCollection())).thenReturn(result);
     }
@@ -113,8 +132,40 @@ class KafkaAdminServiceConsumerLagTest {
             all.put(groupId, offsets);
         });
         ListConsumerGroupOffsetsResult result = mock(ListConsumerGroupOffsetsResult.class);
+        // Un groupe sans entrée n'a pas d'offset commité sur ce topic : c'est une réponse, pas un
+        // échec. La distinction compte, puisque l'échec produit désormais une ligne à part.
+        when(result.partitionsToOffsetAndMetadata(anyString()))
+                .thenReturn(KafkaFuture.completedFuture(Map.of()));
+        all.forEach((groupId, offsets) ->
+                when(result.partitionsToOffsetAndMetadata(groupId))
+                        .thenReturn(KafkaFuture.completedFuture(offsets)));
         when(result.all()).thenReturn(KafkaFuture.completedFuture(all));
         when(admin.listConsumerGroupOffsets(any(Map.class))).thenReturn(result);
+        offsetsResult = result;
+    }
+
+    /** Un groupe dont les offsets ne se lisent pas — l'appel entier ne doit pas tomber avec lui. */
+    private void offsetsFailFor(String groupId, String reason) {
+        KafkaFuture<Map<TopicPartition, OffsetAndMetadata>> failed = mock(KafkaFuture.class);
+        try {
+            when(failed.get(anyLong(), any())).thenThrow(
+                    new ExecutionException(new org.apache.kafka.common.errors.TimeoutException(reason)));
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+        when(offsetsResult.partitionsToOffsetAndMetadata(groupId)).thenReturn(failed);
+    }
+
+    /** Un groupe dont la description ne se lit pas : on perd ses membres, pas ceux des autres. */
+    private void describeFailsFor(String groupId, String reason) {
+        KafkaFuture<ConsumerGroupDescription> failed = mock(KafkaFuture.class);
+        try {
+            when(failed.get(anyLong(), any())).thenThrow(
+                    new ExecutionException(new org.apache.kafka.common.errors.TimeoutException(reason)));
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+        describeFutures.put(groupId, failed);
     }
 
     private void endOffsets(Map<Integer, Long> byPartition) {
@@ -288,7 +339,73 @@ class KafkaAdminServiceConsumerLagTest {
         assertTrue(consumers.truncated());
         assertEquals(1, consumers.groupsExamined());
         assertEquals(3, consumers.groupsInCluster());
-        assertTrue(consumers.warnings().stream().anyMatch(w -> w.contains("would not appear here")));
+        assertTrue(consumers.warnings().stream().anyMatch(w -> w.contains("does not appear here even if it is the one lagging")));
+    }
+
+    /*
+     * `.all()` échouait en bloc : un seul groupe illisible coûtait les membres des deux cents
+     * autres, alors que l'appartenance est ce qui sépare STALLED de BEHIND.
+     */
+    @Test
+    void oneUndescribableGroupDoesNotBlindTheOthers() {
+        topicWithPartitions(1);
+        groups(group("orders", GroupType.CLASSIC), group("payments", GroupType.CLASSIC));
+        described(Map.of("orders", description("orders", member("m1", "h1", 0)),
+                         "payments", description("payments", member("m2", "h2", 0))));
+        describeFailsFor("payments", "coordinator moved");
+        committed(Map.of("orders", Map.of(0, 40L), "payments", Map.of(0, 10L)));
+        endOffsets(Map.of(0, 100L));
+
+        TopicConsumers consumers = service.getTopicConsumers(TOPIC, 200);
+
+        ConsumerGroupLag orders = consumers.groups().stream()
+                .filter(g -> g.groupId().equals("orders")).findFirst().orElseThrow();
+        assertEquals(1, orders.assignedMembers(), "the healthy group keeps its members");
+        assertEquals(60L, orders.totalLag());
+        assertTrue(consumers.warnings().stream().anyMatch(w -> w.contains("1 of the 2 group(s)")),
+            "the degradation should be scoped, not global: " + consumers.warnings());
+    }
+
+    /** Un groupe dont les offsets échouent est nommé, pas confondu avec « ne lit pas ce topic ». */
+    @Test
+    void oneGroupWithUnreadableOffsetsIsReportedRatherThanDropped() {
+        topicWithPartitions(1);
+        groups(group("orders", GroupType.CLASSIC), group("payments", GroupType.CLASSIC));
+        described(Map.of("orders", description("orders", member("m1", "h1", 0))));
+        committed(Map.of("orders", Map.of(0, 40L)));
+        offsetsFailFor("payments", "request timed out");
+        endOffsets(Map.of(0, 100L));
+
+        TopicConsumers consumers = service.getTopicConsumers(TOPIC, 200);
+
+        ConsumerGroupLag payments = consumers.groups().stream()
+                .filter(g -> g.groupId().equals("payments")).findFirst()
+                .orElseThrow(() -> new AssertionError("the failed group should still be listed: " + consumers.groups()));
+        assertEquals(ConsumerGroupLag.Health.UNKNOWN, payments.health());
+        assertTrue(payments.error().contains("timed out"), payments.error());
+        // Et le groupe sain répond quand même — c'est tout l'objet du changement.
+        assertEquals(60L, consumers.groups().stream()
+                .filter(g -> g.groupId().equals("orders")).findFirst().orElseThrow().totalLag());
+    }
+
+    /*
+     * La troncature se faisait par ordre alphabétique, et son propre avertissement l'avouait. Un
+     * groupe qui a des membres est bien plus probablement celui qu'on cherche qu'un groupe vide
+     * depuis une semaine.
+     */
+    @Test
+    void theCapKeepsGroupsWithMembersBeforeDormantOnes() {
+        topicWithPartitions(1);
+        groups(dormantGroup("aaa-idle"), group("zzz-live", GroupType.CLASSIC));
+        described(Map.of("zzz-live", description("zzz-live", member("m1", "h1", 0))));
+        committed(Map.of("zzz-live", Map.of(0, 40L), "aaa-idle", Map.of(0, 90L)));
+        endOffsets(Map.of(0, 100L));
+
+        TopicConsumers consumers = service.getTopicConsumers(TOPIC, 1);
+
+        assertEquals(List.of("zzz-live"),
+            consumers.groups().stream().map(ConsumerGroupLag::groupId).toList(),
+            "the live group must survive the cap even though it sorts last");
     }
 
     @Test

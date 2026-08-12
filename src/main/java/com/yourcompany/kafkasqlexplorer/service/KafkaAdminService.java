@@ -21,6 +21,7 @@ import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.common.KafkaFuture;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.apache.kafka.common.serialization.StringDeserializer;
@@ -35,6 +36,7 @@ import org.apache.kafka.clients.admin.FeatureMetadata;
 import org.apache.kafka.clients.admin.FinalizedVersionRange;
 import org.apache.kafka.clients.admin.ConsumerGroupDescription;
 import org.apache.kafka.clients.admin.GroupListing;
+import org.apache.kafka.clients.admin.ListConsumerGroupOffsetsResult;
 import org.apache.kafka.clients.admin.ListConsumerGroupOffsetsSpec;
 import org.apache.kafka.clients.admin.ListGroupsOptions;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
@@ -489,7 +491,7 @@ public class KafkaAdminService {
             // only "stalled consumer" was the explorer itself.
             candidates = notShare.stream()
                     .filter(g -> !ExplorerConsumerGroups.isExplorerGroup(g.groupId()))
-                    .sorted(Comparator.comparing(GroupListing::groupId))
+                    .sorted(Comparator.comparing(KafkaAdminService::isDormant).thenComparing(GroupListing::groupId))
                     .toList();
             explorerGroups = notShare.size() - candidates.size();
         } catch (Exception e) {
@@ -510,9 +512,10 @@ public class KafkaAdminService {
         }
         boolean truncated = candidates.size() > maxGroups;
         if (truncated) {
-            warnings.add("Only the first " + maxGroups + " of the " + candidates.size()
-                    + " eligible groups were read (alphabetical order) — a group past that point "
-                    + "would not appear here even if it were the one lagging.");
+            warnings.add("Only " + maxGroups + " of the " + candidates.size()
+                    + " eligible groups were read — groups with members first, then dormant ones, "
+                    + "each alphabetically. A group past that point does not appear here even if "
+                    + "it is the one lagging; raise explorer.consumer-group-max-groups to widen it.");
             candidates = candidates.subList(0, maxGroups);
         }
         if (candidates.isEmpty()) {
@@ -523,26 +526,50 @@ public class KafkaAdminService {
         Map<String, String> typeOf = candidates.stream().collect(Collectors.toMap(
                 GroupListing::groupId, g -> g.type().map(Enum::name).orElse("UNKNOWN"), (a, b) -> a));
 
-        Map<String, ConsumerGroupDescription> descriptions = Map.of();
+        // Per group, not in bulk. `.all()` fails as soon as *one* group fails to describe, so a
+        // single odd group — a coordinator that moved, a group deleted mid-read — cost the members
+        // and assignments of all two hundred. Membership is what separates STALLED (nothing is
+        // draining) from BEHIND (it is catching up), so losing it everywhere is not cosmetic.
+        Map<String, ConsumerGroupDescription> descriptions = new LinkedHashMap<>();
+        Map<String, String> describeErrors = new LinkedHashMap<>();
         try {
-            descriptions = adminClient.describeConsumerGroups(groupIds).all().get(10, TimeUnit.SECONDS);
+            awaitPerGroup(adminClient.describeConsumerGroups(groupIds).describedGroups(),
+                    10_000, descriptions, describeErrors);
         } catch (Exception e) {
-            // Degraded, not fatal: without descriptions there are no members, but the offsets —
-            // which carry the lag itself — may still be readable.
-            warnings.add("Group members could not be read (" + rootMessage(e)
-                    + "); lag is still reported, assignments are not.");
+            // The call itself refused — a closed client, an unavailable coordinator. Degraded,
+            // not fatal: the offsets carry the lag and may still be readable.
+            groupIds.forEach(id -> describeErrors.put(id, rootMessage(e)));
+        }
+        if (!describeErrors.isEmpty()) {
+            warnings.add("Group members could not be read for " + describeErrors.size() + " of the "
+                    + groupIds.size() + " group(s) (" + firstReason(describeErrors)
+                    + "); their lag is still reported, their assignments are not.");
         }
 
         Map<String, ListConsumerGroupOffsetsSpec> specs = new LinkedHashMap<>();
         for (String groupId : groupIds) {
             specs.put(groupId, new ListConsumerGroupOffsetsSpec().topicPartitions(partitions));
         }
-        Map<String, Map<TopicPartition, OffsetAndMetadata>> committed;
+        // Same treatment, and here it decides more: `.all()` failing meant the whole topic came
+        // back as "unavailable", so one unreadable group hid every other group's lag.
+        Map<String, Map<TopicPartition, OffsetAndMetadata>> committed = new LinkedHashMap<>();
+        Map<String, String> offsetErrors = new LinkedHashMap<>();
         try {
-            committed = adminClient.listConsumerGroupOffsets(specs).all().get(15, TimeUnit.SECONDS);
+            ListConsumerGroupOffsetsResult offsetsResult = adminClient.listConsumerGroupOffsets(specs);
+            Map<String, KafkaFuture<Map<TopicPartition, OffsetAndMetadata>>> offsetFutures = new LinkedHashMap<>();
+            for (String groupId : groupIds) {
+                offsetFutures.put(groupId, offsetsResult.partitionsToOffsetAndMetadata(groupId));
+            }
+            awaitPerGroup(offsetFutures, 15_000, committed, offsetErrors);
         } catch (Exception e) {
             return TopicConsumers.unavailable(topic,
                     "Could not read committed offsets: " + rootMessage(e));
+        }
+        if (offsetErrors.size() == groupIds.size()) {
+            // Not one group answered: that is the old meaning of unavailable, and it must keep it —
+            // an empty list would claim nobody reads the topic.
+            return TopicConsumers.unavailable(topic,
+                    "Could not read committed offsets: " + firstReason(offsetErrors));
         }
 
         Map<TopicPartition, Long> endOffsets;
@@ -561,6 +588,13 @@ public class KafkaAdminService {
         List<ConsumerGroupLag> groups = new ArrayList<>();
         boolean negativeLag = false;
         for (String groupId : groupIds) {
+            String failure = offsetErrors.get(groupId);
+            if (failure != null) {
+                // Named, never silently dropped: a group whose offsets could not be read is not a
+                // group that does not read this topic, and the audit grades the two differently.
+                groups.add(ConsumerGroupLag.failed(groupId, typeOf.getOrDefault(groupId, "UNKNOWN"), failure));
+                continue;
+            }
             Map<TopicPartition, OffsetAndMetadata> offsets = committed.get(groupId);
             if (offsets == null || offsets.values().stream().allMatch(Objects::isNull)) {
                 continue; // this group has no position on this topic — not a consumer of it
@@ -616,6 +650,49 @@ public class KafkaAdminService {
     }
 
     /** Which member holds each partition of {@code topic}, empty when the group was not described. */
+
+    /**
+     * Waits on one future per group, so one failure costs one row rather than the whole answer.
+     *
+     * <p>The admin client has already issued every request; these futures are in flight together.
+     * Waiting on them in turn against a single deadline therefore costs at most {@code timeoutMs}
+     * in total, and a slow group does not turn its neighbours into failures — they have almost
+     * always completed by the time their turn comes.
+     */
+    private <T> void awaitPerGroup(Map<String, KafkaFuture<T>> futures, long timeoutMs,
+                                   Map<String, T> into, Map<String, String> errors) {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        for (Map.Entry<String, KafkaFuture<T>> entry : futures.entrySet()) {
+            long remaining = Math.max(0, deadline - System.currentTimeMillis());
+            try {
+                into.put(entry.getKey(), entry.getValue().get(remaining, TimeUnit.MILLISECONDS));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                errors.put(entry.getKey(), "interrupted");
+            } catch (Exception e) {
+                errors.put(entry.getKey(), rootMessage(e));
+            }
+        }
+    }
+
+    /** One reason stands for the batch — the count beside it says how many shared it. */
+    private static String firstReason(Map<String, String> errors) {
+        return errors.values().stream().findFirst().orElse("unknown reason");
+    }
+
+    /**
+     * Dormant groups go last when the cap has to cut.
+     *
+     * <p>The cut used to be alphabetical, and its own warning admitted the flaw: "a group past that
+     * point would not appear here even if it were the one lagging". A group with members is far
+     * more likely to be the consumer someone is asking about than one that has been EMPTY for a
+     * week — and the state is already in the listing, so this costs no extra call.
+     */
+    private static boolean isDormant(GroupListing group) {
+        String state = group.groupState().map(Enum::name).orElse("UNKNOWN");
+        return "EMPTY".equals(state) || "DEAD".equals(state);
+    }
+
     private static Map<Integer, MemberDescription> assignmentsOn(String topic, ConsumerGroupDescription description) {
         if (description == null) return Map.of();
         Map<Integer, MemberDescription> holders = new HashMap<>();
