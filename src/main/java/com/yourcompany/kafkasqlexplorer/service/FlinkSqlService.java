@@ -80,6 +80,14 @@ public class FlinkSqlService {
     private static final int FLINK_SELECT_FAILURE_THRESHOLD = 3;
 
     /**
+     * Floor on the wait for the Flink runtime, whatever the query's own timeout is. Entering a free
+     * runtime costs milliseconds; this only matters when several statements arrive at once, and a
+     * caller with a 1 s timeout should still be allowed to queue briefly rather than fail on the
+     * spot.
+     */
+    private static final long MIN_RUNTIME_WAIT_MS = 5_000;
+
+    /**
      * Shape a client-supplied query id must have to be trusted as a job key. Anything else is
      * replaced by a server-generated one — the id ends up in the job store and in log lines, so
      * it must not carry arbitrary text.
@@ -216,11 +224,16 @@ public class FlinkSqlService {
         }
     }
 
-    private TableResult executeManagedSql(String operationName, String statementType, String sql) {
+    /**
+     * @param waitMs how long the caller may wait to get onto the Flink runtime. A synchronous query
+     *               passes its own budget: waiting three times the query timeout just to reach the
+     *               planner, and only then starting to count, is not what the timeout promises.
+     */
+    private TableResult executeManagedSql(String operationName, String statementType, String sql, long waitMs) {
         if ("EXPLAIN".equals(statementType)) {
-            return runtimeCoordinator.runRead(operationName, () -> tableEnv.executeSql(sql));
+            return runtimeCoordinator.runRead(operationName, () -> tableEnv.executeSql(sql), waitMs);
         }
-        return runtimeCoordinator.runMutation(operationName, () -> tableEnv.executeSql(sql));
+        return runtimeCoordinator.runMutation(operationName, () -> tableEnv.executeSql(sql), waitMs);
     }
 
     protected TableResult executeMutationSql(String operationName, String sql) {
@@ -695,7 +708,12 @@ public class FlinkSqlService {
                                                int limit, long timeout, long startTime) {
         TableResult result = null;
         try {
-            result = executeManagedSql("execute-sql-" + statementType.toLowerCase(Locale.ROOT), statementType, finalSql);
+            // Le budget d'attente vaut celui de la requête, avec un plancher : sur un runtime
+            // libre, entrer coûte quelques millisecondes ; sur un runtime occupé, l'appelant doit
+            // ressortir avec un message plutôt que d'attendre indéfiniment que la place se libère.
+            long enterBudgetMs = Math.max(MIN_RUNTIME_WAIT_MS, timeout);
+            result = executeManagedSql(
+                "execute-sql-" + statementType.toLowerCase(Locale.ROOT), statementType, finalSql, enterBudgetMs);
             result.getJobClient().ifPresent(client -> {
                 JobInfo info = new JobInfo(queryId, finalSql, statementType, "SYNC_READ", client, System.currentTimeMillis());
                 activeJobs.put(queryId, info);

@@ -13,6 +13,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Supplier;
@@ -33,12 +35,61 @@ public class FlinkRuntimeCoordinator {
     private volatile boolean metadataProviderReady = false;
     private volatile boolean metadataProviderWarned = false;
 
+    /**
+     * Default ceiling on how long a caller waits to get onto the Flink runtime.
+     *
+     * <p>There was none. {@code lock.lock()} and {@code future.get()} both wait forever, so any
+     * operation that stopped making progress — a job submission against a wedged MiniCluster, a
+     * DDL against an unreachable broker — took every later query down with it, and each one waited
+     * for ever too. A synchronous query bounded only its <em>row fetch</em>, which is the one step
+     * that could never be the cause: the caller had already gone through validation, table
+     * registration and job submission, none of which had a deadline. The visible symptom is a Run
+     * button that spins with no result and no error, which is exactly what a status bar must never
+     * do.
+     */
+    static final long DEFAULT_WAIT_MS = 30_000;
+
+    /** Past this, a wait is worth a WARN naming what is holding the runtime. */
+    private static final long SLOW_WAIT_WARN_MS = 2_000;
+
+    /** Whoever currently holds (or last held) the runtime — the only thing that can explain a wait. */
+    private final AtomicReference<Holder> holder = new AtomicReference<>();
+
+    private record Holder(String kind, String operationName, String threadName, long startedAtNanos) {
+        long heldMs() {
+            return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAtNanos);
+        }
+
+        @Override
+        public String toString() {
+            return String.format("%s '%s' (thread %s), running for %d ms", kind, operationName, threadName, heldMs());
+        }
+    }
+
+    /**
+     * The runtime could not be entered in time.
+     *
+     * <p>A {@link RuntimeException} so it travels the existing error paths — {@code
+     * SqlErrorClassifier} treats it as an engine failure, which is what it is: the statement is
+     * fine, the engine was not free to run it.
+     */
+    public static class FlinkRuntimeBusyException extends RuntimeException {
+        public FlinkRuntimeBusyException(String message) {
+            super(message);
+        }
+    }
+
     public FlinkRuntimeCoordinator(TableEnvironment tableEnv) {
         this.flinkClassLoader = tableEnv.getClass().getClassLoader();
     }
 
     public <T> T runRead(String operationName, Supplier<T> action) {
-        return runWithLock("READ", operationName, runtimeLock.readLock(), action, System.nanoTime());
+        return runRead(operationName, action, DEFAULT_WAIT_MS);
+    }
+
+    /** @param waitMs how long to wait for the runtime before giving up with {@link FlinkRuntimeBusyException}. */
+    public <T> T runRead(String operationName, Supplier<T> action, long waitMs) {
+        return runWithLock("READ", operationName, runtimeLock.readLock(), action, System.nanoTime(), waitMs);
     }
 
     public void runRead(String operationName, Runnable action) {
@@ -49,12 +100,27 @@ public class FlinkRuntimeCoordinator {
     }
 
     public <T> T runMutation(String operationName, Supplier<T> action) {
+        return runMutation(operationName, action, DEFAULT_WAIT_MS);
+    }
+
+    /**
+     * @param waitMs budget covering both the queue behind other mutations and the operation itself.
+     *
+     * <p>On expiry the caller is released and the task is cancelled. Cancelling cannot pull a
+     * thread out of a Flink call that is already running, so the mutation thread may stay busy —
+     * later mutations then fail the same way, with a message naming what is holding it, instead of
+     * every one of them hanging silently.
+     */
+    public <T> T runMutation(String operationName, Supplier<T> action, long waitMs) {
         long queuedAt = System.nanoTime();
         Future<T> future = mutationExecutor.submit(
-            () -> runWithLock("MUTATION", operationName, runtimeLock.writeLock(), action, queuedAt)
+            () -> runWithLock("MUTATION", operationName, runtimeLock.writeLock(), action, queuedAt, waitMs)
         );
         try {
-            return future.get();
+            return future.get(waitMs, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            future.cancel(true);
+            throw busy("MUTATION", operationName, waitMs);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("Interrupted while waiting for Flink runtime mutation '" + operationName + "'", e);
@@ -77,27 +143,64 @@ public class FlinkRuntimeCoordinator {
         });
     }
 
-    private <T> T runWithLock(String kind, String operationName, Lock lock, Supplier<T> action, long queuedAt) {
-        long waitedNs = 0L;
-        lock.lock();
-        long startedAt = System.nanoTime();
+    private <T> T runWithLock(String kind, String operationName, Lock lock, Supplier<T> action,
+                              long queuedAt, long waitMs) {
+        // Le temps déjà passé en file compte dans le budget : sans ça, une mutation qui a attendu
+        // son tour vingt secondes repartirait pour un budget complet, et le plafond annoncé à
+        // l'appelant ne voudrait plus rien dire.
+        long remainingMs = waitMs - TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - queuedAt);
+        boolean acquired;
         try {
-            waitedNs = startedAt - queuedAt;
-            if (waitedNs > 0) {
-                log.debug("Flink runtime {} operation '{}' started after waiting {} ms", kind, operationName, TimeUnit.NANOSECONDS.toMillis(waitedNs));
-            }
+            acquired = lock.tryLock(Math.max(0, remainingMs), TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while waiting for the Flink runtime ('" + operationName + "')", e);
+        }
+        if (!acquired) {
+            throw busy(kind, operationName, waitMs);
+        }
+
+        long startedAt = System.nanoTime();
+        long waitedNs = startedAt - queuedAt;
+        long waitedMs = TimeUnit.NANOSECONDS.toMillis(waitedNs);
+        // Une attente longue n'était tracée qu'en DEBUG, donc invisible sur une installation
+        // ordinaire : c'est précisément l'information qui explique une requête qui ne revient pas.
+        if (waitedMs >= SLOW_WAIT_WARN_MS) {
+            log.warn("Flink runtime {} operation '{}' waited {} ms to start — the runtime is serialised, "
+                + "and the previous holder was {}", kind, operationName, waitedMs, describeHolder());
+        } else if (waitedNs > 0) {
+            log.debug("Flink runtime {} operation '{}' started after waiting {} ms", kind, operationName, waitedMs);
+        }
+
+        holder.set(new Holder(kind, operationName, Thread.currentThread().getName(), startedAt));
+        try {
             return withFlinkClassLoader(action);
         } finally {
             long durationNs = System.nanoTime() - startedAt;
+            holder.set(null);
             lock.unlock();
             log.debug(
                 "Flink runtime {} operation '{}' completed in {} ms (waited {} ms)",
                 kind,
                 operationName,
                 TimeUnit.NANOSECONDS.toMillis(durationNs),
-                TimeUnit.NANOSECONDS.toMillis(waitedNs)
+                waitedMs
             );
         }
+    }
+
+    /** Qui tient le runtime, ou une mention explicite quand personne ne le tient. */
+    private String describeHolder() {
+        Holder current = holder.get();
+        return current == null ? "nobody (it was released in the meantime)" : current.toString();
+    }
+
+    private FlinkRuntimeBusyException busy(String kind, String operationName, long waitMs) {
+        String message = String.format(
+            "The Flink runtime was busy: %s operation '%s' gave up after %d ms. Currently held by %s.",
+            kind, operationName, waitMs, describeHolder());
+        log.warn(message);
+        return new FlinkRuntimeBusyException(message);
     }
 
     private <T> T withFlinkClassLoader(Supplier<T> action) {
