@@ -13,8 +13,17 @@
  * Fonctions pures → testables sans monter le header.
  */
 
+/**
+ * `null` = on ne sait pas encore. C'est un état réel, distinct des deux autres : l'application
+ * démarrait avec `true`, donc la pastille était verte avant la moindre vérification — elle
+ * annonçait « connecté » à un broker que personne n'avait interrogé, et le restait pendant les
+ * secondes où un broker injoignable met à répondre. Une pastille d'état qui devine n'est pas une
+ * pastille d'état.
+ */
+export type Health = boolean | null;
+
 export interface ConnectionInfo {
-  isHealthy: boolean;
+  isHealthy: Health;
   /** `explorer.cluster-name` tel que renvoyé par `/api/dashboard`. Vide avant la première réponse. */
   clusterName?: string;
   /** Adresse d'amorçage effective côté serveur. Absente avant la première réponse. */
@@ -23,12 +32,19 @@ export interface ConnectionInfo {
 
 /** Texte affiché dans la pastille. */
 export function connectionLabel({ isHealthy, clusterName }: ConnectionInfo): string {
+  // Avant la première réponse, personne ne sait ni si le broker répond ni comment s'appelle ce
+  // cluster. « Connecting… » est la seule chose vraie à ce moment-là ; le libellé en dur qui
+  // tenait cette place se trouvait être faux dans toute installation qui n'était pas celle du
+  // développeur.
+  if (isHealthy === null) return 'Connecting…';
   if (!isHealthy) return 'Disconnected';
-  const name = (clusterName ?? '').trim();
-  // Avant la première réponse, personne ne sait comment s'appelle ce cluster. « Connecting… »
-  // est la seule chose vraie à ce moment-là ; le libellé en dur qui tenait cette place se
-  // trouvait être faux dans toute installation qui n'était pas celle du développeur.
-  return name || 'Connecting…';
+  return (clusterName ?? '').trim() || 'Connecting…';
+}
+
+/** Couleur de la pastille : trois états, parce qu'il y en a trois. */
+export function connectionTone({ isHealthy }: ConnectionInfo): 'unknown' | 'healthy' | 'unhealthy' {
+  if (isHealthy === null) return 'unknown';
+  return isHealthy ? 'healthy' : 'unhealthy';
 }
 
 /**
@@ -41,6 +57,7 @@ export function connectionTitle({ isHealthy, clusterName, bootstrapServers }: Co
   const name = (clusterName ?? '').trim();
   const bootstrap = (bootstrapServers ?? '').trim();
 
+  if (isHealthy === null) return 'Checking the connection…';
   if (!isHealthy) {
     return bootstrap ? `Disconnected — no answer from ${bootstrap}` : 'Disconnected';
   }

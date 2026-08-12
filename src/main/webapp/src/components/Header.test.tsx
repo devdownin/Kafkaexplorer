@@ -25,6 +25,13 @@ describe('Header connection pill', () => {
     expect(screen.queryByText(/kraft|docker cluster/i)).toBeNull();
   });
 
+  it('is neither green nor red before anything has been probed', () => {
+    renderHeader({ isHealthy: null, clusterName: 'Orders prod', bootstrapServers: 'kafka:9092' });
+    const pill = screen.getByTitle('Checking the connection…');
+    expect(pill).toHaveTextContent('Connecting…');
+    expect(pill.className).not.toMatch(/success|error/);
+  });
+
   it('names the unreachable address when disconnected', () => {
     renderHeader({ isHealthy: false, clusterName: 'Orders prod', bootstrapServers: 'kafka:9092' });
     expect(screen.getByText('Disconnected')).toBeInTheDocument();

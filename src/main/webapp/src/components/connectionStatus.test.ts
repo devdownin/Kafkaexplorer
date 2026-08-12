@@ -1,5 +1,21 @@
 import { describe, it, expect } from 'vitest';
-import { connectionLabel, connectionTitle } from './connectionStatus';
+import { connectionLabel, connectionTitle, connectionTone } from './connectionStatus';
+
+describe('connectionTone', () => {
+  it('has a third state for "not checked yet"', () => {
+    expect(connectionTone({ isHealthy: null })).toBe('unknown');
+    expect(connectionTone({ isHealthy: true })).toBe('healthy');
+    expect(connectionTone({ isHealthy: false })).toBe('unhealthy');
+  });
+});
+
+describe('before the first probe answers', () => {
+  it('claims neither connected nor disconnected', () => {
+    expect(connectionLabel({ isHealthy: null, clusterName: 'Orders prod' })).toBe('Connecting…');
+    expect(connectionTitle({ isHealthy: null, clusterName: 'Orders prod', bootstrapServers: 'kafka:9092' }))
+      .toBe('Checking the connection…');
+  });
+});
 
 describe('connectionLabel', () => {
   it('shows the configured name when connected', () => {

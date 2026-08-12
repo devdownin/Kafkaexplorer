@@ -5,6 +5,7 @@ import Sidebar from './Sidebar';
 import Header from './Header';
 import CommandPalette from './CommandPalette';
 import { setCatalog } from '../catalogStore';
+import type { Health } from './connectionStatus';
 
 const DESKTOP_QUERY = '(min-width: 768px)';
 
@@ -17,7 +18,10 @@ const DESKTOP_QUERY = '(min-width: 768px)';
  * la recherche globale (topics + tables Flink) — logique identique à l'origine.
  */
 const Layout: FC<{ children: ReactNode }> = ({ children }) => {
-  const [isHealthy, setHealthy] = useState(true);
+  // `null` = pas encore sondé. C'était `true`, donc la pastille s'affichait verte avant la
+  // moindre vérification : « connecté » annoncé sur la foi de rien, et maintenu pendant tout le
+  // temps que met un broker injoignable à ne pas répondre.
+  const [isHealthy, setHealthy] = useState<Health>(null);
   // Vide, pas « Docker Cluster » : avant la première réponse de `/api/dashboard`, le nom du
   // cluster n'est pas connu, et un nom en dur est faux partout sauf sur le poste où il a été
   // écrit. Le header affiche « Connecting… » tant que cette valeur est vide.
