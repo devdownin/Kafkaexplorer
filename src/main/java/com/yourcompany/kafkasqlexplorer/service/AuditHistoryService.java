@@ -125,8 +125,7 @@ public class AuditHistoryService {
         Properties props = new Properties();
         props.putAll(kafkaConfig.getKafkaProperties());
         // Fresh group, no commits: reading history must not move anyone's offsets.
-        props.put(ConsumerConfig.GROUP_ID_CONFIG, "audit-history-reader-" + UUID.randomUUID());
-        props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
+        ExplorerConsumerGroups.configure(props, "audit-history");
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());

@@ -374,8 +374,7 @@ public class KafkaLiveConsumer {
     private Properties buildConsumerProps(String sessionId) {
         Properties props = new Properties();
         kafkaConfig.getKafkaProperties().forEach(props::put);
-        props.put(ConsumerConfig.GROUP_ID_CONFIG, "live-consumer-" + sessionId);
-        props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
+        ExplorerConsumerGroups.configureForSession(props, "live", sessionId);
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest");
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         // Values stay as bytes: the digest is built straight from the wire representation, so a

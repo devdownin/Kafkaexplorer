@@ -495,8 +495,7 @@ public class TopicSearchService {
         Properties props = new Properties();
         props.putAll(kafkaConfig.getKafkaProperties());
         // Fresh group per search, no commits: a search must never move anyone's offsets.
-        props.put(ConsumerConfig.GROUP_ID_CONFIG, "topic-search-" + UUID.randomUUID());
-        props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
+        ExplorerConsumerGroups.configure(props, "topic-search");
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());

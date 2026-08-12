@@ -136,6 +136,48 @@ class KafkaAdminServiceConsumerLagTest {
 
     // ---- tests --------------------------------------------------------------------------
 
+    /*
+     * L'application ne doit pas figurer parmi les consommateurs du topic qu'on inspecte. Ses
+     * lecteurs transitoires avaient commité des offsets (auto-commit laissé à son défaut `true`),
+     * donc ils apparaissaient ici avec du retard et aucun membre — la forme exacte que
+     * `health()` note STALLED et que l'audit remonte en constat *critique*.
+     */
+    @Test
+    void excludesTheApplicationsOwnReaders() {
+        topicWithPartitions(1);
+        groups(group("orders-service", GroupType.CLASSIC),
+               group("kafka-explorer-metadata-8f2c", GroupType.CLASSIC),
+               group("kafka-sql-explorer-timestamps-1a9e", GroupType.CLASSIC),
+               group("topic-search-77b0", GroupType.CLASSIC));
+        described(Map.of("orders-service", description("orders-service", member("m1", "h1", 0))));
+        committed(Map.of("orders-service", Map.of(0, 90L)));
+        endOffsets(Map.of(0, 100L));
+
+        TopicConsumers consumers = service.getTopicConsumers(TOPIC, 200);
+
+        assertEquals(List.of("orders-service"),
+            consumers.groups().stream().map(ConsumerGroupLag::groupId).toList());
+        // Exclu, mais dit : un filtrage muet est ce que le reste de l'application s'interdit.
+        assertTrue(consumers.warnings().stream().anyMatch(w -> w.contains("3 group(s) belonging to this application")),
+            "the exclusion should be stated: " + consumers.warnings());
+    }
+
+    /** Le compte de groupes du cluster reste celui du cluster, pas celui d'après filtrage. */
+    @Test
+    void stillReportsHowManyGroupsTheClusterHolds() {
+        topicWithPartitions(1);
+        groups(group("orders-service", GroupType.CLASSIC),
+               group("kafka-explorer-metadata-8f2c", GroupType.CLASSIC));
+        described(Map.of("orders-service", description("orders-service", member("m1", "h1", 0))));
+        committed(Map.of("orders-service", Map.of(0, 100L)));
+        endOffsets(Map.of(0, 100L));
+
+        TopicConsumers consumers = service.getTopicConsumers(TOPIC, 200);
+
+        assertEquals(2, consumers.groupsInCluster());
+        assertEquals(1, consumers.groupsExamined());
+    }
+
     @Test
     void reportsLagPerPartitionAndItsTotal() {
         topicWithPartitions(2);
