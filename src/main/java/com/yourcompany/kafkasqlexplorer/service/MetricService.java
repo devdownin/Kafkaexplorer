@@ -1261,7 +1261,7 @@ public class MetricService {
         props.putAll(kafkaConfig.getKafkaProperties());
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG,   StringDeserializer.class.getName());
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
-        props.put(ConsumerConfig.GROUP_ID_CONFIG,         "explorer-metrics-restorer-" + UUID.randomUUID());
+        ExplorerConsumerGroups.configure(props, "metrics-restorer");
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         // Fail fast when the broker is unreachable — this runs during application startup.
         props.put(ConsumerConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, "5000");

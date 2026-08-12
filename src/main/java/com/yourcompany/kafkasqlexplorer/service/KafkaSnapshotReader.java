@@ -89,7 +89,7 @@ public class KafkaSnapshotReader {
 
     private <V> void consume(List<String> topics, SnapshotConfig config,
                               Class<?> valueDeserializer, Consumer<ConsumerRecord<String, V>> handler) {
-        String groupId = "snapshot-reader-" + UUID.randomUUID();
+        String groupId = ExplorerConsumerGroups.transientGroup("snapshot");
         Properties props = buildConsumerProperties(groupId, config, valueDeserializer);
 
         KafkaConsumer<String, V> consumer = null;

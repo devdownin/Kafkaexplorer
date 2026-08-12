@@ -213,7 +213,7 @@ public class KafkaAdminService {
         props.putAll(kafkaConfig.getKafkaProperties());
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
-        props.put(ConsumerConfig.GROUP_ID_CONFIG, "kafka-sql-explorer-bulk-metadata-" + UUID.randomUUID());
+        ExplorerConsumerGroups.configure(props, "bulk-metadata");
 
         try (KafkaConsumer<byte[], byte[]> consumer = new KafkaConsumer<>(props)) {
             List<TopicPartition> allPartitions = new ArrayList<>();
@@ -273,7 +273,7 @@ public class KafkaAdminService {
         props.putAll(kafkaConfig.getKafkaProperties());
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
-        props.put(ConsumerConfig.GROUP_ID_CONFIG, "kafka-sql-explorer-metadata-" + UUID.randomUUID());
+        ExplorerConsumerGroups.configure(props, "metadata");
 
         try (KafkaConsumer<byte[], byte[]> consumer = new KafkaConsumer<>(props)) {
             Map<TopicPartition, Long> beginningOffsets = consumer.beginningOffsets(partitions);
@@ -473,16 +473,25 @@ public class KafkaAdminService {
         List<GroupListing> candidates;
         int inCluster;
         int shareGroups;
+        int explorerGroups;
         try {
             Collection<GroupListing> all = adminClient
                     .listGroups(new ListGroupsOptions().timeoutMs(5000))
                     .all().get(5, TimeUnit.SECONDS);
             inCluster = all.size();
-            candidates = all.stream()
+            List<GroupListing> notShare = all.stream()
                     .filter(g -> !"SHARE".equals(g.type().map(Enum::name).orElse("UNKNOWN")))
+                    .toList();
+            shareGroups = inCluster - notShare.size();
+            // This application's own readers are not consumers of your pipeline. They used to be
+            // counted as such — and, having committed offsets with no member left behind them,
+            // graded STALLED and reported by the audit as a critical finding about a topic whose
+            // only "stalled consumer" was the explorer itself.
+            candidates = notShare.stream()
+                    .filter(g -> !ExplorerConsumerGroups.isExplorerGroup(g.groupId()))
                     .sorted(Comparator.comparing(GroupListing::groupId))
                     .toList();
-            shareGroups = inCluster - candidates.size();
+            explorerGroups = notShare.size() - candidates.size();
         } catch (Exception e) {
             // Not "no consumers": the question could not be asked at all.
             return TopicConsumers.unavailable(topic,
@@ -494,6 +503,10 @@ public class KafkaAdminService {
             warnings.add(shareGroups + " share group(s) were skipped: their positions live in the "
                     + "share-group coordinator, not in committed offsets, so no lag can be derived "
                     + "from them here.");
+        }
+        if (explorerGroups > 0) {
+            warnings.add(explorerGroups + " group(s) belonging to this application were excluded — "
+                    + "its own metadata and search readers, which consume nothing of yours.");
         }
         boolean truncated = candidates.size() > maxGroups;
         if (truncated) {
@@ -714,7 +727,7 @@ public class KafkaAdminService {
         props.putAll(kafkaConfig.getKafkaProperties());
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
-        props.put(ConsumerConfig.GROUP_ID_CONFIG, "kafka-sql-explorer-timestamps-" + UUID.randomUUID());
+        ExplorerConsumerGroups.configure(props, "timestamps");
 
         try (KafkaConsumer<byte[], byte[]> consumer = new KafkaConsumer<>(props)) {
             List<TopicPartition> allPartitions = new ArrayList<>();
@@ -790,7 +803,7 @@ public class KafkaAdminService {
         props.putAll(kafkaConfig.getKafkaProperties());
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
-        props.put(ConsumerConfig.GROUP_ID_CONFIG, "kafka-sql-explorer-latest-message-" + UUID.randomUUID());
+        ExplorerConsumerGroups.configure(props, "latest-message");
 
         try (KafkaConsumer<byte[], byte[]> consumer = new KafkaConsumer<>(props)) {
             Map<String, TopicDescription> descriptions = adminClient.describeTopics(Collections.singletonList(topicName))
@@ -892,7 +905,7 @@ public class KafkaAdminService {
         List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records = new ArrayList<>();
         Properties props = new Properties();
         props.putAll(kafkaConfig.getKafkaProperties());
-        props.put(ConsumerConfig.GROUP_ID_CONFIG, "explorer-earliest-" + UUID.randomUUID());
+        ExplorerConsumerGroups.configure(props, "records");
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
         try (KafkaConsumer<byte[], byte[]> consumer = new KafkaConsumer<>(props)) {
@@ -929,7 +942,7 @@ public class KafkaAdminService {
         Properties props = new Properties();
         props.putAll(kafkaConfig.getKafkaProperties());
         // Use a unique group ID to avoid triggering unnecessary rebalances and to ignore existing offsets.
-        props.put(ConsumerConfig.GROUP_ID_CONFIG, "flow-records-" + UUID.randomUUID());
+        ExplorerConsumerGroups.configure(props, "flow-records");
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
 
