@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.yourcompany.kafkasqlexplorer.config.ExplorerConfig;
+import com.yourcompany.kafkasqlexplorer.config.KafkaConfig;
 import com.yourcompany.kafkasqlexplorer.domain.DashboardResponse;
 import com.yourcompany.kafkasqlexplorer.service.FlinkSqlService;
 import com.yourcompany.kafkasqlexplorer.service.KafkaAdminService;
@@ -26,12 +27,14 @@ public class DashboardController {
     private final KafkaAdminService kafkaAdminService;
     private final FlinkSqlService flinkSqlService;
     private final ExplorerConfig explorerConfig;
+    private final KafkaConfig kafkaConfig;
 
     public DashboardController(KafkaAdminService kafkaAdminService, FlinkSqlService flinkSqlService,
-                               ExplorerConfig explorerConfig) {
+                               ExplorerConfig explorerConfig, KafkaConfig kafkaConfig) {
         this.kafkaAdminService = kafkaAdminService;
         this.flinkSqlService = flinkSqlService;
         this.explorerConfig = explorerConfig;
+        this.kafkaConfig = kafkaConfig;
     }
 
     @GetMapping
@@ -64,6 +67,7 @@ public class DashboardController {
                 flinkSqlService.getActiveJobs(),
                 health,
                 explorerConfig.getClusterName(),
+                kafkaConfig.getBootstrapServers(),
                 topicLastMessages
         );
     }

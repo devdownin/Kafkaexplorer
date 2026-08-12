@@ -48,7 +48,12 @@ kafka:
   # confluent-secret: YOUR_API_SECRET
 
 explorer:
-  cluster-name: KRAFT 4.2
+  # Label shown in the header's connection pill. A display name, not a fact about the broker:
+  # nothing verifies it, and POST /api/config can repoint the app while it stays put. It used to
+  # read "KRAFT 4.2", so every deployment asserted a Kafka version it had never checked. Name your
+  # environment here (EXPLORER_CLUSTER_NAME) — "Staging", "Orders prod" — the effective bootstrap
+  # address is shown beside it on hover, and that one is read from the running configuration.
+  cluster-name: Kafka cluster
   audit-history-topic: internal.audit.history
   # Records read from the end of the history topic when listing past runs (bounded scan).
   audit-history-max-records: 200

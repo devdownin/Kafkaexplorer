@@ -1,23 +1,47 @@
 import type { FC } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { resolvePageName } from '../navigation';
+import { connectionLabel, connectionTitle, connectionTone, type Health } from './connectionStatus';
+
+const PILL_TONES = {
+  unknown: 'bg-surface-container-high border-outline-variant text-on-surface-variant',
+  healthy: 'bg-success/10 border-success/25 text-success',
+  unhealthy: 'bg-error/10 border-error/25 text-error',
+} as const;
+
+const DOT_TONES = {
+  unknown: 'bg-outline',
+  healthy: 'bg-success',
+  unhealthy: 'bg-error',
+} as const;
 
 interface HeaderProps {
   onMenuClick?: () => void;
   /** Ouvre la palette de commandes (⌘K). */
   onSearchClick?: () => void;
-  isHealthy: boolean;
+  /** `null` tant que le premier sondage n'a pas répondu — voir `connectionStatus.ts`. */
+  isHealthy: Health;
+  /** Libellé choisi au déploiement (`explorer.cluster-name`), ou vide tant que rien n'a répondu. */
   clusterName: string;
+  /** Adresse d'amorçage effective, telle que le serveur l'utilise réellement. */
+  bootstrapServers?: string;
 }
 
 /**
  * En-tête d'application : fil d'Ariane (cluster / page), état de connexion,
  * déclencheur de la palette de commandes (⌘K), aide et réglages.
+ *
+ * La pastille dit à quoi on est connecté, donc elle ne doit rien affirmer qu'elle n'ait vérifié.
+ * Le libellé est un nom d'affichage — il valait « KRAFT 4.2 » par défaut, soit une version de
+ * Kafka annoncée sans jamais avoir été demandée au broker, et inchangée après un repointage à
+ * chaud par `POST /api/config`. Ce qui est vérifiable voyage à côté : l'adresse d'amorçage
+ * effective, lue dans la configuration en cours d'exécution, en infobulle.
  */
-const Header: FC<HeaderProps> = ({ onMenuClick, onSearchClick, isHealthy, clusterName }) => {
+const Header: FC<HeaderProps> = ({ onMenuClick, onSearchClick, isHealthy, clusterName, bootstrapServers }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const pageName = resolvePageName(location.pathname);
+  const tone = connectionTone({ isHealthy });
 
   return (
     <header className="header-border flex justify-between items-center gap-3 px-4 md:px-6 h-14 sticky top-0 z-30 bg-surface/80 backdrop-blur-md">
@@ -31,18 +55,16 @@ const Header: FC<HeaderProps> = ({ onMenuClick, onSearchClick, isHealthy, cluste
           <span aria-hidden="true" className="material-symbols-outlined text-[22px]">menu</span>
         </button>
 
-        {/* État de connexion */}
+        {/* État de connexion — trois états, dont « on ne sait pas encore » */}
         <span
-          className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full border text-[12px] font-medium ${
-            isHealthy
-              ? 'bg-success/10 border-success/25 text-success'
-              : 'bg-error/10 border-error/25 text-error'
-          }`}
-          title={isHealthy ? `Connected — ${clusterName}` : 'Disconnected'}
+          className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full border text-[12px] font-medium ${PILL_TONES[tone]}`}
+          title={connectionTitle({ isHealthy, clusterName, bootstrapServers })}
         >
-          <span className={`w-1.5 h-1.5 rounded-full ${isHealthy ? 'bg-success' : 'bg-error'}`} />
+          <span
+            className={`w-1.5 h-1.5 rounded-full ${DOT_TONES[tone]} ${tone === 'unknown' ? 'animate-pulse' : ''}`}
+          />
           <span className="hidden sm:inline max-w-[180px] truncate">
-            {isHealthy ? clusterName : 'Disconnected'}
+            {connectionLabel({ isHealthy, clusterName })}
           </span>
         </span>
 
