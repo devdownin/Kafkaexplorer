@@ -17,7 +17,7 @@
  * Fonctions pures → testables sans monter la page.
  */
 
-import type { TopicMessage } from '../components/topic/topicSearch';
+import type { TopicMessage } from '../api/types';
 
 export type { TopicMessage };
 

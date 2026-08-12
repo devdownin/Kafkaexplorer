@@ -7,6 +7,7 @@ import {
   tryParse, diffFields, pairSamples, visiblePairs, countDiffs, countCompared,
   messageText, coordinates, type TopicMessage, type ComparePair,
 } from './compare';
+import type { TopicDetailResponse } from '../api/types';
 
 const MessageCard: React.FC<{
   sample?: TopicMessage;
@@ -166,8 +167,8 @@ const Compare: React.FC = () => {
     setHasResult(false);
     try {
       const [resA, resB] = await Promise.all([
-        axios.get<{ samples: TopicMessage[] }>(`/api/topic/${topicA}`),
-        axios.get<{ samples: TopicMessage[] }>(`/api/topic/${topicB}`),
+        axios.get<TopicDetailResponse>(`/api/topic/${topicA}`),
+        axios.get<TopicDetailResponse>(`/api/topic/${topicB}`),
       ]);
       // `?? []` des deux côtés, y compris pour le message de succès : il lisait
       // `resA.data.samples.length` sur la réponse brute, donc une réponse sans `samples` levait
