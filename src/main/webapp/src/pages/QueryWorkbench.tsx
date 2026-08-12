@@ -112,6 +112,18 @@ const DEFAULT_SQL = '';
 // les lignes visibles sont montées). En-deçà, on garde le rendu classique —
 // aucun changement d'apparence ni de comportement pour le cas courant.
 const VIRTUALIZE_THRESHOLD = 200;
+
+/**
+ * Plafond client d'une exécution, sans lequel le bouton Run tourne indéfiniment.
+ *
+ * `axios` n'a pas de timeout par défaut : si le serveur ne répond jamais — runtime Flink bloqué,
+ * backend mort, connexion coupée sans FIN — la promesse ne se résout pas, `executing` reste vrai,
+ * et l'écran affiche « Running… » pour toujours, sans résultat ni erreur. Volontairement bien
+ * au-dessus du budget serveur (le temps de requête plus les attentes d'entrée dans le runtime) :
+ * il n'est pas là pour arbitrer une requête lente, seulement pour qu'une requête qui ne reviendra
+ * jamais se termine en disant pourquoi.
+ */
+const REQUEST_TIMEOUT_MS = 120_000;
 // Hauteur d'une ligne virtualisée (px-4 py-2.5 text-[12px], forcée sur une
 // seule ligne) — mesurée sur la première ligne montée, cette valeur sert de
 // point de départ.
@@ -981,7 +993,7 @@ const QueryWorkbench: React.FC = () => {
     try {
       if (executionMode === 'ASYNC_JOB') {
         const response = await axios.post<FlinkJobSubmission>('/api/query/jobs', { sql: sqlToRun },
-          { signal: controller.signal });
+          { signal: controller.signal, timeout: REQUEST_TIMEOUT_MS });
         const ms = Date.now() - start;
         setExecutionMs(ms);
         setSubmittedJob(response.data);
@@ -993,7 +1005,8 @@ const QueryWorkbench: React.FC = () => {
         const readMode = offsetMode === 'LATEST' ? 'latest-offset' : 'earliest-offset';
         const limit = maxRows;
         const response = await axios.post<QueryResult>('/api/query/run-sync',
-          { sql: sqlToRun, readMode, maxRows: limit, queryId }, { signal: controller.signal });
+          { sql: sqlToRun, readMode, maxRows: limit, queryId },
+          { signal: controller.signal, timeout: REQUEST_TIMEOUT_MS });
         const ms = Date.now() - start;
         setExecutionMs(ms);
         setResultLimit(limit);

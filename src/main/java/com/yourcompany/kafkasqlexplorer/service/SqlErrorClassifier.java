@@ -88,7 +88,11 @@ public final class SqlErrorClassifier {
             + "|StackOverflowError"
             + "|OutOfMemoryError"
             + "|could not (?:be resolved|instantiate|initialize)"
-            + "|failed to (?:deserialize|submit) the job",
+            + "|failed to (?:deserialize|submit) the job"
+            // Le runtime était occupé : l'instruction est bonne, le moteur n'était pas libre.
+            // C'est un défaut moteur, donc un SELECT doit se replier sur le lecteur direct plutôt
+            // que d'être renvoyé à l'utilisateur comme une requête invalide.
+            + "|Flink runtime was busy",
         Pattern.CASE_INSENSITIVE);
 
     /** Purely syntactic rejections — the parser never reached name resolution. */
