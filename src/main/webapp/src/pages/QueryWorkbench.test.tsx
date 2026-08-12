@@ -1,0 +1,384 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { createMemoryRouter, RouterProvider } from 'react-router-dom';
+import type { ReactNode } from 'react';
+
+/*
+ * The wiring, not the pure logic.
+ *
+ * `queryWorkbench.test.ts` covers what can be decided without React: statement splitting, sorting,
+ * formatting, storage. What it cannot cover is the part that actually broke — whether Run sends
+ * what `splitStatements` designated, whether clicking a topic still destroys the tab you are
+ * writing in, whether the detail panel closes when a sort invalidates the index it holds. Those
+ * live in JSX, and no page in this repository had a component test before this one.
+ *
+ * Monaco is mocked away entirely: it is 4 MB of editor that jsdom cannot lay out, and none of the
+ * behaviour under test needs a real one. The stub exposes just enough of the API the page calls —
+ * a selection, a model with `getOffsetAt`, `executeEdits` — so the wiring runs for real.
+ */
+
+// ── Monaco stub ──────────────────────────────────────────────────────────────
+/** Cursor offset the stubbed editor reports; a test moves it to target a statement. */
+let cursorOffset = 0;
+/** Selected range, or null. Offsets into the document. */
+let selectionRange: { start: number; end: number } | null = null;
+let currentValue = '';
+
+const setCursor = (offset: number) => {
+  cursorOffset = offset;
+  selectionRange = null;
+  cursorListeners.forEach(fn => fn({ selection: makeSelection() }));
+};
+
+let cursorListeners: ((e: { selection: ReturnType<typeof makeSelection> }) => void)[] = [];
+
+function offsetToPosition(text: string, offset: number) {
+  const clamped = Math.max(0, Math.min(offset, text.length));
+  const before = text.slice(0, clamped);
+  const line = before.split('\n').length;
+  return { lineNumber: line, column: clamped - (before.lastIndexOf('\n') + 1) + 1 };
+}
+
+function makeSelection() {
+  const start = selectionRange ? selectionRange.start : cursorOffset;
+  const pos = offsetToPosition(currentValue, start);
+  return {
+    isEmpty: () => selectionRange === null,
+    getPosition: () => ({ ...pos, _offset: start }),
+    startLineNumber: pos.lineNumber,
+    startColumn: pos.column,
+  };
+}
+
+vi.mock('../monaco-setup', () => ({}));
+
+vi.mock('@monaco-editor/react', () => {
+  const Editor = ({ value, onChange, onMount }: {
+    value: string;
+    onChange: (v: string | undefined) => void;
+    onMount: (editor: unknown, monaco: unknown) => void;
+  }) => {
+    currentValue = value;
+    const editor = {
+      getSelection: () => makeSelection(),
+      getModel: () => ({
+        getValueInRange: () => (selectionRange
+          ? currentValue.slice(selectionRange.start, selectionRange.end)
+          : ''),
+        getOffsetAt: (p: { _offset?: number }) => p._offset ?? cursorOffset,
+        getFullModelRange: () => ({}),
+        getValue: () => currentValue,
+      }),
+      onDidChangeCursorSelection: (fn: (e: { selection: ReturnType<typeof makeSelection> }) => void) => {
+        cursorListeners.push(fn);
+        return { dispose: () => {} };
+      },
+      addCommand: () => {},
+      getAction: () => ({ run: () => {} }),
+      executeEdits: () => {},
+      focus: () => {},
+      setPosition: () => {},
+      revealPositionInCenter: () => {},
+    };
+    // `onMount` runs once, like the real component's.
+    queueMicrotask(() => onMount(editor, monacoStub));
+    return (
+      <textarea
+        aria-label="SQL editor"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+      />
+    );
+  };
+  const monacoStub = {
+    KeyMod: { CtrlCmd: 1, Shift: 2 },
+    KeyCode: { Enter: 3, KeyF: 4 },
+    MarkerSeverity: { Error: 8 },
+    Range: class {},
+    editor: { setModelMarkers: () => {} },
+    languages: {
+      registerCompletionItemProvider: () => ({ dispose: () => {} }),
+      registerHoverProvider: () => ({ dispose: () => {} }),
+      registerDocumentFormattingEditProvider: () => ({ dispose: () => {} }),
+      CompletionItemKind: { Class: 1, Field: 2, Keyword: 3 },
+    },
+  };
+  return { default: Editor, useMonaco: () => monacoStub };
+});
+
+// ── axios stub ───────────────────────────────────────────────────────────────
+const get = vi.fn();
+const post = vi.fn();
+vi.mock('axios', () => ({
+  default: {
+    get: (...a: unknown[]) => get(...a),
+    post: (...a: unknown[]) => post(...a),
+    isCancel: () => false,
+  },
+}));
+
+import QueryWorkbench from './QueryWorkbench';
+import { ToastProvider } from '../components/Toast';
+import { ConfirmProvider } from '../components/ui';
+
+const CATALOGUE = {
+  topics: ['demo.orders.1.received', 'internal.audit.history'],
+  tables: [],
+  health: true,
+};
+
+function renderPage(ui: ReactNode = <QueryWorkbench />) {
+  const router = createMemoryRouter(
+    [{ path: '/query', element: <ToastProvider><ConfirmProvider>{ui}</ConfirmProvider></ToastProvider> }],
+    { initialEntries: ['/query'] },
+  );
+  return render(<RouterProvider router={router} />);
+}
+
+/** The editor textarea, once the page has settled. */
+const editor = () => screen.getByLabelText('SQL editor') as HTMLTextAreaElement;
+
+beforeEach(() => {
+  localStorage.clear();
+  cursorListeners = [];
+  cursorOffset = 0;
+  selectionRange = null;
+  currentValue = '';
+  get.mockReset();
+  post.mockReset();
+  get.mockImplementation((url: string) => {
+    if (url === '/api/query/init') return Promise.resolve({ data: CATALOGUE });
+    return Promise.resolve({ data: {} });
+  });
+  post.mockResolvedValue({ data: { valid: true } });
+});
+
+afterEach(() => vi.restoreAllMocks());
+
+describe('QueryWorkbench — the catalogue', () => {
+  it('loads it on arrival, without waiting for the refresh button', async () => {
+    renderPage();
+    expect(await screen.findByText('demo.orders.1.received')).toBeInTheDocument();
+    expect(get).toHaveBeenCalledWith('/api/query/init');
+  });
+
+  it('states why a list is empty instead of showing a bare zero', async () => {
+    get.mockImplementation((url: string) => url === '/api/query/init'
+      ? Promise.resolve({ data: { topics: [], tables: [], health: false, kafkaError: 'Connection to node -1 refused' } })
+      : Promise.resolve({ data: {} }));
+    renderPage();
+    expect(await screen.findByText(/Connection to node -1 refused/)).toBeInTheDocument();
+    expect(screen.getByText('Engine offline')).toBeInTheDocument();
+  });
+
+  it('offers starter queries built from the catalogue, skipping internal topics', async () => {
+    renderPage();
+    const starter = await screen.findByText('SELECT * FROM demo_orders_1_received LIMIT 50');
+    expect(starter).toBeInTheDocument();
+    expect(screen.queryByText(/internal_audit_history/)).not.toBeInTheDocument();
+  });
+});
+
+describe('QueryWorkbench — nothing silently replaces the tab you are writing in', () => {
+  it('fills an empty tab when a topic is clicked', async () => {
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'SELECT from demo.orders.1.received' }));
+    await waitFor(() => expect(editor().value).toContain('demo_orders_1_received'));
+    expect(screen.getAllByRole('tab')).toHaveLength(1);
+  });
+
+  it('opens a new tab instead, when the current one holds SQL', async () => {
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.type(editor(), 'SELECT 1');
+
+    await userEvent.click(screen.getByRole('button', { name: 'SELECT from demo.orders.1.received' }));
+
+    await waitFor(() => expect(screen.getAllByRole('tab')).toHaveLength(2));
+    // The work in progress survived, in the tab it was written in.
+    await userEvent.click(screen.getAllByRole('tab')[0]);
+    await waitFor(() => expect(editor().value).toBe('SELECT 1'));
+  });
+});
+
+describe('QueryWorkbench — what Run sends', () => {
+  const runSync = () => post.mock.calls.find(c => c[0] === '/api/query/run-sync');
+
+  beforeEach(() => {
+    post.mockImplementation((url: string) => url === '/api/query/validate'
+      ? Promise.resolve({ data: { valid: true } })
+      : Promise.resolve({ data: { columns: ['id'], rows: [{ id: 'A' }], error: null, engine: 'KAFKA_DIRECT' } }));
+  });
+
+  it('sends the whole tab when it holds one statement', async () => {
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.type(editor(), 'SELECT 1 FROM t');
+
+    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
+    await waitFor(() => expect(runSync()).toBeTruthy());
+    expect((runSync()![1] as { sql: string }).sql).toBe('SELECT 1 FROM t');
+  });
+
+  it('sends only the statement the cursor is in', async () => {
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    const sql = 'SELECT 1 FROM a;\nSELECT 2 FROM b;';
+    await userEvent.clear(editor());
+    await userEvent.paste(sql);
+    // Cursor inside the second statement.
+    setCursor(sql.indexOf('SELECT 2') + 2);
+
+    await userEvent.click(await screen.findByRole('button', { name: /Run statement/ }));
+    await waitFor(() => expect(runSync()).toBeTruthy());
+    expect((runSync()![1] as { sql: string }).sql).toBe('SELECT 2 FROM b');
+  });
+
+  it('says which statement it will run, before it is pressed', async () => {
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.clear(editor());
+    await userEvent.paste('SELECT 1 FROM a;\nSELECT 2 FROM b;');
+    setCursor(0);
+    expect(await screen.findByText('Statement 1/2')).toBeInTheDocument();
+  });
+
+  it('carries the row cap that the result is then judged against', async () => {
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.type(editor(), 'SELECT 1');
+    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
+    await waitFor(() => expect(runSync()).toBeTruthy());
+    expect((runSync()![1] as { maxRows: number }).maxRows).toBe(50);
+  });
+});
+
+describe('QueryWorkbench — running every statement', () => {
+  beforeEach(() => {
+    post.mockImplementation((url: string) => url === '/api/query/validate'
+      ? Promise.resolve({ data: { valid: true } })
+      : Promise.resolve({ data: { columns: ['id'], rows: [{ id: 'A' }], error: null, engine: 'KAFKA_DIRECT' } }));
+  });
+
+  const sentSql = () => post.mock.calls
+    .filter(c => c[0] === '/api/query/run-sync')
+    .map(c => (c[1] as { sql: string }).sql);
+
+  it('runs them in order', async () => {
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.clear(editor());
+    await userEvent.paste('SELECT 1 FROM a;\nSELECT 2 FROM b;');
+    setCursor(0);
+
+    await userEvent.click(await screen.findByRole('button', { name: /Run all/ }));
+    await waitFor(() => expect(sentSql()).toEqual(['SELECT 1 FROM a', 'SELECT 2 FROM b']));
+  });
+
+  it('stops at the first failure instead of running on a table that was never created', async () => {
+    post.mockImplementation((url: string, body: unknown) => {
+      if (url === '/api/query/validate') return Promise.resolve({ data: { valid: true } });
+      const { sql } = body as { sql: string };
+      return Promise.resolve(sql.includes('FROM a')
+        ? { data: { columns: [], rows: [], error: "Object 'a' not found" } }
+        : { data: { columns: ['id'], rows: [], error: null } });
+    });
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.clear(editor());
+    await userEvent.paste('SELECT 1 FROM a;\nSELECT 2 FROM b;');
+    setCursor(0);
+
+    await userEvent.click(await screen.findByRole('button', { name: /Run all/ }));
+    await waitFor(() => expect(sentSql()).toEqual(['SELECT 1 FROM a']));
+    expect(await screen.findByText(/Stopped at statement 1 of 2/)).toBeInTheDocument();
+  });
+
+  it('is not offered for a single statement', async () => {
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.type(editor(), 'SELECT 1');
+    expect(screen.queryByRole('button', { name: /Run all/ })).not.toBeInTheDocument();
+  });
+});
+
+describe('QueryWorkbench — sharing by link', () => {
+  it('reopens a query whose SQL contains a percent sign', async () => {
+    // The double-decode this replaced threw URIError inside a useState initializer, so the page
+    // did not mount at all — on the most ordinary predicate an exploration tool has.
+    const sql = "SELECT * FROM t WHERE name LIKE '%foo%'";
+    const router = createMemoryRouter(
+      [{ path: '/query', element: <ToastProvider><ConfirmProvider><QueryWorkbench /></ConfirmProvider></ToastProvider> }],
+      { initialEntries: [`/query?sql=${encodeURIComponent(sql)}`] },
+    );
+    render(<RouterProvider router={router} />);
+    await waitFor(() => expect(editor().value).toBe(sql));
+  });
+});
+
+describe('QueryWorkbench — the results grid', () => {
+  const RESULT = {
+    columns: ['customerId', 'note'],
+    rows: [{ customerId: 'C1', note: null }, { customerId: 'C2', note: '' }],
+    error: null,
+    engine: 'KAFKA_DIRECT',
+  };
+
+  beforeEach(async () => {
+    post.mockImplementation((url: string) => url === '/api/query/validate'
+      ? Promise.resolve({ data: { valid: true } })
+      : Promise.resolve({ data: RESULT }));
+  });
+
+  const runAndWait = async () => {
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.type(editor(), 'SELECT 1');
+    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
+    return screen.findByRole('columnheader', { name: /customerId/ });
+  };
+
+  it('shows the column name as the engine spelled it', async () => {
+    const header = await runAndWait();
+    // Not `CUSTOMERID`: the header is data, and the identifier has to stay retypable.
+    expect(header).toHaveTextContent('customerId');
+  });
+
+  it('distinguishes a NULL from an empty string', async () => {
+    await runAndWait();
+    expect(screen.getByText('NULL')).toBeInTheDocument();
+  });
+
+  it('opens the row beside the grid on a cell click, and closes it on a sort', async () => {
+    await runAndWait();
+    await userEvent.click(screen.getByText('C1'));
+
+    const detail = await screen.findByRole('complementary', { name: 'Row detail' });
+    expect(within(detail).getByText('customerId')).toBeInTheDocument();
+
+    // Sorting reorders the rows, so the index the panel holds no longer designates the same one.
+    // Scoped to the header: the detail panel carries a "Copy customerId" button of its own.
+    const header = screen.getByRole('columnheader', { name: /customerId/ });
+    await userEvent.click(within(header).getByRole('button'));
+    await waitFor(() =>
+      expect(screen.queryByRole('complementary', { name: 'Row detail' })).not.toBeInTheDocument());
+  });
+});
+
+describe('QueryWorkbench — history', () => {
+  it('records a failed query, which is the one worth reopening', async () => {
+    post.mockImplementation((url: string) => url === '/api/query/validate'
+      ? Promise.resolve({ data: { valid: true } })
+      : Promise.resolve({ data: { columns: [], rows: [], error: "Object 'nope' not found" } }));
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.type(editor(), 'SELECT * FROM nope');
+    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
+
+    await waitFor(() => {
+      const stored = JSON.parse(localStorage.getItem('kse:query-history') ?? '[]');
+      expect(stored[0]).toMatchObject({ sql: 'SELECT * FROM nope', ok: false });
+    });
+  });
+});

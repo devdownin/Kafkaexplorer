@@ -19,6 +19,7 @@
  */
 import * as monaco from 'monaco-editor';
 import { loader } from '@monaco-editor/react';
+import { formatSql } from './pages/queryWorkbench';
 // `monaco-editor/editor/…`, et non `monaco-editor/esm/vs/editor/…` : la 0.56 déclare un champ
 // `exports` (`"./*": "./esm/vs/*.js"`) qui enracine les sous-chemins sur `esm/vs`. L'ancien chemin
 // s'y résout en `esm/vs/esm/vs/…`, qui n'existe pas — Rollup ne trouvait plus le worker et la
@@ -33,3 +34,25 @@ self.MonacoEnvironment = {
 };
 
 loader.config({ monaco });
+
+/**
+ * Formateur SQL, enregistré **ici** et non dans une page.
+ *
+ * Monaco n'embarque aucun formateur pour ce langage : il fournit une coloration Monarch et rien
+ * d'autre (`monaco-editor/esm/vs/languages/definitions/sql/` ne contient que `sql.js` et
+ * `register.js`). Sans fournisseur, `editor.action.formatDocument` — donc le bouton « Format » et
+ * `Shift+Alt+F` — ne reformate rien et se contente d'un discret « There is no formatter for 'sql'
+ * files installed » dans l'éditeur.
+ *
+ * Le fournisseur est global à l'instance Monaco, mais il était enregistré depuis un effet de
+ * `QueryWorkbench`, donc *disposé au démontage de la page*. Les trois autres éditeurs SQL de
+ * l'application — les deux de `Metrics`, celui de `TopicExplorer` — n'en avaient donc jamais :
+ * même symptôme, aux mêmes endroits, pour une correction qui se croyait terminée. Ce module est
+ * importé par chacune de ces pages et évalué une fois, ce qui est exactement la portée voulue.
+ */
+monaco.languages.registerDocumentFormattingEditProvider('sql', {
+  provideDocumentFormattingEdits: (model) => [{
+    range: model.getFullModelRange(),
+    text: formatSql(model.getValue()),
+  }],
+});

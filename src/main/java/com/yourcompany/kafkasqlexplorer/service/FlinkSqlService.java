@@ -301,7 +301,11 @@ public class FlinkSqlService {
      * infers its schema, generates the DDL and registers it automatically.
      */
     private AutoRegResult autoRegisterTableIfNeeded(String sql) {
-        if (!sql.trim().toUpperCase().startsWith("SELECT")) return AutoRegResult.skip();
+        // Past a leading CTE chain: a `WITH … SELECT` skipped registration entirely, so the topic
+        // its body reads was never registered and the planner answered "Object not found" — which
+        // is how supporting CTEs at the guard alone would have produced a different dead end.
+        if (!SqlStatements.classifiableBody(sql).startsWith("SELECT")) return AutoRegResult.skip();
+        // The first FROM is inside the CTE body, which is exactly the source table to register.
         String rawTableRef = extractPrimaryTable(sql);
         if (rawTableRef == null) return AutoRegResult.skip();
 
@@ -365,7 +369,9 @@ public class FlinkSqlService {
 
     private String extractStatementType(String sql) {
         if (sql == null || sql.isBlank()) return "UNKNOWN";
-        String upper = stripSqlComments(sql).toUpperCase(Locale.ROOT);
+        // Classified past a leading CTE chain, so `WITH … INSERT INTO` and `WITH … SELECT` are
+        // routed like the statements they actually are.
+        String upper = SqlStatements.classifiableBody(stripSqlComments(sql));
         if (upper.startsWith("INSERT INTO")) return "INSERT";
         if (upper.startsWith("CREATE TABLE")) return "CREATE_TABLE";
         if (upper.startsWith("SELECT")) return "SELECT";
@@ -537,7 +543,11 @@ public class FlinkSqlService {
         // Strip comments before keyword checks — a query like "-- comment\nSELECT ..."
         // must not be rejected because startsWith("SELECT") would fail on the comment line.
         String strippedSql = stripSqlComments(originalSql);
-        String sql = strippedSql.toUpperCase();
+        // The guard classifies the statement *past* a leading `WITH … AS ( … )` chain, which is
+        // what made a common table expression impossible to run: it begins with WITH, so it was
+        // refused as if it were dangerous DDL. `withoutLeadingCte` fails closed — a WITH whose
+        // shape it does not recognise comes back unchanged and is refused exactly as before.
+        String sql = SqlStatements.classifiableBody(strippedSql);
 
         // Security: Prevent execution of dangerous or unsupported DDL/DML.
         if (!sql.startsWith("SELECT") && !sql.startsWith("EXPLAIN") && !sql.startsWith("CREATE TABLE")) {
@@ -562,7 +572,8 @@ public class FlinkSqlService {
             int limit = request.maxRows() != null ? request.maxRows() : explorerConfig.getDefaultMaxRows();
             long timeout = request.timeout() != null ? request.timeout() : explorerConfig.getDefaultQueryTimeoutMs();
 
-            if (sqlToExecute.trim().toUpperCase().startsWith("SELECT")) {
+            boolean isCte = SqlStatements.startsWithCte(sqlToExecute);
+            if (SqlStatements.classifiableBody(sqlToExecute).startsWith("SELECT")) {
                 // Prefer the real Flink planner when enabled and not tripped by the circuit breaker.
                 // The FlinkRelMetadataQuery NPE that historically forced the bypass is version
                 // dependent, so on an *engine* failure we fall back to the in-process direct Kafka
@@ -592,6 +603,22 @@ public class FlinkSqlService {
                         if (rejected != null) return rejected;
                         recordFlinkSelectFailure(t.toString());
                     }
+                }
+                /*
+                 * A common table expression never falls back to the direct reader.
+                 *
+                 * That reader regex-matches a table name out of `FROM`, so on `WITH recent AS
+                 * (SELECT … FROM orders) SELECT * FROM recent` it would read whichever name it
+                 * happened to match and return **rows** — from the wrong place, or none, with no
+                 * indication that the CTE was never applied. Wrong rows are worse than a refusal,
+                 * which is the whole reason user errors stopped falling back in the first place.
+                 */
+                if (isCte) {
+                    return new QueryResult(Collections.emptyList(), Collections.emptyList(),
+                            System.currentTimeMillis() - startTime,
+                            "This query uses a common table expression, which only the Flink engine can run. "
+                          + "The Flink planner did not answer, so it was not run — rather than reading the "
+                          + "topics directly and returning rows that ignore the WITH clause.");
                 }
                 QueryResult qr = kafkaDirectSelect(sqlToExecute, readMode, limit, startTime);
                 // Propagate auto-registration flag so the frontend can refresh its schema browser.
@@ -1405,28 +1432,45 @@ public class FlinkSqlService {
         return null;
     }
 
-    public void cancelQuery(String queryId) {
+    /**
+     * What a cancellation request actually achieved.
+     *
+     * <p>{@code cancelQuery} used to return {@code void}, and the endpoint above it answered 200
+     * either way, so a caller could not tell "the Flink job was cancelled" from "there was nothing
+     * to cancel". The distinction is not academic here: a {@code KAFKA_DIRECT} scan has no Flink
+     * job <em>by construction</em>, so the honest message depends on which engine ran — and the UI
+     * had already had to learn, on its own side, not to claim more than it did.
+     */
+    public enum CancelOutcome {
+        /** A live {@code JobClient} was found and asked to cancel. */
+        CANCELLED,
+        /** No live job under that id: already finished, never a Flink job, or an unknown id. */
+        NO_ACTIVE_JOB
+    }
+
+    public CancelOutcome cancelQuery(String queryId) {
         JobInfo info = activeJobs.get(queryId);
         if (info != null) {
             info.markCancelRequested();
             persistJobSnapshot(info, buildJobSummary(info), "Cancellation requested by user", null);
             info.client().cancel();
-        } else {
-            flinkJobStore.update(
-                queryId,
-                "UNKNOWN",
-                "Cancellation requested but no live Flink JobClient was available",
-                null,
-                true,
-                System.currentTimeMillis(),
-                null,
-                null
-            );
+            return CancelOutcome.CANCELLED;
         }
+        flinkJobStore.update(
+            queryId,
+            "UNKNOWN",
+            "Cancellation requested but no live Flink JobClient was available",
+            null,
+            true,
+            System.currentTimeMillis(),
+            null,
+            null
+        );
+        return CancelOutcome.NO_ACTIVE_JOB;
     }
 
-    public void cancelJob(String queryId) {
-        cancelQuery(queryId);
+    public CancelOutcome cancelJob(String queryId) {
+        return cancelQuery(queryId);
     }
 
     public List<FlinkJobSummary> getActiveJobs() {

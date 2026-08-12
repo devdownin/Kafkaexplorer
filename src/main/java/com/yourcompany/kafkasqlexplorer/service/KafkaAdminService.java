@@ -851,11 +851,29 @@ public class KafkaAdminService {
     }
 
     public boolean ping() {
+        return pingDetail().reachable();
+    }
+
+    /**
+     * The result of the reachability probe, <em>with the reason</em> when it fails.
+     *
+     * <p>{@link #ping()} answers a bare boolean, so every caller could report "offline" and none
+     * could say why — a broker that is down, a bootstrap address pointing nowhere and an
+     * authentication failure all came out as the same blank screen. The message is what turns that
+     * into something an operator can act on, so the probe keeps it and {@code ping()} becomes the
+     * shorthand for callers that genuinely only need the flag.
+     *
+     * @param reachable whether the broker answered within the probe's budget
+     * @param error the flattened failure message, or {@code null} when reachable
+     */
+    public record PingResult(boolean reachable, String error) {}
+
+    public PingResult pingDetail() {
         try {
             adminClient.listTopics().names().get(2, TimeUnit.SECONDS);
-            return true;
+            return new PingResult(true, null);
         } catch (Exception e) {
-            return false;
+            return new PingResult(false, SqlErrorClassifier.explain(e));
         }
     }
 

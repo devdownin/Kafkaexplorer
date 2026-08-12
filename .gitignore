@@ -62,3 +62,6 @@ logs/
 # Bytecode Python des vérificateurs de docs/ — généré à chaque exécution locale.
 __pycache__/
 *.py[cod]
+
+# TypeScript incremental build info (tsc -b)
+src/main/webapp/tsconfig.tsbuildinfo
