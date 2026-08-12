@@ -57,6 +57,12 @@ export const topicLastMessages = Object.fromEntries(
   TOPICS.map((t, i) => [t, t.startsWith('internal.') ? min(180 + i) : min(1 + (i % 47))]));
 
 export const dashboard = {
+  // clusterName / bootstrapServers feed the header's connection pill. They were absent here, so
+  // every published screenshot showed the frontend's fallback rather than what the app renders —
+  // the exact failure mode this harness's README warns about: a missing field shows up on screen,
+  // it does not fail loudly.
+  clusterName: 'Kafka cluster',
+  bootstrapServers: 'kafka:29092',
   topics: TOPICS,
   topicSizes,
   totalMessages: Object.values(topicSizes).reduce((a, b) => a + b, 0),
@@ -378,7 +384,7 @@ export const config = {
   mode: 'PLAIN',
   schemaRegistryUrl: 'http://schema-registry:8081',
   isConnected: true,
-  clusterName: 'KRAFT 4.2',
+  clusterName: 'Kafka cluster',
   llmProvider: 'OLLAMA',
   llmBaseUrl: 'http://ollama:11434/v1',
   llmModel: 'qwen3:4b',

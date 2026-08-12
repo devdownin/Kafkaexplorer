@@ -212,6 +212,7 @@ allocates; a cluster audit over thousands of topics is the workload that wants m
 | Variable | Default | Meaning |
 |---|---|---|
 | `JAVA_TOOL_OPTIONS` | `-XX:MaxRAMPercentage=75.0` | Replaced wholesale if you set it — re-state the percentage alongside whatever you add. |
+| `EXPLORER_CLUSTER_NAME` | `Kafka cluster` | Label for this environment in the header — `Staging`, `Orders prod`. A display name only; the bootstrap address the app is really using is shown beside it on hover. |
 | `EXPLORER_DEFAULT_MAX_ROWS` | `50` | Rows a query returns by default. |
 | `EXPLORER_DEFAULT_QUERY_TIMEOUT_MS` | `10000` | Per-query wall clock. |
 | `EXPLORER_AUDIT_MAX_DURATION_MS` | `1800000` | Budget for one full cluster audit; `0` disables it. |

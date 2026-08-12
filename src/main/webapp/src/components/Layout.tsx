@@ -18,7 +18,11 @@ const DESKTOP_QUERY = '(min-width: 768px)';
  */
 const Layout: FC<{ children: ReactNode }> = ({ children }) => {
   const [isHealthy, setHealthy] = useState(true);
-  const [clusterName, setClusterName] = useState('Docker Cluster');
+  // Vide, pas « Docker Cluster » : avant la première réponse de `/api/dashboard`, le nom du
+  // cluster n'est pas connu, et un nom en dur est faux partout sauf sur le poste où il a été
+  // écrit. Le header affiche « Connecting… » tant que cette valeur est vide.
+  const [clusterName, setClusterName] = useState('');
+  const [bootstrapServers, setBootstrapServers] = useState('');
   const [searchTopics, setSearchTopics] = useState<string[]>([]);
   const [searchTables, setSearchTables] = useState<string[]>([]);
 
@@ -40,6 +44,7 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
         // sans requête supplémentaire.
         setCatalog(response.data.topics ?? [], response.data.tables ?? []);
         if (response.data.clusterName) setClusterName(response.data.clusterName);
+        if (response.data.bootstrapServers) setBootstrapServers(response.data.bootstrapServers);
       } catch {
         setHealthy(false);
       }
@@ -100,6 +105,7 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
           onSearchClick={() => setPaletteOpen(true)}
           isHealthy={isHealthy}
           clusterName={clusterName}
+          bootstrapServers={bootstrapServers}
         />
         <main className="flex-1 overflow-y-auto custom-scrollbar relative">
           {children}

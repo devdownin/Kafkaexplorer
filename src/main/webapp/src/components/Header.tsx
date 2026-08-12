@@ -1,20 +1,30 @@
 import type { FC } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { resolvePageName } from '../navigation';
+import { connectionLabel, connectionTitle } from './connectionStatus';
 
 interface HeaderProps {
   onMenuClick?: () => void;
   /** Ouvre la palette de commandes (⌘K). */
   onSearchClick?: () => void;
   isHealthy: boolean;
+  /** Libellé choisi au déploiement (`explorer.cluster-name`), ou vide tant que rien n'a répondu. */
   clusterName: string;
+  /** Adresse d'amorçage effective, telle que le serveur l'utilise réellement. */
+  bootstrapServers?: string;
 }
 
 /**
  * En-tête d'application : fil d'Ariane (cluster / page), état de connexion,
  * déclencheur de la palette de commandes (⌘K), aide et réglages.
+ *
+ * La pastille dit à quoi on est connecté, donc elle ne doit rien affirmer qu'elle n'ait vérifié.
+ * Le libellé est un nom d'affichage — il valait « KRAFT 4.2 » par défaut, soit une version de
+ * Kafka annoncée sans jamais avoir été demandée au broker, et inchangée après un repointage à
+ * chaud par `POST /api/config`. Ce qui est vérifiable voyage à côté : l'adresse d'amorçage
+ * effective, lue dans la configuration en cours d'exécution, en infobulle.
  */
-const Header: FC<HeaderProps> = ({ onMenuClick, onSearchClick, isHealthy, clusterName }) => {
+const Header: FC<HeaderProps> = ({ onMenuClick, onSearchClick, isHealthy, clusterName, bootstrapServers }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const pageName = resolvePageName(location.pathname);
@@ -38,11 +48,11 @@ const Header: FC<HeaderProps> = ({ onMenuClick, onSearchClick, isHealthy, cluste
               ? 'bg-success/10 border-success/25 text-success'
               : 'bg-error/10 border-error/25 text-error'
           }`}
-          title={isHealthy ? `Connected — ${clusterName}` : 'Disconnected'}
+          title={connectionTitle({ isHealthy, clusterName, bootstrapServers })}
         >
           <span className={`w-1.5 h-1.5 rounded-full ${isHealthy ? 'bg-success' : 'bg-error'}`} />
           <span className="hidden sm:inline max-w-[180px] truncate">
-            {isHealthy ? clusterName : 'Disconnected'}
+            {connectionLabel({ isHealthy, clusterName })}
           </span>
         </span>
 

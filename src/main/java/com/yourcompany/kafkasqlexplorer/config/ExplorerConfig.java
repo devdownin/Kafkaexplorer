@@ -12,7 +12,17 @@ import java.util.List;
 @ConfigurationProperties(prefix = "explorer")
 public class ExplorerConfig {
 
-    private String clusterName = "DOCKER CLUSTER";
+    /**
+     * Display label for the connected cluster, shown in the header's connection pill.
+     *
+     * <p>It is a <em>name</em>, not a fact about the broker: nothing here verifies it, and
+     * {@code POST /api/config} can repoint the app at another cluster while this string stays put.
+     * The shipped default therefore claims nothing — it used to be {@code KRAFT 4.2} in
+     * {@code application.yml}, so every deployment asserted a Kafka version it had never checked,
+     * in the one element whose job is to say what you are connected to. What <em>is</em> verified
+     * travels beside it: the effective bootstrap address, which the header shows on hover.
+     */
+    private String clusterName = "Kafka cluster";
     private String auditHistoryTopic = "internal.audit.history";
     /**
      * Records read from the end of the audit-history topic when listing past runs. The topic is
