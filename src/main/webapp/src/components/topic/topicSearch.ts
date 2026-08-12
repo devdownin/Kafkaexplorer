@@ -7,16 +7,14 @@
 import { clearDraft, readDraft, writeDraft } from '../../draftStore';
 
 /** One Kafka record with its coordinates — what /api/topic returns and what a search hit is. */
-export interface TopicMessage {
-  partition: number;
-  offset: number;
-  timestamp: number;
-  key: string | null;
-  value: string | null;
-  headers: Record<string, string | null>;
-  valueBytes: number;
-  truncated: boolean;
-}
+/*
+ * La forme d'un enregistrement vit dans `api/types.ts`, adossée au record Java et vérifiée en CI.
+ * Elle était déclarée ici, et une seconde fois — différemment — dans la page Compare : c'est cette
+ * duplication qui a permis à l'une des deux de se périmer sans que rien ne le dise.
+ */
+import type { TopicMessage } from '../../api/types';
+
+export type { TopicMessage };
 
 export type SearchMode = 'CONTAINS' | 'REGEX' | 'FIELD' | 'HEADER' | 'KEY';
 

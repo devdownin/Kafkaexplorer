@@ -31,6 +31,7 @@ import { DdlPreviewModal } from '../components/query/DdlPreviewModal';
 import { RowDetail } from '../components/query/RowDetail';
 import { randomId } from '../randomId';
 import { copyText } from '../clipboard';
+import type { QueryResult } from '../api/types';
 
 /** Contrôle segmenté compact (mode d'exécution, offset). */
 function Segmented<T extends string>({ value, onChange, options, ariaLabel }: {
@@ -56,19 +57,6 @@ function Segmented<T extends string>({ value, onChange, options, ariaLabel }: {
 }
 
 
-interface QueryResult {
-  columns: string[];
-  rows: Record<string, unknown>[];
-  error: string | null;
-  tableRegistered?: boolean;
-  engine?: string;
-  /**
-   * Caveats the engine attached to an otherwise successful result — above all, WHERE predicates
-   * the direct reader could not apply. It reports them precisely so the UI does not present an
-   * unfiltered scan as a filtered one.
-   */
-  warnings?: string[];
-}
 interface FlinkJobSubmission {
   queryId: string;
   flinkJobId: string;
@@ -1019,7 +1007,10 @@ const QueryWorkbench: React.FC = () => {
           ms,
           ok: !response.data.error,
           rows: response.data.error ? undefined : response.data.rows.length,
-          engine: response.data.error ? undefined : response.data.engine,
+          // `?? undefined` : le serveur peut renvoyer `engine: null` (chemins d'erreur), ce que
+          // l'interface locale — qui déclarait `engine?: string` — ne disait pas. Une entrée
+          // d'historique portant `null` s'afficherait « null » au lieu de ne rien afficher.
+          engine: response.data.error ? undefined : (response.data.engine ?? undefined),
         });
         succeeded = !response.data.error;
         if (!response.data.error) {

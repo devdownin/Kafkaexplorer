@@ -6,6 +6,7 @@ import Header from './Header';
 import CommandPalette from './CommandPalette';
 import { setCatalog } from '../catalogStore';
 import type { Health } from './connectionStatus';
+import type { DashboardResponse } from '../api/types';
 
 const DESKTOP_QUERY = '(min-width: 768px)';
 
@@ -40,7 +41,7 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
   useEffect(() => {
     const checkHealth = async () => {
       try {
-        const response = await axios.get('/api/dashboard');
+        const response = await axios.get<DashboardResponse>('/api/dashboard');
         setHealthy(response.data.health);
         setSearchTopics(response.data.topics ?? []);
         setSearchTables(response.data.tables ?? []);
