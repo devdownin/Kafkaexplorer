@@ -6,24 +6,28 @@ import '../monaco-setup';
 import axios from 'axios';
 import { useToast } from '../components/Toast';
 import {
-  Button, Badge, Input, Select, Field, NumberInput, EmptyState, ErrorPanel, Tooltip, useConfirm, cn,
-  useVirtualRows, ScrollList,
+  Button, Badge, Select, EmptyState, Tooltip, useConfirm, cn,
+  useVirtualRows,
 } from '../components/ui';
 import {
   describeQueryError, describeApiError, offsetLocation,
   type QueryErrorInfo, type QueryErrorLocation,
 } from './queryError';
 import { resolveScope, toTableName } from './sqlScope';
-import { buildWindowSql, windowCaveat, guessTimeColumn, type WindowKind, type WindowUnit } from './windowSql';
 import { toCsv, toJson } from './resultExport';
 import {
-  sortRows, cellText, nextActiveTabId, isResultStale,
+  sortRows, nextActiveTabId, isResultStale,
   writeStored, readStored, removeStored,
   readLayout, clamp, LAYOUT_STORAGE_KEY, DEFAULT_LAYOUT,
   SPLIT_MIN, SPLIT_MAX, SIDEBAR_MIN, SIDEBAR_MAX, type WorkbenchLayout,
   starterQueries, pushHistory, describeHistoryEntry, formatDuration, type HistoryEntry,
-  splitStatements, statementIndexAt, positionAt, detailValue,
+  splitStatements, statementIndexAt, positionAt,
 } from './queryWorkbench';
+import { ResultsGrid } from '../components/query/ResultsGrid';
+import { WindowAssistant } from '../components/query/WindowAssistant';
+import { SchemaBrowser, type SchemaInfo, type SavedQuery } from '../components/query/SchemaBrowser';
+import { DdlPreviewModal } from '../components/query/DdlPreviewModal';
+import { RowDetail } from '../components/query/RowDetail';
 import { randomId } from '../randomId';
 import { copyText } from '../clipboard';
 
@@ -50,191 +54,7 @@ function Segmented<T extends string>({ value, onChange, options, ariaLabel }: {
   );
 }
 
-/**
- * Grille de résultats, mémoïsée et définie **hors** de la page.
- *
- * Elle était rendue en ligne dans `QueryWorkbench` : chaque frappe dans l'éditeur — donc chaque
- * `setTabs` — reconstruisait jusqu'à deux cents lignes de cellules, avec la sérialisation de
- * chaque valeur, alors que rien du résultat n'avait bougé. Sortie du composant parent et
- * `React.memo`-ée, elle ne re-rend que lorsque les lignes, le tri ou la fenêtre de virtualisation
- * changent réellement.
- */
-interface ResultsGridProps {
-  columns: string[];
-  rows: Record<string, unknown>[];
-  virtualized: boolean;
-  window: { start: number; padTop: number; padBottom: number };
-  sortCol: string | null;
-  sortDir: 'asc' | 'desc';
-  onSort: (col: string) => void;
-  /** Ouvre le détail de la ligne, cadré sur la colonne cliquée. */
-  onOpenRow: (index: number, column: string) => void;
-  selectedIndex: number | null;
-  measureRow: (tr: HTMLTableRowElement | null) => void;
-}
 
-const ResultsGrid = React.memo(function ResultsGrid({
-  columns, rows, virtualized, window: vwin, sortCol, sortDir, onSort, onOpenRow, selectedIndex, measureRow,
-}: ResultsGridProps) {
-  return (
-    <table className={cn('w-full text-left border-collapse', virtualized && 'table-fixed')}>
-      <thead className="sticky top-0 bg-surface-container-high/90 backdrop-blur-sm z-10">
-        <tr>
-          {columns.map(col => (
-            // `aria-sort` sur l'en-tête et un vrai `<button>` dedans : l'en-tête était un `<th>`
-            // cliquable, donc un tri inatteignable au clavier et un ordre jamais annoncé.
-            // Le nom de colonne n'est **pas un libellé, c'est une donnée** : il vient du moteur, et
-            // le passer en majuscules par CSS le déforme. `customerId` s'affichait `CUSTOMERID`,
-            // ce qui n'est plus l'identifiant à réécrire dans la requête suivante — et sur un
-            // moteur qui distingue la casse, c'est une piste fausse. L'interlettrage part avec :
-            // il n'existait que pour rendre les capitales lisibles.
-            <th key={col} scope="col"
-              aria-sort={sortCol === col ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
-              className="px-4 py-2.5 border-b border-outline-variant/60 text-[11px] font-medium font-mono text-on-surface-variant whitespace-nowrap">
-              <button type="button" onClick={() => onSort(col)}
-                className="flex items-center gap-1 hover:text-on-surface select-none transition-colors rounded">
-                {col}
-                {sortCol === col
-                  ? <span aria-hidden="true" className="material-symbols-outlined text-[14px] text-primary">{sortDir === 'asc' ? 'arrow_upward' : 'arrow_downward'}</span>
-                  : <span aria-hidden="true" className="material-symbols-outlined text-[14px] text-outline">unfold_more</span>}
-              </button>
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody className="divide-y divide-outline-variant/40">
-        {/* Cale supérieure : préserve la hauteur des lignes non montées. */}
-        {virtualized && vwin.padTop > 0 && (
-          <tr aria-hidden="true" className="border-t-0"><td colSpan={columns.length} style={{ height: vwin.padTop, padding: 0 }} /></tr>
-        )}
-        {rows.map((row, i) => {
-          const absIndex = virtualized ? vwin.start + i : i;
-          const selected = selectedIndex === absIndex;
-          return (
-            <tr key={absIndex} ref={virtualized && i === 0 ? measureRow : undefined}
-              aria-selected={selected}
-              className={cn('transition-colors', selected ? 'bg-primary/10' : 'hover:bg-surface-container-high/40')}>
-              {columns.map(col => {
-                const { text, isNull } = cellText(row[col]);
-                return (
-                  // Le clic ouvre le détail de la ligne au lieu de copier à l'aveugle : une valeur
-                  // longue était tronquée avec un `title` pour seul recours, et un JSON imbriqué
-                  // restait une ligne de texte. La copie vit dans le panneau, par valeur.
-                  <td key={col} onClick={() => onOpenRow(absIndex, col)}
-                    className={cn(
-                      'px-4 py-2.5 text-[12px] font-mono cursor-pointer hover:text-primary transition-colors',
-                      // Un NULL SQL et une chaîne vide se rendaient tous deux par une cellule
-                      // vide — c'est pourtant la distinction qui dit si une jointure a trouvé
-                      // sa ligne.
-                      isNull ? 'text-outline italic' : 'text-on-surface',
-                      // En mode virtualisé, les lignes doivent rester à hauteur constante :
-                      // on force chaque cellule sur une seule ligne (troncature + tooltip).
-                      virtualized && 'whitespace-nowrap max-w-md truncate',
-                    )}
-                    title={virtualized ? text : 'Open this row'}>
-                    {text}
-                  </td>
-                );
-              })}
-            </tr>
-          );
-        })}
-        {/* Cale inférieure. */}
-        {virtualized && vwin.padBottom > 0 && (
-          <tr aria-hidden="true" className="border-t-0"><td colSpan={columns.length} style={{ height: vwin.padBottom, padding: 0 }} /></tr>
-        )}
-      </tbody>
-    </table>
-  );
-});
-
-/**
- * Détail d'une ligne de résultat.
- *
- * La grille rend une ligne par enregistrement, tronquée sur une seule ligne dès qu'elle est
- * virtualisée : une valeur longue n'était atteignable que par le `title` au survol, et un JSON
- * imbriqué y restait une chaîne. Ce panneau montre toutes les colonnes de la ligne choisie, met en
- * forme ce qui est structuré (`detailValue`, y compris le JSON arrivé sous forme de texte, ce que
- * le moteur direct renvoie couramment) et porte la copie, valeur par valeur.
- */
-interface RowDetailProps {
-  columns: string[];
-  row: Record<string, unknown>;
-  index: number;
-  total: number;
-  focusColumn: string | null;
-  onClose: () => void;
-  onStep: (delta: number) => void;
-  onCopy: (value: unknown) => void;
-}
-
-const RowDetail: React.FC<RowDetailProps> = ({
-  columns, row, index, total, focusColumn, onClose, onStep, onCopy,
-}) => (
-  <aside aria-label="Row detail"
-    className="w-80 xl:w-96 shrink-0 border-l border-outline-variant/60 bg-surface-container-low/60 flex flex-col overflow-hidden">
-    <div className="h-10 px-3 flex items-center gap-1 border-b border-outline-variant/60 shrink-0">
-      <span className="text-[11px] font-medium text-on-surface-variant uppercase tracking-[0.05em]">
-        Row <span className="tabular-nums text-on-surface">{index + 1}</span> of <span className="tabular-nums">{total.toLocaleString()}</span>
-      </span>
-      <div className="ml-auto flex items-center">
-        <button type="button" onClick={() => onStep(-1)} disabled={index === 0}
-          aria-label="Previous row" title="Previous row"
-          className="p-1 rounded-md text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high disabled:opacity-30 disabled:pointer-events-none transition-colors">
-          <span aria-hidden="true" className="material-symbols-outlined text-[18px]">keyboard_arrow_up</span>
-        </button>
-        <button type="button" onClick={() => onStep(1)} disabled={index >= total - 1}
-          aria-label="Next row" title="Next row"
-          className="p-1 rounded-md text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high disabled:opacity-30 disabled:pointer-events-none transition-colors">
-          <span aria-hidden="true" className="material-symbols-outlined text-[18px]">keyboard_arrow_down</span>
-        </button>
-        <button type="button" onClick={onClose} aria-label="Close the row detail" title="Close"
-          className="p-1 ml-1 rounded-md text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors">
-          <span aria-hidden="true" className="material-symbols-outlined text-[18px]">close</span>
-        </button>
-      </div>
-    </div>
-    <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-3">
-      {columns.map(col => {
-        const { text, json, isNull } = detailValue(row[col]);
-        return (
-          <div key={col} className={cn(
-            'rounded-lg border px-2.5 py-2',
-            col === focusColumn ? 'border-primary/50 bg-primary/5' : 'border-outline-variant/50',
-          )}>
-            <div className="flex items-center gap-2">
-              <p className="text-[11px] font-medium text-on-surface-variant truncate">{col}</p>
-              {json && <span className="text-[9px] uppercase tracking-wide text-primary/70 shrink-0">json</span>}
-              <button type="button" onClick={() => onCopy(row[col])}
-                aria-label={`Copy ${col}`} title="Copy"
-                className="ml-auto shrink-0 text-outline hover:text-primary transition-colors">
-                <span aria-hidden="true" className="material-symbols-outlined text-[14px]">content_copy</span>
-              </button>
-            </div>
-            <pre className={cn(
-              'mt-1 text-[11px] font-mono whitespace-pre-wrap break-words leading-relaxed',
-              isNull ? 'text-outline italic' : 'text-on-surface',
-            )}>{text}</pre>
-          </div>
-        );
-      })}
-    </div>
-  </aside>
-);
-
-interface SchemaInfo {
-  topics: string[];
-  tables: string[];
-  health: boolean;
-  /**
-   * Pourquoi la liste correspondante est vide, quand elle l'est. `/api/query/init` avalait ses deux
-   * échecs dans des `catch` vides : un broker injoignable et un runtime Flink encore en démarrage
-   * donnaient exactement le même écran — « Engine offline · 0 tables · 0 topics » — sans rien pour
-   * les distinguer ni sur quoi agir.
-   */
-  kafkaError?: string | null;
-  flinkError?: string | null;
-}
 interface QueryResult {
   columns: string[];
   rows: Record<string, unknown>[];
@@ -259,7 +79,6 @@ interface FlinkJobSubmission {
   cancelRequested: boolean;
 }
 interface Tab { id: string; name: string; sql: string; }
-interface SavedQuery { id: string; name: string; sql: string; savedAt: number; }
 type ExecutionMode = 'SYNC_READ' | 'ASYNC_JOB';
 
 /** Choix de plafond de lignes. La valeur part au backend en `maxRows` — voir runQuery. */
@@ -525,6 +344,11 @@ const QueryWorkbench: React.FC = () => {
   // Le fournisseur de formatage SQL vit dans `monaco-setup` : il est global à l'instance Monaco,
   // et l'enregistrer depuis cette page le retirait des trois autres éditeurs SQL de l'application.
 
+  /** Portée mémoïsée de l'autocomplétion — voir son usage dans le provider ci-dessous. */
+  const scopeCacheRef = useRef<{ version: number; catalogKey: string; scope: string[] }>(
+    { version: -1, catalogKey: '', scope: [] },
+  );
+
   // Auto-completion provider
   useEffect(() => {
     if (!monaco) return;
@@ -542,8 +366,22 @@ const QueryWorkbench: React.FC = () => {
         // Tant qu'aucune table n'est citée (curseur dans le SELECT avant le FROM), on retombe
         // sur tout ce qui est connu plutôt que de ne rien proposer.
         const loaded = tableSchemasRef.current;
-        const scope = resolveScope(_model.getValue(), Object.keys(loaded));
-        const scoped = scope.filter(t => loaded[t]);
+        /*
+         * `resolveScope` fait deux passes de regex sur tout le document, et il était rappelé à
+         * chaque frappe : le provider est invoqué sur chaque caractère (`quickSuggestions`). La
+         * portée ne peut changer qu'avec le texte ou avec le catalogue chargé, donc on la garde
+         * jusqu'à ce que l'un des deux bouge. `getVersionId()` s'incrémente à chaque édition du
+         * modèle, ce qui en fait exactement la clé voulue.
+         */
+        const version = _model.getVersionId();
+        const catalogKey = Object.keys(loaded).join('|');
+        const cache = scopeCacheRef.current;
+        if (cache.version !== version || cache.catalogKey !== catalogKey) {
+          cache.version = version;
+          cache.catalogKey = catalogKey;
+          cache.scope = resolveScope(_model.getValue(), Object.keys(loaded));
+        }
+        const scoped = cache.scope.filter(t => loaded[t]);
         const columnSources = scoped.length ? scoped : Object.keys(loaded);
         columnSources.forEach(tableName =>
           Object.entries(loaded[tableName] ?? {}).forEach(([col, type]) => suggestions.push({
@@ -752,10 +590,9 @@ const QueryWorkbench: React.FC = () => {
   const ddlOpenerRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
     if (!ddlPreviewTopic) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setDdlPreviewTopic(null); };
-    document.addEventListener('keydown', onKey);
+    // `Escape` est géré par le modal lui-même ; le retour du focus reste ici, la page étant la
+    // seule à savoir quel élément l'avait ouvert.
     return () => {
-      document.removeEventListener('keydown', onKey);
       ddlOpenerRef.current?.focus();
       ddlOpenerRef.current = null;
     };
@@ -814,12 +651,7 @@ const QueryWorkbench: React.FC = () => {
   }, [showHistory]);
 
   // ── Window assistant ──────────────────────────────────────────────────────────
-  const [windowType, setWindowType] = useState<WindowKind>('TUMBLE');
-  const [windowSize, setWindowSize] = useState(5);
-  const [windowSlide, setWindowSlide] = useState(1);
-  const [windowUnit, setWindowUnit] = useState<WindowUnit>('MINUTE');
-  const [windowTimeCol, setWindowTimeCol] = useState('');
-  const [windowPartitionBy, setWindowPartitionBy] = useState('');
+  // L'état du formulaire de fenêtrage vit dans `WindowAssistant` : rien d'autre ne le lit.
 
   // ── Resize: split pane (vertical) + sidebar (horizontal) ─────────────────────
   /**
@@ -975,7 +807,9 @@ const QueryWorkbench: React.FC = () => {
     const isExpanded = !!expandedTables[tableName];
     setExpandedTables(prev => ({ ...prev, [tableName]: !isExpanded }));
     if (!isExpanded && !tableSchemas[tableName]) {
-      try { const r = await axios.get(`/api/query/schema/${tableName}`); setTableSchemas(prev => ({ ...prev, [tableName]: r.data })); }
+      // `encodeURIComponent`, comme l'autre appel au même endpoint : un nom de table qui n'est pas
+      // sûr dans un chemin d'URL partait tel quel depuis ici seulement.
+      try { const r = await axios.get(`/api/query/schema/${encodeURIComponent(tableName)}`); setTableSchemas(prev => ({ ...prev, [tableName]: r.data })); }
       catch { toast(`Failed to load schema for ${tableName}`, 'error'); }
     }
   };
@@ -1301,307 +1135,74 @@ const QueryWorkbench: React.FC = () => {
     [sql, schema],
   );
 
-  // Pré-remplit la colonne temporelle depuis le schéma chargé, tant que l'utilisateur n'a rien
-  // saisi. L'assistant écrivait `event_time` en dur — un nom que la plupart des topics n'ont pas.
-  const guessedTimeCol = useMemo(
-    () => guessTimeColumn(tableSchemas[toTableName(windowTable)]),
-    [tableSchemas, windowTable],
-  );
-  const effectiveTimeCol = windowTimeCol.trim() || guessedTimeCol || 'event_time';
-
-  const windowSpec = useMemo(() => ({
-    kind: windowType,
-    table: windowTable,
-    timeColumn: effectiveTimeCol,
-    size: windowSize,
-    unit: windowUnit,
-    slide: windowSlide,
-    partitionBy: windowPartitionBy,
-  }), [windowType, windowTable, effectiveTimeCol, windowSize, windowUnit, windowSlide, windowPartitionBy]);
 
   /**
-   * Insère la requête générée à la position du curseur (en remplaçant la sélection).
-   * Elle écrasait auparavant tout l'onglet — le travail en cours était perdu sans confirmation.
+   * Pose le SQL généré par l'assistant à la position du curseur (en remplaçant la sélection).
+   * Il écrasait auparavant tout l'onglet — le travail en cours était perdu sans confirmation.
    */
-  const applyWindowLogic = () => {
-    const where = insertSql(buildWindowSql(windowSpec));
+  const applyWindowLogic = useCallback((generated: string) => {
+    const where = insertSql(generated);
     toast({
       appended: 'Window query appended',
       inserted: 'Window query inserted at cursor',
       replaced: 'Window query replaced the selection',
     }[where], 'success');
-  };
+  }, [insertSql, toast]);
 
 
   // ── Render ────────────────────────────────────────────────────────────────────
   return (
     <div className="flex h-full overflow-hidden">
 
-      {/* ── DDL Preview Modal ────────────────────────────────────────────────── */}
       {ddlPreviewTopic && (
-        <div className="fixed inset-0 glass-overlay z-50 flex items-center justify-center p-8"
-          role="dialog" aria-modal="true" aria-label="DDL preview"
-          onClick={() => setDdlPreviewTopic(null)}>
-          <div onClick={e => e.stopPropagation()}
-            className="bg-surface-container border border-outline-variant rounded-xl w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl">
-            <div className="flex items-center justify-between p-4 border-b border-outline-variant">
-              <div>
-                <h2 className="text-[14px] font-semibold text-on-surface">DDL Preview</h2>
-                <p className="text-[11px] text-on-surface-variant font-mono mt-0.5">{ddlPreviewTopic}</p>
-              </div>
-              <button onClick={() => setDdlPreviewTopic(null)} aria-label="Close"
-                className="p-1.5 rounded-md text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors">
-                <span className="material-symbols-outlined text-[20px]">close</span>
-              </button>
-            </div>
-            <div className="flex-1 overflow-auto p-4">
-              {ddlPreviewLoading
-                ? <div className="flex items-center gap-2 text-on-surface-variant py-4"><span className="material-symbols-outlined animate-spin text-[16px]">progress_activity</span><span className="text-[13px]">Inferring schema…</span></div>
-                : ddlPreview
-                  ? <pre className="text-[12px] font-mono text-on-surface whitespace-pre-wrap leading-relaxed">{ddlPreview}</pre>
-                  : ddlPreviewError
-                    ? <ErrorPanel error={ddlPreviewError}
-                        onRetry={ddlPreviewTopic ? () => void fetchDdlPreview(ddlPreviewTopic) : undefined} />
-                    : <p className="text-[13px] text-on-surface-variant">Failed to generate DDL</p>
-              }
-            </div>
-            <div className="p-4 border-t border-outline-variant flex items-center justify-end gap-2">
-              <Button variant="outline" size="sm" icon="content_copy" disabled={!ddlPreview}
-                onClick={() => { if (ddlPreview) void copyText(ddlPreview).then(ok =>
-                  toast(ok ? 'DDL copied' : 'Could not copy to the clipboard', ok ? 'success' : 'error')); }}>
-                Copy
-              </Button>
-              <Button variant="primary" size="sm" icon="edit_note" disabled={!ddlPreview}
-                onClick={() => {
-                  if (!ddlPreview) return;
-                  const where = openSql(ddlPreview, `DDL ${ddlPreviewTopic}`);
-                  setDdlPreviewTopic(null);
-                  toast(where === 'new' ? 'DDL opened in a new tab' : 'DDL inserted in editor', 'success');
-                }}>
-                Insert in editor
-              </Button>
-            </div>
-          </div>
-        </div>
+        <DdlPreviewModal
+          topic={ddlPreviewTopic}
+          ddl={ddlPreview}
+          error={ddlPreviewError}
+          loading={ddlPreviewLoading}
+          onClose={() => setDdlPreviewTopic(null)}
+          onRetry={() => void fetchDdlPreview(ddlPreviewTopic)}
+          onCopy={() => { if (ddlPreview) void copyText(ddlPreview).then(ok =>
+            toast(ok ? 'DDL copied' : 'Could not copy to the clipboard', ok ? 'success' : 'error')); }}
+          onInsert={() => {
+            if (!ddlPreview) return;
+            const where = openSql(ddlPreview, `DDL ${ddlPreviewTopic}`);
+            setDdlPreviewTopic(null);
+            toast(where === 'new' ? 'DDL opened in a new tab' : 'DDL inserted in editor', 'success');
+          }}
+        />
       )}
 
-      {/* ── Schema Browser Sidebar (resizable) ──────────────────────────────── */}
-      <aside ref={asideRef} className="relative flex-shrink-0 flex flex-col border-r border-outline-variant/60 bg-surface-container-low" style={{ width: sidebarWidth }}>
-        {/* Sidebar drag handle */}
-        <div
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize the schema browser"
-          aria-valuenow={Math.round(sidebarWidth)}
-          aria-valuemin={SIDEBAR_MIN}
-          aria-valuemax={SIDEBAR_MAX}
-          tabIndex={0}
-          onPointerDown={e => startDrag('sidebar', 'col-resize', e)}
-          onKeyDown={e => {
-            if (e.key === 'ArrowLeft') { setSidebarWidth(w => w - 16); e.preventDefault(); }
-            if (e.key === 'ArrowRight') { setSidebarWidth(w => w + 16); e.preventDefault(); }
-            if (e.key === 'Home') { setSidebarWidth(DEFAULT_LAYOUT.sidebarWidth); e.preventDefault(); }
-          }}
-          style={{ touchAction: 'none' }}
-          className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/40 focus-visible:bg-primary/60 transition-colors z-10"
-        />
-
-        <div className="p-4 flex items-center gap-3 border-b border-outline-variant/60">
-          <div className="size-8 bg-primary/15 text-primary rounded-lg flex items-center justify-center shrink-0">
-            <span className="material-symbols-outlined text-[18px]">database</span>
-          </div>
-          <div className="min-w-0">
-            <h1 className="text-[14px] font-semibold tracking-tight text-on-surface">SQL Workbench</h1>
-            <p className="text-[11px] text-on-surface-variant">Flink SQL Engine</p>
-          </div>
-        </div>
-
-        <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-[11px] font-medium text-on-surface-variant uppercase tracking-[0.05em]">Schema Browser</h2>
-            <button onClick={fetchSchema} disabled={schemaLoading} aria-label="Refresh schema" className="p-1 rounded-md text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors disabled:opacity-50" title="Refresh">
-              <span className={`material-symbols-outlined text-[18px] ${schemaLoading ? 'animate-spin' : ''}`}>{schemaLoading ? 'progress_activity' : 'refresh'}</span>
-            </button>
-          </div>
-
-          {/* Ce qui n'a pas répondu, et pourquoi. Une liste vide sans motif se lit comme « ce
-              cluster n'a rien », qui est une tout autre information. */}
-          {(schema?.kafkaError || schema?.flinkError) && (
-            <div className="mb-3 rounded-lg border border-warning/30 bg-warning/10 px-2.5 py-2" role="status">
-              {schema.kafkaError && (
-                <div className="flex items-start gap-1.5">
-                  <span aria-hidden="true" className="material-symbols-outlined text-warning text-[14px] mt-px shrink-0">warning</span>
-                  <p className="text-[11px] text-on-surface-variant leading-snug min-w-0">
-                    <span className="font-semibold text-warning">Kafka: </span>
-                    <span className="break-words">{schema.kafkaError}</span>
-                  </p>
-                </div>
-              )}
-              {schema.flinkError && (
-                <div className={cn('flex items-start gap-1.5', schema.kafkaError && 'mt-1.5')}>
-                  <span aria-hidden="true" className="material-symbols-outlined text-warning text-[14px] mt-px shrink-0">warning</span>
-                  <p className="text-[11px] text-on-surface-variant leading-snug min-w-0">
-                    <span className="font-semibold text-warning">Flink: </span>
-                    <span className="break-words">{schema.flinkError}</span>
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="space-y-1">
-            {/* Flink Tables */}
-            <details className="group" open>
-              <summary className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-primary/10 cursor-pointer list-none">
-                <span className="material-symbols-outlined text-sm text-primary group-open:rotate-90 transition-transform">chevron_right</span>
-                <span className="material-symbols-outlined text-base text-on-surface-variant">grid_view</span>
-                <span className="text-sm font-medium">Flink Tables</span>
-                <span className="ml-auto text-[10px] bg-surface-container-highest px-1.5 py-0.5 rounded-full text-on-surface-variant tabular-nums">{schema?.tables.length ?? 0}</span>
-              </summary>
-              {schema?.tables.length === 0 && (
-                <p className="text-[10px] text-outline px-2 py-2 pl-6">
-                  {schema.flinkError ? 'Tables could not be listed — see above' : 'No Flink tables registered yet'}
-                </p>
-              )}
-              <ScrollList count={schema?.tables.length ?? 0} className="pl-4 pt-1 space-y-0.5">
-                {schema?.tables.map(table => (
-                  <div key={table}>
-                    <div className="flex items-center py-1 px-2 rounded hover:bg-primary/5 transition-colors group/tbl">
-                      {/* Un `<div onClick>` n'est ni tabulable ni actionnable au clavier : toute la
-                          barre latérale était inatteignable sans souris. */}
-                      <button type="button" onClick={() => toggleTable(table)}
-                        aria-expanded={!!expandedTables[table]}
-                        className="flex-1 flex items-center gap-1 min-w-0 text-left rounded">
-                        <span className={`material-symbols-outlined text-xs text-on-surface-variant transition-transform duration-200 shrink-0 ${expandedTables[table] ? 'rotate-90' : ''}`}>chevron_right</span>
-                        <span className="text-xs text-on-surface truncate font-mono">{table}</span>
-                      </button>
-                      <button type="button" onClick={() => openSelectFor(table)}
-                        className="opacity-0 group-hover/tbl:opacity-100 focus-visible:opacity-100 text-outline hover:text-primary transition-all shrink-0 ml-1" title="SELECT from this table" aria-label={`SELECT from ${table}`}>
-                        <span className="material-symbols-outlined text-sm">play_arrow</span>
-                      </button>
-                    </div>
-                    {expandedTables[table] && tableSchemas[table] && (
-                      <div className="ml-6 pl-3 border-l border-primary/20 py-1 space-y-1">
-                        {Object.entries(tableSchemas[table]).map(([col, type]) => (
-                          <div key={col} className="flex justify-between items-center text-[10px] py-0.5">
-                            <span className="text-on-surface-variant truncate pr-2 font-mono">{col}</span>
-                            <span className="text-primary/60 font-mono uppercase shrink-0">{type}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </ScrollList>
-            </details>
-
-            {/* Kafka Topics */}
-            <details className="group" open>
-              <summary className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-primary/10 cursor-pointer list-none">
-                <span className="material-symbols-outlined text-sm text-primary group-open:rotate-90 transition-transform">chevron_right</span>
-                <span className="material-symbols-outlined text-base text-on-surface-variant">topic</span>
-                <span className="text-sm font-medium">Kafka Topics</span>
-                <span className="ml-auto text-[10px] bg-surface-container-highest px-1.5 py-0.5 rounded-full text-on-surface-variant tabular-nums">{schema?.topics.length ?? 0}</span>
-              </summary>
-              <div className="pl-4 pt-1 space-y-0.5">
-                {schemaLoading ? (
-                  <div className="flex items-center gap-2 py-3 px-2 text-on-surface-variant">
-                    <span className="material-symbols-outlined text-sm animate-spin">refresh</span>
-                    <span className="text-xs">Loading…</span>
-                  </div>
-                ) : schema?.topics.length === 0 ? (
-                  // « Aucun topic avec des messages » est une affirmation sur le cluster ; elle
-                  // n'a de sens que si on a pu le lire.
-                  <p className="text-[10px] text-outline px-2 py-2">
-                    {schema.kafkaError ? 'Topics could not be listed — see above' : 'No topics with messages'}
-                  </p>
-                ) : (
-                  <ScrollList count={schema?.topics.length ?? 0} className="space-y-0.5">
-                    {schema?.topics.map(topic => (
-                      <div key={topic} className="flex items-center py-1 px-2 rounded hover:bg-primary/5 transition-colors group/topic">
-                        <button type="button" onClick={() => openSelectFor(toTableName(topic))}
-                          className="flex-1 min-w-0 text-left rounded" aria-label={`SELECT from ${topic}`}>
-                          <span className="text-xs text-on-surface-variant hover:text-primary font-mono truncate block">{topic}</span>
-                        </button>
-                        <button type="button" onClick={e => { e.stopPropagation(); fetchDdlPreview(topic); }}
-                          className="opacity-0 group-hover/topic:opacity-100 focus-visible:opacity-100 text-outline hover:text-primary transition-all shrink-0 ml-1" title="Preview DDL" aria-label={`Preview the generated DDL for ${topic}`}>
-                          <span className="material-symbols-outlined text-sm">code</span>
-                        </button>
-                      </div>
-                    ))}
-                  </ScrollList>
-                )}
-                <p className="text-[10px] text-outline px-2 pt-1">Only topics with messages shown</p>
-              </div>
-            </details>
-
-            {/* ── Saved Queries ── */}
-            <details className="group">
-              <summary className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-primary/10 cursor-pointer list-none">
-                <span className="material-symbols-outlined text-sm text-primary group-open:rotate-90 transition-transform">chevron_right</span>
-                <span className="material-symbols-outlined text-base text-on-surface-variant">bookmark</span>
-                <span className="text-sm font-medium">Saved Queries</span>
-                <span className="ml-auto text-[10px] bg-surface-container-highest px-1.5 py-0.5 rounded-full text-on-surface-variant tabular-nums">{savedQueries.length}</span>
-              </summary>
-              <div className="pl-4 pt-2 space-y-1">
-                {/* Save current query */}
-                {saveInputVisible ? (
-                  <div className="flex items-center gap-1 px-2 pb-2">
-                    <Input
-                      autoFocus
-                      aria-label="Saved query name"
-                      value={saveInputName}
-                      onChange={e => setSaveInputName(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') saveQuery(); if (e.key === 'Escape') setSaveInputVisible(false); }}
-                      placeholder={activeTab.name}
-                      className="flex-1 h-8 text-[12px]"
-                    />
-                    <button onClick={saveQuery} aria-label="Confirm save" className="p-1 rounded-md text-primary hover:bg-surface-container-high">
-                      <span className="material-symbols-outlined text-[18px]">check</span>
-                    </button>
-                    <button onClick={() => setSaveInputVisible(false)} aria-label="Cancel" className="p-1 rounded-md text-outline hover:text-on-surface hover:bg-surface-container-high">
-                      <span className="material-symbols-outlined text-[18px]">close</span>
-                    </button>
-                  </div>
-                ) : (
-                  <button onClick={() => { setSaveInputVisible(true); setSaveInputName(activeTab.name); }}
-                    className="flex items-center gap-1.5 w-full px-2 py-1.5 text-[12px] font-medium text-on-surface-variant hover:text-on-surface border border-dashed border-outline-variant hover:border-outline rounded-md transition-colors">
-                    <span className="material-symbols-outlined text-[16px]">add</span>Save current query
-                  </button>
-                )}
-                {savedQueries.length === 0 && !saveInputVisible && (
-                  <p className="text-[11px] text-outline px-2 py-1">No saved queries yet</p>
-                )}
-                <ScrollList count={savedQueries.length} className="space-y-1">
-                  {savedQueries.map(q => (
-                    <div key={q.id} className="flex items-center gap-1 py-1 px-2 rounded hover:bg-primary/5 transition-colors group/saved">
-                      <div onClick={() => loadSavedQuery(q)} className="flex-1 min-w-0 cursor-pointer">
-                        <p className="text-xs text-on-surface truncate font-medium">{q.name}</p>
-                        <p className="text-[10px] text-outline">{new Date(q.savedAt).toLocaleDateString()}</p>
-                      </div>
-                      <button onClick={() => deleteSavedQuery(q.id)}
-                        className="opacity-0 group-hover/saved:opacity-100 text-outline hover:text-error transition-all shrink-0" title="Delete" aria-label="Delete this saved query">
-                        <span className="material-symbols-outlined text-sm">delete</span>
-                      </button>
-                    </div>
-                  ))}
-                </ScrollList>
-              </div>
-            </details>
-          </div>
-        </div>
-
-        <div className="p-3 border-t border-outline-variant/60 flex items-center gap-2 text-[11px] text-on-surface-variant">
-          {/* Trois états, pas deux : un broker qui répond à la sonde mais refuse l'appel de
-              métadonnées n'est pas « hors ligne », et envoyer quelqu'un vérifier une connexion qui
-              marche est la pire des pistes. */}
-          <span className={cn('w-1.5 h-1.5 rounded-full shrink-0',
-            !schema?.health ? 'bg-outline' : (schema.kafkaError || schema.flinkError) ? 'bg-warning' : 'bg-success')} />
-          <span>{!schema?.health ? 'Engine offline'
-            : (schema.kafkaError || schema.flinkError) ? 'Engine degraded' : 'Engine connected'}</span>
-          <span className="ml-auto tabular-nums shrink-0">{schema?.tables.length ?? 0} tables · {schema?.topics.length ?? 0} topics</span>
-        </div>
-      </aside>
+      <SchemaBrowser
+        ref={asideRef}
+        schema={schema}
+        schemaLoading={schemaLoading}
+        onRefresh={fetchSchema}
+        width={sidebarWidth}
+        widthMin={SIDEBAR_MIN}
+        widthMax={SIDEBAR_MAX}
+        onResizeStart={e => startDrag('sidebar', 'col-resize', e)}
+        onResizeKey={e => {
+          if (e.key === 'ArrowLeft') { setSidebarWidth(w => w - 16); e.preventDefault(); }
+          if (e.key === 'ArrowRight') { setSidebarWidth(w => w + 16); e.preventDefault(); }
+          if (e.key === 'Home') { setSidebarWidth(DEFAULT_LAYOUT.sidebarWidth); e.preventDefault(); }
+        }}
+        expandedTables={expandedTables}
+        tableSchemas={tableSchemas}
+        onToggleTable={toggleTable}
+        onSelectFrom={openSelectFor}
+        onPreviewDdl={fetchDdlPreview}
+        savedQueries={savedQueries}
+        onLoadSaved={loadSavedQuery}
+        onDeleteSaved={id => void deleteSavedQuery(id)}
+        saveInputVisible={saveInputVisible}
+        saveInputName={saveInputName}
+        onSaveInputChange={setSaveInputName}
+        onSaveOpen={() => { setSaveInputVisible(true); setSaveInputName(activeTab.name); }}
+        onSaveCancel={() => setSaveInputVisible(false)}
+        onSaveConfirm={() => void saveQuery()}
+        activeTabName={activeTab.name}
+      />
 
       {/* ── Main Content ─────────────────────────────────────────────────────── */}
       <main className="flex-1 flex flex-col min-w-0">
@@ -1832,107 +1433,13 @@ const QueryWorkbench: React.FC = () => {
               </div>
             </div>
 
-            {/* Window Assistant — repliable. Il prenait 288 px à l'éditeur en permanence pour un
-                outil occasionnel ; replié, il laisse un rail qui le rouvre, et l'état voyage avec
-                le reste de la disposition (`kse:query-layout`). */}
-            {!assistantOpen ? (
-              <div className="w-10 border-l border-outline-variant/60 bg-surface-container-low/40 flex flex-col items-center pt-3 shrink-0">
-                <Tooltip content="Open the Window Assistant — it builds a TUMBLE / HOP / SESSION query over a table.">
-                  <button type="button" onClick={toggleAssistant}
-                    aria-expanded={false} aria-controls="kse-window-assistant"
-                    className="p-1.5 rounded-md text-on-surface-variant hover:text-primary hover:bg-surface-container-high transition-colors"
-                    aria-label="Open the Window Assistant">
-                    <span aria-hidden="true" className="material-symbols-outlined text-[20px]">magic_button</span>
-                  </button>
-                </Tooltip>
-                <span aria-hidden="true" className="mt-3 text-[10px] tracking-[0.08em] uppercase text-outline [writing-mode:vertical-rl]">Window</span>
-              </div>
-            ) : (
-            <div id="kse-window-assistant" className="w-72 border-l border-outline-variant/60 bg-surface-container-low/40 p-4 flex flex-col gap-4 overflow-y-auto shrink-0">
-              <div className="flex items-center gap-2">
-                <span aria-hidden="true" className="material-symbols-outlined text-primary text-[20px]">magic_button</span>
-                <h3 className="text-[14px] font-semibold text-on-surface">Window Assistant</h3>
-                <button type="button" onClick={toggleAssistant} aria-expanded
-                  className="ml-auto p-1 rounded-md text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors"
-                  aria-label="Fold the Window Assistant" title="Fold">
-                  <span aria-hidden="true" className="material-symbols-outlined text-[18px]">right_panel_close</span>
-                </button>
-              </div>
-              <p className="text-[12px] text-on-surface-variant leading-relaxed">
-                Builds a windowed aggregation over <span className="font-mono text-on-surface">{windowTable}</span>.
-              </p>
-              <div className="space-y-3">
-                <Field label="Window type">
-                  {p => (
-                    <Select {...p} value={windowType} onChange={e => setWindowType(e.target.value as WindowKind)}>
-                      <option value="TUMBLE">Tumbling (Non-overlapping)</option>
-                      <option value="HOP">Hopping (Overlapping)</option>
-                      <option value="SESSION">Session (Inactivity based)</option>
-                    </Select>
-                  )}
-                </Field>
-                <Field
-                  label={windowType === 'SESSION' ? 'Inactivity gap' : 'Size'}
-                  className="flex-1"
-                >
-                  {p => (
-                    <div className="flex gap-2">
-                      {/* parseInt(e.target.value) donnait NaN dès que le champ était vidé. */}
-                      <NumberInput {...p} min={1} fallback={5} className="flex-1"
-                        value={windowSize} onChange={setWindowSize} />
-                      <Select aria-label="Time unit" className="w-28"
-                        value={windowUnit} onChange={e => setWindowUnit(e.target.value as WindowUnit)}>
-                        <option value="SECOND">SECOND</option>
-                        <option value="MINUTE">MINUTE</option>
-                        <option value="HOUR">HOUR</option>
-                      </Select>
-                    </div>
-                  )}
-                </Field>
-                {windowType === 'HOP' && (
-                  <Field label="Slide" description="How far each window advances. Must be smaller than the size to overlap.">
-                    {p => (
-                      <NumberInput {...p} min={1} fallback={1}
-                        value={windowSlide} onChange={setWindowSlide} />
-                    )}
-                  </Field>
-                )}
-                <Field
-                  label="Time column"
-                  description={guessedTimeCol
-                    ? `Detected “${guessedTimeCol}” in the table schema.`
-                    : 'Expand the table in the sidebar to detect one automatically.'}
-                >
-                  {p => (
-                    <Input {...p} value={windowTimeCol} placeholder={effectiveTimeCol}
-                      onChange={e => setWindowTimeCol(e.target.value)} />
-                  )}
-                </Field>
-                {windowType === 'SESSION' && (
-                  <Field label="Partition by" description="Required by Flink for SESSION windows.">
-                    {p => (
-                      <Input {...p} value={windowPartitionBy} placeholder="user_id"
-                        onChange={e => setWindowPartitionBy(e.target.value)} />
-                    )}
-                  </Field>
-                )}
-                {windowCaveat(windowSpec) ? (
-                  <div className="p-3 bg-warning/10 border border-warning/30 rounded-lg">
-                    <p className="text-[11px] text-on-surface-variant leading-snug">
-                      <span className="font-semibold text-warning">Heads up:</span> {windowCaveat(windowSpec)}
-                    </p>
-                  </div>
-                ) : (
-                  <div className="p-3 bg-primary/5 border border-primary/20 rounded-lg">
-                    <p className="text-[11px] text-on-surface-variant leading-snug"><span className="font-semibold text-primary">Tip:</span> Tumbling windows are ideal for periodic metrics like “Orders per 5 min”.</p>
-                  </div>
-                )}
-                <Button variant="secondary" className="w-full" icon="bolt" onClick={applyWindowLogic}>
-                  Insert at cursor
-                </Button>
-              </div>
-            </div>
-            )}
+            <WindowAssistant
+              table={windowTable}
+              tableSchema={tableSchemas[toTableName(windowTable)]}
+              open={assistantOpen}
+              onToggle={toggleAssistant}
+              onInsert={applyWindowLogic}
+            />
           </div>
 
           {/* Drag handle */}

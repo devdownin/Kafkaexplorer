@@ -6,9 +6,19 @@ Full review of the SQL editor: `pages/QueryWorkbench.tsx` and the pure modules i
 reliability, ergonomics, optimisation, UI quality — and they are the four sections below.
 
 Everything listed as **fixed** is fixed on this branch. What was found and deliberately left is in
-*Constaté, non traité* at the end, with the reason. The pure logic extracted along the way lives in
-`pages/queryWorkbench.ts` and is covered by `pages/queryWorkbench.test.ts` (77 cases); the two
-backend fixes are pinned by `QueryControllerTest`.
+*Constaté, non traité* at the end, with the reason.
+
+The pure logic extracted along the way lives in `pages/queryWorkbench.ts`, covered by
+`pages/queryWorkbench.test.ts` (77 cases); the backend fixes are pinned by `QueryControllerTest`.
+**The wiring has its own tests** — `pages/QueryWorkbench.test.tsx`, the first component test of any
+page in this repository. It exists because most of what was fixed here *is* wiring: whether Run
+sends what `splitStatements` designated, whether clicking a topic still destroys the tab you are
+writing in, whether the detail panel closes when a sort invalidates the index it holds. Monaco is
+mocked away — 4 MB of editor jsdom cannot lay out, and none of the behaviour under test needs a real
+one. With that net in place the page was split into `components/query/` (`SchemaBrowser`,
+`ResultsGrid`, `RowDetail`, `WindowAssistant`, `DdlPreviewModal`), taking it from 2 168 lines to
+1 661 — in that order, since refactoring what you have just corrected, with no test, is the surest
+way to un-correct it.
 
 ---
 
@@ -331,15 +341,13 @@ Everything below was unreachable without a mouse. All fixed.
   `FlinkSqlService.executeSql` (`"Only SELECT, EXPLAIN and CREATE TABLE statements are allowed."`).
   `CLAUDE.md` is corrected; the code is left alone, since the behaviour is right and only the
   description was wrong.
-- **The autocomplete provider rebuilds its whole suggestion list on every keystroke**, including a
-  `resolveScope` pass with two regexes over the full document and one `push` per column of every
-  loaded table. It is bounded by the size of the catalogue actually loaded, so it has not been a
-  problem in practice; memoising it on the model's version id is the fix if it becomes one.
 - **The page has no mobile story.** Fixed-width sidebar, split panes, Monaco: it targets a desktop,
   and the fix for E5 makes the toolbar usable on a narrow window without pretending otherwise.
 - **`detectStatementType` duplicates the backend's own detection** to gate the execution modes. The
   two agree today. Sharing one definition would mean an endpoint that classifies a statement, which
   is a round trip to answer a question the client can answer instantly.
 - **A closed tab is gone for good.** Closing now asks when there is something to lose, which is the
-  cheap half of the fix; an undo stack is the other half and belongs with a wider "recently closed"
-  notion.
+  cheap half of the fix. The other half needs somewhere to *offer* the undo, and `Toast` carries a
+  message and a type — no action. Extending the shared toast is a design-system change that would
+  touch every page in the app, so it does not belong smuggled into this one; a hidden `⌘⇧T` would
+  be the alternative, and a shortcut nobody can discover is not an answer either.

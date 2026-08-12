@@ -98,11 +98,10 @@ public class QueryController {
         return new QueryInitResponse(topics, tables, isConnected, kafkaError, flinkError);
     }
 
-    @PostMapping(produces = "application/json")
-    public QueryResult execute(@RequestBody QueryRequest request) {
-        return sqlExplorationService.runSync(request);
-    }
-
+    // There used to be a second, path-less `@PostMapping` here calling exactly the same thing as
+    // `/run-sync`. Nothing in this repository ever posted to it — the SPA has always used
+    // `/run-sync` — so it was a second public entry point to the query engine that no test
+    // exercised and no caller needed. Two paths to one behaviour is how they drift.
     @PostMapping(value = "/run-sync", produces = "application/json")
     public QueryResult runSync(@RequestBody QueryRequest request) {
         return sqlExplorationService.runSync(request);
