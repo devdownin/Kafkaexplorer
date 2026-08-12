@@ -1,43 +1,52 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { useToast } from '../components/Toast';
 import { Button } from '../components/ui';
 import { usePersistentState } from '../draftStore';
-
-// Parse JSON safely, return null on failure
-function tryParse(s: string): Record<string, unknown> | null {
-  try { return JSON.parse(s); } catch { return null; }
-}
-
-// Compare two parsed JSON objects field by field
-function diffFields(a: Record<string, unknown> | null, b: Record<string, unknown> | null): Record<string, 'added' | 'removed' | 'changed' | 'same'> {
-  const result: Record<string, 'added' | 'removed' | 'changed' | 'same'> = {};
-  const keys = new Set([...Object.keys(a ?? {}), ...Object.keys(b ?? {})]);
-  keys.forEach(k => {
-    if (!(k in (a ?? {}))) result[k] = 'added';
-    else if (!(k in (b ?? {}))) result[k] = 'removed';
-    else if (JSON.stringify((a ?? {})[k]) !== JSON.stringify((b ?? {})[k])) result[k] = 'changed';
-    else result[k] = 'same';
-  });
-  return result;
-}
+import {
+  tryParse, diffFields, pairSamples, visiblePairs, countDiffs, countCompared,
+  messageText, coordinates, type TopicMessage, type ComparePair,
+} from './compare';
 
 const MessageCard: React.FC<{
-  sample: string;
-  paired?: string;
+  sample?: TopicMessage;
+  paired?: TopicMessage;
   side: 'A' | 'B';
 }> = ({ sample, paired, side }) => {
-  const parsed = tryParse(sample);
-  const pairedParsed = paired ? tryParse(paired) : null;
+  // Une position sans vis-à-vis n'est pas un trou à masquer : les deux panneaux doivent rester
+  // alignés, donc le rang existe des deux côtés et l'absence se dit.
+  if (!sample) {
+    return (
+      <div className="rounded-lg border border-dashed border-outline-variant/60 p-3 text-[12px] text-outline italic">
+        No message at this position
+      </div>
+    );
+  }
+
+  const text = messageText(sample);
+  const parsed = tryParse(text);
+  const pairedParsed = tryParse(messageText(paired));
   const diff = parsed && pairedParsed ? diffFields(
     side === 'A' ? parsed : pairedParsed,
     side === 'A' ? pairedParsed : parsed
   ) : null;
 
+  const coords = (
+    <div className="flex items-center justify-between gap-2 mb-2 text-[10px] text-outline font-mono">
+      <span>{coordinates(sample)}</span>
+      {sample.key && <span className="truncate max-w-[50%]" title={sample.key}>key {sample.key}</span>}
+    </div>
+  );
+
+  // Payload non-JSON (XML, texte, valeur nulle) : on affiche le texte, jamais l'objet — rendre le
+  // record lui-même est ce qui faisait tomber la page sur l'erreur React #31.
   if (!parsed) {
     return (
-      <div className="rounded-lg border border-outline-variant bg-surface-container-low p-3 font-mono text-[12px] text-on-surface">
-        {sample}
+      <div className="rounded-lg border border-outline-variant bg-surface-container-low p-3">
+        {coords}
+        <pre className="font-mono text-[12px] text-on-surface whitespace-pre-wrap break-words">
+          {text || <span className="text-outline italic">empty payload</span>}
+        </pre>
       </div>
     );
   }
@@ -53,6 +62,7 @@ const MessageCard: React.FC<{
 
   return (
     <div className="rounded-lg border border-outline-variant bg-surface-container-low p-3 hover:border-outline transition-colors">
+      {coords}
       <div className="font-mono text-[12px] space-y-1">
         {entries.map(([k, v]) => {
           const status = diff?.[k] ?? 'same';
@@ -82,8 +92,9 @@ const Toggle: React.FC<{ label: string; on: boolean; onClick: () => void }> = ({
 
 const TopicPane: React.FC<{
   side: 'A' | 'B'; topic: string; setTopic: (t: string) => void; count: number;
-  display: string[]; paired: string[]; topics: string[]; hasResult: boolean;
-}> = ({ side, topic, setTopic, count, display, paired, topics, hasResult }) => (
+  /** Les deux panneaux reçoivent **les mêmes** paires : c'est ce qui les garde alignés. */
+  pairs: ComparePair[]; topics: string[]; hasResult: boolean;
+}> = ({ side, topic, setTopic, count, pairs, topics, hasResult }) => (
   <div className="flex-1 flex flex-col rounded-xl bg-surface-container ring-1 ring-white/[0.045] overflow-hidden">
     <div className="p-3 border-b border-outline-variant/60 flex items-center justify-between bg-surface-container-high/60">
       <div className="flex flex-col gap-0.5 min-w-0">
@@ -103,8 +114,16 @@ const TopicPane: React.FC<{
       {!hasResult && (
         <div className="p-8 text-center text-outline text-[12px]">Select topics and run compare</div>
       )}
-      {display.map((s, i) => (
-        <MessageCard key={i} sample={s} paired={paired[i]} side={side} />
+      {hasResult && pairs.length === 0 && (
+        <div className="p-8 text-center text-outline text-[12px]">No differing message</div>
+      )}
+      {pairs.map((pair) => (
+        <MessageCard
+          key={pair.index}
+          sample={side === 'A' ? pair.a : pair.b}
+          paired={side === 'A' ? pair.b : pair.a}
+          side={side}
+        />
       ))}
     </div>
   </div>
@@ -118,8 +137,8 @@ const Compare: React.FC = () => {
   const [syncCursors, setSyncCursors] = usePersistentState('compare:sync', true);
   const [showDiffOnly, setShowDiffOnly] = usePersistentState('compare:diffOnly', false);
   const [loading, setLoading] = useState(false);
-  const [samplesA, setSamplesA] = useState<string[]>([]);
-  const [samplesB, setSamplesB] = useState<string[]>([]);
+  const [samplesA, setSamplesA] = useState<TopicMessage[]>([]);
+  const [samplesB, setSamplesB] = useState<TopicMessage[]>([]);
   const [hasResult, setHasResult] = useState(false);
 
   useEffect(() => {
@@ -147,13 +166,18 @@ const Compare: React.FC = () => {
     setHasResult(false);
     try {
       const [resA, resB] = await Promise.all([
-        axios.get<{ samples: string[] }>(`/api/topic/${topicA}`),
-        axios.get<{ samples: string[] }>(`/api/topic/${topicB}`),
+        axios.get<{ samples: TopicMessage[] }>(`/api/topic/${topicA}`),
+        axios.get<{ samples: TopicMessage[] }>(`/api/topic/${topicB}`),
       ]);
-      setSamplesA(resA.data.samples ?? []);
-      setSamplesB(resB.data.samples ?? []);
+      // `?? []` des deux côtés, y compris pour le message de succès : il lisait
+      // `resA.data.samples.length` sur la réponse brute, donc une réponse sans `samples` levait
+      // dans le `try` et se rapportait comme un échec de chargement.
+      const nextA = resA.data.samples ?? [];
+      const nextB = resB.data.samples ?? [];
+      setSamplesA(nextA);
+      setSamplesB(nextB);
       setHasResult(true);
-      toast(`Loaded ${resA.data.samples.length} + ${resB.data.samples.length} messages`, 'success');
+      toast(`Loaded ${nextA.length} + ${nextB.length} messages`, 'success');
     } catch {
       toast('Failed to fetch topic samples', 'error');
     } finally {
@@ -161,29 +185,12 @@ const Compare: React.FC = () => {
     }
   };
 
-  // Compute diff summary
-  const diffCount = hasResult
-    ? Math.min(samplesA.length, samplesB.length) === 0 ? 0
-    : Array.from({ length: Math.min(samplesA.length, samplesB.length) }).filter((_, i) => {
-        const a = tryParse(samplesA[i]);
-        const b = tryParse(samplesB[i]);
-        return JSON.stringify(a) !== JSON.stringify(b);
-      }).length
-    : 0;
-
-  const displayA = showDiffOnly
-    ? samplesA.filter((s, i) => {
-        const b = samplesB[i];
-        return b == null || JSON.stringify(tryParse(s)) !== JSON.stringify(tryParse(b));
-      })
-    : samplesA;
-
-  const displayB = showDiffOnly
-    ? samplesB.filter((_, i) => {
-        const a = samplesA[i];
-        return a == null || JSON.stringify(tryParse(samplesA[i])) !== JSON.stringify(tryParse(samplesB[i]));
-      })
-    : samplesB;
+  // Une seule liste de paires, partagée par les deux panneaux et par le pied de page : le filtre
+  // « Diff only » s'applique aux paires, jamais à chaque colonne séparément.
+  const pairs = useMemo(() => pairSamples(samplesA, samplesB), [samplesA, samplesB]);
+  const shown = useMemo(() => visiblePairs(pairs, showDiffOnly), [pairs, showDiffOnly]);
+  const diffCount = useMemo(() => countDiffs(pairs), [pairs]);
+  const comparedCount = useMemo(() => countCompared(pairs), [pairs]);
 
   return (
     <div className="flex-1 flex flex-col p-4 gap-4 overflow-hidden h-full">
@@ -212,8 +219,8 @@ const Compare: React.FC = () => {
 
       {/* Side-by-side */}
       <section className="flex-1 flex gap-4 overflow-hidden">
-        <TopicPane side="A" topic={topicA} setTopic={setTopicA} count={samplesA.length} display={displayA} paired={samplesB} topics={topics} hasResult={hasResult} />
-        <TopicPane side="B" topic={topicB} setTopic={setTopicB} count={samplesB.length} display={displayB} paired={samplesA} topics={topics} hasResult={hasResult} />
+        <TopicPane side="A" topic={topicA} setTopic={setTopicA} count={samplesA.length} pairs={shown} topics={topics} hasResult={hasResult} />
+        <TopicPane side="B" topic={topicB} setTopic={setTopicB} count={samplesB.length} pairs={shown} topics={topics} hasResult={hasResult} />
       </section>
 
       {/* Diff Summary Bar */}
@@ -221,7 +228,7 @@ const Compare: React.FC = () => {
         <div className="flex gap-4">
           {hasResult ? (
             <>
-              <span className="text-on-surface-variant">Compared <b className="text-on-surface tabular-nums">{Math.min(samplesA.length, samplesB.length)}</b></span>
+              <span className="text-on-surface-variant">Compared <b className="text-on-surface tabular-nums">{comparedCount}</b></span>
               <span className="text-on-surface-variant">Differences <b className={`tabular-nums ${diffCount > 0 ? 'text-warning' : 'text-success'}`}>{diffCount}</b></span>
             </>
           ) : (
