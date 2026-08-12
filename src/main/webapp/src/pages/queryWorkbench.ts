@@ -389,6 +389,91 @@ export function statementIndexAt(statements: readonly SqlStatement[], offset: nu
   return statements.length - 1;
 }
 
+/**
+ * L'instruction débarrassée d'une chaîne `WITH … AS ( … )` de tête.
+ *
+ * Le backend classe désormais les instructions de la même façon (`SqlStatements.withoutLeadingCte`),
+ * parce qu'une CTE commence par `WITH` et se faisait refuser par tous les `startsWith` du chemin de
+ * requête. Côté UI, c'est ce qui permet à la garde de mode d'exécution de voir qu'un
+ * `WITH … INSERT INTO` est un INSERT et qu'un `WITH … SELECT` est une lecture.
+ *
+ * **Échoue fermé**, comme son homologue Java : une forme non reconnue ressort telle quelle et reste
+ * classée comme avant.
+ */
+export function withoutLeadingCte(sql: string): string {
+  const s = (sql ?? '').trim();
+  if (!/^with\b/i.test(s)) return s;
+
+  let i = 4;
+  const skipSpace = () => { while (i < s.length && /\s/.test(s[i])) i += 1; };
+  /** Passe un bloc parenthésé équilibré, en traversant littéraux et identifiants protégés. */
+  const skipParens = (): boolean => {
+    if (s[i] !== '(') return false;
+    let depth = 0;
+    while (i < s.length) {
+      const c = s[i];
+      if (c === "'") {
+        i += 1;
+        while (i < s.length) {
+          if (s[i] === "'") {
+            if (s[i + 1] === "'") { i += 2; continue; }
+            i += 1;
+            break;
+          }
+          i += 1;
+        }
+        continue;
+      }
+      if (c === '`' || c === '"') {
+        const end = s.indexOf(c, i + 1);
+        if (end === -1) return false;
+        i = end + 1;
+        continue;
+      }
+      if (c === '(') depth += 1;
+      if (c === ')') {
+        depth -= 1;
+        if (depth === 0) { i += 1; return true; }
+      }
+      i += 1;
+    }
+    return false;
+  };
+  const skipIdentifier = (): boolean => {
+    const c = s[i];
+    if (c === '`' || c === '"') {
+      const end = s.indexOf(c, i + 1);
+      if (end === -1) return false;
+      i = end + 1;
+      return true;
+    }
+    if (!/[A-Za-z_]/.test(c ?? '')) return false;
+    while (i < s.length && /[\w$]/.test(s[i])) i += 1;
+    return true;
+  };
+
+  skipSpace();
+  if (/^recursive\b/i.test(s.slice(i))) { i += 9; skipSpace(); }
+
+  let consumed = false;
+  while (i < s.length) {
+    if (!skipIdentifier()) return s;
+    skipSpace();
+    if (s[i] === '(' && !skipParens()) return s;   // liste de colonnes optionnelle
+    skipSpace();
+    if (!/^as\b/i.test(s.slice(i))) return s;
+    i += 2;
+    skipSpace();
+    if (!skipParens()) return s;
+    skipSpace();
+    consumed = true;
+    if (s[i] === ',') { i += 1; skipSpace(); continue; }
+    break;
+  }
+  const body = consumed ? s.slice(i).trim() : s;
+  return body || s;
+}
+
 /** Ligne et colonne (base 1) d'un décalage — le repère que Monaco et le planner emploient. */
 export function positionAt(text: string, offset: number): { line: number; column: number } {
   const clamped = Math.max(0, Math.min(offset, text.length));

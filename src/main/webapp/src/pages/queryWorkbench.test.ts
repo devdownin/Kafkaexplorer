@@ -4,7 +4,7 @@ import {
   isResultStale, writeStored, readStored, removeStored,
   readLayout, LAYOUT_STORAGE_KEY, DEFAULT_LAYOUT, SPLIT_MIN, SIDEBAR_MAX,
   starterTable, starterQueries, pushHistory, describeHistoryEntry, formatDuration,
-  splitStatements, statementIndexAt, positionAt, detailValue,
+  splitStatements, statementIndexAt, positionAt, detailValue, withoutLeadingCte,
   type HistoryEntry,
 } from './queryWorkbench';
 
@@ -443,5 +443,41 @@ describe('readLayout', () => {
   it('reads a layout written before the assistant could fold as open', () => {
     writeStored(LAYOUT_STORAGE_KEY, { splitPercent: 60, sidebarWidth: 300 });
     expect(readLayout().assistantOpen).toBe(true);
+  });
+});
+
+describe('withoutLeadingCte', () => {
+  it('leaves a plain statement alone', () => {
+    expect(withoutLeadingCte('SELECT * FROM orders')).toBe('SELECT * FROM orders');
+  });
+
+  it('sees past a single CTE', () => {
+    expect(withoutLeadingCte('WITH recent AS (SELECT * FROM orders) SELECT * FROM recent'))
+      .toBe('SELECT * FROM recent');
+  });
+
+  it('sees past a chain of them', () => {
+    expect(withoutLeadingCte('WITH a AS (SELECT 1), b AS (SELECT 2) SELECT * FROM a'))
+      .toBe('SELECT * FROM a');
+  });
+
+  it('is not fooled by a parenthesis inside a string literal', () => {
+    expect(withoutLeadingCte("WITH a AS (SELECT * FROM t WHERE l = 'oops )') SELECT * FROM a"))
+      .toBe('SELECT * FROM a');
+  });
+
+  it('classifies what follows, so a CTE around an INSERT stays an INSERT', () => {
+    expect(withoutLeadingCte('WITH a AS (SELECT 1) INSERT INTO sink SELECT * FROM a'))
+      .toBe('INSERT INTO sink SELECT * FROM a');
+  });
+
+  it('fails closed on a shape it does not recognise', () => {
+    for (const sql of ['WITH', 'WITH (', 'WITH a AS SELECT 1', 'WITH a AS (SELECT 1']) {
+      expect(withoutLeadingCte(sql)).toBe(sql);
+    }
+  });
+
+  it('does not match an identifier that merely begins with "with"', () => {
+    expect(withoutLeadingCte('SELECT withdrawal FROM t')).toBe('SELECT withdrawal FROM t');
   });
 });

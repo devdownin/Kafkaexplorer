@@ -160,6 +160,28 @@ it is what DataGrip and DBeaver do. `runOrigin` carries the statement's offset s
 line/column still land on the right line of the document. The toolbar states `Statement 2/3` before
 you press: "Run statement" without saying which one would be the worrying half of the feature.
 
+### E2b — a common table expression could not be run at all *(fixed)*
+
+Every keyword check in the query path is a `startsWith`, so `WITH recent AS (SELECT …) SELECT * FROM
+recent` — ordinary SQL the moment a query outgrows three lines, and fully supported by Flink — was
+refused by the statement whitelist with *"Only SELECT, EXPLAIN and CREATE TABLE statements are
+allowed"*. That message reads as a security restriction, so the user believes they wrote something
+forbidden rather than something the guard never learned.
+
+`SqlStatements.withoutLeadingCte` removes a leading `WITH … AS ( … )` chain so the existing checks
+keep classifying the statement they were meant to classify — whitelist, SELECT branch,
+auto-registration, and the job-mode split, which now sees that `WITH … INSERT INTO` is an INSERT.
+It **fails closed**: any shape it does not recognise comes back unchanged and stays refused, because
+a guard that guesses when confused is worse than one that is narrow. `withoutLeadingCte` exists on
+the front too, so the execution-mode gate agrees with the engine.
+
+Two consequences worth stating. Auto-registration had to follow — it also bailed on anything not
+starting with `SELECT`, so a CTE would have cleared the whitelist only to hit "Object not found";
+the first `FROM` sits inside the CTE body, which is exactly the source topic to register. And a CTE
+**never falls back to the direct Kafka reader**: that reader regex-matches a table name out of
+`FROM`, so it would return rows read from whichever name it matched, silently ignoring the `WITH`
+clause. Wrong rows are worse than a refusal — the same reason user errors stopped falling back.
+
 ### E3 — four different controls silently destroyed the tab you were writing in *(fixed)*
 
 `updateSql()` replaces the **whole active tab**. It was called by the sidebar's "SELECT from this
@@ -193,6 +215,18 @@ The provider is registered in **`monaco-setup.ts`**, not in the page. The first 
 the app's three other SQL editors (two in `Metrics`, one in `TopicExplorer`) still had none: the
 same symptom, in the same places, under a fix that thought it was finished. That module is imported
 by each of those pages and evaluated once, which is exactly the scope wanted.
+
+### E4b — autocomplete and hover ignored half the catalogue *(fixed)*
+
+Both providers read `schema.tables` only. But the sidebar lists Kafka **topics**, clicking one
+writes `SELECT * FROM demo_orders_1_received`, and the backend auto-registers a topic on a plain
+SELECT — so typing that very name offered no completion, and hovering it showed nothing. The half of
+the catalogue the editor is built around was invisible to the assistance.
+
+Topics are now offered under their table name (dots and dashes to underscores — the name the query
+must carry), labelled *"Kafka topic — registered on first use"*, sorted behind the tables already
+registered, and skipped when a table of that name exists. Hover recognises them the same way and
+says which topic it is.
 
 ### E5 — reading `Rows` and `Offset` was impossible on a narrow window *(fixed)*
 

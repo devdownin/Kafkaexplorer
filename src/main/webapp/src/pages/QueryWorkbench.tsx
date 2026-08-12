@@ -21,7 +21,7 @@ import {
   readLayout, clamp, LAYOUT_STORAGE_KEY, DEFAULT_LAYOUT,
   SPLIT_MIN, SPLIT_MAX, SIDEBAR_MIN, SIDEBAR_MAX, type WorkbenchLayout,
   starterQueries, pushHistory, describeHistoryEntry, formatDuration, type HistoryEntry,
-  splitStatements, statementIndexAt, positionAt,
+  splitStatements, statementIndexAt, positionAt, withoutLeadingCte,
 } from './queryWorkbench';
 import { ResultsGrid } from '../components/query/ResultsGrid';
 import { WindowAssistant } from '../components/query/WindowAssistant';
@@ -164,7 +164,11 @@ function restoreTabs(urlSql: string | null): { tabs: Tab[]; activeTabId: string;
 }
 
 const detectStatementType = (sql: string) => {
-  const stripped = sql.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, '').trim().toUpperCase();
+  // Classé past une chaîne CTE de tête, comme le backend : `WITH … INSERT INTO` est un INSERT, et
+  // `WITH … SELECT` une lecture. Sans cela la garde de mode voyait « WITH » et se trompait de camp.
+  const stripped = withoutLeadingCte(
+    sql.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, '').trim(),
+  ).toUpperCase();
   if (stripped.startsWith('INSERT INTO')) return 'INSERT';
   if (stripped.startsWith('CREATE TABLE')) return 'CREATE_TABLE';
   if (stripped.startsWith('SELECT')) return 'SELECT';
@@ -358,9 +362,36 @@ const QueryWorkbench: React.FC = () => {
         const word = _model.getWordUntilPosition(position);
         const range = { startLineNumber: position.lineNumber, endLineNumber: position.lineNumber, startColumn: word.startColumn, endColumn: word.endColumn };
         const suggestions: languages.CompletionItem[] = [];
-        schemaRef.current?.tables.forEach(table => suggestions.push({
+        const catalogue = schemaRef.current;
+        const registered = new Set(catalogue?.tables ?? []);
+        catalogue?.tables.forEach(table => suggestions.push({
           label: table, kind: monaco.languages.CompletionItemKind.Class, insertText: table, range, detail: 'Flink Table',
         }));
+        /*
+         * Les topics Kafka aussi.
+         *
+         * La complétion ne proposait que `tables`, alors que la barre latérale liste les topics,
+         * que cliquer l'un d'eux écrit `SELECT * FROM demo_orders_1_received`, et que le backend
+         * auto-enregistre un topic au premier SELECT. Taper ce nom n'obtenait donc aucune aide :
+         * la moitié du catalogue sur lequel l'éditeur est bâti était invisible à la saisie.
+         *
+         * Le nom proposé est celui de la table (points et tirets en underscores) — c'est celui que
+         * la requête doit porter — et un topic déjà enregistré n'est pas proposé deux fois.
+         */
+        catalogue?.topics.forEach(topic => {
+          const asTable = toTableName(topic);
+          if (registered.has(asTable)) return;
+          suggestions.push({
+            label: asTable,
+            kind: monaco.languages.CompletionItemKind.Class,
+            insertText: asTable,
+            range,
+            detail: 'Kafka topic — registered on first use',
+            documentation: topic === asTable ? undefined : `Topic ${topic}`,
+            // Derrière les tables déjà enregistrées, qui sont un choix explicite de l'utilisateur.
+            sortText: `2_${asTable}`,
+          });
+        });
         // Colonnes : limitées aux tables que la requête cite réellement. Proposer celles de
         // toutes les tables chargées noyait les bonnes au milieu de dizaines d'inutiles.
         // Tant qu'aucune table n'est citée (curseur dans le SELECT avant le FROM), on retombe
@@ -409,12 +440,19 @@ const QueryWorkbench: React.FC = () => {
       provideHover: (_model, position) => {
         const word = _model.getWordAtPosition(position);
         if (!word) return null;
-        const tables = schemaRef.current?.tables ?? [];
-        if (!tables.includes(word.word)) return null;
+        // Le survol ne reconnaissait que les tables Flink, comme la complétion : survoler un nom
+        // écrit par la barre latérale elle-même n'affichait rien.
+        const catalogue = schemaRef.current;
+        const isTable = (catalogue?.tables ?? []).includes(word.word);
+        const topic = (catalogue?.topics ?? []).find(t => toTableName(t) === word.word);
+        if (!isTable && !topic) return null;
         const cols = tableSchemasRef.current[word.word];
+        const heading = isTable
+          ? `**Flink Table** \`${word.word}\``
+          : `**Kafka topic** \`${topic}\`\n\n_Registered as \`${word.word}\` on first use_`;
         const body = cols
-          ? `**Flink Table** \`${word.word}\`\n\n| Column | Type |\n|--------|------|\n${Object.entries(cols).map(([c, t]) => `| \`${c}\` | \`${t}\` |`).join('\n')}`
-          : `**Flink Table** \`${word.word}\`\n\n_Expand in sidebar to load schema_`;
+          ? `${heading}\n\n| Column | Type |\n|--------|------|\n${Object.entries(cols).map(([c, t]) => `| \`${c}\` | \`${t}\` |`).join('\n')}`
+          : `${heading}\n\n_Expand in sidebar to load schema_`;
         return {
           range: new monaco.Range(position.lineNumber, word.startColumn, position.lineNumber, word.endColumn),
           contents: [{ value: body }],
