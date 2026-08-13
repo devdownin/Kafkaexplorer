@@ -368,14 +368,19 @@ export const cluster = {
     { groupId: 'legacy-etl', type: 'CLASSIC', state: 'STABLE' },
     { groupId: 'analytics-share', type: 'SHARE', state: 'STABLE' },
     { groupId: 'sc-reconciler', type: 'STREAMS', state: 'STABLE' },
+    // Un groupe de l'explorer lui-même : la page le marque au lieu de le confondre avec les vôtres.
+    { groupId: 'kafka-explorer-live-a41f9c', type: 'CONSUMER', state: 'STABLE', explorer: true },
   ],
+  // `min` / `max` : c'est ce que le service met sur le fil (`range.put("min", …)`). La fixture
+  // portait les noms de l'API Kafka (`minVersionLevel`), donc la capture publiée affichait
+  // « vundefined » — un champ absent se voit à l'écran, il n'échoue pas bruyamment.
   finalizedFeatures: {
-    'metadata.version': { minVersionLevel: 25, maxVersionLevel: 25 },
-    'kraft.version': { minVersionLevel: 1, maxVersionLevel: 1 },
+    'metadata.version': { min: 25, max: 25 },
+    'kraft.version': { min: 1, max: 1 },
   },
   supportedFeatures: {
-    'metadata.version': { minVersionLevel: 1, maxVersionLevel: 25 },
-    'kraft.version': { minVersionLevel: 0, maxVersionLevel: 1 },
+    'metadata.version': { min: 1, max: 25 },
+    'kraft.version': { min: 0, max: 1 },
   },
 };
 

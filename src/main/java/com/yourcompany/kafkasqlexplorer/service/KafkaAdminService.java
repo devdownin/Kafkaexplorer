@@ -374,6 +374,10 @@ public class KafkaAdminService {
                     item.put("groupId", group.groupId());
                     item.put("type", group.type().map(Enum::name).orElse("UNKNOWN"));
                     item.put("state", group.groupState().map(Enum::name).orElse("UNKNOWN"));
+                    // Marked, not hidden: this page is about the cluster, and a group the
+                    // explorer left behind is part of what is on it. What an operator must not
+                    // have to do is guess which of these rows are their own consumers.
+                    item.put("explorer", ExplorerConsumerGroups.isExplorerGroup(group.groupId()));
                     groupList.add(item);
                 }
                 groupList.sort(Comparator.comparing(g -> (String) g.get("groupId")));
