@@ -25,6 +25,8 @@ interface GroupInfo {
   groupId: string;
   type: string; // CLASSIC | CONSUMER (KIP-848) | SHARE (KIP-932) | STREAMS | UNKNOWN
   state: string;
+  /** Ce groupe appartient à l'explorer lui-même — marqué, pas masqué : la page décrit le cluster. */
+  explorer?: boolean;
 }
 
 interface VersionRange {
@@ -40,6 +42,11 @@ interface ClusterDetails {
   groups?: GroupInfo[];
   finalizedFeatures?: Record<string, VersionRange>;
   supportedFeatures?: Record<string, VersionRange>;
+}
+
+/** Combien de ces groupes sont les nôtres — l'en-tête le dit plutôt que de laisser compter. */
+function explorerGroupCount(groups: GroupInfo[]): number {
+  return groups.filter(g => g.explorer).length;
 }
 
 const GROUP_TYPE_STYLES: Record<string, string> = {
@@ -198,13 +205,17 @@ const Cluster: React.FC = () => {
               Client Groups
               <span className="text-[11px] font-normal text-on-surface-variant">
                 {details.groups.length} group{details.groups.length === 1 ? '' : 's'} — consumer (KIP-848), share (KIP-932), classic, streams
+                {explorerGroupCount(details.groups) > 0 && (
+                  <>, {explorerGroupCount(details.groups)} of them this application&rsquo;s own</>
+                )}
               </span>
             </h2>
             {details.groups.length === 0 ? (
               <p className="text-[12px] text-on-surface-variant italic">
-                No registered client groups. Groups appear once a consumer with group management
-                (subscribe) connects — the explorer's own sampling consumers use manual partition
-                assignment and never register.
+                No registered client groups. A group appears once a consumer joins with group
+                management, or commits an offset. This application&rsquo;s readers assign their
+                partitions and never commit, so they leave nothing behind here; a live Process
+                Mining session does subscribe, and shows up for as long as it runs.
               </p>
             ) : (
               <div className="overflow-x-auto">
@@ -219,7 +230,17 @@ const Cluster: React.FC = () => {
                   <tbody>
                     {details.groups.map(group => (
                       <tr key={group.groupId} className="border-b border-outline-variant/60 last:border-0 hover:bg-primary/5 transition-colors">
-                        <td className="py-2.5 px-2 font-mono text-[13px] text-on-surface">{group.groupId}</td>
+                        <td className="py-2.5 px-2 font-mono text-[13px] text-on-surface">
+                          <span className={group.explorer ? 'text-on-surface-variant' : undefined}>{group.groupId}</span>
+                          {group.explorer && (
+                            <span
+                              className="ml-2 text-[10px] px-1.5 py-0.5 rounded border border-outline-variant text-on-surface-variant uppercase tracking-widest align-middle"
+                              title="Created by this application — one of its own readers, not a consumer of your pipelines."
+                            >
+                              explorer
+                            </span>
+                          )}
+                        </td>
                         <td className="py-2.5 px-2">
                           <span className={`text-[10px] px-2 py-0.5 rounded border font-bold uppercase tracking-widest ${
                             GROUP_TYPE_STYLES[group.type] ?? GROUP_TYPE_STYLES.CLASSIC
