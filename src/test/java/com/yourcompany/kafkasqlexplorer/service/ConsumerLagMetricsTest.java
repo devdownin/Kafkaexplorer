@@ -127,6 +127,45 @@ class ConsumerLagMetricsTest {
                 .tags("group", "g", "topic", "demo.orders").gauge().value());
     }
 
+    /*
+     * Garder la dernière valeur est juste, mais sans date elle est indiscernable d'une valeur
+     * fraîche : une alerte « lag > N » se déclenche pareil que le retard soit réel et bloqué ou
+     * simplement plus mesuré, et l'opérateur qu'elle réveille n'a aucun moyen de trancher. Le
+     * timestamp ne bouge donc que lorsqu'une mesure a réellement abouti.
+     */
+    @Test
+    void datesEachValueSoAFrozenGaugeCanBeToldFromAFreshOne() {
+        explorerConfig.setLagMetricsTopics(List.of("demo.orders"));
+        topicReturns("demo.orders", group("g", 42L, 1, 0));
+
+        metrics.refresh();
+
+        double measuredAt = registry.get("kafka.consumer.group.lag.last.success.timestamp.seconds")
+                .tags("group", "g", "topic", "demo.orders").gauge().value();
+        assertTrue(measuredAt > 1_600_000_000d, "a unix timestamp in seconds, not a duration");
+        assertTrue(measuredAt <= System.currentTimeMillis() / 1000d + 1);
+    }
+
+    @Test
+    void doesNotRefreshTheTimestampOfAGroupThatCouldNotBeRead() throws Exception {
+        explorerConfig.setLagMetricsTopics(List.of("demo.orders"));
+        when(kafkaAdminService.getTopicConsumers(eq("demo.orders"), anyInt()))
+                .thenReturn(available("demo.orders", group("g", 500L, 1, 0)))
+                .thenReturn(available("demo.orders",
+                        ConsumerGroupLag.failed("g", "CLASSIC", "coordinator moved")));
+
+        metrics.refresh();
+        double first = registry.get("kafka.consumer.group.lag.last.success.timestamp.seconds")
+                .tags("group", "g", "topic", "demo.orders").gauge().value();
+        Thread.sleep(1100);
+        metrics.refresh();
+
+        assertEquals(first, registry.get("kafka.consumer.group.lag.last.success.timestamp.seconds")
+                .tags("group", "g", "topic", "demo.orders").gauge().value(),
+                "the lag keeps its last value, so its date must keep it too — that is what makes "
+                    + "the freeze visible to an alert");
+    }
+
     /* Une lecture qui a échoué revient vide : agir dessus publierait « plus aucun consommateur ». */
     @Test
     void keepsTheLastValuesWhenTheTopicCouldNotBeRead() {
@@ -162,6 +201,9 @@ class ConsumerLagMetricsTest {
                 "a group that is gone must stop exporting the backlog it had on its last day");
         assertEquals(0, registry.find("kafka.consumer.group.assigned.members")
                 .tags("group", "old", "topic", "demo.orders").gauges().size());
+        assertEquals(0, registry.find("kafka.consumer.group.lag.last.success.timestamp.seconds")
+                .tags("group", "old", "topic", "demo.orders").gauges().size(),
+                "dating a series that no longer exists would keep it alive on its own");
         assertEquals(4.0, registry.get("kafka.consumer.group.lag")
                 .tags("group", "new", "topic", "demo.orders").gauge().value());
     }

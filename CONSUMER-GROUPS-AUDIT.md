@@ -142,6 +142,29 @@ groupes fantômes hier.
 
 *Correctif* : un seul appel à `configure(props, "snapshot")`, le paramètre `groupId` disparaît.
 
+### B12 — Une jauge figée était indiscernable d'une jauge fraîche
+
+B3 et B4 posent la bonne règle — une lecture ratée garde sa dernière valeur, un groupe disparu perd
+la sienne — mais laissent l'opérateur sans moyen de savoir laquelle des deux il regarde. Une alerte
+`kafka_consumer_group_lag > 10000` se déclenche exactement pareil que le retard soit réel et bloqué
+ou simplement plus mesuré depuis une heure, et la personne qu'elle réveille à 3 h du matin n'a que la
+trace DEBUG du serveur pour trancher. Une valeur qu'on ne peut pas dater est une valeur sur laquelle
+on ne devrait pas agir, ce qui annule l'intérêt de l'exporter.
+
+*Correctif* : `kafka_consumer_group_lag_last_success_timestamp_seconds{group,topic}`, posée
+uniquement sur une ligne réellement mesurée. L'alerte peut alors exiger les deux :
+
+```promql
+kafka_consumer_group_lag > 10000
+  and time() - kafka_consumer_group_lag_last_success_timestamp_seconds < 120
+```
+
+Un horodatage plutôt qu'un booléen : même cardinalité, et il porte *à quel point* c'est périmé, ce
+dont un seuil a besoin. **Le coût est assumé** : une quatrième série par groupe×topic, soit un tiers
+de plus, sur une fonctionnalité construite autour de sa parcimonie. Le plafond
+`explorer.lag-metrics-max-series` compte des paires groupe×topic (`admits` n'indexe que la série de
+retard), donc ce qu'il borne ne change pas.
+
 ## Optimisation
 
 ### O1 — L'audit relisait tous les groupes du cluster, une fois par topic
@@ -205,6 +228,3 @@ pour fermer, et qui a déjà coûté la page Compare une fois. Les trois formes 
 - **Aucune limite sur la taille du snapshot non restreint.** Un cluster où un groupe suit des dizaines
   de milliers de partitions produit une réponse `OffsetFetch` volumineuse. Toujours plus petit que N
   lectures restreintes, mais en un seul objet.
-- **`ConsumerLagMetrics` ne publie rien pour un groupe illisible**, pas même une série
-  `..._read_failed`. Une jauge figée reste muette sur la raison de son immobilité ; la trace de log en
-  DEBUG est aujourd'hui le seul signal.
