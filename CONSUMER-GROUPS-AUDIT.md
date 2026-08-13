@@ -173,10 +173,19 @@ c'est parier qu'elle est encore vraie ; ce pari n'a aucun sens sur « on n'a pas
 
 *Correctif* : `unless = "!#result.available()"`.
 
-**Ce que ça coûte, dit explicitement** : les positions commitées datent du début du run, les end
-offsets de l'instant où chaque topic est audité. Un retard ne peut donc être que **surestimé**, jamais
-sous-estimé — et aucun des constats remontés ne repose sur un retard surestimé (`STALLED` exige zéro
-membre assigné, `AHEAD` un retard négatif). La note de portée du rapport l'énonce.
+**Ce que ça coûte, dit explicitement** : les positions commitées datent de la prise de la photo, les
+end offsets de l'instant où chaque topic est audité. Un retard ne peut donc être que **surestimé**,
+jamais sous-estimé — et aucun des constats remontés ne repose sur un retard surestimé (`STALLED` exige
+zéro membre assigné, `AHEAD` un retard négatif). La note de portée du rapport l'énonce.
+
+Une photo prise une fois et gardée pour tout le run était toutefois l'autre moitié du piège : sur une
+demi-heure, le retard est surestimé d'une demi-heure de trafic — sûr dans sa direction, inexploitable
+dans son ordre de grandeur. `explorer.audit-group-snapshot-ttl-ms` (60 s par défaut, `0` pour ne la
+prendre qu'une fois) borne cette péremption sans rendre le gain : un run de trente minutes paie une
+trentaine de lectures au lieu d'une par topic. `GroupSnapshotHolder` rafraîchit sous verrou, appel
+réseau compris — laisser trois des quatre workers lire une photo périmée pendant que le quatrième la
+reprend achèterait quelques secondes de parallélisme au prix d'un rapport dont les lignes auraient été
+mesurées à des instants différents.
 
 ## Contrat de types
 
@@ -189,10 +198,6 @@ pour fermer, et qui a déjà coûté la page Compare une fois. Les trois formes 
 
 ## Constaté, non traité
 
-- **La photo du run d'audit ne se rafraîchit pas.** Un run très long travaille sur des positions
-  commitées vieilles de plusieurs minutes. Un TTL sur la photo rendrait un peu de fraîcheur contre une
-  partie du gain de O1, et introduirait de la concurrence sur le pool à quatre threads. La note de
-  portée dit ce qui est mesuré ; c'est le compromis retenu.
 - **`getTopicConsumers` redécrit le topic** alors que `getTopicDescriptor` est en cache. Un appel
   admin par topic, négligeable devant ce que O1 vient de retirer.
 - **Les groupes SHARE (KIP-932) restent hors périmètre.** Leur position vit dans le coordinateur de

@@ -89,6 +89,44 @@ public class AuditService {
     /** Why a run stopped short of its scope. */
     private enum StopReason { REQUESTED, TIME_BUDGET }
 
+    /**
+     * The cluster's consumer groups for one run, re-read when the snapshot goes stale.
+     *
+     * <p>One read shared across topics is what makes the consumer-lag check affordable — otherwise
+     * every topic re-lists every group of the cluster. But a snapshot taken once and kept for the
+     * whole run compares committed positions from the run's first minute against end offsets read
+     * half an hour later. That direction is safe (a lag can only be overstated, never understated,
+     * and no finding turns on an overstated lag) yet a backlog overstated by thirty minutes of
+     * traffic is one nobody can act on. The TTL bounds the staleness without giving the saving
+     * back: at 60 s, a thirty-minute run pays about thirty reads rather than one per topic.
+     *
+     * <p>{@code synchronized} on purpose, refresh included. Four topic workers share this, and the
+     * alternative — letting three of them read a stale snapshot while the fourth refreshes — buys a
+     * few seconds of parallelism at the price of a report whose rows were measured against
+     * different instants. Serialising the refresh is exactly what each of those threads would have
+     * done on its own before this existed.
+     */
+    private final class GroupSnapshotHolder {
+        private final int maxGroups;
+        private final long ttlMs;
+        private KafkaAdminService.GroupSnapshot snapshot;
+        private long takenAt;
+
+        GroupSnapshotHolder(int maxGroups, long ttlMs) {
+            this.maxGroups = maxGroups;
+            this.ttlMs = ttlMs;
+        }
+
+        synchronized KafkaAdminService.GroupSnapshot current() {
+            long now = System.currentTimeMillis();
+            if (snapshot == null || (ttlMs > 0 && now - takenAt >= ttlMs)) {
+                snapshot = kafkaAdminService.groupSnapshot(maxGroups, null);
+                takenAt = now;
+            }
+            return snapshot;
+        }
+    }
+
     private final AtomicReference<RunHandle> currentRun = new AtomicReference<>();
 
     /**
@@ -265,12 +303,13 @@ public class AuditService {
             AtomicInteger completed = new AtomicInteger();
             publishProgress(auditId, options, startedAt, "topics", 0, totalTopics);
 
-            // The cluster's groups, read once for the whole run. Per topic, this used to re-list
-            // every group of the cluster, re-describe up to two hundred of them and re-read their
-            // offsets — the same answer, bought again for each of the hundreds of topics, and the
-            // 30 s cache behind it expires many times over during a run that takes minutes.
-            KafkaAdminService.GroupSnapshot groupSnapshot = options.checkConsumerLag()
-                ? kafkaAdminService.groupSnapshot(explorerConfig.getConsumerGroupMaxGroups(), null)
+            // The cluster's groups, read once and shared across topics. Per topic, this used to
+            // re-list every group of the cluster, re-describe up to two hundred of them and re-read
+            // their offsets — the same answer, bought again for each of the hundreds of topics, and
+            // the 30 s cache behind it expires many times over during a run that takes minutes.
+            GroupSnapshotHolder groupSnapshot = options.checkConsumerLag()
+                ? new GroupSnapshotHolder(explorerConfig.getConsumerGroupMaxGroups(),
+                    explorerConfig.getAuditGroupSnapshotTtlMs())
                 : null;
 
             // Parallelize topic auditing on a bounded pool (not the shared commonPool). Each topic
@@ -450,12 +489,14 @@ public class AuditService {
                 + " messages of each pair of consecutive topics on a shared \"id\" field.");
         }
         if (options.checkConsumerLag()) {
+            long ttlMs = explorerConfig.getAuditGroupSnapshotTtlMs();
             notes.add("Consumer lag reads at most " + explorerConfig.getConsumerGroupMaxGroups()
-                + " of the cluster's groups, once at the start of the run, and reports only what no "
-                + "amount of waiting would resolve — a group that is simply behind on a live topic "
-                + "is not a finding. Committed positions therefore date from that moment while each "
-                + "topic's end offsets are read as it is audited, so a lag can only be overstated, "
-                + "never understated.");
+                + " of the cluster's groups, shared across topics and re-read "
+                + (ttlMs > 0 ? "every " + (ttlMs / 1000) + "s" : "never (once for the whole run)")
+                + ", and reports only what no amount of waiting would resolve — a group that is "
+                + "simply behind on a live topic is not a finding. Committed positions are therefore "
+                + "up to that old while each topic's end offsets are read as it is audited, so a lag "
+                + "can only be overstated, never understated.");
         }
         long degraded = topicAudits.stream()
             .filter(t -> t.issues().stream().anyMatch(i -> i.message().startsWith("Audit failed")))
@@ -473,7 +514,7 @@ public class AuditService {
      * worst outcome an audit can produce for a topic.
      */
     private TopicAudit auditTopicSafe(String topicName, long approximateCount, AuditOptions options,
-                                      KafkaAdminService.GroupSnapshot groupSnapshot) {
+                                      GroupSnapshotHolder groupSnapshot) {
         try {
             return auditTopic(topicName, approximateCount, options, groupSnapshot);
         } catch (Exception e) {
@@ -485,7 +526,7 @@ public class AuditService {
     }
 
     private TopicAudit auditTopic(String topicName, long approximateCount, AuditOptions options,
-                                  KafkaAdminService.GroupSnapshot groupSnapshot) {
+                                  GroupSnapshotHolder groupSnapshot) {
         MessageFormat format = MessageFormat.AUTO;
         Map<String, String> schema = Collections.emptyMap();
         List<TopicIssue> issues = new ArrayList<>();
@@ -579,13 +620,12 @@ public class AuditService {
      * <p>A group that could not be read is reported as a degraded measurement rather than
      * dropped: silence would be indistinguishable from "this topic is fine".
      */
-    private List<TopicIssue> consumerLagIssues(String topicName,
-                                               KafkaAdminService.GroupSnapshot groupSnapshot) {
+    private List<TopicIssue> consumerLagIssues(String topicName, GroupSnapshotHolder groupSnapshot) {
         TopicConsumers consumers;
         try {
             consumers = groupSnapshot == null
                 ? kafkaAdminService.getTopicConsumers(topicName, explorerConfig.getConsumerGroupMaxGroups())
-                : kafkaAdminService.getTopicConsumers(topicName, groupSnapshot);
+                : kafkaAdminService.getTopicConsumers(topicName, groupSnapshot.current());
         } catch (Exception e) {
             return List.of(TopicIssue.warning("Consumer groups could not be read ("
                 + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()) + ")."));
