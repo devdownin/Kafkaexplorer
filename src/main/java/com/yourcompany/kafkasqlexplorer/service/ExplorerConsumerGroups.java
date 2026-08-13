@@ -41,13 +41,6 @@ public final class ExplorerConsumerGroups {
      * consumers, which is the exact confusion this class removes.
      */
     private static final List<String> LEGACY_PREFIXES = List.of(
-        // Not legacy: the group id `DdlGeneratorService` writes into every generated Flink table
-        // (`'properties.group.id' = 'flink_table_<table>'`). It is a group this application asks
-        // Flink to use on the user's cluster, so it belongs on this list — the Kafka connector
-        // commits only on a checkpoint, which a bounded local SELECT never takes, but a group that
-        // does gain committed offsets with no member is precisely the phantom-STALLED shape above.
-        // The DDL pins `enable.auto.commit=false` besides; recognising the name is the second lock.
-        "flink_table_",
         "kafka-sql-explorer-",
         "explorer-earliest-",
         "explorer-metrics-restorer-",
@@ -57,6 +50,24 @@ public final class ExplorerConsumerGroups {
         "live-consumer-",
         "snapshot-reader-"
     );
+
+    /**
+     * The group id {@code DdlGeneratorService} writes into every generated Flink table
+     * ({@code 'properties.group.id' = 'flink_table_<table>'}).
+     *
+     * <p>Ours by origin — this application is what puts that name on the user's cluster — but
+     * <strong>not ours to delete</strong>, which is why it is kept apart from the prefixes above
+     * rather than listed among them. The generated DDL exists to be copied: three endpoints serve
+     * it, the Topic page shows it with a copy button, and pasting it into a production Flink job
+     * is the intended use. That job then runs under this very id, so the same name may belong to
+     * something this application has never launched and knows nothing about.
+     *
+     * <p>Hence the split below. For "is this a consumer of the user's pipeline?" the answer is no
+     * and the group is excluded — a Flink table registered for a SELECT is not a stakeholder in
+     * anyone's backlog. For "may this application delete it?" the answer must be no as well, and
+     * for the opposite reason: it might not be ours at all.
+     */
+    static final String FLINK_TABLE_PREFIX = "flink_table_";
 
     private ExplorerConsumerGroups() {
     }
@@ -89,13 +100,34 @@ public final class ExplorerConsumerGroups {
     }
 
     /**
-     * True when a group id belongs to this application rather than to a real consumer.
+     * True when a group id is this application's doing rather than a real consumer's.
      *
-     * <p>Used to keep the app out of its own answers to "who reads this topic". It matches other
-     * instances of the explorer too, which is intended: another explorer pointed at the same
-     * cluster is no more a consumer of your pipeline than this one is.
+     * <p>Used to keep the app out of its own answers to "who reads this topic", and to mark those
+     * rows on the Cluster page. It matches other instances of the explorer too, which is intended:
+     * another explorer pointed at the same cluster is no more a consumer of your pipeline than
+     * this one is. It also matches {@link #FLINK_TABLE_PREFIX} — a table this application
+     * registered is not a stakeholder in anyone's backlog either.
+     *
+     * <p>This answers <em>origin</em>, not ownership. For "may we delete it?" use
+     * {@link #isOwnReaderGroup(String)}, which is deliberately narrower.
      */
     public static boolean isExplorerGroup(String groupId) {
+        if (groupId == null) return false;
+        return isOwnReaderGroup(groupId) || groupId.startsWith(FLINK_TABLE_PREFIX);
+    }
+
+    /**
+     * True when a group id was created by a consumer <em>this application runs itself</em>.
+     *
+     * <p>The predicate for destructive housekeeping, and the reason it is not
+     * {@link #isExplorerGroup(String)}: every id it matches is minted here, by a
+     * {@code KafkaConsumer} inside this JVM (or an older build of it), so nothing else can be
+     * using it. A {@code flink_table_*} id fails that test — it is a name this application
+     * <em>suggests</em>, in DDL meant to be copied into the user's own Flink jobs, so an idle one
+     * may be a stopped production job rather than our leftover. Deleting it would break the rule
+     * the cleanup states for itself: never touch a group that is not ours, whatever its state.
+     */
+    public static boolean isOwnReaderGroup(String groupId) {
         if (groupId == null) return false;
         if (groupId.startsWith(PREFIX)) return true;
         return LEGACY_PREFIXES.stream().anyMatch(groupId::startsWith);

@@ -231,10 +231,15 @@ const Cluster: React.FC = () => {
                     {details.groups.map(group => (
                       <tr key={group.groupId} className="border-b border-outline-variant/60 last:border-0 hover:bg-primary/5 transition-colors">
                         <td className="py-2.5 px-2 font-mono text-[13px] text-on-surface">
-                          {group.groupId}
+                          {/* Grisé, pas seulement badgé : ces lignes doivent reculer devant les
+                              vrais consommateurs, sans quoi la pastille se contente de nommer ce
+                              que l'œil continue de lire au même niveau. */}
+                          <span className={group.explorer ? 'text-on-surface-variant' : undefined}>
+                            {group.groupId}
+                          </span>
                           {group.explorer && (
                             <span
-                              className="ml-2 text-[10px] font-sans not-italic px-1.5 py-0.5 rounded border border-outline-variant/60 text-on-surface-variant uppercase tracking-widest"
+                              className="ml-2 text-[10px] font-sans not-italic px-1.5 py-0.5 rounded border border-outline-variant/60 text-on-surface-variant uppercase tracking-widest align-middle"
                               title="Created by this application for its own reads — it consumes nothing of yours, and the Consumers tab of a topic excludes it."
                             >
                               this app

@@ -429,6 +429,23 @@ class KafkaAdminServiceConsumerLagTest {
             service.listDeletableExplorerGroups(100));
     }
 
+    /*
+     * Le cas qui distingue « c'est nous qui l'avons fait exister » de « c'est à nous ». Le DDL
+     * généré porte `properties.group.id = flink_table_<table>` et il est publié *pour être copié* :
+     * un job Flink de production de l'utilisateur tourne sous cet id. À l'arrêt, il est vide — donc
+     * indiscernable d'un résidu, sauf qu'il ne nous appartient pas. Le supprimer violerait la règle
+     * que ce nettoyage énonce lui-même : ne jamais toucher un groupe qui n'est pas le nôtre.
+     */
+    @Test
+    void neverOffersTheGroupItOnlySuggestedInGeneratedDdl() {
+        groups(dormantGroup("flink_table_demo_orders_1_received"),
+               dormantGroup("kafka-explorer-metadata-1"));
+
+        assertEquals(List.of("kafka-explorer-metadata-1"),
+            service.listDeletableExplorerGroups(100),
+            "an idle flink_table_* group may be the user's own stopped job");
+    }
+
     /** Le plafond est une borne dure, pas une indication. */
     @Test
     void neverOffersMoreThanTheCap() {
