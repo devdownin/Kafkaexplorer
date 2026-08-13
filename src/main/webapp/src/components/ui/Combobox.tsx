@@ -40,14 +40,26 @@ export const Combobox: FC<ComboboxProps> = ({
   const listId = `${inputId}-listbox`;
   const [open, setOpen] = useState(false);
   /**
+   * Ouverture *délibérée* (chevron, flèche bas) : la liste entière, sans filtre.
+   *
+   * Sans ça, une valeur déjà choisie se filtre elle-même : le pool tombe à une proposition
+   * strictement égale à la saisie, qui est supprimée juste après — la liste devenait donc vide
+   * dès qu'un topic était sélectionné, et le chevron un bouton mort. Dans l'éditeur de métrique,
+   * où le topic est pré-rempli à l'ouverture, plus rien ne permettait d'en changer par la liste.
+   */
+  const [browseAll, setBrowseAll] = useState(false);
+  /**
    * Index surligné. Il est *borné à la lecture* plutôt que corrigé par un effet : la liste
    * rétrécit en tapant, et remettre l'index dans ses bornes après coup coûtait un rendu de plus
    * pour afficher, le temps de celui-ci, un surlignage sur du vide.
    */
   const [rawActive, setActive] = useState(-1);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
 
   const matches = useMemo(() => {
+    // Parcourir la liste, c'est la voir en entier : elle défile, et taper la refiltre aussitôt.
+    if (browseAll) return options;
     const needle = value.trim().toLowerCase();
     const pool = needle
       ? options.filter(option => option.toLowerCase().includes(needle))
@@ -55,15 +67,29 @@ export const Combobox: FC<ComboboxProps> = ({
     // Une seule proposition strictement égale à la saisie n'apprend rien : on n'ouvre pas pour ça.
     if (pool.length === 1 && pool[0].toLowerCase() === needle) return [];
     return pool.slice(0, maxVisible);
-  }, [options, value, maxVisible]);
+  }, [options, value, maxVisible, browseAll]);
 
   const active = Math.min(rawActive, matches.length - 1);
+
+  /** Ouvre la liste complète, en surlignant la valeur courante si elle en fait partie. */
+  const openAll = () => {
+    const needle = value.trim().toLowerCase();
+    setBrowseAll(true);
+    setOpen(true);
+    setActive(options.findIndex(option => option.toLowerCase() === needle));
+  };
+
+  // La liste complète peut être longue : le surlignage doit rester visible au clavier.
+  useEffect(() => {
+    if (!open || active < 0) return;
+    (listRef.current?.children[active] as HTMLElement | undefined)?.scrollIntoView({ block: 'nearest' });
+  }, [open, active]);
 
   // Clic à l'extérieur : referme sans toucher à la valeur saisie.
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (event: PointerEvent) => {
-      if (!wrapperRef.current?.contains(event.target as Node)) setOpen(false);
+      if (!wrapperRef.current?.contains(event.target as Node)) { setOpen(false); setBrowseAll(false); }
     };
     document.addEventListener('pointerdown', onPointerDown);
     return () => document.removeEventListener('pointerdown', onPointerDown);
@@ -72,14 +98,17 @@ export const Combobox: FC<ComboboxProps> = ({
   const commit = (option: string) => {
     onChange(option);
     setOpen(false);
+    setBrowseAll(false);
     setActive(-1);
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'ArrowDown' && !open && matches.length > 0) {
+    if (event.key === 'ArrowDown' && !open) {
+      if (options.length === 0) return;
       event.preventDefault();
-      setOpen(true);
-      setActive(0);
+      // Liste vide sous le filtre (valeur déjà choisie) : on ouvre tout de même, en entier.
+      if (matches.length === 0) openAll();
+      else { setOpen(true); setActive(0); }
       return;
     }
     if (!open || matches.length === 0) {
@@ -100,9 +129,11 @@ export const Combobox: FC<ComboboxProps> = ({
       // Ne pas laisser Échap remonter : il fermerait aussi le dialogue parent, le cas échéant.
       event.stopPropagation();
       setOpen(false);
+      setBrowseAll(false);
       setActive(-1);
     } else if (event.key === 'Tab') {
       setOpen(false);
+      setBrowseAll(false);
     }
   };
 
@@ -123,7 +154,8 @@ export const Combobox: FC<ComboboxProps> = ({
         disabled={disabled}
         placeholder={placeholder}
         value={value}
-        onChange={e => { onChange(e.target.value); setOpen(true); }}
+        // Taper, c'est chercher : on repasse au filtre, quelle que soit la façon dont c'était ouvert.
+        onChange={e => { onChange(e.target.value); setBrowseAll(false); setOpen(true); }}
         onFocus={() => setOpen(true)}
         onKeyDown={onKeyDown}
         className="font-mono pr-8"
@@ -132,9 +164,12 @@ export const Combobox: FC<ComboboxProps> = ({
       {options.length > 0 && !disabled && (
         <button
           type="button"
+          // Pas de tabulation en plus (la flèche bas ouvre depuis le champ), mais plus
+          // aria-hidden non plus : c'est le seul chemin à la souris vers la liste complète.
           tabIndex={-1}
-          aria-hidden="true"
-          onClick={() => setOpen(o => !o)}
+          aria-label={expanded ? 'Hide suggestions' : 'Show all suggestions'}
+          title={expanded ? 'Hide suggestions' : 'Show all suggestions'}
+          onClick={() => { if (expanded) { setOpen(false); setBrowseAll(false); } else openAll(); }}
           className="absolute right-2 top-1/2 -translate-y-1/2 text-outline hover:text-on-surface"
         >
           <span className="material-symbols-outlined text-[18px]">
@@ -144,6 +179,7 @@ export const Combobox: FC<ComboboxProps> = ({
       )}
       {expanded && (
         <ul
+          ref={listRef}
           id={listId}
           role="listbox"
           className="absolute z-20 mt-1 w-full max-h-64 overflow-auto custom-scrollbar rounded-lg border border-outline-variant bg-surface-container-high shadow-lg py-1"

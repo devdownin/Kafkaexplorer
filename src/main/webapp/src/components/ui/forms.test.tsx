@@ -13,8 +13,8 @@ afterEach(() => {
   resetCatalog();
 });
 
-function ComboHarness({ options }: { options: string[] }) {
-  const [value, setValue] = useState('');
+function ComboHarness({ options, value: initial = '' }: { options: string[]; value?: string }) {
+  const [value, setValue] = useState(initial);
   return <Combobox value={value} onChange={setValue} options={options} aria-label="Topic" />;
 }
 
@@ -72,6 +72,50 @@ describe('Combobox', () => {
     render(<ComboHarness options={options} />);
     fireEvent.change(screen.getByLabelText('Topic'), { target: { value: 'payments.done' } });
     expect(screen.queryAllByRole('option')).toHaveLength(0);
+  });
+
+  // Une valeur déjà choisie se filtrait elle-même jusqu'à la liste vide : le chevron ne faisait
+  // plus rien, et l'éditeur de métrique — qui pré-remplit le topic — ne permettait plus d'en
+  // changer par la liste.
+  it('opens the whole list from the chevron even when a value is already selected', () => {
+    render(<ComboHarness options={options} value="payments.done" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Show all suggestions' }));
+    expect(screen.getAllByRole('option').map(o => o.textContent)).toEqual(options);
+  });
+
+  it('highlights the current value when the whole list is opened', () => {
+    render(<ComboHarness options={options} value="payments.done" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Show all suggestions' }));
+    expect(screen.getAllByRole('option')[2]).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('picks another option from the opened list', () => {
+    render(<ComboHarness options={options} value="payments.done" />);
+    const input = screen.getByLabelText('Topic');
+    fireEvent.click(screen.getByRole('button', { name: 'Show all suggestions' }));
+    fireEvent.pointerDown(screen.getByText('orders.shipped'));
+    expect(input).toHaveValue('orders.shipped');
+    expect(screen.queryAllByRole('option')).toHaveLength(0);
+  });
+
+  it('opens the whole list with ArrowDown when the value filters it to nothing', () => {
+    render(<ComboHarness options={options} value="payments.done" />);
+    const input = screen.getByLabelText('Topic');
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    expect(screen.getAllByRole('option')).toHaveLength(3);
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    // Le surlignage part de la valeur courante (index 2), donc la suivante boucle sur la première.
+    expect(input).toHaveValue('orders.created');
+  });
+
+  it('returns to filtering as soon as the user types', () => {
+    render(<ComboHarness options={options} value="payments.done" />);
+    const input = screen.getByLabelText('Topic');
+    fireEvent.click(screen.getByRole('button', { name: 'Show all suggestions' }));
+    fireEvent.change(input, { target: { value: 'orders' } });
+    expect(screen.getAllByRole('option').map(o => o.textContent))
+      .toEqual(['orders.created', 'orders.shipped']);
   });
 });
 
