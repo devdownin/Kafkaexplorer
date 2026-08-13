@@ -31,6 +31,9 @@ public class DdlGeneratorServiceTest {
         assertTrue(ddl.contains("localhost:9092"));
         assertTrue(ddl.contains("`proc_time` AS PROCTIME()"));
         assertTrue(ddl.contains("'properties.group.id' = 'flink_table_test_topic'"));
+        // Explicite, jamais hérité : un lecteur de cette application ne commite pas, et un offset
+        // commité sous un groupe sans membre est ce que l'audit note CRITIQUE.
+        assertTrue(ddl.contains("'properties.enable.auto.commit' = 'false'"));
     }
 
     @Test

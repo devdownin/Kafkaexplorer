@@ -77,6 +77,16 @@ class ExplorerConsumerGroupsTest {
         }
     }
 
+    /*
+     * Le groupe que `DdlGeneratorService` écrit dans chaque table Flink générée. C'est bien
+     * l'application qui le fait exister sur le cluster de l'utilisateur : il n'a rien à faire
+     * parmi les consommateurs d'un topic, ni à occuper une place sous le plafond de lecture.
+     */
+    @Test
+    void recognisesTheGroupItGivesToEveryGeneratedFlinkTable() {
+        assertTrue(ExplorerConsumerGroups.isExplorerGroup("flink_table_demo_orders_1_received"));
+    }
+
     @Test
     void leavesRealConsumerGroupsAlone() {
         for (String real : new String[] {

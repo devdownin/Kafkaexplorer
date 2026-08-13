@@ -5,38 +5,14 @@
  * `topicSearch.ts` — ce qui se teste sans navigateur est testé.
  */
 
-export interface PartitionLag {
-  partition: number;
-  /** `null` quand le groupe n'a jamais committé sur cette partition. */
-  committedOffset: number | null;
-  endOffset: number;
-  /** `null` quand il n'y a pas d'offset committé — jamais 0, qui voudrait dire « à jour ». */
-  lag: number | null;
-  memberId: string | null;
-  clientId: string | null;
-  host: string | null;
-}
+/*
+ * Les formes de réponse vivent dans `api/types.ts`, où `docs/check-api-types.py` les résout contre
+ * leurs records Java. Elles étaient déclarées ici, à la main et hors de toute vérification — le
+ * défaut même que ce script existe pour empêcher, et qui a déjà coûté la page Compare une fois.
+ */
+import type { ConsumerGroupLag, PartitionLag, TopicConsumers } from '../../api/types';
 
-export interface ConsumerGroupLag {
-  groupId: string;
-  type: string;
-  state: string;
-  members: number;
-  assignedMembers: number;
-  totalLag: number;
-  partitionsWithoutCommit: number;
-  partitions: PartitionLag[];
-  error: string | null;
-}
-
-export interface TopicConsumers {
-  topic: string;
-  groups: ConsumerGroupLag[];
-  groupsExamined: number;
-  groupsInCluster: number;
-  truncated: boolean;
-  warnings: string[];
-}
+export type { ConsumerGroupLag, PartitionLag, TopicConsumers };
 
 export type GroupSort = 'lag' | 'groupId' | 'state';
 
@@ -52,8 +28,11 @@ export type GroupHealth = 'CAUGHT_UP' | 'BEHIND' | 'STALLED' | 'PARTIAL' | 'AHEA
 export function healthOf(group: ConsumerGroupLag): GroupHealth {
   if (group.error) return 'UNKNOWN';
   if (group.partitions.some(p => p.lag !== null && p.lag < 0)) return 'AHEAD';
-  // Aucun membre vivant : le retard ne se résorbera pas tout seul, quel qu'il soit.
-  if (group.assignedMembers === 0 && group.totalLag > 0) return 'STALLED';
+  // Aucun membre vivant : le retard ne se résorbera pas tout seul, quel qu'il soit. Mais il faut
+  // avoir pu le constater : un groupe que `describeConsumerGroups` n'a pas su décrire arrive avec
+  // zéro membre faute de réponse, pas faute de membre — le déclarer bloqué serait une conclusion
+  // tirée d'un appel qui n'a rien dit. Même règle que `ConsumerGroupLag.health()` côté serveur.
+  if (group.membersKnown && group.assignedMembers === 0 && group.totalLag > 0) return 'STALLED';
   if (group.partitionsWithoutCommit > 0) return 'PARTIAL';
   return group.totalLag > 0 ? 'BEHIND' : 'CAUGHT_UP';
 }
@@ -116,20 +95,33 @@ export function filterGroups(groups: ConsumerGroupLag[], text: string): Consumer
  */
 export function describeScope(consumers: TopicConsumers | null): string {
   if (!consumers) return '';
-  const { groups, groupsExamined, groupsInCluster, truncated } = consumers;
-  if (groupsExamined === 0) {
-    return groupsInCluster === 0
-      ? 'The cluster has no client group at all.'
-      : `None of the cluster's ${groupsInCluster} groups could be read.`;
+  const { groups, groupsExamined, groupsEligible, groupsInCluster, truncated, available } = consumers;
+  // Une lecture qui a échoué revient à zéro groupe sur zéro examiné, exactement comme un cluster
+  // qui n'en a aucun. Sans ce drapeau, la ligne affirmait « le cluster n'a aucun groupe » alors
+  // que la question n'avait pas pu être posée — la seule réponse qu'elle ne doit jamais donner.
+  if (!available) {
+    return 'The consumer groups could not be read — this says nothing about who consumes this topic.';
   }
+  if (groupsExamined === 0) {
+    if (groupsInCluster === 0) return 'The cluster has no client group at all.';
+    // Zéro examiné avec des groupes au compteur : tous ont été écartés (share groups, groupes de
+    // l'application). Les avertissements disent lesquels ; ce n'est pas un échec de lecture.
+    return `None of the cluster's ${groupsInCluster} groups could be measured on this topic.`;
+  }
+  // Le dénominateur est le nombre de groupes éligibles, pas celui du cluster : mélanger un
+  // numérateur d'après exclusions avec un total d'avant faisait lire « 200 sur 3000 » là où 800
+  // des 3000 appartenaient à l'application elle-même.
   const read = truncated
-    ? `${groupsExamined} of the cluster's ${groupsInCluster} groups read`
-    : `all ${groupsExamined} of the cluster's groups read`;
+    ? `${groupsExamined} of ${groupsEligible} eligible groups read`
+    : `all ${groupsExamined} eligible group${groupsExamined === 1 ? '' : 's'} read`;
+  const scope = groupsEligible < groupsInCluster
+    ? `${read} of the cluster's ${groupsInCluster}`
+    : read;
   if (groups.length === 0) {
-    return `No group holds a committed offset on this topic — ${read}.`;
+    return `No group holds a committed offset on this topic — ${scope}.`;
   }
   const plural = groups.length === 1 ? '' : 's';
-  return `${groups.length} group${plural} consume${groups.length === 1 ? 's' : ''} this topic — ${read}.`;
+  return `${groups.length} group${plural} consume${groups.length === 1 ? 's' : ''} this topic — ${scope}.`;
 }
 
 /** Résumé chiffré au-dessus de la liste, ou `null` quand il n'y a rien à résumer. */
@@ -143,6 +135,12 @@ export function describeSummary(groups: ConsumerGroupLag[]): string | null {
   const partial = groups.filter(g => healthOf(g) === 'PARTIAL');
   if (partial.length > 0) {
     parts.push(`${partial.length} reading only part of the partitions`);
+  }
+  // Un groupe illisible pèse zéro dans le total : le dire, sans quoi la somme se lit comme
+  // exhaustive alors qu'elle ignore précisément les lignes dont on ne sait rien.
+  const unreadable = groups.filter(g => healthOf(g) === 'UNKNOWN');
+  if (unreadable.length > 0) {
+    parts.push(`${unreadable.length} could not be read and count for nothing in that total`);
   }
   return parts.join(' · ');
 }

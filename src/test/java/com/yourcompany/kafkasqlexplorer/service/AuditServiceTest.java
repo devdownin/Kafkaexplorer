@@ -49,7 +49,7 @@ class AuditServiceTest {
         // Default for the consumer-lag check, which AuditOptions.all() enables: no group reads the
         // topic. The tests that care about lag override this with groups of their own.
         when(kafkaAdminService.getTopicConsumers(anyString(), anyInt()))
-                .thenAnswer(inv -> new TopicConsumers(inv.getArgument(0), List.of(), 0, 0, false, List.of()));
+                .thenAnswer(inv -> new TopicConsumers(inv.getArgument(0), List.of(), 0, 0, 0, false, true, List.of()));
     }
 
     @Test
@@ -577,13 +577,13 @@ class AuditServiceTest {
 
     private static TopicConsumers consumers(ConsumerGroupLag... groups) {
         return new TopicConsumers("orders.created", List.of(groups), groups.length, groups.length,
-                false, List.of());
+                groups.length, false, true, List.of());
     }
 
     private static ConsumerGroupLag lagging(String groupId, long totalLag, int assignedMembers,
                                             int partitionsWithoutCommit, PartitionLag... partitions) {
         return new ConsumerGroupLag(groupId, "CLASSIC", "STABLE", assignedMembers, assignedMembers,
-                totalLag, partitionsWithoutCommit, List.of(partitions), null);
+                true, totalLag, partitionsWithoutCommit, List.of(partitions), null);
     }
 
     private static PartitionLag lagOf(int partition, Long committed, long end, Long lag) {
@@ -605,6 +605,49 @@ class AuditServiceTest {
         assertTrue(audit.issues().stream().anyMatch(i -> i.message().contains("enricher")
                         && i.message().contains("no member assigned")),
                 "the issue must name the group and why it is stuck: " + audit.issues());
+    }
+
+    /*
+     * Le même retard sans membre assigné, mais sur un groupe que le broker n'a pas su décrire :
+     * les zéro membres viennent de l'absence de réponse, pas de l'absence de membre. En faire un
+     * constat critique, c'était trancher sur la foi d'un appel muet — et `describeConsumerGroups`
+     * est muet, entre autres, pour un groupe Kafka Streams parfaitement sain.
+     */
+    @Test
+    void doesNotReportAGroupAsStuckWhenItsMembershipWasNeverRead() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders.created"));
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("orders.created", 500L));
+        ConsumerGroupLag undescribed = new ConsumerGroupLag("streams-app", "CLASSIC", "UNKNOWN",
+                0, 0, false, 4200L, 0, List.of(lagOf(0, 100L, 4300L, 4200L)), null);
+        when(kafkaAdminService.getTopicConsumers(eq("orders.created"), anyInt()))
+                .thenReturn(consumers(undescribed));
+
+        auditService.runAuditAsync("lag", new AuditOptions(false, false, false, false, false, true, null));
+
+        TopicAudit audit = auditService.getAuditReport("lag").topicAudits().get(0);
+        assertEquals(HealthStatus.HEALTHY, audit.healthStatus());
+        assertTrue(audit.issues().isEmpty(),
+                "unknown membership cannot decide the stalled question: " + audit.issues());
+    }
+
+    /*
+     * Une lecture qui échoue rendait une liste vide, donc aucun constat — indiscernable de « tous
+     * les groupes de ce topic vont bien ». Une vérification qui n'a pas pu tourner le dit, comme
+     * toutes les autres ici.
+     */
+    @Test
+    void saysSoWhenTheConsumerGroupsCouldNotBeReadAtAll() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders.created"));
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("orders.created", 500L));
+        when(kafkaAdminService.getTopicConsumers(eq("orders.created"), anyInt()))
+                .thenReturn(TopicConsumers.unavailable("orders.created", "broker unreachable"));
+
+        auditService.runAuditAsync("lag", new AuditOptions(false, false, false, false, false, true, null));
+
+        TopicAudit audit = auditService.getAuditReport("lag").topicAudits().get(0);
+        assertEquals(HealthStatus.WARNING, audit.healthStatus());
+        assertTrue(audit.issues().stream().anyMatch(i -> i.message().contains("broker unreachable")),
+                "a check that could not run must say so: " + audit.issues());
     }
 
     @Test

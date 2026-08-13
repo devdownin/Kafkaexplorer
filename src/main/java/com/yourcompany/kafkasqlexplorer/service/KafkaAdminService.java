@@ -374,6 +374,11 @@ public class KafkaAdminService {
                     item.put("groupId", group.groupId());
                     item.put("type", group.type().map(Enum::name).orElse("UNKNOWN"));
                     item.put("state", group.groupState().map(Enum::name).orElse("UNKNOWN"));
+                    // Listed, not hidden — this page is the raw view of the cluster — but named
+                    // for what it is. A live Process Mining session *subscribes*, so it does
+                    // register a group here, and the page's own empty-state text used to promise
+                    // the opposite ("the explorer's consumers never register").
+                    item.put("explorer", ExplorerConsumerGroups.isExplorerGroup(group.groupId()));
                     groupList.add(item);
                 }
                 groupList.sort(Comparator.comparing(g -> (String) g.get("groupId")));
@@ -454,24 +459,31 @@ public class KafkaAdminService {
      * when it means "we looked at the first two hundred of three thousand".
      *
      * <p>Cached (30s) like the other metadata reads — the page polls, and the numbers move on
-     * every produce anyway.
+     * every produce anyway. The key carries {@code maxGroups}: it is a configured value today, but
+     * a cache keyed on the topic alone would serve a truncated answer to a caller that asked for a
+     * wider one, which is precisely the confusion {@code truncated} exists to prevent.
      */
-    @Cacheable(value = "topicConsumers", key = "#topic")
+    @Cacheable(value = "topicConsumers", key = "#topic + '@' + #maxGroups")
     public TopicConsumers getTopicConsumers(String topic, int maxGroups) {
-        List<TopicPartition> partitions;
-        try {
-            TopicDescription description = adminClient.describeTopics(List.of(topic))
-                    .allTopicNames().get(5, TimeUnit.SECONDS).get(topic);
-            if (description == null) {
-                return TopicConsumers.unavailable(topic, "Topic '" + topic + "' does not exist.");
-            }
-            partitions = description.partitions().stream()
-                    .map(p -> new TopicPartition(topic, p.partition()))
-                    .toList();
-        } catch (Exception e) {
-            return TopicConsumers.unavailable(topic, "Could not describe the topic: " + rootMessage(e));
-        }
+        return getTopicConsumers(topic, groupSnapshot(maxGroups, null));
+    }
 
+    /**
+     * The cluster's groups, read once: listing, descriptions and committed offsets.
+     *
+     * <p>Split out of {@link #getTopicConsumers(String, int)} because the audit calls that method
+     * <em>per topic</em>, and every call re-listed the whole cluster, re-described up to
+     * {@code maxGroups} groups and re-read their offsets. On a cluster of three hundred topics and
+     * two hundred groups that is three hundred {@code ListGroups}, sixty thousand group
+     * descriptions and as many {@code OffsetFetch} round trips to answer a question whose answer
+     * does not change between topics. The 30 s cache never helped: it is keyed per topic, and an
+     * audit outlives it many times over.
+     *
+     * <p>{@code restrictTo} narrows the offset fetch to one topic's partitions when only that
+     * topic is wanted; passing {@code null} fetches every topic's committed offsets in the same
+     * call, which is what makes the snapshot reusable across an audit.
+     */
+    public GroupSnapshot groupSnapshot(int maxGroups, List<TopicPartition> restrictTo) {
         List<GroupListing> candidates;
         int inCluster;
         int shareGroups;
@@ -496,8 +508,7 @@ public class KafkaAdminService {
             explorerGroups = notShare.size() - candidates.size();
         } catch (Exception e) {
             // Not "no consumers": the question could not be asked at all.
-            return TopicConsumers.unavailable(topic,
-                    "Could not list the cluster's groups: " + rootMessage(e));
+            return GroupSnapshot.failed("Could not list the cluster's groups: " + rootMessage(e));
         }
 
         List<String> warnings = new ArrayList<>();
@@ -510,16 +521,18 @@ public class KafkaAdminService {
             warnings.add(explorerGroups + " group(s) belonging to this application were excluded — "
                     + "its own metadata and search readers, which consume nothing of yours.");
         }
-        boolean truncated = candidates.size() > maxGroups;
+        int eligible = candidates.size();
+        boolean truncated = eligible > maxGroups;
         if (truncated) {
-            warnings.add("Only " + maxGroups + " of the " + candidates.size()
+            warnings.add("Only " + maxGroups + " of the " + eligible
                     + " eligible groups were read — groups with members first, then dormant ones, "
                     + "each alphabetically. A group past that point does not appear here even if "
                     + "it is the one lagging; raise explorer.consumer-group-max-groups to widen it.");
             candidates = candidates.subList(0, maxGroups);
         }
         if (candidates.isEmpty()) {
-            return new TopicConsumers(topic, List.of(), 0, inCluster, truncated, warnings);
+            return new GroupSnapshot(inCluster, eligible, truncated, List.of(), Map.of(),
+                    Map.of(), Map.of(), Map.of(), Map.of(), warnings, null);
         }
 
         List<String> groupIds = candidates.stream().map(GroupListing::groupId).toList();
@@ -543,12 +556,15 @@ public class KafkaAdminService {
         if (!describeErrors.isEmpty()) {
             warnings.add("Group members could not be read for " + describeErrors.size() + " of the "
                     + groupIds.size() + " group(s) (" + firstReason(describeErrors)
-                    + "); their lag is still reported, their assignments are not.");
+                    + "); their lag is still reported, their assignments are not — so they are "
+                    + "never graded \"stalled\", a verdict that rests on membership.");
         }
 
         Map<String, ListConsumerGroupOffsetsSpec> specs = new LinkedHashMap<>();
         for (String groupId : groupIds) {
-            specs.put(groupId, new ListConsumerGroupOffsetsSpec().topicPartitions(partitions));
+            ListConsumerGroupOffsetsSpec spec = new ListConsumerGroupOffsetsSpec();
+            if (restrictTo != null) spec = spec.topicPartitions(restrictTo);
+            specs.put(groupId, spec);
         }
         // Same treatment, and here it decides more: `.all()` failing meant the whole topic came
         // back as "unavailable", so one unreadable group hid every other group's lag.
@@ -562,15 +578,53 @@ public class KafkaAdminService {
             }
             awaitPerGroup(offsetFutures, 15_000, committed, offsetErrors);
         } catch (Exception e) {
-            return TopicConsumers.unavailable(topic,
-                    "Could not read committed offsets: " + rootMessage(e));
+            return GroupSnapshot.failed("Could not read committed offsets: " + rootMessage(e));
         }
         if (offsetErrors.size() == groupIds.size()) {
             // Not one group answered: that is the old meaning of unavailable, and it must keep it —
             // an empty list would claim nobody reads the topic.
-            return TopicConsumers.unavailable(topic,
-                    "Could not read committed offsets: " + firstReason(offsetErrors));
+            return GroupSnapshot.failed("Could not read committed offsets: " + firstReason(offsetErrors));
         }
+
+        return new GroupSnapshot(inCluster, eligible, truncated, groupIds, typeOf,
+                descriptions, describeErrors, committed, offsetErrors, warnings, null);
+    }
+
+    /**
+     * One topic's view of a group snapshot: the end offsets are read <em>now</em>, and only they.
+     *
+     * <p>Public so an audit can take the snapshot once and walk every topic through it. The end
+     * offsets stay per topic and stay last, which is what keeps the lag arithmetic honest — see
+     * {@link #getTopicConsumers(String, int)}.
+     */
+    public TopicConsumers getTopicConsumers(String topic, GroupSnapshot snapshot) {
+        List<TopicPartition> partitions;
+        try {
+            TopicDescription description = adminClient.describeTopics(List.of(topic))
+                    .allTopicNames().get(5, TimeUnit.SECONDS).get(topic);
+            if (description == null) {
+                return TopicConsumers.unavailable(topic, "Topic '" + topic + "' does not exist.");
+            }
+            partitions = description.partitions().stream()
+                    .map(p -> new TopicPartition(topic, p.partition()))
+                    .toList();
+        } catch (Exception e) {
+            return TopicConsumers.unavailable(topic, "Could not describe the topic: " + rootMessage(e));
+        }
+
+        if (snapshot.failure() != null) {
+            return TopicConsumers.unavailable(topic, snapshot.failure());
+        }
+        List<String> warnings = new ArrayList<>(snapshot.warnings());
+        List<String> groupIds = snapshot.groupIds();
+        if (groupIds.isEmpty()) {
+            return new TopicConsumers(topic, List.of(), 0, snapshot.eligible(),
+                    snapshot.inCluster(), snapshot.truncated(), true, warnings);
+        }
+        Map<String, String> typeOf = snapshot.typeOf();
+        Map<String, ConsumerGroupDescription> descriptions = snapshot.descriptions();
+        Map<String, Map<TopicPartition, OffsetAndMetadata>> committed = snapshot.committed();
+        Map<String, String> offsetErrors = snapshot.offsetErrors();
 
         Map<TopicPartition, Long> endOffsets;
         try {
@@ -600,6 +654,7 @@ public class KafkaAdminService {
                 continue; // this group has no position on this topic — not a consumer of it
             }
             ConsumerGroupDescription description = descriptions.get(groupId);
+            boolean membersKnown = description != null;
             Map<Integer, MemberDescription> holders = assignmentsOn(topic, description);
 
             List<PartitionLag> perPartition = new ArrayList<>();
@@ -629,9 +684,10 @@ public class KafkaAdminService {
             groups.add(new ConsumerGroupLag(
                     groupId,
                     typeOf.getOrDefault(groupId, "UNKNOWN"),
-                    description == null ? "UNKNOWN" : description.groupState().name(),
-                    description == null ? 0 : description.members().size(),
+                    membersKnown ? description.groupState().name() : "UNKNOWN",
+                    membersKnown ? description.members().size() : 0,
                     (int) holders.values().stream().map(MemberDescription::consumerId).distinct().count(),
+                    membersKnown,
                     totalLag,
                     withoutCommit,
                     perPartition,
@@ -644,9 +700,38 @@ public class KafkaAdminService {
                     + "offset reset to a future position, or a topic recreated under the same "
                     + "name, leaves behind.");
         }
-        groups.sort(Comparator.comparingLong(ConsumerGroupLag::totalLag).reversed()
+        // Unreadable groups first, then the worst lag. A row whose lag could not be read carries a
+        // zero, so sorting on the number alone buried it among the groups that are up to date —
+        // the one place it must not be, since "not measured" is the row an operator has to act on.
+        groups.sort(Comparator.comparing((ConsumerGroupLag g) -> g.error() == null)
+                .thenComparing(Comparator.comparingLong(ConsumerGroupLag::totalLag).reversed())
                 .thenComparing(ConsumerGroupLag::groupId));
-        return new TopicConsumers(topic, groups, groupIds.size(), inCluster, truncated, warnings);
+        return new TopicConsumers(topic, groups, groupIds.size(), snapshot.eligible(),
+                snapshot.inCluster(), snapshot.truncated(), true, warnings);
+    }
+
+    /**
+     * The cluster's groups as read at one instant — see {@link #groupSnapshot(int, List)}.
+     *
+     * @param failure non-null when the read failed outright; every other field is then empty
+     */
+    public record GroupSnapshot(
+            int inCluster,
+            int eligible,
+            boolean truncated,
+            List<String> groupIds,
+            Map<String, String> typeOf,
+            Map<String, ConsumerGroupDescription> descriptions,
+            Map<String, String> describeErrors,
+            Map<String, Map<TopicPartition, OffsetAndMetadata>> committed,
+            Map<String, String> offsetErrors,
+            List<String> warnings,
+            String failure
+    ) {
+        static GroupSnapshot failed(String reason) {
+            return new GroupSnapshot(0, 0, false, List.of(), Map.of(), Map.of(), Map.of(),
+                    Map.of(), Map.of(), List.of(reason), reason);
+        }
     }
 
     /** Which member holds each partition of {@code topic}, empty when the group was not described. */

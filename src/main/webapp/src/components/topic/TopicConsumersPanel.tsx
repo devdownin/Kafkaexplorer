@@ -107,13 +107,22 @@ const TopicConsumersPanel: FC<TopicConsumersPanelProps> = ({ topic }) => {
 
       {!error && shown.length === 0 ? (
         <EmptyState
-          icon="groups"
-          title={filter ? 'No group matches that filter' : 'No consumer group reads this topic'}
+          icon={data && !data.available ? 'error' : 'groups'}
+          title={
+            // « Personne ne lit ce topic » est une affirmation ; elle n'a pas sa place quand la
+            // question n'a pas pu être posée. Le drapeau `available` sépare les deux.
+            data && !data.available ? 'Consumer groups could not be read'
+              : filter ? 'No group matches that filter'
+                : 'No consumer group reads this topic'
+          }
           description={
-            filter
-              ? 'Clear the filter to see every group that holds a committed offset here.'
-              : 'A group appears once it commits an offset on one of this topic\'s partitions. '
-                + 'A producer-only topic, or one read by a consumer that never commits, legitimately shows nothing.'
+            data && !data.available
+              ? (data.warnings[0] ?? 'The broker did not answer. Retry, or check the connection '
+                + 'on the Settings page.')
+              : filter
+                ? 'Clear the filter to see every group that holds a committed offset here.'
+                : 'A group appears once it commits an offset on one of this topic\'s partitions. '
+                  + 'A producer-only topic, or one read by a consumer that never commits, legitimately shows nothing.'
           }
         />
       ) : (
@@ -158,12 +167,21 @@ const TopicConsumersPanel: FC<TopicConsumersPanelProps> = ({ topic }) => {
                     {group.type !== 'CLASSIC' && ` · ${group.type}`}
                   </td>
                   <td className="px-5 py-3 text-right">
-                    <span
-                      className="font-mono text-on-surface-variant"
-                      title={`${group.assignedMembers} assigned to this topic, ${group.members} in the group`}
-                    >
-                      {group.assignedMembers}/{group.members}
-                    </span>
+                    {group.membersKnown ? (
+                      <span
+                        className="font-mono text-on-surface-variant"
+                        title={`${group.assignedMembers} assigned to this topic, ${group.members} in the group`}
+                      >
+                        {group.assignedMembers}/{group.members}
+                      </span>
+                    ) : (
+                      // Zéro membre affiché pour un groupe qu'on n'a pas su décrire se lirait
+                      // « personne ne le consomme » — la conclusion exacte que le serveur refuse
+                      // désormais de tirer (cf. `membersKnown`).
+                      <Tooltip content="This group could not be described, so its membership is unknown — not zero.">
+                        <span className="font-mono text-on-surface-variant italic">—</span>
+                      </Tooltip>
+                    )}
                   </td>
                   <td className="px-5 py-3 text-right">
                     <span
@@ -174,12 +192,16 @@ const TopicConsumersPanel: FC<TopicConsumersPanelProps> = ({ topic }) => {
                     </span>
                   </td>
                   <td className="px-5 py-3">
-                    <Tooltip content={HEALTH_HELP[health]}>
+                    {/* Le serveur porte la raison par groupe ; elle n'était affichée nulle part,
+                        et « Unreadable » sans le motif ne se diagnostique pas. */}
+                    <Tooltip content={group.error ? `${HEALTH_HELP[health]} — ${group.error}` : HEALTH_HELP[health]}>
                       <Badge tone={HEALTH_TONE[health]} dot>{HEALTH_LABEL[health]}</Badge>
                     </Tooltip>
                   </td>
                   <td className="px-5 py-3 text-right text-[11px] text-on-surface-variant">
-                    {group.partitions.length - group.partitionsWithoutCommit}/{group.partitions.length} read
+                    {group.error
+                      ? <span className="italic">—</span>
+                      : `${group.partitions.length - group.partitionsWithoutCommit}/${group.partitions.length} read`}
                   </td>
                 </tr>
               )];
@@ -187,7 +209,14 @@ const TopicConsumersPanel: FC<TopicConsumersPanelProps> = ({ topic }) => {
                 rows.push(
                   <tr key={`${group.groupId}-detail`} className="bg-surface-container-high/30">
                     <td colSpan={6} className="px-5 py-3">
-                      <PartitionTable group={group} />
+                      {group.error
+                        ? (
+                          <p className="text-[12px] text-on-surface-variant">
+                            This group's positions could not be read, so it has no per-partition
+                            detail: <span className="text-on-surface">{group.error}</span>
+                          </p>
+                        )
+                        : <PartitionTable group={group} />}
                     </td>
                   </tr>,
                 );
