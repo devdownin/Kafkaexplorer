@@ -1,0 +1,15 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Kafka Explorer Contributors
+package com.compagnonsdudev.kafkasqlexplorer.domain;
+
+import java.util.List;
+import java.util.Map;
+
+public record TopicDetailResponse(
+    TopicDescriptor topic,
+    MessageFormat format,
+    Map<String, String> schema,
+    String ddl,
+    /** Carries the record coordinates (partition, offset, timestamp, key, headers), not just values. */
+    List<TopicMessage> samples
+) {}

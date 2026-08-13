@@ -50,7 +50,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # prose table never is.
 DOCS = ['docs/DOCKERHUB.md', 'README.md', 'README.fr.md']
 YAML = ROOT / 'src/main/resources/application.yml'
-CONFIG_DIR = ROOT / 'src/main/java/com/yourcompany/kafkasqlexplorer/config'
+CONFIG_DIR = ROOT / 'src/main/java/com/compagnonsdudev/kafkasqlexplorer/config'
 DOCKERFILES = [ROOT / 'Dockerfile', ROOT / 'Dockerfile.release']
 
 # A table row: | `VAR` / `_SUFFIX` | default | meaning |

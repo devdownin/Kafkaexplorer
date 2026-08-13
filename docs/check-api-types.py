@@ -39,7 +39,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 TYPES = ROOT / 'src/main/webapp/src/api/types.ts'
-DOMAIN = ROOT / 'src/main/java/com/yourcompany/kafkasqlexplorer/domain'
+DOMAIN = ROOT / 'src/main/java/com/compagnonsdudev/kafkasqlexplorer/domain'
 
 # @java <Name> in the doc comment preceding an interface / type alias.
 TS_BLOCK = re.compile(
