@@ -462,10 +462,24 @@ public class KafkaAdminService {
      * every produce anyway. The key carries {@code maxGroups}: it is a configured value today, but
      * a cache keyed on the topic alone would serve a truncated answer to a caller that asked for a
      * wider one, which is precisely the confusion {@code truncated} exists to prevent.
+     *
+     * <p>A <strong>failed</strong> read is not cached ({@code unless}). A brief coordinator blip
+     * otherwise froze the failure for half a minute, and the panel's Refresh button — the one
+     * gesture that exists to retry — replayed the cached error instead of asking again. Caching an
+     * answer is a bet that it is still true; there is no reason to make that bet on "we could not
+     * ask", and the Prometheus poller re-reads on the same period.
      */
-    @Cacheable(value = "topicConsumers", key = "#topic + '@' + #maxGroups")
+    @Cacheable(value = "topicConsumers", key = "#topic + '@' + #maxGroups",
+               unless = "!#result.available()")
     public TopicConsumers getTopicConsumers(String topic, int maxGroups) {
-        return getTopicConsumers(topic, groupSnapshot(maxGroups, null));
+        // The partitions are resolved *before* the snapshot, and not only to assemble the result:
+        // they are what restricts the offset fetch to this topic. Taking the snapshot first would
+        // leave nothing to restrict it with, and every group's offsets on every topic of the
+        // cluster would travel back to answer a question about one topic.
+        TopicPartitions resolved = resolvePartitions(topic);
+        if (resolved.error() != null) return TopicConsumers.unavailable(topic, resolved.error());
+        return assemble(topic, resolved.partitions(),
+                groupSnapshot(maxGroups, resolved.partitions()));
     }
 
     /**
@@ -598,20 +612,31 @@ public class KafkaAdminService {
      * {@link #getTopicConsumers(String, int)}.
      */
     public TopicConsumers getTopicConsumers(String topic, GroupSnapshot snapshot) {
-        List<TopicPartition> partitions;
+        TopicPartitions resolved = resolvePartitions(topic);
+        if (resolved.error() != null) return TopicConsumers.unavailable(topic, resolved.error());
+        return assemble(topic, resolved.partitions(), snapshot);
+    }
+
+    /** A topic's partitions, or the reason they could not be read — never both. */
+    private record TopicPartitions(List<TopicPartition> partitions, String error) {
+    }
+
+    private TopicPartitions resolvePartitions(String topic) {
         try {
             TopicDescription description = adminClient.describeTopics(List.of(topic))
                     .allTopicNames().get(5, TimeUnit.SECONDS).get(topic);
             if (description == null) {
-                return TopicConsumers.unavailable(topic, "Topic '" + topic + "' does not exist.");
+                return new TopicPartitions(List.of(), "Topic '" + topic + "' does not exist.");
             }
-            partitions = description.partitions().stream()
+            return new TopicPartitions(description.partitions().stream()
                     .map(p -> new TopicPartition(topic, p.partition()))
-                    .toList();
+                    .toList(), null);
         } catch (Exception e) {
-            return TopicConsumers.unavailable(topic, "Could not describe the topic: " + rootMessage(e));
+            return new TopicPartitions(List.of(), "Could not describe the topic: " + rootMessage(e));
         }
+    }
 
+    private TopicConsumers assemble(String topic, List<TopicPartition> partitions, GroupSnapshot snapshot) {
         if (snapshot.failure() != null) {
             return TopicConsumers.unavailable(topic, snapshot.failure());
         }

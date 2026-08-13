@@ -132,6 +132,16 @@ de configuration alimente les trois appelants), mais c'est le genre d'hypothèse
 
 *Correctif* : la clé porte `maxGroups`.
 
+### B11 — `KafkaSnapshotReader` reposait le nom du groupe et l'interdiction de commiter à la main
+
+`ExplorerConsumerGroups.configure()` existe pour une raison énoncée dans sa javadoc : poser le
+`group.id` et `enable.auto.commit=false` **ensemble**, « pour que les deux ne puissent plus diverger ».
+Ce lecteur les posait séparément — le nom fabriqué dans `consume()`, l'auto-commit dans
+`buildConsumerProperties()` — donc correct aujourd'hui, et exactement la structure qui a produit les
+groupes fantômes hier.
+
+*Correctif* : un seul appel à `configure(props, "snapshot")`, le paramètre `groupId` disparaît.
+
 ## Optimisation
 
 ### O1 — L'audit relisait tous les groupes du cluster, une fois par topic
@@ -146,6 +156,22 @@ de 30 s n'aidait pas : il est indexé par topic, et une passe d'audit dure des m
 run ; `getTopicConsumers(topic, snapshot)` en dérive la vue d'un topic en ne lisant que ses end
 offsets. `restrictTo = null` récupère les offsets de tous les topics dans le même appel, ce qui est
 ce qui rend la photo réutilisable. L'endpoint HTTP, lui, garde la restriction à un topic.
+
+**Ce dernier point a failli être perdu dans la refonte** : la première version résolvait les
+partitions du topic *après* avoir pris la photo, donc n'avait plus rien avec quoi la restreindre et
+passait `null` — une lecture mono-topic rapatriait les offsets de tous les groupes sur tous les
+topics. `resolvePartitions` est appelé en premier, et
+`restrictsTheOffsetFetchToTheTopicItWasAskedAbout` épingle la restriction, faute de quoi rien dans la
+structure du code ne l'impose.
+
+### O2 — Une lecture échouée était mise en cache 30 s
+
+`@Cacheable` mémorisait aussi les réponses `unavailable`. Un incident réseau bref figeait donc
+l'erreur une demi-minute, et le bouton **Refresh** du panneau — le seul geste qui existe pour
+réessayer — rejouait l'erreur en cache au lieu de reposer la question. Mettre une réponse en cache,
+c'est parier qu'elle est encore vraie ; ce pari n'a aucun sens sur « on n'a pas pu demander ».
+
+*Correctif* : `unless = "!#result.available()"`.
 
 **Ce que ça coûte, dit explicitement** : les positions commitées datent du début du run, les end
 offsets de l'instant où chaque topic est audité. Un retard ne peut donc être que **surestimé**, jamais
@@ -169,9 +195,6 @@ pour fermer, et qui a déjà coûté la page Compare une fois. Les trois formes 
   portée dit ce qui est mesuré ; c'est le compromis retenu.
 - **`getTopicConsumers` redécrit le topic** alors que `getTopicDescriptor` est en cache. Un appel
   admin par topic, négligeable devant ce que O1 vient de retirer.
-- **Une réponse `unavailable` est mise en cache 30 s** comme les autres. Un incident réseau bref fige
-  donc l'erreur une demi-minute. Défendable (le bouton Refresh existe), mais c'est un choix qui n'a
-  jamais été fait explicitement.
 - **Les groupes SHARE (KIP-932) restent hors périmètre.** Leur position vit dans le coordinateur de
   share groups ; les afficher demanderait `describeShareGroups`, pas un contournement.
 - **Aucune limite sur la taille du snapshot non restreint.** Un cluster où un groupe suit des dizaines

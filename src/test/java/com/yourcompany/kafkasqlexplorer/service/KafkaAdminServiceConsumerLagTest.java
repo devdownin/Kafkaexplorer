@@ -10,6 +10,7 @@ import org.apache.kafka.clients.admin.DescribeConsumerGroupsResult;
 import org.apache.kafka.clients.admin.DescribeTopicsResult;
 import org.apache.kafka.clients.admin.GroupListing;
 import org.apache.kafka.clients.admin.ListConsumerGroupOffsetsResult;
+import org.apache.kafka.clients.admin.ListConsumerGroupOffsetsSpec;
 import org.apache.kafka.clients.admin.ListGroupsResult;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
 import org.apache.kafka.clients.admin.MemberAssignment;
@@ -35,11 +36,14 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.*;
+import org.mockito.ArgumentCaptor;
+
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -497,6 +501,31 @@ class KafkaAdminServiceConsumerLagTest {
         TopicConsumers empty = service.getTopicConsumers(TOPIC, 200);
         assertTrue(empty.available(), "the cluster answered: it simply holds no group");
         assertTrue(empty.groups().isEmpty());
+    }
+
+    /*
+     * Lire un topic ne doit pas rapatrier les offsets de tous les autres. La photo partagée par
+     * l'audit, elle, est volontairement non restreinte — c'est ce qui la rend réutilisable — donc
+     * rien n'empêche structurellement le chemin mono-topic d'hériter de cette absence de
+     * restriction : d'où ce test, qui vérifie que la demande porte bien les partitions du topic.
+     */
+    @SuppressWarnings("unchecked")
+    @Test
+    void restrictsTheOffsetFetchToTheTopicItWasAskedAbout() {
+        topicWithPartitions(2);
+        groups(group("orders-service", GroupType.CLASSIC));
+        described(Map.of("orders-service", description("orders-service", member("m1", "h1", 0))));
+        committed(Map.of("orders-service", Map.of(0, 40L)));
+        endOffsets(Map.of(0, 100L, 1, 100L));
+
+        service.getTopicConsumers(TOPIC, 200);
+
+        ArgumentCaptor<Map<String, ListConsumerGroupOffsetsSpec>> specs =
+                ArgumentCaptor.forClass(Map.class);
+        verify(admin).listConsumerGroupOffsets(specs.capture());
+        assertEquals(List.of(new TopicPartition(TOPIC, 0), new TopicPartition(TOPIC, 1)),
+                specs.getValue().get("orders-service").topicPartitions(),
+                "an unrestricted fetch would return every topic's offsets to answer about one");
     }
 
     /*
