@@ -408,6 +408,41 @@ class KafkaAdminServiceConsumerLagTest {
             "the live group must survive the cap even though it sorts last");
     }
 
+    /*
+     * La sélection des groupes supprimables : c'est le seul endroit où cette application écrit sur
+     * un cluster, donc ce qu'elle refuse de toucher compte plus que ce qu'elle supprime.
+     */
+    @Test
+    void onlyOffersItsOwnDormantGroupsForDeletion() {
+        groups(
+            dormantGroup("kafka-explorer-metadata-1"),      // à nous, vide → supprimable
+            dormantGroup("kafka-sql-explorer-timestamps-9"), // ancien schéma, vide → supprimable
+            group("kafka-explorer-live-session-7", GroupType.CONSUMER), // à nous, mais STABLE
+            dormantGroup("orders-service"),                  // vide, mais pas à nous
+            group("payments", GroupType.CLASSIC));           // ni l'un ni l'autre
+
+        assertEquals(List.of("kafka-explorer-metadata-1", "kafka-sql-explorer-timestamps-9"),
+            service.listDeletableExplorerGroups(100));
+    }
+
+    /** Le plafond est une borne dure, pas une indication. */
+    @Test
+    void neverOffersMoreThanTheCap() {
+        groups(dormantGroup("kafka-explorer-a"), dormantGroup("kafka-explorer-b"),
+               dormantGroup("kafka-explorer-c"));
+
+        assertEquals(2, service.listDeletableExplorerGroups(2).size());
+        assertEquals(List.of(), service.listDeletableExplorerGroups(0));
+    }
+
+    /** Un broker qui ne répond pas ne fait pas supprimer au hasard : la liste est vide. */
+    @Test
+    void offersNothingWhenTheGroupsCannotBeListed() {
+        when(admin.listGroups(any())).thenThrow(new IllegalStateException("broker unreachable"));
+
+        assertEquals(List.of(), service.listDeletableExplorerGroups(100));
+    }
+
     @Test
     void reportsANegativeLagInsteadOfHidingIt() {
         topicWithPartitions(1);

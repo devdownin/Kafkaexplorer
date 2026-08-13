@@ -79,6 +79,13 @@ explorer:
   # Consumer lag (GET /api/topic/{name}/consumers, and the audit's consumer-lag check). Each group
   # costs a coordinator lookup, so the read is capped and the response says when the cap bit.
   consumer-group-max-groups: 200
+  # Deletes, at startup, the consumer groups older builds left on the cluster (they committed
+  # offsets under a random group id on every metadata read). This is the only write this
+  # application ever makes to a cluster: off by default, and restricted to groups that carry one
+  # of our names AND that the broker reports EMPTY or DEAD — a live session holds members and is
+  # never touched. Bounded per pass, and every deleted id is logged.
+  cleanup-own-groups: false
+  cleanup-own-groups-max: 500
   # Topics whose consumer lag is exported as Prometheus gauges — named explicitly, never
   # discovered: one series per group x topic is how a metrics backend gets killed. Empty (the
   # default) registers no gauge and starts no polling thread. Example:
