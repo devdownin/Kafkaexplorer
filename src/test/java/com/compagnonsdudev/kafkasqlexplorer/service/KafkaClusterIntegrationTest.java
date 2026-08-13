@@ -25,7 +25,7 @@ import java.util.Properties;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * End-to-end checks against a real Kafka 4.2 broker (KRaft, native image) that the
+ * End-to-end checks against a real Kafka 4.3 broker (KRaft, native image) that the
  * mocked unit suite cannot cover: the kafka-clients 4.x admin surface used by
  * {@link KafkaAdminService} (metadata quorum, group listing, feature lag), record
  * sampling through the ConsumerRecord copy path, and a KIP-848 consumer actually
@@ -38,7 +38,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class KafkaClusterIntegrationTest {
 
     @Container
-    static final KafkaContainer KAFKA = new KafkaContainer(DockerImageName.parse("apache/kafka-native:4.2.0"));
+    static final KafkaContainer KAFKA = new KafkaContainer(DockerImageName.parse("apache/kafka-native:4.3.1"));
 
     private static final String TOPIC = "it.orders.json";
 
@@ -102,7 +102,7 @@ class KafkaClusterIntegrationTest {
 
         assertNotNull(details.get("groups"), "Kafka 4 broker must support ListGroups");
 
-        // A freshly formatted 4.2 broker finalizes metadata.version at the release level:
+        // A freshly formatted 4.3 broker finalizes metadata.version at the release level:
         // it must never be reported as lagging (that signal is reserved for real
         // half-finished rolling upgrades).
         List<Map<String, Object>> lagging = adminService.getLaggingFeatures();

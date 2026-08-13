@@ -381,7 +381,7 @@ identiques.
 `ollama/ollama:latest` est passé à `0.32.6` au passage : c'était le dernier tag réellement flottant
 de l'arbre, dans une stack censée être reproductible.
 
-Les images de service des stacks Compose (`apache/kafka:4.2.0`, `cp-schema-registry:7.6.0`) gardent
+Les images de service des stacks Compose (`apache/kafka:4.3.1`, `cp-schema-registry:7.6.0`) gardent
 leur tag de version, déjà exact. Elles pourraient l'être aussi par digest via l'écosystème
 `docker-compose` de Dependabot — non fait ici pour ne pas ajouter une configuration dont la prise en
 charge dépend de l'instance.

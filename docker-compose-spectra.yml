@@ -49,7 +49,7 @@ services:
   # Named `explorer-kafka` to avoid merging with SpectraLLM's profile-gated
   # `kafka` service that the include also carries.
   explorer-kafka:
-    image: apache/kafka:4.2.0
+    image: apache/kafka:4.3.1
     ports:
       - "${BIND_ADDR:-127.0.0.1}:${KAFKA_PORT:-9092}:9092"
     # A stopping KRaft node flushes its logs and closes the group / share-state
@@ -109,7 +109,7 @@ services:
   # The apache/kafka image runs as the non-root `appuser`, but Docker creates a
   # fresh named volume owned by root — chown it once before the broker starts.
   kafka-data-init:
-    image: apache/kafka:4.2.0
+    image: apache/kafka:4.3.1
     user: root
     volumes:
       - kafka_data:/var/lib/kafka/data
@@ -117,7 +117,7 @@ services:
 
   # ── Seed demo topics (70+) ────────────────────────────────────────────────
   demo-setup:
-    image: apache/kafka:4.2.0
+    image: apache/kafka:4.3.1
     depends_on:
       explorer-kafka:
         condition: service_healthy
@@ -146,7 +146,7 @@ services:
         condition: service_healthy
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=explorer-kafka:29092
-      # Bundled broker is Kafka 4.2 — use the KIP-848 rebalance protocol for the live consumer
+      # Bundled broker is Kafka 4.3 — use the KIP-848 rebalance protocol for the live consumer
       - KAFKA_CONSUMER_GROUP_PROTOCOL=consumer
       - CLAUDE_PROVIDER=SPECTRA
       - CLAUDE_BASE_URL=http://spectra-api:8080
