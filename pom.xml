@@ -7,7 +7,7 @@
 		<version>4.1.0</version>
 		<relativePath/>
 	</parent>
-	<groupId>com.yourcompany</groupId>
+	<groupId>com.compagnonsdudev</groupId>
 	<artifactId>kafka-sql-explorer</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
 	<name>kafka-sql-explorer</name>

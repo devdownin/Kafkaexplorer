@@ -1,0 +1,1564 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Kafka Explorer Contributors
+package com.compagnonsdudev.kafkasqlexplorer.service;
+
+import com.compagnonsdudev.kafkasqlexplorer.domain.FlinkManagedJobDetails;
+import com.compagnonsdudev.kafkasqlexplorer.domain.FlinkJobSummary;
+import com.compagnonsdudev.kafkasqlexplorer.domain.MessageFormat;
+import com.compagnonsdudev.kafkasqlexplorer.domain.QueryRequest;
+import com.compagnonsdudev.kafkasqlexplorer.domain.QueryResult;
+import com.compagnonsdudev.kafkasqlexplorer.config.ExplorerConfig;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.api.common.JobStatus;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.apache.flink.core.execution.JobClient;
+import org.apache.flink.table.api.TableEnvironment;
+import org.apache.flink.table.api.TableResult;
+import org.apache.flink.types.Row;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import jakarta.annotation.PreDestroy;
+
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+
+/**
+ * Core service for executing SQL statements using the embedded Apache Flink engine.
+ * This service manages the lifecycle of Flink jobs and provides an abstraction for
+ * running queries against Kafka topics registered as dynamic tables.
+ */
+@Service
+public class FlinkSqlService {
+
+    private static final Logger log = LoggerFactory.getLogger(FlinkSqlService.class);
+    private final TableEnvironment tableEnv;
+    private final FlinkRuntimeCoordinator runtimeCoordinator;
+    private final ExplorerConfig explorerConfig;
+    private final SqlQueryValidator sqlQueryValidator;
+    private final KafkaAdminService kafkaAdminService;
+    private final SchemaInferenceService schemaInferenceService;
+    private final DdlGeneratorService ddlGeneratorService;
+    private final FlinkJobStore flinkJobStore;
+
+    /**
+     * Dedicated executor for fetching results from Flink to avoid blocking Spring's main threads
+     * or polluting the common ForkJoinPool.
+     */
+    private final ExecutorService queryExecutor = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r);
+        t.setName("flink-query-fetcher-" + t.getId());
+        t.setDaemon(true);
+        return t;
+    });
+
+    /**
+     * Stores metadata about currently running Flink jobs.
+     * This is crucial for lineage tracking and manual job cancellation.
+     */
+    private final Map<String, JobInfo> activeJobs = new ConcurrentHashMap<>();
+
+    /**
+     * Circuit breaker for the Flink SELECT path. If the planner keeps failing (e.g. the
+     * historical FlinkRelMetadataQuery NPE is still present in the running Flink version),
+     * we stop attempting it after {@link #FLINK_SELECT_FAILURE_THRESHOLD} failures so every
+     * SELECT does not pay the cost of a planner attempt before falling back to the direct
+     * Kafka reader. Reset on process restart.
+     */
+    private static final int FLINK_SELECT_FAILURE_THRESHOLD = 3;
+
+    /**
+     * Floor on the wait for the Flink runtime, whatever the query's own timeout is. Entering a free
+     * runtime costs milliseconds; this only matters when several statements arrive at once, and a
+     * caller with a 1 s timeout should still be allowed to queue briefly rather than fail on the
+     * spot.
+     */
+    private static final long MIN_RUNTIME_WAIT_MS = 5_000;
+
+    /**
+     * Shape a client-supplied query id must have to be trusted as a job key. Anything else is
+     * replaced by a server-generated one — the id ends up in the job store and in log lines, so
+     * it must not carry arbitrary text.
+     */
+    private static final Pattern CLIENT_QUERY_ID = Pattern.compile("[A-Za-z0-9_-]{8,64}");
+
+    /**
+     * A windowed table function call. The table may carry a {@code PARTITION BY} (SESSION), and the
+     * trailing group collects every INTERVAL argument: HOP takes (slide, size) and CUMULATE takes
+     * (step, max), so the bucket width is always the last one.
+     */
+    private static final Pattern WINDOW_CALL = Pattern.compile(
+        "(?i)\\b(TUMBLE|HOP|CUMULATE|SESSION)\\s*\\(\\s*TABLE\\s+(\\w[\\w.]*)"
+            + "(?:\\s+PARTITION\\s+BY\\s+[^,]+)?\\s*,\\s*DESCRIPTOR\\s*\\(\\s*(\\w+)\\s*\\)"
+            + "((?:\\s*,\\s*INTERVAL\\s+'\\d+'\\s+\\w+)+)\\s*\\)");
+
+    /** First table named after FROM — backticked, quoted or bare. */
+    private static final Pattern FROM_TABLE = Pattern.compile("(?i)\\bFROM\\s+[`\"]?([\\w.\\-]+)[`\"]?");
+
+    /** One INTERVAL argument of a window call. Flink accepts both MINUTE and MINUTES. */
+    private static final Pattern WINDOW_INTERVAL = Pattern.compile(
+        "(?i)INTERVAL\\s+'(\\d+)'\\s+(MINUTE|HOUR|SECOND|DAY)S?");
+
+    /** "Object 'x' not found" / "Table 'x' not found" — the planner's way of saying it has no such table. */
+    private static final Pattern UNKNOWN_OBJECT = Pattern.compile(
+        "(?:object|table)\\s+['\"][^'\"]*['\"]\\s+not found|does not exist", Pattern.CASE_INSENSITIVE);
+
+    private final java.util.concurrent.atomic.AtomicInteger flinkSelectFailures = new java.util.concurrent.atomic.AtomicInteger(0);
+    private volatile boolean flinkSelectDisabled = false;
+
+    public static final class JobInfo {
+        private final String queryId;
+        private final String sql;
+        private final String statementType;
+        private final String executionMode;
+        private final JobClient client;
+        private final String flinkJobId;
+        private final long startedAt;
+        private volatile Long endedAt;
+        private volatile boolean cancelRequested;
+        private volatile Long cancelRequestedAt;
+
+        public JobInfo(String queryId, String sql, String statementType, String executionMode, JobClient client, long startedAt) {
+            this.queryId = queryId;
+            this.sql = sql;
+            this.statementType = statementType;
+            this.executionMode = executionMode;
+            this.client = client;
+            this.flinkJobId = client.getJobID().toString();
+            this.startedAt = startedAt;
+        }
+
+        public String queryId() { return queryId; }
+        public String sql() { return sql; }
+        public String statementType() { return statementType; }
+        public String executionMode() { return executionMode; }
+        public JobClient client() { return client; }
+        public String flinkJobId() { return flinkJobId; }
+        public long startedAt() { return startedAt; }
+        public Long endedAt() { return endedAt; }
+        public boolean cancelRequested() { return cancelRequested; }
+        public Long cancelRequestedAt() { return cancelRequestedAt; }
+        public void markCancelRequested() {
+            this.cancelRequested = true;
+            this.cancelRequestedAt = System.currentTimeMillis();
+        }
+        public void markEnded(long endedAt) { this.endedAt = endedAt; }
+    }
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
+    /**
+     * Secure XML parser, one per thread: building a DocumentBuilderFactory per message is
+     * far too expensive when an aggregate query parses up to 100 000 XML payloads.
+     * (DocumentBuilder and its factory are not thread-safe; reset() before each parse.)
+     */
+    private static final ThreadLocal<DocumentBuilder> XML_BUILDERS =
+        ThreadLocal.withInitial(FlinkSqlService::createSecureDocumentBuilder);
+
+    private static DocumentBuilder createSecureDocumentBuilder() {
+        try {
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+            factory.setXIncludeAware(false);
+            factory.setExpandEntityReferences(false);
+            return factory.newDocumentBuilder();
+        } catch (Exception e) {
+            throw new IllegalStateException("Cannot create secure XML parser", e);
+        }
+    }
+
+    @Autowired
+    public FlinkSqlService(TableEnvironment tableEnv, FlinkRuntimeCoordinator runtimeCoordinator,
+                           ExplorerConfig explorerConfig, SqlQueryValidator sqlQueryValidator,
+                           KafkaAdminService kafkaAdminService, SchemaInferenceService schemaInferenceService,
+                           DdlGeneratorService ddlGeneratorService, FlinkJobStore flinkJobStore) {
+        this.tableEnv = tableEnv;
+        this.runtimeCoordinator = runtimeCoordinator;
+        this.explorerConfig = explorerConfig;
+        this.sqlQueryValidator = sqlQueryValidator;
+        this.kafkaAdminService = kafkaAdminService;
+        this.schemaInferenceService = schemaInferenceService;
+        this.ddlGeneratorService = ddlGeneratorService;
+        this.flinkJobStore = flinkJobStore;
+        // Register our custom XML extraction function globally in the Flink environment.
+        runtimeCoordinator.runMutation("register-xml-extract-udf", () ->
+            this.tableEnv.createTemporarySystemFunction("XmlExtract", XmlExtractUDF.class)
+        );
+    }
+
+    public List<String> listTables() {
+        return runtimeCoordinator.runRead("list-tables", () -> Arrays.asList(tableEnv.listTables()));
+    }
+
+    public List<String> listViews() {
+        return runtimeCoordinator.runRead("list-views", () -> Arrays.asList(tableEnv.listViews()));
+    }
+
+    public Map<String, String> getTableSchema(String tableName) {
+        try {
+            return runtimeCoordinator.runRead("get-table-schema", () -> {
+                Map<String, String> schema = new LinkedHashMap<>();
+                tableEnv.from(tableName).getResolvedSchema().getColumns().forEach(col -> {
+                    schema.put(col.getName(), col.getDataType().toString());
+                });
+                return schema;
+            });
+        } catch (RuntimeException e) {
+            log.debug("Table not found: {}", tableName);
+            return new LinkedHashMap<>();
+        }
+    }
+
+    /**
+     * @param waitMs how long the caller may wait to get onto the Flink runtime. A synchronous query
+     *               passes its own budget: waiting three times the query timeout just to reach the
+     *               planner, and only then starting to count, is not what the timeout promises.
+     */
+    private TableResult executeManagedSql(String operationName, String statementType, String sql, long waitMs) {
+        if ("EXPLAIN".equals(statementType)) {
+            return runtimeCoordinator.runRead(operationName, () -> tableEnv.executeSql(sql), waitMs);
+        }
+        return runtimeCoordinator.runMutation(operationName, () -> tableEnv.executeSql(sql), waitMs);
+    }
+
+    protected TableResult executeMutationSql(String operationName, String sql) {
+        return runtimeCoordinator.runMutation(operationName, () -> tableEnv.executeSql(sql));
+    }
+
+    /**
+     * Executes a Flink SQL statement and returns the results as a QueryResult.
+     *
+     * IMPORTANT: Since Flink streaming queries are technically infinite, we use a
+     * combination of LIMIT and TIMEOUT to ensure the web request returns in a
+     * reasonable timeframe.
+     */
+    /**
+     * Flink SQL uses backtick-quoted identifiers (e.g. `demo.customers`).
+     * Standard SQL and many editors produce double-quoted identifiers ("demo.customers").
+     * This method converts double-quoted identifiers to backtick-quoted ones while
+     * leaving single-quoted string literals untouched.
+     */
+    private String normalizeIdentifierQuotes(String sql) {
+        if (sql == null || !sql.contains("\"")) return sql;
+        StringBuilder sb = new StringBuilder(sql.length());
+        boolean inSingleQuote = false;
+        for (int i = 0; i < sql.length(); i++) {
+            char c = sql.charAt(i);
+            if (c == '\'' ) {
+                if (inSingleQuote && i + 1 < sql.length() && sql.charAt(i + 1) == '\'') {
+                    sb.append("''");  // escaped single quote inside string
+                    i++;
+                } else {
+                    inSingleQuote = !inSingleQuote;
+                    sb.append(c);
+                }
+            } else if (c == '"' && !inSingleQuote) {
+                sb.append('`');  // double-quote identifier → backtick
+            } else {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
+    }
+
+    /**
+     * @param error                  non-null when a matching Kafka topic was found but registering
+     *                               it as a Flink table failed; the query stops there.
+     * @param registered             a table was created, so the UI should refresh its schema browser.
+     * @param deferredToDirectReader the Kafka topic exists but was deliberately left unregistered,
+     *                               so the Flink planner is expected to report it as unknown.
+     *                               Without this flag that "not found" reads as a user typo and the
+     *                               query would be rejected instead of falling back to the direct
+     *                               reader that was meant to serve it.
+     */
+    private record AutoRegResult(String error, boolean registered, boolean deferredToDirectReader) {
+        static AutoRegResult skip()          { return new AutoRegResult(null,  false, false); }
+        static AutoRegResult tableCreated()  { return new AutoRegResult(null,  true,  false); }
+        static AutoRegResult fail(String e)  { return new AutoRegResult(e,     false, false); }
+        static AutoRegResult deferToDirect() { return new AutoRegResult(null,  false, true);  }
+    }
+
+    /**
+     * The table a SELECT actually reads from.
+     *
+     * <p>Matching on FROM alone is wrong for a windowed query: {@code FROM TABLE(TUMBLE(TABLE
+     * orders, …))} yields the keyword {@code TABLE}, so no topic ever matched, the table was never
+     * registered, and the planner's resulting "Object 'orders' not found" looked exactly like a
+     * typo. The window call is therefore consulted first — it carries the real name.
+     */
+    private String extractPrimaryTable(String sql) {
+        Matcher window = WINDOW_CALL.matcher(sql);
+        if (window.find()) return window.group(2);
+        Matcher from = FROM_TABLE.matcher(sql);
+        return from.find() ? from.group(1) : null;
+    }
+
+    /**
+     * Before executing a SELECT, checks if the referenced table is already registered in Flink.
+     * If not, looks for a Kafka topic whose sanitized name (dots/hyphens → underscores) matches,
+     * infers its schema, generates the DDL and registers it automatically.
+     */
+    private AutoRegResult autoRegisterTableIfNeeded(String sql) {
+        // Past a leading CTE chain: a `WITH … SELECT` skipped registration entirely, so the topic
+        // its body reads was never registered and the planner answered "Object not found" — which
+        // is how supporting CTEs at the guard alone would have produced a different dead end.
+        if (!SqlStatements.classifiableBody(sql).startsWith("SELECT")) return AutoRegResult.skip();
+        // The first FROM is inside the CTE body, which is exactly the source table to register.
+        String rawTableRef = extractPrimaryTable(sql);
+        if (rawTableRef == null) return AutoRegResult.skip();
+
+        String flinkTableName = DdlGeneratorService.toTableName(rawTableRef);
+
+        if (listTables().contains(flinkTableName)) return AutoRegResult.skip();
+
+        List<String> topics;
+        try {
+            topics = kafkaAdminService.listTopics();
+        } catch (Exception e) {
+            log.warn("Could not list Kafka topics during auto-registration: {}", e.getMessage());
+            return AutoRegResult.fail("Cannot reach Kafka broker: " + e.getMessage());
+        }
+
+        String matchingTopic = topics.stream()
+                .filter(t -> DdlGeneratorService.toTableName(t).equals(flinkTableName))
+                .findFirst().orElse(null);
+
+        // No matching topic — the user may have typed a wrong name; let Flink report the error.
+        if (matchingTopic == null) return AutoRegResult.skip();
+
+        try {
+            MessageFormat format = schemaInferenceService.detectFormat(matchingTopic);
+            Map<String, String> schema = schemaInferenceService.inferSchema(matchingTopic, format);
+            if (schema.isEmpty() && format != MessageFormat.XML) {
+                // No schema could be inferred (empty topic or unreadable messages).
+                // Skip Flink registration — KAFKA_DIRECT will read the topic directly.
+                log.info("Skipping auto-registration for '{}': schema inference returned empty (topic may be empty)", matchingTopic);
+                return AutoRegResult.deferToDirect();
+            }
+            String ddl = ddlGeneratorService.generateDdl(matchingTopic, schema, format);
+            if (ddl == null || !ddl.startsWith("CREATE TABLE")) {
+                return AutoRegResult.fail("DDL Generator produced invalid SQL for topic " + matchingTopic);
+            }
+            log.debug("Auto-registering table '{}' with DDL:\n{}", flinkTableName, ddl);
+            executeMutationSql("auto-register-table", ddl);
+            log.info("Auto-registered table '{}' for Kafka topic '{}'", flinkTableName, matchingTopic);
+            return AutoRegResult.tableCreated();
+        } catch (Exception e) {
+            log.error("Auto-registration failed for topic '{}' (table '{}'): {}", matchingTopic, flinkTableName, e.getMessage(), e);
+            return AutoRegResult.fail(String.format(
+                "Failed to auto-register Flink table '%s' from Kafka topic '%s': %s",
+                flinkTableName, matchingTopic, e.getMessage()));
+        }
+    }
+
+    /**
+     * Strips SQL line comments (-- ...) and block comments (/* ... *&#47;) from a SQL string.
+     * Used before keyword checks so that leading comments don't cause false rejections.
+     * Note: does not handle comments inside string literals (rare in practice).
+     */
+    private String stripSqlComments(String sql) {
+        if (sql == null) return null;
+        // Remove block comments /* ... */
+        sql = sql.replaceAll("/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/", " ");
+        // Remove line comments -- ... to end of line
+        sql = sql.replaceAll("--[^\n]*", "");
+        return sql.trim();
+    }
+
+    private String extractStatementType(String sql) {
+        if (sql == null || sql.isBlank()) return "UNKNOWN";
+        // Classified past a leading CTE chain, so `WITH … INSERT INTO` and `WITH … SELECT` are
+        // routed like the statements they actually are.
+        String upper = SqlStatements.classifiableBody(stripSqlComments(sql));
+        if (upper.startsWith("INSERT INTO")) return "INSERT";
+        if (upper.startsWith("CREATE TABLE")) return "CREATE_TABLE";
+        if (upper.startsWith("SELECT")) return "SELECT";
+        if (upper.startsWith("EXPLAIN")) return "EXPLAIN";
+        return upper.split("\\s+", 2)[0];
+    }
+
+    private FlinkJobSummary buildJobSummary(JobInfo info) {
+        String status = "UNKNOWN";
+        try {
+            JobStatus flinkStatus = info.client().getJobStatus().get(150, TimeUnit.MILLISECONDS);
+            status = flinkStatus.name();
+            if (flinkStatus.isGloballyTerminalState() && info.endedAt() == null) {
+                info.markEnded(System.currentTimeMillis());
+            }
+        } catch (Exception e) {
+            status = info.cancelRequested() ? "CANCEL_REQUESTED" : "UNKNOWN";
+        }
+
+        if (info.cancelRequested() && "RUNNING".equals(status)) {
+            status = "CANCELLING";
+        }
+
+        return new FlinkJobSummary(
+            info.queryId(),
+            info.flinkJobId(),
+            info.statementType(),
+            status,
+            info.sql(),
+            info.startedAt(),
+            info.endedAt(),
+            info.cancelRequested()
+        );
+    }
+
+    private void persistJobSnapshot(JobInfo info, FlinkJobSummary summary, String statusDetail, String errorMessage) {
+        FlinkManagedJobDetails updated = flinkJobStore.update(
+            info.queryId(),
+            summary.status(),
+            statusDetail,
+            errorMessage,
+            summary.cancelRequested(),
+            info.cancelRequestedAt(),
+            summary.endedAt(),
+            info.flinkJobId()
+        );
+        if (updated == null) {
+            flinkJobStore.create(
+                info.queryId(),
+                info.flinkJobId(),
+                info.statementType(),
+                info.executionMode(),
+                summary.status(),
+                statusDetail,
+                info.sql(),
+                info.startedAt(),
+                errorMessage
+            );
+        }
+    }
+
+    private void syncPersistedJobs() {
+        // buildJobSummary blocks up to 150ms on the Flink status call per job, so a serial sweep of
+        // N jobs would block up to N×150ms. Poll the statuses in parallel; keep persistence serial
+        // (single writer to the job store) and remove jobs that have reached a terminal state.
+        List<Map.Entry<String, JobInfo>> entries = new ArrayList<>(activeJobs.entrySet());
+        if (entries.isEmpty()) return;
+
+        Map<String, FlinkJobSummary> summaries = entries.stream()
+            .map(e -> CompletableFuture.supplyAsync(
+                () -> Map.entry(e.getKey(), buildJobSummary(e.getValue())), queryExecutor))
+            .toList().stream()
+            .map(CompletableFuture::join)
+            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+        for (Map.Entry<String, JobInfo> e : entries) {
+            JobInfo info = e.getValue();
+            FlinkJobSummary summary = summaries.get(e.getKey());
+            String statusDetail = summary.cancelRequested() ? "Cancellation requested by user" : null;
+            persistJobSnapshot(info, summary, statusDetail, null);
+            if (summary.endedAt() != null) {
+                activeJobs.remove(e.getKey());
+            }
+        }
+    }
+
+    private String prepareSql(String sql) {
+        return stripSqlComments(normalizeIdentifierQuotes(sql.trim()));
+    }
+
+    public QueryResult executeSync(QueryRequest request) {
+        String strippedSql = prepareSql(request.sql());
+        if ("INSERT".equals(extractStatementType(strippedSql))) {
+            return new QueryResult(
+                Collections.emptyList(),
+                Collections.emptyList(),
+                0,
+                "INSERT INTO statements must be submitted via /api/query/jobs in Flink Job mode."
+            );
+        }
+        return executeSql(request);
+    }
+
+    public FlinkJobSummary submitJob(QueryRequest request) {
+        long startedAt = System.currentTimeMillis();
+        String queryId = UUID.randomUUID().toString();
+        String strippedSql = prepareSql(request.sql());
+        String statementType = extractStatementType(strippedSql);
+
+        if (!"INSERT".equals(statementType)) {
+            flinkJobStore.create(
+                queryId,
+                null,
+                statementType,
+                "ASYNC_JOB",
+                "FAILED",
+                "Rejected before execution",
+                strippedSql,
+                startedAt,
+                "Only INSERT INTO statements are allowed in Flink Job mode."
+            );
+            throw new IllegalArgumentException("Only INSERT INTO statements are allowed in Flink Job mode.");
+        }
+
+        try {
+            sqlQueryValidator.validate(strippedSql);
+
+            TableResult result = executeMutationSql("submit-job", strippedSql);
+            JobClient client = result.getJobClient()
+                .orElseThrow(() -> new IllegalStateException("Flink did not return a JobClient for the submitted job."));
+
+            JobInfo info = new JobInfo(queryId, strippedSql, statementType, "ASYNC_JOB", client, startedAt);
+            activeJobs.put(queryId, info);
+            FlinkJobSummary summary = buildJobSummary(info);
+            flinkJobStore.create(
+                queryId,
+                info.flinkJobId(),
+                statementType,
+                info.executionMode(),
+                summary.status(),
+                "Submitted via Flink Job mode",
+                strippedSql,
+                startedAt,
+                null
+            );
+            persistJobSnapshot(info, summary, "Submitted via Flink Job mode", null);
+            return summary;
+        } catch (RuntimeException e) {
+            flinkJobStore.create(
+                queryId,
+                null,
+                statementType,
+                "ASYNC_JOB",
+                "FAILED",
+                "Submission failed before a Flink JobClient was available",
+                strippedSql,
+                startedAt,
+                e.getMessage()
+            );
+            throw e;
+        }
+    }
+
+    public QueryResult executeSql(QueryRequest request) {
+        long startTime = System.currentTimeMillis();
+        String queryId = resolveQueryId(request.queryId());
+        // Normalize double-quoted identifiers to backticks before any parsing/validation
+        String originalSql = normalizeIdentifierQuotes(request.sql().trim());
+        // Strip comments before keyword checks — a query like "-- comment\nSELECT ..."
+        // must not be rejected because startsWith("SELECT") would fail on the comment line.
+        String strippedSql = stripSqlComments(originalSql);
+        // The guard classifies the statement *past* a leading `WITH … AS ( … )` chain, which is
+        // what made a common table expression impossible to run: it begins with WITH, so it was
+        // refused as if it were dangerous DDL. `withoutLeadingCte` fails closed — a WITH whose
+        // shape it does not recognise comes back unchanged and is refused exactly as before.
+        String sql = SqlStatements.classifiableBody(strippedSql);
+
+        // Security: Prevent execution of dangerous or unsupported DDL/DML.
+        if (!sql.startsWith("SELECT") && !sql.startsWith("EXPLAIN") && !sql.startsWith("CREATE TABLE")) {
+            return new QueryResult(Collections.emptyList(), Collections.emptyList(), 0, "Only SELECT, EXPLAIN and CREATE TABLE statements are allowed.");
+        }
+
+        try {
+            sqlQueryValidator.validate(strippedSql);
+        } catch (IllegalArgumentException e) {
+            return new QueryResult(Collections.emptyList(), Collections.emptyList(), 0, "SQL Validation Error: " + e.getMessage());
+        }
+
+        try {
+            AutoRegResult autoReg = autoRegisterTableIfNeeded(strippedSql);
+            if (autoReg.error() != null) {
+                log.error("Table auto-registration failed — query='{}' error='{}'", request.sql(), autoReg.error());
+                return new QueryResult(Collections.emptyList(), Collections.emptyList(),
+                        System.currentTimeMillis() - startTime, autoReg.error());
+            }
+            String sqlToExecute = strippedSql;
+            String readMode = request.readMode();
+            int limit = request.maxRows() != null ? request.maxRows() : explorerConfig.getDefaultMaxRows();
+            long timeout = request.timeout() != null ? request.timeout() : explorerConfig.getDefaultQueryTimeoutMs();
+
+            boolean isCte = SqlStatements.startsWithCte(sqlToExecute);
+            if (SqlStatements.classifiableBody(sqlToExecute).startsWith("SELECT")) {
+                // Prefer the real Flink planner when enabled and not tripped by the circuit breaker.
+                // The FlinkRelMetadataQuery NPE that historically forced the bypass is version
+                // dependent, so on an *engine* failure we fall back to the in-process direct Kafka
+                // reader and the query still succeeds. A failure caused by the statement itself is
+                // returned instead — see the no-fallback note below.
+                if (explorerConfig.isFlinkSelectEnabled() && !flinkSelectDisabled) {
+                    try {
+                        QueryResult flinkResult = executeViaFlinkPlanner(queryId, sqlToExecute, "SELECT", limit, timeout, startTime);
+                        if (flinkResult.error() == null) {
+                            flinkSelectFailures.set(0);
+                            return autoReg.registered() ? withRegisteredFlag(flinkResult) : flinkResult;
+                        }
+                        // A timeout means the planner worked but the job was slow (empty/large topic):
+                        // fall back for this query, but don't count it toward the circuit breaker.
+                        if (flinkResult.error().startsWith("Query timed out")) {
+                            flinkSelectFailures.set(0);
+                            log.warn("Flink SELECT timed out — falling back to direct Kafka read for this query");
+                        } else {
+                            QueryResult rejected = rejectIfUserError(
+                                flinkResult.error(), sqlToExecute, startTime, autoReg.deferredToDirectReader());
+                            if (rejected != null) return rejected;
+                            recordFlinkSelectFailure(flinkResult.error());
+                        }
+                    } catch (Throwable t) {
+                        QueryResult rejected = rejectIfUserError(
+                            SqlErrorClassifier.explain(t), sqlToExecute, startTime, autoReg.deferredToDirectReader());
+                        if (rejected != null) return rejected;
+                        recordFlinkSelectFailure(t.toString());
+                    }
+                }
+                /*
+                 * A common table expression never falls back to the direct reader.
+                 *
+                 * That reader regex-matches a table name out of `FROM`, so on `WITH recent AS
+                 * (SELECT … FROM orders) SELECT * FROM recent` it would read whichever name it
+                 * happened to match and return **rows** — from the wrong place, or none, with no
+                 * indication that the CTE was never applied. Wrong rows are worse than a refusal,
+                 * which is the whole reason user errors stopped falling back in the first place.
+                 */
+                if (isCte) {
+                    return new QueryResult(Collections.emptyList(), Collections.emptyList(),
+                            System.currentTimeMillis() - startTime,
+                            "This query uses a common table expression, which only the Flink engine can run. "
+                          + "The Flink planner did not answer, so it was not run — rather than reading the "
+                          + "topics directly and returning rows that ignore the WITH clause.");
+                }
+                QueryResult qr = kafkaDirectSelect(sqlToExecute, readMode, limit, startTime);
+                // Propagate auto-registration flag so the frontend can refresh its schema browser.
+                return autoReg.registered() ? withRegisteredFlag(qr) : qr;
+            }
+
+            // CREATE TABLE / EXPLAIN go through the Flink planner directly.
+            return executeViaFlinkPlanner(queryId, sqlToExecute, extractStatementType(sqlToExecute), limit, timeout, startTime);
+        } catch (Exception e) {
+            log.error("Flink SQL execution error — query='{}' error='{}'", request.sql(), e.getMessage(), e);
+            long duration = System.currentTimeMillis() - startTime;
+            return new QueryResult(Collections.emptyList(), Collections.emptyList(), duration,
+                SqlErrorClassifier.explain(e));
+        }
+    }
+
+    /**
+     * Uses the caller's query id when it is well-formed, otherwise mints one.
+     *
+     * <p>A synchronous run only learns a server-generated id from its own response, by which time
+     * the query is over — so cancelling one requires the caller to have named it beforehand.
+     */
+    static String resolveQueryId(String requested) {
+        return requested != null && CLIENT_QUERY_ID.matcher(requested).matches()
+            ? requested
+            : UUID.randomUUID().toString();
+    }
+
+    /**
+     * Returns a failed {@link QueryResult} when the planner rejected the statement itself, or null
+     * when the failure looks like an engine fault the direct reader can work around.
+     *
+     * <p>Falling back on a user error is actively harmful: the direct reader only regex-matches the
+     * table name out of the FROM clause, so {@code SELECT id, FROM orders} or a misspelled column
+     * comes back as a page of rows and the query looks like it worked. The planner already said
+     * precisely what is wrong, with a line and column — that answer is the useful one, and it does
+     * not count toward the circuit breaker either, or three typos would disable the Flink planner
+     * for the rest of the process.
+     */
+    private QueryResult rejectIfUserError(String rawError, String sql, long startTime, boolean deferredToDirectReader) {
+        SqlErrorClassifier.Classification classification = SqlErrorClassifier.classify(rawError);
+        if (!classification.isUserError()) return null;
+        // The topic exists, we chose not to register it, and the planner is only saying so.
+        // That is our doing, not the user's — the direct reader is the intended path here.
+        if (deferredToDirectReader && UNKNOWN_OBJECT.matcher(classification.message()).find()) return null;
+        log.debug("Rejecting invalid SELECT without falling back — query='{}' error='{}'", sql, classification.message());
+        flinkSelectFailures.set(0);
+        return new QueryResult(Collections.emptyList(), Collections.emptyList(),
+            System.currentTimeMillis() - startTime, classification.message(), false, "FLINK");
+    }
+
+    private QueryResult withRegisteredFlag(QueryResult qr) {
+        return new QueryResult(qr.columns(), qr.rows(), qr.durationMs(), qr.error(), true, qr.engine());
+    }
+
+    private void recordFlinkSelectFailure(String reason) {
+        int failures = flinkSelectFailures.incrementAndGet();
+        if (failures >= FLINK_SELECT_FAILURE_THRESHOLD && !flinkSelectDisabled) {
+            flinkSelectDisabled = true;
+            log.warn("Flink SELECT failed {} times (last: {}); disabling the Flink planner path for SELECT "
+                + "for this process and using the direct Kafka reader instead. Restart after upgrading Flink to retry.",
+                failures, reason);
+        } else {
+            log.warn("Flink SELECT failed ({}) — falling back to direct Kafka read", reason);
+        }
+    }
+
+    /**
+     * Executes a statement through the embedded Flink planner and collects up to {@code limit}
+     * rows with a {@code timeout} guard. Returns a {@link QueryResult} whose {@code error()} is
+     * non-null on failure, so SELECT callers can detect it and fall back to the direct Kafka reader.
+     */
+    private QueryResult executeViaFlinkPlanner(String queryId, String finalSql, String statementType,
+                                               int limit, long timeout, long startTime) {
+        TableResult result = null;
+        try {
+            // Le budget d'attente vaut celui de la requête, avec un plancher : sur un runtime
+            // libre, entrer coûte quelques millisecondes ; sur un runtime occupé, l'appelant doit
+            // ressortir avec un message plutôt que d'attendre indéfiniment que la place se libère.
+            long enterBudgetMs = Math.max(MIN_RUNTIME_WAIT_MS, timeout);
+            result = executeManagedSql(
+                "execute-sql-" + statementType.toLowerCase(Locale.ROOT), statementType, finalSql, enterBudgetMs);
+            result.getJobClient().ifPresent(client -> {
+                JobInfo info = new JobInfo(queryId, finalSql, statementType, "SYNC_READ", client, System.currentTimeMillis());
+                activeJobs.put(queryId, info);
+                FlinkJobSummary summary = buildJobSummary(info);
+                flinkJobStore.create(
+                    queryId,
+                    info.flinkJobId(),
+                    statementType,
+                    info.executionMode(),
+                    summary.status(),
+                    "Executed through synchronous exploration mode",
+                    finalSql,
+                    info.startedAt(),
+                    null
+                );
+                persistJobSnapshot(info, summary, "Executed through synchronous exploration mode", null);
+            });
+
+            final TableResult tableResult = result;
+            // result.collect() starts the Flink job and provides an iterator to fetch results.
+            // The iterator is NOT thread-safe and is touched by a single thread only — the fetcher
+            // task below, which also closes it in its finally. Closing it from this (calling) thread
+            // via try-with-resources would race with an in-flight read on timeout, so on timeout we
+            // instead cancel the Flink job to unblock the fetcher and let it close the iterator.
+            final org.apache.flink.util.CloseableIterator<Row> it = result.collect();
+            List<String> columns = result.getResolvedSchema().getColumnNames();
+            log.debug("[FlinkSQL] queryId={} sql='{}' resolvedColumns={} resolvedSchema={}",
+                    queryId, finalSql, columns, result.getResolvedSchema());
+            List<Map<String, Object>> rows;
+
+            // We use a CompletableFuture to implement the timeout logic.
+            // Streaming queries might not produce data immediately, so we don't want to block indefinitely.
+            CompletableFuture<List<Map<String, Object>>> future;
+            try {
+                future = CompletableFuture.supplyAsync(() -> {
+                    try {
+                        List<Map<String, Object>> resultRows = new ArrayList<>();
+                        int count = 0;
+                        while (it.hasNext() && count < limit) {
+                            Row row = it.next();
+                            if (count == 0 && log.isDebugEnabled()) {
+                                log.debug("[FlinkSQL] queryId={} first row arity={} kind={} rowString='{}'",
+                                        queryId, row.getArity(), row.getKind(), row);
+                                for (int i = 0; i < columns.size(); i++) {
+                                    Object field = row.getField(i);
+                                    log.debug("[FlinkSQL] queryId={} col[{}]='{}' valueType={} value='{}'",
+                                            queryId, i, columns.get(i),
+                                            field == null ? "null" : field.getClass().getName(), field);
+                                }
+                            }
+                            Map<String, Object> mapRow = new HashMap<>();
+                            for (int i = 0; i < columns.size(); i++) {
+                                Object field = row.getField(i);
+                                // Convert non-serializable Flink internal types to String to avoid JSON issues
+                                mapRow.put(columns.get(i), field == null ? null : toSerializable(field));
+                            }
+                            resultRows.add(mapRow);
+                            count++;
+                        }
+                        log.debug("[FlinkSQL] queryId={} total rows fetched={}", queryId, resultRows.size());
+                        return resultRows;
+                    } finally {
+                        // Only the fetcher thread ever touches the iterator, so it closes it too —
+                        // never the calling thread, even on timeout.
+                        try {
+                            it.close();
+                        } catch (Exception ce) {
+                            log.debug("[FlinkSQL] queryId={} error closing result iterator: {}", queryId, ce.getMessage());
+                        }
+                    }
+                }, queryExecutor);
+            } catch (RuntimeException submitFailure) {
+                // The fetcher never started, so it will never close the iterator — do it here.
+                try { it.close(); } catch (Exception ignored) { }
+                throw submitFailure;
+            }
+
+            try {
+                rows = future.get(timeout, TimeUnit.MILLISECONDS);
+            } catch (TimeoutException te) {
+                log.warn("Query timed out after {}ms: {}", timeout, finalSql);
+                // Cancel the job first so the fetcher's hasNext() unblocks and its finally closes the
+                // iterator; then abandon the fetch. The iterator is never closed from this thread.
+                cancelJobInternal(tableResult);
+                future.cancel(true);
+                long duration = System.currentTimeMillis() - startTime;
+                return new QueryResult(Collections.emptyList(), Collections.emptyList(), duration,
+                    "Query timed out after " + timeout + "ms. The Kafka topic may have fewer messages than the limit, " +
+                    "or the broker is slow. Try adding LIMIT, reducing maxRows, or switching to 'latest-offset' mode.");
+            } catch (ExecutionException ee) {
+                log.error("Query execution failed: {}", finalSql, ee.getCause());
+                Throwable cause = ee.getCause();
+                if (cause instanceof Exception ex) throw ex;
+                throw new RuntimeException(cause);
+            }
+
+            long duration = System.currentTimeMillis() - startTime;
+            return new QueryResult(columns, rows, duration, null, false, "FLINK");
+        } catch (Exception e) {
+            log.error("Flink SQL execution error — query='{}' error='{}'", finalSql, e.getMessage(), e);
+            cancelJobInternal(result);
+            long duration = System.currentTimeMillis() - startTime;
+            // explain() flattens the cause chain and is never blank. e.getMessage() alone is null
+            // for a bare NullPointerException, which left error() null — the caller then read the
+            // crash as a successful run of zero rows.
+            return new QueryResult(Collections.emptyList(), Collections.emptyList(), duration,
+                SqlErrorClassifier.explain(e));
+        }
+    }
+
+    /**
+     * Direct Kafka reader for SELECT queries — used as a fallback when the Flink planner path is
+     * disabled or fails (historically a persistent FlinkRelMetadataQuery NPE, reproduced on Flink
+     * 1.18/1.20/2.0). Reads from Kafka directly, bypassing the Flink optimizer.
+     * Aggregate functions (COUNT, SUM, AVG, MAX, MIN) are computed in-process over the fetched rows.
+     */
+    /**
+     * Parses a raw Kafka message value into a field map.
+     * Tries JSON first; falls back to XML (direct child elements of root → text content).
+     * Returns a map with a single "raw_value" entry only as a last resort.
+     */
+    private Map<String, Object> parseMessageToRow(String value) {
+        if (value == null || value.isBlank()) return Map.of();
+        String trimmed = value.trim();
+
+        // ── JSON ────────────────────────────────────────────────────────────
+        if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+            try {
+                return objectMapper.readValue(trimmed, new TypeReference<LinkedHashMap<String, Object>>() {});
+            } catch (Exception ignored) {}
+        }
+
+        // ── XML ─────────────────────────────────────────────────────────────
+        if (trimmed.startsWith("<")) {
+            try {
+                DocumentBuilder builder = XML_BUILDERS.get();
+                builder.reset();
+                Document doc = builder.parse(new ByteArrayInputStream(trimmed.getBytes(StandardCharsets.UTF_8)));
+                Map<String, Object> row = new LinkedHashMap<>();
+                flattenXmlElement(doc.getDocumentElement(), "", row);
+                if (!row.isEmpty()) return row;
+            } catch (Exception ignored) {}
+        }
+
+        // ── Fallback ─────────────────────────────────────────────────────────
+        Map<String, Object> raw = new LinkedHashMap<>();
+        raw.put("raw_value", value);
+        return raw;
+    }
+
+    /**
+     * Recursively flattens an XML element tree into a dot-notation flat map.
+     * Root element is skipped (prefix = "" on first call); each nested level
+     * appends ".<tagName>" to the key. Leaf nodes store their text content.
+     *
+     * Example: &lt;order&gt;&lt;customer&gt;&lt;name&gt;John&lt;/name&gt;&lt;/customer&gt;&lt;/order&gt;
+     *   → {"customer.name": "John"}
+     */
+    private void flattenXmlElement(Element element, String prefix, Map<String, Object> row) {
+        NodeList children = element.getChildNodes();
+        boolean hasElementChildren = false;
+        for (int i = 0; i < children.getLength(); i++) {
+            if (children.item(i).getNodeType() == Node.ELEMENT_NODE) {
+                hasElementChildren = true;
+                break;
+            }
+        }
+
+        if (prefix.isEmpty()) {
+            // Root element — iterate directly into its children without including root tag in path
+            for (int i = 0; i < children.getLength(); i++) {
+                if (children.item(i).getNodeType() == Node.ELEMENT_NODE) {
+                    Element child = (Element) children.item(i);
+                    flattenXmlElement(child, child.getTagName(), row);
+                }
+            }
+        } else if (!hasElementChildren) {
+            // Leaf node — store trimmed text content
+            String text = element.getTextContent().trim();
+            if (!text.isEmpty()) {
+                row.put(prefix, text);
+            }
+        } else {
+            // Container node — recurse into child elements, extending path
+            for (int i = 0; i < children.getLength(); i++) {
+                if (children.item(i).getNodeType() == Node.ELEMENT_NODE) {
+                    Element child = (Element) children.item(i);
+                    flattenXmlElement(child, prefix + "." + child.getTagName(), row);
+                }
+            }
+        }
+    }
+
+    /**
+     * Retrieves a value from a row map using a dot-notation path.
+     * Supports both flat maps (XML: key "customer.name" stored directly) and
+     * nested maps (JSON: {"customer": {"name": "John"}} traversed via path segments).
+     */
+    @SuppressWarnings("unchecked")
+    private Object getNestedValue(Map<String, Object> row, String path) {
+        // Direct key lookup first — covers XML flat maps and top-level JSON keys
+        if (row.containsKey(path)) return row.get(path);
+        // Dot-notation traversal for nested JSON objects
+        String[] parts = path.split("\\.", -1);
+        Object current = row;
+        for (String part : parts) {
+            if (current instanceof Map) {
+                current = ((Map<String, Object>) current).get(part);
+                if (current == null) return null;
+            } else {
+                return null;
+            }
+        }
+        return current;
+    }
+
+    private QueryResult kafkaDirectSelect(String sql, String readMode, int limit, long startTime) {
+        // Extract table name from FROM clause
+        Pattern fromPattern = Pattern.compile("(?i)\\bFROM\\s+`?([\\w.\\-]+)`?");
+        Matcher fromMatcher = fromPattern.matcher(sql);
+        if (!fromMatcher.find()) {
+            return new QueryResult(Collections.emptyList(), Collections.emptyList(),
+                System.currentTimeMillis() - startTime, "Cannot parse table name from SQL");
+        }
+        String rawTableRef = fromMatcher.group(1);
+        String flinkTableName = DdlGeneratorService.toTableName(rawTableRef);
+
+        // Detect TUMBLE / HOP / SESSION window functions — route to dedicated handler
+        if (Pattern.compile("(?i)\\bTABLE\\s*\\(\\s*(TUMBLE|HOP|SESSION)\\s*\\(").matcher(sql).find()) {
+            return kafkaWindowSelect(sql, readMode, limit, startTime);
+        }
+
+        // Detect aggregate functions in the SELECT portion only (before FROM)
+        boolean isAggregate = Pattern.compile("(?i)\\b(COUNT|SUM|AVG|MAX|MIN)\\s*\\(")
+            .matcher(sql.substring(0, fromMatcher.start())).find();
+
+        // Respect LIMIT from SQL if smaller than configured limit (skip for aggregates)
+        if (!isAggregate) {
+            Pattern limitPattern = Pattern.compile("(?i)\\bLIMIT\\s+(\\d+)");
+            Matcher limitMatcher = limitPattern.matcher(sql);
+            if (limitMatcher.find()) {
+                limit = Math.min(limit, Integer.parseInt(limitMatcher.group(1)));
+            }
+        }
+
+        // Find the matching Kafka topic
+        List<String> topics;
+        try {
+            topics = kafkaAdminService.listTopics();
+        } catch (Exception e) {
+            return new QueryResult(Collections.emptyList(), Collections.emptyList(),
+                System.currentTimeMillis() - startTime, "Cannot reach Kafka broker: " + e.getMessage());
+        }
+        String topic = topics.stream()
+            .filter(t -> DdlGeneratorService.toTableName(t).equals(flinkTableName))
+            .findFirst().orElse(null);
+        if (topic == null) {
+            return new QueryResult(Collections.emptyList(), Collections.emptyList(),
+                System.currentTimeMillis() - startTime,
+                "Table '" + rawTableRef + "' not found. No matching Kafka topic exists.");
+        }
+
+        // Parse selected columns and WHERE conditions from SQL (needed to size the fetch)
+        List<String> requestedCols = isAggregate ? Collections.emptyList() : extractSelectedColumns(sql);
+        Map<String, String> whereConds = extractSimpleWhere(sql);
+        List<String> whereWarnings = unsupportedWhereFragments(sql);
+
+        // For aggregates, read all available messages. For plain projections, a small
+        // overshoot over the limit is enough — but when a WHERE clause filters rows,
+        // matches may sit far beyond limit+20 messages, so scan a much larger slice
+        // (the row loop still stops as soon as `limit` matches are collected).
+        int fetch;
+        if (isAggregate) {
+            fetch = 100_000;
+        } else if (whereConds.isEmpty()) {
+            fetch = limit + 20;
+        } else {
+            fetch = Math.min(100_000, Math.max(5_000, limit * 100));
+        }
+        List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records =
+            "earliest-offset".equals(readMode)
+                ? kafkaAdminService.getEarliestRecords(topic, fetch)
+                : kafkaAdminService.getRecentRecords(topic, fetch);
+
+        // Build result rows from JSON messages
+        List<Map<String, Object>> rows = new ArrayList<>();
+        Set<String> colSet = new LinkedHashSet<>();
+        for (var record : records) {
+            if (!isAggregate && rows.size() >= limit) break;
+            String value = record.value();
+            if (value == null || value.isBlank()) continue;
+            Map<String, Object> row = parseMessageToRow(value);
+            if (row.isEmpty()) continue;
+            if (!matchesWhereConditions(row, whereConds)) continue;
+            if (isAggregate) {
+                rows.add(row);
+                continue;
+            }
+            if (!requestedCols.isEmpty()) {
+                Map<String, Object> projected = new LinkedHashMap<>();
+                for (String colExpr : requestedCols) {
+                    // Handle "source_col AS alias" — fetch by source name, output under alias
+                    String[] aliasParts = colExpr.split("(?i)\\s+AS\\s+", 2);
+                    String sourceCol = aliasParts[0].trim();
+                    String outputCol = aliasParts.length > 1 ? aliasParts[1].trim() : sourceCol;
+                    projected.put(outputCol, toSerializable(getNestedValue(row, sourceCol)));
+                }
+                row = projected;
+            } else {
+                Map<String, Object> serialized = new LinkedHashMap<>();
+                row.forEach((k, v) -> serialized.put(k, toSerializable(v)));
+                row = serialized;
+            }
+            colSet.addAll(row.keySet());
+            rows.add(row);
+        }
+
+        if (isAggregate) {
+            return kafkaAggregateSelect(sql, rows, startTime);
+        }
+
+        List<String> columns = requestedCols.isEmpty()
+            ? new ArrayList<>(colSet)
+            : requestedCols.stream().map(c -> {
+                String[] p = c.split("(?i)\\s+AS\\s+", 2);
+                return p.length > 1 ? p[1].trim() : p[0].trim();
+            }).collect(Collectors.toList());
+        log.debug("[KafkaDirect] topic='{}' rows={} readMode={}", topic, rows.size(), readMode);
+        return new QueryResult(columns, rows, System.currentTimeMillis() - startTime, null, false, "KAFKA_DIRECT")
+            .withWarnings(whereWarnings);
+    }
+
+    /**
+     * Computes SQL aggregate functions (COUNT/SUM/AVG/MAX/MIN) over pre-fetched Kafka rows.
+     * Supports optional GROUP BY with one or more simple column names.
+     * Each aggregate in the SELECT must have an alias (e.g. COUNT(*) AS metric_value).
+     */
+    private QueryResult kafkaAggregateSelect(String sql, List<Map<String, Object>> inputRows, long startTime) {
+        // Parse SELECT portion (everything between SELECT and FROM)
+        Matcher selMatcher = Pattern.compile("(?i)^\\s*SELECT\\s+(.+?)\\s+FROM\\b", Pattern.DOTALL).matcher(sql);
+        if (!selMatcher.find()) {
+            return new QueryResult(Collections.emptyList(), Collections.emptyList(),
+                System.currentTimeMillis() - startTime, "Cannot parse SELECT clause for aggregate query");
+        }
+        String selectPart = selMatcher.group(1);
+
+        // Each aggregate entry: [func, col, alias, distinct("true"/"false")]
+        List<String[]> aggs = new ArrayList<>();
+        Matcher am = Pattern.compile(
+            "(?i)(COUNT|SUM|AVG|MAX|MIN)\\s*\\(\\s*(DISTINCT\\s+)?([^)]+?)\\s*\\)(?:\\s+AS\\s+[`\"]?([\\w]+)[`\"]?)?")
+            .matcher(selectPart);
+        while (am.find()) {
+            String func  = am.group(1).toUpperCase();
+            String dist  = am.group(2) != null ? "true" : "false";
+            String col   = am.group(3).trim().replace("`", "").replace("\"", "");
+            String alias = am.group(4) != null ? am.group(4)
+                         : func.toLowerCase() + "_" + col.replace("*", "all").replaceAll("[^\\w]", "_");
+            aggs.add(new String[]{func, col, alias, dist});
+        }
+        if (aggs.isEmpty()) {
+            return new QueryResult(Collections.emptyList(), Collections.emptyList(),
+                System.currentTimeMillis() - startTime, "No aggregate expressions could be parsed from: " + selectPart);
+        }
+
+        // Parse optional GROUP BY columns
+        List<String> groupCols = new ArrayList<>();
+        Matcher gm = Pattern.compile(
+            "(?i)\\bGROUP\\s+BY\\s+([^;]+?)(?:\\s+HAVING\\b|\\s+ORDER\\b|\\s+LIMIT\\b|\\s*;|\\s*$)")
+            .matcher(sql);
+        if (gm.find()) {
+            for (String c : gm.group(1).split(",")) {
+                String col = c.trim().replace("`", "").replace("\"", "");
+                if (!col.isEmpty()) groupCols.add(col);
+            }
+        }
+
+        // Group input rows (single group when no GROUP BY)
+        Map<String, List<Map<String, Object>>> groups = new LinkedHashMap<>();
+        if (groupCols.isEmpty()) {
+            groups.put("", inputRows);
+        } else {
+            for (Map<String, Object> row : inputRows) {
+                String key = groupCols.stream()
+                    // Resolve nested JSON / flattened XML paths (and case) like WHERE does, instead
+                    // of a direct key lookup that would collapse nested paths into a single group.
+                    .map(c -> {
+                        Object v = getNestedValue(row, c);
+                        if (v == null) v = findValueIgnoreCase(row, c);
+                        return v == null ? "" : String.valueOf(v);
+                    })
+                    .collect(Collectors.joining("\u0001"));
+                groups.computeIfAbsent(key, k -> new ArrayList<>()).add(row);
+            }
+        }
+
+        // Compute aggregates per group
+        List<Map<String, Object>> resultRows = new ArrayList<>();
+        for (Map.Entry<String, List<Map<String, Object>>> entry : groups.entrySet()) {
+            String groupKey = entry.getKey();
+            List<Map<String, Object>> groupRows = entry.getValue();
+            Map<String, Object> result = new LinkedHashMap<>();
+            if (!groupCols.isEmpty()) {
+                String[] keyParts = groupKey.split("\u0001", -1);
+                for (int i = 0; i < groupCols.size() && i < keyParts.length; i++) {
+                    result.put(groupCols.get(i), keyParts[i]);
+                }
+            }
+            for (String[] agg : aggs) {
+                result.put(agg[2], evalAggregate(agg[0], agg[1], "true".equals(agg[3]), groupRows));
+            }
+            resultRows.add(result);
+        }
+
+        List<String> columns = resultRows.isEmpty() ? Collections.emptyList()
+                             : new ArrayList<>(resultRows.get(0).keySet());
+        log.debug("[KafkaDirect/Agg] inputRows={} groups={} cols={}",
+                 inputRows.size(), resultRows.size(), columns);
+        // Aggregates are computed over rows the caller already filtered, but the caveat about
+        // predicates that were never applied still belongs on this result.
+        return new QueryResult(columns, resultRows, System.currentTimeMillis() - startTime, null, false, "KAFKA_DIRECT")
+            .withWarnings(unsupportedWhereFragments(sql));
+    }
+
+    /**
+     * Emulates Flink windowed aggregations over Kafka messages fetched directly, without the
+     * Flink planner.
+     *
+     * Supported syntax:
+     *   SELECT window_start, window_end, AGG(...) AS alias
+     *   FROM TABLE(TUMBLE(TABLE &lt;topic&gt;, DESCRIPTOR(&lt;time_col&gt;), INTERVAL '&lt;n&gt;' MINUTE|HOUR|SECOND|DAY))
+     *   [WHERE ...] GROUP BY window_start, window_end
+     *
+     * <p>HOP, CUMULATE and SESSION parse too but are <em>approximated</em> as tumbling windows of
+     * the same size — this reader buckets by timestamp and emulates neither overlap nor inactivity
+     * gaps. The approximation is reported in {@link QueryResult#warnings()} rather than left for
+     * the reader to discover: only the Flink planner gives those windows their real semantics.
+     * They previously reached this method (the caller routes them here) and died on a TUMBLE-only
+     * regex with "Cannot parse TUMBLE syntax", which described neither the cause nor the fix.
+     *
+     * Time column resolution order:
+     *   1. Parsed from the message field named &lt;time_col&gt; (ISO-8601 string or epoch millis/seconds)
+     *   2. Kafka record timestamp (fallback)
+     */
+    private QueryResult kafkaWindowSelect(String sql, String readMode, int limit, long startTime) {
+        Matcher window = WINDOW_CALL.matcher(sql);
+        if (!window.find()) {
+            return new QueryResult(Collections.emptyList(), Collections.emptyList(),
+                System.currentTimeMillis() - startTime,
+                "Cannot parse the window function. Expected: "
+                    + "TABLE(TUMBLE(TABLE <name>, DESCRIPTOR(<time_col>), INTERVAL '<n>' MINUTE))");
+        }
+        String windowFn    = window.group(1).toUpperCase(Locale.ROOT);
+        String tableName   = window.group(2);
+        String timeCol     = window.group(3);
+
+        // HOP(slide, size) and CUMULATE(step, max) carry two intervals; the bucket width is the
+        // last one. TUMBLE and SESSION carry a single one.
+        List<Long> parsed = new ArrayList<>();
+        List<String> rendered = new ArrayList<>();
+        Matcher scan = WINDOW_INTERVAL.matcher(window.group(4));
+        while (scan.find()) {
+            long amount = Long.parseLong(scan.group(1));
+            String unit = scan.group(2).toUpperCase(Locale.ROOT);
+            parsed.add(amount * switch (unit) {
+                case "SECOND" -> 1_000L;
+                case "HOUR"   -> 3_600_000L;
+                case "DAY"    -> 86_400_000L;
+                default       -> 60_000L;
+            });
+            rendered.add(amount + " " + unit.toLowerCase(Locale.ROOT) + (amount > 1 ? "s" : ""));
+        }
+        if (parsed.isEmpty()) {
+            return new QueryResult(Collections.emptyList(), Collections.emptyList(),
+                System.currentTimeMillis() - startTime,
+                "The window function carries no INTERVAL the direct engine understands "
+                    + "(expected MINUTE, HOUR, SECOND or DAY).");
+        }
+        long intervalMs = parsed.get(parsed.size() - 1);
+
+        List<String> windowWarnings = new ArrayList<>();
+        if (!"TUMBLE".equals(windowFn)) {
+            windowWarnings.add("The direct engine approximated " + windowFn + " as a tumbling window of "
+                + rendered.get(rendered.size() - 1) + ": it buckets by timestamp and emulates neither "
+                + "overlapping windows nor inactivity gaps. Only the Flink engine gives " + windowFn
+                + " its real semantics.");
+        }
+
+        // Resolve Kafka topic
+        String flinkTableName = DdlGeneratorService.toTableName(tableName);
+        List<String> topics;
+        try {
+            topics = kafkaAdminService.listTopics();
+        } catch (Exception e) {
+            return new QueryResult(Collections.emptyList(), Collections.emptyList(),
+                System.currentTimeMillis() - startTime, "Cannot reach Kafka broker: " + e.getMessage());
+        }
+        String topic = topics.stream()
+            .filter(t -> DdlGeneratorService.toTableName(t).equals(flinkTableName))
+            .findFirst().orElse(null);
+        if (topic == null) {
+            return new QueryResult(Collections.emptyList(), Collections.emptyList(),
+                System.currentTimeMillis() - startTime,
+                "Table '" + tableName + "' not found. No matching Kafka topic exists.");
+        }
+
+        // Fetch all messages (windows aggregate over the full dataset)
+        List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records =
+            "earliest-offset".equals(readMode)
+                ? kafkaAdminService.getEarliestRecords(topic, 100_000)
+                : kafkaAdminService.getRecentRecords(topic, 100_000);
+
+        // Parse aggregate expressions from SELECT
+        Matcher selMatcher = Pattern.compile("(?i)^\\s*SELECT\\s+(.+?)\\s+FROM\\b", Pattern.DOTALL).matcher(sql);
+        if (!selMatcher.find()) {
+            return new QueryResult(Collections.emptyList(), Collections.emptyList(),
+                System.currentTimeMillis() - startTime, "Cannot parse SELECT clause");
+        }
+        List<String[]> aggs = new ArrayList<>(); // [func, col, alias, distinct]
+        Matcher am = Pattern.compile(
+            "(?i)(COUNT|SUM|AVG|MAX|MIN)\\s*\\(\\s*(DISTINCT\\s+)?([^)]+?)\\s*\\)(?:\\s+AS\\s+[`\"]?([\\w]+)[`\"]?)?")
+            .matcher(selMatcher.group(1));
+        while (am.find()) {
+            String func  = am.group(1).toUpperCase();
+            String dist  = am.group(2) != null ? "true" : "false";
+            String col   = am.group(3).trim().replace("`", "").replace("\"", "");
+            String alias = am.group(4) != null ? am.group(4)
+                         : func.toLowerCase() + "_" + col.replace("*", "all");
+            aggs.add(new String[]{func, col, alias, dist});
+        }
+
+        Map<String, String> whereConds = extractSimpleWhere(sql);
+        List<String> whereWarnings = unsupportedWhereFragments(sql);
+
+        // Bucket messages by tumbling window
+        Map<Long, List<Map<String, Object>>> windows = new LinkedHashMap<>();
+        for (var record : records) {
+            String value = record.value();
+            if (value == null || value.isBlank()) continue;
+            Map<String, Object> row = parseMessageToRow(value);
+            if (row.isEmpty()) continue;
+            if (!matchesWhereConditions(row, whereConds)) continue;
+
+            // Resolve timestamp: message field → epoch detection → Kafka record ts
+            long tsMillis = parseEventTimeMillis(row.get(timeCol), record.timestamp());
+
+            long bucket = (tsMillis / intervalMs) * intervalMs;
+            windows.computeIfAbsent(bucket, k -> new ArrayList<>()).add(row);
+        }
+
+        // Build result rows — one per window bucket
+        java.time.format.DateTimeFormatter fmt = java.time.format.DateTimeFormatter
+            .ofPattern("yyyy-MM-dd HH:mm:ss").withZone(java.time.ZoneOffset.UTC);
+
+        List<Map<String, Object>> resultRows = new ArrayList<>();
+        for (Map.Entry<Long, List<Map<String, Object>>> entry : windows.entrySet()) {
+            long bucketStart = entry.getKey();
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("window_start", fmt.format(java.time.Instant.ofEpochMilli(bucketStart)));
+            row.put("window_end",   fmt.format(java.time.Instant.ofEpochMilli(bucketStart + intervalMs)));
+            for (String[] agg : aggs) {
+                row.put(agg[2], evalAggregate(agg[0], agg[1], "true".equals(agg[3]), entry.getValue()));
+            }
+            resultRows.add(row);
+        }
+        resultRows.sort(Comparator.comparing(r -> (String) r.get("window_start")));
+        if (resultRows.size() > limit) resultRows = resultRows.subList(0, limit);
+
+        List<String> columns = resultRows.isEmpty()
+            ? List.of("window_start", "window_end")
+            : new ArrayList<>(resultRows.get(0).keySet());
+        log.debug("[KafkaDirect/Window] topic='{}' timeCol='{}' intervalMs={} windows={} rows={}",
+                 topic, timeCol, intervalMs, windows.size(), resultRows.size());
+        // The HOP/SESSION approximation travels with the rows, alongside any ignored predicate.
+        List<String> allWarnings = new ArrayList<>(windowWarnings);
+        allWarnings.addAll(whereWarnings);
+        return new QueryResult(columns, resultRows, System.currentTimeMillis() - startTime, null, false, "KAFKA_DIRECT")
+            .withWarnings(allWarnings);
+    }
+
+    /**
+     * Resolves an event-time value (message field) to epoch millis, mirroring the metric engine:
+     * numbers and numeric strings below 10^10 are treated as epoch seconds, ISO-8601 and
+     * space-separated LocalDateTime strings are parsed, and anything else falls back to {@code fallback}.
+     */
+    private long parseEventTimeMillis(Object tsVal, long fallback) {
+        if (tsVal instanceof Number n) {
+            long ts = n.longValue();
+            return ts < 10_000_000_000L ? ts * 1000L : ts;
+        }
+        if (tsVal instanceof String s) {
+            String text = s.trim();
+            if (!text.isEmpty()) {
+                try {
+                    long ts = Long.parseLong(text);
+                    return ts < 10_000_000_000L ? ts * 1000L : ts;
+                } catch (NumberFormatException ignoredNumeric) {
+                    try {
+                        return java.time.Instant.parse(text).toEpochMilli();
+                    } catch (Exception ignoredIso) {
+                        try {
+                            return java.time.LocalDateTime.parse(text.replace(' ', 'T'))
+                                .toInstant(java.time.ZoneOffset.UTC).toEpochMilli();
+                        } catch (Exception ignoredLocal) {
+                            // fall through to the fallback
+                        }
+                    }
+                }
+            }
+        }
+        return fallback;
+    }
+
+    /** Evaluates a single aggregate function over a list of rows. */
+    private Object evalAggregate(String func, String col, boolean distinct, List<Map<String, Object>> rows) {
+        if ("COUNT".equals(func)) {
+            // Counts are integral — returning double made the UI display "42.0"
+            if ("*".equals(col)) return (long) rows.size();
+            if (distinct) {
+                return (long) rows.stream()
+                    .map(r -> r.get(col)).filter(v -> v != null)
+                    .map(Object::toString)
+                    .collect(Collectors.toSet()).size();
+            }
+            return rows.stream().filter(r -> r.get(col) != null).count();
+        }
+        List<Double> nums = rows.stream()
+            .map(r -> asDouble(r.get(col)))
+            .filter(Objects::nonNull)
+            .collect(Collectors.toList());
+        if (nums.isEmpty()) return null;
+        return switch (func) {
+            case "SUM" -> nums.stream().mapToDouble(d -> d).sum();
+            case "AVG" -> nums.stream().mapToDouble(d -> d).average().orElse(0.0);
+            case "MAX" -> nums.stream().mapToDouble(d -> d).max().orElse(0.0);
+            case "MIN" -> nums.stream().mapToDouble(d -> d).min().orElse(0.0);
+            default    -> null;
+        };
+    }
+
+    /**
+     * Coerces an aggregate operand to a double. Handles genuine numbers and numeric values stored
+     * as strings — XML payloads flatten every field to text, and JSON numbers are sometimes quoted,
+     * so without this SUM/AVG/MAX/MIN over those topics would silently return null.
+     */
+    private Double asDouble(Object value) {
+        if (value instanceof Number n) return n.doubleValue();
+        if (value instanceof String s) {
+            try {
+                return Double.parseDouble(s.trim());
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private List<String> extractSelectedColumns(String sql) {
+        Pattern p = Pattern.compile("(?i)^\\s*SELECT\\s+(.+?)\\s+FROM\\b", Pattern.DOTALL);
+        Matcher m = p.matcher(sql.trim());
+        if (!m.find()) return Collections.emptyList();
+        String cols = m.group(1).trim();
+        if (cols.equals("*")) return Collections.emptyList();
+        return Arrays.stream(cols.split(","))
+            .map(c -> c.replace("`", "").trim())
+            .filter(c -> !c.isEmpty())
+            .collect(Collectors.toList());
+    }
+
+    /** WHERE body, stopping before the clauses that follow it — otherwise GROUP BY looks unsupported. */
+    private static final Pattern WHERE_WARNING_BLOCK = Pattern.compile(
+        "(?i)\\bWHERE\\s+(.+?)(?:\\bGROUP\\s+BY\\b|\\bORDER\\s+BY\\b|\\bHAVING\\b|\\bLIMIT\\b|;|$)",
+        Pattern.DOTALL);
+
+    private Map<String, String> extractSimpleWhere(String sql) {
+        Map<String, String> conditions = new LinkedHashMap<>();
+        Pattern whereBlock = Pattern.compile("(?i)\\bWHERE\\s+(.+?)(?:\\bLIMIT\\b|;|$)", Pattern.DOTALL);
+        Matcher wm = whereBlock.matcher(sql);
+        if (!wm.find()) return conditions;
+        String whereClause = wm.group(1).trim();
+        // Keep the original case of the column name: message fields are case-sensitive
+        // (e.g. "orderId") and lowercasing the key would make every lookup miss.
+        // Dots are allowed so nested JSON / flattened XML paths can be filtered.
+        Pattern condPattern = Pattern.compile("(?i)`?([\\w.]+)`?\\s*=\\s*'([^']*)'");
+        Matcher cm = condPattern.matcher(whereClause);
+        while (cm.find()) {
+            conditions.put(cm.group(1), cm.group(2));
+        }
+        return conditions;
+    }
+
+    /**
+     * Predicates the direct engine silently drops. {@link #extractSimpleWhere} only understands
+     * {@code column = 'value'} joined by AND; anything else — a comparison, LIKE, IN, OR, NOT —
+     * never matches its pattern, so the rows come back unfiltered and the result looks precise
+     * when it is not. Surfacing what was ignored is the difference between a narrow engine and a
+     * wrong answer.
+     */
+    List<String> unsupportedWhereFragments(String sql) {
+        Matcher wm = WHERE_WARNING_BLOCK.matcher(sql);
+        if (!wm.find()) {
+            return List.of();
+        }
+        String remainder = wm.group(1)
+            .replaceAll("(?i)`?[\\w.]+`?\\s*=\\s*'[^']*'", " ")   // supported conditions
+            .replaceAll("(?i)\\bAND\\b", " ")                     // supported combinator
+            .replaceAll("[()]", " ")
+            .replaceAll("\\s+", " ")
+            .trim();
+        if (remainder.isEmpty()) {
+            return List.of();
+        }
+        return List.of("The direct engine applied only the \"column = 'value'\" conditions of this "
+            + "WHERE clause. Ignored: \"" + remainder + "\" — rows that do not satisfy it may appear "
+            + "in the result.");
+    }
+
+    private boolean matchesWhereConditions(Map<String, Object> row, Map<String, String> conditions) {
+        for (Map.Entry<String, String> cond : conditions.entrySet()) {
+            Object val = getNestedValue(row, cond.getKey());
+            if (val == null) {
+                val = findValueIgnoreCase(row, cond.getKey());
+            }
+            if (val == null) return false;
+            if (!val.toString().equalsIgnoreCase(cond.getValue())) return false;
+        }
+        return true;
+    }
+
+    /** Last-resort lookup for WHERE conditions whose case doesn't match the message fields. */
+    private Object findValueIgnoreCase(Map<String, Object> row, String key) {
+        for (Map.Entry<String, Object> e : row.entrySet()) {
+            if (e.getKey().equalsIgnoreCase(key)) return e.getValue();
+        }
+        return null;
+    }
+
+    /**
+     * What a cancellation request actually achieved.
+     *
+     * <p>{@code cancelQuery} used to return {@code void}, and the endpoint above it answered 200
+     * either way, so a caller could not tell "the Flink job was cancelled" from "there was nothing
+     * to cancel". The distinction is not academic here: a {@code KAFKA_DIRECT} scan has no Flink
+     * job <em>by construction</em>, so the honest message depends on which engine ran — and the UI
+     * had already had to learn, on its own side, not to claim more than it did.
+     */
+    public enum CancelOutcome {
+        /** A live {@code JobClient} was found and asked to cancel. */
+        CANCELLED,
+        /** No live job under that id: already finished, never a Flink job, or an unknown id. */
+        NO_ACTIVE_JOB
+    }
+
+    public CancelOutcome cancelQuery(String queryId) {
+        JobInfo info = activeJobs.get(queryId);
+        if (info != null) {
+            info.markCancelRequested();
+            persistJobSnapshot(info, buildJobSummary(info), "Cancellation requested by user", null);
+            info.client().cancel();
+            return CancelOutcome.CANCELLED;
+        }
+        flinkJobStore.update(
+            queryId,
+            "UNKNOWN",
+            "Cancellation requested but no live Flink JobClient was available",
+            null,
+            true,
+            System.currentTimeMillis(),
+            null,
+            null
+        );
+        return CancelOutcome.NO_ACTIVE_JOB;
+    }
+
+    public CancelOutcome cancelJob(String queryId) {
+        return cancelQuery(queryId);
+    }
+
+    public List<FlinkJobSummary> getActiveJobs() {
+        syncPersistedJobs();
+        return flinkJobStore.listActive().stream()
+            .map(FlinkManagedJobDetails::toSummary)
+            .toList();
+    }
+
+    public List<FlinkJobSummary> listRecentJobs() {
+        syncPersistedJobs();
+        return flinkJobStore.listAll().stream()
+            .map(FlinkManagedJobDetails::toSummary)
+            .toList();
+    }
+
+    public Optional<FlinkManagedJobDetails> getJob(String queryId) {
+        syncPersistedJobs();
+        return flinkJobStore.findById(queryId);
+    }
+
+    public Map<String, JobInfo> getActiveJobsDetails() {
+        // Defensive snapshot — callers (lineage) only read; never hand out the live internal map.
+        return Map.copyOf(activeJobs);
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        // Shared deadline, not another private five seconds — see ShutdownBudget.
+        ShutdownBudget.shutdown(queryExecutor);
+    }
+
+    /**
+     * Converts Flink internal types that are not JSON-serializable to plain Java types.
+     * Without this, objects like GenericRowData or metadata handlers appear as their
+     * class toString() (e.g. "metadataHandlerProvider") in the JSON response.
+     */
+    private Object toSerializable(Object value) {
+        if (value == null) return null;
+        // Already plain Java types — return as-is
+        if (value instanceof String || value instanceof Number || value instanceof Boolean) return value;
+        // Flink Row → recurse into fields
+        if (value instanceof Row row) {
+            Map<String, Object> map = new LinkedHashMap<>();
+            for (int i = 0; i < row.getArity(); i++) {
+                map.put("f" + i, toSerializable(row.getField(i)));
+            }
+            log.debug("[FlinkSQL] toSerializable: Row with arity={} converted to map", row.getArity());
+            return map;
+        }
+        // java.time types (LocalDate, LocalTime, LocalDateTime, Instant…) — toString() is ISO-8601
+        if (value instanceof java.time.temporal.TemporalAccessor) return value.toString();
+        // Byte arrays → Base64 string
+        if (value instanceof byte[] bytes) return java.util.Base64.getEncoder().encodeToString(bytes);
+        // Collections / arrays — recurse
+        if (value instanceof List<?> list) return list.stream().map(this::toSerializable).collect(Collectors.toList());
+        if (value instanceof Map<?, ?> map) {
+            Map<String, Object> out = new LinkedHashMap<>();
+            map.forEach((k, v) -> out.put(String.valueOf(k), toSerializable(v)));
+            return out;
+        }
+        // Fallback: log the unexpected type so we can identify it
+        log.warn("[FlinkSQL] toSerializable: unexpected type {} — using toString(). value='{}'",
+                value.getClass().getName(), value);
+        return value.toString();
+    }
+
+    private void cancelJobInternal(TableResult result) {
+        if (result != null && result.getJobClient().isPresent()) {
+            result.getJobClient().get().cancel();
+        }
+    }
+}

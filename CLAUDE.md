@@ -289,7 +289,7 @@ The router is a **data router** (`createBrowserRouter` + `RouterProvider`, a `Sh
 - `Field` owns the label ↔ control ↔ error/description `aria` plumbing and renders its child through a render prop (`{p => <Input {...p} />}`). Pass an explicit `id` when the form needs to focus the first invalid control after validation.
 - **Validate every field at once**, into a `Partial<Record<field, string>>` handed to each `Field error=…`, and focus the first offender — not one message at a time in a banner at the bottom of the page.
 - `NumberInput` keeps the raw string while typing and only coerces on blur. Never `parseInt(e.target.value) || fallback` on change: clearing the field snaps it to the fallback mid-typing, and `0` is falsy so a leading zero does too.
-- `TopicInput` suggests topic (or Flink table) names from `catalogStore`, which `Layout` fills from its existing `/api/dashboard` poll — no extra request. Free text stays valid: a topic can exist before the 30s cache shows it.
+- `TopicInput` suggests topic (or Flink table) names from `catalogStore`, which `Layout` fills from its existing `/api/dashboard` poll — no extra request. Free text stays valid: a topic can exist before the 30s cache shows it. **Opening the list deliberately — the chevron, or ArrowDown from the field — shows every option, unfiltered** (`browseAll` in `Combobox`); typing goes straight back to filtering. Suggestions are filtered by the field's own value, so a value already chosen filtered the list down to one entry identical to itself, which the "a suggestion equal to what you typed teaches nothing" rule then dropped: the list was empty from the moment anything was selected and the chevron did nothing at all. In the metric editor, which pre-fills the topic with `topics[0]`, that removed the ability to change the topic from the list outright — the `<select>` it replaced could always be reopened.
 - `PasswordInput` adds a reveal toggle and `autoComplete="new-password"`. Secrets typed blind fail at connection time with nothing to diagnose.
 - Wrap in a real `<form onSubmit>` so Enter submits from any field. `Button` defaults to `type="button"` for that reason — submit buttons declare `type="submit"` explicitly.
 
@@ -384,7 +384,7 @@ Tests use JUnit 5 + Mockito. Unit tests mock Kafka and Flink — no broker neede
 
 `FlinkSqlServiceTest` and `FlinkDdlValidationTest` **pass on Flink 2.3**. Before the migration these suites were broken (SELECT was routed to `kafkaDirectSelect()`, so tests against in-memory `createTemporaryView()` tables failed with "Table not found"; DDL validation hit a Calcite `SqlParserException`). With the Flink planner path restored (the `THREAD_PROVIDERS` fix, see above), SELECT resolves in-memory views through Flink and the whole suite is green. The Flink-native SELECT tests that were once `@Disabled("KAFKA_DIRECT")` (in-memory views, multi-topic JOIN, the `XmlExtract` UDF) are enabled again — they run against the restored planner, so the suite has no skipped tests.
 
-Test classes are in `src/test/java/com/yourcompany/kafkasqlexplorer/`.
+Test classes are in `src/test/java/com/compagnonsdudev/kafkasqlexplorer/`.
 
 ## Audit (2026-07)
 
