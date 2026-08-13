@@ -112,6 +112,20 @@ public class ExplorerConfig {
      */
     private int consumerGroupMaxGroups = 200;
     /**
+     * Delete the consumer groups this application left on the cluster, at startup.
+     *
+     * <p>Off, and it is the only setting here that makes the app <em>write</em> to a cluster it
+     * otherwise only reads. It exists because older builds committed offsets under a fresh random
+     * group id on every metadata read, leaving thousands of empty groups behind for
+     * {@code offsets.retention.minutes}; those are recognisable (see {@code
+     * ExplorerConsumerGroups.isExplorerGroup}) but nothing removes them. Turning this on removes
+     * only groups that carry one of those names <em>and</em> are EMPTY or DEAD — a running
+     * explorer's live session holds members and is therefore never touched.
+     */
+    private boolean cleanupOwnGroups = false;
+    /** Ceiling on one cleanup pass, so a cluster full of them cannot turn startup into a batch job. */
+    private int cleanupOwnGroupsMax = 500;
+    /**
      * Topics whose consumer lag is exported as Prometheus gauges. Named explicitly rather than
      * discovered: a series per group × topic is how a metrics backend gets killed, and the topics
      * worth alerting on are a short, deliberate list. Empty (the default) registers no gauge and
@@ -316,6 +330,22 @@ public class ExplorerConfig {
 
     public void setConsumerGroupMaxGroups(int consumerGroupMaxGroups) {
         this.consumerGroupMaxGroups = consumerGroupMaxGroups;
+    }
+
+    public boolean isCleanupOwnGroups() {
+        return cleanupOwnGroups;
+    }
+
+    public void setCleanupOwnGroups(boolean cleanupOwnGroups) {
+        this.cleanupOwnGroups = cleanupOwnGroups;
+    }
+
+    public int getCleanupOwnGroupsMax() {
+        return cleanupOwnGroupsMax;
+    }
+
+    public void setCleanupOwnGroupsMax(int cleanupOwnGroupsMax) {
+        this.cleanupOwnGroupsMax = cleanupOwnGroupsMax;
     }
 
     public List<String> getLagMetricsTopics() {

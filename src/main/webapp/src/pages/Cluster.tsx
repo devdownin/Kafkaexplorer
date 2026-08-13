@@ -44,6 +44,11 @@ interface ClusterDetails {
   supportedFeatures?: Record<string, VersionRange>;
 }
 
+/** Combien de ces groupes sont les nôtres — l'en-tête le dit plutôt que de laisser compter. */
+function explorerGroupCount(groups: GroupInfo[]): number {
+  return groups.filter(g => g.explorer).length;
+}
+
 const GROUP_TYPE_STYLES: Record<string, string> = {
   CONSUMER: 'bg-primary/10 text-primary border-primary/20',
   SHARE: 'bg-tertiary/10 text-tertiary border-tertiary/25',
@@ -200,6 +205,9 @@ const Cluster: React.FC = () => {
               Client Groups
               <span className="text-[11px] font-normal text-on-surface-variant">
                 {details.groups.length} group{details.groups.length === 1 ? '' : 's'} — consumer (KIP-848), share (KIP-932), classic, streams
+                {explorerGroupCount(details.groups) > 0 && (
+                  <>, {explorerGroupCount(details.groups)} of them this application&rsquo;s own</>
+                )}
               </span>
             </h2>
             {details.groups.length === 0 ? (

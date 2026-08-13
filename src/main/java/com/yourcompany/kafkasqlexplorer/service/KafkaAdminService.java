@@ -35,6 +35,7 @@ import org.apache.kafka.clients.admin.DescribeMetadataQuorumOptions;
 import org.apache.kafka.clients.admin.FeatureMetadata;
 import org.apache.kafka.clients.admin.FinalizedVersionRange;
 import org.apache.kafka.clients.admin.ConsumerGroupDescription;
+import org.apache.kafka.clients.admin.DeleteConsumerGroupsResult;
 import org.apache.kafka.clients.admin.GroupListing;
 import org.apache.kafka.clients.admin.ListConsumerGroupOffsetsResult;
 import org.apache.kafka.clients.admin.ListConsumerGroupOffsetsSpec;
@@ -760,6 +761,58 @@ public class KafkaAdminService {
     }
 
     /** Which member holds each partition of {@code topic}, empty when the group was not described. */
+
+
+    /**
+     * The explorer's own groups that are safe to delete: ours by name, and dormant.
+     *
+     * <p>Both conditions, and the second is what makes this safe to run while other instances are
+     * up: a live session holds members, so the broker reports it STABLE and it is not a candidate.
+     * A group that is not ours is never returned whatever its state — this exists to clean up
+     * after this application, not to tidy someone's cluster on their behalf.
+     */
+    public List<String> listDeletableExplorerGroups(int max) {
+        try {
+            Collection<GroupListing> all = adminClient
+                    .listGroups(new ListGroupsOptions().timeoutMs(5000))
+                    .all().get(10, TimeUnit.SECONDS);
+            return all.stream()
+                    .filter(g -> ExplorerConsumerGroups.isExplorerGroup(g.groupId()))
+                    .filter(KafkaAdminService::isDormant)
+                    .map(GroupListing::groupId)
+                    .sorted()
+                    .limit(Math.max(0, max))
+                    .toList();
+        } catch (Exception e) {
+            log.warn("Could not list groups for cleanup: {}", rootMessage(e));
+            return List.of();
+        }
+    }
+
+    /**
+     * Deletes the given groups, one future at a time, and returns those actually removed.
+     *
+     * <p>Per group for the same reason the lag read is: {@code .all()} would make one refusal —
+     * a group that became active between the listing and the delete, most plausibly — look like a
+     * total failure. What is reported is what happened.
+     */
+    public List<String> deleteConsumerGroups(List<String> groupIds) {
+        if (groupIds == null || groupIds.isEmpty()) return List.of();
+        List<String> deleted = new ArrayList<>();
+        try {
+            DeleteConsumerGroupsResult result = adminClient.deleteConsumerGroups(groupIds);
+            Map<String, KafkaFuture<Void>> futures = new LinkedHashMap<>(result.deletedGroups());
+            Map<String, Void> ok = new LinkedHashMap<>();
+            Map<String, String> failed = new LinkedHashMap<>();
+            awaitPerGroup(futures, 15_000, ok, failed);
+            deleted.addAll(ok.keySet());
+            failed.forEach((id, reason) ->
+                    log.debug("Could not delete consumer group '{}': {}", id, reason));
+        } catch (Exception e) {
+            log.warn("Could not delete consumer groups: {}", rootMessage(e));
+        }
+        return deleted;
+    }
 
     /**
      * Waits on one future per group, so one failure costs one row rather than the whole answer.

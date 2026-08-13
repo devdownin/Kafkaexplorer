@@ -218,6 +218,7 @@ allocates; a cluster audit over thousands of topics is the workload that wants m
 | `EXPLORER_AUDIT_MAX_DURATION_MS` | `1800000` | Budget for one full cluster audit; `0` disables it. |
 | `EXPLORER_SEARCH_MAX_SCAN` | `20000` | Records one topic-search pass may read. |
 | `EXPLORER_STREAM_FLOW_MAX_TOPICS` | `250` | Topics a whole-cluster trace reads (the most recently active ones). |
+| `EXPLORER_CLEANUP_OWN_GROUPS` | `false` | Delete, at startup, the consumer groups older builds of this app left on the cluster. The only write it ever makes: restricted to its own group names that the broker reports EMPTY or DEAD. |
 
 ### Ports, volumes, probes
 
