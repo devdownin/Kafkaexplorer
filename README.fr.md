@@ -9,7 +9,7 @@
 [![Docker Hub](https://img.shields.io/docker/pulls/compagnonsdudev/kafkaexplorer?logo=docker&logoColor=white&label=docker%20pulls)](https://hub.docker.com/r/compagnonsdudev/kafkaexplorer)
 [![GHCR](https://img.shields.io/badge/ghcr.io-kafkaexplorer-2496ED?logo=github&logoColor=white)](https://github.com/devdownin/Kafkaexplorer/pkgs/container/kafkaexplorer)
 [![Java 21](https://img.shields.io/badge/Java-21-orange)](pom.xml)
-[![Kafka 4.2](https://img.shields.io/badge/Kafka-4.2_KRaft-231F20?logo=apachekafka)](https://kafka.apache.org/)
+[![Kafka 4.3](https://img.shields.io/badge/Kafka-4.3_KRaft-231F20?logo=apachekafka)](https://kafka.apache.org/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 [Site web](https://devdownin.github.io/Kafkaexplorer/) · [Tour des fonctionnalités](docs/FEATURES.md) · [Démarrage rapide](#-démarrage-rapide) · [Contribuer](CONTRIBUTING.md) · [🇬🇧 English](README.md)
@@ -59,7 +59,7 @@ Ces captures sont générées, pas prises à la main : `docs/screenshots/` pilot
 
 ## 🚀 Démarrage rapide
 
-Une seule commande — Kafka 4.2 (KRaft), l'application et tous les topics de démo :
+Une seule commande — Kafka 4.3 (KRaft), l'application et tous les topics de démo :
 
 ```bash
 docker compose up -d
@@ -114,7 +114,7 @@ Le Process Mining fonctionne avec le LLM que vous avez déjà — **Claude (Anth
 
 ## 🛠️ Sous le capot
 
-Un unique JAR Spring Boot 4.1 embarquant Apache Flink 2.3 comme moteur SQL, avec un frontend React 19 + Tailwind. Clients Kafka 4.2 (compatibles brokers 2.1+), Avro via Confluent Schema Registry, métriques Prometheus sur `/actuator/prometheus`. Le SQL est restreint par liste blanche (`SELECT` / `EXPLAIN` / `CREATE TABLE` uniquement), le parsing XML est durci contre les attaques XXE, et les secrets sont masqués dans tout DDL affiché par l'UI.
+Un unique JAR Spring Boot 4.1 embarquant Apache Flink 2.3 comme moteur SQL, avec un frontend React 19 + Tailwind. Clients Kafka 4.3 (compatibles brokers 2.1+), Avro via Confluent Schema Registry, métriques Prometheus sur `/actuator/prometheus`. Le SQL est restreint par liste blanche (`SELECT` / `EXPLAIN` / `CREATE TABLE` uniquement), le parsing XML est durci contre les attaques XXE, et les secrets sont masqués dans tout DDL affiché par l'UI.
 
 Plongée dans l'architecture : **[docs/architecture.md](docs/architecture.md)**
 

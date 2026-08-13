@@ -9,7 +9,7 @@ services:
   # the topics you already seeded are still there. Address services by service name:
   # `docker compose logs kafka`, `docker compose exec explorer sh`.
   kafka:
-    image: apache/kafka:4.2.0
+    image: apache/kafka:4.3.1
     ports:
       - "${BIND_ADDR:-127.0.0.1}:${KAFKA_PORT:-9092}:9092"
     # A stopping KRaft node flushes its logs and closes the group / share-state
@@ -58,7 +58,7 @@ services:
         condition: service_completed_successfully
 
   kafka-data-init:
-    image: apache/kafka:4.2.0
+    image: apache/kafka:4.3.1
     user: root
     volumes:
       - kafka_data_dev:/var/lib/kafka/data

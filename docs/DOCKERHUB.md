@@ -37,13 +37,13 @@ Open **http://localhost:8080**.
 The port is published on the loopback interface deliberately — this image ships no
 authentication. See **Before you expose it** below.
 
-No broker at hand? The snippet below starts Kafka 4.2 (KRaft, no Zookeeper) next to it:
+No broker at hand? The snippet below starts Kafka 4.3 (KRaft, no Zookeeper) next to it:
 
 ```yaml
 # docker-compose.yml — throwaway sandbox, broker data is not persisted.
 services:
   kafka:
-    image: apache/kafka:4.2.0
+    image: apache/kafka:4.3.1
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
@@ -310,7 +310,7 @@ Vulnerability reports: **[SECURITY.md](https://github.com/devdownin/Kafkaexplore
 ## 📦 What is inside
 
 A single Spring Boot 4.1 JAR embedding **Apache Flink 2.3** as the SQL engine, with a
-React 19 + Tailwind frontend served from the same port. Kafka clients 4.2.
+React 19 + Tailwind frontend served from the same port. Kafka clients 4.3.
 
 The JAR is unpacked into Spring Boot's four standard layers (dependencies →
 spring-boot-loader → snapshot-dependencies → application), so a patch release re-pushes
