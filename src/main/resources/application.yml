@@ -64,6 +64,11 @@ explorer:
   # cancellation and the report says how far it got — a 2 000-topic cluster with exact counts can
   # legitimately need longer, so raise it (or set 0) rather than reading a truncated report.
   audit-max-duration-ms: 1800000
+  # The audit reads the cluster's consumer groups once and reuses that snapshot across topics,
+  # instead of re-listing every group for each one. This is how long a snapshot stays usable before
+  # being re-read; 0 takes it once for the whole run. Committed positions are therefore up to this
+  # old while each topic's end offsets are read as it is audited, so a lag can only be overstated.
+  audit-group-snapshot-ttl-ms: 60000
   # Which end of each topic duplicate detection reads: LATEST (default) or EARLIEST.
   audit-duplicate-scan-from: LATEST
   inference-sample-size: 10

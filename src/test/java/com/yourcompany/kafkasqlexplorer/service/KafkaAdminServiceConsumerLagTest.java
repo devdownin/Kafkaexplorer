@@ -10,6 +10,7 @@ import org.apache.kafka.clients.admin.DescribeConsumerGroupsResult;
 import org.apache.kafka.clients.admin.DescribeTopicsResult;
 import org.apache.kafka.clients.admin.GroupListing;
 import org.apache.kafka.clients.admin.ListConsumerGroupOffsetsResult;
+import org.apache.kafka.clients.admin.ListConsumerGroupOffsetsSpec;
 import org.apache.kafka.clients.admin.ListGroupsResult;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
 import org.apache.kafka.clients.admin.MemberAssignment;
@@ -35,11 +36,14 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.*;
+import org.mockito.ArgumentCaptor;
+
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -472,6 +476,133 @@ class KafkaAdminServiceConsumerLagTest {
         assertEquals(60L, consumers.groups().get(0).totalLag(), "the lag itself does not need members");
         assertEquals(0, consumers.groups().get(0).assignedMembers());
         assertTrue(consumers.warnings().stream().anyMatch(w -> w.contains("members could not be read")));
+    }
+
+    /*
+     * Et surtout : ne pas conclure de cette absence de membres que rien ne draine le topic. Un
+     * groupe non décrit arrive à zéro membre faute de réponse, pas faute de membre — le noter
+     * STALLED, c'est trancher sur la foi d'un appel qui n'a rien dit, et l'audit en faisait un
+     * constat *critique*. Le cas est courant : `describeConsumerGroups` ne répond pas pour un
+     * groupe Kafka Streams, dont les offsets se lisent pourtant très bien.
+     */
+    @Test
+    void doesNotCallAGroupStalledWhenItsMembershipCouldNotBeRead() {
+        topicWithPartitions(1);
+        groups(group("streams-app", GroupType.CLASSIC));
+        described(Map.of());
+        describeFailsFor("streams-app", "group id not found");
+        committed(Map.of("streams-app", Map.of(0, 40L)));
+        endOffsets(Map.of(0, 100L));
+
+        ConsumerGroupLag group = service.getTopicConsumers(TOPIC, 200).groups().get(0);
+
+        assertFalse(group.membersKnown(), "nothing answered about this group's members");
+        assertEquals(ConsumerGroupLag.Health.BEHIND, group.health(),
+                "unknown membership cannot decide the stalled question either way");
+    }
+
+    @Test
+    void aGroupWithNoAssignedMemberIsStillStalledWhenThatWasActuallyRead() {
+        topicWithPartitions(1);
+        groups(dormantGroup("abandoned"));
+        described(Map.of("abandoned", description("abandoned")));
+        committed(Map.of("abandoned", Map.of(0, 40L)));
+        endOffsets(Map.of(0, 100L));
+
+        ConsumerGroupLag group = service.getTopicConsumers(TOPIC, 200).groups().get(0);
+
+        assertTrue(group.membersKnown());
+        assertEquals(ConsumerGroupLag.Health.STALLED, group.health());
+    }
+
+    /*
+     * « On n'a pas pu lire » et « il n'y a rien » se rendaient à l'identique : zéro groupe sur
+     * zéro examiné. Le panneau en tirait « le cluster n'a aucun groupe », affirmation sur une
+     * question jamais posée, et l'export Prometheus ne savait pas s'il devait garder sa dernière
+     * valeur ou l'oublier.
+     */
+    @Test
+    void separatesAFailedReadFromAnEmptyAnswer() {
+        topicWithPartitions(1);
+        when(admin.listGroups(any())).thenThrow(new IllegalStateException("broker unreachable"));
+
+        assertFalse(service.getTopicConsumers(TOPIC, 200).available());
+
+        setUp();
+        topicWithPartitions(1);
+        groups();
+        endOffsets(Map.of(0, 100L));
+
+        TopicConsumers empty = service.getTopicConsumers(TOPIC, 200);
+        assertTrue(empty.available(), "the cluster answered: it simply holds no group");
+        assertTrue(empty.groups().isEmpty());
+    }
+
+    /*
+     * Lire un topic ne doit pas rapatrier les offsets de tous les autres. La photo partagée par
+     * l'audit, elle, est volontairement non restreinte — c'est ce qui la rend réutilisable — donc
+     * rien n'empêche structurellement le chemin mono-topic d'hériter de cette absence de
+     * restriction : d'où ce test, qui vérifie que la demande porte bien les partitions du topic.
+     */
+    @SuppressWarnings("unchecked")
+    @Test
+    void restrictsTheOffsetFetchToTheTopicItWasAskedAbout() {
+        topicWithPartitions(2);
+        groups(group("orders-service", GroupType.CLASSIC));
+        described(Map.of("orders-service", description("orders-service", member("m1", "h1", 0))));
+        committed(Map.of("orders-service", Map.of(0, 40L)));
+        endOffsets(Map.of(0, 100L, 1, 100L));
+
+        service.getTopicConsumers(TOPIC, 200);
+
+        ArgumentCaptor<Map<String, ListConsumerGroupOffsetsSpec>> specs =
+                ArgumentCaptor.forClass(Map.class);
+        verify(admin).listConsumerGroupOffsets(specs.capture());
+        assertEquals(List.of(new TopicPartition(TOPIC, 0), new TopicPartition(TOPIC, 1)),
+                specs.getValue().get("orders-service").topicPartitions(),
+                "an unrestricted fetch would return every topic's offsets to answer about one");
+    }
+
+    /*
+     * Le dénominateur honnête de `groupsExamined` est le nombre de groupes éligibles, pas celui du
+     * cluster : le panneau annonçait « tous les N groupes du cluster lus » en ayant écarté les
+     * share groups et ceux de l'application.
+     */
+    @Test
+    void reportsEligibleGroupsApartFromTheClustersTotal() {
+        topicWithPartitions(1);
+        groups(group("orders-service", GroupType.CLASSIC),
+                group("kafka-explorer-metadata-1", GroupType.CLASSIC),
+                group("share-reader", GroupType.SHARE));
+        described(Map.of("orders-service", description("orders-service", member("m1", "h1", 0))));
+        committed(Map.of("orders-service", Map.of(0, 40L)));
+        endOffsets(Map.of(0, 100L));
+
+        TopicConsumers consumers = service.getTopicConsumers(TOPIC, 200);
+
+        assertEquals(3, consumers.groupsInCluster());
+        assertEquals(1, consumers.groupsEligible(), "one share group and one of ours were excluded");
+        assertEquals(1, consumers.groupsExamined());
+    }
+
+    /*
+     * Une ligne dont le retard n'a pas pu être lu porte un zéro. Trier sur le seul chiffre la
+     * rangeait donc parmi les groupes à jour — le seul endroit où elle ne doit pas être.
+     */
+    @Test
+    void putsUnreadableGroupsAboveTheMeasuredOnes() {
+        topicWithPartitions(1);
+        groups(group("busy", GroupType.CLASSIC), group("broken", GroupType.CLASSIC));
+        described(Map.of("busy", description("busy", member("m1", "h1", 0)),
+                "broken", description("broken", member("m2", "h2", 0))));
+        committed(Map.of("busy", Map.of(0, 40L), "broken", Map.of(0, 10L)));
+        offsetsFailFor("broken", "coordinator moved");
+        endOffsets(Map.of(0, 100L));
+
+        TopicConsumers consumers = service.getTopicConsumers(TOPIC, 200);
+
+        assertEquals(List.of("broken", "busy"),
+                consumers.groups().stream().map(ConsumerGroupLag::groupId).toList());
     }
 
     @Test

@@ -41,6 +41,13 @@ public final class ExplorerConsumerGroups {
      * consumers, which is the exact confusion this class removes.
      */
     private static final List<String> LEGACY_PREFIXES = List.of(
+        // Not legacy: the group id `DdlGeneratorService` writes into every generated Flink table
+        // (`'properties.group.id' = 'flink_table_<table>'`). It is a group this application asks
+        // Flink to use on the user's cluster, so it belongs on this list — the Kafka connector
+        // commits only on a checkpoint, which a bounded local SELECT never takes, but a group that
+        // does gain committed offsets with no member is precisely the phantom-STALLED shape above.
+        // The DDL pins `enable.auto.commit=false` besides; recognising the name is the second lock.
+        "flink_table_",
         "kafka-sql-explorer-",
         "explorer-earliest-",
         "explorer-metrics-restorer-",

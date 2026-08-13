@@ -149,6 +149,11 @@ public class DdlGeneratorService {
         sb.append(") WITH (\n");
         sb.append("    'topic' = '").append(topicName).append("',\n");
         sb.append("    'properties.group.id' = 'flink_table_").append(tableName).append("',\n");
+        // Explicit, not inherited: every reader this application opens is forbidden to commit, and
+        // a table registered for one SELECT is no exception. Left to the connector's defaults, a
+        // committed offset under a group with no live member is what the cluster audit grades
+        // CRITICAL — the application inventing a finding about itself. See ExplorerConsumerGroups.
+        sb.append("    'properties.enable.auto.commit' = 'false',\n");
         sb.append("    'connector' = 'kafka',\n");
 
         // Add Kafka connection properties

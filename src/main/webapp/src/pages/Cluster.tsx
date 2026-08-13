@@ -25,7 +25,7 @@ interface GroupInfo {
   groupId: string;
   type: string; // CLASSIC | CONSUMER (KIP-848) | SHARE (KIP-932) | STREAMS | UNKNOWN
   state: string;
-  /** Ce groupe appartient à l'explorer lui-même — marqué, pas masqué : la page décrit le cluster. */
+  /** Groupe créé par l'explorateur lui-même — listé, mais jamais confondu avec un consommateur. */
   explorer?: boolean;
 }
 
@@ -212,10 +212,10 @@ const Cluster: React.FC = () => {
             </h2>
             {details.groups.length === 0 ? (
               <p className="text-[12px] text-on-surface-variant italic">
-                No registered client groups. A group appears once a consumer joins with group
-                management, or commits an offset. This application&rsquo;s readers assign their
-                partitions and never commit, so they leave nothing behind here; a live Process
-                Mining session does subscribe, and shows up for as long as it runs.
+                No registered client groups. Groups appear once a consumer with group management
+                (subscribe) connects, or once one commits an offset — the explorer's sampling
+                readers do neither, though a live Process Mining session does subscribe and shows
+                up here, marked as its own.
               </p>
             ) : (
               <div className="overflow-x-auto">
@@ -231,13 +231,13 @@ const Cluster: React.FC = () => {
                     {details.groups.map(group => (
                       <tr key={group.groupId} className="border-b border-outline-variant/60 last:border-0 hover:bg-primary/5 transition-colors">
                         <td className="py-2.5 px-2 font-mono text-[13px] text-on-surface">
-                          <span className={group.explorer ? 'text-on-surface-variant' : undefined}>{group.groupId}</span>
+                          {group.groupId}
                           {group.explorer && (
                             <span
-                              className="ml-2 text-[10px] px-1.5 py-0.5 rounded border border-outline-variant text-on-surface-variant uppercase tracking-widest align-middle"
-                              title="Created by this application — one of its own readers, not a consumer of your pipelines."
+                              className="ml-2 text-[10px] font-sans not-italic px-1.5 py-0.5 rounded border border-outline-variant/60 text-on-surface-variant uppercase tracking-widest"
+                              title="Created by this application for its own reads — it consumes nothing of yours, and the Consumers tab of a topic excludes it."
                             >
-                              explorer
+                              this app
                             </span>
                           )}
                         </td>

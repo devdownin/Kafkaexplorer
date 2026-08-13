@@ -20,6 +20,8 @@ import java.util.List;
  * @param state                    STABLE / EMPTY / PREPARING_REBALANCE / DEAD / UNKNOWN
  * @param members                  members in the group, all topics together
  * @param assignedMembers          members currently holding a partition of this topic
+ * @param membersKnown             whether the group could be described at all; {@code false} means
+ *                                 {@code members} and {@code assignedMembers} are unknown, not zero
  * @param totalLag                 sum of the per-partition lags that exist
  * @param partitionsWithoutCommit  partitions of the topic this group has never committed on
  * @param partitions               per-partition detail, ordered by partition number
@@ -31,6 +33,7 @@ public record ConsumerGroupLag(
         String state,
         int members,
         int assignedMembers,
+        boolean membersKnown,
         long totalLag,
         int partitionsWithoutCommit,
         List<PartitionLag> partitions,
@@ -39,7 +42,7 @@ public record ConsumerGroupLag(
 
     /** A group whose description or offsets could not be read — named, never silently dropped. */
     public static ConsumerGroupLag failed(String groupId, String type, String reason) {
-        return new ConsumerGroupLag(groupId, type, "UNKNOWN", 0, 0, 0L, 0, List.of(), reason);
+        return new ConsumerGroupLag(groupId, type, "UNKNOWN", 0, 0, false, 0L, 0, List.of(), reason);
     }
 
     /**
@@ -51,6 +54,14 @@ public record ConsumerGroupLag(
      * the audit reports as findings. Kept in step with `healthOf` in
      * {@code components/topic/topicConsumers.ts}, which grades the same thing for the panel
      * without a round trip.
+     *
+     * <p>STALLED requires {@link #membersKnown()}. A group whose {@code describeConsumerGroups}
+     * call failed still has its lag — the offsets are read separately — but arrives with
+     * {@code assignedMembers == 0} because nobody could say otherwise. Grading that STALLED
+     * announced "nothing is draining it" on the strength of a call that never answered, and the
+     * audit turned it into a <em>critical</em> finding: a Kafka Streams group (which the classic
+     * describe API does not answer for) was reported as an abandoned backlog on every topic it
+     * reads. Unknown membership means the STALLED question cannot be decided, so it is not.
      */
     public enum Health {
         /** Committed at the end of every partition. */
@@ -70,7 +81,7 @@ public record ConsumerGroupLag(
     public Health health() {
         if (error != null) return Health.UNKNOWN;
         if (partitions.stream().anyMatch(p -> p.lag() != null && p.lag() < 0)) return Health.AHEAD;
-        if (assignedMembers == 0 && totalLag > 0) return Health.STALLED;
+        if (membersKnown && assignedMembers == 0 && totalLag > 0) return Health.STALLED;
         if (partitionsWithoutCommit > 0) return Health.PARTIAL;
         return totalLag > 0 ? Health.BEHIND : Health.CAUGHT_UP;
     }

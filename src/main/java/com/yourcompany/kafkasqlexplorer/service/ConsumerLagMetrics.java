@@ -14,6 +14,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.HashSet;
+import java.util.stream.Collectors;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -39,6 +41,10 @@ import java.util.concurrent.atomic.AtomicLong;
  *   <li>{@code kafka_consumer_group_assigned_members{group,topic}} — members holding a partition
  *       of this topic. Zero with a non-zero lag is the stalled case: nothing will drain it, and
  *       the two series together express that far better than a threshold on lag ever could</li>
+ *   <li>{@code kafka_consumer_group_lag_last_success_timestamp_seconds{group,topic}} — when the
+ *       three above were last actually measured. They keep their last value through a failed
+ *       read, so this is what separates a real backlog from one nobody is measuring any more;
+ *       see {@link #LAST_SUCCESS}</li>
  * </ul>
  *
  * <h2>Why this is opt-in and topic-scoped</h2>
@@ -61,6 +67,32 @@ public class ConsumerLagMetrics {
 
     private static final Logger log = LoggerFactory.getLogger(ConsumerLagMetrics.class);
     static final long REFRESH_PERIOD_SECONDS = 30;
+    /**
+     * Unix time of the last measurement that actually succeeded for a group×topic.
+     *
+     * <p>The three gauges below deliberately keep their last value when a read fails — falling back
+     * to zero would read as "the backlog was resolved". The cost of that choice was that a frozen
+     * value is indistinguishable from a fresh one: an alert on {@code lag > 10000} fires the same
+     * way whether the backlog is real and stuck or simply no longer being measured, and the
+     * operator it wakes has no way to tell. This is the standard Prometheus answer — date the
+     * value and let the alert decide what it will trust:
+     *
+     * <pre>kafka_consumer_group_lag &gt; 10000
+     *   and time() - kafka_consumer_group_lag_last_success_timestamp_seconds &lt; 120</pre>
+     *
+     * <p>A timestamp rather than a boolean: same cardinality, and it carries <em>how</em> stale,
+     * which is the part a threshold needs. The cost is one more series per group×topic (a third
+     * more than the three below) — paid because a number nobody can date is a number nobody should
+     * act on, which defeats the point of exporting it. The cap in {@link #admits} still counts
+     * group×topic pairs, so what it bounds is unchanged.
+     */
+    private static final String LAST_SUCCESS = "kafka.consumer.group.lag.last.success.timestamp.seconds";
+
+    private static final List<String> GAUGE_NAMES = List.of(
+            "kafka.consumer.group.lag",
+            "kafka.consumer.group.partitions.without.commit",
+            "kafka.consumer.group.assigned.members",
+            LAST_SUCCESS);
 
     private final KafkaAdminService kafkaAdminService;
     private final ExplorerConfig explorerConfig;
@@ -69,6 +101,8 @@ public class ConsumerLagMetrics {
     private final Map<String, AtomicLong> gaugeValues = new ConcurrentHashMap<>();
     /** Series seen so far, to enforce the cap across refreshes rather than within one. */
     private final Set<String> series = ConcurrentHashMap.newKeySet();
+    /** Groups last seen on each watched topic, so a group that disappears stops being exported. */
+    private final Map<String, Set<String>> groupsPerTopic = new ConcurrentHashMap<>();
     private volatile boolean capReported = false;
 
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -105,13 +139,38 @@ public class ConsumerLagMetrics {
             try {
                 TopicConsumers consumers = kafkaAdminService.getTopicConsumers(
                         topic, explorerConfig.getConsumerGroupMaxGroups());
+                if (!consumers.available()) {
+                    // The read failed: an empty group list here means "we could not ask", and
+                    // acting on it would publish exactly the wrong answer — see the catch below.
+                    log.debug("Consumer lag metrics: {} could not be read ({})", topic,
+                            consumers.warnings().isEmpty() ? "no reason given" : consumers.warnings().get(0));
+                    continue;
+                }
+                // Retire *avant* d'exporter : la place libérée par un groupe disparu doit être
+                // disponible pour un nouveau dès ce tour, sinon le plafond continue de compter des
+                // groupes qui n'existent plus et le remplaçant n'est jamais publié.
+                Set<String> live = consumers.groups().stream()
+                        .map(ConsumerGroupLag::groupId)
+                        .collect(Collectors.toCollection(HashSet::new));
+                dropVanished(topic, live);
                 for (ConsumerGroupLag group : consumers.groups()) {
+                    if (group.error() != null) {
+                        // This one group's offsets could not be read, so it arrives with a lag of
+                        // zero — which as a gauge reads "caught up" and silences the very alert
+                        // that should fire. Keep its last value, like a whole failed refresh.
+                        continue;
+                    }
                     Tags tags = Tags.of("group", group.groupId(), "topic", topic);
                     if (!admits("kafka.consumer.group.lag" + tags)) continue;
                     setGauge("kafka.consumer.group.lag", tags, group.totalLag());
                     setGauge("kafka.consumer.group.partitions.without.commit", tags,
                             group.partitionsWithoutCommit());
                     setGauge("kafka.consumer.group.assigned.members", tags, group.assignedMembers());
+                    // Set here and nowhere else: only a row that was actually measured dates the
+                    // three gauges above. Everything that skips this line — an error on the group,
+                    // an unreadable topic, a throwing refresh — leaves the previous timestamp
+                    // standing, which is what makes the freeze visible.
+                    setGauge(LAST_SUCCESS, tags, System.currentTimeMillis() / 1000);
                 }
             } catch (Exception e) {
                 // Registered gauges keep their last value: a transient admin failure must not
@@ -119,6 +178,32 @@ public class ConsumerLagMetrics {
                 log.debug("Consumer lag metrics refresh failed for topic {}", topic, e);
             }
         }
+    }
+
+    /**
+     * Removes the series of groups that a <em>successful</em> read no longer returns.
+     *
+     * <p>Keeping the last value is right for a failed read and wrong for a group that is simply
+     * gone: a decommissioned consumer went on exporting the backlog it had on its last day, for
+     * the life of the process, and an alert on it could never clear. The distinction is exactly
+     * {@code available} plus the per-group error above — everything that got this far was measured.
+     */
+    private void dropVanished(String topic, Set<String> live) {
+        Set<String> known = groupsPerTopic.computeIfAbsent(topic, t -> ConcurrentHashMap.newKeySet());
+        for (String gone : Set.copyOf(known)) {
+            if (live.contains(gone)) continue;
+            Tags tags = Tags.of("group", gone, "topic", topic);
+            for (String name : GAUGE_NAMES) {
+                meterRegistry.find(name).tags(tags).meters().forEach(meterRegistry::remove);
+                gaugeValues.remove(name + tags);
+                series.remove(name + tags);
+            }
+            // `admits` keys on the lag series alone; free that slot too or the cap would count
+            // groups that no longer exist against the ones that do.
+            series.remove("kafka.consumer.group.lag" + tags);
+            known.remove(gone);
+        }
+        known.addAll(live);
     }
 
     /**

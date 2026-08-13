@@ -118,3 +118,62 @@ export interface DashboardResponse {
   bootstrapServers: string;
   topicLastMessages: Record<string, number>;
 }
+
+/**
+ * Où en est un groupe de consommateurs sur une partition.
+ *
+ * `committedOffset` et `lag` sont nullables à dessein : un groupe qui n'a jamais commité sur une
+ * partition n'y a pas de position, et rendre ça par `0` se lirait « à jour au tout début » —
+ * l'exact contraire de « personne ne lit cette partition ».
+ *
+ * @java PartitionLag
+ */
+export interface PartitionLag {
+  partition: number;
+  committedOffset: number | null;
+  endOffset: number;
+  /** `endOffset - committedOffset`. Peut être négatif : un reset d'offset laisse ça derrière lui. */
+  lag: number | null;
+  memberId: string | null;
+  clientId: string | null;
+  host: string | null;
+}
+
+/**
+ * Le retard d'un groupe sur un topic.
+ *
+ * @java ConsumerGroupLag
+ */
+export interface ConsumerGroupLag {
+  groupId: string;
+  type: string;
+  state: string;
+  members: number;
+  assignedMembers: number;
+  /** `false` quand le groupe n'a pas pu être décrit : `members` est alors inconnu, pas nul. */
+  membersKnown: boolean;
+  totalLag: number;
+  partitionsWithoutCommit: number;
+  partitions: PartitionLag[];
+  error: string | null;
+}
+
+/**
+ * `GET /api/topic/{name}/consumers` — qui lit ce topic, et où il en est.
+ *
+ * Les compteurs de portée ne sont pas décoratifs : une liste vide veut dire « personne ne lit ce
+ * topic » ou « on n'a regardé que deux cents groupes sur trois mille », et `available` sépare les
+ * deux d'un troisième cas qui leur ressemblait à s'y méprendre — la lecture qui a échoué.
+ *
+ * @java TopicConsumers
+ */
+export interface TopicConsumers {
+  topic: string;
+  groups: ConsumerGroupLag[];
+  groupsExamined: number;
+  groupsEligible: number;
+  groupsInCluster: number;
+  truncated: boolean;
+  available: boolean;
+  warnings: string[];
+}

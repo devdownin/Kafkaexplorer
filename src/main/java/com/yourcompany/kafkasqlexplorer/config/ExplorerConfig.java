@@ -43,6 +43,19 @@ public class ExplorerConfig {
      */
     private long auditMaxDurationMs = 1_800_000;
     /**
+     * How long the cluster's consumer groups, read once for an audit run, stay usable before being
+     * re-read. {@code 0} takes the snapshot once for the whole run.
+     *
+     * <p>The snapshot is what stops the consumer-lag check from re-listing every group of the
+     * cluster on every topic. Taken once and never refreshed, though, a run of half an hour
+     * compares committed positions from its first minute against end offsets read thirty minutes
+     * later: the lag is only ever overstated, never understated, but "overstated by half an hour of
+     * traffic" is a wide enough margin to make a reported backlog hard to believe. This bounds the
+     * staleness without giving the cost back — at 60 s, a thirty-minute run pays about thirty
+     * reads instead of one per topic.
+     */
+    private long auditGroupSnapshotTtlMs = 60_000;
+    /**
      * Where duplicate detection reads from: LATEST (the most recent messages, the default) or
      * EARLIEST. Everything else in the audit samples recent messages; scanning from the start of
      * the topic judged the oldest surviving records, which on a topic with retention is rarely
@@ -189,6 +202,14 @@ public class ExplorerConfig {
 
     public void setAuditMaxDurationMs(long auditMaxDurationMs) {
         this.auditMaxDurationMs = auditMaxDurationMs;
+    }
+
+    public long getAuditGroupSnapshotTtlMs() {
+        return auditGroupSnapshotTtlMs;
+    }
+
+    public void setAuditGroupSnapshotTtlMs(long auditGroupSnapshotTtlMs) {
+        this.auditGroupSnapshotTtlMs = auditGroupSnapshotTtlMs;
     }
 
     public String getAuditDuplicateScanFrom() {

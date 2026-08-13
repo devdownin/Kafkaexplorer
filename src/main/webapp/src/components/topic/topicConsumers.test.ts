@@ -30,6 +30,7 @@ const group = (over: Partial<ConsumerGroupLag> = {}): ConsumerGroupLag => ({
   state: 'STABLE',
   members: 1,
   assignedMembers: 1,
+  membersKnown: true,
   totalLag: 10,
   partitionsWithoutCommit: 0,
   partitions: [part()],
@@ -41,8 +42,10 @@ const consumers = (over: Partial<TopicConsumers> = {}): TopicConsumers => ({
   topic: 'demo.orders',
   groups: [group()],
   groupsExamined: 3,
+  groupsEligible: 3,
   groupsInCluster: 3,
   truncated: false,
+  available: true,
   warnings: [],
   ...over,
 });
@@ -59,6 +62,12 @@ describe('healthOf', () => {
   it('separates a group with no assigned member from one merely behind', () => {
     // Zéro membre et du retard : rien ne le résorbera, ce n'est pas le même problème.
     expect(healthOf(group({ assignedMembers: 0, totalLag: 4200 }))).toBe('STALLED');
+  });
+
+  it('does not call a group stalled on a membership nobody could read', () => {
+    // Zéro membre par absence de réponse, pas par absence de membre : le serveur applique la même
+    // règle, et l'audit en faisait sinon un constat critique sur un groupe Streams très sain.
+    expect(healthOf(group({ membersKnown: false, assignedMembers: 0, totalLag: 4200 }))).toBe('BEHIND');
   });
 
   it('does not call a zero-lag group with no member stalled', () => {
@@ -82,10 +91,31 @@ describe('describeScope', () => {
   it('distinguishes "nobody consumes it" from "we only looked at a few"', () => {
     const none = describeScope(consumers({ groups: [] }));
     expect(none).toMatch(/No group holds a committed offset/);
-    expect(none).toMatch(/all 3 of the cluster's groups read/);
+    expect(none).toMatch(/all 3 eligible groups read/);
 
-    const capped = describeScope(consumers({ groups: [], groupsExamined: 200, groupsInCluster: 3000, truncated: true }));
-    expect(capped).toMatch(/200 of the cluster's 3000 groups read/);
+    const capped = describeScope(consumers({
+      groups: [], groupsExamined: 200, groupsEligible: 2200, groupsInCluster: 3000, truncated: true,
+    }));
+    expect(capped).toMatch(/200 of 2200 eligible groups read/);
+    // Le total du cluster reste dit, mais comme un contexte — pas comme le dénominateur, puisque
+    // 800 des 3000 avaient été écartés avant même le plafond.
+    expect(capped).toMatch(/of the cluster's 3000/);
+  });
+
+  it('does not present a filtered count as the whole cluster', () => {
+    // 12 groupes listés, 3 éligibles : « tous les 3 groupes du cluster lus » était faux.
+    const scope = describeScope(consumers({ groupsExamined: 3, groupsEligible: 3, groupsInCluster: 12 }));
+    expect(scope).toMatch(/all 3 eligible groups read of the cluster's 12/);
+  });
+
+  it('never turns a failed read into a statement about the cluster', () => {
+    // Le cas qui a motivé `available` : mêmes compteurs à zéro qu'un cluster vide, sens opposé.
+    const scope = describeScope(consumers({
+      groups: [], groupsExamined: 0, groupsEligible: 0, groupsInCluster: 0, available: false,
+      warnings: ['Could not list the cluster\'s groups: broker unreachable'],
+    }));
+    expect(scope).toMatch(/could not be read/);
+    expect(scope).not.toMatch(/no client group at all/);
   });
 
   it('says when the cluster simply has no group', () => {
@@ -93,9 +123,9 @@ describe('describeScope', () => {
       .toMatch(/no client group at all/);
   });
 
-  it('says when nothing could be read', () => {
-    expect(describeScope(consumers({ groups: [], groupsExamined: 0, groupsInCluster: 12 })))
-      .toMatch(/None of the cluster's 12 groups could be read/);
+  it('says when every group was excluded rather than unreadable', () => {
+    expect(describeScope(consumers({ groups: [], groupsExamined: 0, groupsEligible: 0, groupsInCluster: 12 })))
+      .toMatch(/None of the cluster's 12 groups could be measured/);
   });
 
   it('agrees in number with one group', () => {

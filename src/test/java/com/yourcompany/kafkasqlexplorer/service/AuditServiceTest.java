@@ -46,10 +46,13 @@ class AuditServiceTest {
             }
         };
 
+        // The consumer-lag check reads the cluster's groups once and derives each topic's view
+        // from that snapshot, so that is the path the tests must drive.
+        when(kafkaAdminService.groupSnapshot(anyInt(), any())).thenAnswer(inv -> emptySnapshot());
         // Default for the consumer-lag check, which AuditOptions.all() enables: no group reads the
         // topic. The tests that care about lag override this with groups of their own.
-        when(kafkaAdminService.getTopicConsumers(anyString(), anyInt()))
-                .thenAnswer(inv -> new TopicConsumers(inv.getArgument(0), List.of(), 0, 0, false, List.of()));
+        when(kafkaAdminService.getTopicConsumers(anyString(), any(KafkaAdminService.GroupSnapshot.class)))
+                .thenAnswer(inv -> new TopicConsumers(inv.getArgument(0), List.of(), 0, 0, 0, false, true, List.of()));
     }
 
     @Test
@@ -577,13 +580,58 @@ class AuditServiceTest {
 
     private static TopicConsumers consumers(ConsumerGroupLag... groups) {
         return new TopicConsumers("orders.created", List.of(groups), groups.length, groups.length,
-                false, List.of());
+                groups.length, false, true, List.of());
     }
 
     private static ConsumerGroupLag lagging(String groupId, long totalLag, int assignedMembers,
                                             int partitionsWithoutCommit, PartitionLag... partitions) {
         return new ConsumerGroupLag(groupId, "CLASSIC", "STABLE", assignedMembers, assignedMembers,
-                totalLag, partitionsWithoutCommit, List.of(partitions), null);
+                true, totalLag, partitionsWithoutCommit, List.of(partitions), null);
+    }
+
+    /*
+     * L'intérêt de la photo : une lecture des groupes du cluster pour tout le run, pas une par
+     * topic. C'est ce qui faisait 300 `ListGroups` et 60 000 `OffsetFetch` sur un cluster de 300
+     * topics, pour une réponse qui ne varie pas d'un topic à l'autre.
+     */
+    @Test
+    void readsTheClustersGroupsOnceForTheWholeRunRatherThanOncePerTopic() throws Exception {
+        explorerConfig.setAuditGroupSnapshotTtlMs(0);
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("a.one", "b.two", "c.three"));
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of());
+
+        auditService.runAuditAsync("once", new AuditOptions(false, false, false, false, false, true, null));
+
+        verify(kafkaAdminService, times(1)).groupSnapshot(anyInt(), any());
+        verify(kafkaAdminService, times(3))
+                .getTopicConsumers(anyString(), any(KafkaAdminService.GroupSnapshot.class));
+    }
+
+    /*
+     * Mais pas indéfiniment : sur un run d'une demi-heure, les positions commitées de la première
+     * minute comparées à des end offsets lus trente minutes plus tard donnent un retard surestimé
+     * d'une demi-heure de trafic — sûr dans sa direction, inexploitable dans son ordre de grandeur.
+     */
+    @Test
+    void reReadsTheGroupsOnceTheSnapshotHasGoneStale() throws Exception {
+        explorerConfig.setAuditGroupSnapshotTtlMs(1);
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("a.one", "b.two", "c.three"));
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of());
+        // Chaque topic coûte largement plus que le TTL, donc la photo est périmée à chaque fois.
+        when(kafkaAdminService.getTopicConsumers(anyString(), any(KafkaAdminService.GroupSnapshot.class)))
+                .thenAnswer(inv -> {
+                    Thread.sleep(20);
+                    return new TopicConsumers(inv.getArgument(0), List.of(), 0, 0, 0, false, true, List.of());
+                });
+
+        auditService.runAuditAsync("stale", new AuditOptions(false, false, false, false, false, true, null));
+
+        verify(kafkaAdminService, atLeast(2)).groupSnapshot(anyInt(), any());
+    }
+
+    private static KafkaAdminService.GroupSnapshot emptySnapshot() {
+        return new KafkaAdminService.GroupSnapshot(0, 0, false, List.of(), Map.of(), Map.of(),
+                Map.of(), Map.of(), Map.of(), List.of(), null);
     }
 
     private static PartitionLag lagOf(int partition, Long committed, long end, Long lag) {
@@ -594,7 +642,7 @@ class AuditServiceTest {
     void reportsAGroupThatNothingIsDrainingAsCritical() throws Exception {
         when(kafkaAdminService.listTopics()).thenReturn(List.of("orders.created"));
         when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("orders.created", 500L));
-        when(kafkaAdminService.getTopicConsumers(eq("orders.created"), anyInt())).thenReturn(
+        when(kafkaAdminService.getTopicConsumers(eq("orders.created"), any(KafkaAdminService.GroupSnapshot.class))).thenReturn(
                 consumers(lagging("enricher", 4200L, 0, 0, lagOf(0, 100L, 4300L, 4200L))));
 
         auditService.runAuditAsync("lag", new AuditOptions(false, false, false, false, false, true, null));
@@ -607,12 +655,55 @@ class AuditServiceTest {
                 "the issue must name the group and why it is stuck: " + audit.issues());
     }
 
+    /*
+     * Le même retard sans membre assigné, mais sur un groupe que le broker n'a pas su décrire :
+     * les zéro membres viennent de l'absence de réponse, pas de l'absence de membre. En faire un
+     * constat critique, c'était trancher sur la foi d'un appel muet — et `describeConsumerGroups`
+     * est muet, entre autres, pour un groupe Kafka Streams parfaitement sain.
+     */
+    @Test
+    void doesNotReportAGroupAsStuckWhenItsMembershipWasNeverRead() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders.created"));
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("orders.created", 500L));
+        ConsumerGroupLag undescribed = new ConsumerGroupLag("streams-app", "CLASSIC", "UNKNOWN",
+                0, 0, false, 4200L, 0, List.of(lagOf(0, 100L, 4300L, 4200L)), null);
+        when(kafkaAdminService.getTopicConsumers(eq("orders.created"), any(KafkaAdminService.GroupSnapshot.class)))
+                .thenReturn(consumers(undescribed));
+
+        auditService.runAuditAsync("lag", new AuditOptions(false, false, false, false, false, true, null));
+
+        TopicAudit audit = auditService.getAuditReport("lag").topicAudits().get(0);
+        assertEquals(HealthStatus.HEALTHY, audit.healthStatus());
+        assertTrue(audit.issues().isEmpty(),
+                "unknown membership cannot decide the stalled question: " + audit.issues());
+    }
+
+    /*
+     * Une lecture qui échoue rendait une liste vide, donc aucun constat — indiscernable de « tous
+     * les groupes de ce topic vont bien ». Une vérification qui n'a pas pu tourner le dit, comme
+     * toutes les autres ici.
+     */
+    @Test
+    void saysSoWhenTheConsumerGroupsCouldNotBeReadAtAll() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders.created"));
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("orders.created", 500L));
+        when(kafkaAdminService.getTopicConsumers(eq("orders.created"), any(KafkaAdminService.GroupSnapshot.class)))
+                .thenReturn(TopicConsumers.unavailable("orders.created", "broker unreachable"));
+
+        auditService.runAuditAsync("lag", new AuditOptions(false, false, false, false, false, true, null));
+
+        TopicAudit audit = auditService.getAuditReport("lag").topicAudits().get(0);
+        assertEquals(HealthStatus.WARNING, audit.healthStatus());
+        assertTrue(audit.issues().stream().anyMatch(i -> i.message().contains("broker unreachable")),
+                "a check that could not run must say so: " + audit.issues());
+    }
+
     @Test
     void doesNotTurnAnOrdinaryBacklogIntoAFinding() throws Exception {
         when(kafkaAdminService.listTopics()).thenReturn(List.of("orders.created"));
         when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("orders.created", 500L));
         // Behind by a lot, but draining: any threshold one picked here would be arbitrary.
-        when(kafkaAdminService.getTopicConsumers(eq("orders.created"), anyInt())).thenReturn(
+        when(kafkaAdminService.getTopicConsumers(eq("orders.created"), any(KafkaAdminService.GroupSnapshot.class))).thenReturn(
                 consumers(lagging("orders-api", 900_000L, 3, 0, lagOf(0, 100L, 900_100L, 900_000L))));
 
         auditService.runAuditAsync("lag", new AuditOptions(false, false, false, false, false, true, null));
@@ -626,7 +717,7 @@ class AuditServiceTest {
     void warnsWhenAGroupIgnoresPartOfTheTopic() throws Exception {
         when(kafkaAdminService.listTopics()).thenReturn(List.of("orders.created"));
         when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("orders.created", 500L));
-        when(kafkaAdminService.getTopicConsumers(eq("orders.created"), anyInt())).thenReturn(
+        when(kafkaAdminService.getTopicConsumers(eq("orders.created"), any(KafkaAdminService.GroupSnapshot.class))).thenReturn(
                 consumers(lagging("partial", 10L, 1, 2,
                         lagOf(0, 90L, 100L, 10L), lagOf(1, null, 100L, null), lagOf(2, null, 100L, null))));
 
@@ -642,7 +733,7 @@ class AuditServiceTest {
     void warnsWhenACommittedOffsetIsPastTheEndOfTheLog() throws Exception {
         when(kafkaAdminService.listTopics()).thenReturn(List.of("orders.created"));
         when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("orders.created", 500L));
-        when(kafkaAdminService.getTopicConsumers(eq("orders.created"), anyInt())).thenReturn(
+        when(kafkaAdminService.getTopicConsumers(eq("orders.created"), any(KafkaAdminService.GroupSnapshot.class))).thenReturn(
                 consumers(lagging("reset", -400L, 1, 0, lagOf(0, 500L, 100L, -400L))));
 
         auditService.runAuditAsync("lag", new AuditOptions(false, false, false, false, false, true, null));
@@ -656,7 +747,7 @@ class AuditServiceTest {
     void reportsThatTheGroupsCouldNotBeReadRatherThanStayingSilent() throws Exception {
         when(kafkaAdminService.listTopics()).thenReturn(List.of("orders.created"));
         when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("orders.created", 500L));
-        when(kafkaAdminService.getTopicConsumers(eq("orders.created"), anyInt()))
+        when(kafkaAdminService.getTopicConsumers(eq("orders.created"), any(KafkaAdminService.GroupSnapshot.class)))
                 .thenThrow(new IllegalStateException("coordinator unavailable"));
 
         auditService.runAuditAsync("lag", new AuditOptions(false, false, false, false, false, true, null));
@@ -682,7 +773,7 @@ class AuditServiceTest {
     void statesTheBoundsOfTheConsumerLagScan() throws Exception {
         when(kafkaAdminService.listTopics()).thenReturn(List.of("orders.created"));
         when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("orders.created", 500L));
-        when(kafkaAdminService.getTopicConsumers(eq("orders.created"), anyInt())).thenReturn(consumers());
+        when(kafkaAdminService.getTopicConsumers(eq("orders.created"), any(KafkaAdminService.GroupSnapshot.class))).thenReturn(consumers());
 
         auditService.runAuditAsync("lag", new AuditOptions(false, false, false, false, false, true, null));
 

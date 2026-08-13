@@ -89,8 +89,7 @@ public class KafkaSnapshotReader {
 
     private <V> void consume(List<String> topics, SnapshotConfig config,
                               Class<?> valueDeserializer, Consumer<ConsumerRecord<String, V>> handler) {
-        String groupId = ExplorerConsumerGroups.transientGroup("snapshot");
-        Properties props = buildConsumerProperties(groupId, config, valueDeserializer);
+        Properties props = buildConsumerProperties(config, valueDeserializer);
 
         KafkaConsumer<String, V> consumer = null;
         try {
@@ -148,14 +147,16 @@ public class KafkaSnapshotReader {
         }
     }
 
-    private Properties buildConsumerProperties(String groupId, SnapshotConfig config,
+    private Properties buildConsumerProperties(SnapshotConfig config,
                                                 Class<?> valueDeserializer) {
         Properties props = new Properties();
         // Copy base Kafka properties
         kafkaConfig.getKafkaProperties().forEach(props::put);
 
-        props.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);
-        props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
+        // Un seul point d'entrée : le nom du groupe et l'interdiction de commiter sont posés
+        // ensemble, sinon les deux dérivent — c'est exactement ce que cette classe existe pour
+        // empêcher, et les poser à la main ici rouvrait la porte.
+        ExplorerConsumerGroups.configure(props, "snapshot");
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, valueDeserializer.getName());
         props.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, String.valueOf(Math.min(Math.max(config.maxMessages(), 1) * 10, 1000)));
