@@ -770,6 +770,12 @@ public class KafkaAdminService {
      * up: a live session holds members, so the broker reports it STABLE and it is not a candidate.
      * A group that is not ours is never returned whatever its state — this exists to clean up
      * after this application, not to tidy someone's cluster on their behalf.
+     *
+     * <p>"Ours" here is {@code isOwnReaderGroup}, which is narrower than
+     * {@code isExplorerGroup}: the latter also matches the {@code flink_table_*} id written into
+     * generated DDL, and that DDL is published to be copied into the user's own Flink jobs. An
+     * idle {@code flink_table_*} group may therefore be a stopped production job rather than our
+     * leftover, and deleting it would break the very rule stated above.
      */
     public List<String> listDeletableExplorerGroups(int max) {
         try {
@@ -777,7 +783,11 @@ public class KafkaAdminService {
                     .listGroups(new ListGroupsOptions().timeoutMs(5000))
                     .all().get(10, TimeUnit.SECONDS);
             return all.stream()
-                    .filter(g -> ExplorerConsumerGroups.isExplorerGroup(g.groupId()))
+                    // isOwnReaderGroup, not isExplorerGroup: the latter also matches the
+                    // `flink_table_*` id this application writes into generated DDL, which is
+                    // published to be copied — an idle one may be the user's own stopped Flink
+                    // job, not our leftover. See ExplorerConsumerGroups.
+                    .filter(g -> ExplorerConsumerGroups.isOwnReaderGroup(g.groupId()))
                     .filter(KafkaAdminService::isDormant)
                     .map(GroupListing::groupId)
                     .sorted()

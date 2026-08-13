@@ -87,6 +87,29 @@ class ExplorerConsumerGroupsTest {
         assertTrue(ExplorerConsumerGroups.isExplorerGroup("flink_table_demo_orders_1_received"));
     }
 
+    /*
+     * Reconnu comme le nôtre d'origine, mais jamais comme supprimable : ce DDL est publié pour être
+     * copié, donc le même id peut désigner un job Flink que l'utilisateur fait tourner lui-même.
+     * Les deux questions — « est-ce un consommateur de son pipeline ? » et « avons-nous le droit de
+     * le supprimer ? » — ont ici des réponses opposées, d'où deux prédicats.
+     */
+    @Test
+    void doesNotTreatTheGeneratedFlinkTableGroupAsOursToDelete() {
+        assertFalse(ExplorerConsumerGroups.isOwnReaderGroup("flink_table_demo_orders_1_received"));
+    }
+
+    @Test
+    void treatsItsOwnReadersAsBothOursAndDeletable() {
+        for (String own : new String[] {
+            "kafka-explorer-metadata-abc", "kafka-sql-explorer-timestamps-9", "snapshot-reader-1",
+        }) {
+            assertTrue(ExplorerConsumerGroups.isExplorerGroup(own), own);
+            assertTrue(ExplorerConsumerGroups.isOwnReaderGroup(own), own);
+        }
+        assertFalse(ExplorerConsumerGroups.isOwnReaderGroup("orders-service"));
+        assertFalse(ExplorerConsumerGroups.isOwnReaderGroup(null));
+    }
+
     @Test
     void leavesRealConsumerGroupsAlone() {
         for (String real : new String[] {
