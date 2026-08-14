@@ -15,6 +15,7 @@ import { PageHeader, Button, Field, Textarea } from '../components/ui';
 import { clearDraft, readDraft, useDraftConflict, usePersistentState, writeDraft } from '../draftStore';
 import { describeResume, resumableStep } from './processMiningDraft';
 import type { AnalysisMode, Step } from './processMiningDraft';
+import type { FieldMappingValidation } from '../api/types';
 
 // ---- Types ----
 
@@ -283,7 +284,7 @@ const ProcessMining: React.FC = () => {
     setError(null);
 
     try {
-      const res = await axios.post<{ fieldMappingId: string }>('/api/process-mining/profiling/validate', {
+      const res = await axios.post<FieldMappingValidation>('/api/process-mining/profiling/validate', {
         proposal: profileResult.unificationProposal,
         userCorrections: corrections,
       });

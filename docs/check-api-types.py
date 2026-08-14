@@ -116,6 +116,24 @@ def normalize(ts_type: str) -> str:
 
 NULLABLE = re.compile(r'\s*\|\s*(?:null|undefined)\b')
 PRIMITIVES = {'int', 'long', 'double', 'float', 'short', 'boolean', 'byte', 'char'}
+# A union of string literals: 'MAX_HITS' | 'TIMEOUT' | 'ERROR'.
+STRING_UNION = re.compile(r"^'[^']*'(?:\s*\|\s*'[^']*')*$")
+
+
+def narrows_string(declared: str) -> bool:
+    """
+    A union of string literals where Java declares `String`.
+
+    The backend types these as String because Java has no union type, but the frontend knows
+    the closed set the server actually emits — `stopReason` is one of five values, and a
+    component switching on it wants the compiler to check the arms are exhaustive. Widening
+    the frontend to `string` to satisfy this script would delete real type safety in order to
+    pass a check whose entire purpose is type safety.
+
+    Accepted in this direction only. `string` where Java has an *enum* stays an error: there
+    the closed set exists on both sides, and the union alias is what keeps them in step.
+    """
+    return bool(STRING_UNION.fullmatch(NULLABLE.sub('', declared).strip()))
 
 
 def outside_generics(ts_type: str) -> str:
@@ -141,6 +159,8 @@ def accepts(declared: str, expected: str, java_type: str) -> bool:
     """
     declared, expected = normalize(declared), normalize(expected)
     if declared == expected:
+        return True
+    if expected == 'string' and narrows_string(declared):
         return True
     if NULLABLE.sub('', declared) != NULLABLE.sub('', expected):
         return False

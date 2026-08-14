@@ -180,3 +180,131 @@ export interface TopicConsumers {
   available: boolean;
   warnings: string[];
 }
+
+/**
+ * `POST /api/topic/{name}/search` — une passe de recherche bornée, et ce qu'elle a couvert.
+ *
+ * Les compteurs de couverture font partie du contrat : une recherche n'est jamais silencieusement
+ * partielle, donc `scanned` / `stopReason` / `exhausted` décrivent la passe et `nextCursor` permet
+ * de la reprendre. `elapsedMs` a déjà manqué une fois dans une fixture de capture d'écran, ce qui
+ * affichait « 4 318 scanned in NaNs » au lieu d'échouer.
+ *
+ * `stopReason` est plus étroit ici que côté Java, où il n'existe pas de type union : le serveur
+ * n'émet que ces cinq valeurs et l'UI branche dessus.
+ *
+ * @java TopicSearchResponse
+ */
+export interface TopicSearchResponse {
+  hits: TopicMessage[];
+  scanned: number;
+  matched: number;
+  elapsedMs: number;
+  exhausted: boolean;
+  stopReason: 'MAX_HITS' | 'MAX_SCAN' | 'TIMEOUT' | 'EXHAUSTED' | 'ERROR';
+  nextCursor: Record<string, number>;
+  warnings: string[];
+}
+
+/**
+ * `GET /api/query/init` — le catalogue de l'éditeur SQL, et pourquoi il est vide quand il l'est.
+ *
+ * Les deux champs d'erreur sont le correctif d'un `catch` vide : un broker injoignable, une adresse
+ * de bootstrap fausse et un runtime Flink encore en démarrage rendaient tous « Engine offline ·
+ * 0 tables · 0 topics », sans rien pour les distinguer. Les deux sondes sont indépendantes — l'une
+ * qui échoue ne doit pas vider l'autre.
+ *
+ * @java QueryInitResponse
+ */
+export interface QueryInitResponse {
+  topics: string[];
+  tables: string[];
+  health: boolean;
+  kafkaError: string | null;
+  flinkError: string | null;
+}
+
+/**
+ * `GET /api/metrics` — une métrique Prometheus adossée à une requête SQL.
+ *
+ * `lastValue` à `null` laisse la métrique en statut `pending` : la cause habituelle est un SQL
+ * d'agrégat sans alias `AS metric_value`, pas une ressource indisponible.
+ *
+ * @java MetricConfig
+ */
+export interface MetricConfig {
+  id: string;
+  name: string;
+  type: string;
+  sql: string;
+  description: string;
+  warningThreshold: number | null;
+  criticalThreshold: number | null;
+  lastValue: number | null;
+  lastUpdateTime: number | null;
+  errorMessage: string | null;
+  history: number[];
+  lastSummary: Record<string, unknown> | null;
+  createTableSql: string | null;
+  templateType: string | null;
+  templateParams: Record<string, unknown> | null;
+  executionMode: string | null;
+  labelTopic: string | null;
+  labelFields: string[] | null;
+}
+
+/*
+ * ─── Réponses ad hoc ──────────────────────────────────────────────────────────────────────────
+ *
+ * Ce qui suit n'a délibérément pas de marqueur `@java` : ces endpoints répondent par un `Map.of(…)`
+ * construit dans le contrôleur, pas par un record du domaine, donc il n'existe rien contre quoi
+ * `check-api-types.py` pourrait les résoudre — et un marqueur qui ne vérifie rien vaut moins que
+ * pas de marqueur, il fait croire à un contrôle.
+ *
+ * Les nommer ici sert quand même à quelque chose : c'est le motif `axios.get<{ … }>(…)` déclaré au
+ * point d'appel qui a tué la page Compare, parce qu'une forme écrite à la main au milieu d'un
+ * composant n'est relue par personne. Rassemblées, elles se comparent au contrôleur d'un coup
+ * d'œil. Le jour où l'un de ces endpoints reçoit un vrai record, l'interface déménage au-dessus
+ * avec son marqueur.
+ */
+
+/** `GET /api/query/ddl-preview` — l'un ou l'autre, jamais les deux. */
+export interface DdlPreviewResponse {
+  ddl?: string;
+  error?: string;
+}
+
+/** `POST /api/query/validate` — syntaxe seule ; le catalogue n'est pas consulté. */
+export interface SqlValidationResponse {
+  valid: boolean;
+  error?: string;
+}
+
+/**
+ * `POST /api/query/cancel/{queryId}` — ce qui a réellement été annulé.
+ *
+ * `cancelled: false` est un résultat normal, pas un échec : un scan `KAFKA_DIRECT` n'a aucun job
+ * Flink à annuler. L'UI doit dire « requête abandonnée » et non « annulée » dans ce cas.
+ */
+export interface QueryCancelResponse {
+  cancelled: boolean;
+  outcome: string;
+}
+
+/** `POST /api/config/test-llm` — test de connectivité du fournisseur LLM. */
+export interface LlmTestResponse {
+  ok: boolean;
+  message: string;
+}
+
+/** `POST /api/process-mining/profiling/validate` — identifiant du mapping retenu. */
+export interface FieldMappingValidation {
+  fieldMappingId: string;
+}
+
+/** `POST /api/metrics/test` — exécution à blanc d'une métrique avant enregistrement. */
+export interface MetricTestResponse {
+  value?: unknown;
+  rows?: unknown[];
+  error?: string;
+  summary?: Record<string, unknown>;
+}

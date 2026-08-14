@@ -35,7 +35,12 @@ import { DdlPreviewModal } from '../components/query/DdlPreviewModal';
 import { RowDetail } from '../components/query/RowDetail';
 import { randomId } from '../randomId';
 import { copyText } from '../clipboard';
-import type { QueryResult } from '../api/types';
+import type {
+  QueryResult,
+  DdlPreviewResponse,
+  SqlValidationResponse,
+  QueryCancelResponse,
+} from '../api/types';
 
 /** Contrôle segmenté compact (mode d'exécution, offset). */
 function Segmented<T extends string>({ value, onChange, options, ariaLabel }: {
@@ -653,7 +658,7 @@ const QueryWorkbench: React.FC = () => {
     setDdlPreviewError(null);
     setDdlPreviewLoading(true);
     try {
-      const res = await axios.get<{ ddl?: string; error?: string }>(`/api/query/ddl-preview?topic=${encodeURIComponent(topicName)}`);
+      const res = await axios.get<DdlPreviewResponse>(`/api/query/ddl-preview?topic=${encodeURIComponent(topicName)}`);
       setDdlPreview(res.data.ddl ?? null);
       // Le motif s'affiche *dans* la boîte, pas dans un toast qui s'efface derrière elle en trois
       // secondes en emportant la seule chose utile — pourquoi l'inférence n'a rien donné.
@@ -954,7 +959,7 @@ const QueryWorkbench: React.FC = () => {
      */
     if (validatedSqlRef.current !== sqlToRun) {
       try {
-        const vRes = await axios.post<{ valid: boolean; error?: string }>('/api/query/validate', { sql: sqlToRun });
+        const vRes = await axios.post<SqlValidationResponse>('/api/query/validate', { sql: sqlToRun });
         if (!vRes.data.valid) {
           // Rejet avant exécution : le backend renvoie déjà le texte du parser (avec sa
           // ligne/colonne quand il en a une), on le classe comme n'importe quelle erreur.
@@ -1133,7 +1138,7 @@ const QueryWorkbench: React.FC = () => {
      * promettait plus que ce qui s'était produit.
      */
     try {
-      const res = await axios.post<{ cancelled: boolean; outcome: string }>(
+      const res = await axios.post<QueryCancelResponse>(
         `/api/query/cancel/${encodeURIComponent(queryId)}`);
       toast(res.data.cancelled
         ? 'Flink job cancelled'

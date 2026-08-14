@@ -21,27 +21,9 @@ import {
 import { describeQueryError } from './queryError';
 import { clearDraft, readDraft, writeDraft } from '../draftStore';
 import { copyText } from '../clipboard';
-
-interface MetricConfig {
-  id: string;
-  name: string;
-  type: string;
-  sql: string;
-  description: string;
-  warningThreshold: number | null;
-  criticalThreshold: number | null;
-  lastValue: number | null;
-  lastUpdateTime: number | null;
-  errorMessage: string | null;
-  history: number[];
-  createTableSql?: string | null;
-  labelTopic?: string | null;
-  labelFields?: string[];
-  templateType?: string | null;
-  templateParams?: Record<string, unknown> | null;
-  executionMode?: string | null;
-  lastSummary?: Record<string, unknown> | null;
-}
+// La forme vit dans api/types.ts, où check-api-types.py la résout contre le record Java —
+// une interface écrite dans la page est exactement ce qui a divergé sans bruit ailleurs.
+import type { MetricConfig, MetricTestResponse } from '../api/types';
 
 interface MetricTemplateDescriptor {
   type: string;
@@ -996,7 +978,7 @@ const Metrics: React.FC = () => {
       // Preview through the template endpoint so the attached CREATE TABLE DDL is executed first
       // (mirrors the scheduled refresh) and the value is computed with the metric's real type
       // (or template semantics — count delta, transit latency).
-      const res = await axios.post<{ value?: unknown; rows?: unknown[]; error?: string; summary?: Record<string, unknown> }>(
+      const res = await axios.post<MetricTestResponse>(
         '/api/metrics/preview-template', editingMetric);
       setPreviewResult(res.data);
     } catch {

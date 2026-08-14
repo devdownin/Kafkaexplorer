@@ -41,8 +41,28 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `CONTRIBUTING.md` documents the real gate. It told contributors to run `mvn test`, which runs
   neither ESLint nor Vitest, so a contributor could be green locally and red in CI.
 
+- **`docs/check-doc-paths.py`** resolves every repository path that `CLAUDE.md` and
+  `CONTRIBUTING.md` name in prose. `check-links.py` only ever saw markdown *links*, and these two
+  files refer to the codebase in backticks — so three references rotted unnoticed.
+
+### Changed
+
+- **The API contract check covers more of the surface**: 9 hand-written interfaces became 13
+  records verified against `domain/*.java` (`TopicSearchResponse`, `QueryInitResponse`,
+  `MetricConfig` added). The anonymous response shapes declared at call sites — the exact pattern
+  that killed the Compare page — now live in `api/types.ts`, and three literal duplicates under
+  other names (`SchemaInfo`, and local copies of `TopicSearchResponse` and `MetricConfig`) are
+  aliases or imports, so there is one shape per endpoint. `check-api-types.py` now accepts a
+  string-literal union where Java declares `String`: widening the frontend to `string` to satisfy
+  the script would have deleted real type safety in the name of a check that exists to provide it.
+
 ### Fixed
 
+- **Three dead references in `CLAUDE.md`.** `AUDIT.md` and `CONSUMER-GROUPS-AUDIT.md` were
+  described as documents to read before refactoring, and `deploy/kraft-platform/` was cited in a
+  rule about `container_name`; all three had been deleted from the tree, two of them months
+  earlier. The findings they carried are kept in prose, now with the commit that removed each
+  report so the reasoning is still reachable.
 - `pom.xml` carried template placeholders: `<url>` and all three `<scm>` entries pointed at
   `github.com/yourusername/kafka-sql-explorer`.
 - The SPDX licence header the project mandates was missing from 18 Java test files and from all
