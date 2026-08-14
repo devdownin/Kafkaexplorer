@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Kafka Explorer Contributors
+
 // Composant de la page SQL Editor, sorti de `QueryWorkbench.tsx` — voir `ResultsGrid.tsx`.
 import React, { useMemo, useState } from 'react';
 import { Button, Field, Input, NumberInput, Select, Tooltip } from '../ui';

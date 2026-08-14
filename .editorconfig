@@ -1,0 +1,51 @@
+# https://editorconfig.org
+#
+# This describes the conventions the tree already follows — it does not introduce new ones.
+# Java is 4 spaces, the frontend / YAML / shell are 2, and pom.xml is tab-indented (which is
+# what the file actually is; reformatting it would be a diff across 320 lines for nothing).
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+indent_size = 2
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.java]
+indent_size = 4
+
+# Tab-indented as written. Maven's own generated poms use spaces, but this one does not, and
+# consistency with the file beats consistency with a convention nothing here enforces.
+[pom.xml]
+indent_style = tab
+
+[*.{ts,tsx,js,jsx,mjs,cjs,json,css,html}]
+indent_size = 2
+
+[*.{yml,yaml}]
+indent_size = 2
+
+[*.{sh,bash}]
+indent_size = 2
+
+# Windows-only entry points; git checks them out with CRLF (see .gitattributes) and cmd.exe
+# is the one interpreter that genuinely cares.
+[*.{bat,cmd}]
+end_of_line = crlf
+
+[*.ps1]
+end_of_line = crlf
+
+# Markdown: two trailing spaces are a hard line break, so stripping them changes the render.
+[*.md]
+trim_trailing_whitespace = false
+
+# Generated — do not hand-edit, and do not let an editor reformat on save.
+[{package-lock.json,LICENSE}]
+indent_style = unset
+indent_size = unset
+insert_final_newline = unset
+trim_trailing_whitespace = unset

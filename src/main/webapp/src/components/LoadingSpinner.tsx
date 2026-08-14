@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Kafka Explorer Contributors
+
 import React from 'react';
 
 /** Indicateur de chargement pleine zone (icône rotative du design system). */

@@ -1,0 +1,88 @@
+# Static analysis of the *source*, which nothing in this repository did.
+#
+# `ci.yml` scans the released image with Trivy, and that reads the runtime's OS packages and
+# the jars it ships — it never looks at a line of Java or TypeScript. The gap matters here
+# more than it would elsewhere: this application parses untrusted XML (an XXE surface it
+# guards deliberately, per DocumentBuilderFactory), assembles and executes SQL, exposes DDL
+# that embeds Kafka credentials behind a masking function, and ships with no authentication
+# at all. Those are exactly the shapes CodeQL's injection and XXE queries are written for,
+# and a regression in one of them would otherwise be caught by review or not at all.
+#
+# `security-and-quality` rather than the default suite: the extra queries are the ones that
+# find resource leaks and missing-null checks, and this codebase's own audit history is full
+# of them (unbounded close() on Kafka clients, consumers abandoned on an exception path).
+name: CodeQL
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  schedule:
+    # Weekly, because a query-pack update can find something in code that has not changed —
+    # which is the whole point of scheduled scanning and the reason a push-only trigger is
+    # not enough. Monday 06:17 UTC: off the hour, so it does not queue behind everyone
+    # else's cron.
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze ${{ matrix.language }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      # The whole point: without this the results are computed and then dropped.
+      security-events: write
+      contents: read
+      actions: read
+
+    strategy:
+      # One language failing must not hide the other's findings.
+      fail-fast: false
+      matrix:
+        include:
+          - language: java-kotlin
+            build-mode: manual
+          - language: javascript-typescript
+            build-mode: none
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up JDK 21
+        if: matrix.language == 'java-kotlin'
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          queries: security-and-quality
+
+      # `manual` rather than `autobuild`, and deliberately not the project's real build:
+      # autobuild would run the default lifecycle, which activates `build-frontend`
+      # (activeByDefault) and downloads a whole Node toolchain to build a SPA that the
+      # javascript-typescript half of this matrix analyses from source anyway. Compiling the
+      # Java alone is all the extractor needs, and `-DskipTests` because CodeQL reads the
+      # compiler's output, not the suite's.
+      - name: Compile the Java sources
+        if: matrix.language == 'java-kotlin'
+        run: ./mvnw -B -DskipTests -P '!build-frontend' compile
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4
+        with:
+          category: "/language:${{ matrix.language }}"

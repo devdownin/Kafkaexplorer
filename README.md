@@ -166,10 +166,14 @@ If you prefer to compile the entire project locally without Docker, Maven handle
 ```
 ## 🤝 Contributing
 
-Contributions are welcome — the codebase is deliberately heavily commented to double as a learning resource for Flink SQL + Spring Boot integration, and `mvn test` / `npm test` cover the core services.
+Contributions are welcome — the codebase is deliberately heavily commented to double as a learning resource for Flink SQL + Spring Boot integration.
+
+Run **`mvn verify`** before opening a pull request: it is the complete gate — Java tests, ESLint and Vitest — and it is exactly what CI runs. `mvn test` is the fast backend-only loop and does *not* run the frontend checks.
 
 - Read the **[Contributing Guide](CONTRIBUTING.md)** to get started
 - Be excellent to each other: **[Code of Conduct](CODE_OF_CONDUCT.md)**
+- Need help or have a question? **[Support](SUPPORT.md)**
+- What changed between releases: **[Changelog](CHANGELOG.md)**
 - Found a vulnerability? Follow the **[Security Policy](SECURITY.md)**
 
 ## 📄 License

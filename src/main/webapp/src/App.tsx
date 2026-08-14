@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Kafka Explorer Contributors
+
 import { lazy, Suspense } from 'react';
 import type { FC } from 'react';
 import { createBrowserRouter, Link, Outlet, RouterProvider } from 'react-router-dom';

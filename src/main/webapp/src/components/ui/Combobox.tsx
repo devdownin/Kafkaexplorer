@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Kafka Explorer Contributors
+
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { FC, KeyboardEvent } from 'react';
 import { cn } from './cn';

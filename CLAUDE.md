@@ -416,11 +416,70 @@ rebuild, the non-foldable Window Assistant, the absence of a mobile layout, no u
 
 ## License
 
-**AGPL v3** — `LICENSE` file at root. All Java source files carry the header:
+**AGPL v3** — `LICENSE` file at root. All Java **and** frontend source files carry the header:
 ```
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 ```
+
+It applies to `src/main/java`, `src/test/java` and every `.ts`/`.tsx` under `src/main/webapp/src`
+— the SPA ships inside the AGPL jar and image, and had no header on a single file. The one
+exception is `vite-env.d.ts`, a line of Vite boilerplate. `package.json` declares
+`"license": "AGPL-3.0-or-later"` beside it.
+
+## Project governance & supply chain
+
+The community-health files are the ones GitHub looks for, and the ones a stranger reads before
+filing anything: `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, `SUPPORT.md`,
+`CHANGELOG.md`, `.github/CODEOWNERS`, the two issue templates plus `ISSUE_TEMPLATE/config.yml`,
+and `pull_request_template.md`.
+
+- **`CONTRIBUTING.md` names `mvn verify`, never `mvn test`.** It documented the latter, which runs
+  neither ESLint nor Vitest — so a contributor following the file was green locally and red in CI.
+  It also carries the `verify-offline.sh` escape hatch, since a contributor behind a proxy that
+  blocks `packages.confluent.io` cannot build at all otherwise.
+- **`SECURITY.md` supports the latest release only**, and says so rather than naming a version. It
+  named `0.0.1` for eleven releases after that stopped being true. It also states plainly that the
+  app has no authentication and that `POST /api/config` repoints the cluster at runtime — that is
+  a deployment constraint, not a vulnerability, and a report saying otherwise can be answered by
+  pointing at it.
+- **`ISSUE_TEMPLATE/config.yml` keeps blank issues enabled.** The two templates cover a bug and a
+  feature request; a usage question fits neither, and forcing it into one produces a worse issue.
+  There is deliberately **no Discussions link**: the feature is disabled on the repository, and a
+  contact link that 404s is worse than none — enable Discussions and add the link together.
+- **`CODEOWNERS` requests reviews, it does not require them.** Requiring them is a branch
+  protection rule on `main` ("Require review from Code Owners"), which lives in the repository
+  settings and is the thing that turns the file into a gate.
+
+Two workflows beyond `ci.yml` / `release.yml` / `dockerhub-description.yml`:
+
+- **`codeql.yml`** — static analysis of the *source*, on push, pull request and weekly. Trivy in
+  `ci.yml` scans the released image, which means its OS packages and the jars it ships; it never
+  reads a line of Java or TypeScript. That gap mattered here more than most: this app parses
+  untrusted XML, assembles SQL, masks credentials inside generated DDL, and ships unauthenticated.
+  The Java half uses `build-mode: manual` with `./mvnw -DskipTests -P '!build-frontend' compile` —
+  `autobuild` would activate `build-frontend` (it is `activeByDefault`) and download a whole Node
+  toolchain to rebuild a SPA the javascript-typescript half already reads from source.
+- **`security.yml`** — `dependency-review` on pull requests (fails on a **newly introduced** high
+  severity advisory, and on licences that cannot ship inside an AGPL artifact), plus TruffleHog
+  over the full history with `--only-verified`. The severity gate is narrow on purpose: it says
+  nothing about the existing tree, so it cannot start failing builds on a morning nobody chose.
+  TruffleHog **does** fail the build where Trivy only reports, and the asymmetry is deliberate —
+  Trivy's findings are often unfixable transitive CVEs, whereas a verified secret is a live
+  credential in a public repository.
+
+**Every action is pinned to a commit SHA**, with the version in a trailing comment
+(`actions/checkout@3d3c42e… # v7`). A tag is mutable and `softprops`, `peter-evans`,
+`aquasecurity` and `trufflesecurity` all run with credentials or write scope. Dependabot updates
+SHA pins and rewrites the comment, so this costs nothing to maintain — when adding an action,
+pin it the same way rather than reaching for the tag.
+
+`.gitattributes` normalises text to LF in the repository while checking `*.bat` / `*.cmd` /
+`*.ps1` out as CRLF. The tree mixes Unix entry points (`mvnw`, the `setup-*.sh` seeders,
+everything the images run) with Windows ones, and a CRLF that reaches a shell script is the
+classic `bad interpreter: /bin/sh^M` — inside a container, where it is awkward to diagnose.
+`.editorconfig` describes what the tree already does (Java 4 spaces, frontend/YAML/shell 2,
+`pom.xml` tabs); it is not an invitation to reformat.
 
 ## Claude API Java SDK (anthropic-java 2.16.1)
 
@@ -466,7 +525,7 @@ rebuild, the non-foldable Window Assistant, the absence of a mobile layout, no u
 - **`linux/arm64` est vérifié aux deux bouts, et pas au même endroit par hasard.** `platforms:` était une demande que rien ne contrôlait, alors que la page vend l'arm64 comme tournant nativement. `release.yml` se contente d'affirmer que la plateforme est **présente** dans l'index publié (`buildx imagetools inspect --raw` + `jq`, en filtrant les manifestes `unknown` des attestations) ; c'est `ci.yml` qui la **démarre**, sous QEMU, en exigeant liveness + `aarch64` + uid 10001. Dans cet ordre parce qu'au moment où un job de release pourrait sonder une image, elle est déjà poussée : l'information n'est plus actionnable. La CI, elle, échoue avant que le tag existe. Pas sur les pull requests (une JVM sous émulation prend des minutes, et cet étage ne bouge qu'avec un digest de base) — mesuré à ~110 s au premier run, pour un budget de 900 s.
 - **`docs/DOCKERHUB.md` EST la page de présentation Docker Hub**, poussée par `.github/workflows/dockerhub-description.yml` (push sur `main` touchant ce fichier, ou `workflow_dispatch`). Éditer la page sur hub.docker.com ne sert à rien : la synchro suivante l'écrase. Deux contraintes propres à ce fichier, absentes du README : Docker Hub le rend hors du dépôt, donc **tous les liens doivent être absolus**, et aucune image du dépôt n'y est atteignable (seul shields.io l'est). Le workflow est délibérément séparé de `release.yml` — corriger une phrase de la page ne doit pas demander de couper une version. `enable-url-completion` est **désactivé** : l'option réécrit les liens relatifs en absolus, ce dont cette page n'a aucun besoin (ils sont déjà tous absolus, et `check-links.py` casse le build sinon), pendant que ses modes de défaillance documentés sont le code inline et les liens contenant des crochets — dont la page est presque entièrement faite.
 - **Diagnostiquer un échec de la synchro par l'étape où il tombe**, parce qu'ils ne veulent pas dire la même chose et que ce fichier a longtemps annoncé le mauvais. Un **404** à la pose de la description signifie que le dépôt Docker Hub n'existe pas encore : il est créé par le premier `docker push`, donc par la première release. Un **401 à l'étape `Acquiring token`** est antérieur à tout ça — c'est le login lui-même qui est refusé, et le dépôt peut très bien exister. Dans ce cas les deux secrets sont forcément présents (sans quoi le garde `Is Docker Hub configured?` aurait sauté l'étape), et les causes sont : un PAT read-only (voir plus bas), un `DOCKERHUB_USERNAME` qui n'est pas le compte de login (une organisation, ou le namespace du dépôt), un mot de passe au lieu d'un PAT sur un compte à 2FA, ou une espace/un retour ligne collé dans le secret. Ne pas consigner ici l'état du jour : la première rédaction de ce paragraphe affirmait « le dépôt est vide, aucune release n'a jamais tourné, la page n'est pas en ligne », et les trois étaient faux le soir même (`v1.5.0` publiée, trois tags sur Docker Hub, page synchronisée). Le diagnostic se périme moins vite que le constat.
-- **Un token Docker Hub invalide fait tomber la publication GHCR avec lui** — c'est ce qui a tué la release `v1.4.0`, et c'est le contraire de ce que le garde `Is Docker Hub configured?` est censé garantir. Le job se déroule ainsi : `Logging into ghcr.io... Login Succeeded!`, puis `Logging into docker.io... unauthorized: incorrect username or password`, et le job s'arrête **avant de construire quoi que ce soit** — aucune image nulle part, alors que GHCR était parfaitement disponible. Le garde ne vérifie que la *présence* des deux secrets, pas qu'ils fonctionnent : un secret présent mais périmé passe le test et casse tout. Un registre optionnel ne doit pas pouvoir faire échouer un registre obligatoire ; tant que ce n'est pas corrigé, un token Docker Hub expiré casse toutes les releases.
+- **Un token Docker Hub invalide fait tomber la publication GHCR avec lui** — c'est ce qui a tué la release `v1.4.0`, et c'est le contraire de ce que le garde `Is Docker Hub configured?` est censé garantir. Le job se déroule ainsi : `Logging into ghcr.io... Login Succeeded!`, puis `Logging into docker.io... unauthorized: incorrect username or password`, et le job s'arrête **avant de construire quoi que ce soit** — aucune image nulle part, alors que GHCR était parfaitement disponible. Le garde ne vérifie que la *présence* des deux secrets, pas qu'ils fonctionnent : un secret présent mais périmé passe le test et casse tout. Un registre optionnel ne doit pas pouvoir faire échouer un registre obligatoire. **C'est corrigé** : l'étape `Log in to Docker Hub` porte `continue-on-error: true`, une étape `Report a refused Docker Hub login` émet un `::warning::` nommant les causes probables, et le nom `docker.io/…` de `metadata-action` est conditionné à `steps.hub_login.outcome == 'success'` — donc un login refusé (comme un login sauté faute de secrets) sort simplement le nom de la liste et le build pousse vers GHCR seul. `outcome` et non `conclusion` : `conclusion` vaut `success` pour une étape en `continue-on-error` qui vient d'échouer. Le garde `Is Docker Hub configured?` reste utile mais ne prouve que la *présence* des secrets ; c'est l'`outcome` du login qui prouve qu'ils fonctionnent.
 - **Le cache de build est scopé par Dockerfile** (`type=gha,scope=source-image` pour le `Dockerfile` multi-stage, `scope=release-image` pour `Dockerfile.release`). `type=gha` n'a qu'une portée par défaut : deux jeux de couches sans rapport — dont l'un porte le dépôt Maven et `node_modules` — réécrivaient tour à tour le même manifeste de cache, chaque export `mode=max` invalidant celui de l'autre. `mode=max` n'a de sens que pour le build depuis les sources (ce sont les étapes builder qui coûtent : `npm ci`, `go-offline`, `mvn package`) ; `Dockerfile.release` est en `mode=min`, son unique étape builder étant de toute façon invalidée par chaque nouveau JAR.
 - **`release.yml` ne fait que *lire* ce cache** (`cache-from` seul) : il est alimenté par `ci.yml`, qui construit les deux mêmes fichiers à chaque run. GitHub rend les caches de la branche par défaut lisibles depuis n'importe quelle ref, donc un push sur `main` laisse le build d'un tag déjà chaud — y compris le `RUN adduser` de l'étage runtime, que `release.yml` rejouerait sinon sous QEMU pour la variante arm64. Une ref qui build deux fois par an n'a pas à réécrire un cache que la CI entretient.
 - Le job `release-image` de `ci.yml` passe par Buildx et non plus par un `docker build` nu : le driver `docker` par défaut ne sait exporter aucun cache, et c'était la seule image du dépôt reconstruite à froid à chaque fois.

@@ -1,0 +1,47 @@
+# Line endings, normalised in the repository and materialised per platform on checkout.
+#
+# This tree mixes Unix entry points (mvnw, the setup-*.sh seeders, everything the Docker
+# images run) with Windows ones (build.bat, update.ps1, mvnw.cmd), so "whatever the
+# contributor's editor did" is not a workable policy: a CRLF slipped into a shell script is
+# the classic `bad interpreter: /bin/sh^M`, and it happens inside a container where it is
+# awkward to diagnose.
+
+# Normalise text to LF in the repository, and let git decide the working-tree form.
+* text=auto eol=lf
+
+# Always LF, on every platform. These run under a shell — including on Windows, via Git Bash,
+# WSL or a container — so a CRLF checkout breaks them there too.
+*.sh            text eol=lf
+mvnw            text eol=lf
+Dockerfile*     text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+
+# Always CRLF: interpreted by cmd.exe and PowerShell, which want it.
+*.bat           text eol=crlf
+*.cmd           text eol=crlf
+*.ps1           text eol=crlf
+
+# Binary — never normalised, never diffed as text.
+*.png           binary
+*.jpg           binary
+*.jpeg          binary
+*.gif           binary
+*.ico           binary
+*.webp          binary
+*.woff          binary
+*.woff2         binary
+*.ttf           binary
+*.eot           binary
+*.jar           binary
+*.zip           binary
+*.gz            binary
+*.avro          binary
+
+# Generated. Collapsed in pull-request diffs by default (still reviewable on demand), and
+# excluded from the language statistics so the repository is not reported as mostly JSON.
+package-lock.json  linguist-generated=true -diff
+
+# Documentation assets and the licence should not drive the language bar either.
+docs/img/**        linguist-documentation=true
+LICENSE            linguist-vendored=true

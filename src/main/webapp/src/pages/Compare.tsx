@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Kafka Explorer Contributors
+
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import axios from 'axios';
 import { useToast } from '../components/Toast';

@@ -83,7 +83,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # Same guard as release.yml, and for the same reason: a fork of this repository
       # inherits the workflow but not the secrets, and must skip rather than fail.
@@ -103,7 +103,7 @@ jobs:
 
       - name: Push the overview page
         if: steps.hub.outputs.enabled == 'true'
-        uses: peter-evans/dockerhub-description@v5
+        uses: peter-evans/dockerhub-description@1b9a80c056b620d92cedb9d9b5a223409c68ddfa # v5
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Kafka Explorer Contributors
+
 /**
  * Portée d'une requête SQL en cours d'édition : quelles tables elle cite réellement.
  *

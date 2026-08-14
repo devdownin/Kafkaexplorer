@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Kafka Explorer Contributors
+
 /**
  * Logique pure de la recherche dans un topic : critère, requête, couverture, surlignage.
  *

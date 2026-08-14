@@ -1,0 +1,23 @@
+# Blank issues stay enabled on purpose. The two templates cover a bug and a feature request,
+# and everything else — a question about a Flink SQL error, a deployment that will not come
+# up, a report that the documentation is wrong — fits neither. Forcing one of those two
+# shapes onto a question produces a worse issue, not a better one.
+blank_issues_enabled: true
+
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/devdownin/Kafkaexplorer/security/advisories/new
+    about: >-
+      Report privately, never in a public issue. This opens a GitHub security advisory,
+      which stays private until a fix ships. Email contact@compagnonsdudev.com also works.
+
+  # No Discussions link: the feature is disabled on this repository, and a contact link
+  # pointing at a 404 is worse than none. Enabling Discussions in the repository settings is
+  # the right home for usage questions — add the link here at the same time, not before.
+
+  - name: SQL guide and query examples
+    url: https://github.com/devdownin/Kafkaexplorer/blob/main/docs/QUERY-EXAMPLES.md
+    about: >-
+      The in-app Help page maps the real error messages to their cause and fix, and every
+      example runs against the bundled demo dataset. Worth a look before reporting a query
+      as broken.
