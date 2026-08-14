@@ -310,6 +310,21 @@ describe('QueryWorkbench — the sidebar follows the execution mode', () => {
     await waitFor(() => expect(selectedText()).toBe('demo_orders_1_received_out'));
   });
 
+  // L'écran vide n'offrait aucun point de départ en mode Job : les propositions étaient
+  // conditionnées au mode lecture, alors que c'est là que la forme attendue est la moins évidente.
+  it('offers a starting point in Job mode too, and it is an INSERT', async () => {
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await selectJobMode();
+
+    const starter = await screen.findByText(/INSERT INTO demo_orders_1_received_out SELECT … FROM/);
+    await userEvent.click(starter);
+
+    await waitFor(() => expect(editor().value).toContain('INSERT INTO demo_orders_1_received_out'));
+    // Même geste que la barre latérale : la cible est posée sélectionnée.
+    await waitFor(() => expect(selectedText()).toBe('demo_orders_1_received_out'));
+  });
+
   it('selects nothing in Read mode — there is no placeholder to replace', async () => {
     renderPage();
     await screen.findByText('demo.orders.1.received');
