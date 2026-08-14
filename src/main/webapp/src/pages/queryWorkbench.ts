@@ -746,6 +746,49 @@ export function starterQueries(catalog: CatalogLike | null | undefined): Starter
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Raccourci de la barre latérale
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Mode d'exécution de l'éditeur. Déclaré ici parce que le SQL posé en dépend. */
+export type ExecutionMode = 'SYNC_READ' | 'ASYNC_JOB';
+
+/**
+ * Suffixe du nom de sink dans le squelette d'INSERT. C'est un **emplacement à remplir**, pas une
+ * table qu'on suppose exister : le mode Job soumet un job continu, dont la cible doit avoir été
+ * déclarée avant. Le commentaire de tête le dit, parce qu'un nom plausible se lit comme une
+ * promesse et que l'échec, sinon, arriverait sous la forme d'un « Object not found » sur une table
+ * que l'éditeur a écrite lui-même.
+ */
+export const JOB_SINK_SUFFIX = '_out';
+
+/**
+ * Le SQL qu'un clic sur une table ou un topic de la barre latérale pose dans l'éditeur.
+ *
+ * Il suit le mode d'exécution, faute de quoi il produit une requête que le bouton Run refuse :
+ * en mode Job, seul un INSERT INTO part au moteur, donc le `SELECT * FROM …` du mode lecture y
+ * était rejeté par la garde de mode — un clic dont le seul résultat possible était un panneau
+ * d'erreur.
+ *
+ * Pas de `LIMIT` sur la branche Job : un INSERT y est un job continu, que rien ne borne.
+ */
+export function sidebarSqlFor(table: string, mode: ExecutionMode, maxRows: number): string {
+  if (mode === 'ASYNC_JOB') {
+    return [
+      `-- Job mode submits a continuous INSERT. ${table}${JOB_SINK_SUFFIX} is a placeholder:`,
+      '-- point it at a table that already exists (CREATE TABLE declares one over a topic).',
+      `INSERT INTO ${table}${JOB_SINK_SUFFIX}`,
+      `SELECT * FROM ${table}`,
+    ].join('\n');
+  }
+  return `SELECT * FROM ${table} LIMIT ${maxRows}`;
+}
+
+/** Ce que le clic va faire, pour l'intitulé accessible du bouton — il annonçait « SELECT » partout. */
+export function sidebarActionLabel(target: string, mode: ExecutionMode): string {
+  return mode === 'ASYNC_JOB' ? `INSERT INTO from ${target}` : `SELECT from ${target}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Historique
 // ─────────────────────────────────────────────────────────────────────────────
 

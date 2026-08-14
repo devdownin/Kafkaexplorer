@@ -202,6 +202,53 @@ describe('QueryWorkbench — nothing silently replaces the tab you are writing i
   });
 });
 
+describe('QueryWorkbench — the sidebar follows the execution mode', () => {
+  const selectJobMode = () => userEvent.click(screen.getByRole('button', { name: 'Flink job' }));
+
+  it('writes an INSERT INTO in Flink job mode, the only statement that mode accepts', async () => {
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await selectJobMode();
+
+    await userEvent.click(screen.getByRole('button', { name: 'INSERT INTO from demo.orders.1.received' }));
+
+    await waitFor(() => expect(editor().value).toContain('INSERT INTO demo_orders_1_received_out'));
+    expect(editor().value).toContain('SELECT * FROM demo_orders_1_received');
+    expect(editor().value).not.toContain('LIMIT');
+  });
+
+  // Le SELECT du mode lecture était refusé par la garde de mode : le clic ne pouvait mener
+  // qu'au panneau « Flink Job mode only accepts INSERT INTO ».
+  it('no longer poses a statement its own Run button would refuse', async () => {
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await selectJobMode();
+
+    await userEvent.click(screen.getByRole('button', { name: 'INSERT INTO from demo.orders.1.received' }));
+    await waitFor(() => expect(editor().value).toContain('INSERT INTO'));
+
+    await userEvent.click(screen.getByRole('button', { name: /Submit job/ }));
+
+    // Le SQL a passé la garde de mode et atteint l'endpoint des jobs, au lieu de s'arrêter sur
+    // « Flink Job mode only accepts INSERT INTO ».
+    await waitFor(() => expect(post.mock.calls.some(c => c[0] === '/api/query/jobs')).toBe(true));
+    const submitted = post.mock.calls.find(c => c[0] === '/api/query/jobs')![1] as { sql: string };
+    expect(submitted.sql).toContain('INSERT INTO demo_orders_1_received_out');
+    expect(screen.queryByText('Flink Job mode only accepts INSERT INTO')).not.toBeInTheDocument();
+  });
+
+  it('goes back to a bounded SELECT when Read mode is selected again', async () => {
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await selectJobMode();
+    await userEvent.click(screen.getByRole('button', { name: 'Sync read' }));
+
+    await userEvent.click(screen.getByRole('button', { name: 'SELECT from demo.orders.1.received' }));
+
+    await waitFor(() => expect(editor().value).toBe('SELECT * FROM demo_orders_1_received LIMIT 50'));
+  });
+});
+
 describe('QueryWorkbench — what Run sends', () => {
   const runSync = () => post.mock.calls.find(c => c[0] === '/api/query/run-sync');
 

@@ -6,6 +6,7 @@ import {
   readSqlParam, buildQueryLink,
   starterTable, starterQueries, pushHistory, describeHistoryEntry, formatDuration,
   splitStatements, statementIndexAt, positionAt, detailValue, withoutLeadingCte,
+  sidebarSqlFor, sidebarActionLabel,
   type HistoryEntry,
 } from './queryWorkbench';
 
@@ -364,6 +365,38 @@ describe('starterTable / starterQueries', () => {
   it('aliases the aggregate, which the direct engine requires', () => {
     const count = starterQueries({ tables: ['orders'], topics: [] })[1];
     expect(count.sql).toBe('SELECT COUNT(*) AS metric_value FROM orders');
+  });
+});
+
+describe('sidebarSqlFor / sidebarActionLabel', () => {
+  it('reads the table in Read mode, with the row cap actually in force', () => {
+    expect(sidebarSqlFor('demo_orders', 'SYNC_READ', 500))
+      .toBe('SELECT * FROM demo_orders LIMIT 500');
+  });
+
+  // Le mode Job ne laisse passer que INSERT INTO : un SELECT y était refusé par la garde de mode,
+  // donc le clic ne pouvait produire qu'un panneau d'erreur.
+  it('writes an INSERT INTO in Job mode, which is the only statement that mode accepts', () => {
+    const sql = sidebarSqlFor('demo_orders', 'ASYNC_JOB', 500);
+    expect(sql).toContain('INSERT INTO demo_orders_out');
+    expect(sql).toContain('SELECT * FROM demo_orders');
+  });
+
+  it('bounds nothing in Job mode — an INSERT there is a continuous job', () => {
+    expect(sidebarSqlFor('demo_orders', 'ASYNC_JOB', 500)).not.toContain('LIMIT');
+  });
+
+  it('says the sink is a placeholder rather than letting a plausible name pass for a promise', () => {
+    const sql = sidebarSqlFor('demo_orders', 'ASYNC_JOB', 50);
+    expect(sql).toContain('placeholder');
+    // Le commentaire est en tête : la classification d'instruction dépouille les commentaires,
+    // donc l'instruction reste vue comme un INSERT.
+    expect(sql.startsWith('--')).toBe(true);
+  });
+
+  it('names the action the click performs, in both modes', () => {
+    expect(sidebarActionLabel('demo.orders', 'SYNC_READ')).toBe('SELECT from demo.orders');
+    expect(sidebarActionLabel('demo.orders', 'ASYNC_JOB')).toBe('INSERT INTO from demo.orders');
   });
 });
 

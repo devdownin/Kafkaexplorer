@@ -23,6 +23,7 @@ import {
   starterQueries, pushHistory, describeHistoryEntry, formatDuration, type HistoryEntry,
   splitStatements, statementIndexAt, positionAt, withoutLeadingCte,
   readSqlParam, buildQueryLink,
+  sidebarSqlFor, sidebarActionLabel, type ExecutionMode,
 } from './queryWorkbench';
 import { ResultsGrid } from '../components/query/ResultsGrid';
 import { WindowAssistant } from '../components/query/WindowAssistant';
@@ -68,7 +69,6 @@ interface FlinkJobSubmission {
   cancelRequested: boolean;
 }
 interface Tab { id: string; name: string; sql: string; }
-type ExecutionMode = 'SYNC_READ' | 'ASYNC_JOB';
 
 /** Choix de plafond de lignes. La valeur part au backend en `maxRows` — voir runQuery. */
 const ROW_LIMITS = [50, 100, 500, 1000, 5000] as const;
@@ -1215,11 +1215,16 @@ const QueryWorkbench: React.FC = () => {
     return 'new' as const;
   }, [activeTab.sql, activeTabId, addTab, updateSql]);
 
-  /** Le raccourci « SELECT * FROM … » de la barre latérale, sans écraser l'onglet en cours. */
+  /**
+   * Le raccourci de la barre latérale, sans écraser l'onglet en cours.
+   *
+   * Le SQL posé suit le mode d'exécution (`sidebarSqlFor`) : en mode Job, un `SELECT` était refusé
+   * par la garde de mode, donc cliquer un topic n'y menait qu'à un panneau d'erreur.
+   */
   const openSelectFor = useCallback((table: string) => {
-    const where = openSql(`SELECT * FROM ${table} LIMIT ${maxRows}`, table);
+    const where = openSql(sidebarSqlFor(table, executionMode, maxRows), table);
     if (where === 'new') toast(`Opened ${table} in a new tab`, 'success');
-  }, [openSql, maxRows, toast]);
+  }, [openSql, maxRows, executionMode, toast]);
 
   /** Insère à la position du curseur — utilisé par les fragments (assistant de fenêtrage). */
   const insertSql = useCallback((text: string) => {
@@ -1295,6 +1300,7 @@ const QueryWorkbench: React.FC = () => {
           if (e.key === 'ArrowRight') { setSidebarWidth(w => w + 16); e.preventDefault(); }
           if (e.key === 'Home') { setSidebarWidth(DEFAULT_LAYOUT.sidebarWidth); e.preventDefault(); }
         }}
+        actionLabelFor={target => sidebarActionLabel(target, executionMode)}
         expandedTables={expandedTables}
         tableSchemas={tableSchemas}
         onToggleTable={toggleTable}
