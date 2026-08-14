@@ -789,6 +789,25 @@ export function insertableColumns(schema: Record<string, string> | null | undefi
 }
 
 /**
+ * Une cible d'INSERT prise dans le catalogue, plutôt que le placeholder `<source>_out`.
+ *
+ * Un nom inventé ne peut qu'échouer : la cible d'un INSERT continu doit être une table déclarée.
+ * Une table du catalogue, elle, **résout** — c'est tout ce que cette fonction promet. Que ses
+ * colonnes acceptent la projection reste à vérifier, et le SQL généré le dit plutôt que de le
+ * laisser croire.
+ *
+ * Préférence à une table dont le nom commence par celui de la source (`orders` → `orders_enriched`) :
+ * un sink dérivé se nomme presque toujours d'après ce qu'il dérive. À défaut, la première du
+ * catalogue — arbitraire, mais posée *sélectionnée* dans l'éditeur, donc remplaçable d'une frappe.
+ * La source elle-même et les tables `internal*` (celles que l'application s'écrit) sont exclues.
+ */
+export function pickSinkTable(source: string, tables: string[] | null | undefined): string | null {
+  const candidates = (tables ?? []).filter(t => t !== source && !t.toLowerCase().startsWith('internal'));
+  if (candidates.length === 0) return null;
+  return candidates.find(t => t.startsWith(source)) ?? candidates[0];
+}
+
+/**
  * Le SQL qu'un clic sur une table ou un topic de la barre latérale pose dans l'éditeur.
  *
  * Il suit le mode d'exécution, faute de quoi il produit une requête que le bouton Run refuse :
@@ -797,25 +816,36 @@ export function insertableColumns(schema: Record<string, string> | null | undefi
  * d'erreur.
  *
  * Pas de `LIMIT` sur la branche Job : un INSERT y est un job continu, que rien ne borne.
+ *
+ * `sink` est la cible retenue (voir `pickSinkTable`) ; sans elle, le placeholder, et le commentaire
+ * change de propos selon le cas — annoncer « une table qui existe » au-dessus d'un nom inventé
+ * serait exactement le contraire de ce qu'on cherche à dire.
  */
 export function sidebarSqlFor(
   table: string,
   mode: ExecutionMode,
   maxRows: number,
   schema?: Record<string, string> | null,
+  sink?: string | null,
 ): string {
   if (mode === 'ASYNC_JOB') {
     const columns = insertableColumns(schema);
-    const header = [
-      `-- Job mode submits a continuous INSERT. ${table}${JOB_SINK_SUFFIX} is a placeholder:`,
-      '-- point it at a table that already exists (CREATE TABLE declares one over a topic).',
-    ];
+    const target = sink ?? `${table}${JOB_SINK_SUFFIX}`;
+    const header = sink
+      ? [
+        `-- Job mode submits a continuous INSERT. ${sink} is an existing Flink table, and is`,
+        '-- selected below: type to replace it. Its columns must accept the projection.',
+      ]
+      : [
+        `-- Job mode submits a continuous INSERT. ${target} is a placeholder, selected below:`,
+        '-- point it at a table that already exists (CREATE TABLE declares one over a topic).',
+      ];
     // Sans schéma chargé, on ne peut pas lister les colonnes — mais on peut nommer l'échec qui
     // attend, plutôt que de le laisser arriver sous la forme d'une erreur d'arité.
     if (!columns) header.push('-- SELECT * carries proc_time, which a sink refuses: list the columns if it complains.');
     return [
       ...header,
-      `INSERT INTO ${table}${JOB_SINK_SUFFIX}`,
+      `INSERT INTO ${target}`,
       columns
         ? `SELECT\n${columns.map(c => '  `' + c + '`').join(',\n')}\nFROM ${table}`
         : `SELECT * FROM ${table}`,

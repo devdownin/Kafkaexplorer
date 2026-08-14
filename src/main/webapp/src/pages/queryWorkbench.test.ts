@@ -6,7 +6,7 @@ import {
   readSqlParam, buildQueryLink,
   starterTable, starterQueries, pushHistory, describeHistoryEntry, formatDuration,
   splitStatements, statementIndexAt, positionAt, detailValue, withoutLeadingCte,
-  sidebarSqlFor, sidebarActionLabel, insertableColumns, sinkNameRange,
+  sidebarSqlFor, sidebarActionLabel, insertableColumns, sinkNameRange, pickSinkTable,
   type HistoryEntry,
 } from './queryWorkbench';
 
@@ -422,6 +422,39 @@ describe('sidebarSqlFor / sidebarActionLabel', () => {
   it('names the action the click performs, in both modes', () => {
     expect(sidebarActionLabel('demo.orders', 'SYNC_READ')).toBe('SELECT from demo.orders');
     expect(sidebarActionLabel('demo.orders', 'ASYNC_JOB')).toBe('INSERT INTO from demo.orders');
+  });
+});
+
+describe('pickSinkTable', () => {
+  it('prefers a table named after the source — a derived sink usually is', () => {
+    expect(pickSinkTable('orders', ['payments', 'orders_enriched', 'shipments']))
+      .toBe('orders_enriched');
+  });
+
+  it('falls back to the first candidate, which the editor poses selected anyway', () => {
+    expect(pickSinkTable('orders', ['payments', 'shipments'])).toBe('payments');
+  });
+
+  it('never targets the source itself, nor the tables the app writes to itself', () => {
+    expect(pickSinkTable('orders', ['orders'])).toBeNull();
+    expect(pickSinkTable('orders', ['internal_audit_history'])).toBeNull();
+  });
+
+  it('reports nothing rather than inventing one, which is what the placeholder is for', () => {
+    expect(pickSinkTable('orders', [])).toBeNull();
+    expect(pickSinkTable('orders', null)).toBeNull();
+  });
+
+  it('says the target exists only when it does', () => {
+    const chosen = sidebarSqlFor('orders', 'ASYNC_JOB', 50, null, 'orders_enriched');
+    expect(chosen).toContain('INSERT INTO orders_enriched');
+    expect(chosen).toContain('is an existing Flink table');
+    // Le catalogue est vide : annoncer « une table qui existe » au-dessus d'un nom inventé serait
+    // le contraire de ce que le commentaire doit dire.
+    const placeholder = sidebarSqlFor('orders', 'ASYNC_JOB', 50);
+    expect(placeholder).toContain('INSERT INTO orders_out');
+    expect(placeholder).toContain('is a placeholder');
+    expect(placeholder).not.toContain('existing Flink table');
   });
 });
 

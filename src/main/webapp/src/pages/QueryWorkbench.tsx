@@ -23,7 +23,7 @@ import {
   starterQueries, pushHistory, describeHistoryEntry, formatDuration, type HistoryEntry,
   splitStatements, statementIndexAt, positionAt, withoutLeadingCte,
   readSqlParam, buildQueryLink,
-  sidebarSqlFor, sidebarActionLabel, sinkNameRange, type ExecutionMode,
+  sidebarSqlFor, sidebarActionLabel, sinkNameRange, pickSinkTable, type ExecutionMode,
 } from './queryWorkbench';
 import { ResultsGrid } from '../components/query/ResultsGrid';
 import { WindowAssistant } from '../components/query/WindowAssistant';
@@ -1238,7 +1238,9 @@ const QueryWorkbench: React.FC = () => {
         if (schema && Object.keys(schema).length > 0) setTableSchemas(prev => ({ ...prev, [table]: r.data }));
       } catch { /* pas encore enregistrée côté Flink — le SQL généré le dit et reste utilisable */ }
     }
-    const sqlText = sidebarSqlFor(table, executionMode, maxRows, schema);
+    // Une cible prise dans le catalogue résout, là où `<source>_out` ne peut qu'échouer.
+    const sink = executionMode === 'ASYNC_JOB' ? pickSinkTable(table, schemaRef.current?.tables) : null;
+    const sqlText = sidebarSqlFor(table, executionMode, maxRows, schema, sink);
     const where = openSql(sqlText, table);
     // La sélection ne peut être posée qu'une fois le nouveau texte rendu : l'effet ci-dessous s'en
     // charge, sur le `sql` qui vient d'être écrit.

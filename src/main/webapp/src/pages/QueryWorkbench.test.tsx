@@ -276,6 +276,30 @@ describe('QueryWorkbench — the sidebar follows the execution mode', () => {
     expect(editor().value).toContain('proc_time, which a sink refuses');
   });
 
+  /*
+   * Un nom inventé ne peut qu'échouer ; une table du catalogue résout. C'est tout ce qui est
+   * promis — le commentaire renvoie la vérification des colonnes à l'utilisateur.
+   */
+  it('targets an existing Flink table when the catalogue holds one', async () => {
+    get.mockImplementation((url: string) => {
+      if (url === '/api/query/init') {
+        return Promise.resolve({ data: { ...CATALOGUE, tables: ['demo_orders_1_received_enriched'] } });
+      }
+      return Promise.resolve({ data: {} });
+    });
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await selectJobMode();
+
+    await clickTopic();
+
+    await waitFor(() => expect(editor().value).toContain('INSERT INTO demo_orders_1_received_enriched'));
+    expect(editor().value).toContain('is an existing Flink table');
+    expect(editor().value).not.toContain('_received_out');
+    // Et c'est ce nom-là que la frappe remplacera.
+    await waitFor(() => expect(selectedText()).toBe('demo_orders_1_received_enriched'));
+  });
+
   it('leaves the placeholder selected, so the first keystroke replaces it', async () => {
     renderPage();
     await screen.findByText('demo.orders.1.received');
