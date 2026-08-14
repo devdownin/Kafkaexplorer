@@ -6,7 +6,7 @@ import {
   readSqlParam, buildQueryLink,
   starterTable, starterQueries, pushHistory, describeHistoryEntry, formatDuration,
   splitStatements, statementIndexAt, positionAt, detailValue, withoutLeadingCte,
-  sidebarSqlFor, sidebarActionLabel,
+  sidebarSqlFor, sidebarActionLabel, insertableColumns, sinkNameRange,
   type HistoryEntry,
 } from './queryWorkbench';
 
@@ -394,9 +394,55 @@ describe('sidebarSqlFor / sidebarActionLabel', () => {
     expect(sql.startsWith('--')).toBe(true);
   });
 
+  // `proc_time AS PROCTIME()` sort d'un SELECT * mais n'entre dans aucun sink : entre deux tables
+  // du générateur, l'INSERT partait avec une colonne de trop.
+  it('lists the columns when the schema is known, minus the computed one', () => {
+    const sql = sidebarSqlFor('orders', 'ASYNC_JOB', 50, {
+      id: 'STRING', event_time: 'TIMESTAMP(3)', proc_time: 'TIMESTAMP_LTZ(3)',
+    });
+    expect(sql).toContain('`id`');
+    // METADATA FROM 'timestamp' est persistable, donc inscriptible : elle reste.
+    expect(sql).toContain('`event_time`');
+    expect(sql).not.toContain('proc_time');
+    expect(sql).not.toContain('SELECT *');
+  });
+
+  it('falls back to SELECT * without a schema, and names the failure that awaits', () => {
+    const sql = sidebarSqlFor('orders', 'ASYNC_JOB', 50);
+    expect(sql).toContain('SELECT * FROM orders');
+    expect(sql).toContain('proc_time, which a sink refuses');
+    expect(sidebarSqlFor('orders', 'ASYNC_JOB', 50, {})).toContain('SELECT * FROM orders');
+  });
+
+  it('keeps a table whose only columns are computed on the honest fallback', () => {
+    expect(insertableColumns({ proc_time: 'TIMESTAMP_LTZ(3)' })).toBeNull();
+    expect(insertableColumns(null)).toBeNull();
+  });
+
   it('names the action the click performs, in both modes', () => {
     expect(sidebarActionLabel('demo.orders', 'SYNC_READ')).toBe('SELECT from demo.orders');
     expect(sidebarActionLabel('demo.orders', 'ASYNC_JOB')).toBe('INSERT INTO from demo.orders');
+  });
+});
+
+describe('sinkNameRange', () => {
+  it('points at the sink name, so the editor can pose it selected', () => {
+    const sql = sidebarSqlFor('orders', 'ASYNC_JOB', 50);
+    const range = sinkNameRange(sql)!;
+    expect(sql.slice(range.start, range.end)).toBe('orders_out');
+  });
+
+  // Les commentaires de tête contiennent le mot INSERT : ancré en début de ligne, le repérage ne
+  // peut pas les prendre pour l'instruction.
+  it('is not fooled by the word INSERT inside the leading comments', () => {
+    const sql = '-- an INSERT INTO comment_sink is described here\nINSERT INTO real_sink\nSELECT * FROM t';
+    const range = sinkNameRange(sql)!;
+    expect(sql.slice(range.start, range.end)).toBe('real_sink');
+  });
+
+  it('finds nothing in everything else this page writes', () => {
+    expect(sinkNameRange('SELECT * FROM orders LIMIT 50')).toBeNull();
+    expect(sinkNameRange('')).toBeNull();
   });
 });
 

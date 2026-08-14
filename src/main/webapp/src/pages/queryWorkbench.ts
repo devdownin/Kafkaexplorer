@@ -762,6 +762,33 @@ export type ExecutionMode = 'SYNC_READ' | 'ASYNC_JOB';
 export const JOB_SINK_SUFFIX = '_out';
 
 /**
+ * Colonnes qu'un sink accepte en écriture, parmi celles que le schéma résolu rapporte.
+ *
+ * `DdlGeneratorService` termine toute table qu'il génère par `proc_time AS PROCTIME()`, une colonne
+ * **calculée** : elle sort d'un `SELECT *` côté source, mais aucun sink ne l'accepte en entrée. Un
+ * `INSERT INTO sink SELECT * FROM source` entre deux tables de ce générateur envoie donc une
+ * colonne de trop, et échoue sur un désaccord d'arité — pas sur une faute de syntaxe, donc sur un
+ * message qui ne désigne pas la cause.
+ *
+ * L'exclusion se fait **par nom**, faute de mieux : `/api/query/schema/{table}` rend un
+ * `nom → type de donnée`, et un type ne dit pas si la colonne est calculée (`isPersisted()` le
+ * dirait, côté Flink, mais il n'est pas exposé). `proc_time` est ce que notre propre générateur
+ * émet, donc le cas couvert est celui que l'application fabrique elle-même ; une table écrite à la
+ * main qui nommerait la sienne autrement retombe sur le comportement précédent, où c'est le planner
+ * qui se plaint. `event_time` reste : `METADATA FROM 'timestamp'` est persistable, donc inscriptible.
+ *
+ * Rend `null` quand le schéma est inconnu ou vide — l'appelant écrit alors `SELECT *`, qui reste la
+ * seule chose honnête à proposer sans connaître les colonnes.
+ */
+const COMPUTED_COLUMNS = new Set(['proc_time']);
+
+export function insertableColumns(schema: Record<string, string> | null | undefined): string[] | null {
+  if (!schema) return null;
+  const columns = Object.keys(schema).filter(c => !COMPUTED_COLUMNS.has(c.toLowerCase()));
+  return columns.length > 0 ? columns : null;
+}
+
+/**
  * Le SQL qu'un clic sur une table ou un topic de la barre latérale pose dans l'éditeur.
  *
  * Il suit le mode d'exécution, faute de quoi il produit une requête que le bouton Run refuse :
@@ -771,16 +798,46 @@ export const JOB_SINK_SUFFIX = '_out';
  *
  * Pas de `LIMIT` sur la branche Job : un INSERT y est un job continu, que rien ne borne.
  */
-export function sidebarSqlFor(table: string, mode: ExecutionMode, maxRows: number): string {
+export function sidebarSqlFor(
+  table: string,
+  mode: ExecutionMode,
+  maxRows: number,
+  schema?: Record<string, string> | null,
+): string {
   if (mode === 'ASYNC_JOB') {
-    return [
+    const columns = insertableColumns(schema);
+    const header = [
       `-- Job mode submits a continuous INSERT. ${table}${JOB_SINK_SUFFIX} is a placeholder:`,
       '-- point it at a table that already exists (CREATE TABLE declares one over a topic).',
+    ];
+    // Sans schéma chargé, on ne peut pas lister les colonnes — mais on peut nommer l'échec qui
+    // attend, plutôt que de le laisser arriver sous la forme d'une erreur d'arité.
+    if (!columns) header.push('-- SELECT * carries proc_time, which a sink refuses: list the columns if it complains.');
+    return [
+      ...header,
       `INSERT INTO ${table}${JOB_SINK_SUFFIX}`,
-      `SELECT * FROM ${table}`,
+      columns
+        ? `SELECT\n${columns.map(c => '  `' + c + '`').join(',\n')}\nFROM ${table}`
+        : `SELECT * FROM ${table}`,
     ].join('\n');
   }
   return `SELECT * FROM ${table} LIMIT ${maxRows}`;
+}
+
+/**
+ * Position du nom de sink dans un INSERT généré, pour que l'éditeur le pose **sélectionné** : la
+ * première frappe le remplace. Un commentaire qui dit « à remplir » se lit ; une sélection se
+ * remplit.
+ *
+ * Ancré en début de ligne (`^`), donc les commentaires de tête — qui contiennent le mot INSERT —
+ * ne peuvent pas être pris pour l'instruction. Rend `null` s'il n'y a pas d'INSERT INTO, ce qui
+ * est le cas de tout le reste de la page.
+ */
+export function sinkNameRange(sql: string): { start: number; end: number } | null {
+  const match = /^INSERT\s+INTO\s+([^\s(;]+)/im.exec(sql);
+  if (!match) return null;
+  const start = match.index + match[0].length - match[1].length;
+  return { start, end: start + match[1].length };
 }
 
 /** Ce que le clic va faire, pour l'intitulé accessible du bouton — il annonçait « SELECT » partout. */

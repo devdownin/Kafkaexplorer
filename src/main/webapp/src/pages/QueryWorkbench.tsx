@@ -23,7 +23,7 @@ import {
   starterQueries, pushHistory, describeHistoryEntry, formatDuration, type HistoryEntry,
   splitStatements, statementIndexAt, positionAt, withoutLeadingCte,
   readSqlParam, buildQueryLink,
-  sidebarSqlFor, sidebarActionLabel, type ExecutionMode,
+  sidebarSqlFor, sidebarActionLabel, sinkNameRange, type ExecutionMode,
 } from './queryWorkbench';
 import { ResultsGrid } from '../components/query/ResultsGrid';
 import { WindowAssistant } from '../components/query/WindowAssistant';
@@ -829,6 +829,8 @@ const QueryWorkbench: React.FC = () => {
    * rafraîchissement du catalogue), et seulement pour un nom que le catalogue connaît — sinon
    * chaque frappe dans le FROM déclencherait une requête sur un nom incomplet.
    */
+  /** Plage à sélectionner au prochain rendu — voir `openSelectFor`. */
+  const pendingSinkSelectionRef = useRef<{ start: number; end: number } | null>(null);
   const schemaFetchAttempted = useRef<Set<string>>(new Set());
   useEffect(() => {
     const handle = setTimeout(() => {
@@ -1220,11 +1222,50 @@ const QueryWorkbench: React.FC = () => {
    *
    * Le SQL posé suit le mode d'exécution (`sidebarSqlFor`) : en mode Job, un `SELECT` était refusé
    * par la garde de mode, donc cliquer un topic n'y menait qu'à un panneau d'erreur.
+   *
+   * En mode Job le schéma est chargé au besoin — le même appel que déclenche le dépliage d'une
+   * table dans la barre latérale — parce que c'est lui qui permet de lister les colonnes plutôt
+   * que d'écrire `SELECT *`, lequel emporte `proc_time` et fait échouer l'INSERT sur l'arité. Une
+   * table que Flink ne connaît pas encore rend un schéma vide : on retombe alors sur `SELECT *`,
+   * en le disant dans le SQL généré.
    */
-  const openSelectFor = useCallback((table: string) => {
-    const where = openSql(sidebarSqlFor(table, executionMode, maxRows), table);
+  const openSelectFor = useCallback(async (table: string) => {
+    let schema = tableSchemasRef.current[table];
+    if (executionMode === 'ASYNC_JOB' && !schema) {
+      try {
+        const r = await axios.get<Record<string, string>>(`/api/query/schema/${encodeURIComponent(table)}`);
+        schema = r.data;
+        if (schema && Object.keys(schema).length > 0) setTableSchemas(prev => ({ ...prev, [table]: r.data }));
+      } catch { /* pas encore enregistrée côté Flink — le SQL généré le dit et reste utilisable */ }
+    }
+    const sqlText = sidebarSqlFor(table, executionMode, maxRows, schema);
+    const where = openSql(sqlText, table);
+    // La sélection ne peut être posée qu'une fois le nouveau texte rendu : l'effet ci-dessous s'en
+    // charge, sur le `sql` qui vient d'être écrit.
+    pendingSinkSelectionRef.current = sinkNameRange(sqlText);
     if (where === 'new') toast(`Opened ${table} in a new tab`, 'success');
   }, [openSql, maxRows, executionMode, toast]);
+
+  /**
+   * Pose la sélection sur le nom de sink du dernier INSERT généré, pour que la première frappe le
+   * remplace. `setSelection` accepte un `IRange` littéral, donc rien ici ne dépend de l'instance
+   * Monaco.
+   */
+  useEffect(() => {
+    const pending = pendingSinkSelectionRef.current;
+    if (!pending) return;
+    pendingSinkSelectionRef.current = null;
+    const ed = editorRef.current;
+    const model = ed?.getModel();
+    if (!ed || !model) return;
+    const from = model.getPositionAt(pending.start);
+    const to = model.getPositionAt(pending.end);
+    ed.setSelection({
+      startLineNumber: from.lineNumber, startColumn: from.column,
+      endLineNumber: to.lineNumber, endColumn: to.column,
+    });
+    ed.focus();
+  }, [sql]);
 
   /** Insère à la position du curseur — utilisé par les fragments (assistant de fenêtrage). */
   const insertSql = useCallback((text: string) => {

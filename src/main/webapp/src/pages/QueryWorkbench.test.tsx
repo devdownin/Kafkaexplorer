@@ -32,6 +32,20 @@ const setCursor = (offset: number) => {
 };
 
 let cursorListeners: ((e: { selection: ReturnType<typeof makeSelection> }) => void)[] = [];
+/** Dernière plage passée à `setSelection`, en coordonnées ligne/colonne Monaco. */
+let lastSetSelection: { startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number } | null = null;
+
+/** Le texte que la sélection posée recouvre — ce qu'une frappe remplacerait. */
+function selectedText(): string {
+  if (!lastSetSelection) return '';
+  const lines = currentValue.split('\n');
+  const offsetOf = (line: number, column: number) =>
+    lines.slice(0, line - 1).reduce((n, l) => n + l.length + 1, 0) + column - 1;
+  return currentValue.slice(
+    offsetOf(lastSetSelection.startLineNumber, lastSetSelection.startColumn),
+    offsetOf(lastSetSelection.endLineNumber, lastSetSelection.endColumn),
+  );
+}
 
 function offsetToPosition(text: string, offset: number) {
   const clamped = Math.max(0, Math.min(offset, text.length));
@@ -67,6 +81,7 @@ vi.mock('@monaco-editor/react', () => {
           ? currentValue.slice(selectionRange.start, selectionRange.end)
           : ''),
         getOffsetAt: (p: { _offset?: number }) => p._offset ?? cursorOffset,
+        getPositionAt: (offset: number) => offsetToPosition(currentValue, offset),
         getFullModelRange: () => ({}),
         getValue: () => currentValue,
       }),
@@ -79,6 +94,7 @@ vi.mock('@monaco-editor/react', () => {
       executeEdits: () => {},
       focus: () => {},
       setPosition: () => {},
+      setSelection: (range: typeof lastSetSelection) => { lastSetSelection = range; },
       revealPositionInCenter: () => {},
     };
     // `onMount` runs once, like the real component's.
@@ -144,6 +160,7 @@ beforeEach(() => {
   cursorListeners = [];
   cursorOffset = 0;
   selectionRange = null;
+  lastSetSelection = null;
   currentValue = '';
   get.mockReset();
   post.mockReset();
@@ -204,17 +221,79 @@ describe('QueryWorkbench — nothing silently replaces the tab you are writing i
 
 describe('QueryWorkbench — the sidebar follows the execution mode', () => {
   const selectJobMode = () => userEvent.click(screen.getByRole('button', { name: 'Flink job' }));
+  const clickTopic = () =>
+    userEvent.click(screen.getByRole('button', { name: 'INSERT INTO from demo.orders.1.received' }));
+
+  /** Le schéma que `/api/query/schema/{table}` rend pour une table générée par l'application. */
+  const withSchema = (schema: Record<string, string>) => get.mockImplementation((url: string) => {
+    if (url === '/api/query/init') return Promise.resolve({ data: CATALOGUE });
+    if (url.startsWith('/api/query/schema/')) return Promise.resolve({ data: schema });
+    return Promise.resolve({ data: {} });
+  });
 
   it('writes an INSERT INTO in Flink job mode, the only statement that mode accepts', async () => {
     renderPage();
     await screen.findByText('demo.orders.1.received');
     await selectJobMode();
 
-    await userEvent.click(screen.getByRole('button', { name: 'INSERT INTO from demo.orders.1.received' }));
+    await clickTopic();
 
     await waitFor(() => expect(editor().value).toContain('INSERT INTO demo_orders_1_received_out'));
-    expect(editor().value).toContain('SELECT * FROM demo_orders_1_received');
+    expect(editor().value).toContain('FROM demo_orders_1_received');
     expect(editor().value).not.toContain('LIMIT');
+  });
+
+  /*
+   * `proc_time AS PROCTIME()` est une colonne calculée que le générateur de DDL ajoute à toute
+   * table : elle sort d'un `SELECT *` mais aucun sink ne l'accepte, donc l'INSERT échouait sur
+   * un désaccord d'arité — une erreur qui ne nomme pas sa cause.
+   */
+  it('lists the columns and leaves out the computed one, which no sink accepts', async () => {
+    withSchema({ id: 'STRING', amount: 'DOUBLE', event_time: 'TIMESTAMP(3)', proc_time: 'TIMESTAMP_LTZ(3)' });
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await selectJobMode();
+
+    await clickTopic();
+
+    await waitFor(() => expect(editor().value).toContain('`id`'));
+    expect(editor().value).toContain('`amount`');
+    expect(editor().value).toContain('`event_time`');
+    expect(editor().value).not.toContain('proc_time');
+    expect(editor().value).not.toContain('SELECT *');
+  });
+
+  it('falls back to SELECT * when Flink does not know the table yet, and says what that risks', async () => {
+    // Table non enregistrée : le schéma résolu est vide, il n'y a aucune colonne à lister.
+    withSchema({});
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await selectJobMode();
+
+    await clickTopic();
+
+    await waitFor(() => expect(editor().value).toContain('SELECT * FROM demo_orders_1_received'));
+    expect(editor().value).toContain('proc_time, which a sink refuses');
+  });
+
+  it('leaves the placeholder selected, so the first keystroke replaces it', async () => {
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await selectJobMode();
+
+    await clickTopic();
+
+    await waitFor(() => expect(selectedText()).toBe('demo_orders_1_received_out'));
+  });
+
+  it('selects nothing in Read mode — there is no placeholder to replace', async () => {
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+
+    await userEvent.click(screen.getByRole('button', { name: 'SELECT from demo.orders.1.received' }));
+
+    await waitFor(() => expect(editor().value).toContain('SELECT * FROM'));
+    expect(selectedText()).toBe('');
   });
 
   // Le SELECT du mode lecture était refusé par la garde de mode : le clic ne pouvait mener
