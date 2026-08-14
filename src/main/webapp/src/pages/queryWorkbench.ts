@@ -746,6 +746,136 @@ export function starterQueries(catalog: CatalogLike | null | undefined): Starter
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Raccourci de la barre latérale
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Mode d'exécution de l'éditeur. Déclaré ici parce que le SQL posé en dépend. */
+export type ExecutionMode = 'SYNC_READ' | 'ASYNC_JOB';
+
+/**
+ * Suffixe du nom de sink dans le squelette d'INSERT. C'est un **emplacement à remplir**, pas une
+ * table qu'on suppose exister : le mode Job soumet un job continu, dont la cible doit avoir été
+ * déclarée avant. Le commentaire de tête le dit, parce qu'un nom plausible se lit comme une
+ * promesse et que l'échec, sinon, arriverait sous la forme d'un « Object not found » sur une table
+ * que l'éditeur a écrite lui-même.
+ */
+export const JOB_SINK_SUFFIX = '_out';
+
+/**
+ * Colonnes qu'un sink accepte en écriture, parmi celles que le schéma résolu rapporte.
+ *
+ * `DdlGeneratorService` termine toute table qu'il génère par `proc_time AS PROCTIME()`, une colonne
+ * **calculée** : elle sort d'un `SELECT *` côté source, mais aucun sink ne l'accepte en entrée. Un
+ * `INSERT INTO sink SELECT * FROM source` entre deux tables de ce générateur envoie donc une
+ * colonne de trop, et échoue sur un désaccord d'arité — pas sur une faute de syntaxe, donc sur un
+ * message qui ne désigne pas la cause.
+ *
+ * L'exclusion se fait **par nom**, faute de mieux : `/api/query/schema/{table}` rend un
+ * `nom → type de donnée`, et un type ne dit pas si la colonne est calculée (`isPersisted()` le
+ * dirait, côté Flink, mais il n'est pas exposé). `proc_time` est ce que notre propre générateur
+ * émet, donc le cas couvert est celui que l'application fabrique elle-même ; une table écrite à la
+ * main qui nommerait la sienne autrement retombe sur le comportement précédent, où c'est le planner
+ * qui se plaint. `event_time` reste : `METADATA FROM 'timestamp'` est persistable, donc inscriptible.
+ *
+ * Rend `null` quand le schéma est inconnu ou vide — l'appelant écrit alors `SELECT *`, qui reste la
+ * seule chose honnête à proposer sans connaître les colonnes.
+ */
+const COMPUTED_COLUMNS = new Set(['proc_time']);
+
+export function insertableColumns(schema: Record<string, string> | null | undefined): string[] | null {
+  if (!schema) return null;
+  const columns = Object.keys(schema).filter(c => !COMPUTED_COLUMNS.has(c.toLowerCase()));
+  return columns.length > 0 ? columns : null;
+}
+
+/**
+ * Une cible d'INSERT prise dans le catalogue, plutôt que le placeholder `<source>_out`.
+ *
+ * Un nom inventé ne peut qu'échouer : la cible d'un INSERT continu doit être une table déclarée.
+ * Une table du catalogue, elle, **résout** — c'est tout ce que cette fonction promet. Que ses
+ * colonnes acceptent la projection reste à vérifier, et le SQL généré le dit plutôt que de le
+ * laisser croire.
+ *
+ * Préférence à une table dont le nom commence par celui de la source (`orders` → `orders_enriched`) :
+ * un sink dérivé se nomme presque toujours d'après ce qu'il dérive. À défaut, la première du
+ * catalogue — arbitraire, mais posée *sélectionnée* dans l'éditeur, donc remplaçable d'une frappe.
+ * La source elle-même et les tables `internal*` (celles que l'application s'écrit) sont exclues.
+ */
+export function pickSinkTable(source: string, tables: string[] | null | undefined): string | null {
+  const candidates = (tables ?? []).filter(t => t !== source && !t.toLowerCase().startsWith('internal'));
+  if (candidates.length === 0) return null;
+  return candidates.find(t => t.startsWith(source)) ?? candidates[0];
+}
+
+/**
+ * Le SQL qu'un clic sur une table ou un topic de la barre latérale pose dans l'éditeur.
+ *
+ * Il suit le mode d'exécution, faute de quoi il produit une requête que le bouton Run refuse :
+ * en mode Job, seul un INSERT INTO part au moteur, donc le `SELECT * FROM …` du mode lecture y
+ * était rejeté par la garde de mode — un clic dont le seul résultat possible était un panneau
+ * d'erreur.
+ *
+ * Pas de `LIMIT` sur la branche Job : un INSERT y est un job continu, que rien ne borne.
+ *
+ * `sink` est la cible retenue (voir `pickSinkTable`) ; sans elle, le placeholder, et le commentaire
+ * change de propos selon le cas — annoncer « une table qui existe » au-dessus d'un nom inventé
+ * serait exactement le contraire de ce qu'on cherche à dire.
+ */
+export function sidebarSqlFor(
+  table: string,
+  mode: ExecutionMode,
+  maxRows: number,
+  schema?: Record<string, string> | null,
+  sink?: string | null,
+): string {
+  if (mode === 'ASYNC_JOB') {
+    const columns = insertableColumns(schema);
+    const target = sink ?? `${table}${JOB_SINK_SUFFIX}`;
+    const header = sink
+      ? [
+        `-- Job mode submits a continuous INSERT. ${sink} is an existing Flink table, and is`,
+        '-- selected below: type to replace it. Its columns must accept the projection.',
+      ]
+      : [
+        `-- Job mode submits a continuous INSERT. ${target} is a placeholder, selected below:`,
+        '-- point it at a table that already exists (CREATE TABLE declares one over a topic).',
+      ];
+    // Sans schéma chargé, on ne peut pas lister les colonnes — mais on peut nommer l'échec qui
+    // attend, plutôt que de le laisser arriver sous la forme d'une erreur d'arité.
+    if (!columns) header.push('-- SELECT * carries proc_time, which a sink refuses: list the columns if it complains.');
+    return [
+      ...header,
+      `INSERT INTO ${target}`,
+      columns
+        ? `SELECT\n${columns.map(c => '  `' + c + '`').join(',\n')}\nFROM ${table}`
+        : `SELECT * FROM ${table}`,
+    ].join('\n');
+  }
+  return `SELECT * FROM ${table} LIMIT ${maxRows}`;
+}
+
+/**
+ * Position du nom de sink dans un INSERT généré, pour que l'éditeur le pose **sélectionné** : la
+ * première frappe le remplace. Un commentaire qui dit « à remplir » se lit ; une sélection se
+ * remplit.
+ *
+ * Ancré en début de ligne (`^`), donc les commentaires de tête — qui contiennent le mot INSERT —
+ * ne peuvent pas être pris pour l'instruction. Rend `null` s'il n'y a pas d'INSERT INTO, ce qui
+ * est le cas de tout le reste de la page.
+ */
+export function sinkNameRange(sql: string): { start: number; end: number } | null {
+  const match = /^INSERT\s+INTO\s+([^\s(;]+)/im.exec(sql);
+  if (!match) return null;
+  const start = match.index + match[0].length - match[1].length;
+  return { start, end: start + match[1].length };
+}
+
+/** Ce que le clic va faire, pour l'intitulé accessible du bouton — il annonçait « SELECT » partout. */
+export function sidebarActionLabel(target: string, mode: ExecutionMode): string {
+  return mode === 'ASYNC_JOB' ? `INSERT INTO from ${target}` : `SELECT from ${target}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Historique
 // ─────────────────────────────────────────────────────────────────────────────
 

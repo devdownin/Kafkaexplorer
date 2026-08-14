@@ -32,6 +32,13 @@ export interface SchemaBrowserProps {
   tableSchemas: Record<string, Record<string, string>>;
   onToggleTable: (table: string) => void;
   onSelectFrom: (table: string) => void;
+  /**
+   * Intitulé de l'action pour une cible donnée. Le clic pose un `SELECT` ou un `INSERT INTO`
+   * selon le mode d'exécution, et un bouton annonçant « SELECT » dans les deux cas décrirait la
+   * moitié du temps autre chose que ce qu'il fait — c'est le seul nom que reçoit un lecteur
+   * d'écran. La page décide, ce composant rend.
+   */
+  actionLabelFor: (target: string) => string;
   onPreviewDdl: (topic: string) => void;
   savedQueries: SavedQuery[];
   onLoadSaved: (q: SavedQuery) => void;
@@ -54,7 +61,7 @@ export interface SchemaBrowserProps {
  */
 export const SchemaBrowser = React.forwardRef<HTMLElement, SchemaBrowserProps>(function SchemaBrowser({
   schema, schemaLoading, onRefresh, width, onResizeStart, onResizeKey, widthMin, widthMax,
-  expandedTables, tableSchemas, onToggleTable, onSelectFrom, onPreviewDdl,
+  expandedTables, tableSchemas, onToggleTable, onSelectFrom, onPreviewDdl, actionLabelFor,
   savedQueries, onLoadSaved, onDeleteSaved,
   saveInputVisible, saveInputName, onSaveInputChange, onSaveOpen, onSaveCancel, onSaveConfirm,
   activeTabName,
@@ -146,7 +153,7 @@ export const SchemaBrowser = React.forwardRef<HTMLElement, SchemaBrowserProps>(f
                     <span className="text-xs text-on-surface truncate font-mono">{table}</span>
                   </button>
                   <button type="button" onClick={() => onSelectFrom(table)}
-                    className="opacity-0 group-hover/tbl:opacity-100 focus-visible:opacity-100 text-outline hover:text-primary transition-all shrink-0 ml-1" title="SELECT from this table" aria-label={`SELECT from ${table}`}>
+                    className="opacity-0 group-hover/tbl:opacity-100 focus-visible:opacity-100 text-outline hover:text-primary transition-all shrink-0 ml-1" title={actionLabelFor('this table')} aria-label={actionLabelFor(table)}>
                     <span className="material-symbols-outlined text-sm">play_arrow</span>
                   </button>
                 </div>
@@ -190,7 +197,7 @@ export const SchemaBrowser = React.forwardRef<HTMLElement, SchemaBrowserProps>(f
                 {schema?.topics.map(topic => (
                   <div key={topic} className="flex items-center py-1 px-2 rounded hover:bg-primary/5 transition-colors group/topic">
                     <button type="button" onClick={() => onSelectFrom(toTableName(topic))}
-                      className="flex-1 min-w-0 text-left rounded" aria-label={`SELECT from ${topic}`}>
+                      className="flex-1 min-w-0 text-left rounded" aria-label={actionLabelFor(topic)}>
                       <span className="text-xs text-on-surface-variant hover:text-primary font-mono truncate block">{topic}</span>
                     </button>
                     <button type="button" onClick={e => { e.stopPropagation(); onPreviewDdl(topic); }}
