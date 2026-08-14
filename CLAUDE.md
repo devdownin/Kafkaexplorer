@@ -468,6 +468,25 @@ Two workflows beyond `ci.yml` / `release.yml` / `dockerhub-description.yml`:
   Trivy's findings are often unfixable transitive CVEs, whereas a verified secret is a live
   credential in a public repository.
 
+- **`scorecard.yml`** — OpenSSF Scorecard, weekly plus on every `branch_protection_rule` event
+  (that one change otherwise leaves no trace in the repository). It overlaps with nothing else
+  here on purpose: CodeQL reads the code, Trivy the image, dependency-review what a pull request
+  adds, and Scorecard the *project* — signed releases, pinned actions, branch protection, a
+  published security policy. Those decay silently, because no build ever fails when they do.
+  `publish_results: true` is what makes the README badge resolve. The Branch-Protection check
+  needs a classic PAT as the optional `SCORECARD_TOKEN` secret — the default `GITHUB_TOKEN`
+  cannot read those settings, so without it that one check reports unknown while the rest score
+  normally; it stays optional so a fork is not failed on a secret it cannot have.
+
+**The JAR is signed, keylessly** (`actions/attest-build-provenance` in `release.yml`'s `build`
+job, hence the `id-token: write` + `attestations: write` on it). The image had a full SLSA
+provenance and an SBOM while the JAR beside it on the same Release had only `SHA256SUMS.txt` —
+and a checksum published in the same place as the file it describes answers "did this arrive
+intact", never "did this come from here". Sigstore rather than GPG because there is no key to
+store, leak or rotate: the signing identity *is* this workflow at this commit, in a public
+transparency log. Consumers verify with `gh attestation verify <jar> --repo devdownin/Kafkaexplorer`;
+`SECURITY.md` carries that, the image equivalent, and the reason to pin by digest in production.
+
 **Every action is pinned to a commit SHA**, with the version in a trailing comment
 (`actions/checkout@3d3c42e… # v7`). A tag is mutable and `softprops`, `peter-evans`,
 `aquasecurity` and `trufflesecurity` all run with credentials or write scope. Dependabot updates

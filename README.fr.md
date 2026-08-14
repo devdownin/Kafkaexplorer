@@ -6,6 +6,7 @@
 
 [![CI](https://github.com/devdownin/Kafkaexplorer/actions/workflows/ci.yml/badge.svg)](https://github.com/devdownin/Kafkaexplorer/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/devdownin/Kafkaexplorer/badge)](https://scorecard.dev/viewer/?uri=github.com/devdownin/Kafkaexplorer)
 [![Docker Hub](https://img.shields.io/docker/pulls/compagnonsdudev/kafkaexplorer?logo=docker&logoColor=white&label=docker%20pulls)](https://hub.docker.com/r/compagnonsdudev/kafkaexplorer)
 [![GHCR](https://img.shields.io/badge/ghcr.io-kafkaexplorer-2496ED?logo=github&logoColor=white)](https://github.com/devdownin/Kafkaexplorer/pkgs/container/kafkaexplorer)
 [![Java 21](https://img.shields.io/badge/Java-21-orange)](pom.xml)

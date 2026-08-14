@@ -79,6 +79,11 @@ jobs:
     timeout-minutes: 25
     permissions:
       contents: write
+      # Both are for the build provenance attestation on the JAR, below. `id-token` mints the
+      # short-lived OIDC token Sigstore signs against — there is no key to store or rotate,
+      # which is the point — and `attestations` writes the result to this repository.
+      id-token: write
+      attestations: write
 
     steps:
       - name: Checkout code
@@ -144,6 +149,24 @@ jobs:
           name: jar
           path: target/*.jar
           if-no-files-found: error
+
+      # The published image carries a full SLSA provenance and an SBOM (see the `docker` job),
+      # while the JAR beside it on the same Release had only a checksum — and a checksum
+      # published in the same place as the file it describes answers "was this corrupted in
+      # transit", never "did this come from here". Anyone who can alter one can alter both.
+      #
+      # This signs the JAR's digest through Sigstore, keylessly: the signing identity is this
+      # workflow, in this repository, at this commit, and it is recorded in a public
+      # transparency log. There is no private key anywhere — nothing to store in a secret,
+      # nothing to leak, nothing to rotate. That is what makes it maintainable, and it is why
+      # this rather than a GPG key whose passphrase would live in the repository settings.
+      #
+      # Verified by a consumer with:
+      #   gh attestation verify kafka-sql-explorer-<version>.jar --repo devdownin/Kafkaexplorer
+      - name: Attest the JAR's build provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: 'target/*.jar'
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3

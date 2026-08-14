@@ -1,0 +1,80 @@
+# OpenSSF Scorecard — an outside grade of this repository's security posture.
+#
+# It overlaps deliberately with nothing else here. CodeQL reads the code, Trivy reads the
+# image, dependency-review reads what a pull request adds; Scorecard reads the *project* —
+# whether releases are signed, whether actions are pinned, whether branch protection exists,
+# whether a security policy is published, how quickly dependencies are updated. Those are
+# exactly the properties that decay silently, because nothing in a build ever fails when they
+# do.
+#
+# The findings land in the Security tab as code-scanning alerts, so they arrive where the
+# other scanners' findings already are rather than in a report nobody opens.
+name: Scorecard
+
+on:
+  # A branch protection rule changing is a scorecard-relevant event in itself — it is one of
+  # the checks — and it is the one change that otherwise leaves no trace in the repository.
+  branch_protection_rule:
+  schedule:
+    # Weekly. Most of what this measures moves on its own: an action pinned today is still
+    # pinned next week, but a dependency goes stale and a new release either is signed or is
+    # not. Tuesday 07:23 UTC, off the hour so it does not queue with everyone else's cron.
+    - cron: '23 7 * * 2'
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      # Publishes the results as code-scanning alerts.
+      security-events: write
+      # Needed to read the workflow run history, which several checks are computed from.
+      actions: read
+      contents: read
+      # Mints the OIDC token that publishes the result to the public OpenSSF API — which is
+      # what `publish_results` below does, and what makes the README badge resolve.
+      id-token: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Run analysis
+        uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a # v2.4.3
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          # The default GITHUB_TOKEN cannot read branch protection settings, so the
+          # Branch-Protection check reports "unknown" rather than a score with it. Supplying a
+          # classic PAT with the `public_repo` scope as a SCORECARD_TOKEN secret is what makes
+          # that one check meaningful; everything else scores correctly without it. Optional
+          # on purpose — a fork must not fail this workflow on a secret it cannot have.
+          repo_token: ${{ secrets.SCORECARD_TOKEN || github.token }}
+          # Publishes to the public OpenSSF API. This repository is public and its
+          # configuration is already readable by anyone, so the result reveals nothing the
+          # repository does not; in exchange the badge in the README resolves and the score
+          # becomes something an evaluator can check without being asked to trust us.
+          publish_results: true
+
+      # Kept for the raw JSON behind a score. The Security tab shows which check failed; this
+      # shows the reasoning, which is what a fix is written against.
+      - name: Upload the raw results
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: scorecard-results
+          path: results.sarif
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Upload to code scanning
+        uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4
+        with:
+          sarif_file: results.sarif

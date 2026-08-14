@@ -47,6 +47,44 @@ After you submit your report, we will:
 - Work on a fix and release it in a timely manner.
 - Keep you informed of our progress, and credit you in the advisory unless you prefer otherwise.
 
+## Verifying a release
+
+Every release is signed. Nothing here requires a key from us, or trusting a key distribution:
+the signatures are keyless, made through [Sigstore](https://www.sigstore.dev/) against a
+short-lived identity that names this repository, this workflow and the commit it ran on, and
+recorded in a public transparency log.
+
+**The JAR** — checks that it was built by this repository's release workflow, not merely that it
+downloaded intact:
+
+```bash
+gh attestation verify kafka-sql-explorer-<version>.jar --repo devdownin/Kafkaexplorer
+```
+
+`SHA256SUMS.txt` is still attached, and still worth checking, but note what it does *not* do: it
+sits on the same Release page as the file it describes, so anyone able to replace one can replace
+both. It answers "did this arrive intact", never "did this come from here".
+
+**The container image** — the same question, for the artefact most people actually run:
+
+```bash
+gh attestation verify oci://ghcr.io/devdownin/kafkaexplorer:<tag> --repo devdownin/Kafkaexplorer
+```
+
+The image additionally carries a full SLSA provenance and an SBOM, pushed as part of its index:
+
+```bash
+docker buildx imagetools inspect ghcr.io/devdownin/kafkaexplorer:<tag>
+```
+
+**Pin by digest in production.** A tag is mutable — that we do not move ours is a promise about
+our behaviour, not a property of the tag. The digest published in each Release's notes is a
+property:
+
+```bash
+docker run ghcr.io/devdownin/kafkaexplorer@sha256:<digest>
+```
+
 ## Deployment note — this app has no authentication
 
 This is a property of the product rather than a vulnerability, and it is worth stating

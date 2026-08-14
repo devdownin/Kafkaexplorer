@@ -21,6 +21,15 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Dependency review and secret scanning** (`.github/workflows/security.yml`): new dependencies
   are checked against advisories and against licences incompatible with AGPL on every pull
   request, and TruffleHog scans the full history for live credentials.
+- **Signed releases.** The JAR now carries a Sigstore build-provenance attestation, verifiable
+  with `gh attestation verify <jar> --repo devdownin/Kafkaexplorer`. It previously had only a
+  checksum published on the same page as the file it describes — which answers "did this arrive
+  intact", never "did this come from here". Keyless, so there is no key to store or rotate.
+  `SECURITY.md` documents verification for the JAR and the image alike.
+- **OpenSSF Scorecard** (`.github/workflows/scorecard.yml`), weekly and on branch-protection
+  changes, publishing to the Security tab and to the public OpenSSF API — the badge is in both
+  READMEs. It grades the properties no build ever fails on: whether releases are signed, whether
+  actions are pinned, whether branch protection exists.
 
 ### Changed
 
