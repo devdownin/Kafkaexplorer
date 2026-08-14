@@ -4,7 +4,7 @@ import {
   isResultStale, writeStored, readStored, removeStored,
   readLayout, LAYOUT_STORAGE_KEY, DEFAULT_LAYOUT, SPLIT_MIN, SIDEBAR_MAX,
   readSqlParam, buildQueryLink,
-  starterTable, starterQueries, pushHistory, describeHistoryEntry, formatDuration,
+  starterTable, starterQueries, starterJobQueries, pushHistory, describeHistoryEntry, formatDuration,
   splitStatements, statementIndexAt, positionAt, detailValue, withoutLeadingCte,
   sidebarSqlFor, sidebarActionLabel, insertableColumns, sinkNameRange, pickSinkTable,
   type HistoryEntry,
@@ -422,6 +422,46 @@ describe('sidebarSqlFor / sidebarActionLabel', () => {
   it('names the action the click performs, in both modes', () => {
     expect(sidebarActionLabel('demo.orders', 'SYNC_READ')).toBe('SELECT from demo.orders');
     expect(sidebarActionLabel('demo.orders', 'ASYNC_JOB')).toBe('INSERT INTO from demo.orders');
+  });
+});
+
+describe('starterJobQueries', () => {
+  it('offers an INSERT — the only statement Job mode runs', () => {
+    const [starter] = starterJobQueries({ tables: [], topics: ['demo.orders.1.received'] });
+    expect(starter.sql).toContain('INSERT INTO');
+    expect(starter.preview).toContain('INSERT INTO demo_orders_1_received_out');
+  });
+
+  it('names a registered target when there is one, and says what it does not guarantee', () => {
+    const [starter] = starterJobQueries({ tables: ['orders', 'orders_enriched'], topics: [] });
+    expect(starter.sql).toContain('INSERT INTO orders_enriched');
+    expect(starter.hint).toContain('must accept the projection');
+  });
+
+  it('sends you to declare the target first when the catalogue has none', () => {
+    const [starter] = starterJobQueries({ tables: [], topics: ['demo.orders'] });
+    expect(starter.hint).toContain('CREATE TABLE');
+  });
+
+  it('lists the columns when the schema is at hand, like the sidebar does', () => {
+    const [starter] = starterJobQueries(
+      { tables: ['orders', 'orders_enriched'], topics: [] },
+      { orders: { id: 'STRING', proc_time: 'TIMESTAMP_LTZ(3)' } },
+    );
+    expect(starter.sql).toContain('`id`');
+    expect(starter.sql).not.toContain('proc_time');
+  });
+
+  it('offers nothing rather than an example built on an absent table', () => {
+    expect(starterJobQueries({ tables: [], topics: [] })).toEqual([]);
+    expect(starterJobQueries(null)).toEqual([]);
+  });
+
+  // La carte tronque sur une ligne : sans aperçu, on n'y lirait que le commentaire de tête.
+  it('previews the statement, not the comment the SQL opens with', () => {
+    const [starter] = starterJobQueries({ tables: ['orders', 'orders_enriched'], topics: [] });
+    expect(starter.sql.startsWith('--')).toBe(true);
+    expect(starter.preview!.startsWith('INSERT INTO')).toBe(true);
   });
 });
 

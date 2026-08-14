@@ -708,7 +708,13 @@ export function removeStored(key: string): boolean {
  * peuvent pas citer une table absente. Quand le catalogue est vide, il n'y en a aucune : mieux
  * vaut un écran qui n'offre rien qu'un exemple qui ment.
  */
-export interface StarterQuery { label: string; sql: string; hint: string }
+export interface StarterQuery {
+  label: string;
+  sql: string;
+  hint: string;
+  /** Ligne montrée sur la carte quand le SQL commence par des commentaires — sinon on n'y lit qu'eux. */
+  preview?: string;
+}
 
 export interface CatalogLike { tables: string[]; topics: string[] }
 
@@ -743,6 +749,36 @@ export function starterQueries(catalog: CatalogLike | null | undefined): Starter
       hint: 'An aggregate has to be aliased — the direct engine reads the aliased column.',
     },
   ];
+}
+
+/**
+ * Les propositions du mode Job, symétriques de `starterQueries`.
+ *
+ * L'écran vide n'en offrait aucune : elles étaient conditionnées au mode lecture, alors que c'est
+ * en mode Job que la forme attendue est la moins évidente — un INSERT INTO, et lui seul. Le SQL est
+ * exactement celui du raccourci de la barre latérale, pour qu'un même geste ne s'écrive pas de deux
+ * façons selon l'endroit d'où on le déclenche.
+ *
+ * Rien n'est proposé quand le catalogue est vide : la règle du mode lecture, qui est de ne jamais
+ * bâtir un exemple sur une table absente.
+ */
+export function starterJobQueries(
+  catalog: CatalogLike | null | undefined,
+  schemas?: Record<string, Record<string, string>>,
+): StarterQuery[] {
+  const source = starterTable(catalog);
+  if (!source) return [];
+  const sink = pickSinkTable(source, catalog?.tables);
+  // `maxRows` ne sert qu'à la branche lecture : un job continu n'a pas de plafond de lignes.
+  const sql = sidebarSqlFor(source, 'ASYNC_JOB', 0, schemas?.[source], sink);
+  return [{
+    label: 'Stream one table into another',
+    sql,
+    preview: `INSERT INTO ${sink ?? `${source}${JOB_SINK_SUFFIX}`} SELECT … FROM ${source}`,
+    hint: sink
+      ? `Writes into ${sink}, a registered table — its columns must accept the projection.`
+      : 'The target is a placeholder: declare it with CREATE TABLE in Read mode first.',
+  }];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

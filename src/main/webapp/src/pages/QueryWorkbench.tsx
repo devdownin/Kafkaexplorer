@@ -20,7 +20,7 @@ import {
   writeStored, readStored, removeStored,
   readLayout, clamp, LAYOUT_STORAGE_KEY, DEFAULT_LAYOUT,
   SPLIT_MIN, SPLIT_MAX, SIDEBAR_MIN, SIDEBAR_MAX, type WorkbenchLayout,
-  starterQueries, pushHistory, describeHistoryEntry, formatDuration, type HistoryEntry,
+  starterQueries, starterJobQueries, pushHistory, describeHistoryEntry, formatDuration, type HistoryEntry,
   splitStatements, statementIndexAt, positionAt, withoutLeadingCte,
   readSqlParam, buildQueryLink,
   sidebarSqlFor, sidebarActionLabel, sinkNameRange, pickSinkTable, type ExecutionMode,
@@ -1282,7 +1282,15 @@ const QueryWorkbench: React.FC = () => {
     return selection.isEmpty() ? ('inserted' as const) : ('replaced' as const);
   }, [sql, updateSql]);
 
-  const starters = useMemo(() => starterQueries(schema), [schema]);
+  /*
+   * Les propositions suivent le mode, comme le raccourci de la barre latérale : en mode Job elles
+   * étaient purement absentes, alors que c'est le mode où la forme attendue — un INSERT INTO, et
+   * lui seul — est la moins évidente.
+   */
+  const starters = useMemo(
+    () => (executionMode === 'ASYNC_JOB' ? starterJobQueries(schema, tableSchemas) : starterQueries(schema)),
+    [schema, executionMode, tableSchemas],
+  );
 
   /** Table visée par l'assistant : celle que la requête cite, sinon la première du catalogue. */
   const windowTable = useMemo(
@@ -1815,19 +1823,21 @@ const QueryWorkbench: React.FC = () => {
                       jamais sur une table absente. L'onglet initial portait à leur place une
                       requête écrite en dur, en syntaxe ksqlDB et sur un `orders_stream` qui
                       n'existe nulle part : le tout premier Run échouait. */}
-                  {executionMode === 'SYNC_READ' && !sql.trim() && starters.length > 0 && (
+                  {!sql.trim() && starters.length > 0 && (
                     <div className="mx-auto mt-2 max-w-lg">
                       <p className="text-[11px] font-medium text-on-surface-variant uppercase tracking-[0.05em] mb-2">Start from your cluster</p>
                       <div className="space-y-1.5">
                         {starters.map(s => (
                           <button key={s.label} type="button"
-                            onClick={() => { openSql(s.sql); editorRef.current?.focus(); }}
+                            // Même geste que la barre latérale : la cible d'un INSERT est posée
+                            // sélectionnée, donc remplaçable d'une frappe.
+                            onClick={() => { openSql(s.sql); pendingSinkSelectionRef.current = sinkNameRange(s.sql); editorRef.current?.focus(); }}
                             className="w-full text-left px-3 py-2 rounded-lg border border-outline-variant hover:border-primary/50 hover:bg-primary/5 transition-colors group/starter">
                             <div className="flex items-center gap-2">
                               <span aria-hidden="true" className="material-symbols-outlined text-[16px] text-primary">play_arrow</span>
                               <span className="text-[12px] font-medium text-on-surface">{s.label}</span>
                             </div>
-                            <p className="font-mono text-[11px] text-on-surface-variant truncate mt-1">{s.sql}</p>
+                            <p className="font-mono text-[11px] text-on-surface-variant truncate mt-1">{s.preview ?? s.sql}</p>
                             <p className="text-[11px] text-outline mt-0.5">{s.hint}</p>
                           </button>
                         ))}
