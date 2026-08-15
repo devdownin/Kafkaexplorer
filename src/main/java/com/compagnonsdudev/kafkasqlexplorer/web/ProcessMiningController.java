@@ -235,9 +235,18 @@ public class ProcessMiningController {
             return ResponseEntity.badRequest()
                 .body(Map.of("stopped", false, "message", "Malformed session id."));
         }
-        log.info("Stop requested for live session {}", sessionId);
-        kafkaLiveConsumer.stopSession(sessionId);
-        return ResponseEntity.ok(Map.of("sessionId", sessionId, "stopped", true));
+
+        // Reconstructed, not merely checked. What reaches the logger and the session map is a
+        // canonical UUID rendered by the JDK — a value that cannot carry a line break by
+        // construction — rather than the caller's string that happened to pass a guard. It costs
+        // one parse and it means neither a reader nor a static analyser has to prove that the
+        // branch above is airtight. It also normalises case, so an id that differs from the minted
+        // one only by case now resolves instead of silently matching no session.
+        String canonicalId = UUID.fromString(sessionId).toString();
+
+        log.info("Stop requested for live session {}", canonicalId);
+        kafkaLiveConsumer.stopSession(canonicalId);
+        return ResponseEntity.ok(Map.of("sessionId", canonicalId, "stopped", true));
     }
 
     /**

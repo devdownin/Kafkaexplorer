@@ -13,6 +13,7 @@ import org.mockito.Mockito;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import java.util.Locale;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.anyString;
@@ -85,5 +86,21 @@ class ProcessMiningControllerTest {
             .andExpect(status().is4xxClientError());
 
         verify(kafkaLiveConsumer, never()).stopSession(anyString());
+    }
+
+    /**
+     * The id is reconstructed rather than passed through, so what reaches the session map is the
+     * canonical rendering. An id differing from the minted one only by case used to match no
+     * session at all, and said {@code stopped: true} while stopping nothing.
+     */
+    @Test
+    void normalisesTheIdBeforeUsingIt() throws Exception {
+        String sessionId = UUID.randomUUID().toString();
+
+        mockMvc.perform(delete("/api/process-mining/live/" + sessionId.toUpperCase(Locale.ROOT)))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.sessionId").value(sessionId));
+
+        verify(kafkaLiveConsumer).stopSession(sessionId);
     }
 }
