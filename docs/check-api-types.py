@@ -168,21 +168,27 @@ def accepts(declared: str, expected: str, java_type: str) -> bool:
 
 
 def parse_java() -> tuple[dict[str, list[tuple[str, str]]], set[str]]:
+    """
+    Every record and enum under domain/, **nested declarations included**.
+
+    This used to take the first record of each file and stop, which made a nested one invisible:
+    `FlowAudit.StepInfo` is declared inside `FlowAudit`, so marking a `StepInfo` interface `@java`
+    reported "matches no record in domain/" — an error indistinguishable from a typo, on a type
+    that is right there. A blind spot in a checker is worse than a gap in coverage: it does not
+    merely miss the drift, it argues against the correct declaration.
+    """
     records: dict[str, list[tuple[str, str]]] = {}
     enums: set[str] = set()
     for path in sorted(DOMAIN.glob('*.java')):
         source = strip_comments(path.read_text(encoding='utf-8'))
-        match = JAVA_RECORD.search(source)
-        if match:
+        for match in JAVA_RECORD.finditer(source):
             components = []
             for component in split_generics(match.group(2)):
                 parts = component.split()
                 if len(parts) >= 2:
                     components.append((parts[-1], ' '.join(parts[:-1])))
             records[match.group(1)] = components
-            continue
-        enum = JAVA_ENUM.search(source)
-        if enum:
+        for enum in JAVA_ENUM.finditer(source):
             enums.add(enum.group(1))
     return records, enums
 

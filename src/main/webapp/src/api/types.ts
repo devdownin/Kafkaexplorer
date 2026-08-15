@@ -308,3 +308,76 @@ export interface MetricTestResponse {
   error?: string;
   summary?: Record<string, unknown>;
 }
+
+/** @java HealthStatus */
+export type HealthStatus = 'HEALTHY' | 'WARNING' | 'CRITICAL';
+
+/** @java AuditStatus */
+export type AuditStatus = 'RUNNING' | 'COMPLETED' | 'CANCELLED' | 'FAILED';
+
+/**
+ * Un constat sur un topic. La sévérité est graduée : un topic prend la pire de ses sévérités.
+ *
+ * @java TopicIssue
+ */
+export interface TopicIssue {
+  message: string;
+  severity: HealthStatus;
+}
+
+/** @java TopicAudit */
+export interface TopicAudit {
+  name: string;
+  messageCount: number;
+  format: MessageFormat;
+  poisonMessageCount: number;
+  duplicateCount: number;
+  healthStatus: HealthStatus;
+  issues: TopicIssue[];
+}
+
+/**
+ * Une étape d'un flux. `averageLatencyMs` est un `Long` côté Java, donc nullable — une étape dont
+ * la latence n'a pas pu être mesurée n'est pas une étape à zéro milliseconde.
+ *
+ * @java StepInfo
+ */
+export interface StepInfo {
+  topicName: string;
+  count: number;
+  throughputPercentage: number;
+  averageLatencyMs: number | null;
+}
+
+/** @java FlowAudit */
+export interface FlowAudit {
+  flowName: string;
+  steps: StepInfo[];
+  /** Ratio 0..1 — pas un pourcentage (l'UI multiplie par 100). */
+  overallHealthScore: number;
+}
+
+/**
+ * `GET /api/audit/status/{id}` · `/last` · `/history/{id}` — le rapport d'audit du cluster.
+ *
+ * `globalStats` est un `Map<String, Object>` côté Java, et c'est ce que dit ce type. La page en a
+ * une lecture bien plus riche (`GlobalStats` dans `Audit.tsx` : phase, progression, `stopReason`,
+ * `healthScore`, `scopeNotes`…), mais cette forme-là n'est promise par aucun record : elle est
+ * assemblée clé par clé dans `AuditService`. La déclarer ici comme un objet typé ferait passer
+ * pour un contrat ce qui est une convention, et c'est exactement le genre d'affirmation écrite à
+ * la main que ce fichier existe pour supprimer. Le rétrécissement est donc explicite, en un seul
+ * point de `Audit.tsx`, où il se voit.
+ *
+ * @java AuditReport
+ */
+export interface AuditReport {
+  auditId: string;
+  status: AuditStatus;
+  totalTopics: number;
+  totalMessages: number;
+  criticalTopicsCount: number;
+  warningTopicsCount: number;
+  topicAudits: TopicAudit[];
+  flowAudits: FlowAudit[];
+  globalStats: Record<string, unknown>;
+}

@@ -47,9 +47,15 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- **The API contract check covers more of the surface**: 9 hand-written interfaces became 13
-  records verified against `domain/*.java` (`TopicSearchResponse`, `QueryInitResponse`,
-  `MetricConfig` added). The anonymous response shapes declared at call sites — the exact pattern
+- **The API contract check covers more of the surface**: 9 hand-written interfaces became 20
+  records verified against `domain/*.java` — `TopicSearchResponse`, `QueryInitResponse`,
+  `MetricConfig`, then the whole `AuditReport` family (`TopicAudit`, `TopicIssue`, `FlowAudit`,
+  `StepInfo`, `HealthStatus`, `AuditStatus`). `AuditReport.globalStats` is typed
+  `Record<string, unknown>`, which is what the Java record promises; the page's much richer
+  reading of those keys is a convention written by `AuditService`, not a contract, so it is
+  narrowed explicitly in one commented line of `Audit.tsx` rather than asserted in the shared
+  type. `check-api-types.py` also read only the first record per file, which made a nested one
+  (`FlowAudit.StepInfo`) invisible and reported the correct declaration as an error. The anonymous response shapes declared at call sites — the exact pattern
   that killed the Compare page — now live in `api/types.ts`, and three literal duplicates under
   other names (`SchemaInfo`, and local copies of `TopicSearchResponse` and `MetricConfig`) are
   aliases or imports, so there is one shape per endpoint. `check-api-types.py` now accepts a
