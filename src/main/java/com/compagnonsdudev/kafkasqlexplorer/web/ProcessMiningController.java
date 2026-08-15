@@ -17,6 +17,7 @@ import com.compagnonsdudev.kafkasqlexplorer.service.LlmAnalysisService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -34,6 +35,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.regex.Pattern;
 
 @RestController
 @RequestMapping("/api/process-mining")
@@ -58,6 +60,10 @@ public class ProcessMiningController {
      * out from under it by newer ones.
      */
     private static final int MAX_CACHED_MAPPINGS = 200;
+
+    /** Session ids are {@code UUID.randomUUID().toString()}; nothing else names a live session. */
+    private static final Pattern SESSION_ID =
+        Pattern.compile("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
 
     private final Map<String, FieldMapping> fieldMappingCache = Collections.synchronizedMap(
         new LinkedHashMap<>(16, 0.75f, true) {
@@ -210,12 +216,28 @@ public class ProcessMiningController {
      * consumer kept polling and a window could still be sent to the model. The browser knows the
      * session id (the {@code CONNECTED} event carries it), so it can say so directly. Idempotent:
      * an unknown id is a session that already ended, which is the outcome asked for.
+     *
+     * <p>The id is validated before it is used or logged. Every session id is a server-minted
+     * {@link UUID}, so anything else cannot name a live session and is refused rather than
+     * sanitised — which also keeps an attacker-controlled string out of the log file entirely.
+     * Logging it raw was a log-injection sink (CodeQL): a {@code %0A} in the path forges whatever
+     * log line the caller likes, in a file that is meant to be the record of what happened.
      */
     @DeleteMapping("/live/{sessionId}")
-    public Map<String, Object> stopLive(@PathVariable String sessionId) {
+    public ResponseEntity<Map<String, Object>> stopLive(
+            // Named explicitly, like QueryController's params: the offline harness compiles with
+            // plain javac, so without this the binding cannot be resolved by reflection.
+            @PathVariable("sessionId") String sessionId) {
+        if (!SESSION_ID.matcher(sessionId).matches()) {
+            // Deliberately not echoed, neither to the log nor to the response body.
+            log.warn("Ignoring a stop request carrying a malformed session id ({} chars)",
+                sessionId.length());
+            return ResponseEntity.badRequest()
+                .body(Map.of("stopped", false, "message", "Malformed session id."));
+        }
         log.info("Stop requested for live session {}", sessionId);
         kafkaLiveConsumer.stopSession(sessionId);
-        return Map.of("sessionId", sessionId, "stopped", true);
+        return ResponseEntity.ok(Map.of("sessionId", sessionId, "stopped", true));
     }
 
     /**
