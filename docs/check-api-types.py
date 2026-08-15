@@ -116,6 +116,24 @@ def normalize(ts_type: str) -> str:
 
 NULLABLE = re.compile(r'\s*\|\s*(?:null|undefined)\b')
 PRIMITIVES = {'int', 'long', 'double', 'float', 'short', 'boolean', 'byte', 'char'}
+# A union of string literals: 'MAX_HITS' | 'TIMEOUT' | 'ERROR'.
+STRING_UNION = re.compile(r"^'[^']*'(?:\s*\|\s*'[^']*')*$")
+
+
+def narrows_string(declared: str) -> bool:
+    """
+    A union of string literals where Java declares `String`.
+
+    The backend types these as String because Java has no union type, but the frontend knows
+    the closed set the server actually emits — `stopReason` is one of five values, and a
+    component switching on it wants the compiler to check the arms are exhaustive. Widening
+    the frontend to `string` to satisfy this script would delete real type safety in order to
+    pass a check whose entire purpose is type safety.
+
+    Accepted in this direction only. `string` where Java has an *enum* stays an error: there
+    the closed set exists on both sides, and the union alias is what keeps them in step.
+    """
+    return bool(STRING_UNION.fullmatch(NULLABLE.sub('', declared).strip()))
 
 
 def outside_generics(ts_type: str) -> str:
@@ -142,27 +160,35 @@ def accepts(declared: str, expected: str, java_type: str) -> bool:
     declared, expected = normalize(declared), normalize(expected)
     if declared == expected:
         return True
+    if expected == 'string' and narrows_string(declared):
+        return True
     if NULLABLE.sub('', declared) != NULLABLE.sub('', expected):
         return False
     return java_type.strip() not in PRIMITIVES or not NULLABLE.search(outside_generics(declared))
 
 
 def parse_java() -> tuple[dict[str, list[tuple[str, str]]], set[str]]:
+    """
+    Every record and enum under domain/, **nested declarations included**.
+
+    This used to take the first record of each file and stop, which made a nested one invisible:
+    `FlowAudit.StepInfo` is declared inside `FlowAudit`, so marking a `StepInfo` interface `@java`
+    reported "matches no record in domain/" — an error indistinguishable from a typo, on a type
+    that is right there. A blind spot in a checker is worse than a gap in coverage: it does not
+    merely miss the drift, it argues against the correct declaration.
+    """
     records: dict[str, list[tuple[str, str]]] = {}
     enums: set[str] = set()
     for path in sorted(DOMAIN.glob('*.java')):
         source = strip_comments(path.read_text(encoding='utf-8'))
-        match = JAVA_RECORD.search(source)
-        if match:
+        for match in JAVA_RECORD.finditer(source):
             components = []
             for component in split_generics(match.group(2)):
                 parts = component.split()
                 if len(parts) >= 2:
                     components.append((parts[-1], ' '.join(parts[:-1])))
             records[match.group(1)] = components
-            continue
-        enum = JAVA_ENUM.search(source)
-        if enum:
+        for enum in JAVA_ENUM.finditer(source):
             enums.add(enum.group(1))
     return records, enums
 

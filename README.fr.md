@@ -6,6 +6,7 @@
 
 [![CI](https://github.com/devdownin/Kafkaexplorer/actions/workflows/ci.yml/badge.svg)](https://github.com/devdownin/Kafkaexplorer/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/devdownin/Kafkaexplorer/badge)](https://scorecard.dev/viewer/?uri=github.com/devdownin/Kafkaexplorer)
 [![Docker Hub](https://img.shields.io/docker/pulls/compagnonsdudev/kafkaexplorer?logo=docker&logoColor=white&label=docker%20pulls)](https://hub.docker.com/r/compagnonsdudev/kafkaexplorer)
 [![GHCR](https://img.shields.io/badge/ghcr.io-kafkaexplorer-2496ED?logo=github&logoColor=white)](https://github.com/devdownin/Kafkaexplorer/pkgs/container/kafkaexplorer)
 [![Java 21](https://img.shields.io/badge/Java-21-orange)](pom.xml)
@@ -166,10 +167,14 @@ Si vous souhaitez compiler l'intégralité du projet localement (sans Docker pou
 ```
 ## 🤝 Contribuer
 
-Les contributions sont bienvenues — le code est volontairement très commenté pour servir aussi de ressource d'apprentissage sur l'intégration Flink SQL + Spring Boot, et `mvn test` / `npm test` couvrent les services cœur.
+Les contributions sont bienvenues — le code est volontairement très commenté pour servir aussi de ressource d'apprentissage sur l'intégration Flink SQL + Spring Boot.
+
+Lancez **`mvn verify`** avant d'ouvrir une pull request : c'est la porte complète — tests Java, ESLint et Vitest — et c'est exactement ce que fait la CI. `mvn test` est la boucle rapide côté back et ne lance *pas* les vérifications du front.
 
 - Lisez le **[guide de contribution](CONTRIBUTING.md)** pour démarrer
 - Restez bienveillants : **[Code de conduite](CODE_OF_CONDUCT.md)**
+- Besoin d'aide ou une question ? **[Support](SUPPORT.md)**
+- Ce qui change d'une version à l'autre : **[Changelog](CHANGELOG.md)**
 - Une faille de sécurité ? Suivez la **[politique de sécurité](SECURITY.md)**
 
 ## 📄 Licence

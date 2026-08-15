@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Kafka Explorer Contributors
+
 /**
  * Traduction des erreurs SQL brutes (Flink / Calcite / validateur backend) en
  * un message lisible + une piste d'action, sans perdre le texte d'origine.

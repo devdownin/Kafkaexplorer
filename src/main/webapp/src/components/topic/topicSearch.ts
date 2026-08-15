@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Kafka Explorer Contributors
+
 /**
  * Logique pure de la recherche dans un topic : critère, requête, couverture, surlignage.
  *
@@ -12,9 +15,11 @@ import { clearDraft, readDraft, writeDraft } from '../../draftStore';
  * Elle était déclarée ici, et une seconde fois — différemment — dans la page Compare : c'est cette
  * duplication qui a permis à l'une des deux de se périmer sans que rien ne le dise.
  */
-import type { TopicMessage } from '../../api/types';
+import type { TopicMessage, TopicSearchResponse } from '../../api/types';
 
-export type { TopicMessage };
+// Réexportés pour que les consommateurs de ce module gardent un seul point d'import ; la forme
+// elle-même vit dans api/types.ts, où check-api-types.py la résout contre le record Java.
+export type { TopicMessage, TopicSearchResponse };
 
 export type SearchMode = 'CONTAINS' | 'REGEX' | 'FIELD' | 'HEADER' | 'KEY';
 
@@ -78,17 +83,6 @@ export interface TopicSearchCriteria {
   fromTime: string;
   /** Offset de départ en mode OFFSET, gardé en chaîne pour ne pas coercer pendant la saisie. */
   fromOffset: string;
-}
-
-export interface TopicSearchResponse {
-  hits: TopicMessage[];
-  scanned: number;
-  matched: number;
-  elapsedMs: number;
-  exhausted: boolean;
-  stopReason: 'MAX_HITS' | 'MAX_SCAN' | 'TIMEOUT' | 'EXHAUSTED' | 'ERROR';
-  nextCursor: Record<string, number>;
-  warnings: string[];
 }
 
 export const OPERATORS: { value: string; label: string }[] = [

@@ -1,23 +1,21 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Kafka Explorer Contributors
+
 // Composant de la page SQL Editor, sorti de `QueryWorkbench.tsx` — voir `ResultsGrid.tsx`.
 import React from 'react';
 import { Input, ScrollList, cn } from '../ui';
 import { toTableName } from '../../pages/sqlScope';
+import type { QueryInitResponse } from '../../api/types';
 
 export interface SavedQuery { id: string; name: string; sql: string; savedAt: number }
 
-export interface SchemaInfo {
-  topics: string[];
-  tables: string[];
-  health: boolean;
-  /**
-   * Pourquoi la liste correspondante est vide, quand elle l'est. `/api/query/init` avalait ses deux
-   * échecs dans des `catch` vides : un broker injoignable et un runtime Flink encore en démarrage
-   * donnaient exactement le même écran — « Engine offline · 0 tables · 0 topics » — sans rien pour
-   * les distinguer ni sur quoi agir.
-   */
-  kafkaError?: string | null;
-  flinkError?: string | null;
-}
+/**
+ * La réponse de `GET /api/query/init`. Alias de `QueryInitResponse`, dont la forme vit dans
+ * api/types.ts où check-api-types.py la résout contre le record Java : cette page en portait une
+ * copie littérale sous un autre nom, ce qui est précisément la duplication qui se périme sans
+ * bruit. Le nom local est conservé, il est déjà importé ailleurs.
+ */
+export type SchemaInfo = QueryInitResponse;
 
 export interface SchemaBrowserProps {
   schema: SchemaInfo | null;

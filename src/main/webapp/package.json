@@ -2,6 +2,18 @@
   "name": "kafka-sql-explorer-ui",
   "private": true,
   "version": "1.0.0",
+  "description": "React SPA for Kafka SQL Explorer — browse Kafka topics, run Flink SQL, trace message flows and audit a cluster.",
+  "license": "AGPL-3.0-or-later",
+  "author": "Compagnons du dev <contact@compagnonsdudev.com>",
+  "homepage": "https://github.com/devdownin/Kafkaexplorer",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/devdownin/Kafkaexplorer.git",
+    "directory": "src/main/webapp"
+  },
+  "bugs": {
+    "url": "https://github.com/devdownin/Kafkaexplorer/issues"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",

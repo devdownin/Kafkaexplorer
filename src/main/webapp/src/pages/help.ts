@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Kafka Explorer Contributors
+
 /**
  * Contenu pédagogique de la page d'aide — parcours SQL, matrice des moteurs,
  * anatomie des fenêtres, guide d'erreurs.

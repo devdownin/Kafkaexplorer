@@ -1,0 +1,76 @@
+# The two supply-chain checks that belong on a pull request rather than on a release.
+#
+# Dependabot proposes bumps for what is already in the tree; neither it nor anything else
+# looked at a dependency a pull request *introduces*. And the repository has been bitten by a
+# committed key before — the fix at the time was to rewrite the commit, which works only if
+# somebody notices. Both of these are cheap and neither needs the network beyond GitHub.
+name: Security
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Only meaningful on a pull request: it diffs the manifests against the base ref, so there
+  # is nothing for it to compare on a push to main.
+  dependency-review:
+    name: Review new dependencies
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # Writes the summary comment on the pull request.
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+        with:
+          # Fails the pull request on a *newly introduced* high-severity advisory. That is a
+          # narrower gate than it sounds: it says nothing about the existing tree, so it
+          # cannot start failing builds on a morning nobody chose — the failure mode that
+          # makes people ignore a scanner. It fires only when a change adds the problem.
+          fail-on-severity: high
+          # This project is AGPL-3.0-or-later. A copyleft-incompatible dependency is a
+          # licensing problem that is very expensive to discover after release and trivial to
+          # refuse here. These are the ones that cannot ship inside an AGPL artifact.
+          deny-licenses: MPL-1.1, SSPL-1.0, BUSL-1.1, Elastic-2.0
+          comment-summary-in-pr: on-failure
+
+  secrets:
+    name: Scan for committed secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # The whole history, not the shallow default: a key removed from the working tree
+          # in a later commit is still a live key, and the tip alone would show it as gone.
+          fetch-depth: 0
+
+      - name: TruffleHog
+        uses: trufflesecurity/trufflehog@bc2cd3e45e3aa4a6c627bd0c424580f86dde1855 # v3.90.10
+        with:
+          path: ./
+          # Empty base = scan the whole history rather than the event's commit range. The
+          # range form is what breaks on a force-push or a squash merge, where base and head
+          # resolve to the same commit and the action errors out with nothing scanned.
+          base: ""
+          head: HEAD
+          # `--only-verified` means the credential was presented to its provider and came
+          # back live. This one *does* fail the build, unlike the Trivy scan in ci.yml which
+          # only reports — and the difference is deliberate. Trivy's findings are frequently
+          # unfixable CVEs in transitive dependencies, so gating on them trains everyone to
+          # ignore the job. A verified secret is neither noisy nor deferrable: it is a live
+          # credential in a public repository, and the response is to revoke it now.
+          extra_args: --only-verified

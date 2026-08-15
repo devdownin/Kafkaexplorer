@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Kafka Explorer Contributors
+
 import React, { useEffect, useState } from 'react';
 
 /** Ingestion counters sent with every WINDOW_STATS event, emitted when a window is cut. */

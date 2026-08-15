@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Kafka Explorer Contributors
+
 /**
  * Source unique de vérité pour la navigation : chaque écran a UN nom, UNE
  * route et UNE icône, réutilisés partout (Sidebar, fil d'Ariane du Header).

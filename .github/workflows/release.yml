@@ -79,13 +79,18 @@ jobs:
     timeout-minutes: 25
     permissions:
       contents: write
+      # Both are for the build provenance attestation on the JAR, below. `id-token` mints the
+      # short-lived OIDC token Sigstore signs against — there is no key to store or rotate,
+      # which is the point — and `attestations` writes the result to this repository.
+      id-token: write
+      attestations: write
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           java-version: '21'
           distribution: 'temurin'
@@ -94,7 +99,7 @@ jobs:
       - name: Cache npm downloads
         # Same reasoning as ci.yml: the frontend build runs npm inside Maven, and a
         # warm ~/.npm shields a tag build from a transient registry failure.
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.npm
@@ -139,14 +144,32 @@ jobs:
           ( cd target && sha256sum "$(basename "${jars[0]}")" | tee SHA256SUMS.txt )
 
       - name: Upload JAR artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: jar
           path: target/*.jar
           if-no-files-found: error
 
+      # The published image carries a full SLSA provenance and an SBOM (see the `docker` job),
+      # while the JAR beside it on the same Release had only a checksum — and a checksum
+      # published in the same place as the file it describes answers "was this corrupted in
+      # transit", never "did this come from here". Anyone who can alter one can alter both.
+      #
+      # This signs the JAR's digest through Sigstore, keylessly: the signing identity is this
+      # workflow, in this repository, at this commit, and it is recorded in a public
+      # transparency log. There is no private key anywhere — nothing to store in a secret,
+      # nothing to leak, nothing to rotate. That is what makes it maintainable, and it is why
+      # this rather than a GPG key whose passphrase would live in the repository settings.
+      #
+      # Verified by a consumer with:
+      #   gh attestation verify kafka-sql-explorer-<version>.jar --repo devdownin/Kafkaexplorer
+      - name: Attest the JAR's build provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: 'target/*.jar'
+
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
           files: |
             target/*.jar
@@ -170,12 +193,12 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # Not into target/: .dockerignore excludes it, so a JAR downloaded there would be
       # absent from the build context.
       - name: Download JAR artifact
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: jar
           path: dist/
@@ -204,13 +227,13 @@ jobs:
       # target architecture. Without binfmt registered that step fails with "exec format
       # error" on the runner's amd64 kernel.
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
 
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -248,7 +271,7 @@ jobs:
         id: hub_login
         if: steps.hub.outputs.enabled == 'true'
         continue-on-error: true
-        uses: docker/login-action@v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -263,7 +286,7 @@ jobs:
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         # Labels are written into each platform's image *config*, and a multi-arch push
         # publishes an image *index* on top of those — which carries none of them. GHCR
         # reads `org.opencontainers.image.source` off the index to link the package back to
@@ -316,7 +339,7 @@ jobs:
         # One build, pushed to every registry in `meta.outputs.tags` — GHCR always,
         # Docker Hub when its secrets are configured.
         id: build
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: Dockerfile.release
@@ -388,7 +411,7 @@ jobs:
       # not a property); the digest is the only immutable reference, and docs/DOCKERHUB.md
       # points at these notes for it.
       - name: Append the image digest to the Release notes
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
           append_body: true
           body: |

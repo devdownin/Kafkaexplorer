@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Kafka Explorer Contributors
+
 /**
  * Logique pure de la page Stream Flow : validation du critère, lecture de la réponse
  * backend, mise en page du graphe et formatage.

@@ -1,0 +1,40 @@
+# Code owners — who GitHub requests a review from, automatically.
+#
+# The last matching pattern wins, so the catch-all comes first and the narrower rules below
+# it. The point of the narrow ones is not that these files are more precious than the rest:
+# it is that a change to the build, the release or the deployment files is the class of
+# change this repository has repeatedly shipped broken, precisely because it is invisible in
+# a diff full of application code.
+#
+# This file only requests reviewers. It does not *require* them — that is a branch
+# protection rule on `main` ("Require review from Code Owners"), configured in the repository
+# settings, and it is what turns this file from a convention into a gate.
+
+*                               @devdownin
+
+# CI, release and the supply chain. A change here can publish an artifact, mint a token, or
+# silently stop running a check.
+/.github/                       @devdownin
+/.github/workflows/             @devdownin
+
+# The build definition and the pinned toolchain.
+/pom.xml                        @devdownin
+/mvnw                           @devdownin
+/mvnw.cmd                       @devdownin
+/.mvn/                          @devdownin
+/src/main/webapp/package.json   @devdownin
+/src/main/webapp/package-lock.json @devdownin
+
+# Everything that decides how the application is deployed and what it exposes. The bundled
+# stacks bind to the loopback interface on purpose — the app has no authentication.
+/Dockerfile                     @devdownin
+/Dockerfile.release             @devdownin
+/docker-compose*.yml            @devdownin
+/.dockerignore                  @devdownin
+/.env.example                   @devdownin
+
+# Licence, security policy and governance.
+/LICENSE                        @devdownin
+/SECURITY.md                    @devdownin
+/CODE_OF_CONDUCT.md             @devdownin
+/CONTRIBUTING.md                @devdownin

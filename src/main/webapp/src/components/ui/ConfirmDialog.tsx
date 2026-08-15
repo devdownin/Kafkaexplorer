@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Kafka Explorer Contributors
+
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { FC, ReactNode } from 'react';
 import { Button } from './Button';

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Kafka Explorer Contributors
+
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import axios from 'axios';
 import {
@@ -6,6 +9,7 @@ import {
 } from '../components/ui';
 import { clearDraft, readDraft, useDraftConflict, writeDraft } from '../draftStore';
 import { draftableOnly, mergeDraft } from './configDraft';
+import type { LlmTestResponse } from '../api/types';
 
 interface ClusterConfig {
   bootstrapServers: string;
@@ -228,7 +232,7 @@ const Config: React.FC = () => {
     try {
       // Persist current settings first so the server tests against the selected provider.
       await axios.post('/api/config', config);
-      const res = await axios.post<{ ok: boolean; message: string }>('/api/config/test-llm');
+      const res = await axios.post<LlmTestResponse>('/api/config/test-llm');
       setLlmTestResult(res.data);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'LLM test failed';

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Kafka Explorer Contributors
+
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Field, Input, NumberInput, Select } from '../ui';

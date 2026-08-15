@@ -38,7 +38,13 @@ HTML_SRC = re.compile(r'(?:src|href)="([^"]+)"')
 COMMENT = re.compile(r'<!--.*?-->', re.DOTALL)
 
 MARKDOWN = ['docs/DOCKERHUB.md', 'README.md', 'README.fr.md', 'docs/FEATURES.md',
-            'docs/screenshots/README.md']
+            'docs/screenshots/README.md',
+            # The community-health files. They are read by people who have not cloned the
+            # repository — GitHub surfaces them from the issue composer, the "Contribute"
+            # panel and the security tab — and they cross-reference each other heavily, so a
+            # renamed file breaks several of them at once and none of it is visible in a diff.
+            'CONTRIBUTING.md', 'SECURITY.md', 'SUPPORT.md', 'CHANGELOG.md',
+            'CODE_OF_CONDUCT.md']
 HTML = ['docs/index.html']
 
 

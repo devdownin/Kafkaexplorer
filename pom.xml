@@ -222,7 +222,7 @@
 			</plugin>
 		</plugins>
 	</build>
-	<url>https://github.com/yourusername/kafka-sql-explorer</url>
+	<url>https://github.com/devdownin/Kafkaexplorer</url>
 	<developers>
 		<developer>
 			<id>owner</id>
@@ -233,9 +233,9 @@
 		</developer>
 	</developers>
 	<scm>
-		<connection>scm:git:git://github.com/yourusername/kafka-sql-explorer.git</connection>
-		<developerConnection>scm:git:ssh://github.com:yourusername/kafka-sql-explorer.git</developerConnection>
-		<url>https://github.com/yourusername/kafka-sql-explorer/tree/main</url>
+		<connection>scm:git:git://github.com/devdownin/Kafkaexplorer.git</connection>
+		<developerConnection>scm:git:ssh://git@github.com/devdownin/Kafkaexplorer.git</developerConnection>
+		<url>https://github.com/devdownin/Kafkaexplorer/tree/main</url>
 	</scm>
 	<profiles>
 		<profile>

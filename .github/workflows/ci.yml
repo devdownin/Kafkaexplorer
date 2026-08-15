@@ -41,9 +41,9 @@ jobs:
     # also works on a developer machine.
 
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
     - name: Set up JDK 21
-      uses: actions/setup-java@v5
+      uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
       with:
         java-version: '21'
         distribution: 'temurin'
@@ -53,7 +53,7 @@ jobs:
       # a warm ~/.npm serves the package tarballs locally and shields the build
       # from transient registry failures (an npm ECONNRESET broke a previous run).
       # src/main/webapp/node is the node/npm runtime the plugin downloads.
-      uses: actions/cache@v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
       with:
         path: |
           ~/.npm
@@ -72,7 +72,7 @@ jobs:
       # here (CI resolves the real io.confluent jars, the local offline harness uses
       # stubs) was otherwise diagnosable only by scrolling the raw log.
       if: failure()
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
         name: test-reports
         path: target/surefire-reports/
@@ -82,7 +82,7 @@ jobs:
     - name: Upload JAR
       # Consumed by the `release-image` job below, so Dockerfile.release is exercised on
       # every run rather than for the first time at tag time.
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
         name: jar
         path: target/*.jar
@@ -114,12 +114,12 @@ jobs:
       # have to be repeated on each line.
       COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
       - name: Build image from source
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           push: false
@@ -240,9 +240,9 @@ jobs:
     # QEMU, which is slower by a large multiple.
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download JAR
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: jar
           path: dist/
@@ -254,7 +254,7 @@ jobs:
           [ ${#jars[@]} -eq 1 ] || { echo "::error::expected one JAR, found ${#jars[@]}"; exit 1; }
           cp "${jars[0]}" app.jar
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
       - name: Build the release image
         # Was a bare `docker build`, which runs on the default `docker` driver and can
@@ -264,7 +264,7 @@ jobs:
         # branch's caches readable from every other ref, so a push to main warms exactly
         # what the next release consumes, including the runtime stage's `RUN adduser`,
         # which release.yml would otherwise re-run under QEMU for the arm64 variant.
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: Dockerfile.release
@@ -309,7 +309,7 @@ jobs:
       # human reads it when a release is being cut. Turning it into a gate later is
       # `exit-code: 1` plus `ignore-unfixed`, once the baseline is known to be clean.
       - name: Scan the release image
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: kafka-explorer-release:ci
           format: table
@@ -352,11 +352,11 @@ jobs:
       # a Dependabot bump lands on main and is caught there.
       - name: Set up QEMU
         if: github.event_name != 'pull_request'
-        uses: docker/setup-qemu-action@v4
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
 
       - name: Build the release image for arm64
         if: github.event_name != 'pull_request'
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: Dockerfile.release
@@ -405,7 +405,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - run: python3 docs/check-links.py
 
       # The configuration tables on that same page have the same exposure as its links and
@@ -426,6 +426,12 @@ jobs:
       # and types through an explicit mapping.
       - run: python3 docs/check-api-types.py
 
+      # Same rot, one level up: CLAUDE.md and CONTRIBUTING.md refer to the codebase in prose
+      # rather than in links, so check-links.py never saw those references — and three of them
+      # pointed at documents and a directory that had been deleted, one of them for months.
+      # A reader following the file explaining the repository was sent to nothing.
+      - run: python3 docs/check-doc-paths.py
+
   # docs/img/*.png is what the Docker Hub overview, the READMEs and the Pages site show, and
   # it is generated by docs/screenshots/ rather than photographed. Nothing ran that pipeline,
   # which is the exact situation this repository has been bitten by before — a file nobody
@@ -445,12 +451,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # No actions/setup-node: the runner image ships a current Node, and the two scripts
       # here are plain ESM with no dependency but Playwright, installed below.
       - name: Download JAR
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: jar
           path: dist/
@@ -496,7 +502,7 @@ jobs:
           NODE_PATH="$(npm root -g)" node docs/screenshots/capture.mjs http://127.0.0.1:4173 fresh
 
       - name: Upload the fresh captures
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: screenshots
           path: fresh/
@@ -520,13 +526,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Setup Pages
-        uses: actions/configure-pages@v6
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v5
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:
           path: './docs'
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5

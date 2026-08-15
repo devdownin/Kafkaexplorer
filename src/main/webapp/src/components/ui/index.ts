@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Kafka Explorer Contributors
+
 /**
  * Kafka Explorer UI — kit de composants du design system (aligné sur Spectra).
  * Basé sur les tokens de `tailwind.config.js` + `index.css` ; à privilégier

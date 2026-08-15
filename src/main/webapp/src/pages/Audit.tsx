@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Kafka Explorer Contributors
+
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import axios from 'axios';
@@ -5,8 +8,11 @@ import {
   PageHeader, Button, Stat, Badge, EmptyState, Card, Input, Select, Tooltip,
   Table, TableHead, TableBody, TableRow, Th, Td, TopicInput, type BadgeTone,
 } from '../components/ui';
+import type { AuditReport, HealthStatus } from '../api/types';
 
-type Severity = 'HEALTHY' | 'WARNING' | 'CRITICAL';
+// L'enum Java `HealthStatus`, dont la forme est vérifiée dans api/types.ts. Le nom local est
+// conservé : il porte le sens qu'il a sur cette page, et il est déjà utilisé partout ici.
+type Severity = HealthStatus;
 
 const HEALTH_TONE: Record<string, BadgeTone> = {
   HEALTHY: 'success', WARNING: 'warning', CRITICAL: 'error',
@@ -18,35 +24,6 @@ const ISSUE_STYLE: Record<Severity, string> = {
   WARNING: 'bg-warning/10 text-warning border-warning/25',
   CRITICAL: 'bg-error/10 text-error border-error/25',
 };
-
-interface TopicIssue {
-  message: string;
-  severity: Severity;
-}
-
-interface TopicAudit {
-  name: string;
-  messageCount: number;
-  format: string;
-  poisonMessageCount: number;
-  duplicateCount: number;
-  healthStatus: Severity;
-  issues: TopicIssue[];
-}
-
-interface StepInfo {
-  topicName: string;
-  count: number;
-  throughputPercentage: number;
-  averageLatencyMs: number | null;
-}
-
-interface FlowAudit {
-  flowName: string;
-  steps: StepInfo[];
-  /** Ratio 0..1 — pas un pourcentage (le backend normalise). */
-  overallHealthScore: number;
-}
 
 interface LaggingFeature {
   feature: string;
@@ -77,18 +54,6 @@ interface GlobalStats {
   metadataVersionWarning?: string;
   laggingFeatures?: LaggingFeature[];
   options?: Partial<AuditOptions> & { topicPrefix?: string | null };
-}
-
-interface AuditReport {
-  auditId: string;
-  status: 'RUNNING' | 'COMPLETED' | 'CANCELLED' | 'FAILED';
-  totalTopics: number;
-  totalMessages: number;
-  criticalTopicsCount: number;
-  warningTopicsCount: number;
-  topicAudits: TopicAudit[];
-  flowAudits: FlowAudit[];
-  globalStats: GlobalStats;
 }
 
 interface AuditRunSummary {
@@ -386,7 +351,13 @@ const Audit: React.FC = () => {
     if (report && report.status !== 'RUNNING') void fetchHistory();
   }, [report?.auditId, report?.status, fetchHistory]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const stats = report?.globalStats ?? {};
+  // Le seul rétrécissement de `globalStats`, et il est délibérément visible. Le record Java
+  // déclare un `Map<String, Object>` — c'est ce que dit `AuditReport` dans api/types.ts, où le
+  // contrat est vérifié — mais `AuditService` y écrit un ensemble de clés connu, que cette page
+  // est seule à lire. `GlobalStats` décrit cette convention ; l'affirmer dans le type partagé la
+  // ferait passer pour une promesse du serveur, ce qu'elle n'est pas. Une clé absente lit
+  // `undefined`, et tous les champs de `GlobalStats` sont optionnels pour cette raison.
+  const stats = (report?.globalStats ?? {}) as GlobalStats;
   const failed = report?.status === 'FAILED';
   const wasCancelled = report?.status === 'CANCELLED';
   // Un run annulé a produit de vrais résultats sur les topics déjà traités : on les affiche,

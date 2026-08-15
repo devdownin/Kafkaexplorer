@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Kafka Explorer Contributors
+
 // Composants de la page SQL Editor, sortis de `QueryWorkbench.tsx`.
 //
 // La page tenait 2 168 lignes dans un seul composant : onglets, navigateur de schéma, barre
