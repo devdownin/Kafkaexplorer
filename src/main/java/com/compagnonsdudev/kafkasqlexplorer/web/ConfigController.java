@@ -8,7 +8,7 @@ import com.compagnonsdudev.kafkasqlexplorer.service.AuditService;
 import com.compagnonsdudev.kafkasqlexplorer.service.FlinkSqlService;
 import com.compagnonsdudev.kafkasqlexplorer.service.KafkaAdminService;
 import com.compagnonsdudev.kafkasqlexplorer.service.LlmClient;
-import com.compagnonsdudev.kafkasqlexplorer.service.LlmClientFactory;
+import com.compagnonsdudev.kafkasqlexplorer.service.LlmClientProvider;
 import com.compagnonsdudev.kafkasqlexplorer.service.SseEmitterManager;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -37,19 +37,22 @@ public class ConfigController {
     private final AuditService auditService;
     private final FlinkSqlService flinkSqlService;
     private final SseEmitterManager sseEmitterManager;
+    private final LlmClientProvider llmClientProvider;
 
     public ConfigController(KafkaConfig kafkaConfig,
                             KafkaAdminService kafkaAdminService,
                             ClaudeConfig claudeConfig,
                             AuditService auditService,
                             FlinkSqlService flinkSqlService,
-                            SseEmitterManager sseEmitterManager) {
+                            SseEmitterManager sseEmitterManager,
+                            LlmClientProvider llmClientProvider) {
         this.kafkaConfig = kafkaConfig;
         this.kafkaAdminService = kafkaAdminService;
         this.claudeConfig = claudeConfig;
         this.auditService = auditService;
         this.flinkSqlService = flinkSqlService;
         this.sseEmitterManager = sseEmitterManager;
+        this.llmClientProvider = llmClientProvider;
     }
 
     @GetMapping("/api/config")
@@ -188,7 +191,10 @@ public class ConfigController {
         }
 
         try {
-            LlmClient client = LlmClientFactory.create(claudeConfig);
+            // The shared provider, not a private client: this endpoint exists to prove what the
+            // analyses will use, and building a separate client here is precisely how it came to
+            // report a provider reachable that Process Mining was not talking to.
+            LlmClient client = llmClientProvider.get();
             String reply = client.generate(
                 "You are a connectivity health check. Answer in one short word.",
                 "Reply with the word OK.");

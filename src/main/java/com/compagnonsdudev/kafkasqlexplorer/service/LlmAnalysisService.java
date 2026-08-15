@@ -24,6 +24,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 
 @Service
 public class LlmAnalysisService {
@@ -34,7 +35,12 @@ public class LlmAnalysisService {
     private final ClaudeConfig claudeConfig;
     private final ProcessMiningConfig processMiningConfig;
     private final PayloadDigestService payloadDigestService;
-    private final LlmClient llmClient;
+    /**
+     * Resolved per call, never cached in a field: {@code POST /api/config} can change the provider
+     * and the API key at runtime, and a client captured at construction kept every analysis on the
+     * provider configured at startup. See {@link LlmClientProvider}.
+     */
+    private final Supplier<LlmClient> llmClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private static final String SYSTEM_PROMPT = """
@@ -75,20 +81,21 @@ public class LlmAnalysisService {
     @org.springframework.beans.factory.annotation.Autowired
     public LlmAnalysisService(KafkaSnapshotReader snapshotReader, ClaudeConfig claudeConfig,
                               ProcessMiningConfig processMiningConfig,
-                              PayloadDigestService payloadDigestService) {
+                              PayloadDigestService payloadDigestService,
+                              LlmClientProvider llmClientProvider) {
         this(snapshotReader, claudeConfig, processMiningConfig, payloadDigestService,
-            LlmClientFactory.create(claudeConfig));
+            llmClientProvider::get);
     }
 
     /** Test seam: defaults the ingestion tuning so unit tests only have to supply an LlmClient. */
     public LlmAnalysisService(KafkaSnapshotReader snapshotReader, ClaudeConfig claudeConfig, LlmClient llmClient) {
         this(snapshotReader, claudeConfig, new ProcessMiningConfig(),
-            new PayloadDigestService(new ProcessMiningConfig()), llmClient);
+            new PayloadDigestService(new ProcessMiningConfig()), () -> llmClient);
     }
 
     public LlmAnalysisService(KafkaSnapshotReader snapshotReader, ClaudeConfig claudeConfig,
                               ProcessMiningConfig processMiningConfig,
-                              PayloadDigestService payloadDigestService, LlmClient llmClient) {
+                              PayloadDigestService payloadDigestService, Supplier<LlmClient> llmClient) {
         this.snapshotReader = snapshotReader;
         this.claudeConfig = claudeConfig;
         this.processMiningConfig = processMiningConfig;
@@ -292,11 +299,26 @@ Chaque message est un résumé du payload d'origine :
 """);
 
         int topicCount = Math.max(1, byTopic.size());
+        // The per-topic share has a floor, because a topic allotted 200 characters contributes
+        // nothing an analysis can use. But a floor multiplied by the topic count is not a budget:
+        // at 2 000 characters apiece, 100 topics claim 200 000 against a 120 000 budget, and the
+        // ceiling the whole digest pipeline exists to enforce was quietly exceeded by the section
+        // that inlines the messages. So the floor still governs what one topic gets, and a global
+        // remainder governs how many topics get it — the ones past it are named, not dropped in
+        // silence.
         int perTopicBudget = Math.max(2_000, processMiningConfig.getPromptCharBudget() / topicCount);
+        int globalRemaining = Math.max(perTopicBudget, processMiningConfig.getPromptCharBudget());
+        int topicsOmitted = 0;
 
         for (Map.Entry<String, List<PayloadDigest>> entry : byTopic.entrySet()) {
             List<PayloadDigest> all = entry.getValue();
             List<PayloadDigest> selected = sampled.getOrDefault(entry.getKey(), List.of());
+
+            if (globalRemaining <= 0) {
+                topicsOmitted++;
+                continue;
+            }
+            int topicBudget = Math.min(perTopicBudget, globalRemaining);
 
             long totalBytes = all.stream().mapToLong(PayloadDigest::payloadBytes).sum();
             long maxBytes = all.stream().mapToLong(PayloadDigest::payloadBytes).max().orElse(0);
@@ -310,7 +332,7 @@ Chaque message est un résumé du payload d'origine :
             int written = 0;
             sb.append("[\n");
             for (PayloadDigest digest : selected) {
-                if (sb.length() - budgetStart > perTopicBudget) {
+                if (sb.length() - budgetStart > topicBudget) {
                     break;
                 }
                 if (written > 0) {
@@ -325,6 +347,13 @@ Chaque message est un résumé du payload d'origine :
                 sb.append("(").append(all.size() - written)
                   .append(" message(s) non inclus — échantillon régulier sur la fenêtre)\n");
             }
+            globalRemaining -= (sb.length() - budgetStart);
+        }
+
+        if (topicsOmitted > 0) {
+            sb.append("\n(").append(topicsOmitted)
+              .append(" topic(s) sans message inclus — budget global du prompt atteint. "
+                  + "Leur absence ici ne signifie pas qu'ils sont vides.)\n");
         }
     }
 
@@ -443,10 +472,11 @@ Chaque message est un résumé du payload d'origine :
     private ProcessMiningResult callLlmAndParse(String userPrompt) {
         LlmResponse response;
         try {
-            response = llmClient.generateWithMeta(SYSTEM_PROMPT, userPrompt);
+            response = llmClient.get().generateWithMeta(SYSTEM_PROMPT, userPrompt);
         } catch (Exception e) {
             // Surface the real cause (timeout, bad URL/model/key, provider 5xx) instead of a
-            // generic "empty response" — callers show comments() to the user.
+            // generic "empty response" — it is what the caller shows, as an error rather than as
+            // analysis prose.
             log.error("Error calling LLM API for analysis: {}", e.getMessage(), e);
             return errorResult("LLM call failed: " + e.getMessage());
         }
@@ -468,17 +498,31 @@ Chaque message est un résumé du payload d'origine :
         } catch (Exception e) {
             log.error("Failed to parse LLM analysis response: {}", e.getMessage());
             log.debug("Raw response was: {}", rawResponse);
-            return errorResult("Failed to parse LLM response: " + e.getMessage());
+            return errorResult("Failed to parse the model's response as JSON: " + e.getMessage()
+                + truncationHint(json));
         }
     }
 
+    /**
+     * The commonest cause of an unparseable answer is not a model that ignored the format but one
+     * that ran out of room mid-object: {@code claude.max-tokens} caps the whole JSON, anomalies
+     * included. An unclosed brace is the signature, and naming the setting is the difference
+     * between a dead end and a fix.
+     */
+    private String truncationHint(String json) {
+        if (json == null || json.isBlank()) {
+            return "";
+        }
+        String trimmed = json.strip();
+        if (trimmed.startsWith("{") && !trimmed.endsWith("}")) {
+            return " — the answer stops mid-object, which usually means it hit the output cap;"
+                + " raise claude.max-tokens (currently " + claudeConfig.getMaxTokens()
+                + ") or narrow the analysis to fewer topics.";
+        }
+        return "";
+    }
+
     private ProcessMiningResult errorResult(String message) {
-        return new ProcessMiningResult(
-            null,
-            message,
-            List.of(),
-            List.of(),
-            List.of()
-        );
+        return ProcessMiningResult.failed(message);
     }
 }

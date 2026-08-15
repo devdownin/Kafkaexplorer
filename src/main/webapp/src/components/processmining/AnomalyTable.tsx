@@ -3,16 +3,10 @@
 
 import React, { useState } from 'react';
 
-export interface AnomalyReport {
-  id: string;
-  topic: string;
-  type: 'SEQUENCE' | 'TEMPORAL' | 'STRUCTURAL' | 'CARDINALITY' | 'BUSINESS';
-  severity: 'CRITICAL' | 'MAJOR' | 'MINOR';
-  fields: string[];
-  description: string;
-  probableCause: string;
-  ksqlSuggestion: string;
-}
+// La forme vit dans api/types.ts, où check-api-types.py la résout contre le record Java.
+// Réexportée ici parce que c'est d'ici que les pages l'importaient.
+import type { AnomalyReport } from '../../api/types';
+export type { AnomalyReport };
 
 interface AnomalyTableProps {
   anomalies: AnomalyReport[];

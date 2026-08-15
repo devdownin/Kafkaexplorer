@@ -17,7 +17,9 @@ import com.compagnonsdudev.kafkasqlexplorer.service.LlmAnalysisService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -26,14 +28,12 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import com.compagnonsdudev.kafkasqlexplorer.service.SseEmitterManager;
 
-import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
 
 @RestController
 @RequestMapping("/api/process-mining")
@@ -47,8 +47,25 @@ public class ProcessMiningController {
     private final SseEmitterManager sseEmitterManager;
     private final AuditPromptCatalog auditPromptCatalog;
 
-    // Simple in-memory cache for FieldMapping (TTL not enforced but acceptable for this use case)
-    private final ConcurrentHashMap<String, FieldMapping> fieldMappingCache = new ConcurrentHashMap<>();
+    /**
+     * Validated field mappings, keyed by the id handed back to the browser.
+     *
+     * <p>Bounded, and evicting the least recently used entry: this used to be a plain map that
+     * nothing ever removed from, so every trip through the validation step added an entry for the
+     * life of the process — a slow leak on the one screen an operator re-runs all day. The cap is
+     * generous because losing a mapping mid-pipeline costs a re-validation, and it is the *use*
+     * that refreshes an entry, so the mapping of a live session running for hours is not evicted
+     * out from under it by newer ones.
+     */
+    private static final int MAX_CACHED_MAPPINGS = 200;
+
+    private final Map<String, FieldMapping> fieldMappingCache = Collections.synchronizedMap(
+        new LinkedHashMap<>(16, 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<String, FieldMapping> eldest) {
+                return size() > MAX_CACHED_MAPPINGS;
+            }
+        });
 
     public ProcessMiningController(FieldProfilingService fieldProfilingService,
                                     LlmAnalysisService llmAnalysisService,
@@ -183,6 +200,22 @@ public class ProcessMiningController {
         });
 
         return emitter;
+    }
+
+    /**
+     * Ends a live session on request.
+     *
+     * <p>Stopping used to be a purely client-side gesture — the page closed its EventSource and the
+     * server found out on its next heartbeat, up to fifteen seconds later, during which a Kafka
+     * consumer kept polling and a window could still be sent to the model. The browser knows the
+     * session id (the {@code CONNECTED} event carries it), so it can say so directly. Idempotent:
+     * an unknown id is a session that already ended, which is the outcome asked for.
+     */
+    @DeleteMapping("/live/{sessionId}")
+    public Map<String, Object> stopLive(@PathVariable String sessionId) {
+        log.info("Stop requested for live session {}", sessionId);
+        kafkaLiveConsumer.stopSession(sessionId);
+        return Map.of("sessionId", sessionId, "stopped", true);
     }
 
     /**

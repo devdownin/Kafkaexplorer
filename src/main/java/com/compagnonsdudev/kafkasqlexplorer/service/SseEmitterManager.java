@@ -18,9 +18,19 @@ public class SseEmitterManager {
     private final ConcurrentHashMap<String, SseEmitter> emitters = new ConcurrentHashMap<>();
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    /**
+     * How long one live session's stream may stay open. This is a <em>total</em> lifetime, not an
+     * idle timeout — the 15 s heartbeat does not extend it — so the previous five minutes meant
+     * every Process Mining live session died after five minutes whatever it was doing. Nothing
+     * looked broken, because the browser's EventSource silently reconnected and the endpoint minted
+     * a fresh session (new consumer, new group member, flowchart history lost). Long-running
+     * monitoring is the feature; the timeout is only a backstop against an emitter whose client
+     * vanished without the socket noticing, and the heartbeat already catches that within 15 s.
+     */
+    private static final long SESSION_TIMEOUT_MS = 12 * 60 * 60 * 1000L;
+
     public SseEmitter create(String sessionId) {
-        // 5 minutes timeout
-        SseEmitter emitter = new SseEmitter(5 * 60 * 1000L);
+        SseEmitter emitter = new SseEmitter(SESSION_TIMEOUT_MS);
 
         emitter.onCompletion(() -> {
             log.debug("SSE emitter completed for session: {}", sessionId);
