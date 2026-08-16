@@ -5,6 +5,8 @@ package com.compagnonsdudev.kafkasqlexplorer.web;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricLabelPreview;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricPreviewResult;
+import com.compagnonsdudev.kafkasqlexplorer.domain.MetricSuggestionRequest;
+import com.compagnonsdudev.kafkasqlexplorer.domain.MetricSuggestions;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricTemplateDescriptor;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryRequest;
 import com.compagnonsdudev.kafkasqlexplorer.service.DdlGeneratorService;
@@ -13,6 +15,7 @@ import com.compagnonsdudev.kafkasqlexplorer.service.KafkaAdminService;
 import com.compagnonsdudev.kafkasqlexplorer.service.MessageFieldExtractorService;
 import com.compagnonsdudev.kafkasqlexplorer.service.MessageFormatterService;
 import com.compagnonsdudev.kafkasqlexplorer.service.MetricService;
+import com.compagnonsdudev.kafkasqlexplorer.service.MetricSuggestionService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -29,17 +32,20 @@ public class MetricController {
     private final KafkaAdminService kafkaAdminService;
     private final MessageFormatterService messageFormatterService;
     private final MessageFieldExtractorService messageFieldExtractorService;
+    private final MetricSuggestionService metricSuggestionService;
 
     public MetricController(MetricService metricService,
                             FlinkSqlService flinkSqlService,
                             KafkaAdminService kafkaAdminService,
                             MessageFormatterService messageFormatterService,
-                            MessageFieldExtractorService messageFieldExtractorService) {
+                            MessageFieldExtractorService messageFieldExtractorService,
+                            MetricSuggestionService metricSuggestionService) {
         this.metricService = metricService;
         this.flinkSqlService = flinkSqlService;
         this.kafkaAdminService = kafkaAdminService;
         this.messageFormatterService = messageFormatterService;
         this.messageFieldExtractorService = messageFieldExtractorService;
+        this.metricSuggestionService = metricSuggestionService;
     }
 
     @GetMapping
@@ -100,6 +106,20 @@ public class MetricController {
     @GetMapping("/templates")
     public List<MetricTemplateDescriptor> templates() {
         return metricService.listTemplates();
+    }
+
+    /**
+     * Contextual KPIs proposed for this cluster, derived from what has actually been measured on
+     * it — the last audit report, and the Stream Flow traces the caller carries back.
+     *
+     * <p>A POST because the browser contributes evidence: traces live in {@code localStorage} and
+     * the server has never seen one. The body is optional, so a plain call answers with the
+     * audit-derived proposals alone; nothing is created either way — a suggestion is a pre-filled
+     * form for {@code POST /api/metrics}, opened and previewed by hand.
+     */
+    @PostMapping("/suggestions")
+    public MetricSuggestions suggestions(@RequestBody(required = false) MetricSuggestionRequest request) {
+        return metricSuggestionService.suggest(request);
     }
 
     @GetMapping("/label-preview")

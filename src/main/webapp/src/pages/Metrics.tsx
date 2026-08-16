@@ -23,7 +23,10 @@ import { clearDraft, readDraft, writeDraft } from '../draftStore';
 import { copyText } from '../clipboard';
 // La forme vit dans api/types.ts, où check-api-types.py la résout contre le record Java —
 // une interface écrite dans la page est exactement ce qui a divergé sans bruit ailleurs.
-import type { MetricConfig, MetricTestResponse } from '../api/types';
+import type { MetricConfig, MetricSuggestion, MetricSuggestions, MetricTestResponse } from '../api/types';
+import { SuggestionsPanel } from '../components/metrics/SuggestionsPanel';
+import { readFlowChains } from './flowChains';
+import { suggestionToDraft } from './metricSuggestions';
 
 interface MetricTemplateDescriptor {
   type: string;
@@ -685,6 +688,14 @@ const Metrics: React.FC = () => {
   /** Échec d'enregistrement, gardé sous les yeux plutôt que dans un toast fugace. */
   const [saveError, setSaveError] = useState<QueryErrorInfo | null>(null);
   const [templatesError, setTemplatesError] = useState<QueryErrorInfo | null>(null);
+  /*
+   * Les KPI proposés à partir de ce que le cluster a montré de lui-même : l'audit côté serveur,
+   * les traces Stream Flow que ce navigateur a gardées. Les secondes voyagent dans le corps de la
+   * requête — le serveur n'en a jamais vu une — pour qu'une seule dérivation réponde des deux.
+   */
+  const [suggestions, setSuggestions] = useState<MetricSuggestions | null>(null);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(true);
+  const [suggestionsError, setSuggestionsError] = useState<QueryErrorInfo | null>(null);
 
   const fetchMetrics = useCallback(async () => {
     try {
@@ -698,9 +709,27 @@ const Metrics: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- toast is stable
   }, []);
 
+  const fetchSuggestions = useCallback(async () => {
+    setSuggestionsLoading(true);
+    setSuggestionsError(null);
+    try {
+      const res = await axios.post<MetricSuggestions>('/api/metrics/suggestions', {
+        flowChains: readFlowChains(),
+      });
+      setSuggestions(res.data);
+    } catch (err) {
+      // Un panneau vide se lirait « ce cluster n'appelle aucun KPI », qui est l'inverse de
+      // « la dérivation a échoué ». La raison du serveur reste à l'écran.
+      setSuggestionsError(describeApiError(err, 'Failed to derive suggested KPIs.'));
+    } finally {
+      setSuggestionsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- chargement au montage
     fetchMetrics();
+    void fetchSuggestions();
     axios.get<Record<string, string[]>>('/api/metrics/metadata').then(r => setMetadata(r.data)).catch(() => { toast('Failed to load table metadata', 'error'); });
     axios.get<{ bootstrapServers: string }>('/api/config').then(r => {
       if (r.data.bootstrapServers) setBootstrapServers(r.data.bootstrapServers);
@@ -830,6 +859,22 @@ const Metrics: React.FC = () => {
     setIsModalOpen(true);
   };
 
+  /**
+   * Ouvre l'éditeur sur une proposition. Elle arrive complète — SQL ou paramètres de gabarit,
+   * seuils, description — mais reste une proposition : rien n'est enregistré tant que le geste
+   * n'est pas fait, et la prévisualisation est là pour vérifier la colonne de clé déduite.
+   */
+  const openSuggestion = (suggestion: MetricSuggestion) => {
+    const draft = suggestionToDraft(suggestion);
+    setEditingMetric({ ...EMPTY_METRIC, ...draft });
+    setSelectedTopic(draft.labelTopic ?? '');
+    setNameIsAuto(false);
+    setEditorTab('metric');
+    setPreviewResult(null);
+    setSaveError(null);
+    setIsModalOpen(true);
+  };
+
   // When selected topic changes, update DDL template and replace old table name in metric SQL
   const onTopicChange = (topic: string) => {
     const oldTable = selectedTopic ? topicToTable(selectedTopic) : 'my_table';
@@ -941,6 +986,9 @@ const Metrics: React.FC = () => {
       toast('Metric saved', 'success');
       setIsModalOpen(false);
       fetchMetrics();
+      // Ce qui vient d'être enregistré couvre peut-être une proposition : sans ce rappel, la
+      // carte resterait à proposer un KPI désormais en place.
+      void fetchSuggestions();
     } catch (err) {
       // Un toast disparaît derrière le modal en trois secondes, et `catch {}` jetait la seule
       // chose utile : la raison du refus — quelle colonne SQL est inconnue, quelle DDL ne compile
@@ -1103,6 +1151,18 @@ const Metrics: React.FC = () => {
           )}
         </div>
       )}
+
+      {/* ── KPI proposés à partir de ce qui a été mesuré ────────────────────
+          Au-dessus des gabarits génériques, parce qu'une proposition qui nomme un topic de ce
+          cluster et la mesure dont elle sort vaut mieux qu'un COUNT(*) sur la première table
+          trouvée — et en dessous des métriques existantes, qui restent le sujet de la page. */}
+      <SuggestionsPanel
+        response={suggestions}
+        loading={suggestionsLoading}
+        error={suggestionsError}
+        onRefresh={() => void fetchSuggestions()}
+        onAdopt={openSuggestion}
+      />
 
       {/* ── Quick-start templates — always visible ─────────────────────────── */}
       {!loading && (
