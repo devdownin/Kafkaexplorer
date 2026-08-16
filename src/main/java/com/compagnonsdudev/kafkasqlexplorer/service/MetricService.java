@@ -13,6 +13,7 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.MetricTemplateDescriptor;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricTemplateType;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryRequest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryResult;
+import com.compagnonsdudev.kafkasqlexplorer.domain.TopicTimeLag;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.DistributionSummary;
 import io.micrometer.core.instrument.Gauge;
@@ -94,6 +95,14 @@ public class MetricService {
             "Measure processing latency between two topics by matching events on a key and comparing timestamps.",
             List.of("GAUGE", "HISTOGRAM", "SUMMARY"),
             List.of("sourceSql", "targetSql")
+        ),
+        new MetricTemplateDescriptor(
+            MetricTemplateType.CONSUMER_TIME_LAG.name(),
+            "Consumer Lag in Time",
+            "How far behind a consumer group is in time, not in records: the age of the oldest "
+                + "message still waiting. No SQL — committed offsets and record timestamps.",
+            List.of("GAUGE"),
+            List.of("topic", "group")
         )
     );
 
@@ -476,6 +485,20 @@ public class MetricService {
                     throw new IllegalArgumentException("TOPIC_TRANSIT_LATENCY supports GAUGE, HISTOGRAM or SUMMARY");
                 }
             }
+            case CONSUMER_TIME_LAG -> {
+                requireParam(params, "topic");
+                // The group is required rather than resolved to "the worst one reading this
+                // topic": that choice would move between refreshes, so the series would silently
+                // change subject, and an alert on it could never be traced back to a consumer.
+                requireParam(params, "group");
+                if (!"GAUGE".equals(metricType)) {
+                    throw new IllegalArgumentException("CONSUMER_TIME_LAG supports GAUGE metrics only");
+                }
+                String aggregation = getStringParam(params, "aggregation", "MAX").toUpperCase(Locale.ROOT);
+                if (!Set.of("MAX", "AVG").contains(aggregation)) {
+                    throw new IllegalArgumentException("CONSUMER_TIME_LAG aggregation must be MAX or AVG");
+                }
+            }
         }
     }
 
@@ -499,7 +522,66 @@ public class MetricService {
             case RAW_SQL -> computeRawSqlMetric(config);
             case TOPIC_COUNT_DELTA -> computeCountDeltaMetric(config);
             case TOPIC_TRANSIT_LATENCY -> computeTransitLatencyMetric(config);
+            case CONSUMER_TIME_LAG -> computeConsumerTimeLagMetric(config);
         };
+    }
+
+    /**
+     * A consumer group's delay in milliseconds — the age of the oldest record it has not read.
+     *
+     * <p>The only template that runs no SQL, because no query over the topic can answer it: the
+     * position is in {@code __consumer_offsets} and the age is in a record's timestamp. It exists
+     * because the record lag alone is not actionable — the same ten thousand messages are ten
+     * seconds of traffic on one topic and a fortnight on another, and it is the second case that
+     * wakes somebody up.
+     *
+     * <p>A partial read is <b>reported, not averaged over</b>: when partitions could not be
+     * measured the value is still published (the ones that answered are real) and the summary
+     * says how many did not, because a maximum taken over half the partitions is a floor. A read
+     * that measured nothing at all is an error, never a zero — zero means "caught up", and a
+     * gauge that says so while nothing could be read silences the alert it exists to raise.
+     */
+    private MetricComputationResult computeConsumerTimeLagMetric(MetricConfig config) {
+        Map<String, Object> params = config.templateParams() != null ? config.templateParams() : Map.of();
+        String topic = requireParam(params, "topic");
+        String group = requireParam(params, "group");
+        String aggregation = getStringParam(params, "aggregation", "MAX").toUpperCase(Locale.ROOT);
+
+        TopicTimeLag lag = kafkaAdminService.getConsumerTimeLag(topic, group);
+        if (!lag.available()) {
+            return MetricComputationResult.error(lag.error() != null
+                ? lag.error()
+                : "The delay of '" + group + "' on '" + topic + "' could not be measured.");
+        }
+        Long value = "AVG".equals(aggregation) ? lag.avgLagMs() : lag.maxLagMs();
+        if (value == null) {
+            return MetricComputationResult.error("No partition's delay could be measured for '" + group + "'.");
+        }
+
+        Map<String, Object> row = new LinkedHashMap<>();
+        // Both labels are pinned by the configuration, so neither can change subject between two
+        // refreshes — the reason the group is a required parameter.
+        row.put("topic", topic);
+        row.put("group", group);
+        row.put("metric_value", value.doubleValue());
+
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("aggregation", aggregation);
+        summary.put("maxLagMs", lag.maxLagMs());
+        summary.put("avgLagMs", lag.avgLagMs());
+        summary.put("partitionsMeasured", lag.partitionsMeasured());
+        summary.put("partitionsCaughtUp", lag.partitionsCaughtUp());
+        summary.put("partitionsWithoutCommit", lag.partitionsWithoutCommit());
+        summary.put("partitionsUnknown", lag.partitionsUnknown());
+        summary.put("complete", lag.complete());
+        if (!lag.complete()) {
+            summary.put("scopeNote", "Measured over " + lag.partitionsMeasured() + " partition(s); "
+                + lag.partitionsUnknown() + " could not be read and " + lag.partitionsWithoutCommit()
+                + " have no committed offset, so this value is a floor, not a maximum.");
+        }
+        if (!lag.warnings().isEmpty()) summary.put("warnings", lag.warnings());
+
+        return new MetricComputationResult(List.of(row), value.doubleValue(), null, summary);
     }
 
     private MetricComputationResult computeRawSqlMetric(MetricConfig config) {

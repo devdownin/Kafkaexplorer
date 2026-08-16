@@ -26,6 +26,7 @@ import {
   type FlowHit, type FormErrors, type HitSortKey, type ParsedFlow, type TraceContinuation,
   type TraceHistoryEntry, type TraceParams, type TraceProgress, type Transform,
 } from './streamFlow';
+import { recordTracedChain } from './flowChains';
 import { copyText } from '../clipboard';
 
 /** Filet de sécurité côté client : le backend borne déjà la trace (explorer.stream-flow-timeout-ms). */
@@ -403,6 +404,10 @@ const StreamFlow: React.FC = () => {
       // depuis le bouton de partage.
       navigate({ search: buildTraceQuery(params2) }, { replace: true });
       setHistory(pushTraceHistory({ ...params2, ranAt: Date.now(), topicsFound: parsed.nodes.length }));
+      // Une trace est l'observation la plus précise que cette application produise sur un
+      // pipeline, et elle mourait avec la page. Gardée ici, elle alimente les KPI que la page
+      // Métriques propose — rien n'est envoyé nulle part, c'est le navigateur qui la porte.
+      recordTracedChain(parsed.hits, { messageKey: params2.messageKey, searchPath: params2.searchPath });
       setCompletionMessage(parsed.nodes.length === 0
         ? `Trace complete: ${params2.messageKey} was not found in what was scanned.`
         : `Trace complete: ${parsed.nodes.length} topic${parsed.nodes.length > 1 ? 's' : ''}, `

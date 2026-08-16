@@ -252,6 +252,71 @@ export interface MetricConfig {
   labelFields: string[] | null;
 }
 
+/** @java MetricSuggestionSource */
+export type MetricSuggestionSource = 'AUDIT' | 'STREAM_FLOW';
+
+/**
+ * `POST /api/metrics/suggestions` — un KPI contextuel proposé, avec ce sur quoi il repose.
+ *
+ * `evidence` n'est jamais vide et `thresholdBasis` dit d'où sortent les seuils : c'est toute la
+ * différence entre une proposition et le bandeau « 99,98 % de disponibilité » que la page d'aide
+ * des métriques affichait sans que rien ne l'ait jamais mesuré.
+ *
+ * @java MetricSuggestion
+ */
+export interface MetricSuggestion {
+  id: string;
+  source: MetricSuggestionSource;
+  title: string;
+  rationale: string;
+  evidence: string[];
+  thresholdBasis: string | null;
+  caveats: string[];
+  alreadyConfigured: boolean;
+  existingMetricName: string | null;
+  metric: MetricConfig;
+}
+
+/**
+ * `POST /api/metrics/suggestions` — les propositions et l'état des observations dont elles sortent.
+ *
+ * Une liste vide veut dire deux choses opposées — « rien n'a encore été mesuré » et « ce qui a été
+ * mesuré n'appelle aucun KPI ». Les champs d'observation sont ce qui les sépare.
+ *
+ * @java MetricSuggestions
+ */
+export interface MetricSuggestions {
+  suggestions: MetricSuggestion[];
+  auditAvailable: boolean;
+  auditId: string | null;
+  auditTimestamp: number | null;
+  auditSource: string | null;
+  auditTopics: number;
+  flowChainsSubmitted: number;
+  notes: string[];
+}
+
+/**
+ * Une trace Stream Flow telle que le navigateur l'a gardée, renvoyée au serveur pour que la même
+ * dérivation réponde pour les deux familles d'observations.
+ *
+ * @java FlowChainEvidence
+ */
+export interface FlowChainEvidence {
+  messageKey: string | null;
+  searchPath: string | null;
+  tracedAt: number | null;
+  hops: FlowChainHop[];
+}
+
+/** @java FlowChainHop */
+export interface FlowChainHop {
+  topic: string;
+  firstTimestamp: number | null;
+  latencyFromPreviousMs: number | null;
+  occurrences: number | null;
+}
+
 /*
  * ─── Réponses ad hoc ──────────────────────────────────────────────────────────────────────────
  *
