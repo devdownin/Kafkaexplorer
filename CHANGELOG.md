@@ -13,6 +13,26 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Contextual KPI suggestions on the Metrics page** (`POST /api/metrics/suggestions`). The page knew
+  nothing about the cluster it measures: its quick-start cards posed a `COUNT(*)` on the first table
+  found, identical everywhere. Proposals are now derived from what has actually been observed — the
+  cluster audit (flow hops it timed, throughput drops, duplicates, the busiest topics, consumer
+  findings) and Stream Flow traces kept by the browser (per-hop latency, end-to-end completeness).
+  Every card names the run and the measurement it rests on, thresholds are multiples of something
+  measured and say which, and nothing is created: a card opens the editor pre-filled for a preview
+  and an explicit save. With no audit and no trace the panel says nothing has been measured yet and
+  links to the two pages that change that, rather than concluding the cluster needs no KPI.
+- **`CONSUMER_TIME_LAG` metric template — a consumer group's backlog in time rather than in
+  records.** The same 4 000 messages are four seconds of traffic on one topic and four days on
+  another; only the second is actionable. The value is the age of the oldest message the group has
+  not read, taken from committed offsets and record timestamps — the one template that runs no SQL,
+  since neither number is in a payload. Bounded to 64 partitions and an 8 s budget, and a partition
+  whose record could not be read is reported as unknown, never as zero: zero means "caught up", and
+  a gauge saying so while nothing could be read silences the alert it exists to raise.
+- **Stream Flow traces are kept as observations** (`kse:flow-chains`), not only as criteria: a
+  completed trace records the chain it found — topics in first-sighting order, per-hop latency — so
+  the Metrics page can derive KPIs from the path a key really took. Versioned envelope, seven-day
+  expiry, five entries de-duplicated on the route.
 - `CHANGELOG.md` (this file), `SUPPORT.md`, `.github/CODEOWNERS`, `.github/ISSUE_TEMPLATE/config.yml`,
   `.editorconfig` and `.gitattributes`.
 - **CodeQL static analysis** (`.github/workflows/codeql.yml`) over Java and TypeScript, on push,
