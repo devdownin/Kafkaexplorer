@@ -186,7 +186,7 @@ export function suggestionToDraft(suggestion: MetricSuggestion): Partial<MetricC
 /** Les topics qu'une proposition mesure, pour les puces de la carte. */
 export function suggestionTopics(suggestion: MetricSuggestion): string[] {
   const params = suggestion.metric.templateParams ?? {};
-  const named = ['sourceTopic', 'targetTopic', 'leftTopic', 'rightTopic']
+  const named = ['sourceTopic', 'targetTopic', 'leftTopic', 'rightTopic', 'topic']
     .map(key => params[key])
     .filter((value): value is string => typeof value === 'string' && value.length > 0);
   if (named.length > 0) return Array.from(new Set(named));

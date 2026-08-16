@@ -193,6 +193,18 @@ describe('suggestionTopics', () => {
     expect(suggestionTopics(raw)).toEqual(['demo.orders']);
   });
 
+  it('names the single topic a consumer-delay metric watches', () => {
+    const timeLag = suggestion({
+      metric: metric({
+        templateType: 'CONSUMER_TIME_LAG',
+        templateParams: { topic: 'demo.payments', group: 'pay-api', aggregation: 'MAX' },
+        labelTopic: 'demo.payments',
+      }),
+    });
+
+    expect(suggestionTopics(timeLag)).toEqual(['demo.payments']);
+  });
+
   it('does not repeat a topic that is both ends', () => {
     const same = suggestion({
       metric: metric({ templateParams: { leftTopic: 'x', rightTopic: 'x' } }),

@@ -2,10 +2,12 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.compagnonsdudev.kafkasqlexplorer.service;
 
+import com.compagnonsdudev.kafkasqlexplorer.config.ExplorerConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.AuditHistory;
 import com.compagnonsdudev.kafkasqlexplorer.domain.AuditReport;
 import com.compagnonsdudev.kafkasqlexplorer.domain.AuditRunSummary;
 import com.compagnonsdudev.kafkasqlexplorer.domain.AuditStatus;
+import com.compagnonsdudev.kafkasqlexplorer.domain.ConsumerGroupLag;
 import com.compagnonsdudev.kafkasqlexplorer.domain.FlowAudit;
 import com.compagnonsdudev.kafkasqlexplorer.domain.FlowChainEvidence;
 import com.compagnonsdudev.kafkasqlexplorer.domain.HealthStatus;
@@ -16,6 +18,7 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.MetricSuggestionSource;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricSuggestions;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricTemplateType;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicAudit;
+import com.compagnonsdudev.kafkasqlexplorer.domain.TopicConsumers;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicIssue;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -73,6 +76,11 @@ public class MetricSuggestionService {
     private static final int MAX_SUGGESTIONS = 24;
     /** Volume KPIs are proposed for the busiest audited topics only — one per topic is plenty. */
     private static final int MAX_VOLUME_SUGGESTIONS = 3;
+    /**
+     * Topics whose consumer groups are read live to propose a delay-in-time KPI. Each costs a
+     * coordinator round trip (cached 30 s), so the flagged topics are taken a few at a time.
+     */
+    private static final int MAX_TIME_LAG_TOPICS = 3;
     /** Column names that carry a business key, best first. */
     private static final List<String> KEY_COLUMN_CANDIDATES =
         List.of("id", "order_id", "event_id", "correlation_id", "transaction_id", "key", "uuid");
@@ -84,16 +92,22 @@ public class MetricSuggestionService {
     private final AuditHistoryService auditHistoryService;
     private final MetricService metricService;
     private final FlinkSqlService flinkSqlService;
+    private final KafkaAdminService kafkaAdminService;
+    private final ExplorerConfig explorerConfig;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public MetricSuggestionService(AuditService auditService,
                                    AuditHistoryService auditHistoryService,
                                    MetricService metricService,
-                                   FlinkSqlService flinkSqlService) {
+                                   FlinkSqlService flinkSqlService,
+                                   KafkaAdminService kafkaAdminService,
+                                   ExplorerConfig explorerConfig) {
         this.auditService = auditService;
         this.auditHistoryService = auditHistoryService;
         this.metricService = metricService;
         this.flinkSqlService = flinkSqlService;
+        this.kafkaAdminService = kafkaAdminService;
+        this.explorerConfig = explorerConfig;
     }
 
     // ── Entry point ───────────────────────────────────────────────────────────
@@ -220,6 +234,8 @@ public class MetricSuggestionService {
             .sorted(Comparator.comparingLong(TopicAudit::messageCount).reversed())
             .limit(MAX_VOLUME_SUGGESTIONS)
             .forEach(topic -> volumeKpi(topic, run).ifPresent(suggestions::add));
+
+        suggestions.addAll(timeLagKpis(report, run, notes));
 
         lagNote(report).ifPresent(notes::add);
         poisonNote(report).ifPresent(notes::add);
@@ -462,23 +478,164 @@ public class MetricSuggestionService {
     }
 
     /**
-     * Consumer-lag findings do not become a metric here: lag is exported by
-     * {@link ConsumerLagMetrics}, which reads committed offsets directly, and inventing a SQL
-     * metric for it would be a second, worse answer to a question that already has one.
+     * The topics the audit reported a consumer-lag finding on. The group ids are deliberately not
+     * parsed out of the finding text — a message is prose, and reading a name out of it is the
+     * lexical dependency this codebase keeps removing; they are read from the cluster instead.
      */
-    private Optional<String> lagNote(AuditReport report) {
-        List<String> topics = nullSafe(report.topicAudits()).stream()
+    private List<String> topicsWithLagFindings(AuditReport report) {
+        return nullSafe(report.topicAudits()).stream()
             .filter(topic -> nullSafe(topic.issues()).stream()
                 .map(TopicIssue::message)
-                .anyMatch(message -> message != null && message.toLowerCase(Locale.ROOT).contains("lag")))
+                .anyMatch(MetricSuggestionService::isConsumerFinding))
             .map(TopicAudit::name)
-            .limit(5)
             .toList();
+    }
+
+    /**
+     * Whether a finding is about consumers at all.
+     *
+     * <p>Lexical, because {@link TopicIssue} carries prose and nothing else — but bounded on
+     * purpose: it decides only <em>which topics to look at</em>, and everything the proposal
+     * asserts (the group, its backlog) is then read from the cluster. Matching on "consumer
+     * group", the phrase every one of {@code AuditService.consumerLagIssues}'s messages is built
+     * from, rather than on "lag", which three of the four do not contain.
+     */
+    private static boolean isConsumerFinding(String message) {
+        return message != null && message.toLowerCase(Locale.ROOT).contains("consumer group");
+    }
+
+    /**
+     * A backlog measured in records is not actionable on its own, and this is the KPI that makes
+     * it so.
+     *
+     * <p>The audit says "4 000 messages behind". Whether that is four seconds of traffic or four
+     * days of it is the difference between a graph nobody looks at and an incident, and no count
+     * can settle it — hence a metric whose unit is time. Its value comes from the committed offset
+     * and the timestamp of the record sitting there, which is why it is the one template that runs
+     * no SQL: neither number is in the topic's payloads.
+     *
+     * <p>The group is read from the cluster rather than parsed out of the audit's wording, and it
+     * is pinned into the metric: "the worst group of this topic" would move between refreshes, so
+     * the series would change subject without saying so.
+     */
+    private List<MetricSuggestion> timeLagKpis(AuditReport report, String run, List<String> notes) {
+        List<String> topics = topicsWithLagFindings(report);
+        if (topics.isEmpty()) return List.of();
+
+        List<MetricSuggestion> suggestions = new ArrayList<>();
+        List<String> unread = new ArrayList<>();
+        for (String topic : topics.stream().limit(MAX_TIME_LAG_TOPICS).toList()) {
+            TopicConsumers consumers;
+            try {
+                consumers = kafkaAdminService.getTopicConsumers(topic, explorerConfig.getConsumerGroupMaxGroups());
+            } catch (Exception e) {
+                log.debug("Consumers of {} could not be read while suggesting metrics: {}", topic, e.toString());
+                unread.add(topic);
+                continue;
+            }
+            if (!consumers.available()) {
+                unread.add(topic);
+                continue;
+            }
+            // The group carrying the largest readable backlog: the one the finding is about, and
+            // the one whose delay is worth a series. A group with no lag needs no KPI here.
+            Optional<ConsumerGroupLag> worst = nullSafe(consumers.groups()).stream()
+                .filter(group -> group.error() == null)
+                .filter(group -> group.totalLag() > 0)
+                .max(Comparator.comparingLong(ConsumerGroupLag::totalLag));
+            if (worst.isEmpty()) continue;
+
+            suggestions.add(timeLagKpi(topic, worst.get(), report, run));
+        }
+
+        if (!unread.isEmpty()) {
+            notes.add("The consumer groups of " + String.join(", ", unread) + " could not be read "
+                + "just now, so no delay-in-time KPI is proposed for them — the group a metric "
+                + "measures has to be named, and guessing it from the audit's wording is not naming it.");
+        }
+        return suggestions;
+    }
+
+    private MetricSuggestion timeLagKpi(String topic, ConsumerGroupLag group, AuditReport report, String run) {
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("topic", topic);
+        params.put("group", group.groupId());
+        params.put("aggregation", "MAX");
+
+        MetricConfig metric = new MetricConfig(
+            null,
+            "gauge_time_lag_" + DdlGeneratorService.toTableName(topic) + "_" + sanitize(group.groupId()),
+            "GAUGE",
+            null,
+            "Age in milliseconds of the oldest message '" + group.groupId() + "' has not read on "
+                + topic + " — the worst of its partitions. A backlog in time, where the exported "
+                + "kafka_consumer_group_lag is the same backlog in records.",
+            null, null, null, null, null,
+            List.of(), Map.of(), null,
+            MetricTemplateType.CONSUMER_TIME_LAG.name(), params,
+            "TEMPLATE_BOUNDED_SCAN", topic, List.of());
+
+        List<String> evidence = new ArrayList<>();
+        auditFinding(report, topic).ifPresent(finding -> evidence.add(run + " reported on " + topic + ": " + finding));
+        evidence.add("Read just now: group '" + group.groupId() + "' is " + group.totalLag()
+            + " record(s) behind on " + topic
+            + (group.partitionsWithoutCommit() > 0
+                ? ", and has never committed on " + group.partitionsWithoutCommit()
+                  + " partition(s) whose backlog that number does not count."
+                : ".")
+            + " How long that represents is exactly what this metric measures, and nothing here knows it yet.");
+
+        return new MetricSuggestion(
+            "audit:time-lag:" + topic + ">" + group.groupId(),
+            MetricSuggestionSource.AUDIT,
+            "Delay in time of " + group.groupId() + " on " + topic,
+            "A record count says how much is waiting, never for how long — the same 4 000 messages "
+                + "are seconds on one topic and days on another. This is the backlog in the unit an "
+                + "operator can act on.",
+            evidence,
+            // Nothing has been measured in time on this topic, so any threshold would be the round
+            // number this whole panel exists not to print. It is set from the metric's own first
+            // readings — which is precisely the point of running it.
+            null,
+            List.of("The value is the age of the oldest unread message on the worst partition, "
+                + "measured against the moment of the read — a producer that stops leaves its "
+                + "backlog ageing, which is the intended reading.",
+                    "Each refresh reads one record per lagging partition, so this costs more than a "
+                + "SQL count — it is bounded to 64 partitions and an 8 s budget, and a partition "
+                + "that could not be read is reported as unknown rather than as zero.",
+                    "No threshold is proposed: nothing here has ever measured this topic in time. "
+                + "Run it, look at what it reports, then set one."),
+            false, null, metric);
+    }
+
+    /** The audit's own wording about a topic, when it said something about lag. */
+    private Optional<String> auditFinding(AuditReport report, String topic) {
+        return nullSafe(report.topicAudits()).stream()
+            .filter(audit -> topic.equals(audit.name()))
+            .flatMap(audit -> nullSafe(audit.issues()).stream())
+            .map(TopicIssue::message)
+            .filter(MetricSuggestionService::isConsumerFinding)
+            .findFirst();
+    }
+
+    /**
+     * Count-lag findings stay a note beside the KPI above: the count is already exported by
+     * {@link ConsumerLagMetrics} straight from committed offsets, and a SQL metric for it would be
+     * a second, worse answer to a question that already has one.
+     */
+    private Optional<String> lagNote(AuditReport report) {
+        List<String> topics = topicsWithLagFindings(report).stream().limit(5).toList();
         if (topics.isEmpty()) return Optional.empty();
         return Optional.of("The audit reported consumer-lag findings on " + String.join(", ", topics)
-            + ". Lag is not proposed as a SQL metric — it is exported directly from committed "
-            + "offsets: name those topics in explorer.lag-metrics-topics and Prometheus gets "
-            + "kafka_consumer_group_lag for them.");
+            + ". The backlog in *records* is not proposed as a SQL metric — it is exported directly "
+            + "from committed offsets: name those topics in explorer.lag-metrics-topics and "
+            + "Prometheus gets kafka_consumer_group_lag for them. The delay in *time* is what the "
+            + "proposed KPI above adds, since no count can be read as a duration.");
+    }
+
+    /** A Prometheus-safe fragment of a group id, for a metric name. */
+    private String sanitize(String value) {
+        return value.replaceAll("[^A-Za-z0-9_]", "_");
     }
 
     private Optional<String> poisonNote(AuditReport report) {
@@ -660,6 +817,9 @@ public class MetricSuggestionService {
         return switch (MetricTemplateType.fromValue(proposedTemplate)) {
             case TOPIC_TRANSIT_LATENCY -> sameParams(existingParams, proposedParams, "sourceTopic", "targetTopic");
             case TOPIC_COUNT_DELTA -> sameParams(existingParams, proposedParams, "leftTopic", "rightTopic");
+            // Same group on same topic: a second aggregation over the same pair measures the same
+            // delay, so the proposal is marked as covered rather than offered again.
+            case CONSUMER_TIME_LAG -> sameParams(existingParams, proposedParams, "topic", "group");
             case RAW_SQL -> false;
         };
     }

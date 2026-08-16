@@ -2,9 +2,11 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.compagnonsdudev.kafkasqlexplorer.service;
 
+import com.compagnonsdudev.kafkasqlexplorer.config.ExplorerConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.AuditHistory;
 import com.compagnonsdudev.kafkasqlexplorer.domain.AuditReport;
 import com.compagnonsdudev.kafkasqlexplorer.domain.AuditStatus;
+import com.compagnonsdudev.kafkasqlexplorer.domain.ConsumerGroupLag;
 import com.compagnonsdudev.kafkasqlexplorer.domain.FlowAudit;
 import com.compagnonsdudev.kafkasqlexplorer.domain.FlowChainEvidence;
 import com.compagnonsdudev.kafkasqlexplorer.domain.HealthStatus;
@@ -15,7 +17,9 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.MetricSuggestionRequest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricSuggestionSource;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricSuggestions;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricTemplateType;
+import com.compagnonsdudev.kafkasqlexplorer.domain.PartitionLag;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicAudit;
+import com.compagnonsdudev.kafkasqlexplorer.domain.TopicConsumers;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicIssue;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -26,6 +30,8 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -36,6 +42,7 @@ class MetricSuggestionServiceTest {
     private AuditHistoryService auditHistoryService;
     private MetricService metricService;
     private FlinkSqlService flinkSqlService;
+    private KafkaAdminService kafkaAdminService;
     private MetricSuggestionService service;
 
     @BeforeEach
@@ -44,12 +51,17 @@ class MetricSuggestionServiceTest {
         auditHistoryService = mock(AuditHistoryService.class);
         metricService = mock(MetricService.class);
         flinkSqlService = mock(FlinkSqlService.class);
+        kafkaAdminService = mock(KafkaAdminService.class);
 
         when(auditHistoryService.listHistory()).thenReturn(AuditHistory.empty(List.of()));
         when(metricService.getAllMetrics()).thenReturn(List.of());
         when(flinkSqlService.getTableSchema(anyString())).thenReturn(Map.of());
 
-        service = new MetricSuggestionService(auditService, auditHistoryService, metricService, flinkSqlService);
+        when(kafkaAdminService.getTopicConsumers(anyString(), anyInt()))
+            .thenReturn(TopicConsumers.unavailable("unset", "No stub for this topic."));
+
+        service = new MetricSuggestionService(auditService, auditHistoryService, metricService,
+            flinkSqlService, kafkaAdminService, new ExplorerConfig());
     }
 
     // ── Gating ───────────────────────────────────────────────────────────────
@@ -168,6 +180,51 @@ class MetricSuggestionServiceTest {
     }
 
     @Test
+    void aTopicTheAuditFlaggedForLagGetsADelayInTimeKpiNamingTheGroupItMeasures() {
+        when(auditService.getLastAuditReport()).thenReturn(report(List.of(lagging()), List.of()));
+        when(kafkaAdminService.getTopicConsumers(eq("demo.payments"), anyInt()))
+            .thenReturn(consumers(group("pay-api", 4000L, 0), group("audit-api", 12L, 0)));
+
+        MetricSuggestion timeLag = find(service.suggest(null), "audit:time-lag:demo.payments>pay-api");
+
+        assertEquals(MetricTemplateType.CONSUMER_TIME_LAG.name(), timeLag.metric().templateType());
+        assertEquals("demo.payments", timeLag.metric().templateParams().get("topic"));
+        // The worst readable backlog, and pinned: "the worst group" would move between refreshes.
+        assertEquals("pay-api", timeLag.metric().templateParams().get("group"));
+        assertNull(timeLag.thresholdBasis(),
+            "nothing has ever measured this topic in time — a threshold would be the round number "
+                + "this panel exists not to print");
+        assertNull(timeLag.metric().warningThreshold());
+        assertTrue(timeLag.evidence().stream().anyMatch(e -> e.contains("4000 record")),
+            "the count that motivates the KPI is the evidence: " + timeLag.evidence());
+        assertTrue(timeLag.caveats().stream().anyMatch(c -> c.contains("No threshold is proposed")),
+            timeLag.caveats().toString());
+    }
+
+    @Test
+    void aTopicWhoseGroupsAreAllCaughtUpGetsNoDelayKpi() {
+        when(auditService.getLastAuditReport()).thenReturn(report(List.of(lagging()), List.of()));
+        when(kafkaAdminService.getTopicConsumers(eq("demo.payments"), anyInt()))
+            .thenReturn(consumers(group("pay-api", 0L, 2)));
+
+        assertTrue(service.suggest(null).suggestions().stream()
+            .noneMatch(s -> s.id().startsWith("audit:time-lag:")));
+    }
+
+    @Test
+    void whenTheGroupsCannotBeReadTheKpiIsNotGuessedFromTheAuditsWording() {
+        when(auditService.getLastAuditReport()).thenReturn(report(List.of(lagging()), List.of()));
+        when(kafkaAdminService.getTopicConsumers(eq("demo.payments"), anyInt()))
+            .thenReturn(TopicConsumers.unavailable("demo.payments", "Coordinator not available."));
+
+        MetricSuggestions result = service.suggest(null);
+
+        assertTrue(result.suggestions().stream().noneMatch(s -> s.id().startsWith("audit:time-lag:")));
+        assertTrue(result.notes().stream().anyMatch(n -> n.contains("could not be read just now")),
+            "silence would look like 'this topic needs no KPI': " + result.notes());
+    }
+
+    @Test
     void consumerLagAndPoisonFindingsBecomeNotesRatherThanInventedMetrics() {
         TopicAudit lagging = new TopicAudit("demo.payments", 10, MessageFormat.JSON, 0, 0,
             HealthStatus.CRITICAL, List.of(TopicIssue.critical("Consumer group pay-api has a lag of 4000 records")));
@@ -269,6 +326,22 @@ class MetricSuggestionServiceTest {
     }
 
     // ── Fixtures ─────────────────────────────────────────────────────────────
+
+    private static TopicAudit lagging() {
+        return new TopicAudit("demo.payments", 10, MessageFormat.JSON, 0, 0, HealthStatus.CRITICAL,
+            List.of(TopicIssue.critical("Consumer group 'pay-api' is 4000 message(s) behind with no "
+                + "member assigned to this topic — nothing is draining it.")));
+    }
+
+    private static ConsumerGroupLag group(String id, long lag, int assignedMembers) {
+        return new ConsumerGroupLag(id, "CLASSIC", "STABLE", assignedMembers, assignedMembers, true,
+            lag, 0, List.of(new PartitionLag(0, 10L, 10L + lag, lag, null, null, null)), null);
+    }
+
+    private static TopicConsumers consumers(ConsumerGroupLag... groups) {
+        return new TopicConsumers("demo.payments", List.of(groups), groups.length, groups.length,
+            groups.length, false, true, List.of());
+    }
 
     private static AuditReport report(List<TopicAudit> topics, List<FlowAudit> flows) {
         Map<String, Object> stats = new LinkedHashMap<>();

@@ -205,6 +205,14 @@ function validateTemplate(templateType: string, metricType: string,
     if (!['GAUGE', 'HISTOGRAM', 'SUMMARY'].includes(metricType))
       msgs.push({ level: 'error', text: 'Topic Transit Latency supports GAUGE, HISTOGRAM or SUMMARY.' });
     msgs.push({ level: 'info', text: 'Both queries must return match_key and event_time columns (event_time as ISO-8601 or epoch).' });
+  } else if (templateType === 'CONSUMER_TIME_LAG') {
+    if (!paramStr(params, 'topic').trim()) msgs.push({ level: 'error', text: 'A topic is required.' });
+    // Le groupe est exigé, pas déduit : « le groupe le plus en retard » changerait d'une mesure à
+    // l'autre, donc la série changerait de sujet sans le dire.
+    if (!paramStr(params, 'group').trim()) msgs.push({ level: 'error', text: 'A consumer group is required — a delay is always somebody’s.' });
+    if (metricType !== 'GAUGE')            msgs.push({ level: 'error', text: 'Consumer Lag in Time supports GAUGE metrics only.' });
+    msgs.push({ level: 'info', text: 'Value in milliseconds: the age of the oldest message this group has not read. No SQL — committed offsets and record timestamps.' });
+    msgs.push({ level: 'warning', text: 'Each refresh reads one record per lagging partition (bounded to 64 partitions, 8 s). A partition that cannot be read is reported as unknown, never as zero.' });
   }
   return msgs;
 }
@@ -566,7 +574,31 @@ const TemplateParamsEditor: React.FC<{
   const p = (k: string) => paramStr(params, k);
   return (
     <div className="h-full overflow-y-auto p-5 space-y-4">
-      {templateType === 'TOPIC_COUNT_DELTA' ? (
+      {templateType === 'CONSUMER_TIME_LAG' ? (
+        <>
+          <ParamTopic label="Topic" value={p('topic')} onChange={v => setParam('topic', v)} placeholder="demo.payments" />
+          <Field
+            label="Consumer group"
+            description="Named, never resolved to “the worst one”: that choice would move between refreshes and the series would change subject without saying so."
+          >
+            {f => (
+              <Input {...f} value={p('group')} onChange={e => setParam('group', e.target.value)}
+                placeholder="payments-api" spellCheck={false} className="font-mono text-[12px]" />
+            )}
+          </Field>
+          <Field
+            label="Across partitions"
+            description="The worst partition is what an alert is set on; a mean hides it behind the healthy ones."
+          >
+            {f => (
+              <Select {...f} value={p('aggregation') || 'MAX'} onChange={e => setParam('aggregation', e.target.value)}>
+                <option value="MAX" className="bg-[#12151a] text-on-surface">Worst partition (MAX)</option>
+                <option value="AVG" className="bg-[#12151a] text-on-surface">Mean over partitions (AVG)</option>
+              </Select>
+            )}
+          </Field>
+        </>
+      ) : templateType === 'TOPIC_COUNT_DELTA' ? (
         <>
           <ParamSql label="Left query — metric_value" value={p('leftSql')} onChange={v => setParam('leftSql', v)}
             hint="Bounded query returning a single metric_value."

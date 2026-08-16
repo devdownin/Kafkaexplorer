@@ -7,8 +7,10 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.ConsumerGroupLag;
 import com.compagnonsdudev.kafkasqlexplorer.domain.KafkaMessage;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MessageFormat;
 import com.compagnonsdudev.kafkasqlexplorer.domain.PartitionLag;
+import com.compagnonsdudev.kafkasqlexplorer.domain.PartitionTimeLag;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicConsumers;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicDescriptor;
+import com.compagnonsdudev.kafkasqlexplorer.domain.TopicTimeLag;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.DescribeClusterOptions;
 import org.apache.kafka.clients.admin.DescribeClusterResult;
@@ -19,7 +21,10 @@ import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.ListTopicsOptions;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.common.Node;
+import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.KafkaFuture;
 import org.apache.kafka.common.TopicPartition;
@@ -620,6 +625,196 @@ public class KafkaAdminService {
 
     /** A topic's partitions, or the reason they could not be read — never both. */
     private record TopicPartitions(List<TopicPartition> partitions, String error) {
+    }
+
+    // ── Lag in time ───────────────────────────────────────────────────────────
+
+    /** Partitions one time-lag read will measure. Beyond this the answer costs more than it says. */
+    private static final int TIME_LAG_MAX_PARTITIONS = 64;
+    /** Wall-clock budget for the record reads of one time-lag measurement. */
+    private static final long TIME_LAG_BUDGET_MS = 8_000;
+    private static final Duration TIME_LAG_POLL = Duration.ofMillis(400);
+
+    /**
+     * How far behind <em>in time</em> a group is on a topic — the age of the oldest record still
+     * waiting on each partition.
+     *
+     * <p>A record lag is a count, and a count cannot be acted on without a rate: ten thousand
+     * messages is ten seconds on one topic and a fortnight on another. The number an operator
+     * actually reasons about ("the payments consumer is four minutes behind") needs the timestamp
+     * of the record sitting at the committed offset, which no admin call returns — hence the
+     * consumer read here, and hence its budget.
+     *
+     * <p>One consumer, one seek per lagging partition, one drain: the record at each committed
+     * offset is the first one that partition yields, so the whole measurement is a single poll
+     * loop rather than a read per partition. Partitions committed at the end of the log are not
+     * read at all — they are caught up, which is a measurement, not an absence of one.
+     *
+     * <p>The end offsets are read <b>after</b> the committed ones, the same ordering the record
+     * lag uses and for the same reason: a consumer committing between the two calls can then only
+     * make the lag look larger, never smaller, so a reading of zero is one that was earned.
+     *
+     * @param groupId the group to measure; must not be blank — a delay is always somebody's
+     */
+    public TopicTimeLag getConsumerTimeLag(String topic, String groupId) {
+        if (groupId == null || groupId.isBlank()) {
+            return TopicTimeLag.unavailable(topic, groupId, "A consumer group is required to measure a delay.");
+        }
+        TopicPartitions resolved = resolvePartitions(topic);
+        if (resolved.error() != null) return TopicTimeLag.unavailable(topic, groupId, resolved.error());
+
+        List<TopicPartition> partitions = resolved.partitions();
+        List<String> warnings = new ArrayList<>();
+        if (partitions.size() > TIME_LAG_MAX_PARTITIONS) {
+            warnings.add("Topic has " + partitions.size() + " partitions; the "
+                + TIME_LAG_MAX_PARTITIONS + " lowest-numbered ones were measured.");
+            partitions = partitions.subList(0, TIME_LAG_MAX_PARTITIONS);
+        }
+
+        Map<TopicPartition, OffsetAndMetadata> committed;
+        try {
+            committed = adminClient
+                .listConsumerGroupOffsets(Map.of(groupId,
+                    new ListConsumerGroupOffsetsSpec().topicPartitions(partitions)))
+                .partitionsToOffsetAndMetadata(groupId)
+                .get(10, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            return TopicTimeLag.unavailable(topic, groupId,
+                "Could not read the committed offsets of '" + groupId + "': " + rootMessage(e));
+        }
+        if (committed == null || committed.values().stream().allMatch(Objects::isNull)) {
+            return TopicTimeLag.unavailable(topic, groupId,
+                "Group '" + groupId + "' has no committed offset on this topic.");
+        }
+
+        Map<TopicPartition, Long> endOffsets;
+        try {
+            Map<TopicPartition, OffsetSpec> request = new LinkedHashMap<>();
+            partitions.forEach(tp -> request.put(tp, OffsetSpec.latest()));
+            endOffsets = adminClient.listOffsets(request).all().get(10, TimeUnit.SECONDS)
+                .entrySet().stream()
+                .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().offset()));
+        } catch (Exception e) {
+            return TopicTimeLag.unavailable(topic, groupId,
+                "Could not read the topic's end offsets: " + rootMessage(e));
+        }
+
+        // Partitions that still hold something to read are the only ones worth a seek.
+        Map<TopicPartition, Long> toRead = new LinkedHashMap<>();
+        List<PartitionTimeLag> resultsSoFar = new ArrayList<>();
+        int withoutCommit = 0;
+        for (TopicPartition tp : partitions) {
+            OffsetAndMetadata offset = committed.get(tp);
+            long end = endOffsets.getOrDefault(tp, 0L);
+            if (offset == null) {
+                withoutCommit++;
+                resultsSoFar.add(PartitionTimeLag.unknown(tp.partition(), null, end, null,
+                    "The group has never committed on this partition — its backlog is counted by nothing here."));
+                continue;
+            }
+            long position = offset.offset();
+            if (position >= end) {
+                resultsSoFar.add(PartitionTimeLag.caughtUp(tp.partition(), position, end));
+            } else {
+                toRead.put(tp, position);
+            }
+        }
+
+        Map<Integer, Long> timestamps = toRead.isEmpty()
+            ? Map.of()
+            : readTimestampsAt(toRead, warnings);
+
+        long now = System.currentTimeMillis();
+        List<PartitionTimeLag> results = new ArrayList<>(resultsSoFar);
+        for (Map.Entry<TopicPartition, Long> entry : toRead.entrySet()) {
+            TopicPartition tp = entry.getKey();
+            long position = entry.getValue();
+            long end = endOffsets.getOrDefault(tp, 0L);
+            Long timestamp = timestamps.get(tp.partition());
+            if (timestamp == null) {
+                // Compacted away, deleted by retention, or the budget ran out. Reporting 0 here
+                // would say "caught up" about the partition we know is behind.
+                results.add(PartitionTimeLag.unknown(tp.partition(), position, end, end - position,
+                    "The record at the committed offset could not be read — compacted, aged out, or the read budget was spent."));
+            } else {
+                results.add(new PartitionTimeLag(tp.partition(), position, end, end - position,
+                    Math.max(0L, now - timestamp), timestamp, null));
+            }
+        }
+        results.sort(Comparator.comparingInt(PartitionTimeLag::partition));
+
+        List<Long> measured = results.stream()
+            .map(PartitionTimeLag::lagMs)
+            .filter(Objects::nonNull)
+            .toList();
+        int unknown = (int) results.stream()
+            .filter(p -> p.lagMs() == null && p.committedOffset() != null)
+            .count();
+        int caughtUp = (int) results.stream()
+            .filter(p -> p.lagMs() != null && p.lagMs() == 0L)
+            .count();
+
+        if (measured.isEmpty()) {
+            return new TopicTimeLag(topic, groupId, results, null, null, 0, 0, withoutCommit, unknown,
+                false, "No partition's delay could be measured.", warnings);
+        }
+        long max = measured.stream().mapToLong(Long::longValue).max().orElse(0L);
+        long avg = Math.round(measured.stream().mapToLong(Long::longValue).average().orElse(0.0));
+        return new TopicTimeLag(topic, groupId, results, max, avg, measured.size(), caughtUp,
+            withoutCommit, unknown, true, null, warnings);
+    }
+
+    /**
+     * The timestamp of the record sitting at each given offset, in one poll loop.
+     *
+     * <p>Every partition is seeked to its committed offset and the drain keeps the <em>first</em>
+     * record each one yields — which is exactly the record that consumer has not consumed yet.
+     * The loop ends when every partition has answered or the budget is spent; a partition that
+     * never answers is left out of the map, so the caller reports it as unmeasured rather than
+     * inventing a zero.
+     */
+    private Map<Integer, Long> readTimestampsAt(Map<TopicPartition, Long> offsets, List<String> warnings) {
+        Map<Integer, Long> timestamps = new HashMap<>();
+        Properties props = new Properties();
+        props.putAll(kafkaConfig.getKafkaProperties());
+        // Never commits, never joins the measured group: a measurement that moved the very offsets
+        // it reads would be its own worst source of error.
+        ExplorerConsumerGroups.configure(props, "time-lag");
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
+
+        try (Consumer<byte[], byte[]> consumer = createTimeLagConsumer(props)) {
+            List<TopicPartition> partitions = new ArrayList<>(offsets.keySet());
+            consumer.assign(partitions);
+            offsets.forEach(consumer::seek);
+
+            long deadline = System.currentTimeMillis() + TIME_LAG_BUDGET_MS;
+            while (timestamps.size() < partitions.size() && System.currentTimeMillis() < deadline) {
+                ConsumerRecords<byte[], byte[]> records = consumer.poll(TIME_LAG_POLL);
+                if (records.isEmpty()) continue;
+                for (ConsumerRecord<byte[], byte[]> record : records) {
+                    // First record wins: it is the one at the committed offset.
+                    timestamps.putIfAbsent(record.partition(), record.timestamp());
+                }
+            }
+            if (timestamps.size() < partitions.size()) {
+                warnings.add("The read budget was spent before " + (partitions.size() - timestamps.size())
+                    + " partition(s) answered; their delay is reported as unknown, not as zero.");
+            }
+        } catch (Exception e) {
+            log.debug("Time-lag record read failed: {}", e.toString());
+            warnings.add("The records at the committed offsets could not be read: " + rootMessage(e));
+        }
+        return timestamps;
+    }
+
+    /**
+     * Test seam — {@code KafkaAdminServiceTimeLagTest} drives a {@link
+     * org.apache.kafka.clients.consumer.MockConsumer} through it. Same pattern as
+     * {@code TopicSearchService.createConsumer()}.
+     */
+    protected Consumer<byte[], byte[]> createTimeLagConsumer(Properties props) {
+        return new KafkaConsumer<>(props);
     }
 
     private TopicPartitions resolvePartitions(String topic) {
