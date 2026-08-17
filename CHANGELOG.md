@@ -102,6 +102,13 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `CONTRIBUTING.md` documents the real gate. It told contributors to run `mvn test`, which runs
   neither ESLint nor Vitest, so a contributor could be green locally and red in CI.
 
+- **`docs/check-config-table.py` also resolves the Java badge** against `<java.version>` in
+  `pom.xml`. A shields.io badge is static — the version is hand-written text in the URL path,
+  derived from nothing — so it drifts exactly as quietly as the base-image line the script was
+  written for. Both halves are checked, the alt text and the URL, since they are two copies of
+  one number and either can be edited alone. The Kafka badge is deliberately left out:
+  `kafka.version` is `4.3.1` where the badge reads `4.3_KRaft`, so checking it would need a
+  fuzzy-match rule, and a check that blesses two different values teaches nothing.
 - **`docs/check-doc-paths.py`** resolves every repository path that `CLAUDE.md` and
   `CONTRIBUTING.md` name in prose. `check-links.py` only ever saw markdown *links*, and these two
   files refer to the codebase in backticks — so three references rotted unnoticed.

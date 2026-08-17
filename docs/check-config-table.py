@@ -27,7 +27,13 @@ second copy of the documentation:
      properties that only carry a default in Java — those are not read here, since
      parsing a field initialiser reliably is a bigger job than it is worth.
 
-Plus the base-image line, matched against the `FROM` of both runtime images.
+Plus two version claims that live outside any table. The base-image line, matched against
+the `FROM` of both runtime images. And the Java badge, matched against `<java.version>` in
+pom.xml: that badge is a *static* shields.io URL, so the version is hand-written text in the
+path rather than derived from anything, and it was moved by hand in the same commit that
+raised `java.version` — had that been forgotten, nothing here would have caught it. Both
+halves are checked, the alt text and the URL, because they are two copies of one number and
+either can be edited without the other.
 
 Nothing reaches the network, and there is no `needs` on the CI job: this is path and
 string resolution, so it reports in seconds and can never go red for someone else's
@@ -52,6 +58,7 @@ DOCS = ['docs/DOCKERHUB.md', 'README.md', 'README.fr.md']
 YAML = ROOT / 'src/main/resources/application.yml'
 CONFIG_DIR = ROOT / 'src/main/java/com/compagnonsdudev/kafkasqlexplorer/config'
 DOCKERFILES = [ROOT / 'Dockerfile', ROOT / 'Dockerfile.release']
+POM = ROOT / 'pom.xml'
 
 # A table row: | `VAR` / `_SUFFIX` | default | meaning |
 ROW = re.compile(r'^\|\s*(`[^|]+`(?:\s*/\s*`[^|]+`)*)\s*\|([^|]*)\|')
@@ -65,6 +72,12 @@ PREFIX = re.compile(r'@ConfigurationProperties\(\s*prefix\s*=\s*"([^"]+)"')
 FIELD = re.compile(r'^\s*private\s+(?:static\s+|final\s+)*[\w.<>,\[\]\s]+?\s(\w+)\s*(?:=|;)', re.MULTILINE)
 # eclipse-temurin:25-jre-alpine, with or without a digest
 BASE_IMAGE = re.compile(r'eclipse-temurin:([\w.-]+)')
+# <java.version>25</java.version> — the language level, and what the enforcer pins.
+JAVA_VERSION = re.compile(r'<java\.version>\s*([^<\s]+)\s*</java\.version>')
+# [![Java 25](https://img.shields.io/badge/Java-25-orange)](pom.xml)
+# Group 1 is the alt text, group 2 the shields "message" segment of the path.
+JAVA_BADGE = re.compile(
+    r'\[!\[Java\s+([^\]]+)\]\(\s*https://img\.shields\.io/badge/Java-([^-)\s]+)-')
 
 # Variables that are neither Spring properties nor set by the Dockerfiles: they are read
 # from the ambient environment by something else, and each is named here on purpose so
@@ -126,6 +139,17 @@ def java_properties() -> set[str]:
     return props
 
 
+def pom_java_version() -> str | None:
+    """The `<java.version>` of pom.xml, or None if it is absent.
+
+    Read with a regex rather than an XML parser for the same reason application.yml is:
+    one element, no namespaces in play, and nothing here may depend on a library the
+    runner's default image does not carry.
+    """
+    match = JAVA_VERSION.search(POM.read_text(encoding='utf-8'))
+    return match.group(1) if match else None
+
+
 def documented_rows(text: str) -> list[tuple[str, str]]:
     """(VAR, documented default) for every table row whose first cell is a code span.
 
@@ -167,6 +191,8 @@ def check() -> list[str]:
     for var in EXTERNAL:
         known.setdefault(var, None)
 
+    java_version = pom_java_version()
+
     for name in DOCS:
         path = ROOT / name
         if not path.exists():
@@ -201,6 +227,25 @@ def check() -> list[str]:
                 problems.append(
                     f'{name}: base image `eclipse-temurin:{documented}` is not what the '
                     f'Dockerfiles use ({", ".join(sorted(from_lines))})')
+
+        # The Java badge. One claim per badge, so one `checked` — but the alt text and the
+        # URL are reported separately, because a badge reading "Java 25" over a path that
+        # renders 21 is a third failure mode, not a variant of either.
+        for alt, message in JAVA_BADGE.findall(text):
+            checked += 1
+            if java_version is None:
+                problems.append(
+                    f'{name}: a Java badge is present but pom.xml declares no <java.version> '
+                    f'to check it against')
+                continue
+            if message != java_version:
+                problems.append(
+                    f'{name}: the Java badge renders `{message}`, '
+                    f'pom.xml declares java.version `{java_version}`')
+            if alt.strip() != java_version:
+                problems.append(
+                    f'{name}: the Java badge alt text reads `Java {alt.strip()}`, '
+                    f'pom.xml declares java.version `{java_version}`')
 
     print(f'{checked} documented settings resolved against the code')
     return problems
