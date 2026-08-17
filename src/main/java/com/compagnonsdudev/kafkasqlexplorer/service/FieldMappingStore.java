@@ -26,8 +26,16 @@ import java.util.Optional;
 @Component
 public class FieldMappingStore {
 
-    /** Enough for any realistic number of concurrent pipelines; a mapping is a few hundred bytes. */
-    static final int MAX_ENTRIES = 50;
+    /**
+     * Generous on purpose, and the number comes from the other half of this fix.
+     *
+     * <p>Two changes bounded this cache at once — one in place on the controller, one by moving it
+     * here — and their merge produced a file that did not compile. Resolving it kept the better
+     * argued cap of the two: losing a mapping mid-pipeline costs a re-validation, and since it is
+     * the *use* that refreshes an entry, the mapping of a live session running for hours must not
+     * be evicted from under it by newer ones. A mapping is a few hundred bytes.
+     */
+    static final int MAX_ENTRIES = 200;
 
     private final Map<String, FieldMapping> mappings = Collections.synchronizedMap(
         new LinkedHashMap<>(16, 0.75f, true) {
