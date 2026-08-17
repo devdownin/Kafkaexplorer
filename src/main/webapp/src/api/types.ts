@@ -276,7 +276,8 @@ export interface MetricConfig {
   id: string;
   name: string;
   type: string;
-  sql: string;
+  /** `null` sur une métrique de gabarit : elle n'a pas de SQL, ses paramètres tiennent lieu de requête. */
+  sql: string | null;
   description: string;
   warningThreshold: number | null;
   criticalThreshold: number | null;
@@ -294,7 +295,7 @@ export interface MetricConfig {
 }
 
 /** @java MetricSuggestionSource */
-export type MetricSuggestionSource = 'AUDIT' | 'STREAM_FLOW';
+export type MetricSuggestionSource = 'AUDIT' | 'STREAM_FLOW' | 'LINEAGE' | 'PROCESS_MINING';
 
 /**
  * `POST /api/metrics/suggestions` — un KPI contextuel proposé, avec ce sur quoi il repose.

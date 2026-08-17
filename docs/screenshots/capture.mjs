@@ -10,6 +10,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { NOW } from './fixtures.mjs';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 
@@ -93,6 +94,17 @@ const SCREENS = [
     url: '/cluster',
     settle: page => page.getByText('KRaft Controller Quorum').first().waitFor(),
   },
+  {
+    name: 'metrics',
+    url: '/metrics',
+    // The suggestions panel is what the screen is about — the generic templates below it look
+    // the same on every cluster. Waiting on a card's own title rather than on the section
+    // heading: the heading renders before the POST answers, so it would photograph an empty
+    // panel under a filled one's title.
+    settle: page => page.getByText(/Processing latency demo.orders.4.transformed/).first().waitFor(),
+    // Past the KPI row and the two configured metrics, onto the proposals with their evidence.
+    scroll: 520,
+  },
 ];
 
 /**
@@ -153,12 +165,24 @@ for (const screen of SCREENS) {
   const page = await browser.newPage({
     viewport: VIEWPORT,
     deviceScaleFactor: SCALE,
-    // Fixes relative dates ("3 min ago") and any locale-dependent formatting, so a re-run
-    // does not produce a different image from identical data.
+    // Fixes locale-dependent formatting, so a re-run does not produce a different image from
+    // identical data.
     locale: 'en-GB',
     timezoneId: 'UTC',
     colorScheme: 'dark',
   });
+
+  /*
+   * And fixes the clock, which the locale alone never did.
+   *
+   * The fixtures are dated from one fixed instant, and this file claimed that was enough for a
+   * re-run to produce the same image. It was not: every relative reading — "3 min ago", the
+   * staleness warning above the suggested KPIs — compares that instant to the real clock, so the
+   * screens aged a little every day and the Metrics shot eventually grew an amber banner about a
+   * two-month-old audit that says nothing about the product. Pinning the page's clock to the
+   * fixtures' instant is what makes the promise true.
+   */
+  await page.clock.setFixedTime(new Date(NOW));
   const errors = [];
   page.on('pageerror', e => errors.push(String(e)));
   page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });

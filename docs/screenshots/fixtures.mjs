@@ -395,3 +395,256 @@ export const config = {
   llmModel: 'qwen3:4b',
   llmApiKeyConfigured: false,
 };
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Metrics
+ *
+ * Two metrics that have run, and the KPIs the panel derives from the audit above. The
+ * suggestions are shaped exactly as `MetricSuggestionService` produces them — same evidence
+ * sentences, same threshold arithmetic (2×/4× the measured hop, 2×/4× the observed gap), and
+ * the same refusal to carry a threshold where nothing was measured. A fixture that invented
+ * rounder numbers would photograph a panel this application does not have.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+const history = (values) => values;
+
+export const metrics = [
+  {
+    id: 'm-orders-volume', name: 'gauge_volume_demo_orders_1_received', type: 'GAUGE',
+    sql: 'SELECT COUNT(*) AS metric_value\nFROM demo_orders_1_received',
+    description: 'Records currently readable in demo.orders.1.received.',
+    warningThreshold: 1800, criticalThreshold: 2400,
+    lastValue: 1200, lastUpdateTime: min(1), errorMessage: null,
+    history: history([1104, 1121, 1139, 1152, 1168, 1177, 1186, 1194, 1200]),
+    lastSummary: { rowCount: 1 }, createTableSql: null,
+    templateType: 'RAW_SQL', templateParams: {}, executionMode: 'SQL',
+    labelTopic: 'demo.orders.1.received', labelFields: [],
+  },
+  {
+    id: 'm-hop-latency', name: 'gauge_latency_demo_orders_3_enriched_to_demo_orders_4_transformed',
+    type: 'GAUGE', sql: null,
+    description: 'Average latency between demo.orders.3.enriched and demo.orders.4.transformed.',
+    warningThreshold: 3800, criticalThreshold: 7600,
+    lastValue: 2140, lastUpdateTime: min(1), errorMessage: null,
+    history: history([1980, 2010, 2260, 2090, 1940, 2310, 2180, 2140]),
+    lastSummary: { matchedCount: 812, avgLatencyMs: 2140, p95LatencyMs: 3410 },
+    createTableSql: null,
+    templateType: 'TOPIC_TRANSIT_LATENCY',
+    templateParams: {
+      sourceTopic: 'demo.orders.3.enriched', targetTopic: 'demo.orders.4.transformed',
+      sourceSql: 'SELECT `id` AS match_key, `event_time` AS event_time\nFROM demo_orders_3_enriched',
+      targetSql: 'SELECT `id` AS match_key, `event_time` AS event_time\nFROM demo_orders_4_transformed',
+    },
+    executionMode: 'TEMPLATE_BOUNDED_SCAN',
+    labelTopic: 'demo.orders.3.enriched', labelFields: [],
+  },
+];
+
+export const metricTemplates = [
+  {
+    type: 'TOPIC_COUNT_DELTA', label: 'Topic Count Delta',
+    description: 'Compare two bounded topic counts and compute a gap, ratio or percentage difference.',
+    supportedMetricTypes: ['GAUGE'], requiredParams: ['leftSql', 'rightSql', 'operation'],
+  },
+  {
+    type: 'TOPIC_TRANSIT_LATENCY', label: 'Topic Transit Latency',
+    description: 'Measure processing latency between two topics by matching events on a key.',
+    supportedMetricTypes: ['GAUGE', 'HISTOGRAM', 'SUMMARY'], requiredParams: ['sourceSql', 'targetSql'],
+  },
+  {
+    type: 'CONSUMER_TIME_LAG', label: 'Consumer Lag in Time',
+    description: 'How far behind a consumer group is in time, not in records: the age of the oldest '
+      + 'message still waiting. No SQL — committed offsets and record timestamps.',
+    supportedMetricTypes: ['GAUGE'], requiredParams: ['topic', 'group'],
+  },
+];
+
+const suggestion = (over) => ({
+  alreadyConfigured: false, existingMetricName: null, thresholdBasis: null, caveats: [], ...over,
+});
+
+export const metricSuggestions = {
+  suggestions: [
+    suggestion({
+      id: 'audit:hop-latency:demo.orders.4.transformed>demo.orders.5.shipped',
+      source: 'AUDIT',
+      title: 'Processing latency demo.orders.4.transformed → demo.orders.5.shipped',
+      rationale: 'This hop is on a flow the audit reconstructed, and it is where a stalled consumer '
+        + 'or a slow enrichment shows up first — as time, before it shows up as a backlog.',
+      evidence: ['The cluster audit of 2026-06-15 14:32 measured an average hop of 4.2 s between '
+        + 'demo.orders.4.transformed and demo.orders.5.shipped (flow "demo.orders", correlated on '
+        + 'the id field of recent messages).'],
+      thresholdBasis: 'Warning at 2× and critical at 4× the 4.2 s that was measured — a multiple of '
+        + 'an observation, not a round number.',
+      caveats: [
+        'Correlation matches `id` (a column of the registered table for demo.orders.4.transformed) '
+          + 'against `id` (a column of the registered table for demo.orders.5.shipped) — check both '
+          + 'in the preview before saving.',
+        'event_time is the Kafka record timestamp of the table the explorer registers.',
+      ],
+      metric: {
+        id: null, name: 'gauge_latency_demo_orders_4_transformed_to_demo_orders_5_shipped',
+        type: 'GAUGE', sql: null,
+        description: 'Average latency between demo.orders.4.transformed and demo.orders.5.shipped.',
+        warningThreshold: 8400, criticalThreshold: 16800,
+        lastValue: null, lastUpdateTime: null, errorMessage: null, history: [], lastSummary: null,
+        createTableSql: null, templateType: 'TOPIC_TRANSIT_LATENCY',
+        templateParams: {
+          sourceTopic: 'demo.orders.4.transformed', targetTopic: 'demo.orders.5.shipped',
+        },
+        executionMode: 'TEMPLATE_BOUNDED_SCAN',
+        labelTopic: 'demo.orders.4.transformed', labelFields: [],
+      },
+    }),
+    suggestion({
+      id: 'audit:flow-gap:demo.orders.5.shipped>demo.orders.6.delivered',
+      source: 'AUDIT',
+      title: 'Throughput gap demo.orders.5.shipped → demo.orders.6.delivered',
+      rationale: 'Both topics are counted anyway; the difference between them is the KPI, and it is '
+        + 'the one number that says whether the step is losing events rather than merely slow.',
+      evidence: ['The cluster audit of 2026-06-15 14:32 counted 1142 record(s) in '
+        + 'demo.orders.5.shipped and 1098 in demo.orders.6.delivered — 96.1 % carried through '
+        + '(flow "demo.orders").'],
+      thresholdBasis: 'Warning at 2× and critical at 4× the 3.9 % gap observed, floored at 1 % / 5 % '
+        + 'so a lossless flow still has a threshold.',
+      caveats: ['A legitimate filter between the two steps shows up here as a permanent gap — set '
+        + 'the thresholds around the level it normally sits at.'],
+      metric: {
+        id: null, name: 'gauge_gap_demo_orders_5_shipped_to_demo_orders_6_delivered',
+        type: 'GAUGE', sql: null,
+        description: 'Percentage gap between the record counts of demo.orders.5.shipped and '
+          + 'demo.orders.6.delivered.',
+        warningThreshold: 7.8, criticalThreshold: 15.6,
+        lastValue: null, lastUpdateTime: null, errorMessage: null, history: [], lastSummary: null,
+        createTableSql: null, templateType: 'TOPIC_COUNT_DELTA',
+        templateParams: {
+          leftTopic: 'demo.orders.5.shipped', rightTopic: 'demo.orders.6.delivered',
+          operation: 'PERCENT_GAP',
+        },
+        executionMode: 'TEMPLATE_BOUNDED_SCAN',
+        labelTopic: 'demo.orders.5.shipped', labelFields: [],
+      },
+    }),
+    suggestion({
+      id: 'audit:duplicates:demo.orders.1.received',
+      source: 'AUDIT',
+      title: 'Duplicate keys in demo.orders.1.received',
+      rationale: 'The audit found duplicates here once. Whether that was a one-off redelivery or a '
+        + 'producer that retries without idempotence is a question only a continuous measurement '
+        + 'answers.',
+      evidence: ['The cluster audit of 2026-06-15 14:32 found 2 duplicate key(s) in '
+        + 'demo.orders.1.received over the messages it scanned.'],
+      thresholdBasis: 'Warning at the 2 already observed and critical at twice that — the level '
+        + 'that was reached once is the level worth hearing about again.',
+      caveats: ['COUNT(DISTINCT …) needs the Flink planner; if the query falls back to the direct '
+        + 'engine the metric reports the engine’s own error rather than a number.'],
+      metric: {
+        id: null, name: 'gauge_duplicates_demo_orders_1_received', type: 'GAUGE',
+        sql: 'SELECT COUNT(*) - COUNT(DISTINCT `id`) AS metric_value\nFROM demo_orders_1_received',
+        description: 'Records in demo.orders.1.received sharing an id with another record.',
+        warningThreshold: 2, criticalThreshold: 4,
+        lastValue: null, lastUpdateTime: null, errorMessage: null, history: [], lastSummary: null,
+        createTableSql: null, templateType: 'RAW_SQL', templateParams: {}, executionMode: 'SQL',
+        labelTopic: 'demo.orders.1.received', labelFields: [],
+      },
+    }),
+    suggestion({
+      id: 'audit:time-lag:demo.orders.3.enriched>orders-enricher',
+      source: 'AUDIT',
+      title: 'Delay in time of orders-enricher on demo.orders.3.enriched',
+      rationale: 'A record count says how much is waiting, never for how long — the same 4 000 '
+        + 'messages are seconds on one topic and days on another. This is the backlog in the unit '
+        + 'an operator can act on.',
+      evidence: [
+        'The cluster audit of 2026-06-15 14:32 reported on demo.orders.3.enriched: Consumer group '
+          + '’orders-enricher’ is 4200 message(s) behind with no member assigned to this '
+          + 'topic — nothing is draining it.',
+        'Read just now: group ’orders-enricher’ is 4200 record(s) behind on '
+          + 'demo.orders.3.enriched. How long that represents is exactly what this metric measures, '
+          + 'and nothing here knows it yet.',
+      ],
+      caveats: ['No threshold is proposed: nothing here has ever measured this topic in time. Run '
+        + 'it, look at what it reports, then set one.'],
+      metric: {
+        id: null, name: 'gauge_time_lag_demo_orders_3_enriched_orders_enricher', type: 'GAUGE',
+        sql: null,
+        description: 'Age in milliseconds of the oldest message orders-enricher has not read on '
+          + 'demo.orders.3.enriched.',
+        warningThreshold: null, criticalThreshold: null,
+        lastValue: null, lastUpdateTime: null, errorMessage: null, history: [], lastSummary: null,
+        createTableSql: null, templateType: 'CONSUMER_TIME_LAG',
+        templateParams: {
+          topic: 'demo.orders.3.enriched', group: 'orders-enricher', aggregation: 'MAX',
+        },
+        executionMode: 'TEMPLATE_BOUNDED_SCAN',
+        labelTopic: 'demo.orders.3.enriched', labelFields: [],
+      },
+    }),
+    suggestion({
+      id: 'flow:hop-latency:demo.payments.authorized>demo.payments.captured',
+      source: 'STREAM_FLOW',
+      title: 'Processing latency demo.payments.authorized → demo.payments.captured',
+      rationale: 'A key was traced across this hop, so the pair is real rather than inferred from a '
+        + 'naming convention — measuring it continuously turns one observation into a trend.',
+      evidence: ['The trace of key ORD-1042 on 2026-06-15 14:28 travelled '
+        + 'demo.payments.authorized → demo.payments.captured in 1.8 s (one key, one trace — a '
+        + 'single observation, not a distribution).'],
+      thresholdBasis: 'Warning at 2× and critical at 4× the 1.8 s that was measured — a multiple of '
+        + 'an observation, not a round number.',
+      caveats: ['Correlation matches `id` (assumed on demo.payments.authorized — nothing registered '
+        + 'or profiled says otherwise).'],
+      metric: {
+        id: null, name: 'gauge_traced_latency_demo_payments_authorized_to_demo_payments_captured',
+        type: 'GAUGE', sql: null,
+        description: 'Average latency between demo.payments.authorized and demo.payments.captured.',
+        warningThreshold: 3600, criticalThreshold: 7200,
+        lastValue: null, lastUpdateTime: null, errorMessage: null, history: [], lastSummary: null,
+        createTableSql: null, templateType: 'TOPIC_TRANSIT_LATENCY',
+        templateParams: {
+          sourceTopic: 'demo.payments.authorized', targetTopic: 'demo.payments.captured',
+        },
+        executionMode: 'TEMPLATE_BOUNDED_SCAN',
+        labelTopic: 'demo.payments.authorized', labelFields: [],
+      },
+    }),
+    suggestion({
+      id: 'audit:volume:demo.iot.sensors',
+      source: 'AUDIT',
+      title: 'Volume of demo.iot.sensors',
+      rationale: 'This is where the cluster’s traffic actually is. A count that stops moving on '
+        + 'the busiest topic is the earliest sign of a producer that has gone quiet.',
+      evidence: ['The cluster audit of 2026-06-15 14:32 counted 7200 record(s) in demo.iot.sensors.'],
+      thresholdBasis: 'Warning at 1.5× and critical at 2× the 7200 counted by that run — growth '
+        + 'relative to a measured baseline, not an absolute.',
+      caveats: ['A bounded scan of the whole topic: on a topic with retention this counts what is '
+        + 'still readable, not what was ever produced.'],
+      alreadyConfigured: true,
+      existingMetricName: 'gauge_volume_demo_orders_1_received',
+      metric: {
+        id: null, name: 'gauge_volume_demo_iot_sensors', type: 'GAUGE',
+        sql: 'SELECT COUNT(*) AS metric_value\nFROM demo_iot_sensors',
+        description: 'Records currently readable in demo.iot.sensors.',
+        warningThreshold: 10800, criticalThreshold: 14400,
+        lastValue: null, lastUpdateTime: null, errorMessage: null, history: [], lastSummary: null,
+        createTableSql: null, templateType: 'RAW_SQL', templateParams: {}, executionMode: 'SQL',
+        labelTopic: 'demo.iot.sensors', labelFields: [],
+      },
+    }),
+  ],
+  auditAvailable: true,
+  auditId: 'audit-20260615-1432',
+  auditTimestamp: NOW,
+  auditSource: 'CURRENT_RUN',
+  auditTopics: 28,
+  flowChainsSubmitted: 1,
+  notes: [
+    'The audit reported consumer-lag findings on demo.orders.3.enriched. The backlog in *records* '
+      + 'is not proposed as a SQL metric — it is exported directly from committed offsets: name '
+      + 'those topics in explorer.lag-metrics-topics and Prometheus gets kafka_consumer_group_lag '
+      + 'for them. The delay in *time* is what the proposed KPI above adds, since no count can be '
+      + 'read as a duration.',
+    '2 topic(s) carry unparseable payloads. No KPI is proposed for that: a parse failure is not '
+      + 'something SQL can count — the query engine skips or fails on the record rather than '
+      + 'reporting it. The audit is the measurement here.',
+  ],
+};

@@ -90,8 +90,17 @@ export function dismissedSuggestions(
   return suggestions.filter(suggestion => rejected.has(suggestion.id));
 }
 
+const SOURCE_LABELS: Record<MetricSuggestionSource, string> = {
+  AUDIT: 'Cluster audit',
+  STREAM_FLOW: 'Stream Flow trace',
+  LINEAGE: 'Running Flink job',
+  PROCESS_MINING: 'Process Mining mapping',
+};
+
 export function sourceLabel(source: MetricSuggestionSource): string {
-  return source === 'AUDIT' ? 'Cluster audit' : 'Stream Flow trace';
+  // Un libellé inconnu vaut mieux qu'un rendu vide : le serveur peut connaître une source que
+  // cette version du front ignore.
+  return SOURCE_LABELS[source] ?? source;
 }
 
 // ── État des observations ────────────────────────────────────────────────────
@@ -118,15 +127,6 @@ export function describeEvidence(response: MetricSuggestions | null): EvidenceSt
   if (!response.auditAvailable) unlocks.push({ label: 'Run a cluster audit', to: '/audit' });
   if (response.flowChainsSubmitted === 0) unlocks.push({ label: 'Trace a message key', to: '/stream-flow' });
 
-  if (!response.auditAvailable && response.flowChainsSubmitted === 0) {
-    return {
-      summary: 'Nothing has been measured on this cluster yet, so there is nothing to derive a KPI '
-        + 'from. Run an audit, or trace a key across topics, and the proposals appear here.',
-      unlocks,
-      waiting: true,
-    };
-  }
-
   const parts: string[] = [];
   if (response.auditAvailable) {
     const when = response.auditTimestamp ? ` of ${formatDate(response.auditTimestamp)}` : '';
@@ -136,12 +136,31 @@ export function describeEvidence(response: MetricSuggestions | null): EvidenceSt
   if (response.flowChainsSubmitted > 0) {
     parts.push(`${response.flowChainsSubmitted} Stream Flow trace${response.flowChainsSubmitted === 1 ? '' : 's'} recorded in this browser`);
   }
+  /*
+   * L'audit et les traces ne sont plus les seules observations : un job Flink en cours et un
+   * mapping Process Mining validé produisent aussi des cartes. Les compter d'après les
+   * propositions elles-mêmes, sinon le panneau annoncerait « rien n'a été mesuré » au-dessus de
+   * cartes qu'il est en train d'afficher.
+   */
+  const running = response.suggestions.filter(s => s.source === 'LINEAGE').length;
+  if (running > 0) parts.push(`${running} running Flink job edge${running === 1 ? '' : 's'}`);
+  const profiled = response.suggestions.filter(s => s.source === 'PROCESS_MINING').length;
+  if (profiled > 0) parts.push('a validated Process Mining field mapping');
+
+  if (parts.length === 0) {
+    return {
+      summary: 'Nothing has been measured on this cluster yet, so there is nothing to derive a KPI '
+        + 'from. Run an audit, or trace a key across topics, and the proposals appear here.',
+      unlocks,
+      waiting: true,
+    };
+  }
 
   const derived = response.suggestions.length === 0
     ? 'No KPI could be derived from it'
     : `${response.suggestions.length} KPI${response.suggestions.length === 1 ? '' : 's'} derived from it`;
 
-  return { summary: `${derived}: ${parts.join(' and ')}.`, unlocks, waiting: false };
+  return { summary: `${derived}: ${parts.join(', ')}.`, unlocks, waiting: false };
 }
 
 /** L'âge de l'observation, quand il commence à compter — un audit d'il y a trois semaines. */

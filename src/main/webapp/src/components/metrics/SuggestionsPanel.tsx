@@ -31,7 +31,9 @@ interface Props {
   onAdopt: (suggestion: MetricSuggestion) => void;
 }
 
-const SOURCE_TONE = { AUDIT: 'secondary', STREAM_FLOW: 'primary' } as const;
+const SOURCE_TONE = {
+  AUDIT: 'secondary', STREAM_FLOW: 'primary', LINEAGE: 'success', PROCESS_MINING: 'warning',
+} as const;
 
 const SuggestionCard: React.FC<{
   suggestion: MetricSuggestion;
@@ -48,7 +50,7 @@ const SuggestionCard: React.FC<{
           <p className="font-semibold text-on-surface text-[13px] leading-snug">{suggestion.title}</p>
           <p className="text-[12px] text-on-surface-variant mt-1 leading-relaxed">{suggestion.rationale}</p>
         </div>
-        <Badge tone={SOURCE_TONE[suggestion.source]} className="shrink-0">
+        <Badge tone={SOURCE_TONE[suggestion.source] ?? 'neutral'} className="shrink-0">
           {sourceLabel(suggestion.source)}
         </Badge>
       </div>

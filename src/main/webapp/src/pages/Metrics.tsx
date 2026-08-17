@@ -328,6 +328,21 @@ function getSqlTemplates(table: string) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Ce qu'affiche le pied de carte quand il n'y a pas de SQL : le gabarit et ce qu'il compare.
+ *
+ * Une métrique de gabarit n'a pas de requête à montrer — dire « pas de SQL » n'apprendrait rien,
+ * alors que nommer les deux topics dit exactement ce que la métrique mesure.
+ */
+function describeTemplate(metric: MetricConfig): string {
+  const params = metric.templateParams ?? {};
+  const at = (key: string) => (typeof params[key] === 'string' ? params[key] as string : null);
+  const from = at('sourceTopic') ?? at('leftTopic') ?? at('topic');
+  const to = at('targetTopic') ?? at('rightTopic') ?? at('group');
+  const pair = from && to ? `${from} → ${to}` : from ?? '';
+  return [metric.templateType ?? 'TEMPLATE', pair].filter(Boolean).join(' · ');
+}
+
 function relativeTime(ms: number | null): string {
   if (!ms) return 'Never';
   const diff = Date.now() - ms;
@@ -509,17 +524,26 @@ const MetricCard: React.FC<{
         )}
       </div>
 
-      {/* SQL footer */}
+      {/* SQL footer — ou ce qui en tient lieu.
+
+          Une métrique de gabarit n'a pas de SQL : ses paramètres SONT la requête, et le champ
+          arrive à `null` du serveur. La carte appelait `metric.sql.replace(…)` dessus, ce qui
+          faisait tomber toute la page — pas seulement la carte — dès qu'une métrique de gabarit
+          était enregistrée. Le type l'annonçait `string`, ce qu'il n'a jamais été. */}
       <div className="group border-t border-outline-variant/60 bg-background-dark/40 px-4 py-2.5 flex items-start gap-2">
         <span className="material-symbols-outlined text-primary/40 text-base shrink-0 mt-0.5">code</span>
         <pre className="flex-1 text-[10px] font-mono text-on-surface-variant truncate leading-relaxed whitespace-nowrap overflow-hidden">
-          {metric.sql.replace(/\s+/g, ' ')}
+          {metric.sql
+            ? metric.sql.replace(/\s+/g, ' ')
+            : describeTemplate(metric)}
         </pre>
-        <button onClick={() => void copyText(metric.sql).then(ok =>
-            toast(ok ? 'SQL copied' : 'Could not copy to the clipboard', ok ? 'success' : 'error'))}
-          title="Copy SQL" aria-label="Copy the metric SQL" className="shrink-0 text-outline hover:text-primary transition-colors opacity-0 group-hover:opacity-100">
-          <span className="material-symbols-outlined text-base">content_copy</span>
-        </button>
+        {metric.sql && (
+          <button onClick={() => void copyText(metric.sql ?? '').then(ok =>
+              toast(ok ? 'SQL copied' : 'Could not copy to the clipboard', ok ? 'success' : 'error'))}
+            title="Copy SQL" aria-label="Copy the metric SQL" className="shrink-0 text-outline hover:text-primary transition-colors opacity-0 group-hover:opacity-100">
+            <span className="material-symbols-outlined text-base">content_copy</span>
+          </button>
+        )}
       </div>
 
       {/* Footer */}
@@ -747,6 +771,9 @@ const Metrics: React.FC = () => {
     try {
       const res = await axios.post<MetricSuggestions>('/api/metrics/suggestions', {
         flowChains: readFlowChains(),
+        // Le mapping validé par Process Mining vit dans le brouillon de cette page-là ; c'est lui
+        // qui connaît la vraie clé de corrélation et le champ de statut de chaque topic.
+        fieldMappingId: readDraft<string | null>('pm:mapping', null),
       });
       setSuggestions(res.data);
     } catch (err) {

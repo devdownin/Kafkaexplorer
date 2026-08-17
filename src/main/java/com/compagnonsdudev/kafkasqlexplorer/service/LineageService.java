@@ -266,8 +266,14 @@ public class LineageService {
      *
      * <p>It falls back rather than fails: a statement referencing a table that no longer exists
      * cannot be resolved, and a lineage graph missing one edge beats a lineage page that errors.
+     *
+     * <p>Public for a second caller: {@link MetricSuggestionService} reads the running INSERT jobs
+     * to propose a KPI on a pipeline edge the user <em>declared</em>, rather than one a naming
+     * convention guessed. It deliberately does not go through {@link #getLineage(boolean)} — that
+     * builds the whole graph (every table's DDL, every topic's size) to answer a question about a
+     * handful of statements.
      */
-    private SqlDependencies dependenciesOf(String sql) {
+    public SqlDependencies dependenciesOf(String sql) {
         SqlDependencies parsed = parseWithFlink(sql, true);
         return parsed != null ? parsed
             : new SqlDependencies(extractSources(sql), extractInsertTarget(sql), false);

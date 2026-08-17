@@ -7,5 +7,9 @@ public enum MetricSuggestionSource {
     /** A cluster audit report: its flow steps, per-topic counts and findings. */
     AUDIT,
     /** A Stream Flow trace the operator ran, carried back from the browser. */
-    STREAM_FLOW
+    STREAM_FLOW,
+    /** A pipeline edge the user declared: a running INSERT job, as Flink's parser resolves it. */
+    LINEAGE,
+    /** A field mapping the Process Mining pipeline validated — where a real business key lives. */
+    PROCESS_MINING
 }

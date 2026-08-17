@@ -98,6 +98,8 @@ window, plus duplicates and poison records for the audit to find.
 - 🕸️ **Lineage & tracing** — an interactive graph of topics → tables → live jobs, resolved by Flink's own parser; plus cross-topic message tracing by key, header, JSONPath or XPath, streaming its hops as it finds them and comparing two keys side by side.
 - 🩺 **One-click cluster audit** — poison messages, duplicates, flow drop-offs and latency, graded by severity, computed across your whole cluster in the background and diffable against the previous run.
 - 📉 **Consumer lag that grades itself** — who reads a topic and how far behind, with `stalled` (nothing assigned), `partial` (never committed on some partitions) and `ahead` called out rather than folded into one number.
+- ⏱️ **Backlog in time, not just in records** — the same 4 000 messages are four seconds of traffic on one topic and four days on another. Ask any group how long its oldest unread message has been waiting, from the topic page or as a scheduled metric; a partition that could not be read says so instead of reporting zero.
+- 💡 **KPIs proposed from what your cluster was observed doing** — the Metrics page derives them from your audit, your traces, your running Flink jobs and your Process Mining mapping. Every card names the measurement it rests on and where its thresholds come from; nothing is created until you preview and save it.
 - 🤖 **AI process mining** — reconstruct business flows as flowcharts and hunt anomalies with Claude, any local LLM (Ollama, vLLM, LM Studio…), or a fully private [SpectraLLM](https://github.com/devdownin/SpectraLLM). Nothing leaves your network unless you point it outside.
 - 🔭 **Kafka 4 native** — KRaft controller quorum, KIP-848 consumer groups, share groups (KIP-932) and feature versions, in the UI and on `/actuator/prometheus`.
 
@@ -131,10 +133,15 @@ on a million.
 
 ![Cluster Audit: 28 topics, 2 critical and 3 warning, health score 89%, with the per-topic table and its findings](https://devdownin.github.io/Kafkaexplorer/img/audit.png)
 
+**Metrics** — turn a query into a Prometheus series, and let the page propose the KPIs your
+own cluster calls for. Each proposal carries the audit measurement behind it and states that
+its thresholds are a multiple of that measurement, not a round number someone liked.
+
+![Metrics: two configured metrics above the KPIs suggested for this cluster, each card carrying the audit measurement it rests on and the multiple its thresholds come from](https://devdownin.github.io/Kafkaexplorer/img/metrics.png)
+
 Also there and not pictured here: **Cluster**
 ([screenshot](https://devdownin.github.io/Kafkaexplorer/img/cluster.png)) with the KRaft
-controller quorum and client groups, **Lineage**, **Metrics**, **Compare** and **Process
-Mining**.
+controller quorum and client groups, **Lineage**, **Compare** and **Process Mining**.
 
 ## 🏷️ Tags
 
@@ -219,6 +226,8 @@ allocates; a cluster audit over thousands of topics is the workload that wants m
 | `EXPLORER_SEARCH_MAX_SCAN` | `20000` | Records one topic-search pass may read. |
 | `EXPLORER_STREAM_FLOW_MAX_TOPICS` | `250` | Topics a whole-cluster trace reads (the most recently active ones). |
 | `EXPLORER_CLEANUP_OWN_GROUPS` | `false` | Delete, at startup, the consumer groups older builds of this app left on the cluster. The only write it ever makes: restricted to its own group names that the broker reports EMPTY or DEAD. |
+| `EXPLORER_LAG_METRICS_TOPICS` | `[]` | Topics whose consumer lag is exported to Prometheus, named rather than discovered — a series per group × topic is how a metrics backend gets killed. Empty starts no polling at all. |
+| `EXPLORER_LAG_METRICS_TIME` | `false` | Also export that backlog **in time** (`kafka_consumer_group_lag_seconds`). Opt-in because it is the only lag gauge that reads a record rather than metadata. |
 
 ### Ports, volumes, probes
 
@@ -229,7 +238,7 @@ allocates; a cluster audit over thousands of topics is the workload that wants m
 | **Volume** `/app/data` | Flink job history (`flink-jobs.json`) — lost on every container replacement without it. |
 | **Liveness** | `GET /actuator/health/liveness` — what the built-in `HEALTHCHECK` polls. |
 | **Readiness** | `GET /actuator/health/readiness` — liveness **plus** a reachable broker. An unreachable broker means "cannot answer queries", not "restart me": the UI still serves and can be repointed. |
-| **Metrics** | `GET /actuator/prometheus` — JVM, HTTP, KRaft quorum lag, and any SQL query you turn into a metric from the UI. |
+| **Metrics** | `GET /actuator/prometheus` — JVM, HTTP, KRaft quorum lag, consumer-group lag for the topics you name, and any SQL query you turn into a metric from the UI. |
 
 ## 🩹 If something looks wrong
 
