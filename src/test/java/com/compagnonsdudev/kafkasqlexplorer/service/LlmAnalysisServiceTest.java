@@ -61,7 +61,7 @@ class LlmAnalysisServiceTest {
         claudeConfig.setApiKey("test-key");
         llmClient = mock(LlmClient.class);
         llmAnalysisService = new LlmAnalysisService(snapshotReader, claudeConfig,
-            new ProcessMiningConfig(), DIGEST_SERVICE, llmClient);
+            new ProcessMiningConfig(), DIGEST_SERVICE, () -> llmClient);
     }
 
     @Test
@@ -232,5 +232,86 @@ class LlmAnalysisServiceTest {
 
         assertEquals(1, result.ragSources().size());
         assertEquals("spec.pdf", result.ragSources().get(0).sourceFile());
+    }
+
+    /**
+     * A failure has to be reported as one. It used to travel in {@code comments}, where the page
+     * renders it as analysis prose under an empty diagram.
+     */
+    @Test
+    void testCallFailureIsReportedAsAnErrorNotAsCommentary() {
+        when(snapshotReader.readDigested(anyList(), any(), any(), anyInt())).thenReturn(List.of(
+            digestOf("topic1", "key1", "{\"val\":1}")
+        ));
+        when(llmClient.generateWithMeta(anyString(), anyString()))
+            .thenThrow(new RuntimeException("Connection refused"));
+
+        ProcessMiningResult result = llmAnalysisService.analyzeSnapshot(
+            List.of("topic1"), SnapshotConfig.latestN(10), null);
+
+        assertNotNull(result.error(), "a failed call must set error()");
+        assertTrue(result.error().contains("Connection refused"), result.error());
+        assertNull(result.comments(), "the reason must not masquerade as analysis commentary");
+        assertNull(result.flowchart());
+    }
+
+    @Test
+    void testUnparseableAnswerIsReportedAsAnError() {
+        when(snapshotReader.readDigested(anyList(), any(), any(), anyInt())).thenReturn(List.of(
+            digestOf("topic1", "key1", "{\"val\":1}")
+        ));
+        when(llmClient.generateWithMeta(anyString(), anyString()))
+            .thenReturn(new LlmResponse("I am afraid I cannot do that.", List.of()));
+
+        ProcessMiningResult result = llmAnalysisService.analyzeSnapshot(
+            List.of("topic1"), SnapshotConfig.latestN(10), null);
+
+        assertNotNull(result.error());
+        assertNull(result.comments());
+    }
+
+    /** A JSON object cut off at the output cap is the commonest parse failure — say so. */
+    @Test
+    void testTruncatedAnswerNamesTheOutputCap() {
+        when(snapshotReader.readDigested(anyList(), any(), any(), anyInt())).thenReturn(List.of(
+            digestOf("topic1", "key1", "{\"val\":1}")
+        ));
+        when(llmClient.generateWithMeta(anyString(), anyString())).thenReturn(new LlmResponse(
+            "{\"flowchart\":\"flowchart TD\\nA-->B\",\"anomalies\":[{\"id\":\"ANO-001\"", List.of()));
+
+        ProcessMiningResult result = llmAnalysisService.analyzeSnapshot(
+            List.of("topic1"), SnapshotConfig.latestN(10), null);
+
+        assertNotNull(result.error());
+        assertTrue(result.error().contains("claude.max-tokens"), result.error());
+    }
+
+    /**
+     * The client is resolved per call, so a provider swapped through POST /api/config takes effect
+     * on the next analysis. It used to be captured in the constructor, which left every analysis on
+     * the provider configured at startup while the settings page reported the new one reachable.
+     */
+    @Test
+    void testClientIsResolvedPerCall() {
+        LlmClient first = mock(LlmClient.class);
+        LlmClient second = mock(LlmClient.class);
+        List<LlmClient> current = new ArrayList<>(List.of(first));
+        String answer = "{\"flowchart\":\"x\",\"comments\":\"c\",\"hypotheses\":[],"
+            + "\"blindSpots\":[],\"anomalies\":[]}";
+        when(first.generateWithMeta(anyString(), anyString())).thenReturn(new LlmResponse(answer, List.of()));
+        when(second.generateWithMeta(anyString(), anyString())).thenReturn(new LlmResponse(answer, List.of()));
+        when(snapshotReader.readDigested(anyList(), any(), any(), anyInt())).thenReturn(List.of(
+            digestOf("topic1", "key1", "{\"val\":1}")
+        ));
+
+        LlmAnalysisService service = new LlmAnalysisService(snapshotReader, claudeConfig,
+            new ProcessMiningConfig(), DIGEST_SERVICE, () -> current.get(0));
+
+        service.analyzeSnapshot(List.of("topic1"), SnapshotConfig.latestN(10), null);
+        current.set(0, second);
+        service.analyzeSnapshot(List.of("topic1"), SnapshotConfig.latestN(10), null);
+
+        verify(first, times(1)).generateWithMeta(anyString(), anyString());
+        verify(second, times(1)).generateWithMeta(anyString(), anyString());
     }
 }

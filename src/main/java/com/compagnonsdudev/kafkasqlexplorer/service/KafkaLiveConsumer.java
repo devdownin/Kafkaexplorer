@@ -274,6 +274,16 @@ public class KafkaLiveConsumer {
             var result = llmAnalysisService.analyzeLiveDigests(
                 window, session.fieldMapping, session.lastFlowchart, session.auditFocus);
 
+            // A failed analysis is not a quiet window. The service reports failure in the result
+            // rather than by throwing, so without this branch the reason travelled as
+            // ANALYSIS_COMMENTS and the page displayed "LLM call failed: …" as analysis prose,
+            // while ANALYSIS_ERROR — the event the page has a channel for — was never emitted.
+            if (result.error() != null && !result.error().isBlank()) {
+                log.warn("Live analysis failed for session {}: {}", sessionId, result.error());
+                sseEmitterManager.send(sessionId, "ANALYSIS_ERROR", Map.of("message", result.error()));
+                return;
+            }
+
             if (result.flowchart() != null && !result.flowchart().isBlank()
                     && !"NO_CHANGE".equals(result.flowchart())) {
                 session.lastFlowchart = result.flowchart();

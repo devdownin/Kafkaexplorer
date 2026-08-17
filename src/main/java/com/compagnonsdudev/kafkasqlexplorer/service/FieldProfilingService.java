@@ -19,6 +19,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 
 @Service
 public class FieldProfilingService {
@@ -29,26 +30,28 @@ public class FieldProfilingService {
     private final ClaudeConfig claudeConfig;
     private final ProcessMiningConfig processMiningConfig;
     private final PayloadDigestService payloadDigestService;
-    private final LlmClient llmClient;
+    /** Resolved per call so a runtime provider/key change is honoured — see {@link LlmClientProvider}. */
+    private final Supplier<LlmClient> llmClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @org.springframework.beans.factory.annotation.Autowired
     public FieldProfilingService(KafkaSnapshotReader snapshotReader, ClaudeConfig claudeConfig,
                                   ProcessMiningConfig processMiningConfig,
-                                  PayloadDigestService payloadDigestService) {
+                                  PayloadDigestService payloadDigestService,
+                                  LlmClientProvider llmClientProvider) {
         this(snapshotReader, claudeConfig, processMiningConfig, payloadDigestService,
-            LlmClientFactory.create(claudeConfig));
+            llmClientProvider::get);
     }
 
     /** Test seam: defaults the ingestion tuning so unit tests only have to supply an LlmClient. */
     public FieldProfilingService(KafkaSnapshotReader snapshotReader, ClaudeConfig claudeConfig, LlmClient llmClient) {
         this(snapshotReader, claudeConfig, new ProcessMiningConfig(),
-            new PayloadDigestService(new ProcessMiningConfig()), llmClient);
+            new PayloadDigestService(new ProcessMiningConfig()), () -> llmClient);
     }
 
     public FieldProfilingService(KafkaSnapshotReader snapshotReader, ClaudeConfig claudeConfig,
                                   ProcessMiningConfig processMiningConfig,
-                                  PayloadDigestService payloadDigestService, LlmClient llmClient) {
+                                  PayloadDigestService payloadDigestService, Supplier<LlmClient> llmClient) {
         this.snapshotReader = snapshotReader;
         this.claudeConfig = claudeConfig;
         this.processMiningConfig = processMiningConfig;
@@ -93,7 +96,7 @@ public class FieldProfilingService {
                 Return ONLY valid JSON. NO markdown, NO prose outside JSON.
                 If confidence is low, prefer empty arrays and warnings instead of free-form explanations.
                 """;
-            rawResponse = llmClient.generate(systemPrompt, userPrompt);
+            rawResponse = llmClient.get().generate(systemPrompt, userPrompt);
         } catch (Exception e) {
             log.error("LLM API call failed during profiling: {}", e.getMessage(), e);
             return new FieldProfileResult(

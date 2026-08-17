@@ -488,3 +488,59 @@ export interface AuditReport {
   flowAudits: FlowAudit[];
   globalStats: Record<string, unknown>;
 }
+
+/**
+ * Une anomalie relevée par l'analyse Process Mining.
+ *
+ * Les unions de littéraux sont plus étroites que le `String` du record Java : le serveur n'émet que
+ * ces valeurs et l'UI branche dessus (icônes, couleurs de sévérité). Élargir à `string` pour
+ * satisfaire le script supprimerait de la sûreté de type au nom d'un contrôle qui existe pour en
+ * apporter.
+ *
+ * @java AnomalyReport
+ */
+export interface AnomalyReport {
+  id: string;
+  topic: string;
+  type: 'SEQUENCE' | 'TEMPORAL' | 'STRUCTURAL' | 'CARDINALITY' | 'BUSINESS';
+  severity: 'CRITICAL' | 'MAJOR' | 'MINOR';
+  fields: string[];
+  description: string;
+  probableCause: string;
+  ksqlSuggestion: string;
+}
+
+/**
+ * Un passage cité par SpectraLLM à l'appui d'une analyse (RAG). Vide chez les autres fournisseurs.
+ *
+ * @java RagSource
+ */
+export interface RagSource {
+  text: string;
+  sourceFile: string | null;
+  score: number | null;
+}
+
+/**
+ * `POST /api/process-mining/snapshot` — le résultat d'une analyse Process Mining.
+ *
+ * La forme vivait au point d'appel, dans `ProcessMining.tsx` : exactement le motif décrit en tête
+ * de ce fichier, et le premier à dériver quand `error` a été ajouté au record Java pour distinguer
+ * un échec d'un résultat. Elle est ici pour que le script le vérifie.
+ *
+ * `error` est ce qui sépare les deux : un modèle injoignable répond 200 — ce n'est pas une requête
+ * malformée — et la raison voyageait dans `comments`, où la page l'affichait comme un commentaire
+ * d'analyse sous un diagramme vide. Quand ce champ est posé, rien d'autre dans l'objet n'est un
+ * constat.
+ *
+ * @java ProcessMiningResult
+ */
+export interface ProcessMiningResult {
+  flowchart: string | null;
+  comments: string | null;
+  hypotheses: string[];
+  blindSpots: string[];
+  anomalies: AnomalyReport[];
+  ragSources: RagSource[];
+  error: string | null;
+}

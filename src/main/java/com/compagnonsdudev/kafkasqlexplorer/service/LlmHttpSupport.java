@@ -8,8 +8,10 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.net.http.HttpClient;
+import java.net.http.HttpConnectTimeoutException;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 
 /**
@@ -29,14 +31,24 @@ final class LlmHttpSupport {
     private static final Logger log = LoggerFactory.getLogger(LlmHttpSupport.class);
     private static final int MAX_ATTEMPTS = 3;
     private static final long BASE_BACKOFF_MS = 500L;
+    /** Upper bound on the TCP/TLS handshake — see {@link #newClient}. */
+    private static final int MAX_CONNECT_SECONDS = 10;
 
     private LlmHttpSupport() {
     }
 
-    /** Builds a shared client with the configured connect timeout. */
+    /**
+     * Builds a shared client. The connect timeout is deliberately <em>not</em> the request timeout:
+     * that one is sized for how long a model may take to generate (60s by default), and applying it
+     * to the TCP/TLS handshake means a wrong port or an endpoint that is simply down takes a full
+     * minute to say so — three times over, since a connect failure is retried. Opening a socket to a
+     * local Ollama or a hosted API is a sub-second operation; anything past {@value #MAX_CONNECT_SECONDS}s
+     * is an unreachable endpoint, not a slow one.
+     */
     static HttpClient newClient(ClaudeConfig config) {
+        long connectSeconds = Math.max(1, Math.min(MAX_CONNECT_SECONDS, config.getRequestTimeoutSeconds()));
         return HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(config.getRequestTimeoutSeconds()))
+            .connectTimeout(Duration.ofSeconds(connectSeconds))
             .build();
     }
 
@@ -70,8 +82,22 @@ final class LlmHttpSupport {
                 lastError = new RuntimeException(provider + " call failed with status " + status
                     + ": " + truncate(response.body()));
                 log.warn("{} transient failure (status {}), attempt {}/{}", provider, status, attempt, MAX_ATTEMPTS);
+            } catch (HttpConnectTimeoutException e) {
+                // Nothing was generated — the endpoint did not answer at all. Worth another try.
+                lastError = new RuntimeException(provider + " connection timed out after "
+                    + timeoutSeconds(request) + "s: " + e.getMessage(), e);
+                log.warn("{} connect timeout, attempt {}/{}", provider, attempt, MAX_ATTEMPTS);
+            } catch (HttpTimeoutException e) {
+                // The request timed out *while generating*. Retrying replays the whole prompt on a
+                // model that has already shown it needs longer than the budget: it triples the load
+                // and the caller's wait for the same outcome, and on a live session the window it
+                // was analysing is stale by then. Fail once, and name the setting that fixes it.
+                throw new RuntimeException(provider + " did not answer within "
+                    + timeoutSeconds(request) + "s. The model is slower than the budget — raise "
+                    + "claude.request-timeout-seconds, lower claude.max-tokens, or use a smaller "
+                    + "model.", e);
             } catch (IOException e) {
-                // Includes HttpTimeoutException and connection resets — transient.
+                // Connection resets and the like — transient.
                 lastError = new RuntimeException(provider + " call failed: " + e.getMessage(), e);
                 log.warn("{} transient I/O failure, attempt {}/{}: {}", provider, attempt, MAX_ATTEMPTS, e.getMessage());
             } catch (InterruptedException e) {
@@ -84,6 +110,10 @@ final class LlmHttpSupport {
             }
         }
         throw lastError != null ? lastError : new RuntimeException(provider + " call failed");
+    }
+
+    private static String timeoutSeconds(HttpRequest request) {
+        return request.timeout().map(d -> String.valueOf(d.toSeconds())).orElse("?");
     }
 
     private static void sleep(long millis) {

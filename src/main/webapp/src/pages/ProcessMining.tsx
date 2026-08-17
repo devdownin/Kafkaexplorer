@@ -8,31 +8,21 @@ import SchemaValidationPanel, {
   FieldProfileResult,
 } from '../components/processmining/SchemaValidationPanel';
 import MermaidRenderer from '../components/processmining/MermaidRenderer';
-import AnomalyTable, { AnomalyReport } from '../components/processmining/AnomalyTable';
+import AnomalyTable from '../components/processmining/AnomalyTable';
 import LiveStatusBar, { LiveWindowStats } from '../components/processmining/LiveStatusBar';
 import AnomalyFeed, { LiveAnomaly } from '../components/processmining/AnomalyFeed';
 import { PageHeader, Button, Field, Textarea } from '../components/ui';
 import { clearDraft, readDraft, useDraftConflict, usePersistentState, writeDraft } from '../draftStore';
 import { describeResume, resumableStep } from './processMiningDraft';
 import type { AnalysisMode, Step } from './processMiningDraft';
-import type { FieldMappingValidation } from '../api/types';
+import type {
+  AnomalyReport,
+  FieldMappingValidation,
+  ProcessMiningResult,
+  RagSource,
+} from '../api/types';
 
 // ---- Types ----
-
-interface RagSource {
-  text: string;
-  sourceFile: string | null;
-  score: number | null;
-}
-
-interface ProcessMiningResult {
-  flowchart: string | null;
-  comments: string | null;
-  hypotheses: string[];
-  blindSpots: string[];
-  anomalies: AnomalyReport[];
-  ragSources?: RagSource[];
-}
 
 interface RuntimeLlmInfo {
   llmProvider?: string;
@@ -91,10 +81,24 @@ const STEPS: { key: Step; label: string; icon: string }[] = [
 
 const stepIndex = (s: Step) => STEPS.findIndex(x => x.key === s);
 
+/*
+ * axios has no default timeout, so a server that never answers left the spinner turning for ever —
+ * the same defect the SQL editor was fixed for. Both calls drive a model, so the ceilings are
+ * generous rather than tight: what matters is that they exist and that hitting one says so.
+ */
+const PROFILING_TIMEOUT_MS = 5 * 60_000;
+const SNAPSHOT_TIMEOUT_MS = 10 * 60_000;
+// A one-word health check: if this does not answer, nothing else on the page will either.
+const LLM_TEST_TIMEOUT_MS = 90_000;
+
 // Prefer the backend's error payload over axios' generic
 // "Request failed with status code 500" message.
 const errorMessage = (err: unknown, fallback: string): string => {
   if (axios.isAxiosError(err)) {
+    if (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT') {
+      return 'The server did not answer in time. The model may still be working — check the '
+        + 'backend logs, then retry with fewer topics, a smaller sample, or a faster model.';
+    }
     const data: unknown = err.response?.data;
     if (typeof data === 'string' && data) return data;
     if (data && typeof data === 'object') {
@@ -182,7 +186,23 @@ const ProcessMining: React.FC = () => {
   const [selectedAuditIds, setSelectedAuditIds] = usePersistentState<string[]>(DRAFT.audits, []);
   const [customAuditPrompt, setCustomAuditPrompt] = usePersistentState(DRAFT.prompt, '');
   const [resumeNotice, setResumeNotice] = useState<string | null>(restored.notice);
+  const [llmTest, setLlmTest] = useState<{ ok: boolean; message: string } | null>(null);
+  const [llmTesting, setLlmTesting] = useState(false);
   const draftConflict = useDraftConflict(DRAFT_KEYS);
+
+  const testLlmConnection = async () => {
+    setLlmTesting(true);
+    setLlmTest(null);
+    try {
+      const res = await axios.post<{ ok: boolean; message: string }>(
+        '/api/config/test-llm', {}, { timeout: LLM_TEST_TIMEOUT_MS });
+      setLlmTest({ ok: !!res.data.ok, message: res.data.message ?? '' });
+    } catch (err: unknown) {
+      setLlmTest({ ok: false, message: errorMessage(err, 'The LLM could not be reached.') });
+    } finally {
+      setLlmTesting(false);
+    }
+  };
 
   // Live mode state
   const [liveConnected, setLiveConnected] = useState(false);
@@ -193,13 +213,25 @@ const ProcessMining: React.FC = () => {
   const [liveLastUpdate, setLiveLastUpdate] = useState<number | null>(null);
   const [liveComments, setLiveComments] = useState<string | null>(null);
   const [liveSources, setLiveSources] = useState<RagSource[]>([]);
+  // The last window whose analysis failed. Kept beside the results rather than replacing them:
+  // earlier windows produced a real flowchart, and erasing it would lose more than it explains.
+  const [liveError, setLiveError] = useState<string | null>(null);
+  const [liveStarted, setLiveStarted] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const liveSessionIdRef = useRef<string | null>(null);
 
-  // Cleanup on unmount
+  // Cleanup on unmount. Navigating away has to end the session too, not just drop the stream:
+  // routes unmount this page, and a live session left running keeps a consumer and a model busy.
   useEffect(() => {
     return () => {
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
+      const id = liveSessionIdRef.current;
+      liveSessionIdRef.current = null;
+      if (id) {
+        void axios.delete(`/api/process-mining/live/${encodeURIComponent(id)}`).catch(() => {});
       }
     };
   }, []);
@@ -267,7 +299,16 @@ const ProcessMining: React.FC = () => {
       const res = await axios.post<FieldProfileResult>('/api/process-mining/profiling/start', {
         topics,
         depth: snapshotDepth,
-      });
+      }, { timeout: PROFILING_TIMEOUT_MS });
+      // Profiling reports its failures as warnings on an otherwise empty result, so a model that
+      // could not be reached landed the operator on a validation step with nothing to validate.
+      // No topic profiled at all is a failure, not a schema with no fields.
+      if ((res.data.topics?.length ?? 0) === 0) {
+        setError(res.data.warnings?.join(' · ')
+          || 'Profiling returned no topics. Check that the topics hold messages and that the LLM is reachable.');
+        setStep('SELECT');
+        return;
+      }
       setProfileResult(res.data);
       setStep('VALIDATE');
     } catch (err: unknown) {
@@ -310,7 +351,14 @@ const ProcessMining: React.FC = () => {
           fieldMappingId,
           auditPromptIds: selectedAuditIds,
           customAuditPrompt: customAuditPrompt.trim() || null,
-        });
+        }, { timeout: SNAPSHOT_TIMEOUT_MS });
+        // A failure answers 200 with `error` set. Staying on this step is the point: the operator
+        // is one click from re-running with a different model or a narrower selection, where
+        // landing on an empty Results page offers nothing to act on.
+        if (res.data.error) {
+          setError(res.data.error);
+          return;
+        }
         setSnapshotResult(res.data);
         setStep('RESULTS');
       } catch (err: unknown) {
@@ -339,13 +387,24 @@ const ProcessMining: React.FC = () => {
 
     const es = new EventSource(url);
     eventSourceRef.current = es;
+    setLiveStarted(true);
+    setLiveError(null);
 
     es.onopen = () => {
       setLiveConnected(true);
     };
 
-    es.addEventListener('CONNECTED', () => {
+    es.addEventListener('CONNECTED', (e) => {
       setLiveConnected(true);
+      // Keep the server-assigned id: it is what lets Stop end the session server-side.
+      try {
+        const payload = JSON.parse(e.data);
+        if (payload && typeof payload.sessionId === 'string') {
+          liveSessionIdRef.current = payload.sessionId;
+        }
+      } catch {
+        // The stream is usable without it; Stop then falls back to closing the connection only.
+      }
     });
 
     es.addEventListener('HEARTBEAT', () => {
@@ -353,6 +412,9 @@ const ProcessMining: React.FC = () => {
     });
 
     es.addEventListener('FLOWCHART_UPDATE', (e) => {
+      // A window that analysed successfully clears the previous window's failure — otherwise a
+      // one-off timeout would sit on screen contradicting a diagram that has since been refreshed.
+      setLiveError(null);
       try {
         const chart = JSON.parse(e.data);
         setLiveFlowchart(typeof chart === 'string' ? chart : JSON.stringify(chart));
@@ -362,6 +424,7 @@ const ProcessMining: React.FC = () => {
     });
 
     es.addEventListener('ANALYSIS_COMMENTS', (e) => {
+      setLiveError(null);
       try {
         const comments = JSON.parse(e.data);
         setLiveComments(typeof comments === 'string' ? comments : JSON.stringify(comments));
@@ -408,17 +471,69 @@ const ProcessMining: React.FC = () => {
       }
     });
 
+    /*
+     * The server has always emitted this and nothing listened for it, so a window whose analysis
+     * failed left the page looking healthy — connected, ingestion counters ticking — with a
+     * flowchart that simply never arrived and no reason given anywhere.
+     */
+    es.addEventListener('ANALYSIS_ERROR', (e) => {
+      let message = 'The analysis of the last window failed.';
+      try {
+        const payload = JSON.parse(e.data);
+        if (typeof payload === 'string') message = payload;
+        else if (payload && typeof payload.message === 'string') message = payload.message;
+      } catch {
+        if (e.data) message = e.data;
+      }
+      setLiveError(message);
+    });
+
+    /*
+     * EventSource reconnects on its own, and this endpoint mints a *new* session — a new Kafka
+     * consumer, a new group member, a flowchart with no history — on every GET. So the stream
+     * ending (the server finishing the session, or the 5-minute emitter timeout) started a fresh
+     * session behind the operator's back, and a server that stays down became an unbounded loop of
+     * them. Closing here makes the stream end visible and puts resuming under the operator's
+     * control, which is also the only way "Live monitoring" can be said to have stopped.
+     */
     es.onerror = () => {
+      es.close();
+      if (eventSourceRef.current === es) {
+        eventSourceRef.current = null;
+      }
       setLiveConnected(false);
     };
   }, [selectedTopics, fieldMappingId, selectedAuditIds, customAuditPrompt]);
 
+  /**
+   * Closing the stream is what the browser can do; telling the server is what actually stops the
+   * work. Without the second half a Kafka consumer kept polling — and could still spend one more
+   * analysis on the model — until the next heartbeat noticed the emitter was gone.
+   */
   const stopLiveSession = () => {
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
     }
     setLiveConnected(false);
+    const id = liveSessionIdRef.current;
+    liveSessionIdRef.current = null;
+    if (id) {
+      // Best effort: the session also ends on its own once the emitter is gone.
+      void axios.delete(`/api/process-mining/live/${encodeURIComponent(id)}`).catch(() => {});
+    }
+  };
+
+  const resetLiveState = () => {
+    setLiveFlowchart(null);
+    setLiveAnomalies([]);
+    setLiveWindowSize(0);
+    setLiveStats(null);
+    setLiveLastUpdate(null);
+    setLiveComments(null);
+    setLiveSources([]);
+    setLiveError(null);
+    setLiveStarted(false);
   };
 
   const resetAll = () => {
@@ -434,12 +549,7 @@ const ProcessMining: React.FC = () => {
     setProfileResult(null);
     setFieldMappingId(null);
     setSnapshotResult(null);
-    setLiveFlowchart(null);
-    setLiveAnomalies([]);
-    setLiveWindowSize(0);
-    setLiveLastUpdate(null);
-    setLiveComments(null);
-    setLiveSources([]);
+    resetLiveState();
     setSelectedAuditIds([]);
     setCustomAuditPrompt('');
     setError(null);
@@ -490,32 +600,48 @@ const ProcessMining: React.FC = () => {
         </div>
       )}
 
+      {/*
+        Every step of this page costs a model call, so what the banner owes the operator is the
+        configuration it will actually use and a way to check it answers — not an adjective. It
+        used to read "Local lightweight open-source inference is active", concluded from the base
+        URL containing "localhost": a claim about a running model, asserted without ever asking
+        one, on the page whose failures are hardest to attribute. Reachability is now checked on
+        demand, against the same client the analyses use.
+      */}
       {llmInfo && (
-        <div className={`rounded-xl border p-4 ${
-          llmInfo.llmLocalDeployment
-            ? 'border-success/20 bg-success/5'
-            : 'border-outline-variant/60 bg-surface-container'
-        }`}>
+        <div className="rounded-xl border border-outline-variant/60 bg-surface-container p-4">
           <div className="flex items-start gap-3">
-            <span className={`material-symbols-outlined text-lg ${
-              llmInfo.llmLocalDeployment ? 'text-success' : 'text-primary'
-            }`}>
-              smart_toy
-            </span>
-            <div>
+            <span aria-hidden="true" className="material-symbols-outlined text-lg text-primary">smart_toy</span>
+            <div className="min-w-0 flex-1">
               <p className="text-sm font-semibold text-on-surface">
-                LLM Runtime: {llmInfo.llmProviderLabel ?? llmInfo.llmProvider ?? 'Unknown'}
+                LLM runtime: {llmInfo.llmProviderLabel ?? llmInfo.llmProvider ?? 'Unknown'}
                 {llmInfo.llmModel ? ` · ${llmInfo.llmModel}` : ''}
               </p>
               <p className="text-xs text-on-surface-variant mt-1">
+                Profiling and analysis run against this endpoint.
                 {llmInfo.llmLocalDeployment
-                  ? 'Local lightweight open-source inference is active for process mining.'
-                  : 'This page also supports lightweight open-source models through Ollama or any OpenAI-compatible endpoint.'}
+                  ? ' It is a loopback address, so no message content leaves this host.'
+                  : ' Message digests are sent to it — never raw payloads.'}
               </p>
               {llmInfo.llmBaseUrl && (
-                <p className="text-[11px] font-mono text-on-surface-variant mt-2">{llmInfo.llmBaseUrl}</p>
+                <p className="text-[11px] font-mono text-on-surface-variant mt-2 break-all">{llmInfo.llmBaseUrl}</p>
+              )}
+              {llmTest && (
+                <p className={`text-xs mt-2 flex items-start gap-1.5 ${llmTest.ok ? 'text-success' : 'text-error'}`}>
+                  <span aria-hidden="true" className="material-symbols-outlined text-sm flex-shrink-0">
+                    {llmTest.ok ? 'check_circle' : 'error'}
+                  </span>
+                  <span className="break-words">{llmTest.message}</span>
+                </p>
               )}
             </div>
+            <Button
+              variant="outline" size="sm" icon="network_check"
+              loading={llmTesting}
+              onClick={testLlmConnection}
+            >
+              Test
+            </Button>
           </div>
         </div>
       )}
@@ -724,24 +850,68 @@ const ProcessMining: React.FC = () => {
           <div className="space-y-6">
             {/* Live status bar (only in live mode) */}
             {analysisMode === 'LIVE' && (
-              <div className="flex items-center gap-3">
-                <div className="flex-1">
-                  <LiveStatusBar
-                    connected={liveConnected}
-                    windowSize={liveWindowSize}
-                    stats={liveStats}
-                    lastUpdate={liveLastUpdate}
-                  />
+              <>
+                <div className="flex items-center gap-3">
+                  <div className="flex-1">
+                    <LiveStatusBar
+                      connected={liveConnected}
+                      windowSize={liveWindowSize}
+                      stats={liveStats}
+                      lastUpdate={liveLastUpdate}
+                    />
+                  </div>
+                  {liveConnected ? (
+                    <button
+                      onClick={stopLiveSession}
+                      className="flex items-center gap-1.5 px-3 py-2 text-xs text-error border border-error/30 hover:bg-error/10 rounded-lg transition-colors"
+                    >
+                      <span aria-hidden="true" className="material-symbols-outlined text-sm">stop_circle</span>
+                      Stop
+                    </button>
+                  ) : (
+                    <button
+                      onClick={startLiveSession}
+                      className="flex items-center gap-1.5 px-3 py-2 text-xs text-primary border border-primary/30 hover:bg-primary/10 rounded-lg transition-colors"
+                    >
+                      <span aria-hidden="true" className="material-symbols-outlined text-sm">play_arrow</span>
+                      Resume
+                    </button>
+                  )}
                 </div>
-                <button
-                  onClick={stopLiveSession}
-                  disabled={!liveConnected}
-                  className="flex items-center gap-1.5 px-3 py-2 text-xs text-error border border-error/30 hover:bg-error/10 rounded-lg transition-colors disabled:opacity-40"
-                >
-                  <span className="material-symbols-outlined text-sm">stop_circle</span>
-                  Stop
-                </button>
-              </div>
+
+                {/* The stream no longer restarts itself, so its ending has to be said out loud —
+                    the counters simply stopping is not a message. */}
+                {liveStarted && !liveConnected && (
+                  <div className="bg-surface-container border border-outline-variant rounded-xl p-3 flex items-start gap-3">
+                    <span aria-hidden="true" className="material-symbols-outlined text-on-surface-variant text-lg flex-shrink-0">pause_circle</span>
+                    <p className="text-xs text-on-surface-variant">
+                      Live monitoring is stopped — what is shown below is the last window analysed.
+                      Resume starts a new session, which begins reading from the end of each topic.
+                    </p>
+                  </div>
+                )}
+
+                {liveError && (
+                  <div className="bg-error/10 border border-error/30 rounded-xl p-3 flex items-start gap-3">
+                    <span aria-hidden="true" className="material-symbols-outlined text-error text-lg flex-shrink-0">error</span>
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-error">Last window could not be analysed</p>
+                      <p className="text-xs text-error/90 mt-0.5 break-words">{liveError}</p>
+                      <p className="text-[11px] text-on-surface-variant mt-1">
+                        Ingestion continues; the next window will be analysed as usual.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      aria-label="Dismiss"
+                      onClick={() => setLiveError(null)}
+                      className="ml-auto text-error hover:text-error/80 flex-shrink-0"
+                    >
+                      <span aria-hidden="true" className="material-symbols-outlined text-base">close</span>
+                    </button>
+                  </div>
+                )}
+              </>
             )}
 
             {/* Flowchart */}

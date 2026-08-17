@@ -7,6 +7,7 @@ import com.compagnonsdudev.kafkasqlexplorer.config.KafkaConfig;
 import com.compagnonsdudev.kafkasqlexplorer.service.AuditService;
 import com.compagnonsdudev.kafkasqlexplorer.service.FlinkSqlService;
 import com.compagnonsdudev.kafkasqlexplorer.service.KafkaAdminService;
+import com.compagnonsdudev.kafkasqlexplorer.service.LlmClientProvider;
 import com.compagnonsdudev.kafkasqlexplorer.service.SseEmitterManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -55,7 +56,7 @@ class ConfigControllerTest {
 
         mockMvc = MockMvcBuilders
             .standaloneSetup(new ConfigController(kafkaConfig, kafkaAdminService, new ClaudeConfig(),
-                auditService, flinkSqlService, sseEmitterManager))
+                auditService, flinkSqlService, sseEmitterManager, new LlmClientProvider(new ClaudeConfig())))
             .build();
     }
 
