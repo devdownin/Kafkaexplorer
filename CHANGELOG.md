@@ -29,6 +29,12 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   since neither number is in a payload. Bounded to 64 partitions and an 8 s budget, and a partition
   whose record could not be read is reported as unknown, never as zero: zero means "caught up", and
   a gauge saying so while nothing could be read silences the alert it exists to raise.
+- **A Metrics screenshot, and the harness that makes it reproducible.** `docs/img/metrics.png` is
+  generated like the other six, over fixtures shaped exactly as `MetricSuggestionService` produces
+  them. The capture now pins the browser clock to the fixtures' instant: the README claimed a
+  fixed instant was enough for a re-run to produce the same image, but every relative reading
+  compared it to the real clock, so the screens aged daily and the Metrics shot grew an amber
+  "62-day-old audit" banner that says nothing about the product.
 - **Lineage and Process Mining feed the KPI suggestions too.** A running `INSERT INTO` job
   *declares* a pipeline edge, so it yields a gap KPI on a pair nobody had to infer — a job reading
   several sources is refused, with the reason stated, since two inputs against one output have no
@@ -108,6 +114,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A template metric took the whole Metrics page down.** Its `sql` is `null` by construction —
+  the parameters are the query — and `MetricCard` called `metric.sql.replace(…)` on it, so the
+  page rendered its error boundary instead of the metric. The type said `string`, which it had
+  never been. Found by the screenshot harness, pinned by the page's first component test.
 - **Three dead references in `CLAUDE.md`.** `AUDIT.md` and `CONSUMER-GROUPS-AUDIT.md` were
   described as documents to read before refactoring, and `deploy/kraft-platform/` was cited in a
   rule about `container_name`; all three had been deleted from the tree, two of them months

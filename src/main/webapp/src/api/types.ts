@@ -276,7 +276,8 @@ export interface MetricConfig {
   id: string;
   name: string;
   type: string;
-  sql: string;
+  /** `null` sur une métrique de gabarit : elle n'a pas de SQL, ses paramètres tiennent lieu de requête. */
+  sql: string | null;
   description: string;
   warningThreshold: number | null;
   criticalThreshold: number | null;
