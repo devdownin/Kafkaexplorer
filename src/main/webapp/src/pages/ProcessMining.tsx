@@ -14,7 +14,7 @@ import AnomalyFeed, { LiveAnomaly } from '../components/processmining/AnomalyFee
 import { PageHeader, Button, Field, Textarea } from '../components/ui';
 import { clearDraft, readDraft, useDraftConflict, usePersistentState, writeDraft } from '../draftStore';
 import { describeResume, resumableStep } from './processMiningDraft';
-import { describeUsage } from './llmUsage';
+import { describeUsage, totalTokens } from './llmUsage';
 import type { AnalysisMode, Step } from './processMiningDraft';
 import type {
   AnomalyReport,
@@ -112,6 +112,18 @@ const errorMessage = (err: unknown, fallback: string): string => {
   }
   return err instanceof Error ? err.message : fallback;
 };
+
+/**
+ * Ce qui fait qu'une anomalie est « la même » d'une fenêtre à l'autre.
+ *
+ * L'`id` seul ne suffit pas : il est requis par le schéma, mais tous les chemins non contraints
+ * existent encore (SpectraLLM, passerelle OpenAI quelconque, `structured-output: OFF`), et un modèle
+ * qui l'omet donnait `undefined === undefined` — donc *toutes* les anomalies se confondaient, et le
+ * flux live se réduisait à une seule ligne éternellement « RECURRENT ». À défaut d'id, le topic, le
+ * type et la description décrivent l'observation aussi bien.
+ */
+const anomalyKey = (a: AnomalyReport): string =>
+  a.id?.trim() || `${a.topic ?? ''}|${a.type ?? ''}|${a.description ?? ''}`;
 
 const StepIndicator: React.FC<{ current: Step }> = ({ current }) => (
   <div className="flex items-center gap-0 mb-8">
@@ -219,6 +231,13 @@ const ProcessMining: React.FC = () => {
   // earlier windows produced a real flowchart, and erasing it would lose more than it explains.
   const [liveError, setLiveError] = useState<string | null>(null);
   const [liveUsage, setLiveUsage] = useState<LlmUsage | null>(null);
+  /*
+   * Every window's cost, not just the last one. A live session calls the model on a timer, so what
+   * decides whether a configuration is affordable is the running total — the last window's 900
+   * tokens say nothing about the four hours the tab has been open. `totalTokens` already existed
+   * and was unit-tested; nothing had ever asked it a question.
+   */
+  const [liveUsageHistory, setLiveUsageHistory] = useState<LlmUsage[]>([]);
   const [liveStarted, setLiveStarted] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
   const liveSessionIdRef = useRef<string | null>(null);
@@ -285,6 +304,8 @@ const ProcessMining: React.FC = () => {
       }));
     return roles;
   }, [profileResult]);
+
+  const sessionTokens = useMemo(() => totalTokens(liveUsageHistory), [liveUsageHistory]);
 
   const missingRolesFor = (t: AuditTemplate): string[] =>
     (t.requiredRoles ?? []).filter(r => !availableRoles.has(r));
@@ -439,10 +460,11 @@ const ProcessMining: React.FC = () => {
     es.addEventListener('ANOMALY_DETECTED', (e) => {
       try {
         const anomaly: AnomalyReport = JSON.parse(e.data);
+        const key = anomalyKey(anomaly);
         setLiveAnomalies(prev => {
-          const existing = prev.find(a => a.id === anomaly.id);
+          const existing = prev.some(a => anomalyKey(a) === key);
           if (existing) {
-            return prev.map(a => a.id === anomaly.id
+            return prev.map(a => anomalyKey(a) === key
               ? { ...anomaly, status: 'RECURRENT' as const, detectedAt: Date.now() }
               : a
             );
@@ -495,7 +517,13 @@ const ProcessMining: React.FC = () => {
     // where an unaffordable configuration shows up first.
     es.addEventListener('ANALYSIS_USAGE', (e) => {
       try {
-        setLiveUsage(JSON.parse(e.data) as LlmUsage);
+        const usage = JSON.parse(e.data) as LlmUsage;
+        setLiveUsage(usage);
+        // Deliberately uncapped: a cap would make the running total cover the last N windows while
+        // presenting itself as the session's, which is the kind of quietly-wrong number this page
+        // exists to replace. One small object per window — a window every 30 s for eight hours is
+        // under a thousand of them.
+        setLiveUsageHistory(prev => [...prev, usage]);
       } catch {
         // A missing cost line is not worth breaking the stream over.
       }
@@ -547,6 +575,7 @@ const ProcessMining: React.FC = () => {
     setLiveSources([]);
     setLiveError(null);
     setLiveUsage(null);
+    setLiveUsageHistory([]);
     setLiveStarted(false);
   };
 
@@ -713,6 +742,7 @@ const ProcessMining: React.FC = () => {
             result={profileResult}
             onValidate={handleValidateSchema}
             loading={loading}
+            providerLabel={llmInfo?.llmProviderLabel ?? llmInfo?.llmProvider}
           />
         )}
 
@@ -936,12 +966,29 @@ const ProcessMining: React.FC = () => {
               const usage = analysisMode === 'LIVE' ? liveUsage : snapshotResult?.usage ?? null;
               if (!usage) return null;
               return (
-                <div className="flex items-center gap-2 text-xs text-on-surface-variant">
-                  <span aria-hidden="true" className="material-symbols-outlined text-sm">speed</span>
-                  <span>
-                    {analysisMode === 'LIVE' ? 'Last window: ' : 'This analysis: '}
-                    {describeUsage(usage)}
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-on-surface-variant">
+                  <span className="flex items-center gap-2">
+                    <span aria-hidden="true" className="material-symbols-outlined text-sm">speed</span>
+                    <span>
+                      {analysisMode === 'LIVE' ? 'Last window: ' : 'This analysis: '}
+                      {describeUsage(usage)}
+                    </span>
                   </span>
+                  {/* Ce que la session a coûté depuis le début, et non la seule dernière fenêtre :
+                      c'est le cumul qui dit si la configuration est tenable sur la durée. Le total
+                      est absent — jamais partiel — dès qu'un fournisseur n'a pas rapporté ses
+                      comptes, une mesure manquante n'étant pas une mesure nulle. */}
+                  {analysisMode === 'LIVE' && liveUsageHistory.length > 1 && (
+                    <span className="flex items-center gap-2">
+                      <span aria-hidden="true" className="material-symbols-outlined text-sm">functions</span>
+                      <span>
+                        {liveUsageHistory.length} windows ·{' '}
+                        {sessionTokens == null
+                          ? 'tokens not reported'
+                          : `${sessionTokens.toLocaleString()} tokens total`}
+                      </span>
+                    </span>
+                  )}
                 </div>
               );
             })()}

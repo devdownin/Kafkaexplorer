@@ -287,6 +287,88 @@ class LlmAnalysisServiceTest {
     }
 
     /**
+     * A model that volunteers an extra key must not cost the whole analysis.
+     *
+     * <p>The parser used a bare {@code new ObjectMapper()}, which keeps Jackson's default
+     * {@code FAIL_ON_UNKNOWN_PROPERTIES}: one {@code summary} beside {@code comments}, or one
+     * {@code confidence} on an anomaly, and a complete answer was thrown away — reported with a hint
+     * naming {@code claude.max-tokens}, which would not have fixed it. Every unconstrained path
+     * lands here: SpectraLLM, an arbitrary OpenAI-compatible gateway, {@code structured-output: OFF},
+     * and any endpoint that refused a schema once.
+     */
+    @Test
+    void testExtraKeysDoNotFailTheAnalysis() {
+        when(snapshotReader.readDigested(anyList(), any(), any(), anyInt())).thenReturn(List.of(
+            digestOf("topic1", "key1", "{\"val\":1}")
+        ));
+        when(llmClient.generateWithMeta(anyString(), anyString(), any())).thenReturn(new LlmResponse("""
+            {
+              "flowchart": "flowchart TD\\nA-->B",
+              "comments": "Analysis",
+              "summary": "an extra key the model volunteered",
+              "hypotheses": [],
+              "blindSpots": [],
+              "anomalies": [
+                {"id": "ANO-001", "topic": "topic1", "type": "SEQUENCE", "severity": "MINOR",
+                 "fields": [], "description": "d", "probableCause": "c", "ksqlSuggestion": "s",
+                 "confidence": 0.8}
+              ]
+            }
+            """, List.of()));
+
+        ProcessMiningResult result = llmAnalysisService.analyzeSnapshot(
+            List.of("topic1"), SnapshotConfig.latestN(10), null);
+
+        assertNull(result.error(), () -> "unexpected failure: " + result.error());
+        assertEquals("flowchart TD\nA-->B", result.flowchart());
+        assertEquals(1, result.anomalies().size());
+    }
+
+    /**
+     * The default model ({@code qwen3:4b}) reasons before answering. Its trace quotes the JSON it is
+     * about to write, so the first brace in the answer sits inside the deliberation — and the
+     * balanced scan used to return a fragment of it, which parsed cleanly into a flowchart the model
+     * never proposed. Being silently wrong is worse than failing.
+     */
+    @Test
+    void testReasoningTraceIsNotMistakenForTheAnswer() {
+        when(snapshotReader.readDigested(anyList(), any(), any(), anyInt())).thenReturn(List.of(
+            digestOf("topic1", "key1", "{\"val\":1}")
+        ));
+        when(llmClient.generateWithMeta(anyString(), anyString(), any())).thenReturn(new LlmResponse("""
+            <think>
+            I should answer with {"flowchart": "TODO"} once I have worked out the flow.
+            </think>
+            {"flowchart": "flowchart TD\\nA-->B", "comments": "real", "hypotheses": [],
+             "blindSpots": [], "anomalies": []}
+            """, List.of()));
+
+        ProcessMiningResult result = llmAnalysisService.analyzeSnapshot(
+            List.of("topic1"), SnapshotConfig.latestN(10), null);
+
+        assertNull(result.error(), () -> "unexpected failure: " + result.error());
+        assertEquals("flowchart TD\nA-->B", result.flowchart());
+        assertEquals("real", result.comments());
+    }
+
+    /** A model still thinking when it hit the cap produced no answer — say that, not "bad JSON". */
+    @Test
+    void testAnswerThatIsOnlyAReasoningTraceNamesTheOutputCap() {
+        when(snapshotReader.readDigested(anyList(), any(), any(), anyInt())).thenReturn(List.of(
+            digestOf("topic1", "key1", "{\"val\":1}")
+        ));
+        when(llmClient.generateWithMeta(anyString(), anyString(), any())).thenReturn(new LlmResponse(
+            "<think>Let me consider each topic in turn. First {topic1}, which seems", List.of()));
+
+        ProcessMiningResult result = llmAnalysisService.analyzeSnapshot(
+            List.of("topic1"), SnapshotConfig.latestN(10), null);
+
+        assertNotNull(result.error());
+        assertTrue(result.error().contains("claude.max-tokens"), result.error());
+        assertTrue(result.error().contains("reasoning"), result.error());
+    }
+
+    /**
      * The client is resolved per call, so a provider swapped through POST /api/config takes effect
      * on the next analysis. It used to be captured in the constructor, which left every analysis on
      * the provider configured at startup while the settings page reported the new one reachable.

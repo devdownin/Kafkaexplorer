@@ -2,7 +2,9 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.compagnonsdudev.kafkasqlexplorer.service;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.compagnonsdudev.kafkasqlexplorer.config.ClaudeConfig;
 import com.compagnonsdudev.kafkasqlexplorer.config.ProcessMiningConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.FieldProfileResult;
@@ -37,7 +39,10 @@ public class FieldProfilingService {
     private final PayloadDigestService payloadDigestService;
     /** Resolved per call so a runtime provider/key change is honoured — see {@link LlmClientProvider}. */
     private final Supplier<LlmClient> llmClient;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    /** Lenient about unknown keys, for the reasons set out in {@link LlmAnalysisService}. */
+    private final ObjectMapper objectMapper = JsonMapper.builder()
+        .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+        .build();
 
     @org.springframework.beans.factory.annotation.Autowired
     public FieldProfilingService(KafkaSnapshotReader snapshotReader, ClaudeConfig claudeConfig,
@@ -142,11 +147,25 @@ quelques valeurs d'exemple. Les chemins sont en notation pointée ; réponds en 
 ($.chemin).
 """);
 
+        // The same arithmetic that had to be corrected in LlmAnalysisService.appendMessages, and for
+        // the same reason: a per-topic floor multiplied by the topic count is not a budget. At 4 000
+        // characters apiece, the "Select all" gesture on a hundred-topic cluster claims 400 000
+        // against a 120 000 prompt-char-budget — and this is the prompt that runs first, on every
+        // pipeline. So the floor still governs what one topic gets, a global remainder governs how
+        // many topics get it, and the topics past it are named rather than dropped in silence.
         int perTopicBudget = Math.max(4_000,
             processMiningConfig.getPromptCharBudget() / Math.max(1, byTopic.size()));
+        int globalRemaining = Math.max(perTopicBudget, processMiningConfig.getPromptCharBudget());
+        int topicsOmitted = 0;
 
         for (Map.Entry<String, List<PayloadDigest>> entry : byTopic.entrySet()) {
             List<PayloadDigest> digests = entry.getValue();
+            if (globalRemaining <= 0) {
+                topicsOmitted++;
+                continue;
+            }
+            int topicBudget = Math.min(perTopicBudget, globalRemaining);
+            int topicStart = sb.length();
             long maxBytes = digests.stream().mapToLong(PayloadDigest::payloadBytes).max().orElse(0);
             String format = digests.isEmpty() ? "?" : digests.get(0).format();
 
@@ -156,6 +175,7 @@ quelques valeurs d'exemple. Les chemins sont en notation pointée ; réponds en 
 
             if (digests.isEmpty()) {
                 sb.append("(aucun message)\n");
+                globalRemaining -= (sb.length() - topicStart);
                 continue;
             }
 
@@ -186,7 +206,7 @@ quelques valeurs d'exemple. Les chemins sont en notation pointée ; réponds en 
             sb.append("#### Valeurs d'exemple par chemin\n");
             int budgetStart = sb.length();
             for (Map.Entry<String, Set<String>> field : valuesByPath.entrySet()) {
-                if (sb.length() - budgetStart > perTopicBudget) {
+                if (sb.length() - budgetStart > topicBudget) {
                     sb.append("  … (chemins suivants omis, budget atteint)\n");
                     break;
                 }
@@ -205,6 +225,15 @@ quelques valeurs d'exemple. Les chemins sont en notation pointée ; réponds en 
                 arrayCounts.forEach((path, count) ->
                     sb.append("  ").append(path).append(" -> ").append(count).append(" élément(s) max\n"));
             }
+
+            globalRemaining -= (sb.length() - topicStart);
+        }
+
+        if (topicsOmitted > 0) {
+            sb.append("\n(").append(topicsOmitted)
+              .append(" topic(s) non détaillé(s) — budget global du prompt atteint. "
+                  + "Leur absence ici ne signifie pas qu'ils sont vides ; ne propose pas de mapping "
+                  + "pour eux.)\n");
         }
 
         sb.append("""
@@ -325,6 +354,16 @@ Réponds avec ce JSON exact (camelCase, sans markdown) :
         }
 
         String json = LlmJsonSupport.extractJsonPayload(rawResponse);
+        if (json.isBlank()) {
+            // A reasoning model that used its whole budget thinking answered nothing at all; the
+            // parse error that used to follow described a malformed object that was never written.
+            return new FieldProfileResult(List.of(), null, List.of(
+                LlmJsonSupport.hasUnterminatedReasoning(rawResponse)
+                    ? "The model spent its whole output budget reasoning and never reached an "
+                        + "answer. Raise claude.max-tokens (currently " + claudeConfig.getMaxTokens()
+                        + "), or use a model that does not think before answering."
+                    : "The model's answer contained no JSON object."));
+        }
 
         try {
             return objectMapper.readValue(json, FieldProfileResult.class);
