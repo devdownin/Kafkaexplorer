@@ -50,33 +50,18 @@ public class ProcessMiningController {
     private final SseEmitterManager sseEmitterManager;
     private final AuditPromptCatalog auditPromptCatalog;
 
-    /**
-     * Validated field mappings, keyed by the id handed back to the browser.
-     *
-     * <p>Bounded, and evicting the least recently used entry: this used to be a plain map that
-     * nothing ever removed from, so every trip through the validation step added an entry for the
-     * life of the process — a slow leak on the one screen an operator re-runs all day. The cap is
-     * generous because losing a mapping mid-pipeline costs a re-validation, and it is the *use*
-     * that refreshes an entry, so the mapping of a live session running for hours is not evicted
-     * out from under it by newer ones.
-     */
-    private static final int MAX_CACHED_MAPPINGS = 200;
-
     /** Session ids are {@code UUID.randomUUID().toString()}; nothing else names a live session. */
     private static final Pattern SESSION_ID =
         Pattern.compile("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
 
-    private final Map<String, FieldMapping> fieldMappingCache = Collections.synchronizedMap(
-        new LinkedHashMap<>(16, 0.75f, true) {
-            @Override
-            protected boolean removeEldestEntry(Map.Entry<String, FieldMapping> eldest) {
-                return size() > MAX_CACHED_MAPPINGS;
-            }
-        });
-     * Validated field mappings. Held by a component rather than by this controller so the Metrics
-     * suggestions can read one too — the mapping is where a topic's real correlation key lives,
-     * and a controller field made it reachable from nowhere else. Bounded, which the map it
-     * replaces was not.
+    /**
+     * Validated field mappings, keyed by the id handed back to the browser.
+     *
+     * <p>Held by a component rather than by this controller so the Metrics suggestions can read one
+     * too — the mapping is where a topic's real correlation key lives, and a controller field made
+     * it reachable from nowhere else. It is bounded there, which the plain map both of these
+     * replaced was not: every trip through the validation step used to add an entry for the life of
+     * the process, a slow leak on the one screen an operator re-runs all day.
      */
     private final FieldMappingStore fieldMappingStore;
 
