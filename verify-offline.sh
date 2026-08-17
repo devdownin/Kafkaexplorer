@@ -22,6 +22,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORK="${TMPDIR:-/tmp}/kse-offline-verify"
+# Fallback only. The real value is derived from the resolved test classpath below:
+# a hand-written pin here silently drifts the day Spring Boot bumps its JUnit, and the
+# harness would then run a launcher of a different version from the engines it loads.
 CONSOLE_VERSION="6.0.3"
 
 cd "$ROOT"
@@ -52,6 +55,20 @@ echo "==> Resolving dependencies (Confluent excluded)"
 ( cd "$WORK/depsonly" && mvn -q dependency:build-classpath \
     -Dmdep.outputFile="$WORK/cp.txt" -DincludeScope=test )
 CP="$(cat "$WORK/cp.txt")"
+
+# The console launcher must match the junit-platform on the classpath, so take the version
+# from there rather than trusting the pin above. Platform and Jupiter share one version from
+# JUnit 6 on, and Spring Boot's BOM manages both, so whatever resolved is the right answer.
+DERIVED_VERSION="$(tr ':' '\n' <<< "$CP" \
+  | sed -n 's|.*/junit-platform-commons-\([0-9][^/]*\)\.jar$|\1|p' | head -1)"
+if [ -n "$DERIVED_VERSION" ]; then
+  if [ "$DERIVED_VERSION" != "$CONSOLE_VERSION" ]; then
+    echo "==> JUnit launcher: using $DERIVED_VERSION from the classpath (pin says $CONSOLE_VERSION)"
+  fi
+  CONSOLE_VERSION="$DERIVED_VERSION"
+else
+  echo "==> Could not read junit-platform from the classpath; falling back to $CONSOLE_VERSION"
+fi
 
 echo "==> Generating Confluent stubs"
 mkdir -p "$WORK/stubs/io/confluent/kafka/schemaregistry/client" \

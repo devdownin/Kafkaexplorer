@@ -14,7 +14,6 @@ import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.MockConsumer;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
-import org.apache.kafka.clients.consumer.OffsetResetStrategy;
 import org.apache.kafka.common.KafkaFuture;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
@@ -59,7 +58,7 @@ class KafkaAdminServiceTimeLagTest {
     @BeforeEach
     void setUp() {
         admin = mock(AdminClient.class);
-        consumer = new MockConsumer<>(OffsetResetStrategy.NONE);
+        consumer = new MockConsumer<>("none");
         service = new KafkaAdminService(new KafkaConfig()) {
             @Override
             protected Consumer<byte[], byte[]> createTimeLagConsumer(Properties props) {

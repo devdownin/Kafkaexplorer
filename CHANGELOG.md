@@ -113,6 +113,21 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `CONTRIBUTING.md` documents the real gate. It told contributors to run `mvn test`, which runs
   neither ESLint nor Vitest, so a contributor could be green locally and red in CI.
 
+- **`verify-offline.sh` derives the JUnit console version instead of pinning it.** It carried a
+  hand-written `CONSOLE_VERSION="6.0.3"` beside a JUnit that Spring Boot's BOM resolves — in step
+  today, by hand, with nothing holding them together. The day Boot bumps JUnit, the harness would
+  run a launcher of a different version from the engines on its classpath, which is the kind of
+  local-only failure that CI cannot reproduce and nobody can diagnose. The version now comes from
+  `junit-platform-commons-<ver>.jar` on the resolved test classpath — platform and Jupiter share
+  one version from JUnit 6 on — so the drift cannot happen rather than being reported after the
+  fact. The pin remains as a fallback, and a divergence is announced rather than applied silently.
+- **The two deprecated Kafka test APIs are gone**, and with them the last compilation warnings the
+  build emitted from this project's own code. `MemberDescription`'s five-argument constructor is
+  deprecated **for removal** — four of its five overloads are, leaving only the nine-argument one,
+  so the call site is spelled out with the accessor names beside each argument rather than left as
+  an unreadable row of `Optional.empty()`. And `KafkaAdminServiceTimeLagTest` was the last place
+  still passing the deprecated `OffsetResetStrategy` enum to `MockConsumer`; the other three tests
+  in the tree already used the `String` overload it now uses too.
 - **`docs/check-config-table.py` resolves the dependency versions the documentation states in
   prose or in a badge** against `pom.xml` — Flink, Spring Boot, `kafka-clients`, `io.confluent`,
   `flink-connector-kafka`, `anthropic-java`, and the Java and Kafka badges. This is the class of

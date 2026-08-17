@@ -124,8 +124,21 @@ class KafkaAdminServiceConsumerLagTest {
         Set<TopicPartition> assignment = IntStream.of(assignedPartitions)
                 .mapToObj(p -> new TopicPartition(TOPIC, p))
                 .collect(Collectors.toSet());
-        return new MemberDescription(id, Optional.empty(), id + "-client", host,
-                new MemberAssignment(assignment));
+        // The 9-argument constructor is the only one kafka-clients has not deprecated for
+        // removal; the four shorter overloads all are. Spelled out with the accessor names
+        // because a call site of nine arguments, four of them Optional.empty(), is otherwise
+        // unreadable: groupInstanceId, rackId, targetAssignment, memberEpoch and upgraded
+        // are all absent from what this helper needs to describe.
+        return new MemberDescription(
+                id,                             // consumerId
+                Optional.empty(),               // groupInstanceId
+                Optional.empty(),               // rackId
+                id + "-client",                 // clientId
+                host,
+                new MemberAssignment(assignment),
+                Optional.empty(),               // targetAssignment
+                Optional.empty(),               // memberEpoch
+                Optional.empty());              // upgraded
     }
 
     private void committed(Map<String, Map<Integer, Long>> offsetsByGroup) {
