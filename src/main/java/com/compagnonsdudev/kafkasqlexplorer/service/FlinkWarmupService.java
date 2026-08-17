@@ -87,33 +87,9 @@ public class FlinkWarmupService {
                 log.info("Flink planner warmed up in {} ms; the first user query no longer "
                         + "pays for it", ms);
             }
-            reconcileJobStore();
         } catch (Exception e) {
             log.info("Flink warmup query failed after {} ms, continuing without it: {}",
                     (System.nanoTime() - startedAt) / 1_000_000, e.toString());
-        }
-    }
-
-    /**
-     * Clears the probe out of the managed-job map, which it would otherwise sit in until
-     * something else happened to reconcile it.
-     *
-     * <p>This is not tidiness. A synchronous SELECT that gets a JobClient is recorded in
-     * {@code activeJobs}, and entries are only dropped inside {@code syncPersistedJobs()} —
-     * which {@code getActiveJobs()} calls but {@code getActiveJobsDetails()} does not. That
-     * second one is what {@code POST /api/config} counts to decide whether to refuse a cluster
-     * repoint with 409, and what the lineage graph reads. For a user's query the asymmetry is
-     * invisible: they are using the UI, whose dashboard poll calls {@code getActiveJobs()}
-     * every 30 s and reconciles it. A probe the *application* runs by itself has no such
-     * companion — on a fresh boot with no browser open, nothing would clear it, and an operator
-     * repointing the cluster over the API would be refused in the name of a finished query they
-     * never ran. One call to {@code getActiveJobs()} reconciles it through the existing path.
-     */
-    private void reconcileJobStore() {
-        try {
-            flinkSqlService.getActiveJobs();
-        } catch (Exception e) {
-            log.debug("Could not reconcile the job store after the warmup probe: {}", e.toString());
         }
     }
 }

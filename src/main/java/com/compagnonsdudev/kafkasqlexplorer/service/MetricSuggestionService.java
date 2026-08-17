@@ -35,6 +35,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import java.util.Set;
 
 /**
@@ -147,14 +148,18 @@ public class MetricSuggestionService {
         suggestions.addAll(fromLineage(notes));
         if (mapping != null) suggestions.addAll(fromFieldMapping(mapping, notes));
 
-        List<MetricSuggestion> deduplicated = deduplicate(suggestions);
-        if (deduplicated.size() > MAX_SUGGESTIONS) {
-            notes.add("Showing " + MAX_SUGGESTIONS + " of " + deduplicated.size()
-                + " proposals — the rest are of the same kinds, on other topics.");
-            deduplicated = new ArrayList<>(deduplicated.subList(0, MAX_SUGGESTIONS));
+        // Deduplicate in source order, which encodes a deliberate precedence (the audit's card
+        // wins over a trace describing the same pair). Only then mark, rank and cut: marking has
+        // to precede the cap, or a proposal an existing metric already covers could take one of
+        // the slots and push out a fresh one — the panel would then say "already measured" on a
+        // card that displaced the suggestion the operator did not have.
+        List<MetricSuggestion> ranked = new ArrayList<>(markAlreadyConfigured(deduplicate(suggestions)));
+        ranked.sort(BY_RELEVANCE);
+        if (ranked.size() > MAX_SUGGESTIONS) {
+            notes.add(describeTruncation(ranked.subList(MAX_SUGGESTIONS, ranked.size())));
+            ranked = new ArrayList<>(ranked.subList(0, MAX_SUGGESTIONS));
         }
-
-        List<MetricSuggestion> marked = markAlreadyConfigured(deduplicated);
+        List<MetricSuggestion> marked = ranked;
         return new MetricSuggestions(
             marked,
             audit.report() != null,
@@ -1042,6 +1047,76 @@ public class MetricSuggestionService {
      * the same pair of topics; the first one wins because the list is built audit-first and the
      * audit's evidence is the broader of the two.
      */
+    /**
+     * The kinds a proposal can be, most diagnostic first. Read out of the id (`source:kind:target`),
+     * which {@link #deduplicate} already parses — structured data, never the prose of a rationale.
+     *
+     * <p>The order is an argument about what an operator should see first, not a preference:
+     * {@code time-lag} is only ever proposed for a topic the audit flagged with a consumer
+     * finding, and measures the one thing no record count can express; {@code duplicates} and
+     * {@code hop-latency} rest on a number the audit actually measured; {@code volume} is the
+     * routine one — worth having, worth losing first.
+     */
+    private static final List<String> KIND_URGENCY = List.of(
+        "time-lag", "duplicates", "hop-latency", "flow-gap", "completeness", "status", "volume");
+
+    private static int kindRank(MetricSuggestion suggestion) {
+        String[] parts = suggestion.id().split(":", 3);
+        int rank = parts.length > 1 ? KIND_URGENCY.indexOf(parts[1]) : -1;
+        // An unlisted kind sorts last rather than throwing: a new kind must not be able to break
+        // the panel, and ranking it below the known ones is the conservative reading.
+        return rank < 0 ? KIND_URGENCY.size() : rank;
+    }
+
+    /**
+     * Tiebreak only: how directly the evidence establishes the thing being measured. A running
+     * INSERT job *declares* its source and target; a validated field mapping is a human saying
+     * where the key lives; the audit measured this cluster but groups flows by topic name; a
+     * trace followed one key. Deliberately weaker than what the KPI is about — an operator cares
+     * about the problem before its provenance.
+     */
+    private static int sourceRank(MetricSuggestion suggestion) {
+        return switch (suggestion.source()) {
+            case LINEAGE -> 0;
+            case PROCESS_MINING -> 1;
+            case AUDIT -> 2;
+            case STREAM_FLOW -> 3;
+        };
+    }
+
+    /**
+     * Relevance order, applied before the cap so that what is dropped is what matters least.
+     * Every term is a field the proposal already carries, and the last one is the id, so the
+     * order is deterministic across runs — cards must not shuffle between two identical audits,
+     * and a browser-side dismissal is keyed on that id.
+     */
+    private static final Comparator<MetricSuggestion> BY_RELEVANCE =
+        Comparator.comparing(MetricSuggestion::alreadyConfigured)          // fresh before covered
+            .thenComparingInt(MetricSuggestionService::kindRank)           // what it is about
+            .thenComparing(s -> s.thresholdBasis() == null)                // derived thresholds first
+            .thenComparingInt(s -> s.caveats() == null ? 0 : s.caveats().size())  // fewer assumptions
+            .thenComparingInt(MetricSuggestionService::sourceRank)
+            .thenComparing(MetricSuggestion::id);
+
+    /**
+     * Says what was actually dropped. The previous wording claimed the remainder were "of the same
+     * kinds, on other topics" — an assertion nothing checked, and false as soon as the list mixed
+     * sources. Counting the kinds costs nothing and cannot be wrong.
+     */
+    private String describeTruncation(List<MetricSuggestion> dropped) {
+        Map<String, Long> byKind = dropped.stream().collect(Collectors.groupingBy(
+            s -> {
+                String[] parts = s.id().split(":", 3);
+                return parts.length > 1 ? parts[1] : "other";
+            }, LinkedHashMap::new, Collectors.counting()));
+        String detail = byKind.entrySet().stream()
+            .map(e -> e.getValue() + " " + e.getKey())
+            .collect(Collectors.joining(", "));
+        return "Showing the " + MAX_SUGGESTIONS + " most relevant of "
+            + (MAX_SUGGESTIONS + dropped.size()) + " proposals. Left out, as least actionable: "
+            + detail + ".";
+    }
+
     private List<MetricSuggestion> deduplicate(List<MetricSuggestion> suggestions) {
         Set<String> seenIds = new LinkedHashSet<>();
         Set<String> seenTargets = new LinkedHashSet<>();

@@ -488,6 +488,65 @@ class MetricSuggestionServiceTest {
             groups.length, false, true, List.of());
     }
 
+    // ── Bounding and relevance ordering ──────────────────────────────────────
+
+    /** A flow long enough to produce more proposals than the panel will show. */
+    private static AuditReport longFlowReport(int steps) {
+        List<FlowAudit.StepInfo> stepInfos = new java.util.ArrayList<>();
+        for (int i = 0; i < steps; i++) {
+            stepInfos.add(new FlowAudit.StepInfo(
+                "demo.chain." + i, 1000L - (i * 10L), 100.0 - i, i == 0 ? null : 400L + i));
+        }
+        return report(List.of(), List.of(new FlowAudit("chain", stepInfos, 0.9)));
+    }
+
+    @Test
+    void theCapKeepsTheMostRelevantAndSaysWhatItLeftOut() {
+        when(auditService.getLastAuditReport()).thenReturn(longFlowReport(20));
+
+        MetricSuggestions result = service.suggest(null);
+
+        assertEquals(24, result.suggestions().size(),
+            "the panel is bounded — an unbounded wall of cards is not a suggestion");
+        String note = result.notes().stream()
+            .filter(n -> n.contains("most relevant")).findFirst()
+            .orElseThrow(() -> new AssertionError("the truncation must say it happened: " + result.notes()));
+        // The old wording asserted the remainder were "of the same kinds, on other topics",
+        // which nothing checked. This one counts them.
+        assertTrue(note.contains("Left out, as least actionable:"), note);
+    }
+
+    @Test
+    void whatSurvivesTheCapIsOrderedByRelevanceNotBySource() {
+        when(auditService.getLastAuditReport()).thenReturn(longFlowReport(20));
+
+        List<MetricSuggestion> kept = service.suggest(null).suggestions();
+
+        // hop-latency outranks flow-gap, so no gap card may appear above a latency one.
+        int lastLatency = -1, firstGap = Integer.MAX_VALUE;
+        for (int i = 0; i < kept.size(); i++) {
+            String kind = kept.get(i).id().split(":", 3)[1];
+            if ("hop-latency".equals(kind)) lastLatency = i;
+            if ("flow-gap".equals(kind) && i < firstGap) firstGap = i;
+        }
+        if (lastLatency >= 0 && firstGap != Integer.MAX_VALUE) {
+            assertTrue(lastLatency < firstGap,
+                "the cut must follow relevance, not the order the sources were consulted");
+        }
+    }
+
+    @Test
+    void theOrderIsStableAcrossIdenticalRuns() {
+        when(auditService.getLastAuditReport()).thenReturn(longFlowReport(20));
+
+        List<String> first = service.suggest(null).suggestions().stream().map(MetricSuggestion::id).toList();
+        List<String> second = service.suggest(null).suggestions().stream().map(MetricSuggestion::id).toList();
+
+        // Cards must not shuffle between two identical audits: a browser-side dismissal is keyed
+        // on the id, and a list that reorders itself makes the panel look non-deterministic.
+        assertEquals(first, second);
+    }
+
     private static AuditReport report(List<TopicAudit> topics, List<FlowAudit> flows) {
         Map<String, Object> stats = new LinkedHashMap<>();
         stats.put("timestamp", 1_700_000_000_000L);

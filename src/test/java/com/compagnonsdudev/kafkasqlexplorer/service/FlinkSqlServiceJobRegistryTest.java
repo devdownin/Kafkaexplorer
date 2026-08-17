@@ -27,6 +27,7 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.*;
 
 class FlinkSqlServiceJobRegistryTest {
@@ -103,6 +104,40 @@ class FlinkSqlServiceJobRegistryTest {
         assertEquals("RUNNING", summary.status());
         assertNotNull(summary.flinkJobId());
         assertNull(summary.endedAt());
+    }
+
+    @Test
+    void getActiveJobsDetailsDropsAJobThatHasFinished() {
+        // The regression this pins: getActiveJobsDetails() used to hand back `activeJobs`
+        // without reconciling it, so a finished query stayed "active" for its three callers —
+        // POST /api/config (which refuses a cluster repoint with 409 while jobs run), the
+        // lineage graph, and the KPI suggestions — until some other screen called
+        // getActiveJobs(). An operator could be refused a config save in the name of a query
+        // they had already watched finish.
+        JobClient client = mock(JobClient.class);
+        when(client.getJobID()).thenReturn(new JobID());
+        when(client.getJobStatus()).thenReturn(CompletableFuture.completedFuture(JobStatus.FINISHED));
+
+        activeJobs.put("job-done", new FlinkSqlService.JobInfo(
+            "job-done", "SELECT 1", "SELECT", "SYNC_READ", client, 1_700_000_000_000L));
+
+        assertTrue(service.getActiveJobsDetails().isEmpty(),
+            "a finished job must not be reported as active");
+    }
+
+    @Test
+    void getActiveJobsDetailsKeepsAJobStillRunning() {
+        // The other half: reconciling must not throw away work that really is in flight, or the
+        // 409 guard would stop protecting the thing it exists for.
+        JobClient client = mock(JobClient.class);
+        when(client.getJobID()).thenReturn(new JobID());
+        when(client.getJobStatus()).thenReturn(CompletableFuture.completedFuture(JobStatus.RUNNING));
+
+        activeJobs.put("job-live", new FlinkSqlService.JobInfo(
+            "job-live", "INSERT INTO sink SELECT * FROM src", "INSERT", "FLINK_JOB", client,
+            1_700_000_000_000L));
+
+        assertEquals(1, service.getActiveJobsDetails().size());
     }
 
     @Test
