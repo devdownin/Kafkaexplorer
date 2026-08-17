@@ -13,9 +13,11 @@
  * leurs records Java. Elles étaient déclarées ici, à la main et hors de toute vérification — le
  * défaut même que ce script existe pour empêcher, et qui a déjà coûté la page Compare une fois.
  */
-import type { ConsumerGroupLag, PartitionLag, TopicConsumers } from '../../api/types';
+import type {
+  ConsumerGroupLag, PartitionLag, PartitionTimeLag, TopicConsumers, TopicTimeLag,
+} from '../../api/types';
 
-export type { ConsumerGroupLag, PartitionLag, TopicConsumers };
+export type { ConsumerGroupLag, PartitionLag, PartitionTimeLag, TopicConsumers, TopicTimeLag };
 
 export type GroupSort = 'lag' | 'groupId' | 'state';
 
@@ -171,4 +173,70 @@ export function progressOf(partition: PartitionLag): number | null {
   if (partition.committedOffset === null || partition.endOffset <= 0) return null;
   const ratio = partition.committedOffset / partition.endOffset;
   return Math.max(0, Math.min(1, ratio));
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Le retard en temps
+ *
+ * Le nombre de records dit combien attend, jamais depuis quand — et c'est la seconde question
+ * qui décide s'il faut se lever. Elle se mesure à la demande : une lecture de record par
+ * partition en retard, là où tout le reste de ce panneau lit des métadonnées.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/** Durée lisible : la précision au-delà de l'ordre de grandeur n'apprend rien ici. */
+export function formatDelay(ms: number): string {
+  if (ms < 1000) return `${Math.max(0, Math.round(ms))} ms`;
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 90) return `${seconds} s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 90) return `${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours} h`;
+  return `${Math.round(hours / 24)} d`;
+}
+
+/**
+ * Ce que la mesure vaut, en une phrase.
+ *
+ * Trois issues à ne jamais confondre : rien n'a pu être mesuré, une partie seulement l'a été (la
+ * valeur est alors un **plancher**, pas un maximum), ou tout l'a été.
+ */
+export function describeDelay(delay: TopicTimeLag | null): string {
+  if (!delay) return '';
+  if (!delay.available || delay.maxLagMs === null) {
+    return delay.error ?? 'The delay of this group could not be measured.';
+  }
+  const value = `The oldest waiting message is ${formatDelay(delay.maxLagMs)} old`;
+  const scope = `${delay.partitionsMeasured} partition${delay.partitionsMeasured === 1 ? '' : 's'} measured`;
+  if (isComplete(delay)) {
+    return `${value} (worst of ${scope}).`;
+  }
+  const missing: string[] = [];
+  if (delay.partitionsUnknown > 0) missing.push(`${delay.partitionsUnknown} unreadable`);
+  if (delay.partitionsWithoutCommit > 0) missing.push(`${delay.partitionsWithoutCommit} never committed`);
+  // « au moins » : un maximum pris sur une partie des partitions n'est pas le maximum.
+  return `The oldest waiting message is at least ${formatDelay(delay.maxLagMs)} old — `
+    + `${scope}, ${missing.join(' and ')}, so this is a floor.`;
+}
+
+/**
+ * La lecture a-t-elle couvert toutes les partitions ?
+ *
+ * Le record Java expose `complete()`, mais Jackson ne sérialise que les composants d'un record :
+ * la propriété n'existe pas dans la réponse, et la redériver ici est plus honnête que de déclarer
+ * un champ que le serveur n'envoie pas — `check-api-types.py` refuserait d'ailleurs le second.
+ */
+export function isComplete(delay: TopicTimeLag): boolean {
+  return delay.partitionsUnknown === 0 && delay.partitionsWithoutCommit === 0;
+}
+
+/** Les partitions dont l'âge a été mesuré, pires en premier — le reste ensuite, avec sa raison. */
+export function sortDelayPartitions(partitions: PartitionTimeLag[]): PartitionTimeLag[] {
+  return partitions.slice().sort((a, b) => {
+    if (a.lagMs === null && b.lagMs === null) return a.partition - b.partition;
+    // Une mesure absente passe devant : elle demande une décision, pas un coup d'œil.
+    if (a.lagMs === null) return -1;
+    if (b.lagMs === null) return 1;
+    return b.lagMs - a.lagMs;
+  });
 }

@@ -29,6 +29,20 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   since neither number is in a payload. Bounded to 64 partitions and an 8 s budget, and a partition
   whose record could not be read is reported as unknown, never as zero: zero means "caught up", and
   a gauge saying so while nothing could be read silences the alert it exists to raise.
+- **The backlog in time, where the question is asked.** The Topic Explorer's Consumers tab gets a
+  per-group "how long has it been waiting?" button (`GET /api/topic/{name}/time-lag?group=`), on a
+  button rather than on load because it reads a record per lagging partition where the rest of the
+  panel reads metadata. `explorer.lag-metrics-time` (off by default) exports the same measurement
+  as `kafka_consumer_group_lag_seconds` for the watched topics — removed rather than frozen when a
+  refresh cannot measure it, since an age that stops being measured gets more wrong every minute,
+  unlike a count.
+- **The audit dates a stalled backlog.** A STALLED finding now carries the age of the oldest
+  waiting message beside its record count — the one case worth a costlier measurement, budgeted
+  per run and stated in a scope note. A measurement that fails leaves the finding unchanged.
+- **The demo cluster seeds consumer groups.** `setup-demo.sh` created none, so a fresh demo had
+  nothing to show in the Consumers tab, no consumer finding in the audit, no delay KPI proposed
+  and nothing for the lag gauges to export. Two groups on `demo.orders.1.received`: one caught up,
+  one that read four records and left.
 - **Stream Flow traces are kept as observations** (`kse:flow-chains`), not only as criteria: a
   completed trace records the chain it found — topics in first-sighting order, per-hop latency — so
   the Metrics page can derive KPIs from the path a key really took. Versioned envelope, seven-day

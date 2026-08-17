@@ -49,6 +49,14 @@ else
   KAFKA_PRODUCER_CMD="kafka-console-producer.sh"
 fi
 
+if command -v kafka-console-consumer >/dev/null 2>&1; then
+  KAFKA_CONSUMER_CMD="kafka-console-consumer"
+elif [ -f "/opt/kafka/bin/kafka-console-consumer.sh" ]; then
+  KAFKA_CONSUMER_CMD="/opt/kafka/bin/kafka-console-consumer.sh"
+else
+  KAFKA_CONSUMER_CMD="kafka-console-consumer.sh"
+fi
+
 echo "--- Starting Kafka Demo Setup ---"
 echo "Bootstrap Server: $BOOTSTRAP_SERVER"
 
@@ -667,6 +675,52 @@ for f in "$BUFDIR"/raw/*; do
 done
 wait
 
+# ---------------------------------------------------------------------------
+# --- Scenario 12: Consumer groups — one draining, one abandoned ------------
+# ---------------------------------------------------------------------------
+#
+# The seeder produced records and nothing ever read them, so a fresh demo cluster
+# had **no consumer group at all**. Four features then had nothing to show: the
+# Consumers panel of the Topic Explorer, the audit's consumer checks, the
+# CONSUMER_TIME_LAG KPI the Metrics page proposes, and the Prometheus lag gauges.
+# The same reason duplicates and poison records are seeded here: a feature with no
+# data is a feature nobody discovers.
+#
+# Two groups, because one number means nothing without a contrast:
+#
+#   demo.orders.processor  reads everything → CAUGHT_UP, health green.
+#   demo.orders.reporting  reads the first records, then stops for good → records
+#                          waiting, no member left. That is exactly the STALLED
+#                          shape (`ConsumerGroupLag.health()`), which the audit
+#                          reports CRITICAL and which the delay-in-time KPI is
+#                          proposed for.
+#
+# A console consumer commits on exit, so consuming *N* messages and leaving is all
+# it takes — no offset reset, which `kafka-consumer-groups.sh` refuses on a group
+# that never existed (state DEAD).
+#
+# The delay in *time* starts at a few seconds and grows on its own: record
+# timestamps are set at produce time and nothing reads that group again, which is
+# precisely the "a stopped producer leaves a backlog that keeps ageing" case the
+# metric exists to show. Leave the stack running an hour and the KPI reads an hour.
+seed_consumer_groups() {
+  local topic="demo.orders.1.received"
+
+  # Drains the topic: exits on the timeout once there is nothing left to read.
+  $KAFKA_CONSUMER_CMD --bootstrap-server "$BOOTSTRAP_SERVER" \
+    --topic "$topic" --group "demo.orders.processor" \
+    --from-beginning --timeout-ms 8000 >/dev/null 2>&1 || true
+
+  # Reads a handful and never comes back. --max-messages makes it exit cleanly;
+  # the timeout is the safety net for a topic that holds fewer records than asked.
+  $KAFKA_CONSUMER_CMD --bootstrap-server "$BOOTSTRAP_SERVER" \
+    --topic "$topic" --group "demo.orders.reporting" \
+    --from-beginning --max-messages 4 --timeout-ms 8000 >/dev/null 2>&1 || true
+}
+
+echo "Seeding consumer groups (one caught up, one abandoned)..."
+seed_consumer_groups
+
 echo "--- Demo Setup Complete ---"
 echo ""
 echo "What was seeded (76 topics):"
@@ -683,6 +737,9 @@ echo "  • demo.errors.poison   truncated JSON, prose, unclosed XML, invalid UT
 echo "  • demo.orders.3.enriched also carries 2 truncated records — the cluster audit"
 echo "                         should report it CRITICAL inside an otherwise green flow."
 echo "  • demo.sc.*            20-step supply chain, 10 orders, 60 topics."
+echo "  • 2 consumer groups on demo.orders.1.received: 'demo.orders.processor' is"
+echo "                         caught up, 'demo.orders.reporting' stopped after 4 records"
+echo "                         and left — records waiting, no member: the STALLED case."
 echo ""
 echo "Suggestions for exploration:"
 echo "1. Trace by key: Stream Flow → key 'ORD-101', exact record key ON."
@@ -702,5 +759,9 @@ echo "7. Join: SELECT c.name, o.amount FROM \"demo.orders.1.received\" o JOIN \"
 echo "8. Cluster Audit: run it — duplicates on demo.orders.1.received (ORD-103 / ORD-105"
 echo "   redelivered), poison on demo.orders.3.enriched, drop-off on the orders flow."
 echo "9. Metrics: SELECT AVG(temperature) AS metric_value FROM \"demo.iot.sensors\" (GAUGE)"
+echo "9b. Consumer lag: Topic Explorer → demo.orders.1.received → Consumers tab."
+echo "    'demo.orders.reporting' is behind with no member — run the Cluster Audit and"
+echo "    the Metrics page then proposes a CONSUMER_TIME_LAG KPI for it, which reads"
+echo "    the backlog in time. It grows on its own while the stack stays up."
 echo "10. Supply Chain deep nesting: inspect 'SC-100' in demo.sc.*.out — 3-level nesting"
 echo "    from step 6 onwards, each step stamped 90s after the previous one."
