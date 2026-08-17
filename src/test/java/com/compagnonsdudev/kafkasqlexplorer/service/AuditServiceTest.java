@@ -619,12 +619,18 @@ class AuditServiceTest {
         explorerConfig.setAuditGroupSnapshotTtlMs(1);
         when(kafkaAdminService.listTopics()).thenReturn(List.of("a.one", "b.two", "c.three"));
         when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of());
-        // Chaque topic coûte largement plus que le TTL, donc la photo est périmée à chaque fois.
-        when(kafkaAdminService.getTopicConsumers(anyString(), any(KafkaAdminService.GroupSnapshot.class)))
-                .thenAnswer(inv -> {
-                    Thread.sleep(20);
-                    return new TopicConsumers(inv.getArgument(0), List.of(), 0, 0, 0, false, true, List.of());
-                });
+        /*
+         * Le délai est dans la *prise de photo*, pas dans le travail qui suit — et c'est ce qui
+         * rend le scénario déterministe. `current()` est synchronized : le deuxième worker attend
+         * donc ces 20 ms sur le moniteur et voit forcément un TTL de 1 ms expiré. Avec le délai
+         * placé après (dans getTopicConsumers), les trois workers appelaient `current()` au même
+         * instant, tous dans la même milliseconde sur une machine assez rapide, et le test tenait à
+         * l'ordonnancement — il est tombé une fois en CI pour cette raison.
+         */
+        when(kafkaAdminService.groupSnapshot(anyInt(), any())).thenAnswer(inv -> {
+            Thread.sleep(20);
+            return emptySnapshot();
+        });
 
         auditService.runAuditAsync("stale", new AuditOptions(false, false, false, false, false, true, null));
 
