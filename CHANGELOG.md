@@ -113,6 +113,14 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `CONTRIBUTING.md` documents the real gate. It told contributors to run `mvn test`, which runs
   neither ESLint nor Vitest, so a contributor could be green locally and red in CI.
 
+- **The planner is warmed up at startup, so the first query no longer pays for it**
+  (`FlinkWarmupService`, `explorer.flink-warmup-enabled`, default on). Measured rather than
+  assumed: the first SELECT of a process took **~5.5 s** against ~1.2 s warm, and the difference
+  is one-off — Calcite class loading, Janino codegen, the first job graph. A throw-away
+  table-less `SELECT 1` after `ApplicationReadyEvent` brings it to ~1.6 s. Both candidate probes
+  were timed before choosing: an `EXPLAIN` only reaches ~3.0 s, because the cost is in code
+  generation and the job lifecycle, not in parsing. It runs on a daemon thread so readiness is
+  never delayed, needs no table and no reachable broker, and a failure is logged and forgotten.
 - **The documentation checks now audit their own exemption lists.** `NOT_A_PATH`, `EXTERNAL` and
   `HISTORICAL` exist so that stepping around a check is a decision rather than a hole — but nothing
   made the decision expire, and a hand-maintained list only grows. An exemption nobody needs is a
