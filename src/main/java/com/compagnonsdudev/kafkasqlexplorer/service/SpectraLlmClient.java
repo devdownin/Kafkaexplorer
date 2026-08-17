@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.compagnonsdudev.kafkasqlexplorer.config.ClaudeConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.LlmResponse;
+import com.compagnonsdudev.kafkasqlexplorer.domain.LlmUsage;
 import com.compagnonsdudev.kafkasqlexplorer.domain.RagSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,6 +48,7 @@ public class SpectraLlmClient implements LlmClient {
 
     @Override
     public LlmResponse generateWithMeta(String systemPrompt, String userPrompt) {
+        long startedAt = System.currentTimeMillis();
         try {
             String question = (systemPrompt == null || systemPrompt.isBlank())
                 ? userPrompt
@@ -83,7 +85,12 @@ public class SpectraLlmClient implements LlmClient {
                 log.error("SpectraLLM response has no 'answer' field: {}", response.body());
                 throw new RuntimeException("SpectraLLM response did not contain an answer");
             }
-            return new LlmResponse(answer.asText(), parseSources(root.path("sources")));
+            // SpectraLLM's query API reports no token accounting, so the counts stay null rather
+            // than zero — the duration is measured here and is real either way.
+            LlmUsage usage = LlmUsage.untokenized(System.currentTimeMillis() - startedAt,
+                config.getProviderLabel(), config.getModel());
+            log.debug("SpectraLLM call complete — {}", usage.summary());
+            return new LlmResponse(answer.asText(), parseSources(root.path("sources")), usage);
 
         } catch (RuntimeException e) {
             // Already carries a precise message (transport, status, missing answer) — propagate as-is.

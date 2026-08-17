@@ -14,10 +14,12 @@ import AnomalyFeed, { LiveAnomaly } from '../components/processmining/AnomalyFee
 import { PageHeader, Button, Field, Textarea } from '../components/ui';
 import { clearDraft, readDraft, useDraftConflict, usePersistentState, writeDraft } from '../draftStore';
 import { describeResume, resumableStep } from './processMiningDraft';
+import { describeUsage } from './llmUsage';
 import type { AnalysisMode, Step } from './processMiningDraft';
 import type {
   AnomalyReport,
   FieldMappingValidation,
+  LlmUsage,
   ProcessMiningResult,
   RagSource,
 } from '../api/types';
@@ -216,6 +218,7 @@ const ProcessMining: React.FC = () => {
   // The last window whose analysis failed. Kept beside the results rather than replacing them:
   // earlier windows produced a real flowchart, and erasing it would lose more than it explains.
   const [liveError, setLiveError] = useState<string | null>(null);
+  const [liveUsage, setLiveUsage] = useState<LlmUsage | null>(null);
   const [liveStarted, setLiveStarted] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
   const liveSessionIdRef = useRef<string | null>(null);
@@ -488,6 +491,16 @@ const ProcessMining: React.FC = () => {
       setLiveError(message);
     });
 
+    // What the last window cost. A live session calls the model on every window, so this is
+    // where an unaffordable configuration shows up first.
+    es.addEventListener('ANALYSIS_USAGE', (e) => {
+      try {
+        setLiveUsage(JSON.parse(e.data) as LlmUsage);
+      } catch {
+        // A missing cost line is not worth breaking the stream over.
+      }
+    });
+
     /*
      * EventSource reconnects on its own, and this endpoint mints a *new* session — a new Kafka
      * consumer, a new group member, a flowchart with no history — on every GET. So the stream
@@ -533,6 +546,7 @@ const ProcessMining: React.FC = () => {
     setLiveComments(null);
     setLiveSources([]);
     setLiveError(null);
+    setLiveUsage(null);
     setLiveStarted(false);
   };
 
@@ -913,6 +927,24 @@ const ProcessMining: React.FC = () => {
                 )}
               </>
             )}
+
+            {/* Ce que l'analyse a coûté. Jusqu'ici rien ne le mesurait : chaque réglage du
+                pipeline (budget de prompt, échantillonnage, plafonds des digests) reposait sur un
+                raisonnement et non sur un nombre, et personne ne pouvait dire ce que coûtait un
+                run. */}
+            {(() => {
+              const usage = analysisMode === 'LIVE' ? liveUsage : snapshotResult?.usage ?? null;
+              if (!usage) return null;
+              return (
+                <div className="flex items-center gap-2 text-xs text-on-surface-variant">
+                  <span aria-hidden="true" className="material-symbols-outlined text-sm">speed</span>
+                  <span>
+                    {analysisMode === 'LIVE' ? 'Last window: ' : 'This analysis: '}
+                    {describeUsage(usage)}
+                  </span>
+                </div>
+              );
+            })()}
 
             {/* Flowchart */}
             <div className="border border-outline-variant rounded-xl overflow-hidden">

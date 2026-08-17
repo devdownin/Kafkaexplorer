@@ -152,6 +152,10 @@ public class ConfigController {
         if (body.containsKey("llmCollection")) {
             claudeConfig.setCollection(asString(body.get("llmCollection")));
         }
+        if (body.containsKey("llmStructuredOutput") && body.get("llmStructuredOutput") != null) {
+            claudeConfig.setStructuredOutput(
+                ClaudeConfig.StructuredOutput.valueOf(asString(body.get("llmStructuredOutput"))));
+        }
         if (body.containsKey("llmRequestTimeoutSeconds") && body.get("llmRequestTimeoutSeconds") != null) {
             claudeConfig.setRequestTimeoutSeconds(Integer.parseInt(asString(body.get("llmRequestTimeoutSeconds"))));
         }
@@ -225,6 +229,10 @@ public class ConfigController {
         result.put("llmModel", claudeConfig.getModel());
         result.put("llmUseRag", claudeConfig.isUseRag());
         result.put("llmCollection", claudeConfig.getCollection());
+        result.put("llmStructuredOutput", claudeConfig.getStructuredOutput().name());
+        // What AUTO actually resolves to for the provider in force — the setting alone does not
+        // say whether a schema will be sent, and that is the question an operator has.
+        result.put("llmStructuredOutputActive", claudeConfig.isStructuredOutputEnabled());
         result.put("llmRequestTimeoutSeconds", claudeConfig.getRequestTimeoutSeconds());
         result.put("llmMaxTokens", claudeConfig.getMaxTokens());
         result.put("llmSnapshotWindowSize", claudeConfig.getSnapshotWindowSize());

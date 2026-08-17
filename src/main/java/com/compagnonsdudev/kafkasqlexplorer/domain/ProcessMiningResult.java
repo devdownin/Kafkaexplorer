@@ -21,28 +21,46 @@ public record ProcessMiningResult(
     List<String> blindSpots,
     List<AnomalyReport> anomalies,
     List<RagSource> ragSources,
-    String error
+    String error,
+    LlmUsage usage
 ) {
     /** Backwards-compatible constructor without RAG sources (the LLM JSON never carries them). */
     public ProcessMiningResult(String flowchart, String comments, List<String> hypotheses,
                                List<String> blindSpots, List<AnomalyReport> anomalies) {
-        this(flowchart, comments, hypotheses, blindSpots, anomalies, List.of(), null);
+        this(flowchart, comments, hypotheses, blindSpots, anomalies, List.of(), null, null);
     }
 
     public ProcessMiningResult(String flowchart, String comments, List<String> hypotheses,
                                List<String> blindSpots, List<AnomalyReport> anomalies,
                                List<RagSource> ragSources) {
-        this(flowchart, comments, hypotheses, blindSpots, anomalies, ragSources, null);
+        this(flowchart, comments, hypotheses, blindSpots, anomalies, ragSources, null, null);
     }
 
     /** A failed analysis: the reason, and nothing that could be mistaken for a finding. */
     public static ProcessMiningResult failed(String message) {
-        return new ProcessMiningResult(null, null, List.of(), List.of(), List.of(), List.of(), message);
+        return new ProcessMiningResult(null, null, List.of(), List.of(), List.of(), List.of(),
+            message, null);
+    }
+
+    /**
+     * A failed analysis that still cost something. A call that timed out or came back unparseable
+     * consumed tokens and wall clock all the same, and hiding that would make the one number an
+     * operator uses to size a job — what a run costs — quietly optimistic.
+     */
+    public static ProcessMiningResult failed(String message, LlmUsage usage) {
+        return new ProcessMiningResult(null, null, List.of(), List.of(), List.of(), List.of(),
+            message, usage);
     }
 
     /** Returns a copy of this result with the given RAG sources attached. */
     public ProcessMiningResult withRagSources(List<RagSource> sources) {
         return new ProcessMiningResult(flowchart, comments, hypotheses, blindSpots, anomalies,
-            sources == null ? List.of() : sources, error);
+            sources == null ? List.of() : sources, error, usage);
+    }
+
+    /** Returns a copy of this result with the measured cost of the call attached. */
+    public ProcessMiningResult withUsage(LlmUsage measured) {
+        return new ProcessMiningResult(flowchart, comments, hypotheses, blindSpots, anomalies,
+            ragSources, error, measured);
     }
 }

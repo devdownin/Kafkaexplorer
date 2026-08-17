@@ -37,6 +37,20 @@ final class LlmHttpSupport {
     private LlmHttpSupport() {
     }
 
+    /** A 4xx other than 429: the request itself is wrong, so it is never retried as-is. */
+    static final class ClientErrorException extends RuntimeException {
+        private final int status;
+
+        ClientErrorException(int status, String message) {
+            super(message);
+            this.status = status;
+        }
+
+        int status() {
+            return status;
+        }
+    }
+
     /**
      * Builds a shared client. The connect timeout is deliberately <em>not</em> the request timeout:
      * that one is sized for how long a model may take to generate (60s by default), and applying it
@@ -74,9 +88,12 @@ final class LlmHttpSupport {
                     return response;
                 }
                 if (status >= 400 && status < 500 && status != 429) {
-                    // Client-side / configuration error — retrying will not help.
-                    throw new RuntimeException(provider + " call failed with status " + status
-                        + " (check base URL, model and API key): " + truncate(response.body()));
+                    // Client-side / configuration error — retrying will not help. Typed, because
+                    // one caller can actually act on it: an endpoint that rejects a request field
+                    // it does not implement answers this way, and the client can retry without it.
+                    throw new ClientErrorException(status, provider + " call failed with status "
+                        + status + " (check base URL, model and API key): "
+                        + truncate(response.body()));
                 }
                 // 5xx or 429 → transient.
                 lastError = new RuntimeException(provider + " call failed with status " + status
