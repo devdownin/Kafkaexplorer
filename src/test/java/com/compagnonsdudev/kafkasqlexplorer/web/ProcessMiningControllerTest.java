@@ -47,8 +47,6 @@ class ProcessMiningControllerTest {
                 kafkaLiveConsumer,
                 Mockito.mock(SseEmitterManager.class),
                 Mockito.mock(AuditPromptCatalog.class),
-                // Le vrai magasin plutôt qu'un mock : il ne fait rien d'autre que retenir des
-                // mappings, et ce test n'en valide aucun.
                 new FieldMappingStore()))
             .build();
     }

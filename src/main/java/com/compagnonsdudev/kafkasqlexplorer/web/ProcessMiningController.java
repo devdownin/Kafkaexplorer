@@ -30,7 +30,6 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import com.compagnonsdudev.kafkasqlexplorer.service.SseEmitterManager;
 
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -55,13 +54,10 @@ public class ProcessMiningController {
         Pattern.compile("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
 
     /**
-     * Validated field mappings, keyed by the id handed back to the browser.
-     *
-     * <p>Held by a component rather than by this controller so the Metrics suggestions can read one
-     * too — the mapping is where a topic's real correlation key lives, and a controller field made
-     * it reachable from nowhere else. It is bounded there, which the plain map both of these
-     * replaced was not: every trip through the validation step used to add an entry for the life of
-     * the process, a slow leak on the one screen an operator re-runs all day.
+     * Validated field mappings. Held by a component rather than by this controller so the Metrics
+     * suggestions can read one too — the mapping is where a topic's real correlation key lives,
+     * and a controller field made it reachable from nowhere else. Bounded, which the map it
+     * replaces was not.
      */
     private final FieldMappingStore fieldMappingStore;
 
