@@ -43,6 +43,14 @@ public class LlmAnalysisService {
     private final Supplier<LlmClient> llmClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    /**
+     * The shape the answer must take. Sent alongside the prompt, not instead of it: a provider that
+     * cannot constrain its output ignores it, and the prompt below still describes the JSON — which
+     * is why the "Return ONLY valid JSON" instruction stays.
+     */
+    private static final LlmOutputSchema ANALYSIS_SCHEMA =
+        new LlmOutputSchema("process_mining_result", LlmSchemas.processMiningResult());
+
     private static final String SYSTEM_PROMPT = """
         Expert Apache Kafka & Process Mining.
         Analyze Kafka messages to produce a Mermaid flowchart and anomaly report.
@@ -472,7 +480,7 @@ Chaque message est un résumé du payload d'origine :
     private ProcessMiningResult callLlmAndParse(String userPrompt) {
         LlmResponse response;
         try {
-            response = llmClient.get().generateWithMeta(SYSTEM_PROMPT, userPrompt);
+            response = llmClient.get().generateWithMeta(SYSTEM_PROMPT, userPrompt, ANALYSIS_SCHEMA);
         } catch (Exception e) {
             // Surface the real cause (timeout, bad URL/model/key, provider 5xx) instead of a
             // generic "empty response" — it is what the caller shows, as an error rather than as
@@ -482,11 +490,16 @@ Chaque message est un résumé du payload d'origine :
         }
 
         String rawResponse = response.text();
+        // One line per analysis, at INFO: this is the only place the cost of a run is observable,
+        // and a number nobody can see is a number nobody tunes against.
+        if (response.usage() != null) {
+            log.info("Process Mining analysis — {}", response.usage().summary());
+        }
         log.debug("LLM analysis response (first 500 chars): {}",
             rawResponse != null && rawResponse.length() > 500 ? rawResponse.substring(0, 500) : rawResponse);
 
         if (rawResponse == null || rawResponse.isBlank()) {
-            return errorResult("LLM returned an empty response.");
+            return ProcessMiningResult.failed("LLM returned an empty response.", response.usage());
         }
 
         String json = LlmJsonSupport.extractJsonPayload(rawResponse);
@@ -494,12 +507,12 @@ Chaque message est un résumé du payload d'origine :
         try {
             ProcessMiningResult parsed = objectMapper.readValue(json, ProcessMiningResult.class);
             // Attach RAG citations (SpectraLLM); other providers return none.
-            return parsed.withRagSources(response.sources());
+            return parsed.withRagSources(response.sources()).withUsage(response.usage());
         } catch (Exception e) {
             log.error("Failed to parse LLM analysis response: {}", e.getMessage());
             log.debug("Raw response was: {}", rawResponse);
-            return errorResult("Failed to parse the model's response as JSON: " + e.getMessage()
-                + truncationHint(json));
+            return ProcessMiningResult.failed("Failed to parse the model's response as JSON: "
+                + e.getMessage() + truncationHint(json), response.usage());
         }
     }
 

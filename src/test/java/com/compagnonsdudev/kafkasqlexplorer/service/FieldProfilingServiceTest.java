@@ -5,6 +5,7 @@ package com.compagnonsdudev.kafkasqlexplorer.service;
 import com.compagnonsdudev.kafkasqlexplorer.config.ClaudeConfig;
 import com.compagnonsdudev.kafkasqlexplorer.config.ProcessMiningConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.FieldProfileResult;
+import com.compagnonsdudev.kafkasqlexplorer.domain.LlmResponse;
 import com.compagnonsdudev.kafkasqlexplorer.domain.PayloadDigest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.SnapshotConfig;
 import org.junit.jupiter.api.BeforeEach;
@@ -63,7 +64,8 @@ class FieldProfilingServiceTest {
         when(snapshotReader.readDigested(anyList(), any(), any(), anyInt())).thenReturn(List.of(
             digestOf("topic1", "key1", "{\"id\":1}")
         ));
-        when(llmClient.generate(anyString(), anyString())).thenReturn("{\"topics\": [], \"warnings\": []}");
+        when(llmClient.generateWithMeta(anyString(), anyString(), any()))
+            .thenReturn(new LlmResponse("{\"topics\": [], \"warnings\": []}", List.of()));
 
         FieldProfileResult result = fieldProfilingService.profile(List.of("topic1"), SnapshotConfig.latestN(10));
 
@@ -80,7 +82,8 @@ class FieldProfilingServiceTest {
             digestOf("topic1", "key1", "{\"id\":1}")
         ));
 
-        when(llmClient.generate(anyString(), anyString())).thenReturn("{\"topics\": [], \"warnings\": []}");
+        when(llmClient.generateWithMeta(anyString(), anyString(), any()))
+            .thenReturn(new LlmResponse("{\"topics\": [], \"warnings\": []}", List.of()));
 
         FieldProfileResult result = fieldProfilingService.profile(List.of("topic1"), SnapshotConfig.latestN(10));
 
@@ -97,12 +100,12 @@ class FieldProfilingServiceTest {
             digestOf("topic1", "key1", "{\"id\":1}")
         ));
 
-        when(llmClient.generate(anyString(), anyString())).thenReturn("""
+        when(llmClient.generateWithMeta(anyString(), anyString(), any())).thenReturn(new LlmResponse("""
             Here is the requested payload:
             ```json
             {"topics": [], "warnings": []}
             ```
-            """);
+            """, List.of()));
 
         FieldProfileResult result = fieldProfilingService.profile(List.of("topic1"), SnapshotConfig.latestN(10));
 

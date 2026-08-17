@@ -11,6 +11,20 @@ public class ClaudeConfig {
 
     public enum Provider { ANTHROPIC, OPENAI_COMPATIBLE, OLLAMA, SPECTRA }
 
+    /**
+     * Whether to constrain the model's answer to a JSON Schema rather than merely asking for JSON
+     * in the prompt.
+     *
+     * <p>{@link #AUTO} is deliberately not "on everywhere". {@code OPENAI_COMPATIBLE} points at an
+     * endpoint we know nothing about — llama.cpp, vLLM, LM Studio, a corporate gateway — and an
+     * unrecognised {@code response_format} is answered with a 400 by some of them. Turning a
+     * working deployment into a failing one to gain a guarantee it may not need is the wrong
+     * default, so AUTO enables it where support is known ({@code ANTHROPIC}, {@code OLLAMA}) and
+     * {@link #ON} is there for an operator who knows their gateway supports it. Either way the
+     * client degrades on its own if the endpoint refuses the field.
+     */
+    public enum StructuredOutput { AUTO, ON, OFF }
+
     private Provider provider = Provider.OLLAMA;
     private String apiKey = "";
     private String baseUrl = "";
@@ -36,6 +50,7 @@ public class ClaudeConfig {
      * {@link #useRag} is enabled. Blank = SpectraLLM's default collection.
      */
     private String collection = "";
+    private StructuredOutput structuredOutput = StructuredOutput.AUTO;
 
     public Provider getProvider() {
         return provider;
@@ -122,6 +137,23 @@ public class ClaudeConfig {
 
     public void setRequestTimeoutSeconds(int requestTimeoutSeconds) {
         this.requestTimeoutSeconds = requestTimeoutSeconds;
+    }
+
+    public StructuredOutput getStructuredOutput() {
+        return structuredOutput;
+    }
+
+    public void setStructuredOutput(StructuredOutput structuredOutput) {
+        this.structuredOutput = structuredOutput;
+    }
+
+    /** Whether this configuration should send a schema with the request — see {@link StructuredOutput}. */
+    public boolean isStructuredOutputEnabled() {
+        return switch (structuredOutput) {
+            case ON -> true;
+            case OFF -> false;
+            case AUTO -> provider == Provider.ANTHROPIC || provider == Provider.OLLAMA;
+        };
     }
 
     public boolean isApiKeyRequired() {

@@ -281,6 +281,11 @@ public class KafkaLiveConsumer {
             if (result.error() != null && !result.error().isBlank()) {
                 log.warn("Live analysis failed for session {}: {}", sessionId, result.error());
                 sseEmitterManager.send(sessionId, "ANALYSIS_ERROR", Map.of("message", result.error()));
+                // A failed window still cost tokens and time; reporting the failure without the
+                // cost would make a session that keeps failing look free.
+                if (result.usage() != null) {
+                    sseEmitterManager.send(sessionId, "ANALYSIS_USAGE", result.usage());
+                }
                 return;
             }
 
@@ -302,6 +307,13 @@ public class KafkaLiveConsumer {
 
             if (result.ragSources() != null && !result.ragSources().isEmpty()) {
                 sseEmitterManager.send(sessionId, "RAG_SOURCES", result.ragSources());
+            }
+
+            // What the window cost. A live session calls the model every time a window is cut, so
+            // this is where an unaffordable configuration shows up first — and, until now, the only
+            // place it was invisible.
+            if (result.usage() != null) {
+                sseEmitterManager.send(sessionId, "ANALYSIS_USAGE", result.usage());
             }
 
         } catch (Exception e) {

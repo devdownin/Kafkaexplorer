@@ -180,6 +180,15 @@ claude:
   # SPECTRA + use-rag only: the SpectraLLM ChromaDB collection to retrieve from.
   # Blank uses SpectraLLM's default collection.
   collection: ""
+  # Whether the answer is constrained to a JSON Schema rather than merely requested as JSON in
+  # the prompt. Constraining removes the "model wrapped its JSON in prose" failure instead of
+  # reporting it, which matters most for the small local model this ships with by default.
+  # AUTO (default) enables it where support is known — ANTHROPIC and OLLAMA — and leaves an
+  # arbitrary OPENAI_COMPATIBLE gateway alone, because an unrecognised response_format is a 400
+  # on some of them and breaking a working deployment is the wrong default. ON forces it for a
+  # gateway you know supports it; OFF disables it everywhere. Whatever the setting, a client that
+  # gets its schema refused retries once without it and stops sending one to that endpoint.
+  structured-output: AUTO
 
 logging:
   file:

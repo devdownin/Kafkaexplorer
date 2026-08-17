@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.compagnonsdudev.kafkasqlexplorer.config.ClaudeConfig;
 import com.compagnonsdudev.kafkasqlexplorer.config.ProcessMiningConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.FieldProfileResult;
+import com.compagnonsdudev.kafkasqlexplorer.domain.LlmResponse;
 import com.compagnonsdudev.kafkasqlexplorer.domain.PayloadDigest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.PayloadShape;
 import com.compagnonsdudev.kafkasqlexplorer.domain.SnapshotConfig;
@@ -25,6 +26,10 @@ import java.util.function.Supplier;
 public class FieldProfilingService {
 
     private static final Logger log = LoggerFactory.getLogger(FieldProfilingService.class);
+
+    /** The shape the profiling answer must take — see {@link LlmSchemas}. */
+    private static final LlmOutputSchema PROFILING_SCHEMA =
+        new LlmOutputSchema("field_profile_result", LlmSchemas.fieldProfileResult());
 
     private final KafkaSnapshotReader snapshotReader;
     private final ClaudeConfig claudeConfig;
@@ -96,7 +101,14 @@ public class FieldProfilingService {
                 Return ONLY valid JSON. NO markdown, NO prose outside JSON.
                 If confidence is low, prefer empty arrays and warnings instead of free-form explanations.
                 """;
-            rawResponse = llmClient.get().generate(systemPrompt, userPrompt);
+            // generateWithMeta, not generate: the latter threw away the usage — and, on SpectraLLM,
+            // the cited sources with it — for no reason other than the narrower return type.
+            LlmResponse response =
+                llmClient.get().generateWithMeta(systemPrompt, userPrompt, PROFILING_SCHEMA);
+            if (response.usage() != null) {
+                log.info("Field profiling — {}", response.usage().summary());
+            }
+            rawResponse = response.text();
         } catch (Exception e) {
             log.error("LLM API call failed during profiling: {}", e.getMessage(), e);
             return new FieldProfileResult(

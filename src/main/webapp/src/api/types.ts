@@ -543,4 +543,24 @@ export interface ProcessMiningResult {
   anomalies: AnomalyReport[];
   ragSources: RagSource[];
   error: string | null;
+  /** Ce que l'appel a coûté, ou `null` si le client ne l'a pas relevé. */
+  usage: LlmUsage | null;
+}
+
+/**
+ * Ce qu'un appel au modèle a coûté.
+ *
+ * Les comptes de tokens sont nullables et `null` veut dire « non rapporté », pas zéro : l'API de
+ * SpectraLLM n'en renvoie aucun et une passerelle OpenAI-compatible allégée peut omettre l'objet
+ * `usage`. Zéro dirait que l'appel était gratuit — le même genre de mensonge poli que l'audit
+ * précédent a retiré ailleurs. `durationMs` est toujours mesuré côté serveur, donc toujours réel.
+ *
+ * @java LlmUsage
+ */
+export interface LlmUsage {
+  inputTokens: number | null;
+  outputTokens: number | null;
+  durationMs: number;
+  provider: string;
+  model: string;
 }

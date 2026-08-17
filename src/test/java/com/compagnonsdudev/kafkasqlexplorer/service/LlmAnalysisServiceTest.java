@@ -79,7 +79,7 @@ class LlmAnalysisServiceTest {
               "anomalies": []
             }
             """;
-        when(llmClient.generateWithMeta(anyString(), anyString()))
+        when(llmClient.generateWithMeta(anyString(), anyString(), any()))
             .thenReturn(new LlmResponse(jsonResponse, List.of()));
 
         ProcessMiningResult result = llmAnalysisService.analyzeSnapshot(
@@ -100,7 +100,7 @@ class LlmAnalysisServiceTest {
               "anomalies": []
             }
             """;
-        when(llmClient.generateWithMeta(anyString(), anyString()))
+        when(llmClient.generateWithMeta(anyString(), anyString(), any()))
             .thenReturn(new LlmResponse(jsonResponse, List.of()));
 
         ProcessMiningResult result = llmAnalysisService.analyzeLive(
@@ -116,7 +116,7 @@ class LlmAnalysisServiceTest {
         when(snapshotReader.readDigested(anyList(), any(), any(), anyInt())).thenReturn(List.of(
             digestOf("topic1", "key1", "{\"val\":1}")
         ));
-        when(llmClient.generateWithMeta(anyString(), anyString())).thenReturn(new LlmResponse(
+        when(llmClient.generateWithMeta(anyString(), anyString(), any())).thenReturn(new LlmResponse(
             "{\"flowchart\":\"x\",\"comments\":\"\",\"hypotheses\":[],\"blindSpots\":[],\"anomalies\":[]}",
             List.of()));
 
@@ -124,7 +124,7 @@ class LlmAnalysisServiceTest {
         llmAnalysisService.analyzeSnapshot(List.of("topic1"), SnapshotConfig.latestN(10), null, focus);
 
         ArgumentCaptor<String> userPrompt = ArgumentCaptor.forClass(String.class);
-        verify(llmClient).generateWithMeta(anyString(), userPrompt.capture());
+        verify(llmClient).generateWithMeta(anyString(), userPrompt.capture(), any());
         assertTrue(userPrompt.getValue().contains("AUDIT CIBLÉ"));
         assertTrue(userPrompt.getValue().contains("Détecte les messages dupliqués."));
     }
@@ -134,14 +134,14 @@ class LlmAnalysisServiceTest {
         when(snapshotReader.readDigested(anyList(), any(), any(), anyInt())).thenReturn(List.of(
             digestOf("topic1", "key1", "{\"val\":1}")
         ));
-        when(llmClient.generateWithMeta(anyString(), anyString())).thenReturn(new LlmResponse(
+        when(llmClient.generateWithMeta(anyString(), anyString(), any())).thenReturn(new LlmResponse(
             "{\"flowchart\":\"x\",\"comments\":\"\",\"hypotheses\":[],\"blindSpots\":[],\"anomalies\":[]}",
             List.of()));
 
         llmAnalysisService.analyzeSnapshot(List.of("topic1"), SnapshotConfig.latestN(10), null);
 
         ArgumentCaptor<String> userPrompt = ArgumentCaptor.forClass(String.class);
-        verify(llmClient).generateWithMeta(anyString(), userPrompt.capture());
+        verify(llmClient).generateWithMeta(anyString(), userPrompt.capture(), any());
         assertFalse(userPrompt.getValue().contains("AUDIT CIBLÉ"));
     }
 
@@ -151,7 +151,7 @@ class LlmAnalysisServiceTest {
             digestOf("topic1", "key1", "{\"val\":1}")
         ));
 
-        when(llmClient.generateWithMeta(anyString(), anyString())).thenReturn(new LlmResponse("""
+        when(llmClient.generateWithMeta(anyString(), anyString(), any())).thenReturn(new LlmResponse("""
             Analysis completed.
             ```json
             {
@@ -173,7 +173,7 @@ class LlmAnalysisServiceTest {
 
     @Test
     void testLivePromptStaysWithinBudgetForMegabytePayloads() {
-        when(llmClient.generateWithMeta(anyString(), anyString())).thenReturn(new LlmResponse(
+        when(llmClient.generateWithMeta(anyString(), anyString(), any())).thenReturn(new LlmResponse(
             "{\"flowchart\":\"x\",\"comments\":\"\",\"hypotheses\":[],\"blindSpots\":[],\"anomalies\":[]}",
             List.of()));
 
@@ -190,7 +190,7 @@ class LlmAnalysisServiceTest {
         llmAnalysisService.analyzeLiveDigests(window, null, null, null);
 
         ArgumentCaptor<String> prompt = ArgumentCaptor.forClass(String.class);
-        verify(llmClient).generateWithMeta(anyString(), prompt.capture());
+        verify(llmClient).generateWithMeta(anyString(), prompt.capture(), any());
         String userPrompt = prompt.getValue();
 
         ProcessMiningConfig defaults = new ProcessMiningConfig();
@@ -223,7 +223,7 @@ class LlmAnalysisServiceTest {
         when(snapshotReader.readDigested(anyList(), any(), any(), anyInt())).thenReturn(List.of(
             digestOf("topic1", "key1", "{\"val\":1}")
         ));
-        when(llmClient.generateWithMeta(anyString(), anyString())).thenReturn(new LlmResponse(
+        when(llmClient.generateWithMeta(anyString(), anyString(), any())).thenReturn(new LlmResponse(
             "{\"flowchart\":\"x\",\"comments\":\"\",\"hypotheses\":[],\"blindSpots\":[],\"anomalies\":[]}",
             List.of(new RagSource("cited passage", "spec.pdf", 0.9))));
 
@@ -243,7 +243,7 @@ class LlmAnalysisServiceTest {
         when(snapshotReader.readDigested(anyList(), any(), any(), anyInt())).thenReturn(List.of(
             digestOf("topic1", "key1", "{\"val\":1}")
         ));
-        when(llmClient.generateWithMeta(anyString(), anyString()))
+        when(llmClient.generateWithMeta(anyString(), anyString(), any()))
             .thenThrow(new RuntimeException("Connection refused"));
 
         ProcessMiningResult result = llmAnalysisService.analyzeSnapshot(
@@ -260,7 +260,7 @@ class LlmAnalysisServiceTest {
         when(snapshotReader.readDigested(anyList(), any(), any(), anyInt())).thenReturn(List.of(
             digestOf("topic1", "key1", "{\"val\":1}")
         ));
-        when(llmClient.generateWithMeta(anyString(), anyString()))
+        when(llmClient.generateWithMeta(anyString(), anyString(), any()))
             .thenReturn(new LlmResponse("I am afraid I cannot do that.", List.of()));
 
         ProcessMiningResult result = llmAnalysisService.analyzeSnapshot(
@@ -276,7 +276,7 @@ class LlmAnalysisServiceTest {
         when(snapshotReader.readDigested(anyList(), any(), any(), anyInt())).thenReturn(List.of(
             digestOf("topic1", "key1", "{\"val\":1}")
         ));
-        when(llmClient.generateWithMeta(anyString(), anyString())).thenReturn(new LlmResponse(
+        when(llmClient.generateWithMeta(anyString(), anyString(), any())).thenReturn(new LlmResponse(
             "{\"flowchart\":\"flowchart TD\\nA-->B\",\"anomalies\":[{\"id\":\"ANO-001\"", List.of()));
 
         ProcessMiningResult result = llmAnalysisService.analyzeSnapshot(
@@ -298,8 +298,8 @@ class LlmAnalysisServiceTest {
         List<LlmClient> current = new ArrayList<>(List.of(first));
         String answer = "{\"flowchart\":\"x\",\"comments\":\"c\",\"hypotheses\":[],"
             + "\"blindSpots\":[],\"anomalies\":[]}";
-        when(first.generateWithMeta(anyString(), anyString())).thenReturn(new LlmResponse(answer, List.of()));
-        when(second.generateWithMeta(anyString(), anyString())).thenReturn(new LlmResponse(answer, List.of()));
+        when(first.generateWithMeta(anyString(), anyString(), any())).thenReturn(new LlmResponse(answer, List.of()));
+        when(second.generateWithMeta(anyString(), anyString(), any())).thenReturn(new LlmResponse(answer, List.of()));
         when(snapshotReader.readDigested(anyList(), any(), any(), anyInt())).thenReturn(List.of(
             digestOf("topic1", "key1", "{\"val\":1}")
         ));
@@ -311,7 +311,7 @@ class LlmAnalysisServiceTest {
         current.set(0, second);
         service.analyzeSnapshot(List.of("topic1"), SnapshotConfig.latestN(10), null);
 
-        verify(first, times(1)).generateWithMeta(anyString(), anyString());
-        verify(second, times(1)).generateWithMeta(anyString(), anyString());
+        verify(first, times(1)).generateWithMeta(anyString(), anyString(), any());
+        verify(second, times(1)).generateWithMeta(anyString(), anyString(), any());
     }
 }
