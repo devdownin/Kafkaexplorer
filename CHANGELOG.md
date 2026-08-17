@@ -113,6 +113,17 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `CONTRIBUTING.md` documents the real gate. It told contributors to run `mvn test`, which runs
   neither ESLint nor Vitest, so a contributor could be green locally and red in CI.
 
+- **The KPI suggestions are ranked by relevance before being capped.** The cap was there, but it
+  cut the list in the order the sources happened to be consulted — audit, traces, lineage, field
+  mapping — so a pipeline edge a running `INSERT` job *declares*, and a status KPI resting on a
+  mapping an operator *validated*, were dropped before a routine volume count. Proposals now sort
+  by what they are about, then by whether their thresholds were derived from a measurement, then by
+  how few assumptions they carry; the source is only a tiebreak and the id is last, so two
+  identical audits produce the same order (a browser-side dismissal is keyed on that id). Two
+  smaller defects went with it: marking now precedes the cut — a proposal an existing metric
+  already covered could take one of the 24 slots and push out a fresh one — and the truncation note
+  counts what it dropped by kind, where it used to assert the remainder were "of the same kinds, on
+  other topics", which nothing checked.
 - **A finished Flink job no longer counts as running.** `getActiveJobsDetails()` handed back the
   live registry without reconciling it, where its sibling `getActiveJobs()` always did — and the
   three callers of that method are precisely the ones that act on the answer: `POST /api/config`
