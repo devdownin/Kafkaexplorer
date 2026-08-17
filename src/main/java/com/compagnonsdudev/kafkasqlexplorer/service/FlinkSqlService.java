@@ -1511,7 +1511,21 @@ public class FlinkSqlService {
     }
 
     public Map<String, JobInfo> getActiveJobsDetails() {
-        // Defensive snapshot — callers (lineage) only read; never hand out the live internal map.
+        // Reconcile first, exactly as getActiveJobs() does. This method used to skip it, and the
+        // asymmetry was not cosmetic: a finished query stays in `activeJobs` until *something*
+        // sweeps it, and the three callers here are the ones that act on the answer —
+        // `POST /api/config` counts them to refuse a cluster repoint with 409, the lineage graph
+        // draws a node per job, and the KPI suggestions derive a pipeline edge from each. A query
+        // the user ran and finished would therefore go on refusing their next config save until
+        // some *other* screen happened to call getActiveJobs(). It stayed invisible because the
+        // dashboard polls that sibling every 30 s, so a browser being open hid it — which is
+        // exactly why it surfaced the day a probe ran with no browser open at all.
+        //
+        // Affordable: syncPersistedJobs() returns immediately on an empty map, and none of these
+        // callers is on a timer — each is a user gesture, where the ≤150 ms status poll per live
+        // job is not worth trading correctness for.
+        syncPersistedJobs();
+        // Defensive snapshot — callers only read; never hand out the live internal map.
         return Map.copyOf(activeJobs);
     }
 

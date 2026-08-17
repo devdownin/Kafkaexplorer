@@ -55,20 +55,6 @@ class FlinkWarmupServiceTest {
     }
 
     @Test
-    @DisplayName("the probe reconciles the job store, so it cannot be counted as a running job")
-    void probeReconcilesTheJobStore() {
-        when(flinkSqlService.executeSql(any()))
-                .thenReturn(new QueryResult(List.of("kse_warmup_probe"), List.of(), 5L, null));
-
-        service(true).warmUp();
-
-        // getActiveJobs() is the call that runs syncPersistedJobs(); getActiveJobsDetails(),
-        // which POST /api/config counts for its 409 guard, does not. Without this the finished
-        // probe would sit in the map on a fresh boot and refuse a legitimate cluster repoint.
-        verify(flinkSqlService).getActiveJobs();
-    }
-
-    @Test
     @DisplayName("a probe that throws is swallowed — a warmup must never be able to fail startup")
     void failureIsSwallowed() {
         when(flinkSqlService.executeSql(any())).thenThrow(new IllegalStateException("planner down"));

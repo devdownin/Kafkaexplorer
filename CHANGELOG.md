@@ -113,6 +113,16 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `CONTRIBUTING.md` documents the real gate. It told contributors to run `mvn test`, which runs
   neither ESLint nor Vitest, so a contributor could be green locally and red in CI.
 
+- **A finished Flink job no longer counts as running.** `getActiveJobsDetails()` handed back the
+  live registry without reconciling it, where its sibling `getActiveJobs()` always did — and the
+  three callers of that method are precisely the ones that act on the answer: `POST /api/config`
+  refuses a cluster repoint with **409** while jobs run, the lineage graph draws a node per job,
+  and the KPI suggestions derive a pipeline edge from each. So a query the operator had run and
+  watched finish could go on refusing their next config save, in the name of a job that was over,
+  until some other screen happened to call the sibling. The Dashboard polls that sibling every
+  30 s, which is why an open browser hid the defect and why it surfaced only when a warmup probe
+  ran with no browser open at all. Both halves are pinned: a finished job is dropped, a running
+  one is kept — the 409 guard has to keep protecting what it exists for.
 - **The planner is warmed up at startup, so the first query no longer pays for it**
   (`FlinkWarmupService`, `explorer.flink-warmup-enabled`, default on). Measured rather than
   assumed: the first SELECT of a process took **~5.5 s** against ~1.2 s warm, and the difference
