@@ -97,6 +97,11 @@ explorer:
   #   lag-metrics-topics: [ "demo.orders", "demo.payments" ]
   lag-metrics-topics: []
   lag-metrics-max-series: 500
+  # Also export the backlog in TIME (kafka_consumer_group_lag_seconds) for those topics: the age
+  # of the oldest message each group has not read. Off by default because it is the only lag
+  # gauge that reads a record — one per lagging partition, per group, per refresh — where the
+  # others read metadata. A group caught up on every partition costs nothing and reports 0.
+  lag-metrics-time: false
   flink-job-store-path: data/flink-jobs.json
   flink-job-retention-hours: 24
   # SELECT execution: true = try the real Flink planner first and fall back to the in-process

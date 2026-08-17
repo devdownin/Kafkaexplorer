@@ -10,8 +10,9 @@ import {
 import { describeApiError, type QueryErrorInfo } from '../../pages/queryError';
 import {
   HEALTH_HELP, HEALTH_LABEL, HEALTH_TONE,
-  type ConsumerGroupLag, type GroupSort, type TopicConsumers,
-  describeScope, describeSummary, filterGroups, formatCount, healthOf, progressOf, sortGroups,
+  type ConsumerGroupLag, type GroupSort, type TopicConsumers, type TopicTimeLag,
+  describeDelay, describeScope, describeSummary, filterGroups, formatCount, formatDelay, healthOf,
+  progressOf, sortDelayPartitions, sortGroups,
 } from './topicConsumers';
 
 export interface TopicConsumersPanelProps {
@@ -219,7 +220,12 @@ const TopicConsumersPanel: FC<TopicConsumersPanelProps> = ({ topic }) => {
                             detail: <span className="text-on-surface">{group.error}</span>
                           </p>
                         )
-                        : <PartitionTable group={group} />}
+                        : (
+                          <>
+                            <PartitionTable group={group} />
+                            <DelayMeasurement topic={topic} group={group} />
+                          </>
+                        )}
                     </td>
                   </tr>,
                 );
@@ -323,3 +329,93 @@ const PartitionTable: FC<{ group: ConsumerGroupLag }> = ({ group }) => (
 );
 
 export default TopicConsumersPanel;
+
+/**
+ * Le retard du groupe **en temps**, à la demande.
+ *
+ * Sur un bouton, pas au chargement : cette mesure ouvre un consommateur et lit un record par
+ * partition en retard, là où tout le reste de ce panneau lit des métadonnées. Faire payer ça à
+ * chaque ouverture de l'onglet, c'est rendre coûteuse une page qu'on ouvre pour regarder.
+ *
+ * Le nombre de records dit combien attend ; celui-ci dit depuis quand — et c'est la seconde
+ * question qui décide s'il faut agir : quatre mille messages, c'est quatre secondes de trafic sur
+ * un topic et quatre jours sur un autre.
+ */
+const DelayMeasurement: FC<{ topic: string; group: ConsumerGroupLag }> = ({ topic, group }) => {
+  const [delay, setDelay] = useState<TopicTimeLag | null>(null);
+  const [measuring, setMeasuring] = useState(false);
+  const [failure, setFailure] = useState<QueryErrorInfo | null>(null);
+
+  const measure = async () => {
+    setMeasuring(true);
+    setFailure(null);
+    try {
+      const res = await axios.get<TopicTimeLag>(
+        `/api/topic/${encodeURIComponent(topic)}/time-lag?group=${encodeURIComponent(group.groupId)}`,
+      );
+      setDelay(res.data);
+    } catch (err) {
+      setFailure(describeApiError(err, 'The delay of this group could not be measured.'));
+    } finally {
+      setMeasuring(false);
+    }
+  };
+
+  return (
+    <div className="mt-4 pt-3 border-t border-outline-variant/40">
+      <div className="flex items-center gap-3 flex-wrap">
+        <Button variant="ghost" size="sm" icon="schedule" onClick={measure} loading={measuring}>
+          {delay ? 'Measure again' : 'How long has it been waiting?'}
+        </Button>
+        <HelpTip
+          label="What this measurement costs"
+          content="Reads the record sitting at each lagging partition's committed offset, so this costs more than the counts above — hence the button. Bounded to 64 partitions and 8 s."
+        />
+        {delay && (
+          <span className={`text-[12px] ${delay.available ? 'text-on-surface-variant' : 'text-warning'}`}>
+            {describeDelay(delay)}
+          </span>
+        )}
+      </div>
+
+      {failure && <div className="mt-3"><ErrorPanel error={failure} /></div>}
+
+      {delay?.warnings?.map((warning, index) => (
+        <p key={index} className="mt-2 text-[11px] text-warning">{warning}</p>
+      ))}
+
+      {delay && delay.partitions.length > 0 && (
+        <table className="w-full text-[12px] mt-3">
+          <thead>
+            <tr className="text-[10px] uppercase tracking-widest text-on-surface-variant">
+              <th className="text-left py-1.5">Partition</th>
+              <th className="text-right py-1.5">Waiting since</th>
+              <th className="text-right py-1.5">Records behind</th>
+              <th className="text-left py-1.5 pl-4">Note</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sortDelayPartitions(delay.partitions).map(partition => (
+              <tr key={partition.partition} className="border-t border-outline-variant/30">
+                <td className="py-1.5 font-mono text-on-surface-variant">{partition.partition}</td>
+                <td className="py-1.5 text-right font-mono">
+                  {/* Jamais un zéro à la place d'une mesure absente : « à jour » et « pas mesuré »
+                      sont deux réponses opposées, et c'est tout l'enjeu de cette colonne. */}
+                  {partition.lagMs === null
+                    ? <span className="text-on-surface-variant italic">not measured</span>
+                    : partition.lagMs === 0
+                      ? <span className="text-success">caught up</span>
+                      : <span className="text-on-surface">{formatDelay(partition.lagMs)}</span>}
+                </td>
+                <td className="py-1.5 text-right font-mono text-on-surface-variant">
+                  {partition.recordLag === null ? '—' : formatCount(partition.recordLag)}
+                </td>
+                <td className="py-1.5 pl-4 text-[11px] text-on-surface-variant">{partition.note ?? ''}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+};

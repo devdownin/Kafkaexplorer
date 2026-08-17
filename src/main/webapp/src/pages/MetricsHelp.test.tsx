@@ -72,6 +72,32 @@ describe('MetricsHelp', () => {
     expect(screen.queryByRole('heading', { name: 'TIMER' })).toBeNull();
   });
 
+  /*
+   * Le badge annonçait « 2 templates » et en listait deux, un troisième existant déjà côté
+   * backend : une page d'aide pourrit en silence, exactement comme le type TIMER qu'elle a
+   * documenté sans qu'il existe. Le compte se vérifie donc ici.
+   */
+  it('documents the three metric templates, not a stale count', async () => {
+    mockedAxios.get.mockResolvedValue({ data: [] });
+    renderPage();
+    await waitFor(() => expect(screen.getByText('No metric configured yet')).toBeInTheDocument());
+
+    expect(screen.getByText('3 templates')).toBeInTheDocument();
+    for (const template of ['TOPIC_COUNT_DELTA', 'TOPIC_TRANSIT_LATENCY', 'CONSUMER_TIME_LAG']) {
+      expect(screen.getByRole('heading', { name: template })).toBeInTheDocument();
+    }
+  });
+
+  it('says the suggested KPIs rest on an observation and create nothing', async () => {
+    mockedAxios.get.mockResolvedValue({ data: [] });
+    renderPage();
+    await waitFor(() => expect(screen.getByText('No metric configured yet')).toBeInTheDocument());
+
+    expect(screen.getByRole('heading', { name: /KPIs Suggested For Your Cluster/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Nothing is created' })).toBeInTheDocument();
+    expect(screen.getByText(/no threshold at all/i)).toBeInTheDocument();
+  });
+
   it('states that the Prometheus endpoint has no authentication', async () => {
     mockedAxios.get.mockResolvedValue({ data: [] });
     renderPage();

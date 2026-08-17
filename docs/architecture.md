@@ -48,11 +48,14 @@ C4Component
     Container_Boundary(api, "Spring Boot Backend") {
         Component(query_ctrl, "QueryController", "Spring MVC", "Handles SQL execution requests.")
         Component(audit_ctrl, "AuditController", "Spring MVC", "Manages cluster-wide audits.")
+        Component(metric_ctrl, "MetricController", "Spring MVC", "Metric CRUD, previews and KPI suggestions.")
 
         Component(flink_svc, "FlinkSqlService", "Service", "Manages Flink job lifecycle. Uses dedicated ExecutorService for non-blocking result fetching.")
         Component(kafka_svc, "KafkaAdminService", "Service", "Interfaces with Kafka AdminClient. Features Caffeine-based caching and strict timeouts.")
         Component(audit_svc, "AuditService", "Service", "Performs parallelized topic health checks and business flow analysis.")
         Component(inference_svc, "SchemaInferenceService", "Service", "Detects JSON/XML structures and generates schemas.")
+        Component(metric_svc, "MetricService", "Service", "Schedules metric queries and bridges them to Micrometer/Prometheus. Templates: count delta, transit latency, consumer time lag.")
+        Component(suggest_svc, "MetricSuggestionService", "Service", "Derives contextual KPIs from audit reports and Stream Flow traces. Proposes, never creates.")
 
         Component(cache, "Caffeine Cache", "Cache", "Stores topic metadata to reduce Kafka load.")
     }
@@ -63,6 +66,12 @@ C4Component
     Rel(audit_svc, flink_svc, "Uses")
     Rel(flink_svc, kafka_svc, "Uses for DDL")
     Rel(kafka_svc, cache, "Reads/Writes")
+    Rel(metric_ctrl, metric_svc, "Uses")
+    Rel(metric_ctrl, suggest_svc, "Uses")
+    Rel(metric_svc, flink_svc, "Runs metric SQL")
+    Rel(metric_svc, kafka_svc, "Reads offsets and record timestamps")
+    Rel(suggest_svc, audit_svc, "Reads the last report")
+    Rel(suggest_svc, kafka_svc, "Reads the groups a KPI would name")
 ```
 
 ## Key Architectural Decisions (Robustness & Performance)
@@ -73,3 +82,5 @@ C4Component
 - **Safe XML Processing**: `XmlExtractUDF` caches compiled `XPathExpression` instances while maintaining strict XXE protection.
 - **Dynamic SQL Hint Injection**: `FlinkSqlService` uses regex-based SQL manipulation to inject Flink SQL hints (`/*+ OPTIONS(...) */`) for per-query offset control, allowing users to switch between Earliest and Latest modes without altering table definitions.
 - **Strict Timeouts**: All interactions with the Kafka cluster and Flink engine have explicit timeouts to prevent the application from hanging.
+- **A Measurement That Failed Is Never Zero**: across consumer lag (records and time alike), an unread partition, an unreadable group or a spent budget produces `null` with its reason, not `0`. Zero is a claim — "caught up", "no backlog" — and published as a Prometheus gauge it silences the very alert the metric exists to raise. The API records (`PartitionLag`, `PartitionTimeLag`, `TopicTimeLag`) box every such field so the distinction survives to the UI and to the exporter.
+- **Suggestions Rest On Observations**: `MetricSuggestionService` derives KPIs only from measurements that were actually taken — an audit report, a Stream Flow trace — carries the evidence and threshold basis with each proposal, and creates nothing: the operator previews and saves. Flow traces live in the browser, so the frontend sends them back in the request rather than the derivation rule being written twice, once per language.

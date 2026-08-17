@@ -6,6 +6,7 @@ import com.compagnonsdudev.kafkasqlexplorer.config.ExplorerConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.ConsumerGroupLag;
 import com.compagnonsdudev.kafkasqlexplorer.domain.PartitionLag;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicConsumers;
+import com.compagnonsdudev.kafkasqlexplorer.domain.TopicTimeLag;
 import io.micrometer.core.instrument.search.MeterNotFoundException;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
@@ -15,6 +16,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -277,5 +279,76 @@ class ConsumerLagMetricsTest {
         metrics.refresh();
 
         assertEquals(1, registry.find("kafka.consumer.group.lag").gauges().size());
+    }
+
+    // ── The backlog in time (opt-in) ─────────────────────────────────────────
+
+    private void timeLagIs(String group, Long maxLagMs) {
+        when(kafkaAdminService.getConsumerTimeLag("demo.orders", group)).thenReturn(
+                maxLagMs == null
+                        ? TopicTimeLag.unavailable("demo.orders", group, "No partition could be read.")
+                        : new TopicTimeLag("demo.orders", group, List.of(), maxLagMs, maxLagMs,
+                                1, 0, 0, 0, true, null, List.of()));
+    }
+
+    @Test
+    void exportsNothingInTimeUntilItIsAskedFor() {
+        explorerConfig.setLagMetricsTopics(List.of("demo.orders"));
+        topicReturns("demo.orders", group("orders-api", 4000L, 1, 0));
+
+        metrics.refresh();
+
+        assertTrue(registry.find("kafka.consumer.group.lag.seconds").gauges().isEmpty(),
+                "it reads a record per lagging partition — nobody pays for that by default");
+        verify(kafkaAdminService, never()).getConsumerTimeLag(anyString(), anyString());
+    }
+
+    @Test
+    void exportsTheBacklogInSecondsWhenEnabled() {
+        explorerConfig.setLagMetricsTopics(List.of("demo.orders"));
+        explorerConfig.setLagMetricsTime(true);
+        topicReturns("demo.orders", group("orders-api", 4000L, 1, 0));
+        timeLagIs("orders-api", 185_000L);
+
+        metrics.refresh();
+
+        assertEquals(185.0, registry.get("kafka.consumer.group.lag.seconds")
+                .tags("group", "orders-api", "topic", "demo.orders").gauge().value());
+    }
+
+    @Test
+    void aCaughtUpGroupIsZeroSecondsAndCostsNoRead() {
+        explorerConfig.setLagMetricsTopics(List.of("demo.orders"));
+        explorerConfig.setLagMetricsTime(true);
+        topicReturns("demo.orders", group("orders-api", 0L, 2, 0));
+
+        metrics.refresh();
+
+        assertEquals(0.0, registry.get("kafka.consumer.group.lag.seconds")
+                .tags("group", "orders-api", "topic", "demo.orders").gauge().value());
+        // Committed at the end of every partition: that IS the measurement, no record to read.
+        verify(kafkaAdminService, never()).getConsumerTimeLag(anyString(), anyString());
+    }
+
+    /*
+     * L'inverse de la règle des jauges en nombre, et c'est délibéré : un retard vieillit tout
+     * seul, donc une valeur figée n'est pas périmée, elle est fausse — et de plus en plus.
+     */
+    @Test
+    void anAgeThatCanNoLongerBeMeasuredIsRemovedRatherThanFrozen() {
+        explorerConfig.setLagMetricsTopics(List.of("demo.orders"));
+        explorerConfig.setLagMetricsTime(true);
+        topicReturns("demo.orders", group("orders-api", 4000L, 1, 0));
+        timeLagIs("orders-api", 185_000L);
+        metrics.refresh();
+
+        timeLagIs("orders-api", null);
+        metrics.refresh();
+
+        assertTrue(registry.find("kafka.consumer.group.lag.seconds").gauges().isEmpty(),
+                "a frozen age reads younger than the truth every minute that passes");
+        // The record lag keeps its last value: a count that stopped being read is still the count.
+        assertEquals(4000.0, registry.get("kafka.consumer.group.lag")
+                .tags("group", "orders-api", "topic", "demo.orders").gauge().value());
     }
 }

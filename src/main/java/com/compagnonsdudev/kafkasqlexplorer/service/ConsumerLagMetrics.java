@@ -5,6 +5,7 @@ package com.compagnonsdudev.kafkasqlexplorer.service;
 import com.compagnonsdudev.kafkasqlexplorer.config.ExplorerConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.ConsumerGroupLag;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicConsumers;
+import com.compagnonsdudev.kafkasqlexplorer.domain.TopicTimeLag;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
@@ -88,10 +89,34 @@ public class ConsumerLagMetrics {
      */
     private static final String LAST_SUCCESS = "kafka.consumer.group.lag.last.success.timestamp.seconds";
 
+    /**
+     * The same backlog in time — the age of the oldest message the group has not read.
+     *
+     * <p>Opt-in (`explorer.lag-metrics-time`) and off by default, because it is the only series
+     * here that costs a <em>record</em> read: one per lagging partition, per group, per refresh,
+     * where every other gauge is metadata. A group committed at the end of every partition is
+     * published as 0 without reading anything — caught up is a measurement.
+     *
+     * <p>In seconds, not milliseconds, because that is the Prometheus convention and the suffix
+     * has to mean what it says. The {@code CONSUMER_TIME_LAG} metric template reports the same
+     * measurement in milliseconds, matching its sibling templates: one measurement, two units,
+     * each following the convention of where it lands.
+     *
+     * <p><b>This one is removed rather than frozen when a refresh cannot measure it</b>, which is
+     * the opposite of the rule for the three gauges above, and deliberately so. Their last value
+     * stays because a count that stopped being read is still roughly the count. An <em>age</em>
+     * that stopped being read is not still roughly the age: a backlog ages by construction, so a
+     * frozen "3 min" while the real one has been growing for hours is not a stale number, it is a
+     * false one. Absent, an alert can see it with {@code absent()}; frozen, nobody can see it at
+     * all.
+     */
+    private static final String TIME_LAG = "kafka.consumer.group.lag.seconds";
+
     private static final List<String> GAUGE_NAMES = List.of(
             "kafka.consumer.group.lag",
             "kafka.consumer.group.partitions.without.commit",
             "kafka.consumer.group.assigned.members",
+            TIME_LAG,
             LAST_SUCCESS);
 
     private final KafkaAdminService kafkaAdminService;
@@ -171,6 +196,7 @@ public class ConsumerLagMetrics {
                     // an unreadable topic, a throwing refresh — leaves the previous timestamp
                     // standing, which is what makes the freeze visible.
                     setGauge(LAST_SUCCESS, tags, System.currentTimeMillis() / 1000);
+                    exportTimeLag(topic, group, tags);
                 }
             } catch (Exception e) {
                 // Registered gauges keep their last value: a transient admin failure must not
@@ -178,6 +204,42 @@ public class ConsumerLagMetrics {
                 log.debug("Consumer lag metrics refresh failed for topic {}", topic, e);
             }
         }
+    }
+
+    /**
+     * The same group's backlog in seconds, when {@code explorer.lag-metrics-time} is on.
+     *
+     * <p>A group caught up on every partition is published as 0 without any read — that is what
+     * {@code totalLag == 0} means and it costs nothing to say. Anything else opens a consumer, so
+     * this stays opt-in.
+     *
+     * <p>A measurement that fails <b>removes</b> the series instead of freezing it. That is the
+     * opposite of what the record-lag gauges do, and the reason is the unit: a backlog ages by
+     * itself, so a frozen age is not a stale reading but a wrong one, and it gets more wrong every
+     * minute. Absent, {@code absent(kafka_consumer_group_lag_seconds{...})} sees it.
+     */
+    private void exportTimeLag(String topic, ConsumerGroupLag group, Tags tags) {
+        if (!explorerConfig.isLagMetricsTime()) return;
+        if (group.totalLag() <= 0) {
+            setGauge(TIME_LAG, tags, 0);
+            return;
+        }
+        try {
+            TopicTimeLag delay = kafkaAdminService.getConsumerTimeLag(topic, group.groupId());
+            if (delay.available() && delay.maxLagMs() != null) {
+                setGauge(TIME_LAG, tags, delay.maxLagMs() / 1000);
+            } else {
+                dropTimeLag(tags);
+            }
+        } catch (Exception e) {
+            log.debug("Time lag of {} on {} could not be measured: {}", group.groupId(), topic, e.toString());
+            dropTimeLag(tags);
+        }
+    }
+
+    private void dropTimeLag(Tags tags) {
+        meterRegistry.find(TIME_LAG).tags(tags).meters().forEach(meterRegistry::remove);
+        gaugeValues.remove(TIME_LAG + tags);
     }
 
     /**

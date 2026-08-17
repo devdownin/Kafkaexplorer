@@ -182,6 +182,47 @@ export interface TopicConsumers {
 }
 
 /**
+ * Le retard d'un groupe sur une partition, exprimé en temps.
+ *
+ * `lagMs` à `null` veut dire « pas mesuré » — jamais « à jour ». Zéro est une affirmation, et une
+ * mesure impossible ne doit pas pouvoir la produire ; `note` dit pourquoi.
+ *
+ * @java PartitionTimeLag
+ */
+export interface PartitionTimeLag {
+  partition: number;
+  committedOffset: number | null;
+  endOffset: number;
+  recordLag: number | null;
+  lagMs: number | null;
+  oldestWaitingTimestamp: number | null;
+  note: string | null;
+}
+
+/**
+ * `GET /api/topic/{name}/time-lag?group=…` — l'âge du plus vieux message que ce groupe n'a pas lu.
+ *
+ * Les compteurs situent la lecture : un maximum pris sur la moitié des partitions est un plancher,
+ * et `complete` est ce qui permet de le dire au lieu de le laisser passer pour un maximum.
+ *
+ * @java TopicTimeLag
+ */
+export interface TopicTimeLag {
+  topic: string;
+  groupId: string;
+  partitions: PartitionTimeLag[];
+  maxLagMs: number | null;
+  avgLagMs: number | null;
+  partitionsMeasured: number;
+  partitionsCaughtUp: number;
+  partitionsWithoutCommit: number;
+  partitionsUnknown: number;
+  available: boolean;
+  error: string | null;
+  warnings: string[];
+}
+
+/**
  * `POST /api/topic/{name}/search` — une passe de recherche bornée, et ce qu'elle a couvert.
  *
  * Les compteurs de couverture font partie du contrat : une recherche n'est jamais silencieusement

@@ -13,6 +13,40 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Contextual KPI suggestions on the Metrics page** (`POST /api/metrics/suggestions`). The page knew
+  nothing about the cluster it measures: its quick-start cards posed a `COUNT(*)` on the first table
+  found, identical everywhere. Proposals are now derived from what has actually been observed — the
+  cluster audit (flow hops it timed, throughput drops, duplicates, the busiest topics, consumer
+  findings) and Stream Flow traces kept by the browser (per-hop latency, end-to-end completeness).
+  Every card names the run and the measurement it rests on, thresholds are multiples of something
+  measured and say which, and nothing is created: a card opens the editor pre-filled for a preview
+  and an explicit save. With no audit and no trace the panel says nothing has been measured yet and
+  links to the two pages that change that, rather than concluding the cluster needs no KPI.
+- **`CONSUMER_TIME_LAG` metric template — a consumer group's backlog in time rather than in
+  records.** The same 4 000 messages are four seconds of traffic on one topic and four days on
+  another; only the second is actionable. The value is the age of the oldest message the group has
+  not read, taken from committed offsets and record timestamps — the one template that runs no SQL,
+  since neither number is in a payload. Bounded to 64 partitions and an 8 s budget, and a partition
+  whose record could not be read is reported as unknown, never as zero: zero means "caught up", and
+  a gauge saying so while nothing could be read silences the alert it exists to raise.
+- **The backlog in time, where the question is asked.** The Topic Explorer's Consumers tab gets a
+  per-group "how long has it been waiting?" button (`GET /api/topic/{name}/time-lag?group=`), on a
+  button rather than on load because it reads a record per lagging partition where the rest of the
+  panel reads metadata. `explorer.lag-metrics-time` (off by default) exports the same measurement
+  as `kafka_consumer_group_lag_seconds` for the watched topics — removed rather than frozen when a
+  refresh cannot measure it, since an age that stops being measured gets more wrong every minute,
+  unlike a count.
+- **The audit dates a stalled backlog.** A STALLED finding now carries the age of the oldest
+  waiting message beside its record count — the one case worth a costlier measurement, budgeted
+  per run and stated in a scope note. A measurement that fails leaves the finding unchanged.
+- **The demo cluster seeds consumer groups.** `setup-demo.sh` created none, so a fresh demo had
+  nothing to show in the Consumers tab, no consumer finding in the audit, no delay KPI proposed
+  and nothing for the lag gauges to export. Two groups on `demo.orders.1.received`: one caught up,
+  one that read four records and left.
+- **Stream Flow traces are kept as observations** (`kse:flow-chains`), not only as criteria: a
+  completed trace records the chain it found — topics in first-sighting order, per-hop latency — so
+  the Metrics page can derive KPIs from the path a key really took. Versioned envelope, seven-day
+  expiry, five entries de-duplicated on the route.
 - `CHANGELOG.md` (this file), `SUPPORT.md`, `.github/CODEOWNERS`, `.github/ISSUE_TEMPLATE/config.yml`,
   `.editorconfig` and `.gitattributes`.
 - **CodeQL static analysis** (`.github/workflows/codeql.yml`) over Java and TypeScript, on push,
