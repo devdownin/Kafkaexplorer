@@ -3,6 +3,7 @@
 package com.compagnonsdudev.kafkasqlexplorer.web;
 
 import com.compagnonsdudev.kafkasqlexplorer.service.AuditPromptCatalog;
+import com.compagnonsdudev.kafkasqlexplorer.service.FieldMappingStore;
 import com.compagnonsdudev.kafkasqlexplorer.service.FieldProfilingService;
 import com.compagnonsdudev.kafkasqlexplorer.service.KafkaLiveConsumer;
 import com.compagnonsdudev.kafkasqlexplorer.service.LlmAnalysisService;
@@ -45,7 +46,10 @@ class ProcessMiningControllerTest {
                 Mockito.mock(LlmAnalysisService.class),
                 kafkaLiveConsumer,
                 Mockito.mock(SseEmitterManager.class),
-                Mockito.mock(AuditPromptCatalog.class)))
+                Mockito.mock(AuditPromptCatalog.class),
+                // Le vrai magasin plutôt qu'un mock : il ne fait rien d'autre que retenir des
+                // mappings, et ce test n'en valide aucun.
+                new FieldMappingStore()))
             .build();
     }
 
