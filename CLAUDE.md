@@ -187,10 +187,25 @@ KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `
 
 ### Stack
 
-- **Backend**: Spring Boot 4.1.x, Java 21 (`java.version` in pom.xml — Flink 2.x supports Java 17/21, not 25), embedded Apache Flink 2.3.x (`flink.version` in pom.xml). Kafka connector: `flink-connector-kafka:4.0.1-2.0` (the `-2.0` suffix covers the whole Flink 2.x line).
+- **Backend**: Spring Boot 4.1.x, **Java 25** (`java.version` in pom.xml, pinned by `requireJavaVersion` in the enforcer plugin), embedded Apache Flink 2.3.x (`flink.version` in pom.xml). Kafka connector: `flink-connector-kafka:4.0.1-2.0` (the `-2.0` suffix covers the whole Flink 2.x line).
 - **Frontend**: React 19, TypeScript, Vite, Tailwind CSS, Monaco Editor
 - **Kafka**: `kafka-clients` 4.3.1 (`kafka.version` override in pom.xml, which wins over Spring Boot's managed version *and* over what `io.confluent` 8.3.1 pulls transitively — one client version across the whole build, never two). Compatible with Kafka 2.1+ brokers on the classic protocol; all bundled Docker stacks run Kafka 4.3 in KRaft mode. The live Process Mining consumer can opt into the KIP-848 rebalance protocol via `kafka.consumer-group-protocol: consumer` (default `classic`).
 - **Build**: Single JAR — Maven's `frontend-maven-plugin` builds the React app and copies it to `src/main/resources/static/`
+
+**On Java 25.** This file and `CONTRIBUTING.md` both asserted that Flink 2.x supports "Java 17/21,
+**not** 25" — that had stopped being true, and it was contradicted inside the repository itself: both
+runtime images have run on an `eclipse-temurin:25-jre-alpine` base for several releases, and the
+backend builder stage on a JDK 26 Maven image, so the JAR was already *executing* on a JVM 25 while
+the language level stayed at 21. What the bump changes is the bytecode target and the toolchain
+required to build, not the runtime, which had already moved. The whole suite (485 tests, Flink
+planner path included) passes on 25; the only cost is that `maven-enforcer-plugin` now refuses a
+JDK 21, so a contributor must upgrade rather than discover the mismatch at the first Flink test.
+
+Two JVM warnings are expected on 25 and are **not** ours to fix: Flink's shaded Guava calls
+`sun.misc.Unsafe::objectFieldOffset` (terminally deprecated — it will *throw* in a future release,
+which is a Flink-version problem, not a flag to add here), and under the offline harness
+Testcontainers' JNA calls a restricted `System::load` (`--enable-native-access`, test-only). Neither
+needs an `--add-opens`, and none is added: a flag added pre-emptively outlives the reason for it.
 
 ### Backend Layers
 

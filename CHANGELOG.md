@@ -83,6 +83,17 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **The backend targets Java 25** (`java.version` in `pom.xml`, with `requireJavaVersion` in the
+  enforcer plugin raised to match, and the CI, release and CodeQL workflows plus
+  `docker-compose-build.yml` moved to a JDK 25 toolchain). The repository already contradicted its
+  own documentation on this point: both runtime images have shipped on an
+  `eclipse-temurin:25-jre-alpine` base for several releases and the backend builder stage on a
+  JDK 26 Maven image, so the JAR was *executing* on a JVM 25 while `CLAUDE.md` and
+  `CONTRIBUTING.md` stated that Flink 2.x supported "Java 17/21, **not** 25". The bump moves the
+  bytecode target and the build toolchain; the runtime had already moved. The full suite passes on
+  25, Flink planner path included, and no `--add-opens` is added — the two warnings that do appear
+  (Flink's shaded Guava reaching for `sun.misc.Unsafe`, Testcontainers' JNA for a restricted
+  `System::load`) belong to those dependencies, and a flag added pre-emptively outlives its reason.
 - **Every GitHub Action is pinned to a commit SHA** rather than a mutable tag, with the version
   kept in a trailing comment. Dependabot continues to bump them.
 - `SECURITY.md` now states a supported-version policy that matches reality — it claimed `0.0.1`
