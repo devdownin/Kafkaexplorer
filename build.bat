@@ -7,7 +7,7 @@ REM Usage:
 REM   build.bat            -> full build (frontend + backend), runs tests
 REM   build.bat skiptests   -> full build, skips backend tests
 REM
-REM Requires a JDK 21, Maven and Node.js on the machine. If you would rather not
+REM Requires a JDK 25, Maven and Node.js on the machine. If you would rather not
 REM install them, docker-compose-build.yml runs the same build in containers:
 REM   docker compose -f docker-compose-build.yml run --rm package
 REM ============================================================
@@ -28,7 +28,7 @@ REM be sent to install Maven, and so on.
 set "MISSING="
 
 where java >nul 2>nul
-if errorlevel 1 set "MISSING=!MISSING! java (JDK 21)"
+if errorlevel 1 set "MISSING=!MISSING! java (JDK 25)"
 
 where mvn >nul 2>nul
 if errorlevel 1 set "MISSING=!MISSING! mvn (Maven)"

@@ -368,7 +368,7 @@ study, share and improve.
     - `enable-url-completion` is off in the sync workflow, so nothing rewrites a relative
       link into a working one behind your back. Absolute or broken.
 
-  The env-var tables and the base-image line are checked by `check-config-table.py`
+  The env-var tables, the base-image line and the Java badge are checked by `check-config-table.py`
   (same CI job) against application.yml and the Dockerfiles. That check exists because
   this page once advertised a JRE two majors out of date, and nothing noticed.
 

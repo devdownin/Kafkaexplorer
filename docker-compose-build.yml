@@ -20,7 +20,7 @@
 # always `run --rm`, never `up`.
 
 x-maven: &maven
-  image: maven:3.9-eclipse-temurin-21
+  image: maven:3.9-eclipse-temurin-25
   working_dir: /app
   environment:
     # Maven 3.9 reads MAVEN_ARGS. Even if it did not, HOME points into the volume, so

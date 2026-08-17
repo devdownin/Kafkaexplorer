@@ -9,7 +9,7 @@
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/devdownin/Kafkaexplorer/badge)](https://scorecard.dev/viewer/?uri=github.com/devdownin/Kafkaexplorer)
 [![Docker Hub](https://img.shields.io/docker/pulls/compagnonsdudev/kafkaexplorer?logo=docker&logoColor=white&label=docker%20pulls)](https://hub.docker.com/r/compagnonsdudev/kafkaexplorer)
 [![GHCR](https://img.shields.io/badge/ghcr.io-kafkaexplorer-2496ED?logo=github&logoColor=white)](https://github.com/devdownin/Kafkaexplorer/pkgs/container/kafkaexplorer)
-[![Java 21](https://img.shields.io/badge/Java-21-orange)](pom.xml)
+[![Java 25](https://img.shields.io/badge/Java-25-orange)](pom.xml)
 [![Kafka 4.3](https://img.shields.io/badge/Kafka-4.3_KRaft-231F20?logo=apachekafka)](https://kafka.apache.org/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
@@ -73,7 +73,7 @@ Ouvrez ensuite **http://localhost:8080** et commencez à cliquer. C'est tout.
 
 - **Avec Confluent Schema Registry** (topics Avro) : `docker compose -f docker-compose-kafka4.yml up -d`
 - **Avec un LLM local pré-câblé** (Ollama) : `docker compose -f docker-compose-llm.yml up -d`
-- **Depuis les sources** (JDK 21) : lancez Kafka avec `docker compose up -d kafka`, puis `./mvnw spring-boot:run`
+- **Depuis les sources** (JDK 25) : lancez Kafka avec `docker compose up -d kafka`, puis `./mvnw spring-boot:run`
 - **Builder sans rien installer d'autre que Docker** — ni JDK, ni Maven, ni Node :
   ```bash
   docker compose -f docker-compose-build.yml run --rm verify    # le gate complet, comme la CI

@@ -35,7 +35,7 @@ New source files carry the licence header — see [Licence headers](#licence-hea
 
 ### Prerequisites
 
-- JDK 21 (Flink 2.x supports Java 17 and 21, **not** 25)
+- JDK 25 (`java.version` in `pom.xml`; the enforcer plugin refuses anything older)
 - Docker and Docker Compose
 - Maven — or just use the checked-in wrapper, `./mvnw`
 
