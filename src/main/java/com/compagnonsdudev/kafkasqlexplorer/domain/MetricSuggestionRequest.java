@@ -8,10 +8,20 @@ import java.util.List;
  * What the caller contributes to the suggestion pass. The audit side is read server-side; the
  * traces are not, so the browser sends the ones it kept.
  *
+ * <p>{@code fieldMappingId} is the same kind of contribution: the Process Mining pipeline keeps it
+ * in the browser's draft, and it unlocks the one thing this application knows about a topic's
+ * <em>real</em> business key — the mapping an operator validated, rather than the {@code id}
+ * convention everything else falls back to.
+ *
  * <p>The whole body is optional — {@code POST /api/metrics/suggestions} with no body answers with
- * the audit-derived proposals alone.
+ * the audit- and lineage-derived proposals alone.
  */
-public record MetricSuggestionRequest(List<FlowChainEvidence> flowChains) {
+public record MetricSuggestionRequest(List<FlowChainEvidence> flowChains, String fieldMappingId) {
+
+    /** Backwards-compatible: a body carrying only the traces still binds. */
+    public MetricSuggestionRequest(List<FlowChainEvidence> flowChains) {
+        this(flowChains, null);
+    }
 
     public List<FlowChainEvidence> chains() {
         return flowChains == null ? List.of() : flowChains;

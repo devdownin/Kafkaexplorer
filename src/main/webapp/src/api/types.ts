@@ -294,7 +294,7 @@ export interface MetricConfig {
 }
 
 /** @java MetricSuggestionSource */
-export type MetricSuggestionSource = 'AUDIT' | 'STREAM_FLOW';
+export type MetricSuggestionSource = 'AUDIT' | 'STREAM_FLOW' | 'LINEAGE' | 'PROCESS_MINING';
 
 /**
  * `POST /api/metrics/suggestions` — un KPI contextuel proposé, avec ce sur quoi il repose.

@@ -142,6 +142,37 @@ describe('describeEvidence', () => {
   });
 });
 
+describe('describeEvidence — the sources beyond the audit', () => {
+  it('counts running Flink job edges as an observation of their own', () => {
+    const state = describeEvidence(response({
+      auditAvailable: false, auditTimestamp: null, auditSource: null, auditTopics: 0,
+      flowChainsSubmitted: 0,
+      suggestions: [suggestion({ id: 'lineage:flow-gap:a>b', source: 'LINEAGE' })],
+    }));
+
+    // Sans ça, le panneau annonçait « rien n'a été mesuré » au-dessus des cartes qu'il affichait.
+    expect(state.waiting).toBe(false);
+    expect(state.summary).toContain('1 running Flink job edge');
+  });
+
+  it('names the validated mapping when it produced something', () => {
+    const state = describeEvidence(response({
+      suggestions: [suggestion({ id: 'pm:status:t', source: 'PROCESS_MINING' })],
+    }));
+
+    expect(state.summary).toContain('Process Mining field mapping');
+  });
+
+  it('still waits when nothing at all was observed', () => {
+    const state = describeEvidence(response({
+      suggestions: [], auditAvailable: false, auditTimestamp: null, auditSource: null,
+      auditTopics: 0, flowChainsSubmitted: 0,
+    }));
+
+    expect(state.waiting).toBe(true);
+  });
+});
+
 describe('stalenessNote', () => {
   it('is silent on a fresh audit', () => {
     expect(stalenessNote(response(), NOW + 60_000)).toBeNull();
@@ -218,5 +249,12 @@ describe('sourceLabel', () => {
   it('names the evidence family in the operator’s words', () => {
     expect(sourceLabel('AUDIT')).toBe('Cluster audit');
     expect(sourceLabel('STREAM_FLOW')).toBe('Stream Flow trace');
+    expect(sourceLabel('LINEAGE')).toBe('Running Flink job');
+    expect(sourceLabel('PROCESS_MINING')).toBe('Process Mining mapping');
+  });
+
+  it('falls back to the raw value rather than rendering nothing', () => {
+    // Le serveur peut connaître une source que cette version du front ignore.
+    expect(sourceLabel('SOMETHING_NEW' as never)).toBe('SOMETHING_NEW');
   });
 });

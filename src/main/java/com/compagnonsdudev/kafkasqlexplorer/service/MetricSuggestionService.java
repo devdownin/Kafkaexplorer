@@ -9,6 +9,7 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.AuditRunSummary;
 import com.compagnonsdudev.kafkasqlexplorer.domain.AuditStatus;
 import com.compagnonsdudev.kafkasqlexplorer.domain.ConsumerGroupLag;
 import com.compagnonsdudev.kafkasqlexplorer.domain.FlowAudit;
+import com.compagnonsdudev.kafkasqlexplorer.domain.FieldMapping;
 import com.compagnonsdudev.kafkasqlexplorer.domain.FlowChainEvidence;
 import com.compagnonsdudev.kafkasqlexplorer.domain.HealthStatus;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricConfig;
@@ -93,6 +94,8 @@ public class MetricSuggestionService {
     private final MetricService metricService;
     private final FlinkSqlService flinkSqlService;
     private final KafkaAdminService kafkaAdminService;
+    private final LineageService lineageService;
+    private final FieldMappingStore fieldMappingStore;
     private final ExplorerConfig explorerConfig;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -101,12 +104,16 @@ public class MetricSuggestionService {
                                    MetricService metricService,
                                    FlinkSqlService flinkSqlService,
                                    KafkaAdminService kafkaAdminService,
+                                   LineageService lineageService,
+                                   FieldMappingStore fieldMappingStore,
                                    ExplorerConfig explorerConfig) {
         this.auditService = auditService;
         this.auditHistoryService = auditHistoryService;
         this.metricService = metricService;
         this.flinkSqlService = flinkSqlService;
         this.kafkaAdminService = kafkaAdminService;
+        this.lineageService = lineageService;
+        this.fieldMappingStore = fieldMappingStore;
         this.explorerConfig = explorerConfig;
     }
 
@@ -117,9 +124,14 @@ public class MetricSuggestionService {
         List<String> notes = new ArrayList<>();
         List<MetricSuggestion> suggestions = new ArrayList<>();
 
+        // Resolved before anything else: a validated mapping knows a topic's real business key,
+        // which every proposal below would otherwise assume. It improves the cards rather than
+        // adding its own.
+        FieldMapping mapping = resolveFieldMapping(request, notes);
+
         AuditSnapshot audit = readAudit(notes);
         if (audit.report() != null) {
-            suggestions.addAll(fromAudit(audit, notes));
+            suggestions.addAll(fromAudit(audit, mapping, notes));
         } else {
             notes.add("No cluster audit could be read — run one from the Audit page to unlock the "
                 + "KPIs derived from topic volumes, findings and reconstructed flows.");
@@ -129,8 +141,11 @@ public class MetricSuggestionService {
             notes.add("No Stream Flow trace was recorded in this browser — trace a message key to "
                 + "unlock the KPIs derived from the path it actually travelled.");
         } else {
-            suggestions.addAll(fromFlowChains(chains));
+            suggestions.addAll(fromFlowChains(chains, mapping));
         }
+
+        suggestions.addAll(fromLineage(notes));
+        if (mapping != null) suggestions.addAll(fromFieldMapping(mapping, notes));
 
         List<MetricSuggestion> deduplicated = deduplicate(suggestions);
         if (deduplicated.size() > MAX_SUGGESTIONS) {
@@ -207,7 +222,7 @@ public class MetricSuggestionService {
 
     // ── Audit-derived proposals ───────────────────────────────────────────────
 
-    private List<MetricSuggestion> fromAudit(AuditSnapshot audit, List<String> notes) {
+    private List<MetricSuggestion> fromAudit(AuditSnapshot audit, FieldMapping mapping, List<String> notes) {
         AuditReport report = audit.report();
         String run = describeRun(audit);
         List<MetricSuggestion> suggestions = new ArrayList<>();
@@ -217,14 +232,14 @@ public class MetricSuggestionService {
             for (int i = 1; i < steps.size(); i++) {
                 FlowAudit.StepInfo from = steps.get(i - 1);
                 FlowAudit.StepInfo to = steps.get(i);
-                transitLatencyFromAudit(flow.flowName(), from, to, run).ifPresent(suggestions::add);
+                transitLatencyFromAudit(flow.flowName(), from, to, run, mapping).ifPresent(suggestions::add);
                 throughputGap(flow.flowName(), from, to, run).ifPresent(suggestions::add);
             }
         }
 
         for (TopicAudit topic : nullSafe(report.topicAudits())) {
             if (topic.duplicateCount() > 0) {
-                duplicateKpi(topic, run).ifPresent(suggestions::add);
+                duplicateKpi(topic, run, mapping).ifPresent(suggestions::add);
             }
         }
 
@@ -250,7 +265,8 @@ public class MetricSuggestionService {
     private Optional<MetricSuggestion> transitLatencyFromAudit(String flowName,
                                                               FlowAudit.StepInfo from,
                                                               FlowAudit.StepInfo to,
-                                                              String run) {
+                                                              String run,
+                                                              FieldMapping mapping) {
         Long measured = to.averageLatencyMs();
         if (measured == null) return Optional.empty();   // the audit could not correlate the pair
 
@@ -260,7 +276,7 @@ public class MetricSuggestionService {
         return Optional.of(transitLatency(
             "audit:hop-latency:" + from.topicName() + ">" + to.topicName(),
             MetricSuggestionSource.AUDIT,
-            from.topicName(), to.topicName(), measured,
+            from.topicName(), to.topicName(), measured, mapping,
             "Processing latency " + from.topicName() + " → " + to.topicName(),
             "This hop is on a flow the audit reconstructed, and it is where a stalled consumer or a "
                 + "slow enrichment shows up first — as time, before it shows up as a backlog.",
@@ -270,7 +286,8 @@ public class MetricSuggestionService {
     /** The same KPI, from a chain the operator traced by hand rather than from a naming convention. */
     private Optional<MetricSuggestion> transitLatencyFromChain(FlowChainEvidence chain,
                                                                FlowChainEvidence.FlowChainHop from,
-                                                               FlowChainEvidence.FlowChainHop to) {
+                                                               FlowChainEvidence.FlowChainHop to,
+                                                               FieldMapping mapping) {
         Long measured = to.latencyFromPreviousMs();
         if (measured == null) return Optional.empty();
 
@@ -290,7 +307,7 @@ public class MetricSuggestionService {
         return Optional.of(transitLatency(
             "flow:hop-latency:" + from.topic() + ">" + to.topic(),
             MetricSuggestionSource.STREAM_FLOW,
-            from.topic(), to.topic(), basis,
+            from.topic(), to.topic(), basis, mapping,
             "Processing latency " + from.topic() + " → " + to.topic(),
             "A key was traced across this hop, so the pair is real rather than inferred from a "
                 + "naming convention — measuring it continuously turns one observation into a trend.",
@@ -299,10 +316,10 @@ public class MetricSuggestionService {
 
     private MetricSuggestion transitLatency(String id, MetricSuggestionSource source,
                                             String sourceTopic, String targetTopic,
-                                            long measuredMs, String title, String rationale,
-                                            List<String> evidence) {
-        KeyColumn sourceKey = keyColumn(sourceTopic);
-        KeyColumn targetKey = keyColumn(targetTopic);
+                                            long measuredMs, FieldMapping mapping, String title,
+                                            String rationale, List<String> evidence) {
+        KeyColumn sourceKey = keyColumn(sourceTopic, mapping);
+        KeyColumn targetKey = keyColumn(targetTopic, mapping);
 
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("sourceSql", correlationSql(sourceTopic, sourceKey.column()));
@@ -403,8 +420,8 @@ public class MetricSuggestionService {
             false, null, metric));
     }
 
-    private Optional<MetricSuggestion> duplicateKpi(TopicAudit topic, String run) {
-        KeyColumn key = keyColumn(topic.name());
+    private Optional<MetricSuggestion> duplicateKpi(TopicAudit topic, String run, FieldMapping mapping) {
+        KeyColumn key = keyColumn(topic.name(), mapping);
         String table = DdlGeneratorService.toTableName(topic.name());
         String sql = "SELECT COUNT(*) - COUNT(DISTINCT `" + key.column() + "`) AS metric_value\n"
             + "FROM " + table;
@@ -650,7 +667,7 @@ public class MetricSuggestionService {
 
     // ── Stream-Flow-derived proposals ─────────────────────────────────────────
 
-    private List<MetricSuggestion> fromFlowChains(List<FlowChainEvidence> chains) {
+    private List<MetricSuggestion> fromFlowChains(List<FlowChainEvidence> chains, FieldMapping mapping) {
         List<MetricSuggestion> suggestions = new ArrayList<>();
         for (FlowChainEvidence chain : chains) {
             List<FlowChainEvidence.FlowChainHop> hops = nullSafe(chain.hops()).stream()
@@ -659,7 +676,7 @@ public class MetricSuggestionService {
             if (hops.size() < 2) continue;   // a single sighting is not a path
 
             for (int i = 1; i < hops.size(); i++) {
-                transitLatencyFromChain(chain, hops.get(i - 1), hops.get(i)).ifPresent(suggestions::add);
+                transitLatencyFromChain(chain, hops.get(i - 1), hops.get(i), mapping).ifPresent(suggestions::add);
             }
             endToEndCompleteness(chain, hops).ifPresent(suggestions::add);
         }
@@ -716,18 +733,250 @@ public class MetricSuggestionService {
             false, null, metric));
     }
 
+    // ── Lineage-derived proposals ─────────────────────────────────────────────
+
+    /**
+     * A KPI on a pipeline edge the user <em>declared</em> rather than one a convention guessed.
+     *
+     * <p>Every other source here infers: the audit groups topics by their names, a trace follows
+     * one key. A running {@code INSERT INTO sink SELECT … FROM source} states the edge outright,
+     * and Flink's own parser resolves it — the same path the Lineage page draws, which is why
+     * `dependenciesOf` is shared rather than re-implemented with a regex.
+     *
+     * <p>Only single-source statements are proposed. "Everything that entered should come out"
+     * is a sentence about one source; on a join, the counts of two inputs and one output have no
+     * ratio anybody can threshold, and a card claiming otherwise would be worse than no card.
+     */
+    private List<MetricSuggestion> fromLineage(List<String> notes) {
+        Map<String, FlinkSqlService.JobInfo> jobs;
+        try {
+            jobs = flinkSqlService.getActiveJobsDetails();
+        } catch (Exception e) {
+            log.debug("Active jobs could not be read while suggesting metrics: {}", e.toString());
+            return List.of();
+        }
+        if (jobs == null || jobs.isEmpty()) return List.of();
+
+        List<MetricSuggestion> suggestions = new ArrayList<>();
+        int joins = 0;
+        for (Map.Entry<String, FlinkSqlService.JobInfo> entry : jobs.entrySet()) {
+            String sql = entry.getValue().sql();
+            if (sql == null || !sql.toUpperCase(Locale.ROOT).contains("INSERT INTO")) continue;
+
+            LineageService.SqlDependencies dependencies;
+            try {
+                dependencies = lineageService.dependenciesOf(sql);
+            } catch (Exception e) {
+                log.debug("Job {} could not be resolved while suggesting metrics: {}", entry.getKey(), e.toString());
+                continue;
+            }
+            String target = dependencies.target();
+            if (target == null || dependencies.sources().isEmpty()) continue;
+            if (dependencies.sources().size() > 1) { joins++; continue; }
+
+            String source = dependencies.sources().iterator().next();
+            if (source.equals(target)) continue;
+            suggestions.add(declaredGap(source, target, entry.getValue(), dependencies.parsed()));
+        }
+        if (joins > 0) {
+            notes.add(joins + " running job(s) read several sources at once. No gap KPI is proposed "
+                + "for them: \"everything that entered came out\" is a statement about one source, "
+                + "and on a join the counts have no ratio worth a threshold.");
+        }
+        return suggestions;
+    }
+
+    private MetricSuggestion declaredGap(String source, String target,
+                                         FlinkSqlService.JobInfo job, boolean parsed) {
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("leftSql", "SELECT COUNT(*) AS metric_value\nFROM " + source);
+        params.put("rightSql", "SELECT COUNT(*) AS metric_value\nFROM " + target);
+        params.put("operation", "PERCENT_GAP");
+        params.put("leftTopic", source);
+        params.put("rightTopic", target);
+
+        MetricConfig metric = new MetricConfig(
+            null,
+            "gauge_declared_gap_" + DdlGeneratorService.toTableName(source)
+                + "_to_" + DdlGeneratorService.toTableName(target),
+            "GAUGE",
+            null,
+            "Percentage gap between " + source + " and " + target + ", the two ends of a running "
+                + "Flink job.",
+            // No threshold: this edge has never been measured. The audit's gap KPI can multiply
+            // an observed drop; here there is nothing to multiply, and a round number would be
+            // exactly the invention this panel refuses.
+            null, null, null, null, null,
+            List.of(), Map.of(), null,
+            MetricTemplateType.TOPIC_COUNT_DELTA.name(), params,
+            "TEMPLATE_BOUNDED_SCAN", source, List.of());
+
+        String evidence = "A Flink job started "
+            + formatDate(job.startedAt()) + " (query " + job.queryId() + ") inserts into " + target
+            + " reading from " + source + (parsed
+                ? ", as Flink's parser resolves the statement."
+                : ". Flink's parser could not resolve the statement, so the pair was read off the "
+                  + "SQL text and may be incomplete.");
+
+        List<String> caveats = new ArrayList<>();
+        caveats.add("A job that filters or aggregates shows a permanent gap, which is correct and "
+            + "not a fault — set the thresholds around the level it normally sits at.");
+        caveats.add("No threshold is proposed: nothing has measured this pair. Run it, look at "
+            + "what it reports, then set one.");
+        if (!parsed) {
+            caveats.add("The dependency was guessed from the SQL text; check the two queries name "
+                + "the tables you expect before saving.");
+        }
+
+        return new MetricSuggestion(
+            "lineage:flow-gap:" + source + ">" + target,
+            MetricSuggestionSource.LINEAGE,
+            "Throughput gap " + source + " → " + target,
+            "This edge is not inferred from a naming convention: a job you started is moving data "
+                + "along it right now, so the two ends are supposed to agree.",
+            List.of(evidence),
+            null,
+            caveats,
+            false, null, metric);
+    }
+
+    // ── Process-Mining-derived proposals ──────────────────────────────────────
+
+    /**
+     * The mapping the operator validated, or nothing — never a guess about which one they meant.
+     *
+     * <p>The id lives in the browser's Process Mining draft and travels in the request, the way
+     * traces do. A mapping the server no longer holds (it is in-memory, so a restart loses it) is
+     * reported rather than silently ignored: the cards it would have produced are missing, and the
+     * panel would otherwise look as though Process Mining had nothing to say.
+     */
+    private FieldMapping resolveFieldMapping(MetricSuggestionRequest request, List<String> notes) {
+        String id = request == null ? null : request.fieldMappingId();
+        if (id == null || id.isBlank()) {
+            notes.add("No Process Mining field mapping was validated in this browser — validating "
+                + "one names each topic's real correlation key and its status field, which sharpens "
+                + "the proposals above and adds a KPI per status.");
+            return null;
+        }
+        Optional<FieldMapping> mapping = fieldMappingStore.find(id);
+        if (mapping.isEmpty()) {
+            notes.add("The Process Mining field mapping this browser refers to is no longer held by "
+                + "the server (mappings live in memory and a restart loses them) — re-run the "
+                + "profiling step to get its proposals back.");
+            return null;
+        }
+        return mapping.get();
+    }
+
+    /**
+     * One KPI per topic whose status field an operator validated.
+     *
+     * <p>The status is the one business dimension this application can measure without asking
+     * anybody what the business is: the query groups by it, and every non-{@code metric_value}
+     * column becomes a Prometheus label, so a single metric yields one series per status value —
+     * "how many are FAILED right now" without naming FAILED anywhere.
+     */
+    private List<MetricSuggestion> fromFieldMapping(FieldMapping mapping, List<String> notes) {
+        Map<String, String> statusPaths = mapping.statusPaths();
+        if (statusPaths == null || statusPaths.isEmpty()) return List.of();
+
+        List<MetricSuggestion> suggestions = new ArrayList<>();
+        List<String> nested = new ArrayList<>();
+        statusPaths.forEach((topic, path) -> {
+            String column = simpleColumn(path);
+            if (column == null) {
+                nested.add(topic + " (" + path + ")");
+                return;
+            }
+            suggestions.add(statusBreakdown(topic, column, path));
+        });
+        if (!nested.isEmpty()) {
+            notes.add("The status field of " + String.join(", ", nested) + " is a nested path, which "
+                + "a metric query cannot select as a column — no KPI is proposed for it rather than "
+                + "SQL that would fail on its first refresh.");
+        }
+        return suggestions;
+    }
+
+    private MetricSuggestion statusBreakdown(String topic, String column, String path) {
+        String table = DdlGeneratorService.toTableName(topic);
+        String sql = "SELECT `" + column + "` AS " + column + ", COUNT(*) AS metric_value\n"
+            + "FROM " + table + "\n"
+            + "GROUP BY `" + column + "`";
+
+        MetricConfig metric = new MetricConfig(
+            null,
+            "gauge_status_" + table,
+            "GAUGE",
+            sql,
+            "Records of " + topic + " by " + column + " — one Prometheus series per status value.",
+            // Which value matters, and above what count, is a business question nobody here has
+            // been told the answer to. The series is the KPI; the threshold belongs to whoever
+            // knows what FAILED costs.
+            null, null, null, null, null,
+            List.of(), Map.of(), null,
+            MetricTemplateType.RAW_SQL.name(), Map.of(),
+            "SQL", topic, List.of());
+
+        return new MetricSuggestion(
+            "pm:status:" + topic,
+            MetricSuggestionSource.PROCESS_MINING,
+            "Status breakdown of " + topic,
+            "Process Mining identified which field carries the status of these records. Counting "
+                + "them by it is the one business KPI that needs no further knowledge of the "
+                + "business — and it is what turns \"how many are failing?\" into a graph.",
+            List.of("The Process Mining field mapping validated in this browser names `" + path
+                + "` as the status field of " + topic + "."),
+            null,
+            List.of("One Prometheus series per distinct value: fine for a handful of statuses, "
+                + "expensive if that field turns out to be near-unique.",
+                    "No threshold is proposed — which status matters, and above what count, is the "
+                + "one thing this application cannot know for you.",
+                    "The field must be a column of the registered table; the preview is what "
+                + "settles it."),
+            false, null, metric);
+    }
+
     // ── Naming, SQL, dedupe ───────────────────────────────────────────────────
 
-    /** A column that exists in the registered table, or the audit's own convention plus a caveat. */
-    private record KeyColumn(String column, boolean inferred) {
+    /** Where a proposal's correlation key comes from — and the card says which. */
+    private enum KeySource {
+        /** An operator validated it in the Process Mining pipeline: the best answer available. */
+        FIELD_MAPPING,
+        /** A column of the table registered in Flink, matched against the usual key names. */
+        REGISTERED_SCHEMA,
+        /** Nothing knew: the audit's own `id` convention, flagged as an assumption. */
+        CONVENTION
+    }
+
+    private record KeyColumn(String column, KeySource origin) {
+        boolean inferred() {
+            return origin == KeySource.CONVENTION;
+        }
+
         String describe(String topic) {
-            return inferred
-                ? "`" + column + "` (assumed on " + topic + " — no registered table to read a schema from)"
-                : "`" + column + "` (a column of the registered table for " + topic + ")";
+            return switch (origin) {
+                case FIELD_MAPPING -> "`" + column + "` (the correlation key validated for " + topic
+                    + " in Process Mining)";
+                case REGISTERED_SCHEMA -> "`" + column + "` (a column of the registered table for " + topic + ")";
+                case CONVENTION -> "`" + column + "` (assumed on " + topic
+                    + " — nothing registered or profiled says otherwise)";
+            };
         }
     }
 
-    private KeyColumn keyColumn(String topic) {
+    /**
+     * The correlation key for a topic, best source first.
+     *
+     * <p>A validated Process Mining mapping beats a schema guess, and a schema column beats the
+     * `id` convention — because the first is somebody's answer, the second is a fact about the
+     * table, and only the third is this code assuming. Which one it was travels to the card, so
+     * the operator knows whether the preview is a formality or the thing to check.
+     */
+    private KeyColumn keyColumn(String topic, FieldMapping mapping) {
+        String mapped = mappedKeyColumn(topic, mapping);
+        if (mapped != null) return new KeyColumn(mapped, KeySource.FIELD_MAPPING);
+
         Map<String, String> schema;
         try {
             schema = flinkSqlService.getTableSchema(DdlGeneratorService.toTableName(topic));
@@ -735,17 +984,42 @@ public class MetricSuggestionService {
             log.debug("No schema for {} while suggesting metrics: {}", topic, e.toString());
             schema = Map.of();
         }
-        if (schema.isEmpty()) return new KeyColumn(FALLBACK_KEY_COLUMN, true);
+        if (schema.isEmpty()) return new KeyColumn(FALLBACK_KEY_COLUMN, KeySource.CONVENTION);
 
         Map<String, String> byLowerCase = new LinkedHashMap<>();
         schema.keySet().forEach(column -> byLowerCase.putIfAbsent(column.toLowerCase(Locale.ROOT), column));
         for (String candidate : KEY_COLUMN_CANDIDATES) {
             String match = byLowerCase.get(candidate);
-            if (match != null) return new KeyColumn(match, false);
+            if (match != null) return new KeyColumn(match, KeySource.REGISTERED_SCHEMA);
         }
         // Nothing recognisable: name the convention rather than picking an arbitrary column, which
         // would produce a metric that runs and measures nothing.
-        return new KeyColumn(FALLBACK_KEY_COLUMN, true);
+        return new KeyColumn(FALLBACK_KEY_COLUMN, KeySource.CONVENTION);
+    }
+
+    /**
+     * The mapping's correlation path for a topic, when it can be a SQL column.
+     *
+     * <p>A mapping stores a path — `$.orderId`, `order.reference`, `header:x`. A metric query
+     * selects a *column*, so a nested path is not usable and is dropped rather than turned into
+     * SQL that cannot run: `$.` is stripped, anything still carrying a dot or a bracket is not a
+     * column of the registered table and would fail at the first refresh.
+     */
+    private String mappedKeyColumn(String topic, FieldMapping mapping) {
+        if (mapping == null || mapping.correlationIdPaths() == null) return null;
+        String path = mapping.correlationIdPaths().get(topic);
+        return simpleColumn(path);
+    }
+
+    /** A path reduced to a column name, or null when it does not designate one. */
+    private static String simpleColumn(String path) {
+        if (path == null || path.isBlank()) return null;
+        String cleaned = path.trim();
+        if (cleaned.startsWith("$.")) cleaned = cleaned.substring(2);
+        if (cleaned.startsWith("$")) cleaned = cleaned.substring(1);
+        if (cleaned.isEmpty()) return null;
+        // A nested path, an array access or a header reference is not a column of the table.
+        return cleaned.matches("[A-Za-z_][A-Za-z0-9_]*") ? cleaned : null;
     }
 
     private String correlationSql(String topic, String keyColumn) {

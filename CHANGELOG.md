@@ -29,6 +29,16 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   since neither number is in a payload. Bounded to 64 partitions and an 8 s budget, and a partition
   whose record could not be read is reported as unknown, never as zero: zero means "caught up", and
   a gauge saying so while nothing could be read silences the alert it exists to raise.
+- **Lineage and Process Mining feed the KPI suggestions too.** A running `INSERT INTO` job
+  *declares* a pipeline edge, so it yields a gap KPI on a pair nobody had to infer — a job reading
+  several sources is refused, with the reason stated, since two inputs against one output have no
+  ratio worth a threshold. A validated Process Mining field mapping names each topic's real
+  correlation key, which now beats the schema guess and the `id` convention on every card that
+  needs one (each says which of the three it used), and its status field becomes a KPI grouping by
+  status — one Prometheus series per value, no threshold, because which status matters is the one
+  thing the application cannot know for you. The field-mapping cache moved out of the controller
+  into a bounded `FieldMappingStore`: nothing ever evicted an entry, and the mapping was reachable
+  from nowhere else.
 - **The backlog in time, where the question is asked.** The Topic Explorer's Consumers tab gets a
   per-group "how long has it been waiting?" button (`GET /api/topic/{name}/time-lag?group=`), on a
   button rather than on load because it reads a record per lagging partition where the rest of the

@@ -747,6 +747,9 @@ const Metrics: React.FC = () => {
     try {
       const res = await axios.post<MetricSuggestions>('/api/metrics/suggestions', {
         flowChains: readFlowChains(),
+        // Le mapping validé par Process Mining vit dans le brouillon de cette page-là ; c'est lui
+        // qui connaît la vraie clé de corrélation et le champ de statut de chaque topic.
+        fieldMappingId: readDraft<string | null>('pm:mapping', null),
       });
       setSuggestions(res.data);
     } catch (err) {

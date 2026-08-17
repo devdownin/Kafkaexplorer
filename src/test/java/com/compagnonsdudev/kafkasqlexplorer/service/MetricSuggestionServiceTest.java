@@ -8,6 +8,7 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.AuditReport;
 import com.compagnonsdudev.kafkasqlexplorer.domain.AuditStatus;
 import com.compagnonsdudev.kafkasqlexplorer.domain.ConsumerGroupLag;
 import com.compagnonsdudev.kafkasqlexplorer.domain.FlowAudit;
+import com.compagnonsdudev.kafkasqlexplorer.domain.FieldMapping;
 import com.compagnonsdudev.kafkasqlexplorer.domain.FlowChainEvidence;
 import com.compagnonsdudev.kafkasqlexplorer.domain.HealthStatus;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MessageFormat;
@@ -43,6 +44,8 @@ class MetricSuggestionServiceTest {
     private MetricService metricService;
     private FlinkSqlService flinkSqlService;
     private KafkaAdminService kafkaAdminService;
+    private LineageService lineageService;
+    private FieldMappingStore fieldMappingStore;
     private MetricSuggestionService service;
 
     @BeforeEach
@@ -52,6 +55,8 @@ class MetricSuggestionServiceTest {
         metricService = mock(MetricService.class);
         flinkSqlService = mock(FlinkSqlService.class);
         kafkaAdminService = mock(KafkaAdminService.class);
+        lineageService = mock(LineageService.class);
+        fieldMappingStore = new FieldMappingStore();
 
         when(auditHistoryService.listHistory()).thenReturn(AuditHistory.empty(List.of()));
         when(metricService.getAllMetrics()).thenReturn(List.of());
@@ -60,8 +65,11 @@ class MetricSuggestionServiceTest {
         when(kafkaAdminService.getTopicConsumers(anyString(), anyInt()))
             .thenReturn(TopicConsumers.unavailable("unset", "No stub for this topic."));
 
+        // No running job by default: the lineage family is evidence-gated like the others.
+        when(flinkSqlService.getActiveJobsDetails()).thenReturn(Map.of());
+
         service = new MetricSuggestionService(auditService, auditHistoryService, metricService,
-            flinkSqlService, kafkaAdminService, new ExplorerConfig());
+            flinkSqlService, kafkaAdminService, lineageService, fieldMappingStore, new ExplorerConfig());
     }
 
     // ── Gating ───────────────────────────────────────────────────────────────
@@ -301,6 +309,143 @@ class MetricSuggestionServiceTest {
         assertEquals(1, latencyCards, "one hop, one card: " + result.suggestions());
         assertEquals(MetricSuggestionSource.AUDIT,
             find(result, "audit:hop-latency:demo.orders.in>demo.orders.out").source());
+    }
+
+    // ── Lineage-derived ──────────────────────────────────────────────────────
+
+    private void runningJob(String queryId, String sql, java.util.Set<String> sources,
+                            String target, boolean parsed) {
+        FlinkSqlService.JobInfo job = mock(FlinkSqlService.JobInfo.class);
+        when(job.sql()).thenReturn(sql);
+        when(job.queryId()).thenReturn(queryId);
+        when(job.startedAt()).thenReturn(1_700_000_000_000L);
+        when(flinkSqlService.getActiveJobsDetails()).thenReturn(Map.of(queryId, job));
+        when(lineageService.dependenciesOf(sql))
+            .thenReturn(new LineageService.SqlDependencies(sources, target, parsed));
+    }
+
+    @Test
+    void aRunningInsertJobBecomesAGapKpiOnAnEdgeNobodyHadToGuess() {
+        runningJob("q-1", "INSERT INTO orders_out SELECT * FROM orders_in",
+            java.util.Set.of("orders_in"), "orders_out", true);
+
+        MetricSuggestion gap = find(service.suggest(null), "lineage:flow-gap:orders_in>orders_out");
+
+        assertEquals(MetricSuggestionSource.LINEAGE, gap.source());
+        assertEquals(MetricTemplateType.TOPIC_COUNT_DELTA.name(), gap.metric().templateType());
+        assertEquals("PERCENT_GAP", gap.metric().templateParams().get("operation"));
+        // Nothing has ever measured this pair, so there is nothing to multiply.
+        assertNull(gap.metric().warningThreshold());
+        assertNull(gap.thresholdBasis());
+        assertTrue(gap.evidence().get(0).contains("q-1"), gap.evidence().toString());
+        assertTrue(gap.caveats().stream().anyMatch(c -> c.contains("filters or aggregates")),
+            "a filtering job shows a permanent gap, which is correct: " + gap.caveats());
+    }
+
+    @Test
+    void aJoinIsNotProposedAsAGapAndTheReasonIsStated() {
+        runningJob("q-2", "INSERT INTO enriched SELECT * FROM orders JOIN customers ON …",
+            java.util.Set.of("orders", "customers"), "enriched", true);
+
+        MetricSuggestions result = service.suggest(null);
+
+        assertTrue(result.suggestions().stream().noneMatch(s -> s.id().startsWith("lineage:")),
+            "two inputs and one output have no ratio to threshold: " + result.suggestions());
+        assertTrue(result.notes().stream().anyMatch(n -> n.contains("several sources")), result.notes().toString());
+    }
+
+    @Test
+    void aStatementFlinkCouldNotParseIsProposedWithThatSaidOutLoud() {
+        runningJob("q-3", "INSERT INTO out_t SELECT * FROM in_t",
+            java.util.Set.of("in_t"), "out_t", false);
+
+        MetricSuggestion gap = find(service.suggest(null), "lineage:flow-gap:in_t>out_t");
+
+        assertTrue(gap.evidence().get(0).contains("could not resolve"), gap.evidence().toString());
+        assertTrue(gap.caveats().stream().anyMatch(c -> c.contains("guessed from the SQL text")),
+            gap.caveats().toString());
+    }
+
+    @Test
+    void theAuditWinsOverLineageOnTheSamePair() {
+        when(auditService.getLastAuditReport()).thenReturn(reportWithFlow());
+        runningJob("q-4", "INSERT INTO x SELECT * FROM y",
+            java.util.Set.of("demo.orders.in"), "demo.orders.out", true);
+
+        MetricSuggestions result = service.suggest(null);
+
+        long gaps = result.suggestions().stream()
+            .filter(s -> s.id().contains("flow-gap:demo.orders.in>demo.orders.out"))
+            .count();
+        assertEquals(1, gaps, "one pair, one card: " + result.suggestions());
+        assertEquals(MetricSuggestionSource.AUDIT,
+            find(result, "audit:flow-gap:demo.orders.in>demo.orders.out").source());
+    }
+
+    // ── Process-Mining-derived ───────────────────────────────────────────────
+
+    private FieldMapping mapping(Map<String, String> correlation, Map<String, String> statuses) {
+        FieldMapping stored = new FieldMapping("map-1", correlation, Map.of(), statuses, Map.of());
+        fieldMappingStore.put(stored);
+        return stored;
+    }
+
+    @Test
+    void aValidatedStatusFieldBecomesAKpiWithOneSeriesPerValue() {
+        mapping(Map.of(), Map.of("demo.orders", "$.status"));
+
+        MetricSuggestion status = find(
+            service.suggest(new MetricSuggestionRequest(null, "map-1")), "pm:status:demo.orders");
+
+        assertEquals(MetricSuggestionSource.PROCESS_MINING, status.source());
+        assertTrue(status.metric().sql().contains("GROUP BY"), status.metric().sql());
+        assertTrue(status.metric().sql().contains("AS metric_value"), status.metric().sql());
+        // The value that matters, and above what count, is a business question nobody asked us.
+        assertNull(status.metric().warningThreshold());
+        assertTrue(status.caveats().stream().anyMatch(c -> c.contains("series per distinct value")),
+            status.caveats().toString());
+    }
+
+    @Test
+    void aNestedStatusPathIsRefusedRatherThanTurnedIntoSqlThatCannotRun() {
+        mapping(Map.of(), Map.of("demo.orders", "$.order.header.status"));
+
+        MetricSuggestions result = service.suggest(new MetricSuggestionRequest(null, "map-1"));
+
+        assertTrue(result.suggestions().stream().noneMatch(s -> s.id().startsWith("pm:status:")));
+        assertTrue(result.notes().stream().anyMatch(n -> n.contains("nested path")), result.notes().toString());
+    }
+
+    @Test
+    void theValidatedCorrelationKeyBeatsTheConventionOnEveryProposalThatNeedsOne() {
+        when(auditService.getLastAuditReport()).thenReturn(reportWithFlow());
+        mapping(Map.of("demo.orders.in", "$.orderReference"), Map.of());
+
+        MetricSuggestion latency = find(service.suggest(new MetricSuggestionRequest(null, "map-1")),
+            "audit:hop-latency:demo.orders.in>demo.orders.out");
+
+        assertTrue(String.valueOf(latency.metric().templateParams().get("sourceSql")).contains("`orderReference`"),
+            "a validated key beats both the schema guess and the id convention: "
+                + latency.metric().templateParams());
+        assertTrue(latency.caveats().stream().anyMatch(c -> c.contains("validated for demo.orders.in")),
+            "the card says where the key came from: " + latency.caveats());
+    }
+
+    @Test
+    void aMappingTheServerNoLongerHoldsIsReportedRatherThanIgnored() {
+        MetricSuggestions result = service.suggest(new MetricSuggestionRequest(null, "gone"));
+
+        assertTrue(result.notes().stream().anyMatch(n -> n.contains("no longer held by")),
+            "a restart loses the mappings, and the missing cards must have an explanation: "
+                + result.notes());
+    }
+
+    @Test
+    void withNoMappingTheAnswerSaysWhatValidatingOneWouldAdd() {
+        MetricSuggestions result = service.suggest(null);
+
+        assertTrue(result.notes().stream().anyMatch(n -> n.contains("Process Mining field mapping")),
+            result.notes().toString());
     }
 
     // ── Already covered ──────────────────────────────────────────────────────
