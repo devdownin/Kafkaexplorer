@@ -27,13 +27,30 @@ second copy of the documentation:
      properties that only carry a default in Java — those are not read here, since
      parsing a field initialiser reliably is a bigger job than it is worth.
 
-Plus two version claims that live outside any table. The base-image line, matched against
-the `FROM` of both runtime images. And the Java badge, matched against `<java.version>` in
-pom.xml: that badge is a *static* shields.io URL, so the version is hand-written text in the
-path rather than derived from anything, and it was moved by hand in the same commit that
-raised `java.version` — had that been forgotten, nothing here would have caught it. Both
-halves are checked, the alt text and the URL, because they are two copies of one number and
-either can be edited without the other.
+Plus the base-image line, matched against the `FROM` of both runtime images.
+
+  3. Every **dependency version the documentation states in prose or in a badge** is resolved
+     against pom.xml. This is the class of claim that rots most quietly here, and it has been
+     caught twice by reading rather than by CI: the docs asserted that Flink 2.x supported
+     "Java 17/21, not 25" while the runtime images had run a JRE 25 for releases, and named
+     `flink-connector-kafka:4.0.1-2.0` where the pom carried `5.0.0-2.2`. Writing this check
+     immediately found a third — a section documenting `anthropic-java 2.16.1` against a pom
+     on 2.53.0.
+
+     The claims are enumerated in VERSION_CLAIMS rather than discovered, and resolved forwards
+     from the pom, for the reason the env-var pass is: a blind scan for version-shaped numbers
+     would flag React 19, JUnit 5, "Kafka 2.1+ brokers" and a dozen others, and a check with
+     false positives is one people learn to ignore. What that costs is visible instead of
+     hidden — the run prints how many claims it resolved, so a claim absent from the table is
+     unchecked rather than silently blessed.
+
+     Abbreviated claims resolve by prefix at a component boundary ("Flink 2.3" against 2.3.0,
+     the `Kafka-4.3_KRaft` badge against 4.3.1); a claim about an exact artifact version is
+     compared exactly. Badges are checked on **both** halves, the alt text and the URL, since
+     they are two copies of one number and either can be edited alone.
+
+     Claims that describe the past on purpose are exempted by name in HISTORICAL — a document
+     saying a bug "reproduced on Flink 1.18" is correct and must not be dragged forward.
 
 Nothing reaches the network, and there is no `needs` on the CI job: this is path and
 string resolution, so it reports in seconds and can never go red for someone else's
@@ -60,6 +77,15 @@ CONFIG_DIR = ROOT / 'src/main/java/com/compagnonsdudev/kafkasqlexplorer/config'
 DOCKERFILES = [ROOT / 'Dockerfile', ROOT / 'Dockerfile.release']
 POM = ROOT / 'pom.xml'
 
+# Files whose prose states a dependency version. Wider than DOCS: these carry no
+# configuration table, but they do make version claims, and CLAUDE.md makes most of them.
+VERSION_DOCS = ['CLAUDE.md', 'CONTRIBUTING.md', 'README.md', 'README.fr.md',
+                'docs/DOCKERHUB.md', 'docs/architecture.md']
+
+# How a documented version relates to the pom's.
+EXACT = 'exact'    # the claim names a precise artifact version
+PREFIX = 'prefix'  # the claim abbreviates it ("Flink 2.3" for 2.3.0)
+
 # A table row: | `VAR` / `_SUFFIX` | default | meaning |
 ROW = re.compile(r'^\|\s*(`[^|]+`(?:\s*/\s*`[^|]+`)*)\s*\|([^|]*)\|')
 CODE = re.compile(r'`([^`]+)`')
@@ -72,12 +98,44 @@ PREFIX = re.compile(r'@ConfigurationProperties\(\s*prefix\s*=\s*"([^"]+)"')
 FIELD = re.compile(r'^\s*private\s+(?:static\s+|final\s+)*[\w.<>,\[\]\s]+?\s(\w+)\s*(?:=|;)', re.MULTILINE)
 # eclipse-temurin:25-jre-alpine, with or without a digest
 BASE_IMAGE = re.compile(r'eclipse-temurin:([\w.-]+)')
-# <java.version>25</java.version> — the language level, and what the enforcer pins.
-JAVA_VERSION = re.compile(r'<java\.version>\s*([^<\s]+)\s*</java\.version>')
-# [![Java 25](https://img.shields.io/badge/Java-25-orange)](pom.xml)
-# Group 1 is the alt text, group 2 the shields "message" segment of the path.
-JAVA_BADGE = re.compile(
-    r'\[!\[Java\s+([^\]]+)\]\(\s*https://img\.shields\.io/badge/Java-([^-)\s]+)-')
+
+# Version claims to resolve, each naming where the truth lives. Enumerated rather than
+# discovered — see the module docstring on why a blind scan would be worse than no check.
+# `source` is ('property', name) | ('dependency', artifactId) | ('parent',).
+VERSION_CLAIMS = [
+    ('Flink', r'(?:Apache )?Flink (\d+\.\d+(?:\.\d+)?)', ('property', 'flink.version'), PREFIX),
+    ('Spring Boot', r'Spring Boot (\d+\.\d+(?:\.\d+)?)', ('parent',), PREFIX),
+    ('kafka-clients', r'kafka-clients`? (\d+\.\d+\.\d+)', ('property', 'kafka.version'), EXACT),
+    ('io.confluent', r'io\.confluent`? (\d+\.\d+\.\d+)', ('property', 'confluent.version'), EXACT),
+    ('flink-connector-kafka', r'flink-connector-kafka:([\w.-]+)',
+     ('dependency', 'flink-connector-kafka'), EXACT),
+    ('anthropic-java', r'anthropic-java (\d+\.\d+\.\d+)', ('dependency', 'anthropic-java'), EXACT),
+]
+
+# Static shields.io badges carrying a version: (label, source, mode). The version is
+# hand-written text in the URL path, derived from nothing.
+BADGES = [
+    ('Java', ('property', 'java.version'), EXACT),
+    ('Kafka', ('property', 'kafka.version'), PREFIX),
+]
+
+# Version claims that describe the PAST on purpose, exempted by name so that each is a
+# decision rather than a hole — the same discipline as EXTERNAL below. DOCKER-AUDIT.md is
+# not in VERSION_DOCS at all for this reason: it is a record of what was fixed, so every
+# version it names is historical by construction.
+HISTORICAL = {
+    # The Calcite metadataHandlerProvider NPE reproduced on Flink 1.18/1.20/2.0, and still
+    # reproduces on 2.3 — the workaround in FlinkRuntimeCoordinator is load-bearing.
+    ('CLAUDE.md', 'Flink', '1.18'),
+    # CLAUDE.md's own paragraph about this check cites the two stale claims that motivated it.
+    # Prose *about* drift names the wrong value on purpose; the alternative was to describe
+    # them without the numbers, which would make the paragraph less useful to the next reader.
+    # The cost is worth stating: an exemption keyed on the value cannot tell a citation from a
+    # genuine regression back to that same value in that same file. It is narrow — one file,
+    # one artifact, one version each — and the sentences around them explain why they are here.
+    ('CLAUDE.md', 'flink-connector-kafka', '4.0.1-2.0'),
+    ('CLAUDE.md', 'anthropic-java', '2.16.1'),
+}
 
 # Variables that are neither Spring properties nor set by the Dockerfiles: they are read
 # from the ambient environment by something else, and each is named here on purpose so
@@ -139,15 +197,61 @@ def java_properties() -> set[str]:
     return props
 
 
-def pom_java_version() -> str | None:
-    """The `<java.version>` of pom.xml, or None if it is absent.
+def pom_version(source: tuple) -> str | None:
+    """Resolve a VERSION_CLAIMS/BADGES source to the version pom.xml actually declares.
 
-    Read with a regex rather than an XML parser for the same reason application.yml is:
-    one element, no namespaces in play, and nothing here may depend on a library the
-    runner's default image does not carry.
+    Read with regexes rather than an XML parser for the same reason application.yml is:
+    nothing here may depend on a library the runner's default image does not carry. Each
+    shape is anchored on the element that identifies it, so a `<version>` is never picked
+    up from the wrong dependency.
     """
-    match = JAVA_VERSION.search(POM.read_text(encoding='utf-8'))
+    text = POM.read_text(encoding='utf-8')
+    kind = source[0]
+    if kind == 'property':
+        match = re.search(rf'<{re.escape(source[1])}>\s*([^<\s]+)\s*</', text)
+    elif kind == 'dependency':
+        match = re.search(
+            rf'<artifactId>{re.escape(source[1])}</artifactId>\s*<version>\s*([^<\s]+)', text)
+    elif kind == 'parent':
+        match = re.search(
+            r'spring-boot-starter-parent</artifactId>\s*<version>\s*([^<\s]+)', text)
+    else:
+        raise AssertionError(f'unknown version source {source!r}')
     return match.group(1) if match else None
+
+
+def version_agrees(claimed: str, actual: str, mode: str) -> bool:
+    """Does a documented version agree with the pom's, under the declared mode?
+
+    PREFIX accepts an abbreviation only at a component boundary, so "2.3" resolves against
+    2.3.0 while "1.18" does not — otherwise the mode would bless anything sharing a first
+    digit, which is the fuzzy matching that makes a check worthless.
+    """
+    if claimed == actual:
+        return True
+    return mode == PREFIX and actual.startswith(claimed + '.')
+
+
+def version_claims(name: str, text: str) -> list[tuple[str, str, str, str]]:
+    """(label, claimed, actual, mode) for every enumerated claim the document makes."""
+    found: list[tuple[str, str, str, str]] = []
+    for label, pattern, source, mode in VERSION_CLAIMS:
+        for claimed in set(re.findall(pattern, text)):
+            if (name, label, claimed) in HISTORICAL:
+                continue
+            found.append((label, claimed, pom_version(source), mode))
+    for label, source, mode in BADGES:
+        badge = re.compile(
+            rf'\[!\[{re.escape(label)}\s+([^\]]+)\]\(\s*'
+            rf'https://img\.shields\.io/badge/{re.escape(label)}-([^-)\s]+)-')
+        for alt, message in badge.findall(text):
+            actual = pom_version(source)
+            # `Kafka-4.3_KRaft` says 4.3 and then says what it is; compare the version part.
+            for half, raw in (('badge alt text', alt), ('badge URL', message)):
+                lead = re.match(r'[\d.]+', raw.strip())
+                found.append((f'{label} {half}', lead.group(0) if lead else raw.strip(),
+                              actual, mode))
+    return found
 
 
 def documented_rows(text: str) -> list[tuple[str, str]]:
@@ -191,8 +295,6 @@ def check() -> list[str]:
     for var in EXTERNAL:
         known.setdefault(var, None)
 
-    java_version = pom_java_version()
-
     for name in DOCS:
         path = ROOT / name
         if not path.exists():
@@ -228,24 +330,22 @@ def check() -> list[str]:
                     f'{name}: base image `eclipse-temurin:{documented}` is not what the '
                     f'Dockerfiles use ({", ".join(sorted(from_lines))})')
 
-        # The Java badge. One claim per badge, so one `checked` — but the alt text and the
-        # URL are reported separately, because a badge reading "Java 25" over a path that
-        # renders 21 is a third failure mode, not a variant of either.
-        for alt, message in JAVA_BADGE.findall(text):
+
+    # Dependency versions stated in prose or in a badge, resolved against the pom.
+    for name in VERSION_DOCS:
+        path = ROOT / name
+        if not path.exists():
+            problems.append(f'{name}: listed for version checking but missing from the repository')
+            continue
+        for label, claimed, actual, mode in version_claims(name, path.read_text(encoding='utf-8')):
             checked += 1
-            if java_version is None:
+            if actual is None:
                 problems.append(
-                    f'{name}: a Java badge is present but pom.xml declares no <java.version> '
-                    f'to check it against')
-                continue
-            if message != java_version:
+                    f'{name}: states {label} `{claimed}` but pom.xml declares no version to '
+                    f'check it against')
+            elif not version_agrees(claimed, actual, mode):
                 problems.append(
-                    f'{name}: the Java badge renders `{message}`, '
-                    f'pom.xml declares java.version `{java_version}`')
-            if alt.strip() != java_version:
-                problems.append(
-                    f'{name}: the Java badge alt text reads `Java {alt.strip()}`, '
-                    f'pom.xml declares java.version `{java_version}`')
+                    f'{name}: states {label} `{claimed}`, pom.xml declares `{actual}`')
 
     print(f'{checked} documented settings resolved against the code')
     return problems
