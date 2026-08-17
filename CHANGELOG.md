@@ -113,6 +113,20 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `CONTRIBUTING.md` documents the real gate. It told contributors to run `mvn test`, which runs
   neither ESLint nor Vitest, so a contributor could be green locally and red in CI.
 
+- **`docs/check-config-table.py` resolves the dependency versions the documentation states in
+  prose or in a badge** against `pom.xml` — Flink, Spring Boot, `kafka-clients`, `io.confluent`,
+  `flink-connector-kafka`, `anthropic-java`, and the Java and Kafka badges. This is the class of
+  claim that rots most quietly here, and it had been caught three times by reading rather than by
+  CI; writing the check found the third itself, a section documenting `anthropic-java 2.16.1`
+  against a pom on `2.53.0` — since fixed independently in `ed308e4`, so what lands here is the
+  guard rather than the correction. Claims are **enumerated, not discovered**: a blind scan for
+  version-shaped numbers would
+  flag React 19, JUnit 5 and "Kafka 2.1+ brokers", and a check with false positives is one people
+  learn to ignore — so the run prints how many it resolved, making an unlisted claim visibly
+  unchecked rather than silently blessed. Abbreviations resolve by prefix at a component boundary
+  ("Flink 2.3" against `2.3.0`) and never by fuzzy match, which is what keeps `1.18` from
+  resolving against `2.3.0`. Prose that describes the past on purpose is exempted by name in
+  `HISTORICAL`, and `DOCKER-AUDIT.md` is excluded entirely, being a record of what was fixed.
 - **`docs/check-config-table.py` also resolves the Java badge** against `<java.version>` in
   `pom.xml`. A shields.io badge is static — the version is hand-written text in the URL path,
   derived from nothing — so it drifts exactly as quietly as the base-image line the script was
