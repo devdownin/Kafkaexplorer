@@ -113,6 +113,26 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `CONTRIBUTING.md` documents the real gate. It told contributors to run `mvn test`, which runs
   neither ESLint nor Vitest, so a contributor could be green locally and red in CI.
 
+- **The planner is warmed up at startup, so the first query no longer pays for it**
+  (`FlinkWarmupService`, `explorer.flink-warmup-enabled`, default on). Measured rather than
+  assumed: the first SELECT of a process took **~5.5 s** against ~1.2 s warm, and the difference
+  is one-off — Calcite class loading, Janino codegen, the first job graph. A throw-away
+  table-less `SELECT 1` after `ApplicationReadyEvent` brings it to ~1.6 s. Both candidate probes
+  were timed before choosing: an `EXPLAIN` only reaches ~3.0 s, because the cost is in code
+  generation and the job lifecycle, not in parsing. It runs on a daemon thread so readiness is
+  never delayed, needs no table and no reachable broker, and a failure is logged and forgotten.
+- **The documentation checks now audit their own exemption lists.** `NOT_A_PATH`, `EXTERNAL` and
+  `HISTORICAL` exist so that stepping around a check is a decision rather than a hole — but nothing
+  made the decision expire, and a hand-maintained list only grows. An exemption nobody needs is a
+  standing licence for a claim nobody is checking. Both scripts now fail on one, which is what
+  `--report-unused-disable-directives` already does for this repo's ESLint directives, applied to
+  the checks' own escape hatches. It found that **16 of the 37 `NOT_A_PATH` entries** had stopped
+  doing anything — twelve whose prose was gone, four unreachable because `looks_like_path` rejects
+  the token before the list is consulted — and that `EXTERNAL`'s only entry, `JAVA_TOOL_OPTIONS`,
+  had been redundant for as long as both runtime images have set it as an `ENV`. All removed;
+  `EXTERNAL` is now empty and says why. Deliberately **not** reported: a `NOT_A_PATH` entry whose
+  token would resolve as a real path — half that list is generated or gitignored, so the verdict
+  would depend on whether a build had run, green on a clean checkout and red on a developer's tree.
 - **`verify-offline.sh` derives the JUnit console version instead of pinning it.** It carried a
   hand-written `CONSOLE_VERSION="6.0.3"` beside a JUnit that Spring Boot's BOM resolves — in step
   today, by hand, with nothing holding them together. The day Boot bumps JUnit, the harness would

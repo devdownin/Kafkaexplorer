@@ -26,6 +26,10 @@ application-local.properties
 
 # Logs and PID files
 logs/
+# The Flink job store (explorer.flink-job-store-path). Written at runtime and mounted as a
+# volume in every stack — CLAUDE.md already described it as gitignored, which it was not:
+# running the suite produced data/flink-jobs.json and it turned up in a commit.
+data/
 *.log
 *.pid
 app.pid

@@ -89,6 +89,10 @@ explorer:
   # application ever makes to a cluster: off by default, and restricted to groups that carry one
   # of our names AND that the broker reports EMPTY or DEAD — a live session holds members and is
   # never touched. Bounded per pass, and every deleted id is logged.
+  # Run one throw-away query after startup so the first real one does not pay for the planner
+  # waking up. Measured: ~5.5 s for the first SELECT of a process without it, ~1.6 s with.
+  # Runs on a daemon thread after the app is ready, so it never delays readiness.
+  flink-warmup-enabled: true
   cleanup-own-groups: false
   cleanup-own-groups-max: 500
   # Topics whose consumer lag is exported as Prometheus gauges — named explicitly, never
