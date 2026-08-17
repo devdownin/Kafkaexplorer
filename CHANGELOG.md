@@ -83,6 +83,17 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **The unused Lombok dependency is gone.** It was declared in `pom.xml` — with a matching
+  `spring-boot-maven-plugin` exclude that existed only for it, itself redundant beside
+  `<optional>true</optional>` — while being referenced by exactly zero source files. It cost an
+  annotation processor on the compiler command line of every build for nothing. The `<configuration>`
+  block went with it, since the exclude was all it held; the packaged JAR still carries
+  `JarLauncher`, its four layers in the documented order, and leaves the plain jar as
+  `*.jar.original` that the release glob depends on.
+- `CLAUDE.md` named the wrong Kafka connector. It documented `flink-connector-kafka:4.0.1-2.0`
+  where the pom carries `5.0.0-2.2`, and claimed the `-2.0` suffix "covers the whole Flink 2.x
+  line" — it does not: the suffix names the Flink minor the connector was built against, which is
+  precisely why no `-2.3` build exists and `5.0.0-2.2` is the newest published release.
 - **The backend targets Java 25** (`java.version` in `pom.xml`, with `requireJavaVersion` in the
   enforcer plugin raised to match, and the CI, release and CodeQL workflows plus
   `docker-compose-build.yml` moved to a JDK 25 toolchain). The repository already contradicted its

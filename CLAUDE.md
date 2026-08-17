@@ -187,7 +187,7 @@ KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `
 
 ### Stack
 
-- **Backend**: Spring Boot 4.1.x, **Java 25** (`java.version` in pom.xml, pinned by `requireJavaVersion` in the enforcer plugin), embedded Apache Flink 2.3.x (`flink.version` in pom.xml). Kafka connector: `flink-connector-kafka:4.0.1-2.0` (the `-2.0` suffix covers the whole Flink 2.x line).
+- **Backend**: Spring Boot 4.1.x, **Java 25** (`java.version` in pom.xml, pinned by `requireJavaVersion` in the enforcer plugin), embedded Apache Flink 2.3.x (`flink.version` in pom.xml). Kafka connector: `flink-connector-kafka:5.0.0-2.2`. The suffix names the **Flink minor the connector was built against**, not a range — it does not cover the whole 2.x line, which is why `5.0.0-2.2` is what runs on Flink 2.3: no `-2.3` build is published yet, and this is the newest release on Maven Central. Check there before assuming a bump exists.
 - **Frontend**: React 19, TypeScript, Vite, Tailwind CSS, Monaco Editor
 - **Kafka**: `kafka-clients` 4.3.1 (`kafka.version` override in pom.xml, which wins over Spring Boot's managed version *and* over what `io.confluent` 8.3.1 pulls transitively — one client version across the whole build, never two). Compatible with Kafka 2.1+ brokers on the classic protocol; all bundled Docker stacks run Kafka 4.3 in KRaft mode. The live Process Mining consumer can opt into the KIP-848 rebalance protocol via `kafka.consumer-group-protocol: consumer` (default `classic`).
 - **Build**: Single JAR — Maven's `frontend-maven-plugin` builds the React app and copies it to `src/main/resources/static/`
