@@ -138,12 +138,14 @@ HISTORICAL = {
 }
 
 # Variables that are neither Spring properties nor set by the Dockerfiles: they are read
-# from the ambient environment by something else, and each is named here on purpose so
+# from the ambient environment by something else, and each would be named here on purpose so
 # that adding one is a decision rather than a hole in the check.
-EXTERNAL = {
-    # Read by the JVM itself, not by the application.
-    'JAVA_TOOL_OPTIONS',
-}
+#
+# Empty, and correctly so. It held `JAVA_TOOL_OPTIONS`, which both runtime images set as an
+# ENV — so `known` already resolved it and the entry had been suppressing nothing for as long
+# as those ENV lines have existed. The slot stays for the next genuinely ambient variable;
+# stale_exemptions() is what will say when one stops being needed.
+EXTERNAL: set[str] = set()
 
 
 def env_name(prop: str) -> str:
@@ -233,13 +235,18 @@ def version_agrees(claimed: str, actual: str, mode: str) -> bool:
 
 
 def version_claims(name: str, text: str) -> list[tuple[str, str, str, str]]:
-    """(label, claimed, actual, mode) for every enumerated claim the document makes."""
-    found: list[tuple[str, str, str, str]] = []
+    """(label, claimed, actual, mode, exemption) for every enumerated claim the document makes.
+
+    `exemption` is the HISTORICAL key when one covers this claim, else None.
+    """
+    found: list[tuple[str, str, str, str, tuple | None]] = []
     for label, pattern, source, mode in VERSION_CLAIMS:
         for claimed in set(re.findall(pattern, text)):
-            if (name, label, claimed) in HISTORICAL:
-                continue
-            found.append((label, claimed, pom_version(source), mode))
+            key = (name, label, claimed)
+            # Reported rather than skipped here: check() has to know whether the exemption
+            # actually suppressed a disagreement, or is one nobody needs any more.
+            found.append((label, claimed, pom_version(source), mode,
+                          key if key in HISTORICAL else None))
     for label, source, mode in BADGES:
         badge = re.compile(
             rf'\[!\[{re.escape(label)}\s+([^\]]+)\]\(\s*'
@@ -250,7 +257,7 @@ def version_claims(name: str, text: str) -> list[tuple[str, str, str, str]]:
             for half, raw in (('badge alt text', alt), ('badge URL', message)):
                 lead = re.match(r'[\d.]+', raw.strip())
                 found.append((f'{label} {half}', lead.group(0) if lead else raw.strip(),
-                              actual, mode))
+                              actual, mode, None))
     return found
 
 
@@ -279,6 +286,47 @@ def documented_rows(text: str) -> list[tuple[str, str]]:
     return rows
 
 
+def stale_exemptions(documented_vars: set[str], resolvable: set[str],
+                     historical_needed: set[tuple], historical_moot: set[tuple]) -> list[str]:
+    """EXTERNAL and HISTORICAL entries that have stopped doing anything.
+
+    Both lists exist so that stepping around a check is a decision rather than a hole. The
+    same reasoning says the decision has to expire: an exemption nobody needs is a standing
+    licence for a claim nobody is checking, and a hand-maintained list only grows. This is
+    what `--report-unused-disable-directives` does for the ESLint directives in this repo,
+    applied to the checks' own escape hatches.
+
+    Judged only on facts derived from files under version control — what the docs state, what
+    the pom and the Dockerfiles declare — so the verdict cannot depend on the state of a
+    working tree.
+    """
+    stale: list[str] = []
+
+    for var in sorted(EXTERNAL):
+        if var in resolvable:
+            stale.append(
+                f'EXTERNAL: `{var}` is redundant — it already resolves as a property, a '
+                f'placeholder or an ENV of a runtime image; remove it')
+        elif var not in documented_vars:
+            stale.append(
+                f'EXTERNAL: `{var}` is documented in no table any more — remove it')
+
+    for key in sorted(HISTORICAL):
+        if key in historical_needed:
+            continue
+        doc, label, claimed = key
+        if key in historical_moot:
+            stale.append(
+                f'HISTORICAL: {doc} states {label} `{claimed}`, which now agrees with '
+                f'pom.xml — the exemption suppresses nothing; remove it')
+        else:
+            stale.append(
+                f'HISTORICAL: {doc} no longer states {label} `{claimed}` — the prose the '
+                f'exemption covered is gone; remove it')
+
+    return stale
+
+
 def check() -> list[str]:
     problems: list[str] = []
     checked = 0
@@ -292,8 +340,15 @@ def check() -> list[str]:
     for dockerfile in DOCKERFILES:
         for var in DOCKER_ENV.findall(dockerfile.read_text(encoding='utf-8')):
             known.setdefault(var, None)
+    # Snapshot before EXTERNAL widens it: an EXTERNAL entry is only needed for a variable
+    # nothing else resolves, and that is exactly what this set lets us assert afterwards.
+    resolvable_without_external = set(known)
     for var in EXTERNAL:
         known.setdefault(var, None)
+
+    documented_vars: set[str] = set()
+    historical_needed: set[tuple] = set()
+    historical_moot: set[tuple] = set()
 
     for name in DOCS:
         path = ROOT / name
@@ -303,6 +358,7 @@ def check() -> list[str]:
         text = path.read_text(encoding='utf-8')
 
         for var, documented in documented_rows(text):
+            documented_vars.add(var)
             checked += 1
             if var not in known:
                 problems.append(
@@ -337,17 +393,27 @@ def check() -> list[str]:
         if not path.exists():
             problems.append(f'{name}: listed for version checking but missing from the repository')
             continue
-        for label, claimed, actual, mode in version_claims(name, path.read_text(encoding='utf-8')):
+        for label, claimed, actual, mode, exemption in version_claims(
+                name, path.read_text(encoding='utf-8')):
+            agrees = actual is not None and version_agrees(claimed, actual, mode)
+            if exemption is not None:
+                # An exemption earns its place only by suppressing a real disagreement.
+                (historical_needed if not agrees else historical_moot).add(exemption)
+                continue
             checked += 1
             if actual is None:
                 problems.append(
                     f'{name}: states {label} `{claimed}` but pom.xml declares no version to '
                     f'check it against')
-            elif not version_agrees(claimed, actual, mode):
+            elif not agrees:
                 problems.append(
                     f'{name}: states {label} `{claimed}`, pom.xml declares `{actual}`')
 
-    print(f'{checked} documented settings resolved against the code')
+    problems.extend(stale_exemptions(
+        documented_vars, resolvable_without_external, historical_needed, historical_moot))
+
+    print(f'{checked} documented settings resolved against the code, '
+          f'{len(EXTERNAL) + len(HISTORICAL)} exemptions audited')
     return problems
 
 
