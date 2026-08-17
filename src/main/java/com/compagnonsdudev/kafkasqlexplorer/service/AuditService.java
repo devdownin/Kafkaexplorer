@@ -49,6 +49,13 @@ public class AuditService {
      * hundreds of kilobytes and nothing ever evicted it.
      */
     private static final int MAX_RETAINED_RUNS = 20;
+    /**
+     * Groups whose backlog this run also measures <em>in time</em>. Only the STALLED ones are
+     * candidates — a draining backlog is ordinary and needs no second number — and the cap exists
+     * because each measurement opens a consumer and reads a record per lagging partition, where
+     * every other check of this audit reads metadata.
+     */
+    private static final int MAX_DELAY_MEASUREMENTS_PER_RUN = 20;
 
     private final KafkaAdminService kafkaAdminService;
     private final FlinkSqlService flinkSqlService;
@@ -111,6 +118,14 @@ public class AuditService {
         private final long ttlMs;
         private KafkaAdminService.GroupSnapshot snapshot;
         private long takenAt;
+        /**
+         * Delay-in-time measurements spent by this run. Unlike everything else here, one of those
+         * reads a *record* per lagging partition, so it is budgeted for the whole run rather than
+         * per topic: a cluster with fifty abandoned groups would otherwise turn one audit into
+         * fifty consumer opens. Held here because this object is already the run's shared,
+         * thread-safe home for group data.
+         */
+        private final AtomicInteger delayMeasurements = new AtomicInteger();
 
         GroupSnapshotHolder(int maxGroups, long ttlMs) {
             this.maxGroups = maxGroups;
@@ -124,6 +139,19 @@ public class AuditService {
                 takenAt = now;
             }
             return snapshot;
+        }
+
+        /** Claims one measurement from the run's budget, or refuses when it is spent. */
+        boolean claimDelayMeasurement() {
+            return delayMeasurements.incrementAndGet() <= MAX_DELAY_MEASUREMENTS_PER_RUN;
+        }
+
+        int delaysTaken() {
+            return Math.min(delayMeasurements.get(), MAX_DELAY_MEASUREMENTS_PER_RUN);
+        }
+
+        boolean delayBudgetSpent() {
+            return delayMeasurements.get() > MAX_DELAY_MEASUREMENTS_PER_RUN;
         }
     }
 
@@ -366,7 +394,7 @@ public class AuditService {
             // Scored over the topics actually audited, not the ones that were in scope: a run
             // stopped after 10 of 2 000 topics must not read as "1 990 topics are healthy".
             globalStats.put("healthScore", healthScore(auditedTopics, criticalCount, warningCount));
-            List<String> scopeNotes = scopeNotes(options, topicAudits);
+            List<String> scopeNotes = scopeNotes(options, topicAudits, groupSnapshot);
             if (wasCancelled) {
                 globalStats.put("cancelled", true);
                 globalStats.put("stopReason", stopped.name());
@@ -473,7 +501,8 @@ public class AuditService {
      * a check whose prerequisite is disabled produces nothing at all. Reporting zero without
      * saying so reads as "clean", which is the one answer an audit must never fake.
      */
-    private List<String> scopeNotes(AuditOptions options, List<TopicAudit> topicAudits) {
+    private List<String> scopeNotes(AuditOptions options, List<TopicAudit> topicAudits,
+                                    GroupSnapshotHolder groupSnapshot) {
         List<String> notes = new ArrayList<>();
         if (options.checkDuplicates()) {
             notes.add("Duplicate detection scans at most " + DUPLICATE_SCAN_MAX_MESSAGES
@@ -497,6 +526,14 @@ public class AuditService {
                 + "simply behind on a live topic is not a finding. Committed positions are therefore "
                 + "up to that old while each topic's end offsets are read as it is audited, so a lag "
                 + "can only be overstated, never understated.");
+        }
+        if (groupSnapshot != null && groupSnapshot.delaysTaken() > 0) {
+            notes.add("The backlog of " + groupSnapshot.delaysTaken() + " stalled group(s) was also "
+                + "measured in time — the age of the oldest message they have not read"
+                + (groupSnapshot.delayBudgetSpent()
+                    ? ", up to this run's budget of " + MAX_DELAY_MEASUREMENTS_PER_RUN
+                      + "; the stalled groups beyond it carry their record count alone."
+                    : ". A group whose age could not be read keeps its record count alone, never a zero."));
         }
         long degraded = topicAudits.stream()
             .filter(t -> t.issues().stream().anyMatch(i -> i.message().startsWith("Audit failed")))
@@ -643,9 +680,12 @@ public class AuditService {
         }
         for (ConsumerGroupLag group : consumers.groups()) {
             switch (group.health()) {
+                // The one case worth a second, costlier number: "4 000 messages behind" is four
+                // seconds of traffic on one topic and four days on another, and nothing about a
+                // count says which. The age of the oldest waiting record does.
                 case STALLED -> found.add(TopicIssue.critical("Consumer group '" + group.groupId()
                     + "' is " + group.totalLag() + " message(s) behind with no member assigned to this "
-                    + "topic — nothing is draining it."));
+                    + "topic — nothing is draining it." + delaySuffix(topicName, group.groupId(), groupSnapshot)));
                 case PARTIAL -> found.add(TopicIssue.warning("Consumer group '" + group.groupId()
                     + "' has never committed on " + group.partitionsWithoutCommit() + " of this topic's "
                     + group.partitions().size() + " partition(s); their backlog is not counted in its lag."));
@@ -659,6 +699,42 @@ public class AuditService {
             }
         }
         return found;
+    }
+
+    /**
+     * " The oldest waiting message is 3 h old." — or nothing at all.
+     *
+     * <p>Appended to a STALLED finding, never substituted for it: the count is what the check is
+     * about, the age is what makes it actionable. Three situations produce an empty suffix rather
+     * than a number — the run's measurement budget is spent, the read failed, or no partition
+     * could be measured — and in all three the finding stands unchanged. A backlog whose age
+     * could not be read is not a backlog of zero seconds, and the audit says only what it knows.
+     */
+    private String delaySuffix(String topic, String groupId, GroupSnapshotHolder groupSnapshot) {
+        if (groupSnapshot == null || !groupSnapshot.claimDelayMeasurement()) return "";
+        try {
+            TopicTimeLag delay = kafkaAdminService.getConsumerTimeLag(topic, groupId);
+            if (!delay.available() || delay.maxLagMs() == null) return "";
+            String age = formatAge(delay.maxLagMs());
+            return delay.complete()
+                ? " The oldest waiting message is " + age + " old."
+                : " The oldest waiting message is at least " + age + " old (some partitions could "
+                  + "not be read).";
+        } catch (Exception e) {
+            log.debug("Delay of {} on {} could not be measured: {}", groupId, topic, e.toString());
+            return "";
+        }
+    }
+
+    /** Coarse on purpose: this is prose in a finding, not a series. */
+    private static String formatAge(long millis) {
+        long seconds = millis / 1000;
+        if (seconds < 90) return seconds + " s";
+        long minutes = seconds / 60;
+        if (minutes < 90) return minutes + " min";
+        long hours = minutes / 60;
+        if (hours < 48) return hours + " h";
+        return (hours / 24) + " day(s)";
     }
 
     /** Format shared by most of the sample, used when the schema pass is disabled. */

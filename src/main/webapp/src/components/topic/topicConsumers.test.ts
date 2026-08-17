@@ -5,13 +5,19 @@ import { describe, expect, it } from 'vitest';
 import {
   ConsumerGroupLag,
   PartitionLag,
+  PartitionTimeLag,
   TopicConsumers,
+  TopicTimeLag,
+  describeDelay,
   describeScope,
   describeSummary,
   filterGroups,
   formatCount,
+  formatDelay,
   healthOf,
+  isComplete,
   progressOf,
+  sortDelayPartitions,
   sortGroups,
   totalLag,
 } from './topicConsumers';
@@ -214,5 +220,91 @@ describe('totalLag / formatCount / progressOf', () => {
 
   it('reports the consumed share', () => {
     expect(progressOf(part({ committedOffset: 25, endOffset: 100, lag: 75 }))).toBe(0.25);
+  });
+});
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Le retard en temps
+ * ────────────────────────────────────────────────────────────────────────── */
+
+function partitionDelay(over: Partial<PartitionTimeLag> = {}): PartitionTimeLag {
+  return {
+    partition: 0, committedOffset: 100, endOffset: 150, recordLag: 50,
+    lagMs: 60_000, oldestWaitingTimestamp: 1_700_000_000_000, note: null, ...over,
+  };
+}
+
+function timeLag(over: Partial<TopicTimeLag> = {}): TopicTimeLag {
+  return {
+    topic: 'demo.orders', groupId: 'orders-api', partitions: [partitionDelay()],
+    maxLagMs: 60_000, avgLagMs: 60_000,
+    partitionsMeasured: 1, partitionsCaughtUp: 0, partitionsWithoutCommit: 0, partitionsUnknown: 0,
+    available: true, error: null, warnings: [], ...over,
+  };
+}
+
+describe('formatDelay', () => {
+  it('drops to the order of magnitude that reads', () => {
+    expect(formatDelay(450)).toBe('450 ms');
+    expect(formatDelay(45_000)).toBe('45 s');
+    expect(formatDelay(600_000)).toBe('10 min');
+    expect(formatDelay(3 * 3600_000)).toBe('3 h');
+    expect(formatDelay(4 * 24 * 3600_000)).toBe('4 d');
+  });
+});
+
+describe('describeDelay', () => {
+  it('states the age and the partitions it is the worst of', () => {
+    expect(describeDelay(timeLag())).toBe('The oldest waiting message is 60 s old (worst of 1 partition measured).');
+  });
+
+  it('says "at least" when partitions are missing — a partial maximum is a floor', () => {
+    const text = describeDelay(timeLag({ partitionsUnknown: 2, partitionsMeasured: 1 }));
+
+    expect(text).toContain('at least');
+    expect(text).toContain('2 unreadable');
+    expect(text).toContain('floor');
+  });
+
+  it('counts partitions with no commit apart from unreadable ones', () => {
+    const text = describeDelay(timeLag({ partitionsWithoutCommit: 3 }));
+
+    expect(text).toContain('3 never committed');
+  });
+
+  it('gives the server reason rather than a number when nothing could be measured', () => {
+    const text = describeDelay(timeLag({
+      available: false, maxLagMs: null, error: "Group 'x' has no committed offset on this topic.",
+    }));
+
+    expect(text).toBe("Group 'x' has no committed offset on this topic.");
+  });
+});
+
+describe('sortDelayPartitions', () => {
+  it('puts what could not be measured first, then the worst ages', () => {
+    const rows = [
+      partitionDelay({ partition: 0, lagMs: 1000 }),
+      partitionDelay({ partition: 1, lagMs: null, note: 'compacted' }),
+      partitionDelay({ partition: 2, lagMs: 90_000 }),
+    ];
+
+    // Une mesure absente demande une décision ; un âge se lit du pire au moindre.
+    expect(sortDelayPartitions(rows).map(p => p.partition)).toEqual([1, 2, 0]);
+  });
+
+  it('does not mutate its input', () => {
+    const rows = [partitionDelay({ partition: 5, lagMs: 10 }), partitionDelay({ partition: 1, lagMs: 99 })];
+    sortDelayPartitions(rows);
+
+    expect(rows.map(p => p.partition)).toEqual([5, 1]);
+  });
+});
+
+describe('isComplete', () => {
+  it('is false as soon as a partition was not measured', () => {
+    expect(isComplete(timeLag())).toBe(true);
+    expect(isComplete(timeLag({ partitionsUnknown: 1 }))).toBe(false);
+    expect(isComplete(timeLag({ partitionsWithoutCommit: 1 }))).toBe(false);
   });
 });

@@ -168,7 +168,7 @@ const MetricsHelp: React.FC = () => {
             <h2 className="text-xl font-bold text-primary flex items-center gap-3">
               <span className="material-symbols-outlined">dashboard_customize</span> 03. Configuration Templates
             </h2>
-            <span className="text-[10px] font-mono bg-primary/20 text-primary px-3 py-1 rounded-full uppercase">2 templates</span>
+            <span className="text-[10px] font-mono bg-primary/20 text-primary px-3 py-1 rounded-full uppercase">3 templates</span>
           </div>
           <div className="grid md:grid-cols-2 gap-8">
             <div className="space-y-4">
@@ -197,6 +197,16 @@ const MetricsHelp: React.FC = () => {
               <div className="p-4 bg-surface-container rounded-xl border border-outline-variant">
                 <h4 className="text-[11px] font-bold text-primary tracking-widest uppercase mb-1">TOPIC_TRANSIT_LATENCY</h4>
                 <p className="text-[10px] text-on-surface-variant">Measures the delay (ms) between ingestion on Topic A and output on Topic B.</p>
+              </div>
+              {/* Le seul gabarit sans SQL : ni la position (dans __consumer_offsets) ni l'âge
+                  (l'horodatage d'un record) ne sont dans un payload. */}
+              <div className="p-4 bg-surface-container rounded-xl border border-outline-variant">
+                <h4 className="text-[11px] font-bold text-primary tracking-widest uppercase mb-1">CONSUMER_TIME_LAG</h4>
+                <p className="text-[10px] text-on-surface-variant">
+                  A consumer group&rsquo;s backlog in <strong>time</strong> (ms), not in records: the age of the oldest
+                  message it has not read. Runs no SQL — committed offsets and record timestamps. A partition that
+                  could not be read is reported as unknown, never as zero.
+                </p>
               </div>
             </div>
           </div>
@@ -296,6 +306,44 @@ const MetricsHelp: React.FC = () => {
           </div>
         </section>
 
+        {/* 07. KPI proposés — la page enseigne la mesure, donc elle dit d'où sortent les nombres
+            qu'elle propose : une observation, jamais un chiffre rond qui a l'air réfléchi. */}
+        <section className="lg:col-span-12 p-8 bg-surface-container border border-outline-variant/60 rounded-xl">
+          <h2 className="text-xl font-bold text-primary mb-6 flex items-center gap-3">
+            <span className="material-symbols-outlined">lightbulb</span> 07. KPIs Suggested For Your Cluster
+          </h2>
+          <p className="text-[12px] text-on-surface-variant leading-relaxed mb-6 max-w-3xl">
+            The Metrics page proposes KPIs derived from what this cluster has actually been observed to do — the
+            flows, volumes and findings of a <strong>cluster audit</strong>, and the path a key really took in a
+            <strong> Stream Flow trace</strong>. No audit and no trace means no proposal: the panel says so rather
+            than concluding your cluster needs no KPI.
+          </p>
+          <div className="grid md:grid-cols-3 gap-6">
+            <div className="p-4 bg-surface-container-high/40 rounded-xl border border-outline-variant">
+              <h4 className="text-[11px] font-bold text-primary tracking-widest uppercase mb-2">Evidence</h4>
+              <p className="text-[11px] text-on-surface-variant leading-relaxed">
+                Every card names the run, the measurement and its scope — &ldquo;the audit measured an average hop of
+                812&nbsp;ms&rdquo;. A KPI you cannot trace back to an observation does not belong on this page.
+              </p>
+            </div>
+            <div className="p-4 bg-surface-container-high/40 rounded-xl border border-outline-variant">
+              <h4 className="text-[11px] font-bold text-primary tracking-widest uppercase mb-2">Derived thresholds</h4>
+              <p className="text-[11px] text-on-surface-variant leading-relaxed">
+                Warning and critical are multiples of something measured, and the card says which. Where nothing was
+                measured — a delay never yet timed — there is <strong>no threshold at all</strong>: set it from the
+                metric&rsquo;s own first readings.
+              </p>
+            </div>
+            <div className="p-4 bg-surface-container-high/40 rounded-xl border border-outline-variant">
+              <h4 className="text-[11px] font-bold text-primary tracking-widest uppercase mb-2">Nothing is created</h4>
+              <p className="text-[11px] text-on-surface-variant leading-relaxed">
+                &ldquo;Review &amp; add&rdquo; opens the editor pre-filled; you preview and save. The SQL rests on an
+                inferred key column and on an aggregate only the Flink planner runs — both stated on the card.
+              </p>
+            </div>
+          </div>
+        </section>
+
         {/* 5. Step-by-step guide */}
         <section className="lg:col-span-12 p-8 bg-surface-container border border-primary/20 rounded-xl">
           <div className="text-center mb-12">
@@ -308,7 +356,10 @@ const MetricsHelp: React.FC = () => {
               {/* Le chemin annoncé — « Monitoring menu > Kafka Metrics » — n'existe nulle part : le
                   groupe de navigation est « Observe », l'écran « Metrics », le bouton « Add metric ». */}
               <h5 className="text-[12px] font-bold uppercase mb-1">Access & Add</h5>
-              <p className="text-[10px] text-on-surface-variant leading-tight">Sidebar &gt; Observe &gt; Metrics, then &ldquo;Add metric&rdquo;.</p>
+              <p className="text-[10px] text-on-surface-variant leading-tight">
+                Sidebar &gt; Observe &gt; Metrics, then &ldquo;Add metric&rdquo; — or start from a card under
+                &ldquo;Suggested for this cluster&rdquo;.
+              </p>
               <div className="hidden lg:block absolute -right-full top-6 w-full border-t-2 border-dashed border-primary/20"></div>
             </div>
             <div className="flex flex-col items-center text-center max-w-[200px] relative">

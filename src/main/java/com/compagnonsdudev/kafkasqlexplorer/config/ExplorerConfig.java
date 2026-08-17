@@ -137,6 +137,16 @@ public class ExplorerConfig {
      * Reaching it is logged once — a silently truncated metric is worse than an absent one.
      */
     private int lagMetricsMaxSeries = 500;
+    /**
+     * Also export each watched group's backlog <em>in time</em> ({@code kafka_consumer_group_lag_seconds}).
+     *
+     * <p>Off by default and separate from {@link #lagMetricsTopics} because of what it costs: the
+     * other lag gauges read metadata, this one opens a consumer and reads one record per lagging
+     * partition, every refresh. On a short, deliberate topic list that is nothing; turned on
+     * cluster-wide it would not be. A group caught up on every partition is published as 0 without
+     * any read.
+     */
+    private boolean lagMetricsTime = false;
     private String flinkJobStorePath = "data/flink-jobs.json";
     private long flinkJobRetentionHours = 24;
 
@@ -354,6 +364,14 @@ public class ExplorerConfig {
 
     public void setLagMetricsTopics(List<String> lagMetricsTopics) {
         this.lagMetricsTopics = lagMetricsTopics;
+    }
+
+    public boolean isLagMetricsTime() {
+        return lagMetricsTime;
+    }
+
+    public void setLagMetricsTime(boolean lagMetricsTime) {
+        this.lagMetricsTime = lagMetricsTime;
     }
 
     public int getLagMetricsMaxSeries() {

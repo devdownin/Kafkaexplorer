@@ -182,6 +182,47 @@ export interface TopicConsumers {
 }
 
 /**
+ * Le retard d'un groupe sur une partition, exprimé en temps.
+ *
+ * `lagMs` à `null` veut dire « pas mesuré » — jamais « à jour ». Zéro est une affirmation, et une
+ * mesure impossible ne doit pas pouvoir la produire ; `note` dit pourquoi.
+ *
+ * @java PartitionTimeLag
+ */
+export interface PartitionTimeLag {
+  partition: number;
+  committedOffset: number | null;
+  endOffset: number;
+  recordLag: number | null;
+  lagMs: number | null;
+  oldestWaitingTimestamp: number | null;
+  note: string | null;
+}
+
+/**
+ * `GET /api/topic/{name}/time-lag?group=…` — l'âge du plus vieux message que ce groupe n'a pas lu.
+ *
+ * Les compteurs situent la lecture : un maximum pris sur la moitié des partitions est un plancher,
+ * et `complete` est ce qui permet de le dire au lieu de le laisser passer pour un maximum.
+ *
+ * @java TopicTimeLag
+ */
+export interface TopicTimeLag {
+  topic: string;
+  groupId: string;
+  partitions: PartitionTimeLag[];
+  maxLagMs: number | null;
+  avgLagMs: number | null;
+  partitionsMeasured: number;
+  partitionsCaughtUp: number;
+  partitionsWithoutCommit: number;
+  partitionsUnknown: number;
+  available: boolean;
+  error: string | null;
+  warnings: string[];
+}
+
+/**
  * `POST /api/topic/{name}/search` — une passe de recherche bornée, et ce qu'elle a couvert.
  *
  * Les compteurs de couverture font partie du contrat : une recherche n'est jamais silencieusement
@@ -235,7 +276,8 @@ export interface MetricConfig {
   id: string;
   name: string;
   type: string;
-  sql: string;
+  /** `null` sur une métrique de gabarit : elle n'a pas de SQL, ses paramètres tiennent lieu de requête. */
+  sql: string | null;
   description: string;
   warningThreshold: number | null;
   criticalThreshold: number | null;
@@ -250,6 +292,71 @@ export interface MetricConfig {
   executionMode: string | null;
   labelTopic: string | null;
   labelFields: string[] | null;
+}
+
+/** @java MetricSuggestionSource */
+export type MetricSuggestionSource = 'AUDIT' | 'STREAM_FLOW' | 'LINEAGE' | 'PROCESS_MINING';
+
+/**
+ * `POST /api/metrics/suggestions` — un KPI contextuel proposé, avec ce sur quoi il repose.
+ *
+ * `evidence` n'est jamais vide et `thresholdBasis` dit d'où sortent les seuils : c'est toute la
+ * différence entre une proposition et le bandeau « 99,98 % de disponibilité » que la page d'aide
+ * des métriques affichait sans que rien ne l'ait jamais mesuré.
+ *
+ * @java MetricSuggestion
+ */
+export interface MetricSuggestion {
+  id: string;
+  source: MetricSuggestionSource;
+  title: string;
+  rationale: string;
+  evidence: string[];
+  thresholdBasis: string | null;
+  caveats: string[];
+  alreadyConfigured: boolean;
+  existingMetricName: string | null;
+  metric: MetricConfig;
+}
+
+/**
+ * `POST /api/metrics/suggestions` — les propositions et l'état des observations dont elles sortent.
+ *
+ * Une liste vide veut dire deux choses opposées — « rien n'a encore été mesuré » et « ce qui a été
+ * mesuré n'appelle aucun KPI ». Les champs d'observation sont ce qui les sépare.
+ *
+ * @java MetricSuggestions
+ */
+export interface MetricSuggestions {
+  suggestions: MetricSuggestion[];
+  auditAvailable: boolean;
+  auditId: string | null;
+  auditTimestamp: number | null;
+  auditSource: string | null;
+  auditTopics: number;
+  flowChainsSubmitted: number;
+  notes: string[];
+}
+
+/**
+ * Une trace Stream Flow telle que le navigateur l'a gardée, renvoyée au serveur pour que la même
+ * dérivation réponde pour les deux familles d'observations.
+ *
+ * @java FlowChainEvidence
+ */
+export interface FlowChainEvidence {
+  messageKey: string | null;
+  searchPath: string | null;
+  tracedAt: number | null;
+  hops: FlowChainHop[];
+}
+
+/** @java FlowChainHop */
+export interface FlowChainHop {
+  topic: string;
+  firstTimestamp: number | null;
+  latencyFromPreviousMs: number | null;
+  occurrences: number | null;
 }
 
 /*

@@ -619,12 +619,18 @@ class AuditServiceTest {
         explorerConfig.setAuditGroupSnapshotTtlMs(1);
         when(kafkaAdminService.listTopics()).thenReturn(List.of("a.one", "b.two", "c.three"));
         when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of());
-        // Chaque topic coûte largement plus que le TTL, donc la photo est périmée à chaque fois.
-        when(kafkaAdminService.getTopicConsumers(anyString(), any(KafkaAdminService.GroupSnapshot.class)))
-                .thenAnswer(inv -> {
-                    Thread.sleep(20);
-                    return new TopicConsumers(inv.getArgument(0), List.of(), 0, 0, 0, false, true, List.of());
-                });
+        /*
+         * Le délai est dans la *prise de photo*, pas dans le travail qui suit — et c'est ce qui
+         * rend le scénario déterministe. `current()` est synchronized : le deuxième worker attend
+         * donc ces 20 ms sur le moniteur et voit forcément un TTL de 1 ms expiré. Avec le délai
+         * placé après (dans getTopicConsumers), les trois workers appelaient `current()` au même
+         * instant, tous dans la même milliseconde sur une machine assez rapide, et le test tenait à
+         * l'ordonnancement — il est tombé une fois en CI pour cette raison.
+         */
+        when(kafkaAdminService.groupSnapshot(anyInt(), any())).thenAnswer(inv -> {
+            Thread.sleep(20);
+            return emptySnapshot();
+        });
 
         auditService.runAuditAsync("stale", new AuditOptions(false, false, false, false, false, true, null));
 
@@ -655,6 +661,56 @@ class AuditServiceTest {
         assertTrue(audit.issues().stream().anyMatch(i -> i.message().contains("enricher")
                         && i.message().contains("no member assigned")),
                 "the issue must name the group and why it is stuck: " + audit.issues());
+    }
+
+    /*
+     * « 4 200 messages de retard » ne se lit pas : c'est quatre secondes de trafic sur un topic et
+     * quatre jours sur un autre. Le seul cas où l'audit paie une mesure plus coûteuse — une lecture
+     * de record par partition en retard — est celui-là, et le constat porte alors les deux nombres.
+     */
+    @Test
+    void datesAStalledBacklogWithTheAgeOfTheOldestWaitingMessage() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders.created"));
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("orders.created", 500L));
+        when(kafkaAdminService.getTopicConsumers(eq("orders.created"), any(KafkaAdminService.GroupSnapshot.class))).thenReturn(
+                consumers(lagging("enricher", 4200L, 0, 0, lagOf(0, 100L, 4300L, 4200L))));
+        when(kafkaAdminService.getConsumerTimeLag("orders.created", "enricher")).thenReturn(
+                new TopicTimeLag("orders.created", "enricher", List.of(), 7_200_000L, 7_200_000L,
+                        1, 0, 0, 0, true, null, List.of()));
+
+        auditService.runAuditAsync("lag", new AuditOptions(false, false, false, false, false, true, null));
+
+        AuditReport report = auditService.getAuditReport("lag");
+        TopicAudit audit = report.topicAudits().get(0);
+        assertTrue(audit.issues().stream().anyMatch(i -> i.message().contains("4200 message(s) behind")
+                        && i.message().contains("2 h old")),
+                "the count is the finding, the age is what makes it actionable: " + audit.issues());
+        @SuppressWarnings("unchecked")
+        List<String> notes = (List<String>) report.globalStats().get("scopeNotes");
+        assertTrue(notes.stream().anyMatch(n -> n.contains("measured in time")),
+                "a costlier measurement states its own bounds: " + notes);
+    }
+
+    /*
+     * Une mesure impossible ne devient jamais un nombre : le constat garde son compte seul. Un
+     * retard dont on n'a pas pu lire l'âge n'est pas un retard de zéro seconde.
+     */
+    @Test
+    void leavesTheFindingUnchangedWhenTheAgeCannotBeMeasured() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders.created"));
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("orders.created", 500L));
+        when(kafkaAdminService.getTopicConsumers(eq("orders.created"), any(KafkaAdminService.GroupSnapshot.class))).thenReturn(
+                consumers(lagging("enricher", 4200L, 0, 0, lagOf(0, 100L, 4300L, 4200L))));
+        when(kafkaAdminService.getConsumerTimeLag("orders.created", "enricher")).thenReturn(
+                TopicTimeLag.unavailable("orders.created", "enricher", "records could not be read"));
+
+        auditService.runAuditAsync("lag", new AuditOptions(false, false, false, false, false, true, null));
+
+        TopicAudit audit = auditService.getAuditReport("lag").topicAudits().get(0);
+        assertTrue(audit.issues().stream().anyMatch(i -> i.message().contains("4200 message(s) behind")),
+                audit.issues().toString());
+        assertTrue(audit.issues().stream().noneMatch(i -> i.message().contains("old")),
+                "no age could be read, so the finding claims none: " + audit.issues());
     }
 
     /*

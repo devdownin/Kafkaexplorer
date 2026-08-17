@@ -101,6 +101,7 @@ Ouvrez ensuite **http://localhost:8080** et commencez à cliquer. C'est tout.
 | Suivre un message à travers tout un pipeline | **Stream Flow** |
 | Visualiser topics → tables → jobs en cours | **Lineage** |
 | Transformer du SQL en métriques Prometheus avec graphiques | **Metrics** |
+| Se voir proposer des KPI tirés de ce que le cluster a montré | **Metrics** — proposés d'après l'audit et les traces |
 | Vérifier la santé de tout le cluster en un clic | **Audit** |
 | Inspecter brokers, quorum KRaft, groupes clients, feature flags | **Cluster** |
 | Laisser un LLM reconstruire et auditer vos flux métier | **Process Mining** |

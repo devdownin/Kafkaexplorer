@@ -10,6 +10,7 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.TopicDetailResponse;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicMessage;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicSearchRequest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicSearchResponse;
+import com.compagnonsdudev.kafkasqlexplorer.domain.TopicTimeLag;
 import com.compagnonsdudev.kafkasqlexplorer.service.MessageFormatterService;
 import com.compagnonsdudev.kafkasqlexplorer.service.DdlGeneratorService;
 import com.compagnonsdudev.kafkasqlexplorer.service.KafkaAdminService;
@@ -113,6 +114,25 @@ public class TopicController {
     @GetMapping("/{name}/consumers")
     public TopicConsumers getConsumers(@PathVariable String name) {
         return kafkaAdminService.getTopicConsumers(name, explorerConfig.getConsumerGroupMaxGroups());
+    }
+
+    /**
+     * How far behind one group is <em>in time</em> on this topic — the age of the oldest message
+     * it has not read.
+     *
+     * <p>Deliberately not folded into {@code /consumers}: that endpoint reads metadata for every
+     * group of the cluster, while this one opens a consumer and reads a record per lagging
+     * partition of one group. Charging every visit to the Consumers tab for a measurement nobody
+     * asked for is how a panel becomes expensive; here the operator asks for it, one group at a
+     * time.
+     *
+     * <p>200 even when nothing could be measured: the body carries {@code available} and the
+     * reason. A 404 would say the topic or the group does not exist, which is a different answer
+     * from "this group's delay could not be read".
+     */
+    @GetMapping("/{name}/time-lag")
+    public TopicTimeLag getTimeLag(@PathVariable String name, @RequestParam("group") String group) {
+        return kafkaAdminService.getConsumerTimeLag(name, group);
     }
 
     @GetMapping(value = "/{name}/ddl", produces = "text/plain")

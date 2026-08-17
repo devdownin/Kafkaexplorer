@@ -13,6 +13,56 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Contextual KPI suggestions on the Metrics page** (`POST /api/metrics/suggestions`). The page knew
+  nothing about the cluster it measures: its quick-start cards posed a `COUNT(*)` on the first table
+  found, identical everywhere. Proposals are now derived from what has actually been observed — the
+  cluster audit (flow hops it timed, throughput drops, duplicates, the busiest topics, consumer
+  findings) and Stream Flow traces kept by the browser (per-hop latency, end-to-end completeness).
+  Every card names the run and the measurement it rests on, thresholds are multiples of something
+  measured and say which, and nothing is created: a card opens the editor pre-filled for a preview
+  and an explicit save. With no audit and no trace the panel says nothing has been measured yet and
+  links to the two pages that change that, rather than concluding the cluster needs no KPI.
+- **`CONSUMER_TIME_LAG` metric template — a consumer group's backlog in time rather than in
+  records.** The same 4 000 messages are four seconds of traffic on one topic and four days on
+  another; only the second is actionable. The value is the age of the oldest message the group has
+  not read, taken from committed offsets and record timestamps — the one template that runs no SQL,
+  since neither number is in a payload. Bounded to 64 partitions and an 8 s budget, and a partition
+  whose record could not be read is reported as unknown, never as zero: zero means "caught up", and
+  a gauge saying so while nothing could be read silences the alert it exists to raise.
+- **A Metrics screenshot, and the harness that makes it reproducible.** `docs/img/metrics.png` is
+  generated like the other six, over fixtures shaped exactly as `MetricSuggestionService` produces
+  them. The capture now pins the browser clock to the fixtures' instant: the README claimed a
+  fixed instant was enough for a re-run to produce the same image, but every relative reading
+  compared it to the real clock, so the screens aged daily and the Metrics shot grew an amber
+  "62-day-old audit" banner that says nothing about the product.
+- **Lineage and Process Mining feed the KPI suggestions too.** A running `INSERT INTO` job
+  *declares* a pipeline edge, so it yields a gap KPI on a pair nobody had to infer — a job reading
+  several sources is refused, with the reason stated, since two inputs against one output have no
+  ratio worth a threshold. A validated Process Mining field mapping names each topic's real
+  correlation key, which now beats the schema guess and the `id` convention on every card that
+  needs one (each says which of the three it used), and its status field becomes a KPI grouping by
+  status — one Prometheus series per value, no threshold, because which status matters is the one
+  thing the application cannot know for you. The field-mapping cache moved out of the controller
+  into a bounded `FieldMappingStore`: nothing ever evicted an entry, and the mapping was reachable
+  from nowhere else.
+- **The backlog in time, where the question is asked.** The Topic Explorer's Consumers tab gets a
+  per-group "how long has it been waiting?" button (`GET /api/topic/{name}/time-lag?group=`), on a
+  button rather than on load because it reads a record per lagging partition where the rest of the
+  panel reads metadata. `explorer.lag-metrics-time` (off by default) exports the same measurement
+  as `kafka_consumer_group_lag_seconds` for the watched topics — removed rather than frozen when a
+  refresh cannot measure it, since an age that stops being measured gets more wrong every minute,
+  unlike a count.
+- **The audit dates a stalled backlog.** A STALLED finding now carries the age of the oldest
+  waiting message beside its record count — the one case worth a costlier measurement, budgeted
+  per run and stated in a scope note. A measurement that fails leaves the finding unchanged.
+- **The demo cluster seeds consumer groups.** `setup-demo.sh` created none, so a fresh demo had
+  nothing to show in the Consumers tab, no consumer finding in the audit, no delay KPI proposed
+  and nothing for the lag gauges to export. Two groups on `demo.orders.1.received`: one caught up,
+  one that read four records and left.
+- **Stream Flow traces are kept as observations** (`kse:flow-chains`), not only as criteria: a
+  completed trace records the chain it found — topics in first-sighting order, per-hop latency — so
+  the Metrics page can derive KPIs from the path a key really took. Versioned envelope, seven-day
+  expiry, five entries de-duplicated on the route.
 - `CHANGELOG.md` (this file), `SUPPORT.md`, `.github/CODEOWNERS`, `.github/ISSUE_TEMPLATE/config.yml`,
   `.editorconfig` and `.gitattributes`.
 - **CodeQL static analysis** (`.github/workflows/codeql.yml`) over Java and TypeScript, on push,
@@ -64,6 +114,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A template metric took the whole Metrics page down.** Its `sql` is `null` by construction —
+  the parameters are the query — and `MetricCard` called `metric.sql.replace(…)` on it, so the
+  page rendered its error boundary instead of the metric. The type said `string`, which it had
+  never been. Found by the screenshot harness, pinned by the page's first component test.
 - **Three dead references in `CLAUDE.md`.** `AUDIT.md` and `CONSUMER-GROUPS-AUDIT.md` were
   described as documents to read before refactoring, and `deploy/kraft-platform/` was cited in a
   rule about `container_name`; all three had been deleted from the tree, two of them months

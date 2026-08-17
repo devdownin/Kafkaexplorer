@@ -7,7 +7,9 @@ import com.compagnonsdudev.kafkasqlexplorer.config.KafkaConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.KafkaMessage;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricPreviewResult;
+import com.compagnonsdudev.kafkasqlexplorer.domain.PartitionTimeLag;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryResult;
+import com.compagnonsdudev.kafkasqlexplorer.domain.TopicTimeLag;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
@@ -531,5 +533,91 @@ class MetricServiceTest {
             .gauge()
             .getId()
             .getTag("status"));
+    }
+
+    // ── CONSUMER_TIME_LAG — the backlog in time rather than in records ────────
+
+    private static MetricConfig timeLagMetric(Map<String, Object> params) {
+        return new MetricConfig(
+            null, "orders_delay", "GAUGE", null, null, null, null, null, null, null,
+            List.of(), Map.of(), null, "CONSUMER_TIME_LAG", params, null, null, List.of());
+    }
+
+    private static TopicTimeLag measured(long maxMs, long avgMs, int measured, int unknown) {
+        return new TopicTimeLag("demo.orders", "orders-api",
+            List.of(new PartitionTimeLag(0, 100L, 150L, 50L, maxMs, 1L, null)),
+            maxMs, avgMs, measured, 0, 0, unknown, true, null, List.of());
+    }
+
+    @Test
+    void timeLagMetricPublishesTheWorstPartitionAndLabelsBothPinnedValues() {
+        Mockito.when(kafkaAdminService.getConsumerTimeLag("demo.orders", "orders-api"))
+            .thenReturn(measured(62_000L, 31_000L, 2, 0));
+
+        MetricPreviewResult preview = service.previewMetric(timeLagMetric(
+            new LinkedHashMap<>(Map.of("topic", "demo.orders", "group", "orders-api"))));
+
+        assertNull(preview.error());
+        assertEquals(62_000.0, preview.value());
+        assertEquals("MAX", preview.summary().get("aggregation"));
+        // Both labels come from the configuration, so the series cannot change subject silently.
+        assertEquals("demo.orders", preview.rows().get(0).get("topic"));
+        assertEquals("orders-api", preview.rows().get(0).get("group"));
+    }
+
+    @Test
+    void timeLagMetricHonoursTheAverageAggregation() {
+        Mockito.when(kafkaAdminService.getConsumerTimeLag("demo.orders", "orders-api"))
+            .thenReturn(measured(62_000L, 31_000L, 2, 0));
+
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("topic", "demo.orders");
+        params.put("group", "orders-api");
+        params.put("aggregation", "AVG");
+
+        assertEquals(31_000.0, service.previewMetric(timeLagMetric(params)).value());
+    }
+
+    @Test
+    void timeLagMetricSaysWhenItsValueIsAFloorRatherThanAMaximum() {
+        Mockito.when(kafkaAdminService.getConsumerTimeLag("demo.orders", "orders-api"))
+            .thenReturn(new TopicTimeLag("demo.orders", "orders-api",
+                List.of(), 62_000L, 62_000L, 1, 0, 0, 3, true, null,
+                List.of("The read budget was spent before 3 partition(s) answered")));
+
+        MetricPreviewResult preview = service.previewMetric(timeLagMetric(
+            new LinkedHashMap<>(Map.of("topic", "demo.orders", "group", "orders-api"))));
+
+        assertEquals(62_000.0, preview.value());
+        assertEquals(false, preview.summary().get("complete"));
+        assertTrue(String.valueOf(preview.summary().get("scopeNote")).contains("floor"),
+            "a maximum over some of the partitions must not pass for the maximum");
+    }
+
+    @Test
+    void aDelayThatCouldNotBeMeasuredIsAnErrorNeverAZero() {
+        Mockito.when(kafkaAdminService.getConsumerTimeLag("demo.orders", "orders-api"))
+            .thenReturn(TopicTimeLag.unavailable("demo.orders", "orders-api",
+                "Group 'orders-api' has no committed offset on this topic."));
+
+        MetricPreviewResult preview = service.previewMetric(timeLagMetric(
+            new LinkedHashMap<>(Map.of("topic", "demo.orders", "group", "orders-api"))));
+
+        assertNull(preview.value(), "0 would be exported as 'the backlog is gone'");
+        assertTrue(preview.error().contains("no committed offset"), preview.error());
+    }
+
+    @Test
+    void timeLagMetricRefusesAnUnnamedGroupAndANonGaugeType() {
+        MetricPreviewResult missingGroup = service.previewMetric(timeLagMetric(
+            new LinkedHashMap<>(Map.of("topic", "demo.orders"))));
+        assertTrue(missingGroup.error().contains("group"), missingGroup.error());
+
+        MetricConfig asCounter = new MetricConfig(
+            null, "orders_delay", "COUNTER", null, null, null, null, null, null, null,
+            List.of(), Map.of(), null, "CONSUMER_TIME_LAG",
+            new LinkedHashMap<>(Map.of("topic", "demo.orders", "group", "orders-api")),
+            null, null, List.of());
+        assertTrue(service.previewMetric(asCounter).error().contains("GAUGE"));
     }
 }

@@ -11,6 +11,7 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.SchemaUnificationProposal;
 import com.compagnonsdudev.kafkasqlexplorer.domain.SnapshotConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.UnificationEntry;
 import com.compagnonsdudev.kafkasqlexplorer.service.AuditPromptCatalog;
+import com.compagnonsdudev.kafkasqlexplorer.service.FieldMappingStore;
 import com.compagnonsdudev.kafkasqlexplorer.service.FieldProfilingService;
 import com.compagnonsdudev.kafkasqlexplorer.service.KafkaLiveConsumer;
 import com.compagnonsdudev.kafkasqlexplorer.service.LlmAnalysisService;
@@ -72,12 +73,20 @@ public class ProcessMiningController {
                 return size() > MAX_CACHED_MAPPINGS;
             }
         });
+     * Validated field mappings. Held by a component rather than by this controller so the Metrics
+     * suggestions can read one too — the mapping is where a topic's real correlation key lives,
+     * and a controller field made it reachable from nowhere else. Bounded, which the map it
+     * replaces was not.
+     */
+    private final FieldMappingStore fieldMappingStore;
 
     public ProcessMiningController(FieldProfilingService fieldProfilingService,
                                     LlmAnalysisService llmAnalysisService,
                                     KafkaLiveConsumer kafkaLiveConsumer,
                                     SseEmitterManager sseEmitterManager,
-                                    AuditPromptCatalog auditPromptCatalog) {
+                                    AuditPromptCatalog auditPromptCatalog,
+                                    FieldMappingStore fieldMappingStore) {
+        this.fieldMappingStore = fieldMappingStore;
         this.fieldProfilingService = fieldProfilingService;
         this.llmAnalysisService = llmAnalysisService;
         this.kafkaLiveConsumer = kafkaLiveConsumer;
@@ -147,7 +156,7 @@ public class ProcessMiningController {
             statusEquivalences
         );
 
-        fieldMappingCache.put(mappingId, fieldMapping);
+        fieldMappingStore.put(fieldMapping);
         log.info("Stored FieldMapping with id: {}", mappingId);
 
         return Map.of("fieldMappingId", mappingId);
@@ -159,7 +168,7 @@ public class ProcessMiningController {
 
         FieldMapping fieldMapping = null;
         if (request.fieldMappingId() != null) {
-            fieldMapping = fieldMappingCache.get(request.fieldMappingId());
+            fieldMapping = fieldMappingStore.find(request.fieldMappingId()).orElse(null);
             if (fieldMapping == null) {
                 log.warn("FieldMapping not found for id: {}", request.fieldMappingId());
             }
@@ -182,7 +191,7 @@ public class ProcessMiningController {
         String sessionId = UUID.randomUUID().toString();
         log.info("Starting live session {} for topics: {}", sessionId, topics);
 
-        FieldMapping fieldMapping = fieldMappingCache.get(fieldMappingId);
+        FieldMapping fieldMapping = fieldMappingStore.find(fieldMappingId).orElse(null);
         if (fieldMapping == null) {
             log.warn("FieldMapping not found for id: {} — proceeding without mapping", fieldMappingId);
         }

@@ -23,7 +23,10 @@ import { clearDraft, readDraft, writeDraft } from '../draftStore';
 import { copyText } from '../clipboard';
 // La forme vit dans api/types.ts, où check-api-types.py la résout contre le record Java —
 // une interface écrite dans la page est exactement ce qui a divergé sans bruit ailleurs.
-import type { MetricConfig, MetricTestResponse } from '../api/types';
+import type { MetricConfig, MetricSuggestion, MetricSuggestions, MetricTestResponse } from '../api/types';
+import { SuggestionsPanel } from '../components/metrics/SuggestionsPanel';
+import { readFlowChains } from './flowChains';
+import { suggestionToDraft } from './metricSuggestions';
 
 interface MetricTemplateDescriptor {
   type: string;
@@ -202,6 +205,14 @@ function validateTemplate(templateType: string, metricType: string,
     if (!['GAUGE', 'HISTOGRAM', 'SUMMARY'].includes(metricType))
       msgs.push({ level: 'error', text: 'Topic Transit Latency supports GAUGE, HISTOGRAM or SUMMARY.' });
     msgs.push({ level: 'info', text: 'Both queries must return match_key and event_time columns (event_time as ISO-8601 or epoch).' });
+  } else if (templateType === 'CONSUMER_TIME_LAG') {
+    if (!paramStr(params, 'topic').trim()) msgs.push({ level: 'error', text: 'A topic is required.' });
+    // Le groupe est exigé, pas déduit : « le groupe le plus en retard » changerait d'une mesure à
+    // l'autre, donc la série changerait de sujet sans le dire.
+    if (!paramStr(params, 'group').trim()) msgs.push({ level: 'error', text: 'A consumer group is required — a delay is always somebody’s.' });
+    if (metricType !== 'GAUGE')            msgs.push({ level: 'error', text: 'Consumer Lag in Time supports GAUGE metrics only.' });
+    msgs.push({ level: 'info', text: 'Value in milliseconds: the age of the oldest message this group has not read. No SQL — committed offsets and record timestamps.' });
+    msgs.push({ level: 'warning', text: 'Each refresh reads one record per lagging partition (bounded to 64 partitions, 8 s). A partition that cannot be read is reported as unknown, never as zero.' });
   }
   return msgs;
 }
@@ -316,6 +327,21 @@ function getSqlTemplates(table: string) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Ce qu'affiche le pied de carte quand il n'y a pas de SQL : le gabarit et ce qu'il compare.
+ *
+ * Une métrique de gabarit n'a pas de requête à montrer — dire « pas de SQL » n'apprendrait rien,
+ * alors que nommer les deux topics dit exactement ce que la métrique mesure.
+ */
+function describeTemplate(metric: MetricConfig): string {
+  const params = metric.templateParams ?? {};
+  const at = (key: string) => (typeof params[key] === 'string' ? params[key] as string : null);
+  const from = at('sourceTopic') ?? at('leftTopic') ?? at('topic');
+  const to = at('targetTopic') ?? at('rightTopic') ?? at('group');
+  const pair = from && to ? `${from} → ${to}` : from ?? '';
+  return [metric.templateType ?? 'TEMPLATE', pair].filter(Boolean).join(' · ');
+}
 
 function relativeTime(ms: number | null): string {
   if (!ms) return 'Never';
@@ -498,17 +524,26 @@ const MetricCard: React.FC<{
         )}
       </div>
 
-      {/* SQL footer */}
+      {/* SQL footer — ou ce qui en tient lieu.
+
+          Une métrique de gabarit n'a pas de SQL : ses paramètres SONT la requête, et le champ
+          arrive à `null` du serveur. La carte appelait `metric.sql.replace(…)` dessus, ce qui
+          faisait tomber toute la page — pas seulement la carte — dès qu'une métrique de gabarit
+          était enregistrée. Le type l'annonçait `string`, ce qu'il n'a jamais été. */}
       <div className="group border-t border-outline-variant/60 bg-background-dark/40 px-4 py-2.5 flex items-start gap-2">
         <span className="material-symbols-outlined text-primary/40 text-base shrink-0 mt-0.5">code</span>
         <pre className="flex-1 text-[10px] font-mono text-on-surface-variant truncate leading-relaxed whitespace-nowrap overflow-hidden">
-          {metric.sql.replace(/\s+/g, ' ')}
+          {metric.sql
+            ? metric.sql.replace(/\s+/g, ' ')
+            : describeTemplate(metric)}
         </pre>
-        <button onClick={() => void copyText(metric.sql).then(ok =>
-            toast(ok ? 'SQL copied' : 'Could not copy to the clipboard', ok ? 'success' : 'error'))}
-          title="Copy SQL" aria-label="Copy the metric SQL" className="shrink-0 text-outline hover:text-primary transition-colors opacity-0 group-hover:opacity-100">
-          <span className="material-symbols-outlined text-base">content_copy</span>
-        </button>
+        {metric.sql && (
+          <button onClick={() => void copyText(metric.sql ?? '').then(ok =>
+              toast(ok ? 'SQL copied' : 'Could not copy to the clipboard', ok ? 'success' : 'error'))}
+            title="Copy SQL" aria-label="Copy the metric SQL" className="shrink-0 text-outline hover:text-primary transition-colors opacity-0 group-hover:opacity-100">
+            <span className="material-symbols-outlined text-base">content_copy</span>
+          </button>
+        )}
       </div>
 
       {/* Footer */}
@@ -563,7 +598,31 @@ const TemplateParamsEditor: React.FC<{
   const p = (k: string) => paramStr(params, k);
   return (
     <div className="h-full overflow-y-auto p-5 space-y-4">
-      {templateType === 'TOPIC_COUNT_DELTA' ? (
+      {templateType === 'CONSUMER_TIME_LAG' ? (
+        <>
+          <ParamTopic label="Topic" value={p('topic')} onChange={v => setParam('topic', v)} placeholder="demo.payments" />
+          <Field
+            label="Consumer group"
+            description="Named, never resolved to “the worst one”: that choice would move between refreshes and the series would change subject without saying so."
+          >
+            {f => (
+              <Input {...f} value={p('group')} onChange={e => setParam('group', e.target.value)}
+                placeholder="payments-api" spellCheck={false} className="font-mono text-[12px]" />
+            )}
+          </Field>
+          <Field
+            label="Across partitions"
+            description="The worst partition is what an alert is set on; a mean hides it behind the healthy ones."
+          >
+            {f => (
+              <Select {...f} value={p('aggregation') || 'MAX'} onChange={e => setParam('aggregation', e.target.value)}>
+                <option value="MAX" className="bg-[#12151a] text-on-surface">Worst partition (MAX)</option>
+                <option value="AVG" className="bg-[#12151a] text-on-surface">Mean over partitions (AVG)</option>
+              </Select>
+            )}
+          </Field>
+        </>
+      ) : templateType === 'TOPIC_COUNT_DELTA' ? (
         <>
           <ParamSql label="Left query — metric_value" value={p('leftSql')} onChange={v => setParam('leftSql', v)}
             hint="Bounded query returning a single metric_value."
@@ -685,6 +744,14 @@ const Metrics: React.FC = () => {
   /** Échec d'enregistrement, gardé sous les yeux plutôt que dans un toast fugace. */
   const [saveError, setSaveError] = useState<QueryErrorInfo | null>(null);
   const [templatesError, setTemplatesError] = useState<QueryErrorInfo | null>(null);
+  /*
+   * Les KPI proposés à partir de ce que le cluster a montré de lui-même : l'audit côté serveur,
+   * les traces Stream Flow que ce navigateur a gardées. Les secondes voyagent dans le corps de la
+   * requête — le serveur n'en a jamais vu une — pour qu'une seule dérivation réponde des deux.
+   */
+  const [suggestions, setSuggestions] = useState<MetricSuggestions | null>(null);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(true);
+  const [suggestionsError, setSuggestionsError] = useState<QueryErrorInfo | null>(null);
 
   const fetchMetrics = useCallback(async () => {
     try {
@@ -698,9 +765,30 @@ const Metrics: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- toast is stable
   }, []);
 
+  const fetchSuggestions = useCallback(async () => {
+    setSuggestionsLoading(true);
+    setSuggestionsError(null);
+    try {
+      const res = await axios.post<MetricSuggestions>('/api/metrics/suggestions', {
+        flowChains: readFlowChains(),
+        // Le mapping validé par Process Mining vit dans le brouillon de cette page-là ; c'est lui
+        // qui connaît la vraie clé de corrélation et le champ de statut de chaque topic.
+        fieldMappingId: readDraft<string | null>('pm:mapping', null),
+      });
+      setSuggestions(res.data);
+    } catch (err) {
+      // Un panneau vide se lirait « ce cluster n'appelle aucun KPI », qui est l'inverse de
+      // « la dérivation a échoué ». La raison du serveur reste à l'écran.
+      setSuggestionsError(describeApiError(err, 'Failed to derive suggested KPIs.'));
+    } finally {
+      setSuggestionsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- chargement au montage
     fetchMetrics();
+    void fetchSuggestions();
     axios.get<Record<string, string[]>>('/api/metrics/metadata').then(r => setMetadata(r.data)).catch(() => { toast('Failed to load table metadata', 'error'); });
     axios.get<{ bootstrapServers: string }>('/api/config').then(r => {
       if (r.data.bootstrapServers) setBootstrapServers(r.data.bootstrapServers);
@@ -830,6 +918,22 @@ const Metrics: React.FC = () => {
     setIsModalOpen(true);
   };
 
+  /**
+   * Ouvre l'éditeur sur une proposition. Elle arrive complète — SQL ou paramètres de gabarit,
+   * seuils, description — mais reste une proposition : rien n'est enregistré tant que le geste
+   * n'est pas fait, et la prévisualisation est là pour vérifier la colonne de clé déduite.
+   */
+  const openSuggestion = (suggestion: MetricSuggestion) => {
+    const draft = suggestionToDraft(suggestion);
+    setEditingMetric({ ...EMPTY_METRIC, ...draft });
+    setSelectedTopic(draft.labelTopic ?? '');
+    setNameIsAuto(false);
+    setEditorTab('metric');
+    setPreviewResult(null);
+    setSaveError(null);
+    setIsModalOpen(true);
+  };
+
   // When selected topic changes, update DDL template and replace old table name in metric SQL
   const onTopicChange = (topic: string) => {
     const oldTable = selectedTopic ? topicToTable(selectedTopic) : 'my_table';
@@ -941,6 +1045,9 @@ const Metrics: React.FC = () => {
       toast('Metric saved', 'success');
       setIsModalOpen(false);
       fetchMetrics();
+      // Ce qui vient d'être enregistré couvre peut-être une proposition : sans ce rappel, la
+      // carte resterait à proposer un KPI désormais en place.
+      void fetchSuggestions();
     } catch (err) {
       // Un toast disparaît derrière le modal en trois secondes, et `catch {}` jetait la seule
       // chose utile : la raison du refus — quelle colonne SQL est inconnue, quelle DDL ne compile
@@ -1103,6 +1210,18 @@ const Metrics: React.FC = () => {
           )}
         </div>
       )}
+
+      {/* ── KPI proposés à partir de ce qui a été mesuré ────────────────────
+          Au-dessus des gabarits génériques, parce qu'une proposition qui nomme un topic de ce
+          cluster et la mesure dont elle sort vaut mieux qu'un COUNT(*) sur la première table
+          trouvée — et en dessous des métriques existantes, qui restent le sujet de la page. */}
+      <SuggestionsPanel
+        response={suggestions}
+        loading={suggestionsLoading}
+        error={suggestionsError}
+        onRefresh={() => void fetchSuggestions()}
+        onAdopt={openSuggestion}
+      />
 
       {/* ── Quick-start templates — always visible ─────────────────────────── */}
       {!loading && (
