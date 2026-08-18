@@ -10,7 +10,7 @@ import {
   columnRowY, anchorSpread, computeEdgeGeometry, crowFootPath, oneBarPath,
   graphBounds, fitTransform, topicDomains, domainColors,
   formatCount, describeRelation, matchingColumns, describeColumnMatches,
-  buildExportSvg, exportNotes, escapeXml, toMermaidEr,
+  buildExportSvg, exportNotes, escapeXml, toMermaidEr, buildJoinSql, joinAliases,
 } from './dataModel';
 
 function entity(id: string, columnCount: number, overrides: Partial<DataModelEntity> = {}): DataModelEntity {
@@ -585,5 +585,131 @@ describe('toMermaidEr', () => {
       { entities: [], relations: [], warnings: [], topicsRequested: 0, topicsAnalyzed: 0, truncated: false },
       caption);
     expect(empty.trim().endsWith('erDiagram')).toBe(true);
+  });
+});
+
+describe('joinAliases', () => {
+  it('uses the distinctive segment of each topic', () => {
+    expect(joinAliases('demo.payments.authorized', 'demo.orders.1.received'))
+      .toEqual(['payments', 'orders']);
+  });
+
+  it('falls back to the last segment for sibling topics, never to a numeric alias', () => {
+    // Both share `demo.orders`, so what the domain rule isolates is `1` and `2` — not SQL
+    // identifiers, and the proposed query would have died at the parser.
+    expect(joinAliases('demo.orders.1.received', 'demo.orders.2.validated'))
+      .toEqual(['received', 'validated']);
+  });
+
+  it('suffixes only when nothing else separates the two', () => {
+    const [a, b] = joinAliases('demo.orders.1', 'demo.orders.2');
+    expect(a).not.toBe(b);
+    expect(a).toMatch(/^[A-Za-z_]/);
+    expect(b).toMatch(/^[A-Za-z_]/);
+  });
+});
+
+describe('buildJoinSql', () => {
+  const orders = entity('demo_orders', 0, {
+    topic: 'demo.orders.1.received',
+    primaryKey: 'order_id',
+    columns: [
+      { name: 'order_id', type: 'STRING', primaryKey: true, references: null },
+      { name: 'status', type: 'STRING', primaryKey: false, references: null },
+      { name: 'amount_cents', type: 'BIGINT', primaryKey: false, references: null },
+    ],
+  });
+  const payments = entity('demo_payments', 0, {
+    topic: 'demo.payments.authorized',
+    primaryKey: 'payment_id',
+    columns: [
+      { name: 'payment_id', type: 'STRING', primaryKey: true, references: null },
+      { name: 'order_id', type: 'STRING', primaryKey: false, references: 'demo_orders' },
+      { name: 'method', type: 'STRING', primaryKey: false, references: null },
+    ],
+  });
+  const rel = (over: Partial<DataModelRelation> = {}): DataModelRelation => ({
+    from: 'demo_payments', to: 'demo_orders',
+    fromColumn: 'order_id', toColumn: 'order_id',
+    confidence: 'HIGH', reason: 'Key columns agree.',
+    ...over,
+  });
+
+  it('writes the join the relation describes, with readable aliases', () => {
+    const join = buildJoinSql(rel(), [orders, payments])!;
+    expect(join.sql).toContain('FROM demo_payments AS payments');
+    expect(join.sql).toContain('JOIN demo_orders AS orders');
+    expect(join.sql).toContain('  ON payments.order_id = orders.order_id');
+    expect(join.caveats).toEqual([]);
+  });
+
+  it('names columns rather than SELECT * — both sides carry order_id', () => {
+    const join = buildJoinSql(rel(), [orders, payments])!;
+    expect(join.sql).not.toContain('SELECT *');
+    expect(join.sql).toContain('    payments.order_id');
+    expect(join.sql).toContain('    orders.order_id');
+  });
+
+  it('carries the evidence and the unbounded-join caveat into the query', () => {
+    const join = buildJoinSql(rel(), [orders, payments])!;
+    expect(join.sql).toContain('-- Key columns agree.');
+    expect(join.sql).toContain('high confidence');
+    expect(join.sql).toContain('Flink keeps both sides in state');
+  });
+
+  it('bounds the result, so the editor gets a query that terminates', () => {
+    expect(buildJoinSql(rel(), [orders, payments])!.sql.endsWith('LIMIT 50')).toBe(true);
+  });
+
+  it('falls back to the target key when the relation names no column, and says so', () => {
+    const join = buildJoinSql(rel({ toColumn: null }), [orders, payments])!;
+    expect(join.sql).toContain('ON payments.order_id = orders.order_id');
+    expect(join.caveats[0]).toContain("detected key 'order_id'");
+    // The assumption travels in the SQL itself, not only in a tooltip nobody exports.
+    expect(join.sql).toContain('-- The relation names no column');
+  });
+
+  it('refuses rather than inventing a predicate when nothing resolves', () => {
+    const keyless = entity('demo_orders', 0, {
+      topic: 'demo.orders.1.received',
+      primaryKey: null,
+      columns: [{ name: 'status', type: 'STRING', primaryKey: false, references: null }],
+    });
+    expect(buildJoinSql(rel({ toColumn: null }), [keyless, payments])).toBeNull();
+  });
+
+  it('leaves nested fields out of the projection and reports how many', () => {
+    const nested = entity('demo_payments', 0, {
+      topic: 'demo.payments.authorized',
+      primaryKey: 'payment_id',
+      columns: [
+        { name: 'payment_id', type: 'STRING', primaryKey: true, references: null },
+        { name: 'order_id', type: 'STRING', primaryKey: false, references: 'demo_orders' },
+        { name: 'card.last4', type: 'STRING', primaryKey: false, references: null },
+      ],
+    });
+    const join = buildJoinSql(rel(), [orders, nested])!;
+    expect(join.sql).not.toContain('card.last4');
+    expect(join.caveats.some(c => c.includes('1 nested field'))).toBe(true);
+  });
+
+  it('caps the projection so the query stays a starting point', () => {
+    const wide = entity('demo_payments', 0, {
+      topic: 'demo.payments.authorized',
+      primaryKey: 'payment_id',
+      columns: Array.from({ length: 20 }, (_, i) => ({
+        name: i === 0 ? 'order_id' : `f_${i}`, type: 'STRING',
+        primaryKey: false, references: null,
+      })),
+    });
+    const join = buildJoinSql(rel(), [orders, wide])!;
+    const projected = join.sql.split('\n').filter(l => l.startsWith('    payments.'));
+    expect(projected).toHaveLength(5);
+    // The join column is kept whatever the cap: without it the query reads as unrelated.
+    expect(projected[0]).toMatch(/^ {4}payments\.order_id,?$/);
+  });
+
+  it('returns null when an endpoint is not in the model', () => {
+    expect(buildJoinSql(rel({ to: 'ghost' }), [payments])).toBeNull();
   });
 });
