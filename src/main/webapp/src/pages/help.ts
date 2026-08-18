@@ -570,7 +570,7 @@ export interface EditorTip {
 export const EDITOR_TIPS: EditorTip[] = [
   {
     title: 'Run sends one statement',
-    body: 'With no selection, Run executes the statement the cursor is in — the toolbar says which one, as "Statement 2/3". Run all executes them in order and stops at the first failure. Select text to run exactly that.',
+    body: 'With no selection, Run (⌘↵) executes the statement the cursor is in — the toolbar says which one, as "Statement 2/3". Run all (⌘⇧↵) executes them in order and stops at the first failure, keeping what each one returned: the list under the results brings any of them back into the grid. Select text to run exactly that — a selection spanning several statements runs them all.',
   },
   {
     title: 'Nothing overwrites the tab you are writing in',

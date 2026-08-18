@@ -8,7 +8,12 @@ import {
   readLayout, LAYOUT_STORAGE_KEY, DEFAULT_LAYOUT, SPLIT_MIN, SIDEBAR_MAX,
   readSqlParam, buildQueryLink,
   starterTable, starterQueries, starterJobQueries, pushHistory, describeHistoryEntry, formatDuration,
-  splitStatements, statementIndexAt, positionAt, detailValue, withoutLeadingCte,
+  splitStatements, statementIndexAt, positionAt, offsetAt, resolveOrigin,
+  detailValue, withoutLeadingCte,
+  planRun, previewStatement, detectStatementType,
+  forgetOldestResults, summariseBatch, describeStatementRun, MAX_RETAINED_BATCH_ROWS,
+  buildCompletionEntries, SQL_KEYWORD_SUGGESTIONS,
+  type StatementRun,
   sidebarSqlFor, sidebarActionLabel, insertableColumns, sinkNameRange, pickSinkTable,
   type HistoryEntry,
 } from './queryWorkbench';
@@ -146,6 +151,246 @@ describe('splitStatements', () => {
   it('handles an unterminated literal without running away', () => {
     expect(() => splitStatements("SELECT 'oops")).not.toThrow();
     expect(splitStatements("SELECT 'oops").map(s => s.text)).toEqual(["SELECT 'oops"]);
+  });
+});
+
+describe('offsetAt', () => {
+  const text = 'SELECT 1;\nSELECT 2;\nSELECT 3';
+
+  it('is the inverse of positionAt', () => {
+    for (const offset of [0, 5, 9, 10, 18, text.length]) {
+      const { line, column } = positionAt(text, offset);
+      expect(offsetAt(text, line, column)).toBe(offset);
+    }
+  });
+
+  it('clamps a line and a column past the end', () => {
+    expect(offsetAt(text, 99, 1)).toBe(text.length);
+    expect(offsetAt(text, 1, 999)).toBe(text.length);
+  });
+});
+
+describe('resolveOrigin', () => {
+  const sql = 'SELECT 1 FROM a;\nSELECT 2 FROM b;';
+
+  it('locates the statement that ran, in the document as it now reads', () => {
+    expect(resolveOrigin(sql, 'SELECT 2 FROM b')).toEqual({ line: 2, column: 1 });
+  });
+
+  /* Figée au moment du run, l'origine devenait fausse dès qu'on ajoutait une ligne au-dessus. */
+  it('follows the text when the document moves around it', () => {
+    expect(resolveOrigin(`-- a note\n${sql}`, 'SELECT 2 FROM b')).toEqual({ line: 3, column: 1 });
+  });
+
+  it('locates a selected fragment too, which is not a statement', () => {
+    expect(resolveOrigin(sql, 'FROM b')).toEqual({ line: 2, column: 10 });
+  });
+
+  it('falls back to a whitespace-insensitive match, so reformatting keeps the position', () => {
+    expect(resolveOrigin('SELECT   1\n  FROM a', 'SELECT 1 FROM a')).toEqual({ line: 1, column: 1 });
+  });
+
+  /* Pointer une ligne quand le texte mesuré a disparu désignerait autre chose que ce dont le
+     moteur parle : l'appelant retire la position au lieu de la deviner. */
+  it('reports nothing when what ran is no longer in the document', () => {
+    expect(resolveOrigin(sql, 'SELECT 3 FROM c')).toBeNull();
+    expect(resolveOrigin(sql, null)).toBeNull();
+    expect(resolveOrigin(sql, '   ')).toBeNull();
+  });
+});
+
+describe('planRun', () => {
+  const sql = 'CREATE TABLE a (x INT);\nSELECT 1 FROM a;\nSELECT 2 FROM b';
+
+  it('takes the statement the cursor is in', () => {
+    expect(planRun(sql, sql.indexOf('SELECT 1') + 2, null, 'cursor'))
+      .toEqual([{ text: 'SELECT 1 FROM a', start: sql.indexOf('SELECT 1') }]);
+  });
+
+  it('takes every statement of the document for a Run all', () => {
+    expect(planRun(sql, 0, null, 'all').map(p => p.text))
+      .toEqual(['CREATE TABLE a (x INT)', 'SELECT 1 FROM a', 'SELECT 2 FROM b']);
+  });
+
+  /*
+   * Sélectionner deux requêtes et les lancer est un geste ordinaire ; la sélection partait
+   * auparavant en une seule requête, que le planner rejetait sur le `;`.
+   */
+  it('splits a selection that spans two statements, in document coordinates', () => {
+    const start = sql.indexOf('SELECT 1');
+    const selection = { start, text: sql.slice(start) };
+    expect(planRun(sql, 0, selection, 'cursor')).toEqual([
+      { text: 'SELECT 1 FROM a', start },
+      { text: 'SELECT 2 FROM b', start: sql.indexOf('SELECT 2') },
+    ]);
+  });
+
+  it('sends a selected fragment verbatim — a sub-expression is not a statement', () => {
+    const selection = { start: 7, text: ' 1 FROM a ' };
+    expect(planRun(sql, 0, selection, 'cursor')).toEqual([{ text: '1 FROM a', start: 8 }]);
+  });
+
+  it('reports nothing to run rather than sending an empty string', () => {
+    expect(planRun('  \n-- just a comment\n', 0, null, 'cursor')).toEqual([]);
+    expect(planRun('', 0, null, 'all')).toEqual([]);
+  });
+
+  /* Une sélection vide n'est pas une sélection : c'est le curseur qui décide, comme le libellé du
+     bouton, qui repasse de « Run selection » à « Run statement » dans ce même cas. */
+  it('ignores a whitespace-only selection and runs the cursor statement', () => {
+    expect(planRun(sql, 0, { start: 0, text: '   ' }, 'cursor').map(p => p.text))
+      .toEqual(['CREATE TABLE a (x INT)']);
+  });
+});
+
+describe('previewStatement', () => {
+  it('collapses whitespace and truncates', () => {
+    expect(previewStatement('SELECT\n  a,\n  b\nFROM t', 12)).toBe('SELECT a, b…');
+  });
+
+  /* Le SQL que la barre latérale pose commence par deux lignes de commentaire : un aperçu brut
+     donnerait la même étiquette à toutes les instructions du lot. */
+  it('looks past the comments a generated statement opens with', () => {
+    expect(previewStatement('-- Read the topic\n-- target selected\nSELECT * FROM t'))
+      .toBe('SELECT * FROM t');
+  });
+
+  it('falls back to the comment when there is nothing else', () => {
+    expect(previewStatement('-- nothing but this')).toBe('-- nothing but this');
+  });
+});
+
+describe('detectStatementType', () => {
+  it('classifies past a leading CTE, like the backend', () => {
+    expect(detectStatementType('WITH x AS (SELECT 1) INSERT INTO t SELECT * FROM x')).toBe('INSERT');
+    expect(detectStatementType('WITH x AS (SELECT 1) SELECT * FROM x')).toBe('SELECT');
+  });
+
+  it('classifies past comments', () => {
+    expect(detectStatementType('-- a note\nCREATE TABLE t (x INT)')).toBe('CREATE_TABLE');
+  });
+
+  it('names an unknown statement by its first word', () => {
+    expect(detectStatementType('DROP TABLE t')).toBe('DROP');
+    expect(detectStatementType('   ')).toBe('UNKNOWN');
+  });
+});
+
+describe('buildCompletionEntries', () => {
+  const catalogue = { tables: ['orders'], topics: ['demo.orders.1.received', 'orders'] };
+  const schemas = { orders: { id: 'STRING', amount: 'DOUBLE' }, other: { x: 'INT' } };
+
+  it('offers a Kafka topic under the table name a query has to carry', () => {
+    const entry = buildCompletionEntries(catalogue, {}, []).find(e => e.label === 'demo_orders_1_received');
+    expect(entry).toMatchObject({ kind: 'table', insertText: 'demo_orders_1_received' });
+    expect(entry?.documentation).toBe('Topic demo.orders.1.received');
+  });
+
+  it('does not offer a topic twice when it is already a registered table', () => {
+    const labels = buildCompletionEntries(catalogue, {}, []).filter(e => e.label === 'orders');
+    expect(labels).toHaveLength(1);
+    expect(labels[0].detail).toBe('Flink Table');
+  });
+
+  /* Proposer les colonnes de toutes les tables chargées noyait les bonnes au milieu des inutiles. */
+  it('limits columns to the tables the query cites, and ranks them first', () => {
+    const entries = buildCompletionEntries(catalogue, schemas, ['orders']);
+    const columns = entries.filter(e => e.kind === 'column');
+    expect(columns.map(c => c.label)).toEqual(['id', 'amount']);
+    expect(columns.every(c => c.sortText?.startsWith('0_'))).toBe(true);
+  });
+
+  it('falls back to every loaded table while the query cites none', () => {
+    const columns = buildCompletionEntries(catalogue, schemas, []).filter(e => e.kind === 'column');
+    expect(columns.map(c => c.label)).toEqual(['id', 'amount', 'x']);
+    expect(columns.every(c => c.sortText?.startsWith('1_'))).toBe(true);
+  });
+
+  it('ignores a scoped table whose schema has not been loaded', () => {
+    const columns = buildCompletionEntries(catalogue, schemas, ['not_loaded']).filter(e => e.kind === 'column');
+    expect(columns.map(c => c.label)).toEqual(['id', 'amount', 'x']);
+  });
+
+  it('always carries the Flink keywords', () => {
+    const keywords = buildCompletionEntries(null, {}, []).filter(e => e.kind === 'keyword');
+    expect(keywords.map(k => k.label)).toEqual([...SQL_KEYWORD_SUGGESTIONS]);
+  });
+
+  it('says nothing at all on an empty catalogue but the keywords', () => {
+    expect(buildCompletionEntries(null, {}, []).every(e => e.kind === 'keyword')).toBe(true);
+  });
+});
+
+describe('the batch', () => {
+  const run = (index: number, rows: number, over: Partial<StatementRun> = {}): StatementRun => ({
+    index,
+    sql: `SELECT ${index}`,
+    kind: 'SELECT',
+    status: 'ok',
+    ms: 120,
+    rows,
+    engine: 'KAFKA_DIRECT',
+    result: {
+      columns: ['a'],
+      rows: Array.from({ length: rows }, () => ({ a: 1 })),
+      durationMs: 1, error: null, tableRegistered: false, engine: 'KAFKA_DIRECT', warnings: [],
+    },
+    ...over,
+  });
+
+  describe('forgetOldestResults', () => {
+    it('keeps everything while the batch fits in its budget', () => {
+      const runs = forgetOldestResults([run(1, 10), run(2, 10)], 100);
+      expect(runs.every(r => r.result && !r.forgotten)).toBe(true);
+    });
+
+    it('releases the oldest rows first, and marks what it released', () => {
+      const runs = forgetOldestResults([run(1, 60), run(2, 60), run(3, 60)], 100);
+      expect(runs[0]).toMatchObject({ forgotten: true, result: null });
+      expect(runs[1].forgotten).toBe(true);
+      // La dernière est celle que la grille affiche : jamais libérée.
+      expect(runs[2].result?.rows).toHaveLength(60);
+    });
+
+    /* « 4 000 lignes, plus affichables » est une réponse ; « 0 ligne » en serait une fausse. */
+    it('keeps the row count of what it released', () => {
+      const [first] = forgetOldestResults([run(1, 400), run(2, 400)], 100);
+      expect(first.rows).toBe(400);
+    });
+
+    it('holds a real budget by default', () => {
+      expect(MAX_RETAINED_BATCH_ROWS).toBeGreaterThan(1000);
+    });
+  });
+
+  describe('summariseBatch', () => {
+    it('counts each outcome, and names the ones never run', () => {
+      expect(summariseBatch([
+        run(1, 1),
+        run(2, 0, { status: 'failed', result: null }),
+        run(3, 0, { status: 'skipped', result: null, rows: undefined }),
+      ])).toBe('3 statements · 1 ok · 1 failed · 1 never run');
+    });
+
+    it('says nothing it did not count', () => {
+      expect(summariseBatch([run(1, 1)])).toBe('1 statement · 1 ok');
+    });
+  });
+
+  describe('describeStatementRun', () => {
+    it('sums up what the statement gave', () => {
+      expect(describeStatementRun(run(1, 3))).toBe('120ms · 3 rows · Kafka Direct');
+    });
+
+    it('never prints a zero for a measurement that was not taken', () => {
+      const skipped = run(2, 0, { status: 'skipped', ms: undefined, rows: undefined, engine: undefined, result: null });
+      expect(describeStatementRun(skipped)).toBe('never run');
+    });
+
+    it('says the rows were released rather than showing none', () => {
+      expect(describeStatementRun(run(1, 0, { rows: 4000, result: null, forgotten: true })))
+        .toContain('rows released');
+    });
   });
 });
 
