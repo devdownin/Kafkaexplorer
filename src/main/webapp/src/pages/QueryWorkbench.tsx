@@ -24,7 +24,10 @@ import {
   readLayout, clamp, LAYOUT_STORAGE_KEY, DEFAULT_LAYOUT,
   SPLIT_MIN, SPLIT_MAX, SIDEBAR_MIN, SIDEBAR_MAX, type WorkbenchLayout,
   starterQueries, starterJobQueries, pushHistory, describeHistoryEntry, formatDuration, type HistoryEntry,
-  splitStatements, statementIndexAt, positionAt, withoutLeadingCte,
+  splitStatements, statementIndexAt, positionAt, offsetAt,
+  planRun, detectStatementType, previewStatement,
+  forgetOldestResults, summariseBatch, describeStatementRun, MAX_RETAINED_BATCH_ROWS,
+  type PlannedStatement, type StatementRun,
   readSqlParam, buildQueryLink,
   sidebarSqlFor, sidebarActionLabel, sinkNameRange, pickSinkTable, type ExecutionMode,
 } from './queryWorkbench';
@@ -77,6 +80,35 @@ interface FlinkJobSubmission {
   cancelRequested: boolean;
 }
 interface Tab { id: string; name: string; sql: string; }
+
+/**
+ * Ce qu'une instruction a donné. `executeStatement` le rend, la boucle d'un lot le range dans son
+ * entrée : un booléen suffisait pour « faut-il continuer », pas pour « qu'a fait celle-ci ».
+ */
+interface StatementOutcome {
+  status: 'ok' | 'failed' | 'cancelled';
+  ms: number;
+  rows?: number;
+  engine?: string;
+  /** Plafond de lignes sous lequel elle a tourné, pour juger sa troncature plus tard. */
+  limit?: number;
+  result: QueryResult | null;
+  job: FlinkJobSubmission | null;
+  error: QueryErrorInfo | null;
+}
+
+/** Une entrée de lot, avec la soumission de job que seule cette page connaît. */
+type Run = StatementRun<FlinkJobSubmission>;
+
+/** L'icône de chaque issue d'instruction dans la liste d'un lot. */
+const STATEMENT_ICON: Record<string, string> = {
+  pending: 'schedule',
+  running: 'sync',
+  ok: 'check_circle',
+  failed: 'error',
+  cancelled: 'stop_circle',
+  skipped: 'remove',
+};
 
 /** Choix de plafond de lignes. La valeur part au backend en `maxRows` — voir runQuery. */
 const ROW_LIMITS = [50, 100, 500, 1000, 5000] as const;
@@ -176,18 +208,6 @@ function restoreTabs(urlSql: string | null): { tabs: Tab[]; activeTabId: string;
   };
 }
 
-const detectStatementType = (sql: string) => {
-  // Classé past une chaîne CTE de tête, comme le backend : `WITH … INSERT INTO` est un INSERT, et
-  // `WITH … SELECT` une lecture. Sans cela la garde de mode voyait « WITH » et se trompait de camp.
-  const stripped = withoutLeadingCte(
-    sql.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, '').trim(),
-  ).toUpperCase();
-  if (stripped.startsWith('INSERT INTO')) return 'INSERT';
-  if (stripped.startsWith('CREATE TABLE')) return 'CREATE_TABLE';
-  if (stripped.startsWith('SELECT')) return 'SELECT';
-  if (stripped.startsWith('EXPLAIN')) return 'EXPLAIN';
-  return stripped.split(/\s+/, 1)[0] ?? 'UNKNOWN';
-};
 
 const QueryWorkbench: React.FC = () => {
   const { toast } = useToast();
@@ -341,6 +361,7 @@ const QueryWorkbench: React.FC = () => {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const monaco = useMonaco();
   const runQueryRef = useRef<() => void>(() => {});
+  const runAllRef = useRef<() => void>(() => {});
 
   /**
    * Le raccourci ⌘↵ était enregistré dans un effet dépendant du seul `monaco`, qui abandonnait si
@@ -353,6 +374,9 @@ const QueryWorkbench: React.FC = () => {
   const registerEditorCommands = useCallback((ed: editor.IStandaloneCodeEditor, m: typeof monaco) => {
     if (!m) return;
     ed.addCommand(m.KeyMod.CtrlCmd | m.KeyCode.Enter, () => runQueryRef.current());
+    // Le pendant clavier de « Run all ». Le bouton n'apparaît qu'au-delà d'une instruction ; le
+    // raccourci se contente d'exécuter ce qu'il y a, quel qu'en soit le nombre.
+    ed.addCommand(m.KeyMod.CtrlCmd | m.KeyMod.Shift | m.KeyCode.Enter, () => runAllRef.current());
     ed.addCommand(m.KeyMod.CtrlCmd | m.KeyMod.Shift | m.KeyCode.KeyF, () => {
       void ed.getAction('editor.action.formatDocument')?.run();
     });
@@ -485,8 +509,32 @@ const QueryWorkbench: React.FC = () => {
   const [executionMs, setExecutionMs] = useState<number | null>(null);
   /** SQL de la requête qui a produit `results` — sert à marquer l'affichage périmé. */
   const [ranSql, setRanSql] = useState<string | null>(null);
-  /** Progression d'un « Run all », ou `null` — un exécuteur muet sur dix instructions inquiète. */
-  const [runningAll, setRunningAll] = useState<{ index: number; total: number } | null>(null);
+  /**
+   * Le lot en cours ou terminé, une entrée par instruction, ou `null` quand la dernière exécution
+   * n'en portait qu'une. C'est lui qui garde ce que chaque instruction a donné — voir `runBatch`.
+   */
+  const [batch, setBatch] = useState<Run[] | null>(null);
+  /** L'entrée du lot que la grille affiche. */
+  const [selectedRun, setSelectedRun] = useState<number | null>(null);
+  /**
+   * Un lot est en cours. Distinct de `executingRef`, qui retombe entre deux instructions : c'est
+   * dans cet intervalle qu'un ⌘↵ lançait une requête concurrente de la boucle.
+   */
+  const batchRef = useRef(false);
+  /** Stop a été demandé pendant un lot — relu par la boucle, qui s'arrête à l'instruction suivante. */
+  const batchCancelRef = useRef(false);
+  /**
+   * Le lot décrit les instructions d'un onglet : changer d'onglet le vide, ses numéros et ses
+   * origines ne désignant plus rien dans le texte affiché. Ajusté pendant le rendu — le motif
+   * documenté pour un état dérivé, et le même que `errorSource` plus bas — plutôt qu'un effet,
+   * qui laisserait le lot de l'onglet précédent visible le temps d'un rendu.
+   */
+  const [batchTabId, setBatchTabId] = useState(activeTabId);
+  if (batchTabId !== activeTabId) {
+    setBatchTabId(activeTabId);
+    setBatch(null);
+    setSelectedRun(null);
+  }
   /** Dernier SQL que le validateur backend a accepté, pour ne pas le lui redemander à l'identique. */
   const validatedSqlRef = useRef<string | null>(null);
   // Plafond de lignes réellement envoyé au backend. Il était figé à 50 côté serveur
@@ -558,13 +606,25 @@ const QueryWorkbench: React.FC = () => {
   // Le résultat bute sur son propre plafond → il est probablement incomplet.
   const truncated = !!results && !results.error && results.rows.length >= resultLimit;
 
+  /** L'instruction du lot en cours d'exécution, ou -1. Dérivé : deux sources se contrediraient. */
+  const runningStatement = useMemo(
+    () => (batch ? batch.findIndex(r => r.status === 'running') : -1),
+    [batch],
+  );
+  /** L'entrée du lot que la grille montre — c'est elle qui dit si ses lignes existent encore. */
+  const shownRun = batch && selectedRun !== null ? batch[selectedRun] ?? null : null;
+
   /**
    * Les lignes affichées ne répondent plus au SQL en cours d'édition. La grille gardait le
    * résultat précédent sans rien dire pendant qu'on écrivait la requête suivante — on lit alors
    * un tableau en croyant qu'il répond au texte sous les yeux. Stream Flow marque son graphe
    * exactement de la même façon.
+   *
+   * Les instructions du document entrent dans ce jugement : sans elles, un résultat issu d'un
+   * onglet multi-instructions est *toujours* périmé, le texte exécuté n'étant jamais égal au
+   * contenu de l'onglet — et un avertissement permanent ne prévient plus de rien.
    */
-  const staleResults = !executing && !!results && isResultStale(ranSql, sql);
+  const staleResults = !executing && !!results && isResultStale(ranSql, sql, statements);
 
   // Place le curseur sur la position fautive et la révèle dans l'éditeur.
   const jumpToError = useCallback((loc: QueryErrorLocation) => {
@@ -869,84 +929,78 @@ const QueryWorkbench: React.FC = () => {
     }
   };
 
-  const runQuery = async () => {
-    /**
-     * Le bouton Run se désactive pendant l'exécution, mais ⌘↵ appelle cette fonction *directement*
-     * : deux frappes rapides lançaient deux requêtes. La seconde écrasait `abortRef` et
-     * `runningQueryIdRef`, si bien que Stop n'annulait plus la première, dont le `finally`
-     * repassait ensuite l'écran en « Complete » alors qu'une requête était toujours en vol.
-     */
-    if (executingRef.current) {
-      toast('A query is already running — stop it first', 'info');
-      return;
-    }
-    setPanelError(null);
-
-    /*
-     * Que faut-il exécuter ?
-     *
-     * 1. La sélection quand il y en a une — habitude universelle des éditeurs SQL, et le moyen de
-     *    forcer n'importe quel fragment.
-     * 2. Sinon **l'instruction sous le curseur**. Un onglet peut en contenir plusieurs, séparées
-     *    par `;` : le formateur les met en forme et l'éditeur les accepte, mais Run envoyait le
-     *    texte entier et le backend classait sur le premier mot. Sélectionner à la main était le
-     *    contournement.
-     * 3. Sur un document d'une seule instruction — le cas courant — les deux reviennent au même.
-     *
-     * L'onglet garde son contenu entier dans tous les cas ; seule la portion envoyée change, et
-     * `runOrigin` reporte les positions d'erreur du moteur dans le repère du document.
-     */
-    const editor = editorRef.current;
-    const selection = editor?.getSelection();
+  /**
+   * Ce qu'un geste d'exécution va envoyer, décidé par `planRun`.
+   *
+   * La sélection n'est consultée que pour la portée `cursor` : « Run all » dit « toutes les
+   * instructions de cet onglet », et le raccourci doit faire ce que le bouton annonce.
+   */
+  const planFor = (scope: 'cursor' | 'all'): PlannedStatement[] => {
+    const ed = editorRef.current;
+    const selection = scope === 'cursor' ? ed?.getSelection() : undefined;
     const selected = selection && !selection.isEmpty()
-      ? editor?.getModel()?.getValueInRange(selection) ?? ''
+      ? ed?.getModel()?.getValueInRange(selection) ?? ''
       : '';
-    const runningSelection = selected.trim().length > 0;
-
-    let sqlToRun = sql;
-    let origin: QueryErrorLocation | null = null;
-    if (runningSelection && selection) {
-      sqlToRun = selected;
-      origin = { line: selection.startLineNumber, column: selection.startColumn };
-    } else {
-      const statement = statements[cursorStatement];
-      if (statement && statements.length > 1) {
-        sqlToRun = statement.text;
-        origin = positionAt(sql, statement.start);
-      }
-    }
-    return executeStatement(sqlToRun, origin);
+    const range = selection && selected.trim()
+      ? { start: offsetAt(sql, selection.startLineNumber, selection.startColumn), text: selected }
+      : null;
+    return planRun(sql, cursorOffset, range, scope);
   };
+
+  /**
+   * Exécute ce que le curseur ou la sélection désigne.
+   *
+   * Que faut-il exécuter ?
+   *
+   * 1. La sélection quand il y en a une — habitude universelle des éditeurs SQL, et le moyen de
+   *    forcer n'importe quel fragment. Quand elle enjambe plusieurs instructions, elle en produit
+   *    plusieurs : sélectionner deux requêtes et les lancer est un geste ordinaire, et cela partait
+   *    auparavant en une seule requête que le planner rejetait sur le `;`.
+   * 2. Sinon **l'instruction sous le curseur**. Un onglet peut en contenir plusieurs, séparées par
+   *    `;` : le formateur les met en forme et l'éditeur les accepte, mais Run envoyait le texte
+   *    entier et le backend classait sur le premier mot.
+   * 3. Sur un document d'une seule instruction — le cas courant — les deux reviennent au même.
+   *
+   * L'onglet garde son contenu entier dans tous les cas ; seule la portion envoyée change, et
+   * `runOrigin` reporte les positions d'erreur du moteur dans le repère du document.
+   */
+  const runQuery = () => runBatch(planFor('cursor'));
 
   /**
    * Exécute **une** instruction : gardes de mode, pré-vol, envoi, résultat.
    *
    * Sortie de `runQuery` pour que « Run all » la réutilise telle quelle — un exécuteur séquentiel
    * qui recopierait ces gardes finirait par en diverger, et c'est précisément sur elles que se joue
-   * ce qui part au moteur. Rend `true` quand l'instruction a abouti, ce qui est ce dont la boucle a
-   * besoin pour s'arrêter à la première erreur.
+   * ce qui part au moteur. Elle rend ce que l'instruction a donné, et non un booléen : un lot doit
+   * pouvoir distinguer un échec d'un arrêt demandé, et garder de chaque instruction autre chose que
+   * le fait qu'elle a abouti.
    */
-  const executeStatement = async (sqlToRun: string, origin: QueryErrorLocation | null): Promise<boolean> => {
+  const executeStatement = async (
+    sqlToRun: string,
+    origin: QueryErrorLocation | null,
+  ): Promise<StatementOutcome> => {
     setRunOrigin(origin);
     const statementType = detectStatementType(sqlToRun);
 
+    /** Refus avant exécution : rien n'est parti au moteur, et le panneau porte la raison. */
+    const refuse = (error: QueryErrorInfo): StatementOutcome => {
+      setResults(null); setSubmittedJob(null); setPanelError(error);
+      return { status: 'failed', ms: 0, result: null, job: null, error };
+    };
+
     if (executionMode === 'SYNC_READ' && statementType === 'INSERT') {
-      setResults(null); setSubmittedJob(null);
-      setPanelError({
+      return refuse({
         title: 'INSERT INTO cannot run in Read mode',
         hint: 'Switch the execution mode to Flink Job — Read mode returns rows, so it only accepts SELECT, EXPLAIN and CREATE TABLE.',
         raw: 'INSERT INTO must be submitted in Flink Job mode.',
       });
-      return false;
     }
     if (executionMode === 'ASYNC_JOB' && statementType !== 'INSERT') {
-      setResults(null); setSubmittedJob(null);
-      setPanelError({
+      return refuse({
         title: 'Flink Job mode only accepts INSERT INTO',
         hint: `This statement is ${statementType || 'not an INSERT'}. Switch back to Read mode to run it and see the rows.`,
         raw: 'Flink Job mode only accepts INSERT INTO statements.',
       });
-      return false;
     }
 
     /*
@@ -964,9 +1018,7 @@ const QueryWorkbench: React.FC = () => {
           // Rejet avant exécution : le backend renvoie déjà le texte du parser (avec sa
           // ligne/colonne quand il en a une), on le classe comme n'importe quelle erreur.
           validatedSqlRef.current = null;
-          setResults(null); setSubmittedJob(null);
-          setPanelError(describeQueryError(vRes.data.error ?? 'SQL validation failed'));
-          return false;
+          return refuse(describeQueryError(vRes.data.error ?? 'SQL validation failed'));
         }
         validatedSqlRef.current = sqlToRun;
       } catch { /* let execution handle it */ }
@@ -983,7 +1035,6 @@ const QueryWorkbench: React.FC = () => {
     runningQueryIdRef.current = queryId;
     abortRef.current = controller;
     executingRef.current = true;
-    let succeeded = false;
     setExecuting(true); setResults(null); setSubmittedJob(null); setSortCol(null); setDetailIndex(null);
     // Ce qui a réellement été exécuté — c'est lui, et non le contenu courant de l'onglet, qui dit
     // si les lignes affichées répondent encore au texte sous les yeux.
@@ -997,8 +1048,8 @@ const QueryWorkbench: React.FC = () => {
         setSubmittedJob(response.data);
         setResults(null);
         saveToHistory({ sql: sqlToRun, ts: Date.now(), ms, ok: true, engine: 'FLINK JOB' });
-        succeeded = true;
         toast(`Streaming job submitted: ${response.data.status}`, 'success');
+        return { status: 'ok', ms, result: null, job: response.data, error: null };
       } else {
         const readMode = offsetMode === 'LATEST' ? 'latest-offset' : 'earliest-offset';
         const limit = maxRows;
@@ -1022,8 +1073,8 @@ const QueryWorkbench: React.FC = () => {
           // d'historique portant `null` s'afficherait « null » au lieu de ne rien afficher.
           engine: response.data.error ? undefined : (response.data.engine ?? undefined),
         });
-        succeeded = !response.data.error;
-        if (!response.data.error) {
+        const failed = !!response.data.error;
+        if (!failed) {
           // Refresh the schema browser when:
           // 1. The user explicitly ran a CREATE TABLE statement.
           // 2. The backend auto-registered a Flink table during query execution.
@@ -1032,6 +1083,17 @@ const QueryWorkbench: React.FC = () => {
             fetchSchema();
           }
         }
+        return {
+          status: failed ? 'failed' : 'ok',
+          ms,
+          // Pas de compte de lignes sur un échec : « 0 ligne » se lit comme une réponse.
+          rows: failed ? undefined : response.data.rows.length,
+          engine: failed ? undefined : (response.data.engine ?? undefined),
+          limit,
+          result: response.data,
+          job: null,
+          error: failed ? describeQueryError(response.data.error ?? 'Query failed') : null,
+        };
       }
     } catch (error) {
       const ms = Date.now() - start;
@@ -1041,7 +1103,7 @@ const QueryWorkbench: React.FC = () => {
       if (axios.isCancel(error)) {
         setResults(null);
         setSubmittedJob(null);
-        return false;
+        return { status: 'cancelled', ms, result: null, job: null, error: null };
       }
       saveToHistory({ sql: sqlToRun, ts: Date.now(), ms, ok: false });
       // describeApiError couvre aussi ce que le corps de réponse ne dit pas : backend
@@ -1052,18 +1114,17 @@ const QueryWorkbench: React.FC = () => {
       setSubmittedJob(null);
       setPanelError(info);
       toast(info.title, 'error');
+      return { status: 'failed', ms, result: null, job: null, error: info };
     } finally {
       setExecuting(false);
       executingRef.current = false;
       abortRef.current = null;
       runningQueryIdRef.current = null;
     }
-    return succeeded;
   };
 
   /**
-   * Exécute toutes les instructions de l'onglet, dans l'ordre, en s'arrêtant à la première qui
-   * échoue.
+   * Exécute une suite d'instructions, dans l'ordre, en s'arrêtant à la première qui échoue.
    *
    * Depuis que Run vise l'instruction sous le curseur, un onglet qui contient `CREATE TABLE …;`
    * puis `SELECT …;` doit être lancé morceau par morceau. Avant, Run envoyait tout le texte — mais
@@ -1072,28 +1133,129 @@ const QueryWorkbench: React.FC = () => {
    *
    * L'arrêt à la première erreur est délibéré : les instructions d'un même onglet se suivent
    * généralement parce que la suivante dépend de la précédente, et enchaîner sur une table qui n'a
-   * pas été créée produirait une seconde erreur qui masquerait la première. Le résultat affiché est
-   * celui de la dernière instruction exécutée, et le message dit **laquelle** a échoué.
+   * pas été créée produirait une seconde erreur qui masquerait la première. Les instructions jamais
+   * atteintes sont marquées comme telles — `skipped`, et non « réussi sans lignes ».
+   *
+   * Chaque instruction garde ce qu'elle a donné : le lot n'affichait que le résultat de la
+   * **dernière**, si bien que lancer cinq requêtes laissait une grille et aucune trace des quatre
+   * autres — ni lignes, ni durée, ni moteur, ni la preuve qu'elles avaient tourné.
    */
-  const runAllStatements = async () => {
-    if (executingRef.current) {
+  const runBatch = async (plan: PlannedStatement[]) => {
+    /*
+     * Le bouton Run se désactive pendant l'exécution, mais ⌘↵ appelle cette fonction *directement*
+     * : deux frappes rapides lançaient deux requêtes. La seconde écrasait `abortRef` et
+     * `runningQueryIdRef`, si bien que Stop n'annulait plus la première, dont le `finally`
+     * repassait ensuite l'écran en « Complete » alors qu'une requête était toujours en vol.
+     *
+     * `batchRef` couvre le même trou pendant un lot : entre deux instructions, aucune requête n'est
+     * en vol, donc `executingRef` est faux — une frappe tombant dans cet intervalle lançait une
+     * requête *concurrente* de la boucle, les deux écrivant le même résultat affiché.
+     */
+    if (executingRef.current || batchRef.current) {
       toast('A query is already running — stop it first', 'info');
       return;
     }
     setPanelError(null);
-    for (let i = 0; i < statements.length; i += 1) {
-      const statement = statements[i];
-      setRunningAll({ index: i, total: statements.length });
-      const ok = await executeStatement(statement.text, positionAt(sql, statement.start));
-      if (!ok) {
-        setRunningAll(null);
-        // Le panneau porte déjà l'erreur du moteur ; ce toast dit seulement où l'on s'est arrêté.
-        toast(`Stopped at statement ${i + 1} of ${statements.length}`, 'error');
-        return;
-      }
+    if (!plan.length) {
+      // Envoyer une chaîne vide pour que le moteur dise lui-même qu'elle est vide, c'est faire
+      // dire à une erreur de planner ce qu'on savait avant de partir.
+      setPanelError({
+        title: 'Nothing to run',
+        hint: 'This tab holds no statement — only blank space or comments.',
+        raw: 'No statement to execute.',
+      });
+      return;
     }
-    setRunningAll(null);
-    toast(`Ran ${statements.length} statements`, 'success');
+    // Une instruction n'est pas un lot : pas de liste au-dessus de la grille pour un résultat
+    // unique, et celle d'une exécution précédente s'en va avec lui.
+    if (plan.length === 1) {
+      setBatch(null);
+      setSelectedRun(null);
+      await executeStatement(plan[0].text, positionAt(sql, plan[0].start));
+      return;
+    }
+    batchRef.current = true;
+    batchCancelRef.current = false;
+    let runs: Run[] = plan.map((p, i) => ({
+      index: i + 1,
+      sql: p.text,
+      origin: positionAt(sql, p.start),
+      kind: detectStatementType(p.text),
+      status: 'pending',
+    }));
+    // Le lot est posé *avant* de commencer : on voit ce qui va tourner, pas seulement ce qui a
+    // tourné, et la barre de progression a de quoi se remplir.
+    setBatch(runs);
+    setSelectedRun(0);
+    try {
+      for (let i = 0; i < runs.length; i += 1) {
+        runs = runs.map((r, j) => (j === i ? { ...r, status: 'running' as const } : r));
+        setBatch(runs);
+        setSelectedRun(i);
+        const outcome = await executeStatement(runs[i].sql, runs[i].origin);
+        runs = forgetOldestResults(runs.map((r, j) => (j === i ? { ...r, ...outcome } : r)));
+        setBatch(runs);
+
+        // Stop pressé *entre* deux instructions n'annulait rien : la requête en vol était déjà
+        // terminée, et la boucle enchaînait sur la suivante. L'arrêt est donc un drapeau que la
+        // boucle relit, et pas seulement un `abort()` sur une requête HTTP.
+        const stopped = outcome.status === 'cancelled' || batchCancelRef.current;
+        if (stopped || outcome.status !== 'ok') {
+          const remaining = runs.length - i - 1;
+          runs = runs.map((r, j) => (j > i && r.status === 'pending' ? { ...r, status: 'skipped' as const } : r));
+          setBatch(runs);
+          const tail = remaining ? ` — ${remaining} never run` : '';
+          // Un arrêt demandé n'est pas un échec : il était annoncé en rouge comme une erreur.
+          toast(stopped
+            ? `Stopped after statement ${i + 1} of ${runs.length}${tail}`
+            : `Failed at statement ${i + 1} of ${runs.length}${tail}`, stopped ? 'info' : 'error');
+          return;
+        }
+      }
+      toast(`Ran ${runs.length} statements`, 'success');
+    } finally {
+      batchRef.current = false;
+      batchCancelRef.current = false;
+    }
+  };
+
+  /** Exécute toutes les instructions de l'onglet. */
+  const runAllStatements = () => runBatch(planFor('all'));
+
+  /**
+   * Réaffiche ce qu'une instruction du lot a donné. Le résultat lui-même est ce qui a été conservé
+   * — y compris son plafond de lignes, sans quoi le badge « limit reached » jugerait un résultat
+   * ancien à l'aune du sélecteur tel qu'il est réglé maintenant.
+   */
+  const selectRun = useCallback((index: number) => {
+    const run = batch?.[index];
+    if (!run) return;
+    setSelectedRun(index);
+    setSortCol(null);
+    setDetailIndex(null);
+    setRunOrigin(run.origin);
+    setResults(run.result ?? null);
+    setSubmittedJob(run.job ?? null);
+    setPanelError(run.error ?? null);
+    setExecutionMs(run.ms ?? null);
+    setRanSql(run.sql);
+    if (typeof run.limit === 'number') setResultLimit(run.limit);
+  }, [batch]);
+
+  /** Relance une instruction du lot, à sa place — la puce reprend ce qu'elle vient de donner. */
+  const rerunStatement = async (index: number) => {
+    const run = batch?.[index];
+    if (!run) return;
+    if (executingRef.current || batchRef.current) {
+      toast('A query is already running — stop it first', 'info');
+      return;
+    }
+    setPanelError(null);
+    setSelectedRun(index);
+    setBatch(prev => prev && prev.map((r, j) => (j === index ? { ...r, status: 'running' as const } : r)));
+    const outcome = await executeStatement(run.sql, run.origin);
+    setBatch(prev => prev && forgetOldestResults(
+      prev.map((r, j) => (j === index ? { ...r, ...outcome, forgotten: false } : r))));
   };
 
   /** Lien rejouable vers la requête de l'onglet courant. */
@@ -1105,7 +1267,7 @@ const QueryWorkbench: React.FC = () => {
   }, [sql, location.pathname, toast]);
 
   // Idem : la ref se met à jour dans un effet, pas au milieu du rendu.
-  useEffect(() => { runQueryRef.current = runQuery; });
+  useEffect(() => { runQueryRef.current = runQuery; runAllRef.current = () => void runAllStatements(); });
 
   /**
    * Arrête la requête en cours. Deux effets distincts, et seul le premier est garanti :
@@ -1117,6 +1279,10 @@ const QueryWorkbench: React.FC = () => {
     const queryId = runningQueryIdRef.current;
     const controller = abortRef.current;
     controller?.abort();
+    // Un lot ne s'arrête pas en abandonnant une requête HTTP : entre deux instructions il n'y en a
+    // aucune en vol, et la boucle enchaînait. Le drapeau est ce qu'elle relit après chaque
+    // instruction — Stop arrête donc le lot, et pas seulement l'instruction en cours.
+    batchCancelRef.current = batchRef.current;
 
     // Ne confirmer que ce qui a réellement eu lieu. Sans contrôleur ni id, ce bouton n'a
     // rien annulé du tout, et annoncer « Query cancelled » là-dessus est précisément ce qui
@@ -1124,6 +1290,9 @@ const QueryWorkbench: React.FC = () => {
     // resté bloqué » — le message détournait le diagnostic. On remet aussi l'écran dans un
     // état cohérent, sans quoi il reste en « exécution » indéfiniment.
     if (!controller && !queryId) {
+      // Rien en vol, mais un lot en cours : c'est le drapeau qui l'arrête, à l'instruction
+      // suivante. Répondre « No query was running » ici décrirait mal ce qui vient de se passer.
+      if (batchRef.current) { toast('Stopping the batch after this statement', 'info'); return; }
       setExecuting(false);
       toast('No query was running', 'info');
       return;
@@ -1471,27 +1640,31 @@ const QueryWorkbench: React.FC = () => {
             <Tooltip content="Run the query, or just the selection when there is one. Shortcut: ⌘↵ / Ctrl+Enter.">
               <span tabIndex={0} className="text-[11px] text-outline hidden lg:block font-mono rounded">⌘↵</span>
             </Tooltip>
-            {executing && (
+            {(executing || runningStatement >= 0) && (
               <Button variant="secondary" onClick={() => void cancelRunningQuery()} icon="stop_circle">
                 Stop
               </Button>
             )}
             {/* Ce que Run va envoyer, dit avant d'appuyer. « Run statement » sans dire laquelle
                 serait la moitié inquiétante de la fonctionnalité. */}
-            {!hasSelection && statements.length > 1 && executionMode === 'SYNC_READ' && (
+            {/* Le mode ne conditionne plus rien ici. En mode Flink Job, Run visait déjà la seule
+                instruction sous le curseur : un onglet de trois INSERT en soumettait *un* sans que
+                rien ne le dise, et « Run all » n'y était pas offert — une exécution partielle
+                silencieuse, exactement ce que ce compteur existe pour empêcher. */}
+            {!hasSelection && statements.length > 1 && (
               <>
-                <Tooltip content="This tab holds several statements. ⌘↵ runs the one the cursor is in — select a fragment to run something else.">
+                <Tooltip content="This tab holds several statements. ⌘↵ runs the one the cursor is in, ⌘⇧↵ runs them all — select a fragment to run something else.">
                   <span tabIndex={0} className="text-[11px] text-on-surface-variant tabular-nums rounded hidden md:block">
-                    {runningAll
-                      ? `Running ${runningAll.index + 1}/${runningAll.total}`
+                    {runningStatement >= 0 && batch
+                      ? `Running ${runningStatement + 1}/${batch.length}`
                       : `Statement ${cursorStatement + 1}/${statements.length}`}
                   </span>
                 </Tooltip>
                 {/* Créer une table puis la lire est ce que l'auto-enregistrement encourage, et
                     depuis que Run vise une seule instruction, cela demandait deux gestes. */}
-                <Tooltip content="Runs every statement in this tab, in order, stopping at the first one that fails.">
+                <Tooltip content="Runs every statement in this tab, in order, stopping at the first one that fails. Shortcut: ⌘⇧↵.">
                   <Button variant="secondary" onClick={() => void runAllStatements()}
-                    disabled={executing} icon="playlist_play">
+                    disabled={executing || runningStatement >= 0} icon="playlist_play">
                     Run all
                   </Button>
                 </Tooltip>
@@ -1671,7 +1844,9 @@ const QueryWorkbench: React.FC = () => {
                   <span className="text-[11px] text-on-surface-variant">
                     {/* Tronqué = autant de lignes que le plafond *de cette requête*. La constante
                         locale d'avant ne suivait pas `explorer.default-max-rows` côté serveur. */}
-                    Rows <span className={`tabular-nums ${truncated ? 'text-warning' : 'text-on-surface'}`}>{results?.rows.length ?? 0}</span>
+                    Rows <span className={`tabular-nums ${truncated ? 'text-warning' : 'text-on-surface'}`}>
+                      {shownRun?.forgotten ? (shownRun.rows ?? 0) : (results?.rows.length ?? 0)}
+                    </span>
                     {truncated && (
                       <Tooltip content={`The scan stopped at the ${resultLimit.toLocaleString()}-row limit, so this result is probably incomplete — raise "Rows" to fetch more.`}>
                         <span tabIndex={0} className="ml-1.5 text-[10px] text-warning font-medium rounded">limit reached</span>
@@ -1712,11 +1887,73 @@ const QueryWorkbench: React.FC = () => {
                     </button>
                   </Tooltip>
                 )}
-                <Badge tone={executing ? 'primary' : (queryError ? 'error' : (results || submittedJob) ? 'success' : 'neutral')} dot>
-                  {executing ? 'Running' : queryError ? 'Error' : submittedJob ? 'Job submitted' : results ? 'Complete' : 'Idle'}
+                <Badge tone={executing ? 'primary' : (queryError ? 'error' : (results || submittedJob || shownRun?.forgotten) ? 'success' : 'neutral')} dot>
+                  {executing ? 'Running' : queryError ? 'Error' : submittedJob ? 'Job submitted'
+                    : (results || shownRun?.forgotten) ? 'Complete' : 'Idle'}
                 </Badge>
               </div>
             </div>
+
+            {/* ── Le lot : une puce par instruction ──
+                « Run all » n'affichait que le résultat de la dernière : les autres n'avaient laissé
+                ni lignes, ni durée, ni moteur, ni la preuve qu'elles avaient tourné. Chaque puce
+                rappelle ce que son instruction a donné et la ramène dans la grille au clic. */}
+            {batch && (
+              <div className="border-b border-outline-variant/60 bg-surface-container-low/60 shrink-0">
+                <div className="flex items-center justify-between gap-3 px-4 pt-2">
+                  <p className="text-[11px] text-on-surface-variant">
+                    <span className="font-medium text-on-surface">Batch</span> · {summariseBatch(batch)}
+                  </p>
+                  <button type="button" onClick={() => { setBatch(null); setSelectedRun(null); }}
+                    className="text-[11px] text-outline hover:text-on-surface transition-colors"
+                    disabled={runningStatement >= 0}>
+                    Dismiss
+                  </button>
+                </div>
+                <div role="group" aria-label="Statements in this run"
+                  className="flex items-stretch gap-1.5 px-4 py-2 overflow-x-auto custom-scrollbar">
+                  {batch.map((run, i) => (
+                    <button
+                      key={run.index}
+                      type="button"
+                      onClick={() => selectRun(i)}
+                      // Le nom accessible porte l'issue : l'icône qui la donne à l'œil est
+                      // `aria-hidden`, et « Statement 3 » seul ne dit pas si elle a tourné.
+                      aria-label={`Statement ${run.index}, ${run.status}`}
+                      aria-pressed={selectedRun === i}
+                      title={run.sql}
+                      className={cn(
+                        'shrink-0 max-w-[16rem] text-left px-2.5 py-1.5 rounded-lg border transition-colors',
+                        selectedRun === i
+                          ? 'border-primary bg-primary/10'
+                          : 'border-outline-variant hover:border-primary/50 hover:bg-surface-container-high/60',
+                        run.status === 'pending' || run.status === 'skipped' ? 'opacity-60' : '',
+                      )}
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <span aria-hidden="true" className={cn(
+                          'material-symbols-outlined text-[14px]',
+                          run.status === 'ok' ? 'text-success'
+                            : run.status === 'failed' ? 'text-error'
+                              : run.status === 'running' ? 'text-primary animate-pulse' : 'text-outline',
+                        )}>{STATEMENT_ICON[run.status]}</span>
+                        <span className="text-[11px] font-medium text-on-surface tabular-nums">{run.index}</span>
+                        <span className="text-[10px] text-on-surface-variant uppercase tracking-wide">
+                          {run.kind.replace('_', ' ')}
+                        </span>
+                      </span>
+                      <span className="block font-mono text-[10px] text-on-surface-variant truncate mt-0.5">
+                        {previewStatement(run.sql, 40)}
+                      </span>
+                      {/* Rien d'inventé : une instruction jamais atteinte n'affiche pas « 0 ligne ». */}
+                      {describeStatementRun(run) && (
+                        <span className="block text-[10px] text-outline mt-0.5">{describeStatementRun(run)}</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Réserves du moteur sur un résultat par ailleurs réussi — typiquement les
                 prédicats WHERE que le lecteur direct n'a pas su appliquer. Le backend les
@@ -1805,6 +2042,23 @@ const QueryWorkbench: React.FC = () => {
                       </div>
                       <pre className="text-[10px] text-on-surface-variant font-mono whitespace-pre-wrap overflow-x-auto leading-relaxed border-t border-success/20 pt-2">{submittedJob.sql}</pre>
                     </div>
+                  </div>
+                </div>
+              ) : shownRun?.forgotten ? (
+                /* Les lignes de cette instruction ont été libérées pour borner ce que le lot
+                   retient. Une grille vide se lirait « aucune ligne » : ce panneau dit ce qui a
+                   été mesuré, et propose le seul geste qui les ramène. */
+                <div className="p-4">
+                  <EmptyState
+                    icon="inventory_2"
+                    title="These rows are no longer held"
+                    description={`Statement ${shownRun.index} returned ${(shownRun.rows ?? 0).toLocaleString()} rows. A batch keeps the most recent ${MAX_RETAINED_BATCH_ROWS.toLocaleString()} rows, so these were released — run it again to see them.`}
+                  />
+                  <div className="flex justify-center mt-2">
+                    <Button variant="secondary" icon="play_arrow" disabled={executing}
+                      onClick={() => void rerunStatement(selectedRun ?? 0)}>
+                      Run statement {shownRun.index} again
+                    </Button>
                   </div>
                 </div>
               ) : results?.columns.length ? (

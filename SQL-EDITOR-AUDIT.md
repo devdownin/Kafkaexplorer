@@ -403,6 +403,76 @@ Everything below was unreachable without a mouse. All fixed.
 
 ---
 
+## 5. Running several statements — second pass
+
+`Run all` (E2e) made a tab of several statements *runnable*. This pass is about what running them
+actually reported, and what could still go wrong while they ran.
+
+### M1 — a batch threw away every result but the last *(fixed)*
+
+`runAllStatements` called `executeStatement` in a loop, and each call begins with `setResults(null)`.
+Five statements therefore left **one** grid: no rows, no duration, no engine and no proof that the
+other four had ever run. On the screen whose whole job is to show what a query returned, four of
+five answers were discarded between one render and the next.
+
+The run now keeps a `StatementRun` per statement — kind, status, duration, row count, engine and the
+result itself — and a strip above the grid lists them; selecting one brings its rows back, with the
+row cap *it* ran under, so the "limit reached" badge does not judge an old result by how the
+selector is set now. Retention is bounded (`forgetOldestResults`, 10 000 rows across the batch,
+oldest released first, never the one on screen) and what is released **says so** rather than
+rendering as an empty grid: "4 000 rows, no longer held" is an answer, "0 rows" is a false one.
+
+### M2 — Flink Job mode ran one statement of several, silently *(fixed)*
+
+Run has targeted the statement under the cursor since E2, in both modes. But the toolbar's
+`Statement 2/3` counter and the `Run all` button were gated on `executionMode === 'SYNC_READ'`. A tab
+holding three `INSERT INTO` — the shape that mode exists for — submitted **one** job, with nothing on
+screen saying so and no way to submit the rest in one gesture. Silent partial execution is precisely
+what that counter was added to prevent; the gate is gone.
+
+### M3 — `⌘↵` during a batch started a competing query *(fixed)*
+
+`executingRef` is the synchronous guard against two runs at once, and it falls back to `false`
+between two statements of a batch. A keystroke landing in that gap — the gap is not small: it holds
+the state updates, the history write and possibly a schema refetch — started a query *concurrent*
+with the loop, both writing `results`, `abortRef` and `runningQueryIdRef`. `batchRef` closes it, and
+covers `Run all` against itself for the same reason.
+
+### M4 — Stop did not stop a batch *(fixed)*
+
+`cancelRunningQuery` aborts the in-flight HTTP request. Pressed between two statements there is no
+request to abort, so the loop simply carried on to the next one — and the Stop button was not even
+rendered there, `executing` being false. Stop is now shown for the whole batch, raises a flag the
+loop re-reads after each statement, and says what it did (`Stopping the batch after this statement`)
+instead of `No query was running`.
+
+### M5 — a cancelled batch was reported as a failure *(fixed)*
+
+`executeStatement` returned a bare `true`/`false`, so a user-requested cancellation and an engine
+error were the same value: pressing Stop raised a red `Stopped at statement 2 of 5`. It returns an
+outcome now (`ok` / `failed` / `cancelled`), the toast distinguishes the two, and the statements the
+batch never reached are marked `skipped` — not left looking like runs that returned nothing.
+
+### M6 — a selection spanning two statements was sent as one query *(fixed)*
+
+Selecting two statements and pressing Run is an ordinary gesture in any SQL editor. The selected text
+went to `/api/query/run-sync` verbatim, `;` included, where the planner rejected it. `planRun` splits
+a selection exactly as it splits the document — and still sends a *fragment* verbatim, since
+selecting a sub-expression to try it must keep working.
+
+`planRun` is also what makes an empty run impossible: a tab holding only blanks or comments answers
+`Nothing to run` before anything is sent, instead of asking the engine to say what we already knew.
+
+### M7 — a multi-statement tab was permanently "stale" *(fixed)*
+
+`isResultStale` compared the SQL that ran against the whole tab. On a tab with several statements
+those are never equal, so the amber `Stale — rerun` chip was on from the first run and never went
+off. A warning that is always on stops being a warning. It now consults the tab's statements: a
+result is current while what ran is still, word for word, one of them — and editing *another*
+statement does not stale the one on screen.
+
+---
+
 ## Constaté, non traité
 
 - **`SqlQueryValidator` is not the whitelist.** `CLAUDE.md` describes it as "whitelist-based guard:
@@ -414,9 +484,10 @@ Everything below was unreachable without a mouse. All fixed.
   description was wrong.
 - **The page has no mobile story.** Fixed-width sidebar, split panes, Monaco: it targets a desktop,
   and the fix for E5 makes the toolbar usable on a narrow window without pretending otherwise.
-- **`detectStatementType` duplicates the backend's own detection** to gate the execution modes. The
-  two agree today. Sharing one definition would mean an endpoint that classifies a statement, which
-  is a round trip to answer a question the client can answer instantly.
+- **`detectStatementType` duplicates the backend's own detection** to gate the execution modes, and
+  now also to label the statements of a batch. The two agree today. Sharing one definition would
+  mean an endpoint that classifies a statement, which is a round trip to answer a question the
+  client can answer instantly; it moved into `queryWorkbench.ts` instead, where it is tested.
 - **A closed tab is gone for good.** Closing now asks when there is something to lose, which is the
   cheap half of the fix. The other half needs somewhere to *offer* the undo, and `Toast` carries a
   message and a type — no action. Extending the shared toast is a design-system change that would

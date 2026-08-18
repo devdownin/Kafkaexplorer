@@ -10,6 +10,8 @@
  * `topicSearch.ts` — une page de 1 400 lignes n'est testable que par ce qu'on en a sorti.
  */
 import { toTableName } from './sqlScope';
+import type { QueryResult } from '../api/types';
+import type { QueryErrorInfo } from './queryError';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Formatage SQL
@@ -488,6 +490,227 @@ export function positionAt(text: string, offset: number): { line: number; column
   return { line, column: clamped - lineStart + 1 };
 }
 
+/**
+ * L'inverse de `positionAt` : le décalage d'une ligne/colonne (base 1).
+ *
+ * Monaco sait le faire (`model.getOffsetAt`), mais le calculer ici garde le plan d'exécution
+ * décidable sans éditeur — donc testable, ce qui est toute la raison d'être de ce module.
+ */
+export function offsetAt(text: string, line: number, column: number): number {
+  let offset = 0;
+  for (let l = 1; l < line; l += 1) {
+    const next = text.indexOf('\n', offset);
+    if (next === -1) return text.length;
+    offset = next + 1;
+  }
+  return Math.min(text.length, offset + Math.max(0, column - 1));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Ce qu'un geste « Run » va envoyer
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Une instruction prête à partir, avec son décalage **dans le document**. */
+export interface PlannedStatement {
+  text: string;
+  /** Décalage du premier caractère dans le document, d'où viennent les positions d'erreur. */
+  start: number;
+}
+
+/**
+ * Les instructions qu'un geste d'exécution va envoyer, dans l'ordre.
+ *
+ * Un seul point d'entrée pour les trois gestes, parce qu'ils se distinguent uniquement par leur
+ * portée et que les laisser diverger, c'est laisser diverger ce qui part au moteur :
+ *
+ * - **une sélection**, quand l'appelant en fournit une, l'emporte : c'est le geste explicite
+ *   « exécute *ça* » (l'éditeur ne la transmet donc pas pour un « Run all », qui annonce l'onglet
+ *   entier). Elle est
+ *   découpée comme le document — une sélection qui enjambe deux instructions partait auparavant
+ *   telle quelle en une seule requête, que le planner rejetait sur le `;`, alors que sélectionner
+ *   deux requêtes et les lancer est un geste parfaitement ordinaire. Un fragment sans `;` reste
+ *   envoyé tel quel : sélectionner une sous-expression pour l'essayer doit continuer de marcher.
+ * - **`all`** prend toutes les instructions de l'onglet ;
+ * - **`cursor`** prend celle où se trouve le curseur, et **rien** quand il n'y en a aucune.
+ *
+ * Un tableau vide n'est pas une erreur silencieuse : c'est ce qui permet à l'appelant de dire
+ * « il n'y a rien à exécuter ici » au lieu d'envoyer une chaîne vide au moteur pour qu'il le dise
+ * à sa place, dans ses termes à lui.
+ */
+export function planRun(
+  sql: string,
+  cursorOffset: number,
+  selection: { start: number; text: string } | null,
+  scope: 'cursor' | 'all',
+): PlannedStatement[] {
+  if (selection && selection.text.trim()) {
+    const inner = splitStatements(selection.text);
+    if (inner.length <= 1) {
+      // Un fragment : envoyé tel quel, aux espaces de bord près, pour que le décalage d'erreur
+      // désigne son premier caractère utile et non le blanc qui le précède.
+      const leading = selection.text.length - selection.text.trimStart().length;
+      const text = selection.text.trim();
+      return text ? [{ text, start: selection.start + leading }] : [];
+    }
+    return inner.map(s => ({ text: s.text, start: selection.start + s.start }));
+  }
+
+  const statements = splitStatements(sql);
+  if (scope === 'all') return statements.map(s => ({ text: s.text, start: s.start }));
+  const index = statementIndexAt(statements, cursorOffset);
+  const statement = index >= 0 ? statements[index] : undefined;
+  return statement ? [{ text: statement.text, start: statement.start }] : [];
+}
+
+/**
+ * Aperçu d'une instruction sur une ligne, pour la nommer dans la liste d'un lot.
+ *
+ * Les commentaires sont retirés d'abord : le SQL que la barre latérale pose commence par deux
+ * lignes de commentaire, dont un aperçu brut ne montrerait que celles-là — donc la même étiquette
+ * pour toutes les instructions du lot.
+ */
+export function previewStatement(sql: string, max = 64): string {
+  const bare = (sql ?? '')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/--[^\n]*/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim() || (sql ?? '').replace(/\s+/g, ' ').trim();
+  return bare.length > max ? `${bare.slice(0, max - 1)}…` : bare;
+}
+
+/**
+ * Type d'instruction, classé après une éventuelle chaîne CTE de tête — comme le backend
+ * (`SqlStatements.withoutLeadingCte`) : `WITH … INSERT INTO` est un INSERT et `WITH … SELECT` une
+ * lecture. Sans cela, la garde de mode d'exécution voyait « WITH » et se trompait de camp.
+ */
+export function detectStatementType(sql: string): string {
+  const stripped = withoutLeadingCte(
+    (sql ?? '').replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, '').trim(),
+  ).toUpperCase();
+  if (stripped.startsWith('INSERT INTO')) return 'INSERT';
+  if (stripped.startsWith('CREATE TABLE')) return 'CREATE_TABLE';
+  if (stripped.startsWith('SELECT')) return 'SELECT';
+  if (stripped.startsWith('EXPLAIN')) return 'EXPLAIN';
+  return stripped.split(/\s+/, 1)[0] || 'UNKNOWN';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Le lot : ce que chaque instruction a donné, et pas seulement la dernière
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Issue d'une instruction dans un lot.
+ *
+ * `skipped` est distinct de `pending` et le reste : une instruction que le lot n'a **jamais**
+ * atteinte — parce qu'une précédente a échoué, ou parce qu'on a arrêté — n'a pas « réussi sans
+ * lignes », et c'est exactement le genre de zéro que cet écran ne doit pas afficher.
+ */
+export type StatementStatus = 'pending' | 'running' | 'ok' | 'failed' | 'cancelled' | 'skipped';
+
+/**
+ * Ce qu'une instruction d'un lot a donné, conservé pour qu'on puisse y revenir.
+ *
+ * « Run all » n'affichait que le résultat de la **dernière** instruction : lancer cinq requêtes
+ * laissait une grille et aucune trace des quatre autres — ni lignes, ni durée, ni moteur, ni même
+ * la preuve qu'elles avaient tourné. Le lot garde donc une entrée par instruction, et la grille
+ * montre celle qu'on sélectionne.
+ *
+ * `J` est le type de la soumission de job (mode Flink Job), que la page connaît et que ce module
+ * n'a pas à connaître.
+ */
+export interface StatementRun<J = unknown> {
+  /** Rang dans le lot, base 1 — c'est le numéro que l'utilisateur lit. */
+  index: number;
+  sql: string;
+  /** Origine dans le document (base 1), pour reporter les positions d'erreur du moteur. */
+  origin: { line: number; column: number };
+  /** SELECT, INSERT, CREATE_TABLE… — voir `detectStatementType`. */
+  kind: string;
+  status: StatementStatus;
+  /** Durée mesurée côté client, absente tant que l'instruction n'a pas fini. */
+  ms?: number;
+  /** Lignes rendues. Absent — jamais 0 — quand la question n'a pas été posée. */
+  rows?: number;
+  engine?: string;
+  /**
+   * Plafond de lignes sous lequel elle a tourné. Conservé avec elle, sinon le badge « limit
+   * reached » jugerait un résultat ancien à l'aune du sélecteur tel qu'il est réglé maintenant.
+   */
+  limit?: number;
+  /** Le résultat conservé, ou `null` s'il n'y en a pas (job, échec, ou lignes libérées). */
+  result?: QueryResult | null;
+  job?: J | null;
+  error?: QueryErrorInfo | null;
+  /**
+   * Les lignes ont été libérées pour borner ce que le lot retient. Le compte (`rows`) reste, lui :
+   * « 4 000 lignes, plus affichables » est une réponse, « 0 ligne » en serait une fausse.
+   */
+  forgotten?: boolean;
+}
+
+/**
+ * Plafond de lignes que l'ensemble d'un lot conserve en mémoire.
+ *
+ * Une instruction peut rendre jusqu'à 5 000 lignes (`ROW_LIMITS`) et un lot n'a pas de longueur
+ * maximale : tout garder, c'est laisser un onglet de vingt requêtes retenir cent mille lignes
+ * pour la seule éventualité qu'on y revienne.
+ */
+export const MAX_RETAINED_BATCH_ROWS = 10_000;
+
+/**
+ * Libère les lignes des plus **anciennes** instructions jusqu'à rentrer dans le budget.
+ *
+ * Les plus anciennes, parce qu'on remonte un lot depuis sa fin ; et jamais la dernière, qui est
+ * celle que la grille affiche. Ce qui est libéré est **marqué** (`forgotten`) au lieu d'être
+ * silencieusement vidé : une grille vide et un résultat qu'on ne garde plus sont deux réponses
+ * différentes, et l'écran doit pouvoir les distinguer.
+ */
+export function forgetOldestResults<J>(
+  runs: readonly StatementRun<J>[],
+  budget = MAX_RETAINED_BATCH_ROWS,
+): StatementRun<J>[] {
+  const out = runs.map(r => ({ ...r }));
+  let retained = out.reduce((n, r) => n + (r.forgotten ? 0 : r.result?.rows.length ?? 0), 0);
+  for (let i = 0; i < out.length - 1 && retained > budget; i += 1) {
+    const run = out[i];
+    const held = run.forgotten ? 0 : run.result?.rows.length ?? 0;
+    if (!held) continue;
+    retained -= held;
+    run.result = null;
+    run.forgotten = true;
+  }
+  return out;
+}
+
+/** Compte des issues d'un lot, dans l'ordre où on veut les lire. */
+export function summariseBatch<J>(runs: readonly StatementRun<J>[]): string {
+  const count = (s: StatementStatus) => runs.filter(r => r.status === s).length;
+  const parts = [`${runs.length} statement${runs.length === 1 ? '' : 's'}`];
+  const ok = count('ok');
+  if (ok) parts.push(`${ok} ok`);
+  const failed = count('failed');
+  if (failed) parts.push(`${failed} failed`);
+  const cancelled = count('cancelled');
+  if (cancelled) parts.push(`${cancelled} cancelled`);
+  const skipped = count('skipped');
+  if (skipped) parts.push(`${skipped} never run`);
+  return parts.join(' · ');
+}
+
+/** Résumé d'une entrée pour sa puce : durée, lignes, moteur — rien d'inventé. */
+export function describeStatementRun<J>(run: StatementRun<J>): string {
+  const parts: string[] = [];
+  if (typeof run.ms === 'number') parts.push(formatDuration(run.ms));
+  if (typeof run.rows === 'number') {
+    parts.push(`${run.rows.toLocaleString()} ${run.rows === 1 ? 'row' : 'rows'}`);
+  }
+  if (run.engine) parts.push(run.engine === 'KAFKA_DIRECT' ? 'Kafka Direct' : run.engine);
+  if (run.status === 'skipped') parts.push('never run');
+  if (run.status === 'cancelled') parts.push('stopped');
+  if (run.forgotten) parts.push('rows released');
+  return parts.join(' · ');
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Tri de la grille de résultats
 // ─────────────────────────────────────────────────────────────────────────────
@@ -640,10 +863,21 @@ export function nextActiveTabId<T extends TabLike>(
  * son graphe « stale » exactement pour cette raison (`sameCriterion`) — la comparaison ignore
  * l'espacement, une indentation retouchée ne périme pas un résultat.
  */
-export function isResultStale(ranSql: string | null, currentSql: string): boolean {
+export function isResultStale(
+  ranSql: string | null,
+  currentSql: string,
+  statements?: readonly SqlStatement[],
+): boolean {
   if (ranSql === null) return false;
   const normalize = (s: string) => s.replace(/\s+/g, ' ').trim();
-  return normalize(ranSql) !== normalize(currentSql);
+  const ran = normalize(ranSql);
+  // Une instruction parmi plusieurs : le texte exécuté n'est *jamais* égal au contenu de
+  // l'onglet, donc la comparaison brute déclarait périmé tout résultat d'un onglet
+  // multi-instructions — un avertissement permanent, qui ne veut plus rien dire dès qu'il est
+  // toujours là. Le résultat reste à jour tant que ce qui a tourné est encore, mot pour mot,
+  // l'une des instructions du document ; éditer *une autre* instruction ne périme pas celle-ci.
+  if (statements?.some(s => normalize(s.text) === ran)) return false;
+  return ran !== normalize(currentSql);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -35,6 +35,13 @@ const setCursor = (offset: number) => {
 };
 
 let cursorListeners: ((e: { selection: ReturnType<typeof makeSelection> }) => void)[] = [];
+
+/** Poser une sélection, comme un glissement de souris dans l'éditeur. */
+const setSelection = (start: number, end: number) => {
+  selectionRange = { start, end };
+  cursorListeners.forEach(fn => fn({ selection: makeSelection() }));
+};
+
 /** Dernière plage passée à `setSelection`, en coordonnées ligne/colonne Monaco. */
 let lastSetSelection: { startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number } | null = null;
 
@@ -444,7 +451,7 @@ describe('QueryWorkbench — running every statement', () => {
     await waitFor(() => expect(sentSql()).toEqual(['SELECT 1 FROM a', 'SELECT 2 FROM b']));
   });
 
-  it('stops at the first failure instead of running on a table that was never created', async () => {
+  it('stops at the first failure, and says the rest never ran', async () => {
     post.mockImplementation((url: string, body: unknown) => {
       if (url === '/api/query/validate') return Promise.resolve({ data: { valid: true } });
       const { sql } = body as { sql: string };
@@ -460,7 +467,9 @@ describe('QueryWorkbench — running every statement', () => {
 
     await userEvent.click(await screen.findByRole('button', { name: /Run all/ }));
     await waitFor(() => expect(sentSql()).toEqual(['SELECT 1 FROM a']));
-    expect(await screen.findByText(/Stopped at statement 1 of 2/)).toBeInTheDocument();
+    expect(await screen.findByText(/Failed at statement 1 of 2 — 1 never run/)).toBeInTheDocument();
+    // « Jamais exécutée » et « réussie sans lignes » sont deux réponses différentes.
+    expect(screen.getByRole('button', { name: 'Statement 2, skipped' })).toBeInTheDocument();
   });
 
   it('is not offered for a single statement', async () => {
@@ -468,6 +477,200 @@ describe('QueryWorkbench — running every statement', () => {
     await screen.findByText('demo.orders.1.received');
     await userEvent.type(editor(), 'SELECT 1');
     expect(screen.queryByRole('button', { name: /Run all/ })).not.toBeInTheDocument();
+  });
+});
+
+describe('QueryWorkbench — a batch keeps what every statement gave', () => {
+  /** Une réponse par instruction, pour distinguer les résultats dans la grille. */
+  const perStatement = () => post.mockImplementation((url: string, body: unknown) => {
+    if (url === '/api/query/validate') return Promise.resolve({ data: { valid: true } });
+    const { sql } = body as { sql: string };
+    const tag = sql.includes('FROM a') ? 'from-a' : 'from-b';
+    return Promise.resolve({
+      data: { columns: ['tag'], rows: [{ tag }], error: null, engine: 'KAFKA_DIRECT', warnings: [] },
+    });
+  });
+
+  const runTwo = async () => {
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.clear(editor());
+    await userEvent.paste('SELECT 1 FROM a;\nSELECT 2 FROM b;');
+    setCursor(0);
+    await userEvent.click(await screen.findByRole('button', { name: /Run all/ }));
+  };
+
+  /*
+   * Le lot n'affichait que le résultat de la **dernière** instruction : les autres ne laissaient
+   * ni lignes, ni durée, ni moteur, ni la preuve qu'elles avaient tourné.
+   */
+  it('lists one entry per statement, with what it gave', async () => {
+    perStatement();
+    await runTwo();
+    expect(await screen.findByRole('button', { name: 'Statement 1, ok' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Statement 2, ok' })).toBeInTheDocument();
+    expect(screen.getByText(/2 statements · 2 ok/)).toBeInTheDocument();
+  });
+
+  it('brings an earlier statement’s rows back into the grid', async () => {
+    perStatement();
+    await runTwo();
+    // La grille montre la dernière, comme avant.
+    expect(await screen.findByText('from-b')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Statement 1, ok' }));
+
+    expect(await screen.findByText('from-a')).toBeInTheDocument();
+    expect(screen.queryByText('from-b')).not.toBeInTheDocument();
+  });
+
+  it('leaves no batch behind when a single statement is run', async () => {
+    perStatement();
+    await runTwo();
+    await screen.findByRole('button', { name: 'Statement 1, ok' });
+
+    setCursor(0);
+    await userEvent.click(screen.getByRole('button', { name: /Run statement/ }));
+
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Statement 1, ok' })).not.toBeInTheDocument());
+  });
+});
+
+describe('QueryWorkbench — Stop stops the batch', () => {
+  /*
+   * Stop n'abandonnait qu'une requête HTTP. Entre deux instructions il n'y en a aucune en vol, et
+   * la boucle enchaînait ; l'arrêt était par ailleurs annoncé en rouge comme un échec.
+   */
+  it('marks the statements it never reached, and does not call the stop a failure', async () => {
+    let release = () => {};
+    post.mockImplementation((url: string) => {
+      if (url === '/api/query/validate') return Promise.resolve({ data: { valid: true } });
+      if (url === '/api/query/run-sync') {
+        return new Promise(resolve => {
+          release = () => resolve({
+            data: { columns: ['id'], rows: [], error: null, engine: 'KAFKA_DIRECT', warnings: [] },
+          });
+        });
+      }
+      return Promise.resolve({ data: { cancelled: false, outcome: 'NO_ACTIVE_JOB' } });
+    });
+
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.clear(editor());
+    await userEvent.paste('SELECT 1 FROM a;\nSELECT 2 FROM b;');
+    setCursor(0);
+    await userEvent.click(await screen.findByRole('button', { name: /Run all/ }));
+    await screen.findByRole('button', { name: 'Statement 1, running' });
+
+    await userEvent.click(screen.getByRole('button', { name: /Stop/ }));
+    release();
+
+    expect(await screen.findByText(/Stopped after statement 1 of 2 — 1 never run/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Statement 2, skipped' })).toBeInTheDocument();
+    // La seconde n'est jamais partie.
+    expect(post.mock.calls.filter(c => c[0] === '/api/query/run-sync')).toHaveLength(1);
+  });
+});
+
+describe('QueryWorkbench — a selection that holds several statements', () => {
+  beforeEach(() => {
+    post.mockImplementation((url: string) => url === '/api/query/validate'
+      ? Promise.resolve({ data: { valid: true } })
+      : Promise.resolve({ data: { columns: ['id'], rows: [{ id: 'A' }], error: null, engine: 'KAFKA_DIRECT' } }));
+  });
+
+  const sentSql = () => post.mock.calls
+    .filter(c => c[0] === '/api/query/run-sync')
+    .map(c => (c[1] as { sql: string }).sql);
+
+  /*
+   * Sélectionner deux requêtes et les lancer est un geste ordinaire ; la sélection partait
+   * auparavant en une seule requête, que le planner rejetait sur le `;`.
+   */
+  it('runs them one after another, not as one query', async () => {
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    const sql = 'SELECT 1 FROM a;\nSELECT 2 FROM b;';
+    await userEvent.clear(editor());
+    await userEvent.paste(sql);
+    setSelection(0, sql.length);
+
+    await userEvent.click(await screen.findByRole('button', { name: /Run selection/ }));
+
+    await waitFor(() => expect(sentSql()).toEqual(['SELECT 1 FROM a', 'SELECT 2 FROM b']));
+  });
+
+  it('still sends a sub-expression verbatim', async () => {
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    const sql = 'SELECT 1 FROM a WHERE x = 2';
+    await userEvent.clear(editor());
+    await userEvent.paste(sql);
+    setSelection(0, 'SELECT 1 FROM a'.length);
+
+    await userEvent.click(await screen.findByRole('button', { name: /Run selection/ }));
+
+    await waitFor(() => expect(sentSql()).toEqual(['SELECT 1 FROM a']));
+  });
+});
+
+describe('QueryWorkbench — Flink Job mode runs several statements too', () => {
+  const JOB = {
+    queryId: 'q1', flinkJobId: 'f1', statementType: 'INSERT_INTO', status: 'RUNNING',
+    sql: 'INSERT INTO x SELECT 1', startedAt: 0, endedAt: null, cancelRequested: false,
+  };
+  const sql = 'INSERT INTO x SELECT * FROM a;\nINSERT INTO y SELECT * FROM b;';
+
+  beforeEach(() => {
+    post.mockImplementation((url: string) => url === '/api/query/validate'
+      ? Promise.resolve({ data: { valid: true } })
+      : Promise.resolve({ data: JOB }));
+  });
+
+  /*
+   * Run visait déjà la seule instruction sous le curseur en mode Job, mais le compteur et
+   * « Run all » y étaient masqués : un onglet de trois INSERT en soumettait un, sans que rien ne
+   * le dise. Une exécution partielle silencieuse est ce que ce compteur existe pour empêcher.
+   */
+  it('says which statement Run will submit, and offers to submit them all', async () => {
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.click(screen.getByRole('button', { name: 'Flink job' }));
+    await userEvent.clear(editor());
+    await userEvent.paste(sql);
+    setCursor(0);
+
+    expect(await screen.findByText('Statement 1/2')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Run all/ })).toBeInTheDocument();
+  });
+
+  it('submits every INSERT of the tab', async () => {
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.click(screen.getByRole('button', { name: 'Flink job' }));
+    await userEvent.clear(editor());
+    await userEvent.paste(sql);
+    setCursor(0);
+
+    await userEvent.click(await screen.findByRole('button', { name: /Run all/ }));
+
+    await waitFor(() => expect(post.mock.calls.filter(c => c[0] === '/api/query/jobs')).toHaveLength(2));
+  });
+});
+
+describe('QueryWorkbench — a tab with nothing to run', () => {
+  it('says so instead of sending an empty query to the engine', async () => {
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.clear(editor());
+    await userEvent.paste('-- just a note');
+
+    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
+
+    expect(await screen.findByText('Nothing to run')).toBeInTheDocument();
+    expect(post.mock.calls.filter(c => c[0] === '/api/query/run-sync')).toHaveLength(0);
   });
 });
 
