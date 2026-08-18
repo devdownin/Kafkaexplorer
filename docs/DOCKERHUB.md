@@ -126,6 +126,13 @@ can be checked rather than believed.
 
 ![Stream Flow: key ORD-1042 traced across six topics, with per-hop latencies and the slowest hop into demo.orders.5.shipped highlighted](https://devdownin.github.io/Kafkaexplorer/img/stream-flow.png)
 
+**Data Model** — pick a set of topics and read them as tables: each becomes a card carrying its
+inferred columns, and the relations between them are deduced from key-column names. Kafka has no
+foreign keys, so every edge is a claim rather than a fact — it is graded, drawn in a line style
+that says which grade it is, and states in plain words the evidence it rests on.
+
+![Data Model: four topics read as tables — customers, orders, payments and shipments — with three deduced relations drawn in crow's-foot notation between their key columns](https://devdownin.github.io/Kafkaexplorer/img/data-model.png)
+
 **Cluster Audit** — one click, whole cluster: message formats, poison payloads, duplicate
 keys, flow drop-off and latency, graded `HEALTHY` / `WARNING` / `CRITICAL`. Every run states
 its own scope, because a check that quietly sampled ten messages must not read like a verdict

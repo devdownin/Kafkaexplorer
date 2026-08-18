@@ -26,7 +26,7 @@ Built for data engineers, architects and anyone who has ever asked *"what's actu
 ![The dashboard: every topic, its message count, its state and when it last received something](docs/img/dashboard.png)
 
 <details>
-<summary>More screens — Topic Explorer, SQL Editor, Stream Flow, Audit, Cluster</summary>
+<summary>More screens — Topic Explorer, SQL Editor, Stream Flow, Data Model, Audit, Cluster</summary>
 
 **Topic Explorer** — search the whole topic and see what was actually covered.
 ![Topic Explorer](docs/img/topic-explorer.png)
@@ -36,6 +36,9 @@ Built for data engineers, architects and anyone who has ever asked *"what's actu
 
 **Stream Flow** — one record key across the cluster, with per-hop latency and a checkable evidence table.
 ![Stream Flow](docs/img/stream-flow.png)
+
+**Data Model** — topics read as tables, with the relations between them deduced and graded.
+![Data Model](docs/img/data-model.png)
 
 **Cluster Audit** — graded findings, and every run states its own scope.
 ![Cluster Audit](docs/img/audit.png)

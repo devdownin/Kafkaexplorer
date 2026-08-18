@@ -8,6 +8,7 @@ import Sidebar from './Sidebar';
 import Header from './Header';
 import CommandPalette from './CommandPalette';
 import { setCatalog } from '../catalogStore';
+import { DESKTOP_QUERY } from '../breakpoints';
 import type { Health } from './connectionStatus';
 import type { DashboardResponse } from '../api/types';
 
@@ -22,8 +23,11 @@ import type { DashboardResponse } from '../api/types';
  *
  * Les classes `lg:` de `Sidebar`, `Header` et du conteneur de contenu ci-dessous décrivent le même
  * seuil : elles doivent bouger ensemble, sinon le rail et le bouton qui l'ouvre se contredisent.
+ *
+ * La constante elle-même vit dans `breakpoints.ts` : la page Data Model choisit sa disposition au
+ * même seuil, et deux fichiers portant chacun leur copie de `'(min-width: 1024px)'` sont la
+ * manière dont la règle ci-dessus se perd.
  */
-const DESKTOP_QUERY = '(min-width: 1024px)';
 
 /**
  * Shell applicatif : sidebar (repliable en desktop, drawer en mobile) + header
