@@ -3,7 +3,9 @@
 
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Field, Input, NumberInput, Select } from '../ui';
+import { Combobox, Field, Input, NumberInput, Select } from '../ui';
+import { useToast } from '../Toast';
+import { addTopicEntries, describeTopicEntry } from '../../topicSelection';
 
 export interface SnapshotConfig {
   mode: 'EARLIEST' | 'LATEST_N' | 'TIMESTAMP';
@@ -18,9 +20,12 @@ interface TopicSelectorPanelProps {
 }
 
 const TopicSelectorPanel: React.FC<TopicSelectorPanelProps> = ({ onStart, loading }) => {
+  const { toast } = useToast();
   const [allTopics, setAllTopics] = useState<string[]>([]);
   const [selectedTopics, setSelectedTopics] = useState<string[]>([]);
   const [filter, setFilter] = useState('');
+  /** Saisie libre : un nom, une liste collée, ou un motif — même geste que Stream Flow. */
+  const [topicDraft, setTopicDraft] = useState('');
   const [mode, setMode] = useState<SnapshotConfig['mode']>('LATEST_N');
   const [maxMessages, setMaxMessages] = useState(500);
   const [fromTimestamp, setFromTimestamp] = useState('');
@@ -50,6 +55,23 @@ const TopicSelectorPanel: React.FC<TopicSelectorPanelProps> = ({ onStart, loadin
         ? prev.filter(t => t !== topic)
         : [...prev, topic]
     );
+  };
+
+  /**
+   * Ajoute la saisie à la sélection. Elle peut valoir plusieurs topics — une liste collée depuis
+   * un runbook, ou un motif `demo.orders.*` étendu sur les topics déjà chargés, sans requête
+   * supplémentaire. Un motif sans correspondance est signalé plutôt qu'ajouté comme nom de
+   * topic : il n'en est pas un, et le profilage échouerait dessus à l'autre bout.
+   *
+   * Aucun plafond ici, contrairement à Data Model : ce qui borne un profilage est le budget de
+   * prompt, appliqué côté serveur sur l'ensemble des topics, pas un nombre de topics.
+   */
+  const addTopics = () => {
+    const entry = addTopicEntries(selectedTopics, topicDraft, allTopics);
+    setSelectedTopics(entry.selection);
+    setTopicDraft('');
+    const note = describeTopicEntry(entry);
+    if (note) toast(note, entry.unmatched.length > 0 ? 'error' : 'success');
   };
 
   const toggleAll = () => {
@@ -83,13 +105,24 @@ const TopicSelectorPanel: React.FC<TopicSelectorPanelProps> = ({ onStart, loadin
         </p>
       </div>
 
+      {/* Saisie libre, comme Stream Flow et Data Model : un pipeline se connaît par listes, et
+          cocher les topics un par un n'est pas le geste d'un opérateur qui sait ce qu'il cherche. */}
+      <Combobox
+        aria-label="Add topics by name, list or pattern"
+        options={allTopics}
+        value={topicDraft}
+        onChange={setTopicDraft}
+        onEnter={addTopics}
+        placeholder="Topic, demo.orders.*, or a pasted list…"
+      />
+
       {/* Topic filter + list */}
       <div className="border border-outline-variant rounded-xl overflow-hidden">
         <div className="p-3 border-b border-outline-variant/60 bg-primary/5 flex items-center gap-2">
           <span className="material-symbols-outlined text-on-surface-variant text-base">search</span>
           <input
             className="flex-1 bg-transparent text-sm outline-none placeholder-on-surface-variant"
-            placeholder="Filter topics..."
+            placeholder="Filter the list below..."
             value={filter}
             onChange={e => setFilter(e.target.value)}
           />

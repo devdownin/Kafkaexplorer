@@ -6,7 +6,6 @@ import type { DataModelEntity, DataModelRelation, DataModelResponse } from '../a
 import {
   MAX_TOPICS, MAX_COLUMNS_SHOWN, NODE_W, HEADER_H, ROW_H, FOOTER_H, DOMAIN_PALETTE,
   filterTopics, toggleTopic, selectAll, topicsFromQuery, buildQuery,
-  addTopicEntries, describeTopicEntry,
   displayedColumns, entityHeight, computeLayout, describeModel, splitByConnectivity,
   columnRowY, anchorSpread, computeEdgeGeometry, crowFootPath, oneBarPath,
   graphBounds, fitTransform, topicDomains, domainColors,
@@ -712,92 +711,5 @@ describe('buildJoinSql', () => {
 
   it('returns null when an endpoint is not in the model', () => {
     expect(buildJoinSql(rel({ to: 'ghost' }), [payments])).toBeNull();
-  });
-});
-
-describe('addTopicEntries', () => {
-  const catalog = [
-    'demo.orders.1.received', 'demo.orders.2.validated', 'demo.payments.authorized',
-    'internal.audit.history',
-  ];
-
-  it('adds a single name', () => {
-    const entry = addTopicEntries([], 'demo.payments.authorized', catalog);
-    expect(entry.selection).toEqual(['demo.payments.authorized']);
-    expect(entry.added).toEqual(['demo.payments.authorized']);
-  });
-
-  it('takes a pasted list, whatever separates it', () => {
-    const entry = addTopicEntries([], 'demo.orders.1.received, demo.orders.2.validated\ndemo.payments.authorized', catalog);
-    expect(entry.selection).toHaveLength(3);
-  });
-
-  it('expands a pattern over the catalogue, with no extra request', () => {
-    const entry = addTopicEntries([], 'demo.orders.*', catalog);
-    expect(entry.selection).toEqual(['demo.orders.1.received', 'demo.orders.2.validated']);
-  });
-
-  it('reports a pattern that matches nothing instead of sending it as a topic name', () => {
-    const entry = addTopicEntries([], 'nope.*', catalog);
-    expect(entry.selection).toEqual([]);
-    expect(entry.unmatched).toEqual(['nope.*']);
-  });
-
-  it('still accepts a plain name the catalogue does not know', () => {
-    // A topic can exist before the 30s cache shows it.
-    const entry = addTopicEntries([], 'brand.new.topic', catalog);
-    expect(entry.selection).toEqual(['brand.new.topic']);
-    expect(entry.unmatched).toEqual([]);
-  });
-
-  it('honours an explicit internal.* pattern, unlike the bulk select', () => {
-    // Ticking "select shown" skips them; naming them is a deliberate request.
-    expect(addTopicEntries([], 'internal.*', catalog).selection).toEqual(['internal.audit.history']);
-    expect(selectAll([], catalog)).not.toContain('internal.audit.history');
-  });
-
-  it('never duplicates what is already selected', () => {
-    const entry = addTopicEntries(['demo.orders.1.received'], 'demo.orders.*', catalog);
-    expect(entry.selection).toEqual(['demo.orders.1.received', 'demo.orders.2.validated']);
-    expect(entry.added).toEqual(['demo.orders.2.validated']);
-  });
-
-  it('stops at the server cap and reports what it left out', () => {
-    const many = Array.from({ length: 40 }, (_, i) => `t${i}`);
-    const entry = addTopicEntries([], '*', many);
-    expect(entry.selection).toHaveLength(MAX_TOPICS);
-    expect(entry.overflow).toHaveLength(10);
-  });
-
-  it('an empty input changes nothing', () => {
-    const before = ['a'];
-    const entry = addTopicEntries(before, '   ', catalog);
-    expect(entry.selection).toBe(before);
-    expect(entry.added).toEqual([]);
-  });
-});
-
-describe('describeTopicEntry', () => {
-  const empty = { selection: [], added: [], unmatched: [], overflow: [] };
-
-  it('counts what went in', () => {
-    expect(describeTopicEntry({ ...empty, selection: ['a', 'b'], added: ['a', 'b'] }))
-      .toBe('2 topics added');
-    expect(describeTopicEntry({ ...empty, selection: ['a'], added: ['a'] }))
-      .toBe('1 topic added');
-  });
-
-  it('states a partial add rather than letting it pass for a whole one', () => {
-    expect(describeTopicEntry({
-      ...empty, selection: ['a'], added: ['a'], unmatched: ['nope.*'], overflow: ['b', 'c'],
-    })).toBe(`1 topic added · no topic matches nope.* · 2 left out — the request is capped at ${MAX_TOPICS} topics`);
-  });
-
-  it('says so when everything was already selected — the input must not look inert', () => {
-    expect(describeTopicEntry({ ...empty, selection: ['a'] })).toBe('Already selected');
-  });
-
-  it('has nothing to say about an empty input', () => {
-    expect(describeTopicEntry(empty)).toBeNull();
   });
 });
