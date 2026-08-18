@@ -483,6 +483,128 @@ export function describeColumnMatches(matches: Map<string, Set<string>>, term: s
   return `${columns} ${columnWord} in ${matches.size} ${entityWord}`;
 }
 
+// ── Export ────────────────────────────────────────────────────────────────────
+
+const EXPORT_PAD = 32;
+const EXPORT_TITLE_H = 24;
+const EXPORT_LINE_H = 15;
+const EXPORT_LEGEND_ROW_H = 16;
+const EXPORT_BG = '#0d1015';
+
+export interface ExportLegendEntry {
+  color: string;
+  dash?: string;
+  label: string;
+}
+
+export interface ExportCaption {
+  title: string;
+  /** Ce que le modèle couvre — la même phrase que la ligne de couverture à l'écran. */
+  coverage: string;
+  /** Ce que le dessin ne montre pas : entités non dessinées, avertissements du serveur. */
+  notes: string[];
+}
+
+/** Au-delà, les avertissements sont comptés — un bandeau n'est pas un journal. */
+const EXPORT_MAX_NOTES = 4;
+
+/**
+ * Ce que le dessin ne montre pas, en toutes lettres sous le titre : les entités laissées de
+ * côté et les réserves du serveur. Un diagramme détaché de l'application ne peut plus être
+ * interrogé — s'il ne porte pas ses limites, il se lit comme un modèle complet.
+ */
+export function exportNotes(response: DataModelResponse, hiddenEntities: number): string[] {
+  const notes: string[] = [];
+  if (hiddenEntities > 0) {
+    notes.push(`${hiddenEntities} ${hiddenEntities === 1 ? 'entity has' : 'entities have'}`
+      + ' no deduced relation and are not drawn.');
+  }
+  const warnings = response.warnings ?? [];
+  notes.push(...warnings.slice(0, EXPORT_MAX_NOTES));
+  if (warnings.length > EXPORT_MAX_NOTES) {
+    notes.push(`… and ${warnings.length - EXPORT_MAX_NOTES} more warnings.`);
+  }
+  return notes;
+}
+
+/** Échappe le texte destiné à un nœud SVG. Les noms de topics et de colonnes passent par là. */
+export function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/**
+ * Un SVG autonome à partir du diagramme réellement rendu.
+ *
+ * Le balisage interne vient du DOM vivant (sérialisé par l'appelant) plutôt que d'être
+ * réécrit ici : deux moteurs de rendu pour une même image finiraient par diverger, et
+ * l'export montrerait autre chose que l'écran. Ce qui s'ajoute autour est ce qu'un visuel
+ * détaché doit porter — **la couverture et les légendes** : collé dans un ticket, un
+ * diagramme qui ne dit pas sur combien de topics il porte ni ce qu'un trait pointillé
+ * signifie est une image qu'on ne peut pas interpréter. Même règle que les exports JSON de
+ * Stream Flow.
+ */
+export function buildExportSvg(
+  innerMarkup: string,
+  bounds: Bounds,
+  caption: ExportCaption,
+  confidenceLegend: ExportLegendEntry[],
+  domainLegend: ExportLegendEntry[] = [],
+): string {
+  const graphW = Math.max(1, bounds.maxX - bounds.minX);
+  const graphH = Math.max(1, bounds.maxY - bounds.minY);
+
+  const headerH = EXPORT_TITLE_H + EXPORT_LINE_H * (1 + caption.notes.length) + 12;
+  const legendRows = Math.max(confidenceLegend.length, domainLegend.length);
+  const footerH = legendRows > 0 ? 18 + EXPORT_LEGEND_ROW_H * legendRows : 0;
+
+  // Le bandeau peut être plus large que le graphe sur un modèle d'une seule table.
+  const captionW = 8 * Math.max(
+    caption.title.length, caption.coverage.length, ...caption.notes.map(n => n.length));
+  const width = Math.round(Math.max(graphW, captionW, 420) + EXPORT_PAD * 2);
+  const height = Math.round(graphH + headerH + footerH + EXPORT_PAD * 2);
+
+  const dx = EXPORT_PAD - bounds.minX;
+  const dy = EXPORT_PAD + headerH - bounds.minY;
+
+  const parts: string[] = [];
+  parts.push(`<rect width="${width}" height="${height}" fill="${EXPORT_BG}"/>`);
+  parts.push(
+    `<text x="${EXPORT_PAD}" y="${EXPORT_PAD + 4}" fill="#ffffff" font-size="16"`
+    + ` font-family="Inter, sans-serif" font-weight="bold">${escapeXml(caption.title)}</text>`);
+  parts.push(
+    `<text x="${EXPORT_PAD}" y="${EXPORT_PAD + EXPORT_TITLE_H}" fill="#a3adff" font-size="11"`
+    + ` font-family="Inter, sans-serif">${escapeXml(caption.coverage)}</text>`);
+  caption.notes.forEach((note, i) => {
+    parts.push(
+      `<text x="${EXPORT_PAD}" y="${EXPORT_PAD + EXPORT_TITLE_H + EXPORT_LINE_H * (i + 1)}"`
+      + ` fill="#79839a" font-size="10" font-family="Inter, sans-serif">${escapeXml(note)}</text>`);
+  });
+
+  parts.push(`<g transform="translate(${dx}, ${dy})">${innerMarkup}</g>`);
+
+  if (legendRows > 0) {
+    const top = EXPORT_PAD + headerH + graphH + 18;
+    const column = (entries: ExportLegendEntry[], x: number) => entries.forEach((entry, i) => {
+      const y = top + EXPORT_LEGEND_ROW_H * i;
+      parts.push(
+        `<line x1="${x}" y1="${y - 3}" x2="${x + 22}" y2="${y - 3}" stroke="${entry.color}"`
+        + ` stroke-width="2"${entry.dash ? ` stroke-dasharray="${entry.dash}"` : ''}/>`);
+      parts.push(
+        `<text x="${x + 30}" y="${y}" fill="#c5cad6" font-size="10"`
+        + ` font-family="Inter, sans-serif">${escapeXml(entry.label)}</text>`);
+    });
+    column(confidenceLegend, EXPORT_PAD);
+    if (domainLegend.length > 0) column(domainLegend, EXPORT_PAD + Math.round(width / 2));
+  }
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"`
+    + ` viewBox="0 0 ${width} ${height}">${parts.join('')}</svg>`;
+}
+
 /**
  * La ligne de couverture : ce que le modèle couvre réellement. « 3 entities · 2 relations »
  * sans le « of 5 topics » laisserait un modèle partiel passer pour complet.

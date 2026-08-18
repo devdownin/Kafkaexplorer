@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import axios from 'axios';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useCatalog } from '../catalogStore';
@@ -15,6 +16,7 @@ import {
   displayedColumns, entityHeight, computeLayout, computeEdgeGeometry, splitByConnectivity,
   crowFootPath, oneBarPath, graphBounds, fitTransform, topicDomains, domainColors,
   formatCount, describeRelation, matchingColumns, describeColumnMatches,
+  buildExportSvg, exportNotes,
   CONFIDENCE_STYLE, describeModel,
 } from './dataModel';
 import type { DataModelRelation } from '../api/types';
@@ -143,6 +145,8 @@ const DataModel: React.FC = () => {
   const [edgeTip, setEdgeTip] = useState<{ relation: DataModelRelation; x: number; y: number } | null>(null);
 
   const svgRef = useRef<SVGSVGElement>(null);
+  /** Le groupe qui porte le pan/zoom : l'export sérialise ses enfants, pas sa transformation. */
+  const graphGroupRef = useRef<SVGGElement>(null);
   const isPanning = useRef(false);
   const lastPos = useRef({ x: 0, y: 0 });
   const requestSeq = useRef(0);
@@ -313,6 +317,100 @@ const DataModel: React.FC = () => {
     fitToViewport();
   }, [fitToViewport]);
 
+  // ── Export ──────────────────────────────────────────────────────────────────
+
+  const [exporting, setExporting] = useState(false);
+
+  /**
+   * Le diagramme en fichier autonome. Le balisage vient du DOM réellement rendu — un second
+   * moteur de rendu finirait par diverger de l'écran — et l'enrobage y ajoute ce qu'une image
+   * détachée doit porter : la couverture et les légendes.
+   */
+  const exportDiagram = useCallback(async (format: 'svg' | 'png') => {
+    if (!model) return;
+    // La sélection estompe le reste du diagramme : exportée, elle donnerait une image aux
+    // trois quarts effacée. `flushSync` pour que le DOM soit à jour avant la sérialisation.
+    if (selectedId !== null) flushSync(() => setSelectedId(null));
+
+    const group = graphGroupRef.current;
+    const bounds = graphBounds(graphEntities, positions);
+    if (!group || !bounds) return;
+
+    const serializer = new XMLSerializer();
+    const inner = Array.from(group.childNodes)
+      .map(node => serializer.serializeToString(node))
+      .join('');
+
+    const svg = buildExportSvg(
+      inner,
+      bounds,
+      {
+        title: 'Kafka data model',
+        coverage: describeModel(model),
+        notes: exportNotes(model, entities.length - graphEntities.length),
+      },
+      relations.length > 0
+        ? (Object.entries(CONFIDENCE_STYLE) as [keyof typeof CONFIDENCE_STYLE, typeof CONFIDENCE_STYLE.HIGH][])
+            .map(([grade, style]) => ({
+              color: style.color, dash: style.dash, label: `${grade.toLowerCase()} — ${style.label}`,
+            }))
+        : [],
+      domainLegend.map(([domain, tint]) => ({ color: tint.accent, label: domain })),
+    );
+
+    const save = (blob: Blob, extension: string) => {
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `data-model.${extension}`;
+      link.click();
+      URL.revokeObjectURL(url);
+    };
+
+    if (format === 'svg') {
+      save(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }), 'svg');
+      return;
+    }
+
+    // PNG : c'est le format qui se colle dans un ticket. Rendu à 2× pour rester lisible.
+    setExporting(true);
+    try {
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        const source = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }));
+        const image = new Image();
+        image.onload = () => {
+          URL.revokeObjectURL(source);
+          const canvas = document.createElement('canvas');
+          canvas.width = image.width * 2;
+          canvas.height = image.height * 2;
+          const context = canvas.getContext('2d');
+          if (!context) { reject(new Error('This browser refused a 2D canvas.')); return; }
+          context.scale(2, 2);
+          context.drawImage(image, 0, 0);
+          canvas.toBlob(result => {
+            if (result) resolve(result);
+            else reject(new Error('The browser produced no image.'));
+          }, 'image/png');
+        };
+        image.onerror = () => {
+          URL.revokeObjectURL(source);
+          reject(new Error('The diagram could not be rasterised.'));
+        };
+        image.src = source;
+      });
+      save(blob, 'png');
+    } catch (err) {
+      // Un échec de rasterisation doit dire quoi faire, pas disparaître : le SVG, lui, marche.
+      setError({
+        title: 'PNG export failed',
+        hint: 'Export as SVG instead — it carries the same diagram and opens in any browser.',
+        raw: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setExporting(false);
+    }
+  }, [model, selectedId, graphEntities, positions, entities.length, relations.length, domainLegend]);
+
   const onGraphKeyDown = useCallback((e: React.KeyboardEvent<SVGSVGElement>) => {
     const step = e.shiftKey ? 160 : 48;
     switch (e.key) {
@@ -420,6 +518,23 @@ const DataModel: React.FC = () => {
             <p className="text-[10px] text-warning leading-snug" role="status">
               The selection changed since this model was built — regenerate to match it.
             </p>
+          )}
+
+          {/* Export : un modèle de données finit dans un wiki ou un ticket. Le fichier
+              embarque la couverture et les légendes — détaché de l'application, un diagramme
+              qui ne dit pas ce qu'il couvre se lit comme un modèle complet. */}
+          {model && graphEntities.length > 0 && (
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" className="flex-1" icon="download"
+                onClick={() => exportDiagram('svg')}>
+                SVG
+              </Button>
+              <Button variant="outline" size="sm" className="flex-1"
+                icon={exporting ? undefined : 'image'} loading={exporting}
+                onClick={() => exportDiagram('png')} disabled={exporting}>
+                PNG
+              </Button>
+            </div>
           )}
 
           {/* Recherche d'un champ à travers les entités : « qui d'autre transporte cette
@@ -619,7 +734,7 @@ const DataModel: React.FC = () => {
             onKeyDown={onGraphKeyDown}
             onClick={e => { if (e.target === e.currentTarget) setSelectedId(null); }}
           >
-            <g transform={`translate(${transform.x}, ${transform.y}) scale(${transform.scale})`}>
+            <g ref={graphGroupRef} transform={`translate(${transform.x}, ${transform.y}) scale(${transform.scale})`}>
 
               {/* Arêtes : ancrées sur la ligne de leur colonne, cardinalité en patte-d'oie —
                   la patte-d'oie côté référent (N), la barre côté référencé (1). Le style de

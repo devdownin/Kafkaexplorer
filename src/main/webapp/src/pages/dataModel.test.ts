@@ -10,6 +10,7 @@ import {
   columnRowY, anchorSpread, computeEdgeGeometry, crowFootPath, oneBarPath,
   graphBounds, fitTransform, topicDomains, domainColors,
   formatCount, describeRelation, matchingColumns, describeColumnMatches,
+  buildExportSvg, exportNotes, escapeXml,
 } from './dataModel';
 
 function entity(id: string, columnCount: number, overrides: Partial<DataModelEntity> = {}): DataModelEntity {
@@ -413,5 +414,95 @@ describe('matchingColumns / describeColumnMatches', () => {
       .toBe('2 columns in 2 entities');
     expect(describeColumnMatches(matchingColumns([orders], 'amount'), 'amount'))
       .toBe('1 column in 1 entity');
+  });
+});
+
+describe('escapeXml', () => {
+  it('escapes what would break the markup — topic and column names go through it', () => {
+    expect(escapeXml('a & b <c> "d"')).toBe('a &amp; b &lt;c&gt; &quot;d&quot;');
+  });
+});
+
+describe('exportNotes', () => {
+  const base: DataModelResponse = {
+    entities: [], relations: [], warnings: [],
+    topicsRequested: 5, topicsAnalyzed: 5, truncated: false,
+  };
+
+  it('says how many entities the drawing leaves out', () => {
+    expect(exportNotes(base, 3)[0]).toBe('3 entities have no deduced relation and are not drawn.');
+    expect(exportNotes(base, 1)[0]).toBe('1 entity has no deduced relation and are not drawn.');
+  });
+
+  it('carries the server warnings verbatim', () => {
+    const notes = exportNotes({ ...base, warnings: ["Topic 'x' yielded no schema."] }, 0);
+    expect(notes).toEqual(["Topic 'x' yielded no schema."]);
+  });
+
+  it('counts the warnings past the cap rather than printing a log', () => {
+    const warnings = Array.from({ length: 7 }, (_, i) => `w${i}`);
+    const notes = exportNotes({ ...base, warnings }, 0);
+    expect(notes).toHaveLength(5);
+    expect(notes[4]).toBe('… and 3 more warnings.');
+  });
+
+  it('a clean model with everything drawn needs no note', () => {
+    expect(exportNotes(base, 0)).toEqual([]);
+  });
+});
+
+describe('buildExportSvg', () => {
+  const bounds = { minX: 40, minY: 40, maxX: 640, maxY: 340 };
+  const caption = { title: 'Kafka data model', coverage: '4 entities · 3 relations deduced', notes: [] as string[] };
+
+  it('produces a standalone SVG sized to the graph plus its chrome', () => {
+    const svg = buildExportSvg('<g id="inner"/>', bounds, caption, []);
+    expect(svg.startsWith('<svg xmlns="http://www.w3.org/2000/svg"')).toBe(true);
+    expect(svg).toContain('<g id="inner"/>');
+    const width = Number(/width="(\d+)"/.exec(svg)![1]);
+    const height = Number(/height="(\d+)"/.exec(svg)![1]);
+    // 600 wide graph + 2 × 32 padding; taller than the graph because of the caption block.
+    expect(width).toBe(664);
+    expect(height).toBeGreaterThan(340 - 40 + 64);
+    expect(svg).toContain(`viewBox="0 0 ${width} ${height}"`);
+  });
+
+  it('translates the graph so its own origin is not lost', () => {
+    const svg = buildExportSvg('<g/>', bounds, caption, []);
+    // dx = padding − minX = 32 − 40 = −8.
+    expect(svg).toMatch(/<g transform="translate\(-8, \d+\)">/);
+  });
+
+  it('carries the coverage line — a detached diagram must say what it covers', () => {
+    const svg = buildExportSvg('', bounds, caption, []);
+    expect(svg).toContain('Kafka data model');
+    expect(svg).toContain('4 entities · 3 relations deduced');
+  });
+
+  it('carries the notes and escapes them', () => {
+    const svg = buildExportSvg('', bounds,
+      { ...caption, notes: ['2 entities & "others" are not drawn'] }, []);
+    expect(svg).toContain('2 entities &amp; &quot;others&quot; are not drawn');
+  });
+
+  it('draws both legends, dash included, so a dotted line stays interpretable', () => {
+    const svg = buildExportSvg('', bounds, caption,
+      [{ color: '#7ee2a8', label: 'high — key columns agree' },
+       { color: '#79839a', dash: '2 4', label: 'low — shared key column' }],
+      [{ color: '#a3adff', label: 'orders' }]);
+    expect(svg).toContain('high — key columns agree');
+    expect(svg).toContain('stroke-dasharray="2 4"');
+    expect(svg).toContain('>orders</text>');
+  });
+
+  it('paints a background — a transparent export is unreadable on a light page', () => {
+    const svg = buildExportSvg('', bounds, caption, []);
+    expect(svg).toMatch(/<rect width="\d+" height="\d+" fill="#[0-9a-f]{6}"\/>/);
+  });
+
+  it('widens for a caption longer than a one-table graph', () => {
+    const narrow = { minX: 0, minY: 0, maxX: 100, maxY: 100 };
+    const svg = buildExportSvg('', narrow, caption, []);
+    expect(Number(/width="(\d+)"/.exec(svg)![1])).toBeGreaterThan(100 + 64);
   });
 });
