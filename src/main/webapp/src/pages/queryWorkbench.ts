@@ -506,6 +506,37 @@ export function offsetAt(text: string, line: number, column: number): number {
   return Math.min(text.length, offset + Math.max(0, column - 1));
 }
 
+/**
+ * Où se trouve, **dans le document tel qu'il est maintenant**, le SQL qui a été exécuté — ou `null`
+ * quand il n'y est plus.
+ *
+ * Les positions que le moteur renvoie (ligne, colonne) sont relatives au fragment envoyé ; il faut
+ * donc une origine pour les ramener dans le repère du document. Cette origine était *figée au
+ * moment du run*, ce qui la rend fausse dès que le texte bouge : ajouter une ligne au-dessus
+ * décalait le « Jump to line » d'autant, et rouvrir le résultat d'une instruction d'un lot après
+ * une édition pointait une position qui avait glissé. La dériver du texte courant la corrige toute
+ * seule dans le premier cas, et permet dans le second de dire honnêtement qu'on ne sait plus.
+ *
+ * `null` veut dire « le texte mesuré n'est plus là » : l'appelant retire alors la position au lieu
+ * d'en désigner une au hasard — le message brut du moteur, lui, porte toujours sa ligne et sa
+ * colonne, relatives à ce qui avait été envoyé.
+ *
+ * Deux passes, dans cet ordre : la recherche littérale d'abord, qui couvre le cas courant (rien n'a
+ * bougé) et vaut aussi pour un fragment sélectionné, qui n'est pas une instruction ; puis la
+ * comparaison normalisée aux instructions du document, qui rattrape un simple reformatage. Deux
+ * instructions identiques dans un même onglet rendent la première : elles sont indiscernables, et
+ * choisir la première est au moins déterministe.
+ */
+export function resolveOrigin(sql: string, ranSql: string | null): { line: number; column: number } | null {
+  if (!ranSql || !ranSql.trim()) return null;
+  const literal = sql.indexOf(ranSql);
+  if (literal !== -1) return positionAt(sql, literal);
+  const normalize = (s: string) => s.replace(/\s+/g, ' ').trim();
+  const ran = normalize(ranSql);
+  const match = splitStatements(sql).find(st => normalize(st.text) === ran);
+  return match ? positionAt(sql, match.start) : null;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Ce qu'un geste « Run » va envoyer
 // ─────────────────────────────────────────────────────────────────────────────
@@ -595,6 +626,92 @@ export function detectStatementType(sql: string): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Complétion : les propositions, sans Monaco
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Une proposition de complétion, **sans sa plage** : celle-ci dépend du mot sous le curseur, donc
+ * de l'appel, tandis que tout le reste ne dépend que du catalogue et de la portée. C'est cette
+ * séparation qui permet de ne plus tout reconstruire à chaque frappe.
+ */
+export interface CompletionEntry {
+  label: string;
+  /** Traduit en `CompletionItemKind` par l'appelant, seul à connaître Monaco. */
+  kind: 'table' | 'column' | 'keyword';
+  insertText: string;
+  detail?: string;
+  documentation?: string;
+  sortText?: string;
+}
+
+/** Mots-clés Flink proposés en plus du catalogue. */
+export const SQL_KEYWORD_SUGGESTIONS: readonly string[] = [
+  'TUMBLE', 'HOP', 'SESSION', 'CUMULATE', 'DESCRIPTOR', 'PROCTIME', 'ROWTIME',
+  'WATERMARK', 'EMIT CHANGES', 'INTERVAL', 'OVER', 'PARTITION BY',
+  'JSON_VALUE', 'JSON_QUERY', 'JSON_EXISTS',
+];
+
+/**
+ * Les propositions pour un catalogue et une portée donnés.
+ *
+ * Le fournisseur Monaco est invoqué **à chaque caractère** (`quickSuggestions`), et il reconstruisait
+ * tout à chaque fois : un objet par table, un `toTableName()` et un `sortText` interpolé par topic,
+ * un `Set` des tables enregistrées, un `Object.entries` par table chargée. Sur un cluster de trois
+ * cents topics, cela fait quelques centaines d'objets et autant de chaînes fabriquées par frappe,
+ * pour un résultat identique tant que ni le catalogue ni la portée n'ont bougé — la page mémoïse
+ * donc cette liste sur ces deux seules entrées, et n'attache plus que la plage à chaque appel.
+ *
+ * Les topics Kafka figurent dans la liste au même titre que les tables : la barre latérale les
+ * écrit, le backend les auto-enregistre au premier SELECT, et la complétion n'en proposait aucun —
+ * la moitié du catalogue sur lequel l'éditeur est bâti était invisible à la saisie. Le nom proposé
+ * est celui de la table (points et tirets en underscores), et un topic déjà enregistré n'est pas
+ * proposé deux fois.
+ */
+export function buildCompletionEntries(
+  catalogue: CatalogLike | null | undefined,
+  loadedSchemas: Readonly<Record<string, Record<string, string>>>,
+  scope: readonly string[],
+): CompletionEntry[] {
+  const entries: CompletionEntry[] = [];
+  const registered = new Set(catalogue?.tables ?? []);
+
+  (catalogue?.tables ?? []).forEach(table => entries.push({
+    label: table, kind: 'table', insertText: table, detail: 'Flink Table',
+  }));
+
+  (catalogue?.topics ?? []).forEach(topic => {
+    const asTable = toTableName(topic);
+    if (registered.has(asTable)) return;
+    entries.push({
+      label: asTable,
+      kind: 'table',
+      insertText: asTable,
+      detail: 'Kafka topic — registered on first use',
+      documentation: topic === asTable ? undefined : `Topic ${topic}`,
+      // Derrière les tables déjà enregistrées, qui sont un choix explicite de l'utilisateur.
+      sortText: `2_${asTable}`,
+    });
+  });
+
+  // Colonnes : limitées aux tables que la requête cite réellement. Proposer celles de toutes les
+  // tables chargées noyait les bonnes au milieu de dizaines d'inutiles. Tant qu'aucune table n'est
+  // citée (curseur dans le SELECT avant le FROM), on retombe sur tout ce qui est connu plutôt que
+  // de ne rien proposer.
+  const scoped = scope.filter(t => loadedSchemas[t]);
+  const columnSources = scoped.length ? scoped : Object.keys(loadedSchemas);
+  columnSources.forEach(tableName =>
+    Object.entries(loadedSchemas[tableName] ?? {}).forEach(([col, type]) => entries.push({
+      label: col, kind: 'column', insertText: col, detail: type,
+      documentation: `${tableName}.${col}`,
+      // Les colonnes en portée passent devant les mots-clés, triés par défaut sur le label.
+      sortText: scoped.length ? `0_${col}` : `1_${col}`,
+    })));
+
+  SQL_KEYWORD_SUGGESTIONS.forEach(kw => entries.push({ label: kw, kind: 'keyword', insertText: kw }));
+  return entries;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Le lot : ce que chaque instruction a donné, et pas seulement la dernière
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -622,8 +739,6 @@ export interface StatementRun<J = unknown> {
   /** Rang dans le lot, base 1 — c'est le numéro que l'utilisateur lit. */
   index: number;
   sql: string;
-  /** Origine dans le document (base 1), pour reporter les positions d'erreur du moteur. */
-  origin: { line: number; column: number };
   /** SELECT, INSERT, CREATE_TABLE… — voir `detectStatementType`. */
   kind: string;
   status: StatementStatus;

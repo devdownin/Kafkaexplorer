@@ -4,7 +4,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import Editor, { useMonaco } from '@monaco-editor/react';
-import type { editor, languages } from 'monaco-editor';
+import type { editor } from 'monaco-editor';
 import '../monaco-setup';
 import axios from 'axios';
 import { useToast } from '../components/Toast';
@@ -24,9 +24,10 @@ import {
   readLayout, clamp, LAYOUT_STORAGE_KEY, DEFAULT_LAYOUT,
   SPLIT_MIN, SPLIT_MAX, SIDEBAR_MIN, SIDEBAR_MAX, type WorkbenchLayout,
   starterQueries, starterJobQueries, pushHistory, describeHistoryEntry, formatDuration, type HistoryEntry,
-  splitStatements, statementIndexAt, positionAt, offsetAt,
+  splitStatements, statementIndexAt, offsetAt, resolveOrigin,
   planRun, detectStatementType, previewStatement,
   forgetOldestResults, summariseBatch, describeStatementRun, MAX_RETAINED_BATCH_ROWS,
+  buildCompletionEntries, type CompletionEntry,
   type PlannedStatement, type StatementRun,
   readSqlParam, buildQueryLink,
   sidebarSqlFor, sidebarActionLabel, sinkNameRange, pickSinkTable, type ExecutionMode,
@@ -40,6 +41,7 @@ import { randomId } from '../randomId';
 import { copyText } from '../clipboard';
 import type {
   QueryResult,
+  FlinkJobSummary,
   DdlPreviewResponse,
   SqlValidationResponse,
   QueryCancelResponse,
@@ -69,17 +71,17 @@ function Segmented<T extends string>({ value, onChange, options, ariaLabel }: {
 }
 
 
-interface FlinkJobSubmission {
-  queryId: string;
-  flinkJobId: string;
-  statementType: string;
-  status: string;
-  sql: string;
-  startedAt: number;
-  endedAt: number | null;
-  cancelRequested: boolean;
-}
 interface Tab { id: string; name: string; sql: string; }
+
+/**
+ * Ce que `POST /api/query/jobs` rend. Le nom local est celui du geste (une soumission) ; la forme
+ * est celle du record Java, importée plutôt que recopiée — la page en tenait sa propre déclaration,
+ * huit champs écrits à la main au point d'appel, alors que `api/types.ts` portait déjà la même
+ * interface sous son marqueur `@java`. C'est exactement la dérive que `check-api-types.py` existe
+ * pour attraper, et le motif qui a tué la page Compare : les deux copies s'accordaient, et rien ne
+ * l'exigeait.
+ */
+type FlinkJobSubmission = FlinkJobSummary;
 
 /**
  * Ce qu'une instruction a donné. `executeStatement` le rend, la boucle d'un lot le range dans son
@@ -113,6 +115,8 @@ const STATEMENT_ICON: Record<string, string> = {
 /** Choix de plafond de lignes. La valeur part au backend en `maxRows` — voir runQuery. */
 const ROW_LIMITS = [50, 100, 500, 1000, 5000] as const;
 const DEFAULT_LIMIT = 50;
+/** Profondeur du retour arrière sur les onglets fermés — un filet, pas un historique. */
+const CLOSED_TAB_CAP = 5;
 const TABS_STORAGE_KEY = 'kse:tabs';
 const HISTORY_STORAGE_KEY = 'kse:query-history';
 const SAVED_STORAGE_KEY = 'kse:saved-queries';
@@ -273,6 +277,21 @@ const QueryWorkbench: React.FC = () => {
    * y a quelque chose à perdre, comme partout ailleurs dans l'application (`useConfirm`). Le
    * calcul de l'onglet suivant est sorti de l'updater : celui-ci doit être pur.
    */
+  /**
+   * Les derniers onglets fermés, le plus récent en tête.
+   *
+   * Fermer un onglet demandait confirmation quand il portait du SQL — la moitié bon marché du
+   * problème — mais restait sans retour possible, et ce texte n'existe nulle part ailleurs. Le
+   * `Toast` partagé ne porte qu'un message et un ton, pas d'action : offrir l'annulation par là
+   * aurait été une modification du système de composants pour un seul écran. La barre d'onglets,
+   * elle, est exactement l'endroit où l'on cherche un onglet disparu.
+   *
+   * En mémoire seulement, et borné : c'est un filet pour le geste qu'on vient de faire, pas un
+   * historique. Un rechargement de page le vide, ce que la persistance des onglets rend acceptable
+   * — ce qui est perdu là est ce qu'on a explicitement confirmé vouloir fermer.
+   */
+  const [closedTabs, setClosedTabs] = useState<Tab[]>([]);
+
   const closeTab = useCallback(async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     const tab = tabs.find(t => t.id === id);
@@ -288,7 +307,19 @@ const QueryWorkbench: React.FC = () => {
     }
     setActiveTabId(prev => nextActiveTabId(tabs, id, prev));
     setTabs(prev => prev.filter(t => t.id !== id));
+    setClosedTabs(prev => [tab, ...prev].slice(0, CLOSED_TAB_CAP));
   }, [tabs, confirm]);
+
+  /** Rouvre le dernier onglet fermé, tel qu'il était, et l'active. */
+  const reopenClosedTab = useCallback(() => {
+    setClosedTabs(prev => {
+      const [restored, ...rest] = prev;
+      if (!restored) return prev;
+      setTabs(current => (current.some(t => t.id === restored.id) ? current : [...current, restored]));
+      setActiveTabId(restored.id);
+      return rest;
+    });
+  }, []);
 
   const startRename = (tab: Tab, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -390,49 +421,32 @@ const QueryWorkbench: React.FC = () => {
     { version: -1, catalogKey: '', scope: [] },
   );
 
+  /**
+   * Propositions mémoïsées, clefées sur les identités du catalogue, des schémas chargés et de la
+   * portée : reconstruire quelques centaines d'objets par caractère tapé pour un résultat
+   * identique était le coût principal de la complétion.
+   */
+  const completionCacheRef = useRef<{
+    catalogue: SchemaInfo | null;
+    loaded: Record<string, Record<string, string>> | null;
+    scope: readonly string[] | null;
+    entries: CompletionEntry[];
+  }>({ catalogue: null, loaded: null, scope: null, entries: [] });
+
   // Auto-completion provider
   useEffect(() => {
     if (!monaco) return;
+    const KINDS = {
+      table: monaco.languages.CompletionItemKind.Class,
+      column: monaco.languages.CompletionItemKind.Field,
+      keyword: monaco.languages.CompletionItemKind.Keyword,
+    } as const;
     const disp = monaco.languages.registerCompletionItemProvider('sql', {
       triggerCharacters: [' ', '\n', '.'],
       provideCompletionItems: (_model, position) => {
         const word = _model.getWordUntilPosition(position);
         const range = { startLineNumber: position.lineNumber, endLineNumber: position.lineNumber, startColumn: word.startColumn, endColumn: word.endColumn };
-        const suggestions: languages.CompletionItem[] = [];
         const catalogue = schemaRef.current;
-        const registered = new Set(catalogue?.tables ?? []);
-        catalogue?.tables.forEach(table => suggestions.push({
-          label: table, kind: monaco.languages.CompletionItemKind.Class, insertText: table, range, detail: 'Flink Table',
-        }));
-        /*
-         * Les topics Kafka aussi.
-         *
-         * La complétion ne proposait que `tables`, alors que la barre latérale liste les topics,
-         * que cliquer l'un d'eux écrit `SELECT * FROM demo_orders_1_received`, et que le backend
-         * auto-enregistre un topic au premier SELECT. Taper ce nom n'obtenait donc aucune aide :
-         * la moitié du catalogue sur lequel l'éditeur est bâti était invisible à la saisie.
-         *
-         * Le nom proposé est celui de la table (points et tirets en underscores) — c'est celui que
-         * la requête doit porter — et un topic déjà enregistré n'est pas proposé deux fois.
-         */
-        catalogue?.topics.forEach(topic => {
-          const asTable = toTableName(topic);
-          if (registered.has(asTable)) return;
-          suggestions.push({
-            label: asTable,
-            kind: monaco.languages.CompletionItemKind.Class,
-            insertText: asTable,
-            range,
-            detail: 'Kafka topic — registered on first use',
-            documentation: topic === asTable ? undefined : `Topic ${topic}`,
-            // Derrière les tables déjà enregistrées, qui sont un choix explicite de l'utilisateur.
-            sortText: `2_${asTable}`,
-          });
-        });
-        // Colonnes : limitées aux tables que la requête cite réellement. Proposer celles de
-        // toutes les tables chargées noyait les bonnes au milieu de dizaines d'inutiles.
-        // Tant qu'aucune table n'est citée (curseur dans le SELECT avant le FROM), on retombe
-        // sur tout ce qui est connu plutôt que de ne rien proposer.
         const loaded = tableSchemasRef.current;
         /*
          * `resolveScope` fait deux passes de regex sur tout le document, et il était rappelé à
@@ -449,22 +463,35 @@ const QueryWorkbench: React.FC = () => {
           cache.catalogKey = catalogKey;
           cache.scope = resolveScope(_model.getValue(), Object.keys(loaded));
         }
-        const scoped = cache.scope.filter(t => loaded[t]);
-        const columnSources = scoped.length ? scoped : Object.keys(loaded);
-        columnSources.forEach(tableName =>
-          Object.entries(loaded[tableName] ?? {}).forEach(([col, type]) => suggestions.push({
-            label: col, kind: monaco.languages.CompletionItemKind.Field, insertText: col, range, detail: type,
-            documentation: `${tableName}.${col}`,
-            // Les colonnes en portée passent devant les mots-clés, triés par défaut sur le label.
-            sortText: scoped.length ? `0_${col}` : `1_${col}`,
-          }))
-        );
-        ['TUMBLE', 'HOP', 'SESSION', 'CUMULATE', 'DESCRIPTOR', 'PROCTIME', 'ROWTIME',
-          'WATERMARK', 'EMIT CHANGES', 'INTERVAL', 'OVER', 'PARTITION BY',
-          'JSON_VALUE', 'JSON_QUERY', 'JSON_EXISTS'].forEach(kw =>
-          suggestions.push({ label: kw, kind: monaco.languages.CompletionItemKind.Keyword, insertText: kw, range })
-        );
-        return { suggestions };
+
+        /*
+         * Les propositions elles-mêmes ne dépendent que du catalogue, des schémas chargés et de la
+         * portée : elles étaient pourtant refabriquées à chaque caractère — un objet par table, un
+         * `toTableName()` et un `sortText` interpolé par topic, un `Object.entries` par table. La
+         * clé de ce cache est faite d'**identités d'objets**, pas de chaînes : `cache.scope` n'est
+         * remplacé que quand la portée est recalculée ci-dessus, si bien qu'entre deux frappes la
+         * comparaison est celle de trois références.
+         */
+        const entryCache = completionCacheRef.current;
+        if (entryCache.catalogue !== catalogue || entryCache.loaded !== loaded || entryCache.scope !== cache.scope) {
+          entryCache.catalogue = catalogue;
+          entryCache.loaded = loaded;
+          entryCache.scope = cache.scope;
+          entryCache.entries = buildCompletionEntries(catalogue, loaded, cache.scope);
+        }
+
+        // Seule la plage change d'un appel à l'autre : elle suit le mot sous le curseur.
+        return {
+          suggestions: entryCache.entries.map(entry => ({
+            label: entry.label,
+            kind: KINDS[entry.kind],
+            insertText: entry.insertText,
+            detail: entry.detail,
+            documentation: entry.documentation,
+            sortText: entry.sortText,
+            range,
+          })),
+        };
       },
     });
     return () => disp.dispose();
@@ -524,8 +551,8 @@ const QueryWorkbench: React.FC = () => {
   /** Stop a été demandé pendant un lot — relu par la boucle, qui s'arrête à l'instruction suivante. */
   const batchCancelRef = useRef(false);
   /**
-   * Le lot décrit les instructions d'un onglet : changer d'onglet le vide, ses numéros et ses
-   * origines ne désignant plus rien dans le texte affiché. Ajusté pendant le rendu — le motif
+   * Le lot décrit les instructions d'un onglet : changer d'onglet le vide, ses numéros ne
+   * désignant plus rien dans le texte affiché. Ajusté pendant le rendu — le motif
    * documenté pour un état dérivé, et le même que `errorSource` plus bas — plutôt qu'un effet,
    * qui laisserait le lot de l'onglet précédent visible le temps d'un rendu.
    */
@@ -547,10 +574,14 @@ const QueryWorkbench: React.FC = () => {
   // sinon on ne le connaîtrait qu'une fois la requête terminée — trop tard pour l'annuler.
   const abortRef = useRef<AbortController | null>(null);
   const runningQueryIdRef = useRef<string | null>(null);
-  // Origine du fragment exécuté dans le document, quand seule la sélection a été lancée.
-  // Les positions d'erreur du moteur sont relatives à ce fragment ; sans ce décalage, le
-  // marqueur Monaco et le « jump to line » pointeraient le haut du document.
-  const [runOrigin, setRunOrigin] = useState<QueryErrorLocation | null>(null);
+  /*
+   * L'origine du fragment exécuté est **dérivée du texte courant** (`resolveOrigin`), non retenue
+   * au moment du run. Figée, elle devenait fausse dès la première édition : ajouter une ligne
+   * au-dessus décalait le « Jump to line » d'autant, et `updateSql` la remettait à `null` — ce qui
+   * ramenait la position d'une instruction quelconque au haut du document, puisque `results.error`,
+   * lui, survit à l'édition. Dérivée, elle suit le texte, et vaut `null` quand ce qui a été exécuté
+   * n'y est plus : la position est alors retirée plutôt que devinée.
+   */
   // Reflète la présence d'une sélection non vide, pour libeller le bouton en conséquence.
   const [hasSelection, setHasSelection] = useState(false);
   /**
@@ -592,6 +623,8 @@ const QueryWorkbench: React.FC = () => {
     [results, sortCol, sortDir],
   );
 
+  const runOrigin = useMemo(() => resolveOrigin(sql, ranSql), [sql, ranSql]);
+
   // Erreur classée (titre lisible + piste + position) — voir queryError.ts.
   // Une requête rejetée avant exécution (mode, validateur backend) passe par le même
   // panneau que l'échec d'exécution : même titre lisible, même piste, même marqueur
@@ -600,7 +633,11 @@ const QueryWorkbench: React.FC = () => {
     const info = panelError ?? (results?.error ? describeQueryError(results.error) : null);
     if (!info) return null;
     // Ramène la position dans le repère du document quand seule la sélection a été exécutée.
-    return { ...info, location: offsetLocation(info.location, runOrigin ?? undefined) };
+    // Plus d'origine résoluble : le texte mesuré a disparu de l'onglet, et pointer une ligne
+    // quand même désignerait autre chose que ce dont le moteur parle. Le message brut garde sa
+    // ligne et sa colonne, relatives à ce qui avait été envoyé.
+    if (!runOrigin) return { ...info, location: undefined };
+    return { ...info, location: offsetLocation(info.location, runOrigin) };
   }, [panelError, results, runOrigin]);
 
   // Le résultat bute sur son propre plafond → il est probablement incomplet.
@@ -660,7 +697,6 @@ const QueryWorkbench: React.FC = () => {
   const updateSql = useCallback((next: string) => {
     setSql(next);
     setPanelError(null);
-    setRunOrigin(null);
     const model = editorRef.current?.getModel();
     if (monaco && model) monaco.editor.setModelMarkers(model, 'kse-sql-error', []);
   }, [monaco, setSql]);
@@ -975,11 +1011,7 @@ const QueryWorkbench: React.FC = () => {
    * pouvoir distinguer un échec d'un arrêt demandé, et garder de chaque instruction autre chose que
    * le fait qu'elle a abouti.
    */
-  const executeStatement = async (
-    sqlToRun: string,
-    origin: QueryErrorLocation | null,
-  ): Promise<StatementOutcome> => {
-    setRunOrigin(origin);
+  const executeStatement = async (sqlToRun: string): Promise<StatementOutcome> => {
     const statementType = detectStatementType(sqlToRun);
 
     /** Refus avant exécution : rien n'est parti au moteur, et le panneau porte la raison. */
@@ -1171,7 +1203,7 @@ const QueryWorkbench: React.FC = () => {
     if (plan.length === 1) {
       setBatch(null);
       setSelectedRun(null);
-      await executeStatement(plan[0].text, positionAt(sql, plan[0].start));
+      await executeStatement(plan[0].text);
       return;
     }
     batchRef.current = true;
@@ -1179,7 +1211,6 @@ const QueryWorkbench: React.FC = () => {
     let runs: Run[] = plan.map((p, i) => ({
       index: i + 1,
       sql: p.text,
-      origin: positionAt(sql, p.start),
       kind: detectStatementType(p.text),
       status: 'pending',
     }));
@@ -1192,7 +1223,7 @@ const QueryWorkbench: React.FC = () => {
         runs = runs.map((r, j) => (j === i ? { ...r, status: 'running' as const } : r));
         setBatch(runs);
         setSelectedRun(i);
-        const outcome = await executeStatement(runs[i].sql, runs[i].origin);
+        const outcome = await executeStatement(runs[i].sql);
         runs = forgetOldestResults(runs.map((r, j) => (j === i ? { ...r, ...outcome } : r)));
         setBatch(runs);
 
@@ -1233,7 +1264,6 @@ const QueryWorkbench: React.FC = () => {
     setSelectedRun(index);
     setSortCol(null);
     setDetailIndex(null);
-    setRunOrigin(run.origin);
     setResults(run.result ?? null);
     setSubmittedJob(run.job ?? null);
     setPanelError(run.error ?? null);
@@ -1253,7 +1283,7 @@ const QueryWorkbench: React.FC = () => {
     setPanelError(null);
     setSelectedRun(index);
     setBatch(prev => prev && prev.map((r, j) => (j === index ? { ...r, status: 'running' as const } : r)));
-    const outcome = await executeStatement(run.sql, run.origin);
+    const outcome = await executeStatement(run.sql);
     setBatch(prev => prev && forgetOldestResults(
       prev.map((r, j) => (j === index ? { ...r, ...outcome, forgotten: false } : r))));
   };
@@ -1748,6 +1778,17 @@ const QueryWorkbench: React.FC = () => {
                 <button type="button" onClick={() => addTab()} className="px-2.5 py-2 text-outline hover:text-on-surface transition-colors shrink-0" title="New tab" aria-label="New tab">
                   <span className="material-symbols-outlined text-[16px]">add</span>
                 </button>
+                {/* Le retour arrière est *visible* : un raccourci que personne ne découvre n'est
+                    pas une réponse, et ⌘⇧T appartient au navigateur, qui ne le laisse pas passer. */}
+                {closedTabs.length > 0 && (
+                  <Tooltip content={`Reopen “${closedTabs[0].name}”, closed a moment ago. The last ${CLOSED_TAB_CAP} closed tabs are kept until the page is reloaded.`}>
+                    <button type="button" onClick={reopenClosedTab}
+                      aria-label={`Reopen ${closedTabs[0].name}`}
+                      className="px-2.5 py-2 text-outline hover:text-on-surface transition-colors shrink-0">
+                      <span aria-hidden="true" className="material-symbols-outlined text-[16px]">undo</span>
+                    </button>
+                  </Tooltip>
+                )}
                 {/* Format + Link pushed to the right */}
                 <div className="ml-auto px-3 flex items-center gap-3">
                   {/* L'éditeur acceptait un `?sql=` sans jamais en produire — à rebours de Stream

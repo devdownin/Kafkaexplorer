@@ -449,8 +449,8 @@ tree in d643f23; its conclusions are the paragraphs in this file, not a separate
 `SQL-EDITOR-AUDIT.md` is the review of the **SQL editor** (`QueryWorkbench.tsx` and its pure modules,
 plus `QueryController` / `SqlQueryValidator` / `FlinkSqlService.executeSync`) along the four axes it
 was asked for — reliability, ergonomics, optimisation, UI quality. All findings are fixed on this
-codebase; the report also carries a "constaté, non traité" section (the per-keystroke autocomplete
-rebuild, the non-foldable Window Assistant, the absence of a mobile layout, no undo for a closed tab).
+codebase; the report also carries a "constaté, non traité" section (the absence of a mobile
+layout, and two statements of identical text being indistinguishable to `resolveOrigin`).
 
 An earlier full bug & optimisation audit covered the whole codebase: all critical (C1–C4), major (M1–M8), minor and optimisation findings have been fixed here. Its report, `AUDIT.md`, was deleted from the tree in 31767bd — so the corrective decisions survive only as the behaviour of the code and the notes in this file, which is worth knowing before refactoring `AuditService`, `KafkaLiveConsumer`, `MetricService` or the direct SELECT engine: what looks like an odd choice in those four is usually a fix, and `git show 31767bd^:AUDIT.md` is where the reasoning is.
 

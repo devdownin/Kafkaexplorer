@@ -471,6 +471,57 @@ off. A warning that is always on stops being a warning. It now consults the tab'
 result is current while what ran is still, word for word, one of them — and editing *another*
 statement does not stale the one on screen.
 
+### M8 — the page kept its own copy of an API response type *(fixed)*
+
+`QueryWorkbench.tsx` declared a local `FlinkJobSubmission` interface — eight fields, written by
+hand at the point of call — for what `POST /api/query/jobs` returns. `api/types.ts` already carried
+`FlinkJobSummary` under its `@java` marker, resolved against the Java record by
+`docs/check-api-types.py`. The two agreed, and nothing required them to: this is exactly the drift
+that killed the Compare page, and the reason that checker exists. The local copy is gone; the page
+imports the checked type and keeps only an alias for the name the gesture goes by.
+
+### M9 — the error position was frozen at run time, so editing moved it off target *(fixed)*
+
+Engine positions are relative to the fragment that was sent, so an origin is needed to map them back
+into the document. That origin was captured when the query ran and kept in state — which makes it
+wrong the moment the text moves: adding a line above shifted "Jump to line" by one, and `updateSql`
+reset it to `null` on every edit, which mapped a failed statement's position to the *top of the
+document*, since `results.error` survives the edit. Reopening a batch entry after an edit had the
+same problem.
+
+`resolveOrigin` derives it from the current text instead: the literal text that ran, located in the
+document (which also covers a selected fragment, not being a statement), then a whitespace-
+insensitive match against the tab's statements, so a reformat keeps the position. When neither
+finds it, the answer is `null` — **the position is removed rather than guessed**, since pointing at
+a line would designate something other than what the engine is talking about; the raw message keeps
+its own line and column. The stored origin on a batch entry went with it: derived state that was
+also kept is state that can disagree with itself.
+
+### M10 — the completion list was rebuilt on every keystroke *(fixed)*
+
+Monaco calls the provider on **each character** (`quickSuggestions`), and it rebuilt everything each
+time: an object per Flink table, a `toTableName()` and an interpolated `sortText` per Kafka topic, a
+`Set` of registered tables, an `Object.entries` per loaded schema. On a three-hundred-topic cluster
+that is several hundred objects and as many fabricated strings per keypress, for a list that is
+identical until the catalogue or the scope changes. `buildCompletionEntries` is now a pure function
+(tested), memoised on the **identities** of the catalogue, the loaded schemas and the resolved scope
+— so between two keystrokes the check is three reference comparisons — and only the range, which
+follows the word under the cursor, is attached per call.
+
+### M11 — a closed tab was gone for good *(fixed)*
+
+Listed under "constaté, non traité" in the first pass: closing asks for confirmation when there is
+something to lose, but nothing could bring it back, and a tab's text exists nowhere else. The
+blocker named there was where to *offer* the undo — the shared `Toast` carries a message and a
+tone, no action, and extending it is a design-system change that should not be smuggled into one
+page; `⌘⇧T` is not an answer either, since the browser keeps that shortcut for itself and a
+shortcut nobody can discover helps nobody.
+
+The tab bar is where one looks for a tab that has disappeared, so the affordance lives there: an
+undo button appears beside `+` while something can be reopened, naming the tab in its tooltip and
+its accessible label. The last five closed tabs are kept **in memory only** — a net for the gesture
+just made, not a history — which is stated in the tooltip rather than left to be discovered.
+
 ---
 
 ## Constaté, non traité
@@ -488,8 +539,7 @@ statement does not stale the one on screen.
   now also to label the statements of a batch. The two agree today. Sharing one definition would
   mean an endpoint that classifies a statement, which is a round trip to answer a question the
   client can answer instantly; it moved into `queryWorkbench.ts` instead, where it is tested.
-- **A closed tab is gone for good.** Closing now asks when there is something to lose, which is the
-  cheap half of the fix. The other half needs somewhere to *offer* the undo, and `Toast` carries a
-  message and a type — no action. Extending the shared toast is a design-system change that would
-  touch every page in the app, so it does not belong smuggled into this one; a hidden `⌘⇧T` would
-  be the alternative, and a shortcut nobody can discover is not an answer either.
+- **Two identical statements in one tab are indistinguishable to `resolveOrigin`.** It returns the
+  first, so reopening the second one's error after an edit can map its position onto the first.
+  Distinguishing them means tracking each statement's identity across edits — a document model the
+  page does not have — for a case where both statements are the same text anyway.

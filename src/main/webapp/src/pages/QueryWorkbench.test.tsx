@@ -674,6 +674,38 @@ describe('QueryWorkbench — a tab with nothing to run', () => {
   });
 });
 
+describe('QueryWorkbench — a closed tab can be reopened', () => {
+  /*
+   * Fermer demandait confirmation quand il y avait quelque chose à perdre — la moitié bon marché
+   * du problème. Le texte d'un onglet n'existe nulle part ailleurs, et il n'y avait aucun retour.
+   */
+  it('offers to reopen the tab that was just closed, with its SQL', async () => {
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.type(editor(), 'SELECT 1 FROM a');
+    // Un second onglet : le dernier onglet ne se ferme pas.
+    await userEvent.click(screen.getByRole('button', { name: 'New tab' }));
+    await waitFor(() => expect(screen.getAllByRole('tab')).toHaveLength(2));
+
+    // Le premier onglet : celui qui porte le SQL.
+    await userEvent.click(screen.getAllByRole('button', { name: /^Close / })[0]);
+    // Le SQL en cours vaut une confirmation avant de disparaître.
+    await userEvent.click(await screen.findByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.getAllByRole('tab')).toHaveLength(1));
+
+    await userEvent.click(await screen.findByRole('button', { name: /^Reopen / }));
+
+    await waitFor(() => expect(screen.getAllByRole('tab')).toHaveLength(2));
+    expect(editor().value).toBe('SELECT 1 FROM a');
+  });
+
+  it('offers nothing while no tab has been closed', async () => {
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    expect(screen.queryByRole('button', { name: /^Reopen / })).not.toBeInTheDocument();
+  });
+});
+
 describe('QueryWorkbench — sharing by link', () => {
   it('reopens a query whose SQL contains a percent sign', async () => {
     // The double-decode this replaced threw URIError inside a useState initializer, so the page
