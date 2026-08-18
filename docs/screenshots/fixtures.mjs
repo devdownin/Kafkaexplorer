@@ -648,3 +648,104 @@ export const metricSuggestions = {
       + 'reporting it. The audit is the measurement here.',
   ],
 };
+
+/**
+ * `POST /api/data-model` — le modèle déduit pour la sélection que la capture ouvre.
+ *
+ * Calqué sur ce que `setup-demo.sh` sème, et surtout **sur ce que le service produirait
+ * réellement** : les clés primaires sont celles que `detectPrimaryKey` élirait (un champ nommé
+ * d'après le topic l'emporte sur un `id` nu), et chaque relation est celle que
+ * `deduceRelations` tirerait, avec le grade et la phrase de justification que le serveur écrit.
+ * Une fixture qui décrirait un modèle que le code ne sait pas produire photographierait un
+ * produit qui n'existe pas.
+ */
+const dmColumn = (name, type, over = {}) => ({
+  name, type, primaryKey: false, references: null, ...over,
+});
+
+export const dataModel = {
+  entities: [
+    {
+      id: 'demo_customers',
+      topic: 'demo.customers',
+      format: 'JSON',
+      primaryKey: 'customer_id',
+      messageCount: SIZES['demo.customers'],
+      columns: [
+        dmColumn('customer_id', 'STRING', { primaryKey: true }),
+        dmColumn('name', 'STRING'),
+        dmColumn('email', 'STRING'),
+        dmColumn('country', 'STRING'),
+        dmColumn('tier', 'STRING'),
+        dmColumn('created_at', 'BIGINT'),
+      ],
+    },
+    {
+      id: 'demo_orders_1_received',
+      topic: 'demo.orders.1.received',
+      format: 'JSON',
+      primaryKey: 'order_id',
+      messageCount: SIZES['demo.orders.1.received'],
+      columns: [
+        dmColumn('order_id', 'STRING', { primaryKey: true }),
+        dmColumn('customer_id', 'STRING', { references: 'demo_customers' }),
+        dmColumn('status', 'STRING'),
+        dmColumn('amount_cents', 'BIGINT'),
+        dmColumn('currency', 'STRING'),
+        dmColumn('event_time', 'BIGINT'),
+      ],
+    },
+    {
+      id: 'demo_payments_authorized',
+      topic: 'demo.payments.authorized',
+      format: 'JSON',
+      primaryKey: 'payment_id',
+      messageCount: SIZES['demo.payments.authorized'],
+      columns: [
+        dmColumn('payment_id', 'STRING', { primaryKey: true }),
+        dmColumn('order_id', 'STRING', { references: 'demo_orders_1_received' }),
+        dmColumn('method', 'STRING'),
+        dmColumn('amount_cents', 'BIGINT'),
+        dmColumn('authorized_at', 'BIGINT'),
+      ],
+    },
+    {
+      id: 'demo_shipments_dispatched',
+      topic: 'demo.shipments.dispatched',
+      format: 'JSON',
+      primaryKey: 'shipment_id',
+      messageCount: SIZES['demo.shipments.dispatched'],
+      columns: [
+        dmColumn('shipment_id', 'STRING', { primaryKey: true }),
+        dmColumn('order_id', 'STRING', { references: 'demo_orders_1_received' }),
+        dmColumn('carrier', 'STRING'),
+        dmColumn('tracking_code', 'STRING'),
+        dmColumn('dispatched_at', 'BIGINT'),
+      ],
+    },
+  ],
+  relations: [
+    {
+      from: 'demo_orders_1_received', to: 'demo_customers',
+      fromColumn: 'customer_id', toColumn: 'customer_id',
+      confidence: 'HIGH',
+      reason: "'customer_id' names topic 'demo.customers' and matches its key column 'customer_id'.",
+    },
+    {
+      from: 'demo_payments_authorized', to: 'demo_orders_1_received',
+      fromColumn: 'order_id', toColumn: 'order_id',
+      confidence: 'HIGH',
+      reason: "'order_id' names topic 'demo.orders.1.received' and matches its key column 'order_id'.",
+    },
+    {
+      from: 'demo_shipments_dispatched', to: 'demo_orders_1_received',
+      fromColumn: 'order_id', toColumn: 'order_id',
+      confidence: 'HIGH',
+      reason: "'order_id' names topic 'demo.orders.1.received' and matches its key column 'order_id'.",
+    },
+  ],
+  warnings: [],
+  topicsRequested: 4,
+  topicsAnalyzed: 4,
+  truncated: false,
+};

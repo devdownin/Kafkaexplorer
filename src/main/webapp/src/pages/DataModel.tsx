@@ -6,6 +6,7 @@ import { flushSync } from 'react-dom';
 import axios from 'axios';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useCatalog } from '../catalogStore';
+import { useIsDesktop } from '../breakpoints';
 import { Button, EmptyState, ErrorPanel, Badge } from '../components/ui';
 import { describeApiError } from './queryError';
 import type { QueryErrorInfo } from './queryError';
@@ -16,7 +17,7 @@ import {
   displayedColumns, entityHeight, computeLayout, computeEdgeGeometry, splitByConnectivity,
   crowFootPath, oneBarPath, graphBounds, fitTransform, topicDomains, domainColors,
   formatCount, describeRelation, matchingColumns, describeColumnMatches,
-  buildExportSvg, exportNotes,
+  buildExportSvg, exportNotes, toMermaidEr,
   CONFIDENCE_STYLE, describeModel,
 } from './dataModel';
 import type { DataModelRelation } from '../api/types';
@@ -125,6 +126,14 @@ const EntityNode: React.FC<{
 
 const DataModel: React.FC = () => {
   const { topics: catalogTopics } = useCatalog();
+  /**
+   * Sous le seuil desktop, les deux panneaux latéraux deviennent des tiroirs superposés. Fixes,
+   * ils coûtaient 576 px de chrome sur une largeur qui n'en a pas 1024 : le canevas — la seule
+   * chose que cette page existe pour montrer — tombait à quelques dizaines de pixels, exactement
+   * le défaut que `MOBILE-LAYOUT-SCOPE.md` documente pour l'éditeur SQL.
+   */
+  const isDesktop = useIsDesktop();
+  const [topicsDrawerOpen, setTopicsDrawerOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -172,6 +181,8 @@ const DataModel: React.FC = () => {
       setModel(res.data);
       setRanTopics(topics);
       setSelectedId(null);
+      // Le tiroir a rempli tout l'écran pour choisir ; le résultat est derrière lui.
+      setTopicsDrawerOpen(false);
       // Cadré au viewport une fois le nouveau graphe rendu — un reset vers scale(1) fixe
       // laissait un grand modèle déborder hors écran.
       pendingFit.current = true;
@@ -317,6 +328,12 @@ const DataModel: React.FC = () => {
     fitToViewport();
   }, [fitToViewport]);
 
+  // Franchir le seuil change la largeur du canevas de plusieurs centaines de pixels : le cadrage
+  // d'avant décrit un viewport qui n'existe plus.
+  useEffect(() => {
+    pendingFit.current = true;
+  }, [isDesktop]);
+
   // ── Export ──────────────────────────────────────────────────────────────────
 
   const [exporting, setExporting] = useState(false);
@@ -326,7 +343,7 @@ const DataModel: React.FC = () => {
    * moteur de rendu finirait par diverger de l'écran — et l'enrobage y ajoute ce qu'une image
    * détachée doit porter : la couverture et les légendes.
    */
-  const exportDiagram = useCallback(async (format: 'svg' | 'png') => {
+  const exportDiagram = useCallback(async (format: 'svg' | 'png' | 'mermaid') => {
     if (!model) return;
     // La sélection estompe le reste du diagramme : exportée, elle donnerait une image aux
     // trois quarts effacée. `flushSync` pour que le DOM soit à jour avant la sérialisation.
@@ -341,14 +358,16 @@ const DataModel: React.FC = () => {
       .map(node => serializer.serializeToString(node))
       .join('');
 
+    const caption = {
+      title: 'Kafka data model',
+      coverage: describeModel(model),
+      notes: exportNotes(model, entities.length - graphEntities.length),
+    };
+
     const svg = buildExportSvg(
       inner,
       bounds,
-      {
-        title: 'Kafka data model',
-        coverage: describeModel(model),
-        notes: exportNotes(model, entities.length - graphEntities.length),
-      },
+      caption,
       relations.length > 0
         ? (Object.entries(CONFIDENCE_STYLE) as [keyof typeof CONFIDENCE_STYLE, typeof CONFIDENCE_STYLE.HIGH][])
             .map(([grade, style]) => ({
@@ -369,6 +388,13 @@ const DataModel: React.FC = () => {
 
     if (format === 'svg') {
       save(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }), 'svg');
+      return;
+    }
+
+    if (format === 'mermaid') {
+      // La seule forme qui se relit et se différencie : un PNG dans une revue ne dit pas ce
+      // qui a changé depuis la version d'avant.
+      save(new Blob([toMermaidEr(model, caption)], { type: 'text/plain;charset=utf-8' }), 'mmd');
       return;
     }
 
@@ -456,12 +482,30 @@ const DataModel: React.FC = () => {
         </div>
       )}
 
+      {/* Fond du tiroir, sous le seuil seulement : cliquer à côté referme, comme le tiroir de
+          navigation du shell. */}
+      {!isDesktop && topicsDrawerOpen && (
+        <div className="absolute inset-0 bg-black/60 z-30" aria-hidden="true"
+          onClick={() => setTopicsDrawerOpen(false)} />
+      )}
+
       {/* ── Panneau de sélection ── */}
-      <aside className="w-64 border-r border-outline-variant/60 bg-background-dark flex flex-col shrink-0">
+      <aside className={isDesktop
+        ? 'w-64 border-r border-outline-variant/60 bg-background-dark flex flex-col shrink-0'
+        : `absolute inset-y-0 left-0 z-40 w-[min(18rem,85vw)] border-r border-outline-variant/60 bg-background-dark flex flex-col shadow-2xl transition-transform ${topicsDrawerOpen ? 'translate-x-0' : '-translate-x-full'}`}
+        aria-hidden={!isDesktop && !topicsDrawerOpen}>
         <div className="p-4 space-y-3 border-b border-outline-variant/60">
-          <h2 className="text-xs font-bold text-on-surface-variant uppercase tracking-widest">
-            Topics ({selection.length}/{MAX_TOPICS})
-          </h2>
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-xs font-bold text-on-surface-variant uppercase tracking-widest">
+              Topics ({selection.length}/{MAX_TOPICS})
+            </h2>
+            {!isDesktop && (
+              <button onClick={() => setTopicsDrawerOpen(false)} aria-label="Close the topic selector"
+                className="text-on-surface-variant hover:text-on-surface transition-colors">
+                <span aria-hidden="true" className="material-symbols-outlined text-lg">close</span>
+              </button>
+            )}
+          </div>
           <div className="flex items-center gap-2 bg-surface-container-low border border-outline-variant rounded-md px-2.5 py-1.5 focus-within:border-primary/40 transition-colors">
             <span aria-hidden="true" className="material-symbols-outlined text-on-surface-variant text-base shrink-0">search</span>
             <input
@@ -525,14 +569,20 @@ const DataModel: React.FC = () => {
               qui ne dit pas ce qu'il couvre se lit comme un modèle complet. */}
           {model && graphEntities.length > 0 && (
             <div className="flex gap-2">
-              <Button variant="outline" size="sm" className="flex-1" icon="download"
-                onClick={() => exportDiagram('svg')}>
+              <Button variant="outline" size="sm" className="flex-1"
+                onClick={() => exportDiagram('svg')} title="Vector diagram, opens in any browser">
                 SVG
               </Button>
               <Button variant="outline" size="sm" className="flex-1"
-                icon={exporting ? undefined : 'image'} loading={exporting}
-                onClick={() => exportDiagram('png')} disabled={exporting}>
+                loading={exporting}
+                onClick={() => exportDiagram('png')} disabled={exporting}
+                title="Raster image, for pasting into a ticket">
                 PNG
+              </Button>
+              <Button variant="outline" size="sm" className="flex-1"
+                onClick={() => exportDiagram('mermaid')}
+                title="Mermaid erDiagram — the text form, which diffs between two runs">
+                MMD
               </Button>
             </div>
           )}
@@ -652,6 +702,17 @@ const DataModel: React.FC = () => {
 
         {/* Bandeau : couverture + avertissements */}
         <div className="absolute top-4 left-4 right-4 z-10 flex flex-col items-start gap-2 pointer-events-none">
+          {/* Sous le seuil, c'est la seule porte vers la sélection : elle est donc toujours là,
+              y compris sur l'état vide, où c'est précisément le geste suivant. */}
+          {!isDesktop && (
+            <button
+              onClick={() => setTopicsDrawerOpen(true)}
+              className="pointer-events-auto flex items-center gap-1.5 bg-surface-container border border-outline-variant px-3 py-1.5 rounded-full text-xs text-on-surface hover:bg-surface-container-high transition-colors"
+            >
+              <span aria-hidden="true" className="material-symbols-outlined text-[16px]">tune</span>
+              Topics ({selection.length})
+            </button>
+          )}
           <div className="flex items-center gap-2 bg-surface-container/90 border border-outline-variant px-3 py-1.5 rounded-full text-xs">
             <span className="text-on-surface-variant">Data Model</span>
             {model && (
@@ -822,7 +883,9 @@ const DataModel: React.FC = () => {
 
       {/* ── Inspecteur : l'évidence derrière la sélection ── */}
       {selectedId && entityById.get(selectedId) && (
-        <aside className="border-l border-outline-variant/60 bg-background-dark flex flex-col shrink-0 overflow-hidden" style={{ width: 320 }}>
+        <aside className={isDesktop
+          ? 'border-l border-outline-variant/60 bg-background-dark flex flex-col shrink-0 overflow-hidden w-80'
+          : 'absolute inset-y-0 right-0 z-40 w-[min(20rem,85vw)] border-l border-outline-variant/60 bg-background-dark flex flex-col overflow-hidden shadow-2xl'}>
           <div className="p-4 border-b border-outline-variant/60">
             <div className="flex items-center justify-between mb-2">
               <Badge tone="primary">entity</Badge>

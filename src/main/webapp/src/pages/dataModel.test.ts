@@ -10,7 +10,7 @@ import {
   columnRowY, anchorSpread, computeEdgeGeometry, crowFootPath, oneBarPath,
   graphBounds, fitTransform, topicDomains, domainColors,
   formatCount, describeRelation, matchingColumns, describeColumnMatches,
-  buildExportSvg, exportNotes, escapeXml,
+  buildExportSvg, exportNotes, escapeXml, toMermaidEr,
 } from './dataModel';
 
 function entity(id: string, columnCount: number, overrides: Partial<DataModelEntity> = {}): DataModelEntity {
@@ -504,5 +504,86 @@ describe('buildExportSvg', () => {
     const narrow = { minX: 0, minY: 0, maxX: 100, maxY: 100 };
     const svg = buildExportSvg('', narrow, caption, []);
     expect(Number(/width="(\d+)"/.exec(svg)![1])).toBeGreaterThan(100 + 64);
+  });
+});
+
+describe('toMermaidEr', () => {
+  const caption = { title: 'Kafka data model', coverage: '2 entities · 1 relation deduced', notes: [] as string[] };
+
+  function model(): DataModelResponse {
+    const orders = entity('demo_orders', 0, {
+      primaryKey: 'order_id',
+      columns: [
+        { name: 'order_id', type: 'STRING', primaryKey: true, references: null },
+        { name: 'amount', type: 'DOUBLE', primaryKey: false, references: null },
+      ],
+    });
+    const payments = entity('demo_payments', 0, {
+      columns: [
+        { name: 'order_id', type: 'STRING', primaryKey: false, references: 'demo_orders' },
+      ],
+    });
+    return {
+      entities: [orders, payments],
+      relations: [{
+        from: 'demo_payments', to: 'demo_orders',
+        fromColumn: 'order_id', toColumn: 'order_id',
+        confidence: 'HIGH', reason: 'test',
+      }],
+      warnings: [], topicsRequested: 2, topicsAnalyzed: 2, truncated: false,
+    };
+  }
+
+  it('emits a valid erDiagram with the caption as comments', () => {
+    const mermaid = toMermaidEr(model(), caption);
+    const lines = mermaid.split('\n');
+    expect(lines[0]).toBe('%% Kafka data model');
+    expect(lines[1]).toBe('%% 2 entities · 1 relation deduced');
+    expect(lines[2]).toBe('erDiagram');
+  });
+
+  it('draws the relation from the referenced side, with the confidence in the label', () => {
+    const mermaid = toMermaidEr(model(), caption);
+    // Mermaid has no per-edge line style, so a diagram that dropped the grade would present a
+    // guess and a key match identically.
+    expect(mermaid).toContain('demo_orders ||--o{ demo_payments : "order_id (high)"');
+  });
+
+  it('marks keys and foreign keys', () => {
+    const mermaid = toMermaidEr(model(), caption);
+    expect(mermaid).toContain('STRING order_id PK');
+    expect(mermaid).toContain('STRING order_id FK');
+    expect(mermaid).toContain('DOUBLE amount');
+  });
+
+  it('sanitises identifiers but keeps the original name as a comment', () => {
+    const nested = entity('t', 0, {
+      columns: [{ name: 'customer.address.city', type: 'STRING', primaryKey: false, references: null }],
+    });
+    const mermaid = toMermaidEr(
+      { entities: [nested], relations: [], warnings: [], topicsRequested: 1, topicsAnalyzed: 1, truncated: false },
+      caption);
+    expect(mermaid).toContain('STRING customer_address_city "customer.address.city"');
+  });
+
+  it('carries the notes, so a text export states its bounds like the image does', () => {
+    const mermaid = toMermaidEr(model(), { ...caption, notes: ['3 entities have no deduced relation and are not drawn.'] });
+    expect(mermaid).toContain('%% 3 entities have no deduced relation and are not drawn.');
+  });
+
+  it('skips a relation whose endpoints are not both drawn', () => {
+    const m = model();
+    m.relations.push({
+      from: 'demo_payments', to: 'ghost', fromColumn: 'x_id', toColumn: null,
+      confidence: 'LOW', reason: 'test',
+    });
+    expect(toMermaidEr(m, caption)).not.toContain('ghost');
+  });
+
+  it('an empty model is still a valid diagram, not a broken one', () => {
+    const empty = toMermaidEr(
+      { entities: [], relations: [], warnings: [], topicsRequested: 0, topicsAnalyzed: 0, truncated: false },
+      caption);
+    expect(empty.trim().endsWith('erDiagram')).toBe(true);
   });
 });

@@ -505,6 +505,70 @@ export interface ExportCaption {
   notes: string[];
 }
 
+/**
+ * Le modèle en `erDiagram` Mermaid — la forme texte du même diagramme.
+ *
+ * Elle existe pour ce que les deux exports binaires ne savent pas faire : **se relire et se
+ * différencier**. Un PNG collé dans une revue ne dit pas ce qui a changé depuis la version
+ * précédente ; ces quelques lignes, si. Mermaid est déjà une dépendance du dépôt (Process
+ * Mining), donc GitHub, la plupart des wikis et l'application elle-même savent la rendre.
+ *
+ * Deux contraintes de la syntaxe, et une décision :
+ *
+ *  * les identifiants Mermaid n'acceptent ni point ni tiret — les noms d'entités sont déjà les
+ *    noms de tables Flink, donc sains, mais les noms de colonnes viennent des charges utiles et
+ *    peuvent porter un chemin imbriqué : ils sont assainis, et le nom d'origine reste en
+ *    commentaire de colonne, jamais perdu ;
+ *  * la cardinalité est `}o--||` (plusieurs-vers-un facultatif), la seule que les déductions
+ *    justifient : rien ici n'établit qu'une référence est obligatoire.
+ *
+ * La décision : **la confiance voyage dans le libellé de la relation**, pas dans un commentaire.
+ * Mermaid n'a pas de style de trait par arête, donc un `erDiagram` qui tairait le grade
+ * présenterait une supposition et une concordance de clés exactement de la même façon — ce que
+ * tout le reste de cette page existe pour éviter.
+ */
+export function toMermaidEr(
+  response: DataModelResponse,
+  caption: ExportCaption,
+): string {
+  const lines: string[] = [];
+  lines.push(`%% ${caption.title}`);
+  lines.push(`%% ${caption.coverage}`);
+  caption.notes.forEach(note => lines.push(`%% ${note}`));
+  lines.push('erDiagram');
+
+  const drawn = new Set(response.entities.map(e => e.id));
+  for (const relation of response.relations) {
+    if (!drawn.has(relation.from) || !drawn.has(relation.to)) continue;
+    const label = `${relation.fromColumn} (${relation.confidence.toLowerCase()})`;
+    lines.push(`    ${mermaidId(relation.to)} ||--o{ ${mermaidId(relation.from)} : "${mermaidLabel(label)}"`);
+  }
+
+  for (const entity of response.entities) {
+    lines.push(`    ${mermaidId(entity.id)} {`);
+    for (const column of entity.columns) {
+      const key = column.primaryKey ? ' PK' : column.references ? ' FK' : '';
+      // Le nom d'origine en commentaire : l'assainissement ne doit rien coûter en information.
+      const comment = mermaidId(column.name) !== column.name ? ` "${mermaidLabel(column.name)}"` : '';
+      lines.push(`        ${mermaidId(column.type)} ${mermaidId(column.name)}${key}${comment}`);
+    }
+    lines.push('    }');
+  }
+
+  return lines.join('\n') + '\n';
+}
+
+/** Un identifiant Mermaid : lettres, chiffres et tirets bas. Vide → `_`, jamais rien. */
+function mermaidId(value: string): string {
+  const cleaned = value.replace(/[^A-Za-z0-9_]/g, '_');
+  return cleaned === '' ? '_' : cleaned;
+}
+
+/** Un libellé entre guillemets : les guillemets internes casseraient la ligne. */
+function mermaidLabel(value: string): string {
+  return value.replace(/"/g, "'");
+}
+
 /** Au-delà, les avertissements sont comptés — un bandeau n'est pas un journal. */
 const EXPORT_MAX_NOTES = 4;
 

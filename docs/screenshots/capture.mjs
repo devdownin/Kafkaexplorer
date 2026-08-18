@@ -95,6 +95,17 @@ const SCREENS = [
     settle: page => page.getByText('KRaft Controller Quorum').first().waitFor(),
   },
   {
+    name: 'data-model',
+    // The selection round-trips through the query string and replays on open, so the capture
+    // takes the same path a colleague's shared link does.
+    url: '/data-model?topics=' + encodeURIComponent(
+      ['demo.customers', 'demo.orders.1.received',
+       'demo.payments.authorized', 'demo.shipments.dispatched'].join(',')),
+    // The coverage line is the last thing the run turns on, and unlike the node labels it is
+    // not truncated inside the SVG.
+    settle: page => page.getByText(/relations deduced/).first().waitFor(),
+  },
+  {
     name: 'metrics',
     url: '/metrics',
     // The suggestions panel is what the screen is about — the generic templates below it look
@@ -158,7 +169,17 @@ let quantised = 0;
 let savedFrom = 0;
 let savedTo = 0;
 
-const browser = await chromium.launch();
+/*
+ * `CHROMIUM_PATH` désigne un binaire Chromium déjà présent, comme `PNGQUANT` plus haut désigne
+ * un pngquant hors du PATH — et pour la même raison. Playwright cherche ses navigateurs dans le
+ * répertoire de la version *qu'il attend* : sur une image où le navigateur est fourni par
+ * l'environnement (`PLAYWRIGHT_BROWSERS_PATH`) et où playwright a été installé séparément, les
+ * deux numéros de version divergent et le lancement échoue en réclamant un téléchargement que
+ * l'image interdit. Vide, le comportement par défaut de Playwright est inchangé : la CI n'a rien
+ * à poser.
+ */
+const browser = await chromium.launch(
+  process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
 fs.mkdirSync(outDir, { recursive: true });
 
 for (const screen of SCREENS) {

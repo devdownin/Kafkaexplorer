@@ -15,14 +15,20 @@ node capture.mjs http://127.0.0.1:4173 ../img
 ```
 
 Requires Node 22+ and Playwright with a Chromium build (`npm i -g playwright && playwright
-install chromium`). The capture exits non-zero if any screen fails — six screenshots out of
-seven means the seventh silently disappears from the documentation, so a partial run is a
+install chromium`). The capture exits non-zero if any screen fails — seven screenshots out of
+eight means the eighth silently disappears from the documentation, so a partial run is a
 failed run.
+
+On an image that ships its own Chromium (`PLAYWRIGHT_BROWSERS_PATH`) while Playwright was
+installed separately, the two version numbers diverge and the launch fails asking for a
+download the image forbids. Point **`CHROMIUM_PATH`** at the binary that is already there
+(`CHROMIUM_PATH=/opt/pw-browsers/chromium-*/chrome-linux/chrome`); unset, Playwright's own
+lookup is unchanged, so CI needs nothing.
 
 **Install `pngquant` too** (`apt install pngquant`, `brew install pngquant`, or point
 `PNGQUANT` at a binary). Each shot is quantised to an 8-bit palette, which on flat UI colour
-and text is visually indistinguishable from the original and takes the seven from ~2.3 MB to
-~800 kB. That is not repository housekeeping: the Docker Hub overview loads five of them from
+and text is visually indistinguishable from the original and takes the eight from ~2.9 MB to
+~970 kB. That is not repository housekeeping: the Docker Hub overview loads five of them from
 GitHub Pages on every view. Without the binary the run still succeeds and says so at the end
 — compression is not what this script is for, but nobody should discover the omission from a
 commit diff either.

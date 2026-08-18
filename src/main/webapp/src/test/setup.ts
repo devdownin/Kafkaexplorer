@@ -30,3 +30,22 @@ if (!('ResizeObserver' in globalThis)) {
   }
   globalThis.ResizeObserver = ResizeObserverStub;
 }
+
+// Troisième API absente de jsdom, et la plus trompeuse des trois : `matchMedia`. Tout écran qui
+// choisit sa mise en page au seuil desktop (`useIsDesktop`) plante sur un `is not a function`
+// avant d'avoir rendu quoi que ce soit. Le bouchon répond **false** — jsdom n'a aucune mise en
+// page, donc aucune largeur à interroger, et « pas desktop » est la seule réponse honnête : c'est
+// la disposition étroite qui est alors testée, et une page qui ne tient pas dans cette
+// disposition-là doit échouer ici plutôt que sur l'écran de quelqu'un.
+if (!window.matchMedia) {
+  window.matchMedia = (query: string): MediaQueryList => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    addListener: () => {},
+    removeListener: () => {},
+    dispatchEvent: () => false,
+  });
+}
