@@ -24,7 +24,9 @@
  * rejet tienne quand le prochain audit redérive la même carte.
  */
 
-import type { MetricConfig, MetricSuggestion, MetricSuggestions, MetricSuggestionSource } from '../api/types';
+import type {
+  AuditHistory, AuditRunSummary, MetricConfig, MetricSuggestion, MetricSuggestions, MetricSuggestionSource,
+} from '../api/types';
 
 export const DISMISSED_KEY = 'kse:metric-suggestions-dismissed';
 /** Au-delà, la liste de rejets décrit des propositions que plus aucun audit ne produit. */
@@ -175,6 +177,59 @@ export function stalenessNote(
   const days = Math.floor(age / (24 * 60 * 60 * 1000));
   return `The audit these proposals rest on is ${days} day${days === 1 ? '' : 's'} old — topics may `
     + 'have changed since. Re-run it before trusting the thresholds it suggested.';
+}
+
+// ── Un audit plus récent ─────────────────────────────────────────────────────
+
+/**
+ * Le run que le serveur retiendrait aujourd'hui, s'il redérivait maintenant.
+ *
+ * Mêmes exclusions que `MetricSuggestionService.readAudit` : un run `legacy` porte l'échelle de
+ * sévérité retirée et ne se projette pas sur celle d'aujourd'hui, un run `FAILED` ne mesure rien.
+ * Les reproduire ici est une duplication assumée — l'alternative serait d'annoncer « un audit plus
+ * récent existe » au-dessus d'un bouton qui, une fois cliqué, redérive exactement les mêmes cartes.
+ */
+export function newestUsableRun(history: AuditHistory | null): AuditRunSummary | null {
+  // `listHistory()` répond du plus récent au plus ancien. Le tableau est vérifié plutôt que
+  // supposé : le type est écrit à la main, et une réponse sans `runs` — une version antérieure,
+  // une erreur renvoyée en 200 — ferait tomber toute la page des métriques sur un `.find` de
+  // `undefined`. C'est exactement ce qui avait tué la page Compare.
+  const runs = history && Array.isArray(history.runs) ? history.runs : [];
+  return runs.find(run => !run.legacy && run.status !== 'FAILED') ?? null;
+}
+
+/**
+ * Ce qu'il faut dire quand l'audit sous-jacent a bougé depuis la dérivation affichée.
+ *
+ * Le panneau dérive au chargement de la page et plus jamais : lancer un audit dans un autre onglet
+ * laissait des seuils calculés sur le run précédent, sans un mot. `stalenessNote` date déjà
+ * l'observation ; celle-ci dit qu'une plus fraîche existe, ce qu'un âge ne peut pas exprimer.
+ *
+ * Trois réponses distinctes, parce qu'elles n'appellent pas le même geste : un audit *en cours*
+ * n'est pas encore une évidence (le serveur refuse un rapport `RUNNING`, dont la liste de topics
+ * change entre deux sondages), un premier audit débloque des cartes qui n'existaient pas, et un
+ * run plus récent remplace celui sur lequel les seuils reposent.
+ */
+export function newerAuditNote(
+  response: MetricSuggestions | null,
+  history: AuditHistory | null,
+): string | null {
+  if (!response || !history) return null;
+
+  const runs = Array.isArray(history.runs) ? history.runs : [];
+  const running = runs.find(run => run.status === 'RUNNING');
+  if (running && running.auditId !== response.auditId) {
+    return 'An audit is running. These proposals rest on an earlier run — re-derive once it finishes.';
+  }
+
+  const newest = newestUsableRun(history);
+  if (!newest || newest.auditId === response.auditId) return null;
+
+  if (!response.auditAvailable) {
+    return `A cluster audit has run since (${formatDate(newest.timestamp)}). Re-derive to get the KPIs it unlocks.`;
+  }
+  return `A more recent audit ran on ${formatDate(newest.timestamp)}; these proposals rest on the run of `
+    + `${response.auditTimestamp ? formatDate(response.auditTimestamp) : 'an earlier date'}. Re-derive to use it.`;
 }
 
 // ── Vers l'éditeur ───────────────────────────────────────────────────────────

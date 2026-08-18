@@ -53,7 +53,7 @@ const Header: FC<HeaderProps> = ({ onMenuClick, onSearchClick, isHealthy, cluste
           type="button"
           onClick={onMenuClick}
           aria-label="Open navigation"
-          className="md:hidden p-1.5 -ml-1.5 rounded-md hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface transition-colors"
+          className="lg:hidden p-1.5 -ml-1.5 rounded-md hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface transition-colors"
         >
           <span aria-hidden="true" className="material-symbols-outlined text-[22px]">menu</span>
         </button>

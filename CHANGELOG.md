@@ -211,12 +211,64 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   string-literal union where Java declares `String`: widening the frontend to `string` to satisfy
   the script would have deleted real type safety in the name of a check that exists to provide it.
 
+### Added
+
+- **The Process Mining field mappings are persisted** to `internal.field.mappings`, keyed by
+  mapping id. It was the only artefact this application produces by *correcting a model* and then
+  threw away: a restart lost every mapping, the KPI suggestions reported one they could no longer
+  resolve, and getting it back meant replaying two model calls to re-derive something an operator
+  had already fixed by hand. The restore is bounded and best-effort — driven by the end offsets, an
+  unreadable record costs that record and not the restore, and a broker that cannot be reached at
+  startup leaves an empty store and a log line rather than a boot that hangs.
+- **A "this screen needs a wider window" notice on the SQL editor**, under `lg`, naming the screens
+  that do work at that width and what each answers. The page was not broken in the usual sense —
+  nothing overflows, nothing overlaps — it was unusable without saying so, which is worse: the
+  operator concludes the application is down. It dismisses, and the dismissal sticks.
+- **The Metrics page says when the audit its proposals rest on has moved on.** The panel derived on
+  page load and never again, so an audit run in another tab left thresholds computed from the
+  previous run without a word. It now distinguishes the three cases that call for different
+  gestures: a run in flight (not evidence yet — the server refuses a `RUNNING` report), a first
+  audit (which unlocks cards that did not exist), and a newer run (which replaces what the
+  thresholds rest on), with a re-derive button beside the sentence.
+
 ### Fixed
 
+- **A tablet in landscape was worse off than a phone.** At exactly 768 px the shell's navigation
+  stopped being an off-canvas drawer and took 256 px in the flow, while the SQL editor's schema
+  browser kept its fixed 288 px — so Monaco fell from 64 px of rendered width at 640 px to **5 px**
+  at 768. Nobody had chosen that; two independent width decisions met. The shell's threshold is now
+  `lg`, and the measured effect is 768 → 192 px and 900 → 324 px.
+- **`layout-probe.mjs` printed a ceiling where a measurement was expected.** Its list of clipped
+  containers was cut to eight entries *before* being counted, so five of seven pages reported
+  "8 clipped" at every viewport width, and `MOBILE-LAYOUT-SCOPE.md` read that constancy as evidence
+  that the clipping was width-independent truncation by design. The probe now counts the whole set,
+  excludes `sr-only` (which clips by construction), and reports whether each clipped element's
+  remaining content can be reached at all.
+- **Truncated values with no way to read them.** Following from the above: a metric card's name,
+  its description and its SQL line all carried `truncate` with no `title` anywhere — 280 px of
+  metric name rendered into 147 px, with the rest unreachable — and the Cluster page's property
+  names overflowed a grid cell with neither ellipsis nor title. The codebase's own convention is
+  that a compacted value keeps its exact form in a `title`; these had not followed it.
+- **A failed container launch could fail a release.** `KafkaClusterIntegrationTest` started its
+  Testcontainers broker with no startup retry, and a launch that failed — twice in twelve hours on
+  hosted runners, once on a pull request and once on a push to `main` — took the whole `mvn verify`
+  down with it, its own assertions never having run. Survivable on a pull request, where a re-run
+  costs minutes; not on `release.yml`, which gates a tag on the same `verify`. One retry on the
+  launch, and a startup timeout sized for a cold image pull. The retry deliberately does not cover
+  the assertions: a broker that started and then misbehaved is a finding.
+- **The KPI suggestions read every running Flink job on every load of the Metrics page.** Resolving
+  a statement is a Flink parse taken under the runtime's read lock, and the lineage family was the
+  only one of the five that was not capped. It now resolves the 12 most recently started
+  `INSERT INTO` jobs and counts the rest in a note — by start time rather than in map order, since
+  `getActiveJobsDetails()` returns a `Map.copyOf` whose iteration order would have made the jobs
+  read vary between two calls.
 - **A template metric took the whole Metrics page down.** Its `sql` is `null` by construction —
   the parameters are the query — and `MetricCard` called `metric.sql.replace(…)` on it, so the
   page rendered its error boundary instead of the metric. The type said `string`, which it had
   never been. Found by the screenshot harness, pinned by the page's first component test.
+- `POST /api/metrics/suggestions` had no test, on a body that is optional and a record that grew a
+  component after it shipped — the exact binding failure `StreamFlowControllerTest` exists to
+  catch. `MetricControllerTest` pins the four shapes the browser and a hand-written call produce.
 - **Three dead references in `CLAUDE.md`.** `AUDIT.md` and `CONSUMER-GROUPS-AUDIT.md` were
   described as documents to read before refactoring, and `deploy/kraft-platform/` was cited in a
   rule about `container_name`; all three had been deleted from the tree, two of them months

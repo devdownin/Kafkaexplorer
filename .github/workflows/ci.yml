@@ -61,6 +61,47 @@ jobs:
         key: npm-${{ runner.os }}-${{ hashFiles('src/main/webapp/package-lock.json') }}
         restore-keys: |
           npm-${{ runner.os }}-
+    # KafkaClusterIntegrationTest pulls apache/kafka-native and testcontainers/ryuk from
+    # Docker Hub, anonymously, from a shared runner IP — and anonymous pulls are rate-limited
+    # per IP over a time window. `Container startup failed for image apache/kafka-native:4.3.1`
+    # failed this job three times in thirteen hours, twice on a pull request and once on a push
+    # to main, and the third time it failed with `withStartupAttempts(2)` already in place: an
+    # immediate retry inside the same window is exactly what a rate limit does not forgive,
+    # which is the shape of evidence that pointed here. Authenticating raises the limit.
+    #
+    # This is a hypothesis, not a proven cause — the Testcontainers exception naming the reason
+    # sat above the tail GitHub's log API serves, which `src/test/resources/logback-test.xml`
+    # now fixes. Either way the step costs nothing and cannot regress anything: same guard as
+    # release.yml, so a fork without the secrets simply skips it, and `continue-on-error` keeps
+    # a refused login from failing a build that never needed the login to begin with.
+    - name: Is Docker Hub configured?
+      id: hub
+      env:
+        DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      run: |
+        set -euo pipefail
+        if [ -n "${DOCKERHUB_USERNAME:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ]; then
+          echo 'enabled=true' >> "$GITHUB_OUTPUT"
+        else
+          echo 'enabled=false' >> "$GITHUB_OUTPUT"
+          echo "::notice::DOCKERHUB_USERNAME / DOCKERHUB_TOKEN are not set — Testcontainers will pull anonymously, subject to Docker Hub's per-IP rate limit."
+        fi
+
+    - name: Log in to Docker Hub for Testcontainers pulls
+      id: hub_login
+      if: steps.hub.outputs.enabled == 'true'
+      continue-on-error: true
+      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+    - name: Report a refused Docker Hub login
+      if: steps.hub_login.outcome == 'failure'
+      run: |
+        echo "::warning::Docker Hub login was refused — Testcontainers will pull anonymously. The secrets are set (the guard let this step run), so the token itself is being rejected: a read-only or expired PAT, a DOCKERHUB_USERNAME that is not the login account, a password instead of a PAT on a 2FA account, or whitespace in the secret."
+
     - name: Build & Test with Maven
       # verify runs the full lifecycle including tests — no separate `mvn test`
       # pass (the previous package + test combo ran the whole suite twice).

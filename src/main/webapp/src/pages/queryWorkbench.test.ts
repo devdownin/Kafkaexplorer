@@ -2,11 +2,13 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
+import { NAV_ITEMS } from '../navigation';
 import {
   formatSql, tokenizeSql, sortRows, sortKeyOf, cellText, nextActiveTabId,
   isResultStale, writeStored, readStored, removeStored,
   readLayout, LAYOUT_STORAGE_KEY, DEFAULT_LAYOUT, SPLIT_MIN, SIDEBAR_MAX,
   readSqlParam, buildQueryLink,
+  NARROW_ALTERNATIVES, WIDE_WINDOW_MIN_PX, dismissNarrowNotice, readNarrowNoticeDismissed,
   starterTable, starterQueries, starterJobQueries, pushHistory, describeHistoryEntry, formatDuration,
   splitStatements, statementIndexAt, positionAt, offsetAt, resolveOrigin,
   detailValue, withoutLeadingCte,
@@ -912,5 +914,39 @@ describe('readSqlParam / buildQueryLink', () => {
 
   it('never throws on a malformed query string', () => {
     expect(() => readSqlParam('?sql=%')).not.toThrow();
+  });
+});
+
+// ── Fenêtre trop étroite ─────────────────────────────────────────────────────
+
+describe('NARROW_ALTERNATIVES', () => {
+  it('names only screens that exist as routes', () => {
+    // Un bandeau qui renvoie vers un 404 est pire que pas de bandeau : il arrive au moment où
+    // l'opérateur cherche une réponse. Le Topic Explorer est mesuré bon à 390 px lui aussi, mais
+    // sa route demande un nom de topic — c'est pour ça qu'il n'est pas dans la liste.
+    const paths = new Set(NAV_ITEMS.map(item => item.path));
+    for (const alternative of NARROW_ALTERNATIVES) {
+      expect(paths.has(alternative.to)).toBe(true);
+    }
+  });
+
+  it('says what each screen answers, not just its name', () => {
+    for (const alternative of NARROW_ALTERNATIVES) {
+      expect(alternative.answers.length).toBeGreaterThan(10);
+    }
+  });
+
+  it('matches the width the shell itself calls desktop', () => {
+    // `DESKTOP_QUERY` dans Layout.tsx et ce seuil décrivent le même « il y a la place » : les
+    // laisser diverger ferait apparaître le bandeau au-dessus d'un éditeur devenu utilisable.
+    expect(WIDE_WINDOW_MIN_PX).toBe(1024);
+  });
+});
+
+describe('le rejet du bandeau', () => {
+  it('tient sur ce navigateur, et ne ment pas quand le stockage refuse', () => {
+    expect(readNarrowNoticeDismissed()).toBe(false);
+    dismissNarrowNotice();
+    expect(readNarrowNoticeDismissed()).toBe(true);
   });
 });

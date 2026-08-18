@@ -16,3 +16,17 @@ afterEach(cleanup);
 if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = function scrollIntoView() {};
 }
+
+// Même raison, autre API absente de jsdom : `ResizeObserver`. Recharts s'en sert pour tout
+// conteneur responsive (les graphes des cartes de la page Métriques), et sans lui la page tombe
+// dans sa frontière d'erreur avant d'avoir rendu quoi que ce soit d'observable — un échec qui ne
+// dit rien du test. Ici plutôt que dans un fichier de test : le prochain écran qui affiche un
+// graphe n'a pas à redécouvrir la panne, et un bouchon par fichier finit par diverger.
+if (!('ResizeObserver' in globalThis)) {
+  class ResizeObserverStub implements ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  globalThis.ResizeObserver = ResizeObserverStub;
+}

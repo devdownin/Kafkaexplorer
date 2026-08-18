@@ -11,7 +11,19 @@ import { setCatalog } from '../catalogStore';
 import type { Health } from './connectionStatus';
 import type { DashboardResponse } from '../api/types';
 
-const DESKTOP_QUERY = '(min-width: 768px)';
+/*
+ * Le rail de navigation en flux — donc l'écran considéré comme « desktop » — commence à `lg`,
+ * pas à `md`. C'était 768 px, et `MOBILE-LAYOUT-SCOPE.md` a mesuré ce que ça coûtait : à cette
+ * largeur exacte la navigation cessait d'être un tiroir hors-flux pour prendre 256 px dans le
+ * flux, pendant que le navigateur de schéma de l'éditeur SQL gardait ses 288 px — l'éditeur
+ * tombait de 64 px à 5 px en passant de 640 à 768. Une tablette en paysage était donc moins bien
+ * lotie qu'un téléphone. Personne n'avait choisi ça : deux décisions de largeur indépendantes se
+ * rencontraient. Le tiroir tient jusqu'à 1024 px, où les 256 px sont enfin payables.
+ *
+ * Les classes `lg:` de `Sidebar`, `Header` et du conteneur de contenu ci-dessous décrivent le même
+ * seuil : elles doivent bouger ensemble, sinon le rail et le bouton qui l'ouvre se contredisent.
+ */
+const DESKTOP_QUERY = '(min-width: 1024px)';
 
 /**
  * Shell applicatif : sidebar (repliable en desktop, drawer en mobile) + header
@@ -97,7 +109,7 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
 
       {mobileOpen && (
         <div
-          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 md:hidden animate-fade-in"
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 lg:hidden animate-fade-in"
           onClick={() => setMobileOpen(false)}
           aria-hidden="true"
         />
@@ -105,7 +117,7 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
 
       <div
         className={`h-screen flex flex-col min-w-0 transition-all duration-300 ml-0 ${
-          effectiveCollapsed ? 'md:ml-[68px]' : 'md:ml-64'
+          effectiveCollapsed ? 'lg:ml-[68px]' : 'lg:ml-64'
         }`}
       >
         <Header

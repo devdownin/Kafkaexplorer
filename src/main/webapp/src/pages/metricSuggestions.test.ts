@@ -3,10 +3,13 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  describeEvidence, dismiss, dismissedSuggestions, DISMISSED_KEY, readDismissed, restore,
-  sourceLabel, stalenessNote, suggestionTopics, suggestionToDraft, visibleSuggestions,
+  describeEvidence, dismiss, dismissedSuggestions, DISMISSED_KEY, newerAuditNote, newestUsableRun,
+  readDismissed, restore, sourceLabel, stalenessNote, suggestionTopics, suggestionToDraft,
+  visibleSuggestions,
 } from './metricSuggestions';
-import type { MetricConfig, MetricSuggestion, MetricSuggestions } from '../api/types';
+import type {
+  AuditHistory, AuditRunSummary, MetricConfig, MetricSuggestion, MetricSuggestions,
+} from '../api/types';
 
 const NOW = 1_700_000_000_000;
 
@@ -256,5 +259,90 @@ describe('sourceLabel', () => {
   it('falls back to the raw value rather than rendering nothing', () => {
     // Le serveur peut connaître une source que cette version du front ignore.
     expect(sourceLabel('SOMETHING_NEW' as never)).toBe('SOMETHING_NEW');
+  });
+});
+
+// ── Un audit plus récent ─────────────────────────────────────────────────────
+
+function run(overrides: Partial<AuditRunSummary> = {}): AuditRunSummary {
+  return {
+    auditId: 'run-2', status: 'COMPLETED', timestamp: NOW, durationMs: 4200,
+    totalTopics: 12, totalMessages: 340, criticalTopicsCount: 0, warningTopicsCount: 1,
+    healthScore: 0.9, topicPrefix: null, legacy: false,
+    ...overrides,
+  };
+}
+
+function history(...runs: AuditRunSummary[]): AuditHistory {
+  return { runs, recordsScanned: runs.length, exhausted: true, warnings: [] };
+}
+
+describe('newestUsableRun', () => {
+  it('takes the newest run the server would actually derive from', () => {
+    // `listHistory()` répond du plus récent au plus ancien.
+    const usable = newestUsableRun(history(run({ auditId: 'run-3' }), run({ auditId: 'run-2' })));
+    expect(usable?.auditId).toBe('run-3');
+  });
+
+  it('skips a legacy run and a failed one — the server refuses both', () => {
+    const usable = newestUsableRun(history(
+      run({ auditId: 'run-9', legacy: true }),
+      run({ auditId: 'run-8', status: 'FAILED' }),
+      run({ auditId: 'run-7' }),
+    ));
+    expect(usable?.auditId).toBe('run-7');
+  });
+
+  it('answers null rather than guessing when the history could not be read', () => {
+    expect(newestUsableRun(null)).toBeNull();
+    expect(newestUsableRun(history())).toBeNull();
+  });
+});
+
+describe('newerAuditNote', () => {
+  it('says nothing when the displayed proposals rest on the newest run', () => {
+    expect(newerAuditNote(response({ auditId: 'run-2' }), history(run({ auditId: 'run-2' })))).toBeNull();
+  });
+
+  it('names the more recent run and asks for a re-derivation', () => {
+    const note = newerAuditNote(
+      response({ auditId: 'run-1', auditTimestamp: NOW - 86_400_000 }),
+      history(run({ auditId: 'run-2', timestamp: NOW })),
+    );
+    expect(note).toContain('A more recent audit');
+    expect(note).toContain('Re-derive');
+  });
+
+  it('an audit in flight is not evidence, and the wording says so', () => {
+    // Le serveur refuse un rapport RUNNING : sa liste de topics change entre deux sondages.
+    const note = newerAuditNote(
+      response({ auditId: 'run-1' }),
+      history(run({ auditId: 'run-2', status: 'RUNNING' }), run({ auditId: 'run-1' })),
+    );
+    expect(note).toBe('An audit is running. These proposals rest on an earlier run — re-derive once it finishes.');
+  });
+
+  it('a first audit unlocks cards rather than replacing thresholds', () => {
+    const note = newerAuditNote(
+      response({ auditAvailable: false, auditId: null, auditTimestamp: null }),
+      history(run({ auditId: 'run-2' })),
+    );
+    expect(note).toContain('has run since');
+    expect(note).toContain('unlocks');
+  });
+
+  /*
+   * Le type est écrit à la main : croire qu'il décrit ce qui arrive vraiment est ce qui avait tué
+   * la page Compare. Une réponse sans `runs` doit rendre un `null`, pas faire tomber la page.
+   */
+  it('survives a response whose shape is not the one the type promises', () => {
+    expect(newestUsableRun({} as AuditHistory)).toBeNull();
+    expect(newerAuditNote(response(), {} as AuditHistory)).toBeNull();
+  });
+
+  it('says nothing when there is nothing to compare', () => {
+    expect(newerAuditNote(null, history(run()))).toBeNull();
+    expect(newerAuditNote(response(), null)).toBeNull();
+    expect(newerAuditNote(response(), history())).toBeNull();
   });
 });

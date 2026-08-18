@@ -27,6 +27,8 @@ interface Props {
   response: MetricSuggestions | null;
   loading: boolean;
   error: QueryErrorInfo | null;
+  /** Un audit plus récent que celui dont ces cartes sont issues, s'il y en a un. */
+  newerAudit: string | null;
   onRefresh: () => void;
   onAdopt: (suggestion: MetricSuggestion) => void;
 }
@@ -113,7 +115,10 @@ const SuggestionCard: React.FC<{
         </p>
       )}
 
-      <div className="flex items-center gap-2 mt-auto pt-1">
+      {/* `flex-wrap` : à 310 px de carte les deux boutons demandent 320 px et la rangée débordait
+          d'un conteneur en `overflow: hidden` — la fin du second bouton n'était atteignable par
+          rien (W7 de MOBILE-LAYOUT-SCOPE.md). */}
+      <div className="flex flex-wrap items-center gap-2 mt-auto pt-1">
         <Button
           variant={suggestion.alreadyConfigured ? 'ghost' : 'primary'}
           size="sm"
@@ -130,7 +135,7 @@ const SuggestionCard: React.FC<{
   );
 };
 
-export const SuggestionsPanel: React.FC<Props> = ({ response, loading, error, onRefresh, onAdopt }) => {
+export const SuggestionsPanel: React.FC<Props> = ({ response, loading, error, newerAudit, onRefresh, onAdopt }) => {
   const [dismissed, setDismissed] = useState<string[]>(() => readDismissed());
   const [showDismissed, setShowDismissed] = useState(false);
 
@@ -157,6 +162,18 @@ export const SuggestionsPanel: React.FC<Props> = ({ response, loading, error, on
       </div>
 
       {error && <div className="mb-3"><ErrorPanel error={error} /></div>}
+
+      {/* Une observation plus fraîche existe : le dire, et rendre le geste immédiat — le panneau
+          ne dérive qu'au chargement, donc sans ça un audit lancé ailleurs reste invisible ici. */}
+      {newerAudit && (
+        <div className="mb-3 flex items-start gap-2 text-[11px] text-warning">
+          <span aria-hidden="true" className="material-symbols-outlined text-[14px] mt-0.5">update</span>
+          <span>{newerAudit}</span>
+          <Button variant="ghost" size="sm" icon="refresh" onClick={onRefresh} disabled={loading}>
+            Re-derive now
+          </Button>
+        </div>
+      )}
 
       {staleness && (
         <p className="text-[11px] text-warning mb-3 flex items-start gap-1.5">

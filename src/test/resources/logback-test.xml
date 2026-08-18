@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SPDX-License-Identifier: AGPL-3.0-or-later
+  Copyright (C) 2026 Kafka Explorer Contributors
+
+  Test-only logging, and it exists for one reason: a failing build has to be readable.
+
+  KafkaClusterIntegrationTest starts a broker through Testcontainers, and when that container
+  fails to launch, every KafkaConsumer and AdminClient still open in the suite spends its
+  shutdown retrying against an address that answers nothing — at INFO, `AdminMetadataManager`
+  alone prints thousands of "Metadata update failed" lines. The Testcontainers exception that
+  says *why* the container did not start is then several thousand lines above the end of the
+  log, and GitHub's job-log API only serves the tail: the one line a maintainer needs is the
+  one the noise pushed out of reach. That happened three times in thirteen hours before this
+  file existed, and each diagnosis had to stop at "the container did not start".
+
+  So: the Kafka clients are raised to WARN for tests only, and Testcontainers is left at INFO
+  so container startup, image pulls and wait strategies stay visible. Everything else keeps the
+  root level — this is about removing repetition, not about hiding failures.
+-->
+<configuration>
+  <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} -- %msg%n</pattern>
+    </encoder>
+  </appender>
+
+  <!-- Retry storms during teardown, not information. -->
+  <logger name="org.apache.kafka" level="WARN"/>
+
+  <!-- The half that has to stay: why a container did or did not start. -->
+  <logger name="org.testcontainers" level="INFO"/>
+  <logger name="tc" level="INFO"/>
+  <logger name="com.github.dockerjava" level="WARN"/>
+
+  <logger name="com.compagnonsdudev.kafkasqlexplorer" level="INFO"/>
+
+  <root level="INFO">
+    <appender-ref ref="CONSOLE"/>
+  </root>
+</configuration>
