@@ -7,6 +7,7 @@ import axios from 'axios';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useCatalog } from '../catalogStore';
 import { useIsDesktop } from '../breakpoints';
+import { addTopicEntries, describeTopicEntry } from '../topicSelection';
 import { Button, EmptyState, ErrorPanel, Badge, TopicInput } from '../components/ui';
 import { useToast } from '../components/Toast';
 import { describeApiError } from './queryError';
@@ -15,7 +16,6 @@ import type { DataModelEntity, DataModelResponse } from '../api/types';
 import {
   MAX_TOPICS, NODE_W, HEADER_H, ROW_H,
   filterTopics, toggleTopic, selectAll, topicsFromQuery, buildQuery,
-  addTopicEntries, describeTopicEntry,
   displayedColumns, entityHeight, computeLayout, computeEdgeGeometry, splitByConnectivity,
   crowFootPath, oneBarPath, graphBounds, fitTransform, topicDomains, domainColors,
   formatCount, describeRelation, matchingColumns, describeColumnMatches,
@@ -177,7 +177,7 @@ const DataModel: React.FC = () => {
    * que ce qu'on a demandé.
    */
   const addTopics = useCallback(() => {
-    const entry = addTopicEntries(selection, topicDraft, catalogTopics);
+    const entry = addTopicEntries(selection, topicDraft, catalogTopics, MAX_TOPICS);
     setSelection(entry.selection);
     setTopicDraft('');
     const note = describeTopicEntry(entry);
