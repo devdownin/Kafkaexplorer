@@ -6,9 +6,10 @@ import type { DataModelEntity, DataModelRelation, DataModelResponse } from '../a
 import {
   MAX_TOPICS, MAX_COLUMNS_SHOWN, NODE_W, HEADER_H, ROW_H, FOOTER_H, DOMAIN_PALETTE,
   filterTopics, toggleTopic, selectAll, topicsFromQuery, buildQuery,
-  displayedColumns, entityHeight, computeLayout, describeModel,
+  displayedColumns, entityHeight, computeLayout, describeModel, splitByConnectivity,
   columnRowY, anchorSpread, computeEdgeGeometry, crowFootPath, oneBarPath,
   graphBounds, fitTransform, topicDomains, domainColors,
+  formatCount, describeRelation, matchingColumns, describeColumnMatches,
 } from './dataModel';
 
 function entity(id: string, columnCount: number, overrides: Partial<DataModelEntity> = {}): DataModelEntity {
@@ -318,5 +319,99 @@ describe('describeModel', () => {
   it('singular forms read correctly', () => {
     expect(describeModel({ ...base, topicsRequested: 1, topicsAnalyzed: 1 }))
       .toBe('1 entity · 0 relations deduced');
+  });
+});
+
+describe('splitByConnectivity', () => {
+  it('separates entities a relation touches from those none does', () => {
+    const a = entity('a', 1);
+    const b = entity('b', 1);
+    const lonely = entity('lonely', 1);
+    const { connected, isolated } = splitByConnectivity(
+      [a, b, lonely], [relation('a', 'b')]);
+    expect(connected.map(e => e.id)).toEqual(['a', 'b']);
+    expect(isolated.map(e => e.id)).toEqual(['lonely']);
+  });
+
+  it('a self-relation and a relation to an unknown entity connect nothing', () => {
+    const { connected, isolated } = splitByConnectivity(
+      [entity('a', 1)], [relation('a', 'a'), relation('a', 'ghost')]);
+    expect(connected).toHaveLength(0);
+    expect(isolated.map(e => e.id)).toEqual(['a']);
+  });
+});
+
+describe('formatCount', () => {
+  it('compacts thousands and millions, keeps small numbers whole', () => {
+    expect(formatCount(847)).toBe('847');
+    expect(formatCount(12_340)).toBe('12.3K');
+    expect(formatCount(1_250_000)).toBe('1.3M');
+    expect(formatCount(0)).toBe('0');
+  });
+
+  it('says so rather than printing a number it does not have', () => {
+    expect(formatCount(Number.NaN)).toBe('—');
+    expect(formatCount(Number.POSITIVE_INFINITY)).toBe('—');
+  });
+});
+
+describe('describeRelation', () => {
+  it('states the link, the grade and the evidence in one sentence', () => {
+    const described = describeRelation({
+      from: 'demo_payments', to: 'demo_orders',
+      fromColumn: 'order_id', toColumn: 'order_id',
+      confidence: 'HIGH', reason: "'order_id' names topic 'demo.orders'.",
+    });
+    expect(described).toBe(
+      "demo_payments.order_id → demo_orders.order_id · high confidence · "
+      + "'order_id' names topic 'demo.orders'.");
+  });
+
+  it('omits the target column when the target has no matching key', () => {
+    expect(describeRelation(relation('a', 'b', 'x_id'))).toContain('a.x_id → b ·');
+  });
+});
+
+describe('matchingColumns / describeColumnMatches', () => {
+  const orders = entity('orders', 2, {
+    columns: [
+      { name: 'order_id', type: 'STRING', primaryKey: true, references: null },
+      { name: 'amount', type: 'DOUBLE', primaryKey: false, references: null },
+    ],
+  });
+  const payments = entity('payments', 2, {
+    columns: [
+      { name: 'ORDER_ID', type: 'STRING', primaryKey: false, references: 'orders' },
+      { name: 'customer.id', type: 'STRING', primaryKey: false, references: null },
+    ],
+  });
+
+  it('matches as a case-insensitive substring of the whole path', () => {
+    const matches = matchingColumns([orders, payments], 'order_id');
+    expect([...matches.get('orders')!]).toEqual(['order_id']);
+    expect([...matches.get('payments')!]).toEqual(['ORDER_ID']);
+  });
+
+  it('a nested path answers to either half of it', () => {
+    expect(matchingColumns([payments], 'customer').get('payments')).toBeDefined();
+    expect(matchingColumns([payments], 'id').get('payments')!.size).toBe(2);
+  });
+
+  it('an empty term designates nothing — highlighting everything says nothing', () => {
+    expect(matchingColumns([orders, payments], '   ').size).toBe(0);
+    expect(describeColumnMatches(new Map(), '  ')).toBe('');
+  });
+
+  it('zero reads as a zero, not as an absent answer', () => {
+    const matches = matchingColumns([orders], 'nope');
+    expect(matches.size).toBe(0);
+    expect(describeColumnMatches(matches, 'nope')).toBe('No column matches “nope”');
+  });
+
+  it('counts columns and entities, singular forms included', () => {
+    expect(describeColumnMatches(matchingColumns([orders, payments], 'order_id'), 'order_id'))
+      .toBe('2 columns in 2 entities');
+    expect(describeColumnMatches(matchingColumns([orders], 'amount'), 'amount'))
+      .toBe('1 column in 1 entity');
   });
 });

@@ -12,10 +12,12 @@ import type { DataModelEntity, DataModelResponse } from '../api/types';
 import {
   MAX_TOPICS, NODE_W, HEADER_H, ROW_H,
   filterTopics, toggleTopic, selectAll, topicsFromQuery, buildQuery,
-  displayedColumns, entityHeight, computeLayout, computeEdgeGeometry,
+  displayedColumns, entityHeight, computeLayout, computeEdgeGeometry, splitByConnectivity,
   crowFootPath, oneBarPath, graphBounds, fitTransform, topicDomains, domainColors,
+  formatCount, describeRelation, matchingColumns, describeColumnMatches,
   CONFIDENCE_STYLE, describeModel,
 } from './dataModel';
+import type { DataModelRelation } from '../api/types';
 
 /**
  * La page Modèle de données : une sélection de topics → les entités (topics lus comme des
@@ -32,11 +34,16 @@ const EntityNode: React.FC<{
   dimmed: boolean;
   /** Teinte du domaine du topic — c'est elle qui fait apparaître les sous-systèmes. */
   tint: { header: string; accent: string };
+  /** Colonnes que la recherche de champ désigne dans cette entité. */
+  highlighted: Set<string> | undefined;
   onClick: () => void;
-}> = ({ entity, x, y, selected, dimmed, tint, onClick }) => {
+}> = ({ entity, x, y, selected, dimmed, tint, highlighted, onClick }) => {
   const { columns, hidden } = displayedColumns(entity);
   const height = entityHeight(entity);
   const stroke = selected ? '#ffffff' : tint.accent;
+  const exactCount = entity.messageCount !== null
+    ? `${entity.messageCount.toLocaleString()} messages`
+    : 'message count unavailable';
 
   return (
     <g
@@ -44,7 +51,7 @@ const EntityNode: React.FC<{
       tabIndex={0}
       role="button"
       aria-pressed={selected}
-      aria-label={`${entity.id}, ${entity.columns.length} columns`}
+      aria-label={`${entity.id}, ${entity.columns.length} columns, ${exactCount}`}
       className="cursor-pointer focus:outline-none"
       style={{ opacity: dimmed ? 0.15 : 1, transition: 'opacity 0.15s' }}
       onClick={onClick}
@@ -55,6 +62,9 @@ const EntityNode: React.FC<{
         onClick();
       }}
     >
+      {/* Le compte de l'en-tête est abrégé faute de place ; l'exact voyage ici — un nombre
+          compacté sans son original est une information qu'on ne peut plus vérifier. */}
+      <title>{`${entity.topic} · ${exactCount}`}</title>
       {selected && (
         <rect x={x - 4} y={y - 4} width={NODE_W + 8} height={height + 8} rx={10}
           fill={tint.accent} fillOpacity={0.08} stroke={tint.accent} strokeWidth={1} strokeOpacity={0.3} />
@@ -71,7 +81,7 @@ const EntityNode: React.FC<{
       <text x={x + 10} y={y + 33} fill="#79839a" fontSize={9} fontFamily="Inter, sans-serif">
         {entity.topic.length > 32 ? entity.topic.slice(0, 31) + '…' : entity.topic}
         {entity.format ? ` · ${entity.format}` : ''}
-        {entity.messageCount !== null ? ` · ${entity.messageCount.toLocaleString()} msg` : ''}
+        {entity.messageCount !== null ? ` · ${formatCount(entity.messageCount)} msg` : ''}
       </text>
       <line x1={x} y1={y + HEADER_H} x2={x + NODE_W} y2={y + HEADER_H}
         stroke={tint.accent} strokeOpacity={0.35} />
@@ -80,10 +90,16 @@ const EntityNode: React.FC<{
         const rowY = y + HEADER_H + (i + 1) * ROW_H - 6;
         const marker = column.primaryKey ? '🔑' : column.references ? '→' : '';
         const name = column.name.length > 22 ? column.name.slice(0, 21) + '…' : column.name;
+        const lit = highlighted?.has(column.name) ?? false;
         return (
           <g key={column.name}>
+            {lit && (
+              <rect x={x + 4} y={rowY - ROW_H + 6} width={NODE_W - 8} height={ROW_H} rx={3}
+                fill="#f5c264" fillOpacity={0.18} />
+            )}
             <text x={x + 10} y={rowY} fontSize={10} fontFamily="JetBrains Mono, monospace"
-              fill={column.primaryKey ? '#7ee2a8' : column.references ? '#f5c264' : '#c5cad6'}>
+              fontWeight={lit ? 'bold' : 'normal'}
+              fill={lit ? '#f5c264' : column.primaryKey ? '#7ee2a8' : column.references ? '#f5c264' : '#c5cad6'}>
               {marker ? `${marker} ` : ''}{name}
             </text>
             <text x={x + NODE_W - 10} y={rowY} textAnchor="end" fontSize={9}
@@ -118,6 +134,13 @@ const DataModel: React.FC = () => {
   const [error, setError] = useState<QueryErrorInfo | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
+  /** Recherche d'un champ à travers les entités — « qui d'autre transporte cette clé ? ». */
+  const [columnQuery, setColumnQuery] = useState('');
+  /** Les entités sans relation encombrent le diagramme ; repliées par défaut, jamais cachées. */
+  const [showUnrelated, setShowUnrelated] = useState(false);
+  const [unrelatedOpen, setUnrelatedOpen] = useState(false);
+  /** Infobulle d'arête : la preuve de la déduction, au survol comme au focus clavier. */
+  const [edgeTip, setEdgeTip] = useState<{ relation: DataModelRelation; x: number; y: number } | null>(null);
 
   const svgRef = useRef<SVGSVGElement>(null);
   const isPanning = useRef(false);
@@ -180,12 +203,24 @@ const DataModel: React.FC = () => {
 
   const entities = useMemo(() => model?.entities ?? [], [model]);
   const relations = useMemo(() => model?.relations ?? [], [model]);
-  const positions = useMemo(() => computeLayout(entities, relations), [entities, relations]);
+  /** Toutes les entités restent inspectables ; seul le graphe se restreint. */
   const entityById = useMemo(() => new Map(entities.map(e => [e.id, e])), [entities]);
+  const { connected, isolated } = useMemo(
+    () => splitByConnectivity(entities, relations), [entities, relations]);
+  /** Ce que le graphe dessine : sans les entités isolées, elles diluent le signal — les relations. */
+  const graphEntities = useMemo(
+    () => (showUnrelated || isolated.length === entities.length ? entities : connected),
+    [showUnrelated, entities, connected, isolated.length]);
+  const positions = useMemo(
+    () => computeLayout(graphEntities, relations), [graphEntities, relations]);
   /** Géométrie des arêtes : ancrées sur les lignes de colonnes, écartées quand elles se partagent une ancre. */
   const edgeGeometry = useMemo(
-    () => computeEdgeGeometry(relations, entities, positions),
-    [relations, entities, positions]);
+    () => computeEdgeGeometry(relations, graphEntities, positions),
+    [relations, graphEntities, positions]);
+  const columnMatches = useMemo(
+    () => matchingColumns(entities, columnQuery), [entities, columnQuery]);
+  const columnMatchNote = useMemo(
+    () => describeColumnMatches(columnMatches, columnQuery), [columnMatches, columnQuery]);
   const domains = useMemo(() => topicDomains(entities.map(e => e.topic)), [entities]);
   const tints = useMemo(() => domainColors(domains), [domains]);
   const tintOf = useCallback((topic: string) =>
@@ -195,14 +230,19 @@ const DataModel: React.FC = () => {
     () => [...tints.entries()].filter(() => tints.size > 1),
     [tints]);
 
+  /**
+   * Le voisinage à mettre en avant. `null` quand la sélection n'est pas *dans* le graphe — une
+   * entité choisie dans la liste des sans-relation n'a aucun voisin à souligner, et estomper
+   * tout le diagramme pour l'annoncer serait pire que ne rien faire.
+   */
   const neighborIds = useMemo<Set<string> | null>(() => {
-    if (!selectedId) return null;
+    if (!selectedId || !positions[selectedId]) return null;
     const ids = new Set<string>([selectedId]);
     relations.forEach(r => {
       if (r.from === selectedId || r.to === selectedId) { ids.add(r.from); ids.add(r.to); }
     });
     return ids;
-  }, [selectedId, relations]);
+  }, [selectedId, relations, positions]);
 
   const selectedRelations = useMemo(
     () => (selectedId ? relations.filter(r => r.from === selectedId || r.to === selectedId) : []),
@@ -251,6 +291,7 @@ const DataModel: React.FC = () => {
     const dy = e.clientY - lastPos.current.y;
     lastPos.current = { x: e.clientX, y: e.clientY };
     setTransform(t => ({ ...t, x: t.x + dx, y: t.y + dy }));
+    setEdgeTip(null);
   }, []);
   const onPointerUp = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
     isPanning.current = false;
@@ -260,10 +301,10 @@ const DataModel: React.FC = () => {
   /** Cadre le graphe entier dans le viewport — le geste de reset, et celui d'après-génération. */
   const fitToViewport = useCallback(() => {
     const rect = svgRef.current?.getBoundingClientRect();
-    const bounds = graphBounds(entities, positions);
+    const bounds = graphBounds(graphEntities, positions);
     if (!rect || !bounds || rect.width === 0) return;
     setTransform(fitTransform(bounds, rect.width, rect.height));
-  }, [entities, positions]);
+  }, [graphEntities, positions]);
 
   // Après une génération, le SVG du nouveau modèle est monté à ce moment-là seulement.
   useEffect(() => {
@@ -282,7 +323,7 @@ const DataModel: React.FC = () => {
       case '+': case '=': zoomFromCenter(1.25); break;
       case '-': case '_': zoomFromCenter(0.8); break;
       case '0': fitToViewport(); break;
-      case 'Escape': setSelectedId(null); break;
+      case 'Escape': setSelectedId(null); setEdgeTip(null); break;
       default: return;
     }
     e.preventDefault();
@@ -292,6 +333,30 @@ const DataModel: React.FC = () => {
 
   return (
     <div style={{ position: 'absolute', inset: 0, display: 'flex', overflow: 'hidden' }}>
+
+      {/* ── Infobulle d'arête : la preuve de la déduction, au survol comme au focus clavier ──
+          Une relation est une affirmation ; sa justification ne doit pas n'être atteignable
+          qu'en ouvrant l'inspecteur du nœud. */}
+      {edgeTip && (
+        <div
+          style={{ position: 'fixed', left: edgeTip.x + 14, top: edgeTip.y - 70, zIndex: 100, pointerEvents: 'none' }}
+          className="bg-background-dark/95 border border-outline-variant rounded-lg px-3 py-2 shadow-2xl text-xs max-w-[280px]"
+          role="tooltip"
+        >
+          <p className="font-mono text-on-surface break-all leading-snug">
+            {edgeTip.relation.from}.{edgeTip.relation.fromColumn}
+            {' → '}
+            {edgeTip.relation.to}{edgeTip.relation.toColumn ? `.${edgeTip.relation.toColumn}` : ''}
+          </p>
+          <p className="text-[10px] font-bold uppercase mt-1"
+            style={{ color: CONFIDENCE_STYLE[edgeTip.relation.confidence].color }}>
+            {edgeTip.relation.confidence} confidence
+          </p>
+          <p className="text-on-surface-variant text-[11px] mt-1 leading-snug">
+            {edgeTip.relation.reason}
+          </p>
+        </div>
+      )}
 
       {/* ── Panneau de sélection ── */}
       <aside className="w-64 border-r border-outline-variant/60 bg-background-dark flex flex-col shrink-0">
@@ -356,6 +421,83 @@ const DataModel: React.FC = () => {
               The selection changed since this model was built — regenerate to match it.
             </p>
           )}
+
+          {/* Recherche d'un champ à travers les entités : « qui d'autre transporte cette
+              clé ? » est la question qu'on se pose devant ce diagramme, et la réponse est déjà
+              côté navigateur — aucune requête. */}
+          {model && entities.length > 0 && (
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2 bg-surface-container-low border border-outline-variant rounded-md px-2.5 py-1.5 focus-within:border-primary/40 transition-colors">
+                <span aria-hidden="true" className="material-symbols-outlined text-on-surface-variant text-base shrink-0">manage_search</span>
+                <input
+                  value={columnQuery}
+                  onChange={e => setColumnQuery(e.target.value)}
+                  placeholder="Highlight a field…"
+                  aria-label="Highlight a field across entities"
+                  className="bg-transparent outline-none text-xs text-on-surface w-full placeholder:text-outline"
+                />
+                {columnQuery && (
+                  <button onClick={() => setColumnQuery('')} aria-label="Clear field highlight"
+                    className="text-outline hover:text-on-surface shrink-0">
+                    <span aria-hidden="true" className="material-symbols-outlined text-sm">close</span>
+                  </button>
+                )}
+              </div>
+              {columnMatchNote && (
+                <p className={`text-[10px] leading-snug ${columnMatches.size === 0 ? 'text-outline' : 'text-[#f5c264]'}`}
+                  role="status">
+                  {columnMatchNote}
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Entités qu'aucune relation ne touche : elles diluent le signal du diagramme, qui
+              est justement les relations. Rangées à part — comptées, ouvrables, inspectables —
+              plutôt que cachées ou étalées sous le graphe. */}
+          {model && isolated.length > 0 && connected.length > 0 && (
+            <div className="space-y-1">
+              <button
+                onClick={() => setUnrelatedOpen(open => !open)}
+                aria-expanded={unrelatedOpen}
+                className="w-full flex items-center gap-1.5 text-[10px] font-bold text-on-surface-variant uppercase tracking-wider hover:text-on-surface transition-colors"
+              >
+                <span aria-hidden="true" className="material-symbols-outlined text-[14px]">
+                  {unrelatedOpen ? 'expand_more' : 'chevron_right'}
+                </span>
+                No deduced relation ({isolated.length})
+              </button>
+              {unrelatedOpen && (
+                <div className="space-y-1 pl-1">
+                  {isolated.map(entity => (
+                    <button
+                      key={entity.id}
+                      onClick={() => setSelectedId(prev => (prev === entity.id ? null : entity.id))}
+                      className={`w-full text-left text-[11px] font-mono truncate px-1.5 py-1 rounded transition-colors ${
+                        selectedId === entity.id
+                          ? 'bg-primary/15 text-on-surface'
+                          : 'text-on-surface-variant hover:bg-surface-container-high'
+                      }`}
+                      title={entity.topic}
+                    >
+                      {entity.id}
+                    </button>
+                  ))}
+                  <label className="flex items-center gap-2 text-[10px] text-on-surface-variant pt-1 cursor-pointer">
+                    <input type="checkbox" checked={showUnrelated}
+                      onChange={() => {
+                        // Le graphe change de taille : il faut le recadrer, sinon les nœuds
+                        // qui apparaissent le font hors de l'écran.
+                        pendingFit.current = true;
+                        setShowUnrelated(v => !v);
+                      }}
+                      className="accent-[#a3adff] shrink-0" />
+                    Draw them in the diagram
+                  </label>
+                </div>
+              )}
+            </div>
+          )}
           {/* Légende des confiances : une arête déduite doit dire sur quoi elle repose. */}
           {model && relations.length > 0 && (
             <div className="space-y-1">
@@ -401,6 +543,13 @@ const DataModel: React.FC = () => {
               <>
                 <span className="text-primary/40">/</span>
                 <span className="text-primary font-semibold">{describeModel(model)}</span>
+                {/* Une entité absente du diagramme doit se dire ici : le compte ci-dessus est
+                    celui du modèle, pas celui de ce qui est dessiné. */}
+                {graphEntities.length < entities.length && (
+                  <span className="px-1.5 py-0.5 rounded bg-warning/20 text-warning text-[9px] font-bold uppercase">
+                    {entities.length - graphEntities.length} not drawn
+                  </span>
+                )}
               </>
             )}
           </div>
@@ -414,7 +563,7 @@ const DataModel: React.FC = () => {
         </div>
 
         {/* Zoom */}
-        {model && entities.length > 0 && (
+        {model && graphEntities.length > 0 && (
           <div className="absolute bottom-6 left-4 z-10 flex flex-col bg-surface-container border border-outline-variant rounded-xl overflow-hidden shadow-xl">
             <button onClick={() => zoomFromCenter(1.25)} aria-label="Zoom in"
               className="p-2 hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface border-b border-outline-variant/60 transition-colors">
@@ -455,7 +604,7 @@ const DataModel: React.FC = () => {
           </div>
         )}
 
-        {model && entities.length > 0 && (
+        {model && graphEntities.length > 0 && (
           <svg
             ref={svgRef}
             className="w-full h-full select-none focus:outline-none focus-visible:ring-1 focus-visible:ring-primary/60"
@@ -487,22 +636,46 @@ const DataModel: React.FC = () => {
                 const mx = (x1 + x2) / 2;
                 const opacity = dim ? 0.06 : hi ? 0.95 : 0.55;
 
+                const curve = `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`;
+                const showTip = (clientX: number, clientY: number) =>
+                  setEdgeTip({ relation, x: clientX, y: clientY });
+
                 return (
-                  <g key={i} opacity={opacity}>
+                  <g
+                    key={i}
+                    opacity={opacity}
+                    data-node="true"
+                    tabIndex={dim ? -1 : 0}
+                    role="button"
+                    aria-label={describeRelation(relation)}
+                    className="focus:outline-none"
+                    onMouseEnter={e => { if (!isPanning.current) showTip(e.clientX, e.clientY); }}
+                    onMouseLeave={() => setEdgeTip(null)}
+                    onFocus={e => {
+                      const box = (e.currentTarget as SVGGElement).getBoundingClientRect();
+                      showTip(box.left + box.width / 2, box.top);
+                    }}
+                    onBlur={() => setEdgeTip(null)}
+                  >
+                    {/* Cible de survol : un trait de 1,5 px ne s'attrape pas à la souris. */}
+                    <path d={curve} fill="none" stroke="transparent" strokeWidth={14}
+                      pointerEvents={dim ? 'none' : 'stroke'} />
                     <path
-                      d={`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`}
+                      d={curve}
                       fill="none"
                       stroke={style.color}
                       strokeWidth={hi ? 2.2 : 1.5}
                       strokeDasharray={style.dash}
+                      pointerEvents="none"
                     />
                     <path d={crowFootPath(x1, y1, d1)} fill="none" stroke={style.color}
-                      strokeWidth={hi ? 1.8 : 1.3} />
+                      strokeWidth={hi ? 1.8 : 1.3} pointerEvents="none" />
                     <path d={oneBarPath(x2, y2, d2)} fill="none" stroke={style.color}
-                      strokeWidth={hi ? 1.8 : 1.3} />
+                      strokeWidth={hi ? 1.8 : 1.3} pointerEvents="none" />
                     {!dim && (
                       <text x={mx} y={(y1 + y2) / 2 - 6} textAnchor="middle" fill={style.color}
-                        fontSize={9} fontFamily="JetBrains Mono, monospace" opacity={hi ? 1 : 0.7}>
+                        fontSize={9} fontFamily="JetBrains Mono, monospace"
+                        opacity={hi ? 1 : 0.7} pointerEvents="none">
                         {relation.fromColumn}
                       </text>
                     )}
@@ -511,7 +684,7 @@ const DataModel: React.FC = () => {
               })}
 
               {/* Nœuds */}
-              {entities.map(entity => {
+              {graphEntities.map(entity => {
                 const pos = positions[entity.id];
                 if (!pos) return null;
                 return (
@@ -522,6 +695,7 @@ const DataModel: React.FC = () => {
                     selected={selectedId === entity.id}
                     dimmed={neighborIds !== null && !neighborIds.has(entity.id)}
                     tint={tintOf(entity.topic)}
+                    highlighted={columnMatches.get(entity.id)}
                     onClick={() => setSelectedId(prev => (prev === entity.id ? null : entity.id))}
                   />
                 );

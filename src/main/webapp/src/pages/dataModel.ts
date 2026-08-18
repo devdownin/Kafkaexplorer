@@ -111,6 +111,29 @@ const ORPHAN_COLS = 4;
 export type Positions = Record<string, { x: number; y: number }>;
 
 /**
+ * Sépare les entités qu'au moins une relation touche de celles qu'aucune ne touche. Une seule
+ * définition, parce que la page et la disposition posent la même question : la première pour
+ * ranger les entités sans relation dans une section à part, la seconde pour ne pas les faire
+ * entrer dans les couches.
+ */
+export function splitByConnectivity(
+  entities: DataModelEntity[],
+  relations: DataModelRelation[],
+): { connected: DataModelEntity[]; isolated: DataModelEntity[] } {
+  const known = new Set(entities.map(e => e.id));
+  const touched = new Set<string>();
+  relations.forEach(r => {
+    if (!known.has(r.from) || !known.has(r.to) || r.from === r.to) return;
+    touched.add(r.from);
+    touched.add(r.to);
+  });
+  return {
+    connected: entities.filter(e => touched.has(e.id)),
+    isolated: entities.filter(e => !touched.has(e.id)),
+  };
+}
+
+/**
  * Disposition en couches, celle du graphe de lignage : les entités que personne ne référence
  * ouvrent la première colonne, chaque relation pousse sa cible d'une colonne vers la droite.
  * Les hauteurs de nœuds sont réelles (elles varient avec le nombre de colonnes), et les
@@ -125,20 +148,16 @@ export function computeLayout(
   const known = new Set(entities.map(e => e.id));
   const adjacency = new Map<string, string[]>();
   const inDegree = new Map<string, number>();
-  const touched = new Set<string>();
   entities.forEach(e => { adjacency.set(e.id, []); inDegree.set(e.id, 0); });
   relations.forEach(r => {
     if (!known.has(r.from) || !known.has(r.to)) return;
     if (r.from === r.to) return;
     adjacency.get(r.from)!.push(r.to);
     inDegree.set(r.to, (inDegree.get(r.to) ?? 0) + 1);
-    touched.add(r.from);
-    touched.add(r.to);
   });
 
   const byId = new Map(entities.map(e => [e.id, e]));
-  const connected = entities.filter(e => touched.has(e.id));
-  const isolated = entities.filter(e => !touched.has(e.id));
+  const { connected, isolated } = splitByConnectivity(entities, relations);
 
   const layers: string[][] = [];
   const visited = new Set<string>();
@@ -401,6 +420,68 @@ export const CONFIDENCE_STYLE: Record<RelationConfidence, { dash: string | undef
   MEDIUM: { dash: '6 4',     color: '#f5c264', label: 'name match only' },
   LOW:    { dash: '2 4',     color: '#79839a', label: 'shared key column' },
 };
+
+/**
+ * Compte compacté pour l'en-tête d'un nœud, dont la largeur est fixe : `1.2M`, `12.3K`, `847`.
+ * La valeur exacte voyage à côté (`<title>` sur le nœud), convention du dépôt — un nombre
+ * abrégé sans son original est une information qu'on ne peut plus vérifier.
+ */
+export function formatCount(value: number): string {
+  if (!Number.isFinite(value)) return '—';
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+  return String(value);
+}
+
+/**
+ * Ce qu'une arête dit, en une phrase : la relation, la colonne qui la porte, son grade et la
+ * preuve exacte que le serveur a énoncée. Sert à la fois d'infobulle et de nom accessible —
+ * une explication que seule la souris atteint n'est pas une explication.
+ */
+export function describeRelation(relation: DataModelRelation): string {
+  const target = relation.toColumn ? ` → ${relation.to}.${relation.toColumn}` : ` → ${relation.to}`;
+  return `${relation.from}.${relation.fromColumn}${target} · `
+    + `${relation.confidence.toLowerCase()} confidence · ${relation.reason}`;
+}
+
+// ── Recherche d'un champ à travers les entités ────────────────────────────────
+
+/**
+ * Les colonnes que le terme désigne, par entité — « qui d'autre transporte cette clé ? » est
+ * la question qu'on se pose devant ce diagramme, et la réponse est déjà côté navigateur, donc
+ * elle ne coûte aucune requête. Sous-chaîne insensible à la casse, sur le chemin complet, pour
+ * qu'un `customer.id` réponde autant à `customer` qu'à `id`. Un terme vide ne désigne rien :
+ * tout surligner et ne rien surligner disent la même chose.
+ */
+export function matchingColumns(
+  entities: DataModelEntity[],
+  term: string,
+): Map<string, Set<string>> {
+  const needle = term.trim().toLowerCase();
+  const matches = new Map<string, Set<string>>();
+  if (!needle) return matches;
+  for (const entity of entities) {
+    const hit = entity.columns
+      .filter(c => c.name.toLowerCase().includes(needle))
+      .map(c => c.name);
+    if (hit.length > 0) matches.set(entity.id, new Set(hit));
+  }
+  return matches;
+}
+
+/**
+ * Ce que la recherche a trouvé, en toutes lettres. Zéro doit se lire comme un zéro — « aucune
+ * colonne ne porte ce nom » — et non comme l'absence de réponse.
+ */
+export function describeColumnMatches(matches: Map<string, Set<string>>, term: string): string {
+  if (!term.trim()) return '';
+  if (matches.size === 0) return `No column matches “${term.trim()}”`;
+  const columns = [...matches.values()].reduce((n, set) => n + set.size, 0);
+  const entityWord = matches.size === 1 ? 'entity' : 'entities';
+  const columnWord = columns === 1 ? 'column' : 'columns';
+  return `${columns} ${columnWord} in ${matches.size} ${entityWord}`;
+}
 
 /**
  * La ligne de couverture : ce que le modèle couvre réellement. « 3 entities · 2 relations »
