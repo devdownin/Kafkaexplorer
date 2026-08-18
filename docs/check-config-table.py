@@ -117,6 +117,7 @@ VERSION_CLAIMS = [
 BADGES = [
     ('Java', ('property', 'java.version'), EXACT),
     ('Kafka', ('property', 'kafka.version'), PREFIX),
+    ('Flink', ('property', 'flink.version'), PREFIX),
 ]
 
 # Version claims that describe the PAST on purpose, exempted by name so that each is a
