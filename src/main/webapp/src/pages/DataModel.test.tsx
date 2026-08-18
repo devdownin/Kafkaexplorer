@@ -28,7 +28,10 @@ const mockedAxios = vi.mocked(axios, true);
 
 vi.mock('../catalogStore', () => ({
   useCatalog: () => ({
-    topics: ['demo.orders.1.received', 'demo.payments.authorized', 'internal.audit.history'],
+    topics: [
+      'demo.orders.1.received', 'demo.orders.2.validated',
+      'demo.payments.authorized', 'internal.audit.history',
+    ],
     tables: [],
   }),
 }));
@@ -121,6 +124,44 @@ describe('DataModel page', () => {
     // C'est là que le geste suivant est justement de choisir des topics.
     await openTopics(user);
     expect(await screen.findByLabelText('Filter topics')).toBeInTheDocument();
+  });
+
+  it('takes a pattern and expands it over the catalogue, like Stream Flow does', async () => {
+    const user = userEvent.setup();
+    stubApi();
+    await renderPage();
+
+    await openTopics(user);
+    await user.type(
+      screen.getByLabelText('Add topics by name, list or pattern'),
+      'demo.orders.*{Enter}');
+
+    // Les deux topics du motif sont cochés, sans requête supplémentaire : le catalogue est
+    // déjà en mémoire.
+    await waitFor(() => expect(
+      screen.getByRole('checkbox', { name: /demo.orders.1.received/ })).toBeChecked());
+    expect(screen.getByRole('checkbox', { name: /demo.orders.2.validated/ })).toBeChecked();
+
+    await user.click(screen.getByRole('button', { name: /Generate model/ }));
+    await waitFor(() => expect(mockedAxios.post).toHaveBeenCalledWith(
+      '/api/data-model',
+      { topics: ['demo.orders.1.received', 'demo.orders.2.validated'] },
+      expect.anything(),
+    ));
+  });
+
+  it('reports a pattern that matches nothing rather than sending it as a topic name', async () => {
+    const user = userEvent.setup();
+    stubApi();
+    await renderPage();
+
+    await openTopics(user);
+    await user.type(
+      screen.getByLabelText('Add topics by name, list or pattern'),
+      'nope.*{Enter}');
+
+    expect(await screen.findByText(/no topic matches nope\.\*/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Generate model/ })).toBeDisabled();
   });
 
   it('posts the selected topics and nothing else', async () => {

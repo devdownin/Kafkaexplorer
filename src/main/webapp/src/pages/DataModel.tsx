@@ -7,13 +7,15 @@ import axios from 'axios';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useCatalog } from '../catalogStore';
 import { useIsDesktop } from '../breakpoints';
-import { Button, EmptyState, ErrorPanel, Badge } from '../components/ui';
+import { Button, EmptyState, ErrorPanel, Badge, TopicInput } from '../components/ui';
+import { useToast } from '../components/Toast';
 import { describeApiError } from './queryError';
 import type { QueryErrorInfo } from './queryError';
 import type { DataModelEntity, DataModelResponse } from '../api/types';
 import {
   MAX_TOPICS, NODE_W, HEADER_H, ROW_H,
   filterTopics, toggleTopic, selectAll, topicsFromQuery, buildQuery,
+  addTopicEntries, describeTopicEntry,
   displayedColumns, entityHeight, computeLayout, computeEdgeGeometry, splitByConnectivity,
   crowFootPath, oneBarPath, graphBounds, fitTransform, topicDomains, domainColors,
   formatCount, describeRelation, matchingColumns, describeColumnMatches,
@@ -126,6 +128,7 @@ const EntityNode: React.FC<{
 
 const DataModel: React.FC = () => {
   const { topics: catalogTopics } = useCatalog();
+  const { toast } = useToast();
   /**
    * Sous le seuil desktop, les deux panneaux latéraux deviennent des tiroirs superposés. Fixes,
    * ils coûtaient 576 px de chrome sur une largeur qui n'en a pas 1024 : le canevas — la seule
@@ -139,6 +142,8 @@ const DataModel: React.FC = () => {
 
   const [selection, setSelection] = useState<string[]>([]);
   const [filter, setFilter] = useState('');
+  /** Saisie libre : un nom, une liste collée, ou un motif `demo.orders.*` — comme Stream Flow. */
+  const [topicDraft, setTopicDraft] = useState('');
   const [model, setModel] = useState<DataModelResponse | null>(null);
   const [ranTopics, setRanTopics] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
@@ -164,6 +169,23 @@ const DataModel: React.FC = () => {
   const selfWrittenSearch = useRef<string | null>(null);
   /** Vrai entre une génération réussie et le cadrage du graphe fraîchement monté. */
   const pendingFit = useRef(false);
+
+  /**
+   * Ajoute la saisie à la sélection. Elle peut valoir plusieurs topics — une liste collée depuis
+   * un runbook, ou un motif étendu sur le catalogue déjà chargé. Ce qui n'est pas entré est dit :
+   * un motif sans correspondance et un plafond atteint sont deux façons de repartir avec moins
+   * que ce qu'on a demandé.
+   */
+  const addTopics = useCallback(() => {
+    const entry = addTopicEntries(selection, topicDraft, catalogTopics);
+    setSelection(entry.selection);
+    setTopicDraft('');
+    const note = describeTopicEntry(entry);
+    if (note) {
+      toast(note, entry.unmatched.length > 0 || entry.overflow.length > 0 ? 'error' : 'success');
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- toast est stable
+  }, [selection, topicDraft, catalogTopics]);
 
   const generate = useCallback(async (topics: string[]) => {
     if (topics.length === 0) return;
@@ -506,12 +528,22 @@ const DataModel: React.FC = () => {
               </button>
             )}
           </div>
+          {/* Saisie libre, comme Stream Flow : un pipeline se connaît par listes, et cocher
+              trente cases une par une n'est pas le geste d'un opérateur qui sait ce qu'il cherche. */}
+          <TopicInput
+            aria-label="Add topics by name, list or pattern"
+            value={topicDraft}
+            onChange={setTopicDraft}
+            onEnter={addTopics}
+            placeholder="Topic, demo.orders.*, or a pasted list…"
+          />
+
           <div className="flex items-center gap-2 bg-surface-container-low border border-outline-variant rounded-md px-2.5 py-1.5 focus-within:border-primary/40 transition-colors">
             <span aria-hidden="true" className="material-symbols-outlined text-on-surface-variant text-base shrink-0">search</span>
             <input
               value={filter}
               onChange={e => setFilter(e.target.value)}
-              placeholder="Filter topics…"
+              placeholder="Filter the list below…"
               aria-label="Filter topics"
               className="bg-transparent outline-none text-xs text-on-surface w-full placeholder:text-outline"
             />

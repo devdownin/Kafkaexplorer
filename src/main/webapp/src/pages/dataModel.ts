@@ -14,6 +14,9 @@ import type {
   DataModelResponse,
   RelationConfidence,
 } from '../api/types';
+// Réutilisés, pas réécrits : c'est la même question que Stream Flow pose — « quels topics ? » —
+// et deux découpages de liste qui divergent seraient deux comportements pour un seul geste.
+import { expandTopicPatterns, parseTopicList } from './streamFlow';
 
 /** Miroir du plafond serveur (`DataModelService.MAX_TOPICS`) : l'UI prévient avant d'envoyer. */
 export const MAX_TOPICS = 30;
@@ -46,6 +49,85 @@ export function selectAll(selection: string[], visible: string[]): string[] {
     if (!next.includes(topic)) next.push(topic);
   }
   return next;
+}
+
+/**
+ * Ce qu'une saisie a produit : la nouvelle sélection, ce qui s'y est ajouté, les motifs sans
+ * correspondance et ce que le plafond a refusé. Les trois dernières listes existent pour être
+ * dites — un ajout partiel silencieux laisserait croire que tout est entré.
+ */
+export interface TopicEntry {
+  selection: string[];
+  added: string[];
+  /** Motifs qui ne correspondent à aucun topic du catalogue. */
+  unmatched: string[];
+  /** Topics laissés dehors par le plafond de la requête. */
+  overflow: string[];
+}
+
+/**
+ * Ajoute une saisie à la sélection : un nom, une liste collée, ou un motif `demo.orders.*`.
+ *
+ * Même geste que Stream Flow, et les mêmes deux fonctions : `parseTopicList` sépare sur les
+ * virgules, les espaces et les sauts de ligne — une liste sortie d'un runbook ou d'un
+ * `kafka-topics --list` entre d'un coup — et `expandTopicPatterns` étend les motifs sur le
+ * catalogue que `Layout` interroge déjà, sans requête supplémentaire. Un motif sans
+ * correspondance est **rendu**, pas envoyé comme nom de topic : il n'en est pas un.
+ *
+ * Deux différences avec le sélecteur en cases à cocher, et elles sont assumées. Le plafond de
+ * {@link MAX_TOPICS} s'applique — c'est celui du serveur — et ce qu'il refuse est rendu plutôt
+ * que tronqué en silence. Et les topics `internal.*` ne sont **pas** écartés ici, là où
+ * `selectAll` les saute : cocher « tout ce qui est affiché » est un geste en bloc sur une liste
+ * filtrée, alors qu'un motif tapé à la main est une demande explicite, qu'il faut honorer telle
+ * quelle.
+ */
+export function addTopicEntries(
+  selection: string[],
+  text: string,
+  catalog: string[],
+): TopicEntry {
+  const entries = parseTopicList(text);
+  if (entries.length === 0) {
+    return { selection, added: [], unmatched: [], overflow: [] };
+  }
+
+  const { topics, unmatched } = expandTopicPatterns(entries, catalog);
+  const next = [...selection];
+  const added: string[] = [];
+  const overflow: string[] = [];
+  for (const topic of topics) {
+    if (next.includes(topic)) continue;
+    if (next.length >= MAX_TOPICS) {
+      overflow.push(topic);
+      continue;
+    }
+    next.push(topic);
+    added.push(topic);
+  }
+  return { selection: next, added, unmatched, overflow };
+}
+
+/**
+ * Le résultat d'une saisie, en une phrase — ou `null` quand il n'y a rien à dire. Ce qui n'a pas
+ * été ajouté doit s'énoncer : un motif qui ne correspond à rien et un plafond atteint sont deux
+ * façons différentes de repartir avec moins que ce qu'on a demandé.
+ */
+export function describeTopicEntry(entry: TopicEntry): string | null {
+  const parts: string[] = [];
+  if (entry.added.length > 0) {
+    parts.push(`${entry.added.length} topic${entry.added.length > 1 ? 's' : ''} added`);
+  }
+  if (entry.unmatched.length > 0) {
+    parts.push(`no topic matches ${entry.unmatched.join(', ')}`);
+  }
+  if (entry.overflow.length > 0) {
+    parts.push(`${entry.overflow.length} left out — the request is capped at ${MAX_TOPICS} topics`);
+  }
+  if (parts.length === 0) {
+    // Tout était déjà là : le dire, sinon la saisie semble n'avoir rien fait.
+    return entry.selection.length > 0 ? 'Already selected' : null;
+  }
+  return parts.join(' · ');
 }
 
 // ── Aller-retour par l'URL (même convention que Stream Flow) ──────────────────
