@@ -36,6 +36,8 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 class MetricSuggestionServiceTest {
 
@@ -352,6 +354,41 @@ class MetricSuggestionServiceTest {
         assertTrue(result.suggestions().stream().noneMatch(s -> s.id().startsWith("lineage:")),
             "two inputs and one output have no ratio to threshold: " + result.suggestions());
         assertTrue(result.notes().stream().anyMatch(n -> n.contains("several sources")), result.notes().toString());
+    }
+
+    /**
+     * Resolving a statement is a Flink parse under the runtime's read lock, taken on every load of
+     * the Metrics page, so this family is capped like every other one — and the cut is by start
+     * time, since the map of active jobs has no order of its own.
+     */
+    @Test
+    void onlyTheMostRecentlyStartedJobsAreResolvedAndTheRestAreCounted() {
+        Map<String, FlinkSqlService.JobInfo> jobs = new java.util.HashMap<>();
+        for (int i = 0; i < 15; i++) {
+            String source = "src_" + i;
+            String target = "dst_" + i;
+            String sql = "INSERT INTO " + target + " SELECT * FROM " + source;
+            FlinkSqlService.JobInfo job = mock(FlinkSqlService.JobInfo.class);
+            when(job.sql()).thenReturn(sql);
+            when(job.queryId()).thenReturn("q-" + i);
+            when(job.startedAt()).thenReturn(1_700_000_000_000L + i);   // the higher i, the newer
+            jobs.put("q-" + i, job);
+            when(lineageService.dependenciesOf(sql))
+                .thenReturn(new LineageService.SqlDependencies(java.util.Set.of(source), target, true));
+        }
+        when(flinkSqlService.getActiveJobsDetails()).thenReturn(jobs);
+
+        MetricSuggestions result = service.suggest(null);
+
+        assertEquals(12, result.suggestions().stream().filter(s -> s.source() == MetricSuggestionSource.LINEAGE).count());
+        // The parse is what costs, so it is the parse that is bounded: three jobs are never read.
+        verify(lineageService, times(12)).dependenciesOf(anyString());
+        // The newest survive the cut, the oldest are the ones dropped.
+        assertTrue(result.suggestions().stream().anyMatch(s -> s.id().equals("lineage:flow-gap:src_14>dst_14")));
+        assertTrue(result.suggestions().stream().noneMatch(s -> s.id().equals("lineage:flow-gap:src_0>dst_0")));
+        // And what was not read is said, never silently absent.
+        assertTrue(result.notes().stream().anyMatch(n -> n.contains("3 further running job")),
+            result.notes().toString());
     }
 
     @Test

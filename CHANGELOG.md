@@ -213,10 +213,19 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The KPI suggestions read every running Flink job on every load of the Metrics page.** Resolving
+  a statement is a Flink parse taken under the runtime's read lock, and the lineage family was the
+  only one of the five that was not capped. It now resolves the 12 most recently started
+  `INSERT INTO` jobs and counts the rest in a note — by start time rather than in map order, since
+  `getActiveJobsDetails()` returns a `Map.copyOf` whose iteration order would have made the jobs
+  read vary between two calls.
 - **A template metric took the whole Metrics page down.** Its `sql` is `null` by construction —
   the parameters are the query — and `MetricCard` called `metric.sql.replace(…)` on it, so the
   page rendered its error boundary instead of the metric. The type said `string`, which it had
   never been. Found by the screenshot harness, pinned by the page's first component test.
+- `POST /api/metrics/suggestions` had no test, on a body that is optional and a record that grew a
+  component after it shipped — the exact binding failure `StreamFlowControllerTest` exists to
+  catch. `MetricControllerTest` pins the four shapes the browser and a hand-written call produce.
 - **Three dead references in `CLAUDE.md`.** `AUDIT.md` and `CONSUMER-GROUPS-AUDIT.md` were
   described as documents to read before refactoring, and `deploy/kraft-platform/` was cited in a
   rule about `container_name`; all three had been deleted from the tree, two of them months

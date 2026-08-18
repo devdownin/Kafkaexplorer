@@ -11,9 +11,9 @@
  * carte appelait `.replace()` dessus, ce qui faisait tomber la page entière. Le cas est pinné ici.
  *
  * Monaco est neutralisé : l'éditeur SQL du modal n'entre dans aucune des assertions et jsdom ne
- * sait pas le disposer. `ResizeObserver` est bouché pour la même raison — les graphes Recharts des
- * cartes s'en servent, jsdom ne le fournit pas, et sans lui la page tombe dans sa frontière
- * d'erreur avant d'avoir rendu quoi que ce soit d'observable.
+ * sait pas le disposer. `ResizeObserver`, dont les graphes Recharts des cartes ont besoin, est
+ * bouché dans `src/test/setup.ts` — jsdom ne le fournit pas, et sans lui la page tombe dans sa
+ * frontière d'erreur avant d'avoir rendu quoi que ce soit d'observable.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -110,16 +110,9 @@ async function renderPage() {
   );
 }
 
-class ResizeObserverStub {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
-}
-
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
-  vi.stubGlobal('ResizeObserver', ResizeObserverStub);
 });
 
 describe('Metrics page', () => {

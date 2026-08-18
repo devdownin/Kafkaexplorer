@@ -83,6 +83,17 @@ public class MetricSuggestionService {
      * coordinator round trip (cached 30 s), so the flagged topics are taken a few at a time.
      */
     private static final int MAX_TIME_LAG_TOPICS = 3;
+    /**
+     * Running jobs whose statement is resolved to find the pipeline edge it declares.
+     *
+     * <p>Resolving one is a Flink parse taken under the runtime's read lock, and this runs on
+     * every load of the Metrics page — so it is bounded like every other family here rather than
+     * scaling with whatever the cluster happens to be running. The cut is by start time, newest
+     * first: a job started recently is the one an operator is most likely to be watching, and the
+     * map {@code getActiveJobsDetails} hands back has no order of its own, so without a sort the
+     * jobs that got read would vary between two calls.
+     */
+    private static final int MAX_LINEAGE_JOBS = 12;
     /** Column names that carry a business key, best first. */
     private static final List<String> KEY_COLUMN_CANDIDATES =
         List.of("id", "order_id", "event_id", "correlation_id", "transaction_id", "key", "uuid");
@@ -762,15 +773,30 @@ public class MetricSuggestionService {
         }
         if (jobs == null || jobs.isEmpty()) return List.of();
 
+        // Only INSERT statements declare an edge, and that test is a string comparison — so it
+        // runs on every job, and the cap applies to the parses, which are what actually cost.
+        List<Map.Entry<String, FlinkSqlService.JobInfo>> inserting = jobs.entrySet().stream()
+            .filter(entry -> {
+                String sql = entry.getValue().sql();
+                return sql != null && sql.toUpperCase(Locale.ROOT).contains("INSERT INTO");
+            })
+            .sorted(Comparator.comparingLong((Map.Entry<String, FlinkSqlService.JobInfo> e) ->
+                e.getValue().startedAt()).reversed())
+            .toList();
+
+        int unread = Math.max(0, inserting.size() - MAX_LINEAGE_JOBS);
+        if (unread > 0) {
+            notes.add(unread + " further running job(s) were not resolved: the "
+                + MAX_LINEAGE_JOBS + " most recently started are read, since resolving a statement "
+                + "costs a Flink parse on every load of this page.");
+        }
+
         List<MetricSuggestion> suggestions = new ArrayList<>();
         int joins = 0;
-        for (Map.Entry<String, FlinkSqlService.JobInfo> entry : jobs.entrySet()) {
-            String sql = entry.getValue().sql();
-            if (sql == null || !sql.toUpperCase(Locale.ROOT).contains("INSERT INTO")) continue;
-
+        for (Map.Entry<String, FlinkSqlService.JobInfo> entry : inserting.stream().limit(MAX_LINEAGE_JOBS).toList()) {
             LineageService.SqlDependencies dependencies;
             try {
-                dependencies = lineageService.dependenciesOf(sql);
+                dependencies = lineageService.dependenciesOf(entry.getValue().sql());
             } catch (Exception e) {
                 log.debug("Job {} could not be resolved while suggesting metrics: {}", entry.getKey(), e.toString());
                 continue;
