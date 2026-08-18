@@ -29,6 +29,7 @@ export const NAV_ITEMS: NavItem[] = [
   { name: 'Cluster',        icon: 'hub',             path: '/cluster',        group: 'Observe' },
 
   { name: 'Lineage',        icon: 'account_tree',    path: '/lineage',        group: 'Analyze' },
+  { name: 'Data Model',     icon: 'schema',          path: '/data-model',     group: 'Analyze' },
   { name: 'Process Mining', icon: 'query_stats',     path: '/process-mining', group: 'Analyze' },
 ];
 

@@ -602,3 +602,67 @@ export interface AuditHistory {
   exhausted: boolean;
   warnings: string[];
 }
+
+/**
+ * Une colonne d'une entité du modèle de données. Les chemins imbriqués gardent leur notation
+ * pointée (`customer.address.city`).
+ *
+ * @java DataModelColumn
+ */
+export interface DataModelColumn {
+  name: string;
+  type: string;
+  primaryKey: boolean;
+  /** Id de l'entité que cette colonne référence, `null` pour une colonne ordinaire. */
+  references: string | null;
+}
+
+/**
+ * Un nœud du modèle de données : un topic Kafka lu comme une table. `primaryKey` est détectée,
+ * jamais inventée — `null` quand rien d'identifiant n'a été trouvé — et `messageCount` nullable
+ * parce qu'un comptage qui n'a pas pu être lu n'est pas un topic vide.
+ *
+ * @java DataModelEntity
+ */
+export interface DataModelEntity {
+  id: string;
+  topic: string;
+  format: MessageFormat | null;
+  columns: DataModelColumn[];
+  primaryKey: string | null;
+  messageCount: number | null;
+}
+
+/** @java RelationConfidence */
+export type RelationConfidence = 'HIGH' | 'MEDIUM' | 'LOW';
+
+/**
+ * Une relation déduite — jamais observée, Kafka n'a pas de clés étrangères — donc chaque arête
+ * porte la preuve sur laquelle elle repose et le grade de cette preuve.
+ *
+ * @java DataModelRelation
+ */
+export interface DataModelRelation {
+  from: string;
+  to: string;
+  fromColumn: string;
+  toColumn: string | null;
+  confidence: RelationConfidence;
+  reason: string;
+}
+
+/**
+ * `POST /api/data-model` — le modèle déduit, avec les bornes de ce qui a réellement été lu :
+ * un topic sans schéma, au-delà du plafond ou dont la lecture a échoué est nommé dans
+ * `warnings`, jamais silencieusement absent du graphe.
+ *
+ * @java DataModelResponse
+ */
+export interface DataModelResponse {
+  entities: DataModelEntity[];
+  relations: DataModelRelation[];
+  warnings: string[];
+  topicsRequested: number;
+  topicsAnalyzed: number;
+  truncated: boolean;
+}
