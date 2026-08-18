@@ -564,3 +564,41 @@ export interface LlmUsage {
   provider: string;
   model: string;
 }
+
+/**
+ * Une ligne de l'historique d'audit : de quoi comparer des runs sans charger les rapports.
+ *
+ * Déclarée ici plutôt qu'au point d'appel parce qu'elle en a maintenant deux — la page Audit, qui
+ * liste les runs passés, et la page Métriques, qui compare l'identifiant du dernier run à celui
+ * dont ses propositions sont issues. Une forme anonyme dupliquée est exactement ce qui a tué la
+ * page Compare.
+ *
+ * @java AuditRunSummary
+ */
+export interface AuditRunSummary {
+  auditId: string;
+  status: string;
+  timestamp: number;
+  durationMs: number | null;
+  totalTopics: number;
+  totalMessages: number;
+  criticalTopicsCount: number;
+  warningTopicsCount: number;
+  healthScore: number | null;
+  topicPrefix: string | null;
+  /** Enregistré avant la sévérité graduée : forme illisible par la vue actuelle. */
+  legacy: boolean;
+}
+
+/**
+ * L'historique borné, avec ce que la lecture a couvert — une liste qui montrerait 20 runs sur 500
+ * sans le dire se lirait « le cluster n'a jamais été audité avant ».
+ *
+ * @java AuditHistory
+ */
+export interface AuditHistory {
+  runs: AuditRunSummary[];
+  recordsScanned: number;
+  exhausted: boolean;
+  warnings: string[];
+}

@@ -211,8 +211,31 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   string-literal union where Java declares `String`: widening the frontend to `string` to satisfy
   the script would have deleted real type safety in the name of a check that exists to provide it.
 
+### Added
+
+- **The Process Mining field mappings are persisted** to `internal.field.mappings`, keyed by
+  mapping id. It was the only artefact this application produces by *correcting a model* and then
+  threw away: a restart lost every mapping, the KPI suggestions reported one they could no longer
+  resolve, and getting it back meant replaying two model calls to re-derive something an operator
+  had already fixed by hand. The restore is bounded and best-effort — driven by the end offsets, an
+  unreadable record costs that record and not the restore, and a broker that cannot be reached at
+  startup leaves an empty store and a log line rather than a boot that hangs.
+- **The Metrics page says when the audit its proposals rest on has moved on.** The panel derived on
+  page load and never again, so an audit run in another tab left thresholds computed from the
+  previous run without a word. It now distinguishes the three cases that call for different
+  gestures: a run in flight (not evidence yet — the server refuses a `RUNNING` report), a first
+  audit (which unlocks cards that did not exist), and a newer run (which replaces what the
+  thresholds rest on), with a re-derive button beside the sentence.
+
 ### Fixed
 
+- **A failed container launch could fail a release.** `KafkaClusterIntegrationTest` started its
+  Testcontainers broker with no startup retry, and a launch that failed — twice in twelve hours on
+  hosted runners, once on a pull request and once on a push to `main` — took the whole `mvn verify`
+  down with it, its own assertions never having run. Survivable on a pull request, where a re-run
+  costs minutes; not on `release.yml`, which gates a tag on the same `verify`. One retry on the
+  launch, and a startup timeout sized for a cold image pull. The retry deliberately does not cover
+  the assertions: a broker that started and then misbehaved is a finding.
 - **The KPI suggestions read every running Flink job on every load of the Metrics page.** Resolving
   a statement is a Flink parse taken under the runtime's read lock, and the lineage family was the
   only one of the five that was not capped. It now resolves the 12 most recently started

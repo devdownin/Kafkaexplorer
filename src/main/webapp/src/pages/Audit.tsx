@@ -8,7 +8,7 @@ import {
   PageHeader, Button, Stat, Badge, EmptyState, Card, Input, Select, Tooltip,
   Table, TableHead, TableBody, TableRow, Th, Td, TopicInput, type BadgeTone,
 } from '../components/ui';
-import type { AuditReport, HealthStatus } from '../api/types';
+import type { AuditHistory, AuditReport, AuditRunSummary, HealthStatus } from '../api/types';
 
 // L'enum Java `HealthStatus`, dont la forme est vérifiée dans api/types.ts. Le nom local est
 // conservé : il porte le sens qu'il a sur cette page, et il est déjà utilisé partout ici.
@@ -54,28 +54,6 @@ interface GlobalStats {
   metadataVersionWarning?: string;
   laggingFeatures?: LaggingFeature[];
   options?: Partial<AuditOptions> & { topicPrefix?: string | null };
-}
-
-interface AuditRunSummary {
-  auditId: string;
-  status: string;
-  timestamp: number;
-  durationMs: number | null;
-  totalTopics: number;
-  totalMessages: number;
-  criticalTopicsCount: number;
-  warningTopicsCount: number;
-  healthScore: number | null;
-  topicPrefix: string | null;
-  /** Enregistré avant la sévérité graduée : forme illisible par la vue actuelle. */
-  legacy: boolean;
-}
-
-interface AuditHistory {
-  runs: AuditRunSummary[];
-  recordsScanned: number;
-  exhausted: boolean;
-  warnings: string[];
 }
 
 type ChangeKind = 'ADDED' | 'REMOVED' | 'REGRESSED' | 'IMPROVED' | 'ISSUES_CHANGED';

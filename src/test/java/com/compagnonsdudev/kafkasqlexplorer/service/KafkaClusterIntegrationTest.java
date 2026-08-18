@@ -39,8 +39,31 @@ import static org.junit.jupiter.api.Assertions.*;
 @Testcontainers(disabledWithoutDocker = true)
 class KafkaClusterIntegrationTest {
 
+    /**
+     * Two knobs beyond the image, and neither is decoration.
+     *
+     * <p>{@code withStartupAttempts(2)} exists because a launch that fails is not a test that
+     * failed: it happened twice in twelve hours on hosted runners — once here, once on a push to
+     * {@code main} — and it takes the whole {@code mvn verify} down with it, this class's own
+     * assertions never having run. That is survivable on a pull request, where a re-run costs a
+     * few minutes; it is not on {@code release.yml}, which gates a tag on the same {@code verify}
+     * and offers no way to retry without cutting the version again. One retry turns the commonest
+     * infrastructure hiccup into a delay instead of a failed release.
+     *
+     * <p>The startup timeout is raised from the 60 s default because it is measured against a
+     * cold pull of the image on a runner that may also be pulling for the {@code docker} job:
+     * the wait strategy is what decides whether a slow pull reads as a broken broker. Both are
+     * bounded — this must never become an unbounded wait, which is how a wedged container turns
+     * into a six-hour job.
+     *
+     * <p>Deliberately <em>not</em> a retry around the assertions: a broker that started and then
+     * misbehaved is a finding, and re-running that would hide exactly what this class exists to
+     * catch.
+     */
     @Container
-    static final KafkaContainer KAFKA = new KafkaContainer(DockerImageName.parse("apache/kafka-native:4.3.1"));
+    static final KafkaContainer KAFKA = new KafkaContainer(DockerImageName.parse("apache/kafka-native:4.3.1"))
+        .withStartupAttempts(2)
+        .withStartupTimeout(Duration.ofMinutes(3));
 
     private static final String TOPIC = "it.orders.json";
 

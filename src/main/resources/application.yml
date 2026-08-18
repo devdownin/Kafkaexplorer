@@ -55,6 +55,10 @@ explorer:
   # address is shown beside it on hover, and that one is read from the running configuration.
   cluster-name: Kafka cluster
   audit-history-topic: internal.audit.history
+  # Where the field mappings validated in Process Mining are kept, keyed by mapping id (so the
+  # topic is meant to be compacted). The mapping is the only human-corrected artefact this app
+  # produces; it used to live in memory alone and a restart lost it.
+  field-mapping-topic: internal.field.mappings
   # Records read from the end of the history topic when listing past runs (bounded scan).
   audit-history-max-records: 200
   default-max-rows: 50

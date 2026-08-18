@@ -3,6 +3,8 @@
 package com.compagnonsdudev.kafkasqlexplorer.web;
 
 import com.compagnonsdudev.kafkasqlexplorer.service.AuditPromptCatalog;
+import com.compagnonsdudev.kafkasqlexplorer.config.ExplorerConfig;
+import com.compagnonsdudev.kafkasqlexplorer.config.KafkaConfig;
 import com.compagnonsdudev.kafkasqlexplorer.service.FieldMappingStore;
 import com.compagnonsdudev.kafkasqlexplorer.service.FieldProfilingService;
 import com.compagnonsdudev.kafkasqlexplorer.service.KafkaLiveConsumer;
@@ -47,7 +49,7 @@ class ProcessMiningControllerTest {
                 kafkaLiveConsumer,
                 Mockito.mock(SseEmitterManager.class),
                 Mockito.mock(AuditPromptCatalog.class),
-                new FieldMappingStore()))
+                new FieldMappingStore(new KafkaConfig(), new ExplorerConfig())))
             .build();
     }
 

@@ -39,6 +39,14 @@ public class ExplorerConfig {
      */
     private int auditHistoryMaxRecords = 200;
     private String metricsConfigTopic = "internal.metrics.config";
+    /**
+     * Where the field mappings validated in Process Mining are kept.
+     *
+     * <p>Keyed by mapping id, so the topic is meant to be compacted: only the last version of a
+     * mapping matters. The store bounds what it holds in memory anyway, and a restore replays in
+     * offset order, so an uncompacted topic costs a longer startup read rather than a wrong answer.
+     */
+    private String fieldMappingTopic = "internal.field.mappings";
     private int defaultMaxRows = 50;
     private long defaultQueryTimeoutMs = 10000;
     private long auditQueryTimeoutMs = 5000;
@@ -188,6 +196,14 @@ public class ExplorerConfig {
 
     public void setMetricsConfigTopic(String metricsConfigTopic) {
         this.metricsConfigTopic = metricsConfigTopic;
+    }
+
+    public String getFieldMappingTopic() {
+        return fieldMappingTopic;
+    }
+
+    public void setFieldMappingTopic(String fieldMappingTopic) {
+        this.fieldMappingTopic = fieldMappingTopic;
     }
 
     public int getDefaultMaxRows() {

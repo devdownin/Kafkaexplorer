@@ -23,10 +23,10 @@ import { clearDraft, readDraft, writeDraft } from '../draftStore';
 import { copyText } from '../clipboard';
 // La forme vit dans api/types.ts, où check-api-types.py la résout contre le record Java —
 // une interface écrite dans la page est exactement ce qui a divergé sans bruit ailleurs.
-import type { MetricConfig, MetricSuggestion, MetricSuggestions, MetricTestResponse } from '../api/types';
+import type { AuditHistory, MetricConfig, MetricSuggestion, MetricSuggestions, MetricTestResponse } from '../api/types';
 import { SuggestionsPanel } from '../components/metrics/SuggestionsPanel';
 import { readFlowChains } from './flowChains';
-import { suggestionToDraft } from './metricSuggestions';
+import { newerAuditNote, suggestionToDraft } from './metricSuggestions';
 
 interface MetricTemplateDescriptor {
   type: string;
@@ -752,6 +752,12 @@ const Metrics: React.FC = () => {
   const [suggestions, setSuggestions] = useState<MetricSuggestions | null>(null);
   const [suggestionsLoading, setSuggestionsLoading] = useState(true);
   const [suggestionsError, setSuggestionsError] = useState<QueryErrorInfo | null>(null);
+  /*
+   * L'historique d'audit, lu pour une seule question : le dernier run est-il celui dont ces
+   * propositions sont issues ? Les résumés, pas les rapports — un rapport porte une entrée par
+   * topic, et cette page n'a besoin que d'un identifiant et d'une date.
+   */
+  const [auditHistory, setAuditHistory] = useState<AuditHistory | null>(null);
 
   const fetchMetrics = useCallback(async () => {
     try {
@@ -785,10 +791,22 @@ const Metrics: React.FC = () => {
     }
   }, []);
 
+  const fetchAuditHistory = useCallback(async () => {
+    try {
+      const res = await axios.get<AuditHistory>('/api/audit/history');
+      setAuditHistory(res.data);
+    } catch {
+      // Muet : ne pas pouvoir dire « un audit plus récent existe » n'est pas une panne de cette
+      // page, et une erreur de plus ne dirait rien de ce que les cartes affichent.
+      setAuditHistory(null);
+    }
+  }, []);
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- chargement au montage
     fetchMetrics();
     void fetchSuggestions();
+    void fetchAuditHistory();
     axios.get<Record<string, string[]>>('/api/metrics/metadata').then(r => setMetadata(r.data)).catch(() => { toast('Failed to load table metadata', 'error'); });
     axios.get<{ bootstrapServers: string }>('/api/config').then(r => {
       if (r.data.bootstrapServers) setBootstrapServers(r.data.bootstrapServers);
@@ -923,6 +941,18 @@ const Metrics: React.FC = () => {
    * seuils, description — mais reste une proposition : rien n'est enregistré tant que le geste
    * n'est pas fait, et la prévisualisation est là pour vérifier la colonne de clé déduite.
    */
+  /*
+   * Relu au retour sur l'onglet, pas en boucle : l'audit se lance depuis une autre page, donc le
+   * moment où la réponse peut avoir changé est exactement celui où l'on revient ici.
+   */
+  useEffect(() => {
+    const onFocus = () => void fetchAuditHistory();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [fetchAuditHistory]);
+
+  const newerAudit = useMemo(() => newerAuditNote(suggestions, auditHistory), [suggestions, auditHistory]);
+
   const openSuggestion = (suggestion: MetricSuggestion) => {
     const draft = suggestionToDraft(suggestion);
     setEditingMetric({ ...EMPTY_METRIC, ...draft });
@@ -1219,6 +1249,7 @@ const Metrics: React.FC = () => {
         response={suggestions}
         loading={suggestionsLoading}
         error={suggestionsError}
+        newerAudit={newerAudit}
         onRefresh={() => void fetchSuggestions()}
         onAdopt={openSuggestion}
       />

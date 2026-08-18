@@ -66,6 +66,7 @@ function renderPanel(props: Partial<React.ComponentProps<typeof SuggestionsPanel
         response={response()}
         loading={false}
         error={null}
+        newerAudit={null}
         onRefresh={onRefresh}
         onAdopt={onAdopt}
         {...props}
@@ -182,5 +183,23 @@ describe('SuggestionsPanel', () => {
     });
 
     expect(screen.getByText('Failed to derive suggested KPIs.')).toBeInTheDocument();
+  });
+});
+
+describe('un audit plus récent', () => {
+  it('renders the note and offers to re-derive on the spot', async () => {
+    const user = userEvent.setup();
+    const { onRefresh } = renderPanel({ newerAudit: 'A more recent audit ran on 14/08/2026.' });
+
+    expect(screen.getByText('A more recent audit ran on 14/08/2026.')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /Re-derive now/ }));
+
+    expect(onRefresh).toHaveBeenCalled();
+  });
+
+  it('shows nothing when the displayed run is the newest one', () => {
+    renderPanel({ newerAudit: null });
+
+    expect(screen.queryByRole('button', { name: /Re-derive now/ })).toBeNull();
   });
 });

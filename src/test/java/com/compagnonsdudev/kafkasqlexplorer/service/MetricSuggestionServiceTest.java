@@ -58,7 +58,15 @@ class MetricSuggestionServiceTest {
         flinkSqlService = mock(FlinkSqlService.class);
         kafkaAdminService = mock(KafkaAdminService.class);
         lineageService = mock(LineageService.class);
-        fieldMappingStore = new FieldMappingStore();
+        // The store persists to Kafka; the seam keeps this suite broker-free.
+        fieldMappingStore = new FieldMappingStore(new com.compagnonsdudev.kafkasqlexplorer.config.KafkaConfig(), new ExplorerConfig()) {
+            @Override
+            org.apache.kafka.clients.producer.Producer<String, String> createProducer() {
+                return new org.apache.kafka.clients.producer.MockProducer<>(true, null,
+                    new org.apache.kafka.common.serialization.StringSerializer(),
+                    new org.apache.kafka.common.serialization.StringSerializer());
+            }
+        };
 
         when(auditHistoryService.listHistory()).thenReturn(AuditHistory.empty(List.of()));
         when(metricService.getAllMetrics()).thenReturn(List.of());
