@@ -17,7 +17,7 @@ import {
   displayedColumns, entityHeight, computeLayout, computeEdgeGeometry, splitByConnectivity,
   crowFootPath, oneBarPath, graphBounds, fitTransform, topicDomains, domainColors,
   formatCount, describeRelation, matchingColumns, describeColumnMatches,
-  buildExportSvg, exportNotes, toMermaidEr,
+  buildExportSvg, exportNotes, toMermaidEr, buildJoinSql,
   CONFIDENCE_STYLE, describeModel,
 } from './dataModel';
 import type { DataModelRelation } from '../api/types';
@@ -956,6 +956,37 @@ const DataModel: React.FC = () => {
                     {/* La preuve, en toutes lettres : une arête déduite sans son évidence est une
                         supposition dessinée comme un fait. */}
                     <p className="text-on-surface-variant leading-snug">{relation.reason}</p>
+                    {/* Une relation HIGH *est* un prédicat de jointure, et c'est le seul endroit
+                        de l'application où il est déjà connu : le diagramme devient un point de
+                        départ pour une requête au lieu d'une image qu'on regarde. */}
+                    {(() => {
+                      const join = buildJoinSql(relation, entities);
+                      if (!join) {
+                        return (
+                          <p className="text-outline text-[10px] leading-snug">
+                            No join query: the relation names no column on {relation.to}, and no key
+                            was detected there to fall back on.
+                          </p>
+                        );
+                      }
+                      return (
+                        <Link
+                          to={`/query?sql=${encodeURIComponent(join.sql)}`}
+                          className="inline-flex items-center gap-1 text-primary hover:underline"
+                          title={join.caveats.length > 0
+                            ? `Opens in the SQL editor. ${join.caveats.join(' ')}`
+                            : 'Opens the join this relation describes in the SQL editor.'}
+                        >
+                          <span aria-hidden="true" className="material-symbols-outlined text-[14px]">terminal</span>
+                          Open as SQL
+                          {join.caveats.length > 0 && (
+                            <span className="text-[9px] text-warning">
+                              ({join.caveats.length} caveat{join.caveats.length > 1 ? 's' : ''})
+                            </span>
+                          )}
+                        </Link>
+                      );
+                    })()}
                   </div>
                 ))}
               </div>

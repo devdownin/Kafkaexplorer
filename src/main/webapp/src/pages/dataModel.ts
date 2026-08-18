@@ -483,6 +483,137 @@ export function describeColumnMatches(matches: Map<string, Set<string>>, term: s
   return `${columns} ${columnWord} in ${matches.size} ${entityWord}`;
 }
 
+// ── SQL depuis une relation ───────────────────────────────────────────────────
+
+/** Colonnes projetées par côté : au-delà, la requête cesse d'être un point de départ lisible. */
+const JOIN_MAX_COLUMNS = 5;
+
+export interface JoinSql {
+  sql: string;
+  /** Ce que la requête suppose et que l'opérateur doit vérifier avant de l'exécuter. */
+  caveats: string[];
+}
+
+/**
+ * La requête de jointure qu'une relation déduite décrit.
+ *
+ * Une relation `HIGH` **est** un prédicat de jointure — `payments.order_id = orders.order_id` —
+ * et c'est le seul endroit de l'application où ce prédicat est déjà connu. Le diagramme cesse
+ * donc d'être une image qu'on regarde pour devenir le point de départ d'une requête, via le
+ * `?sql=` que l'éditeur accepte déjà.
+ *
+ * Ce qu'elle ne fait pas, et pourquoi :
+ *
+ *  * **pas de `SELECT *`** — les deux tables partagent le nom de la colonne de jointure, donc
+ *    l'étoile produit deux colonnes homonymes ; les colonnes sont nommées et qualifiées ;
+ *  * **les chemins imbriqués sont écartés de la projection**, avec une réserve qui le dit : un
+ *    `customer.address.city` derrière un alias de table n'a pas la même signification en Flink
+ *    SQL qu'à l'écran, et une requête qui échoue à la première exécution est pire qu'une
+ *    requête plus courte ;
+ *  * **la jointure est régulière, donc non bornée**, ce que la requête énonce en commentaire :
+ *    Flink garde les deux côtés en état, ce qui est sans conséquence sur le jeu de démonstration
+ *    et ne l'est pas sur un vrai topic.
+ *
+ * `null` quand aucune colonne cible ne peut être résolue — une relation `MEDIUM` sur une entité
+ * sans clé détectée ne décrit aucun prédicat, et en inventer un serait précisément la
+ * supposition présentée comme un fait que ce diagramme évite partout ailleurs.
+ */
+export function buildJoinSql(
+  relation: DataModelRelation,
+  entities: DataModelEntity[],
+): JoinSql | null {
+  const from = entities.find(e => e.id === relation.from);
+  const to = entities.find(e => e.id === relation.to);
+  if (!from || !to) return null;
+
+  const caveats: string[] = [];
+
+  // La colonne que la relation nomme ; à défaut, la clé détectée de la cible — signalée comme
+  // supposée, jamais posée en silence.
+  let targetColumn = relation.toColumn;
+  if (targetColumn === null) {
+    if (to.primaryKey === null) return null;
+    targetColumn = to.primaryKey;
+    caveats.push(`The relation names no column on ${to.id}; the join uses its detected key `
+      + `'${targetColumn}'.`);
+  }
+
+  const [fromAlias, toAlias] = joinAliases(from.topic, to.topic);
+  const projected = (entity: DataModelEntity, alias: string, joinColumn: string) => {
+    const flat = entity.columns.filter(c => !c.name.includes('.'));
+    if (flat.length < entity.columns.length) {
+      caveats.push(`${entity.columns.length - flat.length} nested field(s) of ${entity.id} are `
+        + 'left out of the projection — a nested path behind a table alias does not mean the '
+        + 'same thing in Flink SQL as it does on the diagram.');
+    }
+    const ordered = [
+      ...flat.filter(c => c.name === joinColumn || c.primaryKey),
+      ...flat.filter(c => c.name !== joinColumn && !c.primaryKey),
+    ];
+    return ordered.slice(0, JOIN_MAX_COLUMNS).map(c => `    ${alias}.${c.name}`);
+  };
+
+  const columns = [
+    ...projected(from, fromAlias, relation.fromColumn),
+    ...projected(to, toAlias, targetColumn),
+  ];
+
+  if (relation.fromColumn.includes('.') || targetColumn.includes('.')) {
+    caveats.push('The join column is a nested path — check how it resolves before running.');
+  }
+
+  const sql = [
+    `-- ${from.id} → ${to.id}, from a deduced relation (${relation.confidence.toLowerCase()} confidence).`,
+    `-- ${relation.reason}`,
+    ...caveats.map(c => `-- ${c}`),
+    '-- Regular join: Flink keeps both sides in state, which is fine here and is not on a large topic.',
+    'SELECT',
+    columns.join(',\n'),
+    `FROM ${from.id} AS ${fromAlias}`,
+    `JOIN ${to.id} AS ${toAlias}`,
+    `  ON ${fromAlias}.${relation.fromColumn} = ${toAlias}.${targetColumn}`,
+    'LIMIT 50',
+  ].join('\n');
+
+  return { sql, caveats };
+}
+
+/**
+ * Deux alias courts, distincts et **valides** pour une paire de topics.
+ *
+ * Premier choix : le segment distinctif que `topicDomains` isole déjà en retirant les segments de
+ * tête partagés — `demo.payments.authorized` et `demo.orders.1.received` donnent `payments` et
+ * `orders`, qui est ce qui se lit le mieux dans un `ON`.
+ *
+ * Mais deux topics *frères* (`demo.orders.1.received`, `demo.orders.2.validated`) partagent aussi
+ * `orders`, donc ce que la règle isole est ce qui les sépare vraiment : `1` et `2`. Un alias qui
+ * commence par un chiffre n'est pas un identifiant SQL, et la requête proposée échouerait au
+ * parseur — le test qui pose ce cas a trouvé exactement ça. Le repli est alors le dernier segment
+ * non numérique (`received`, `validated`), qui est de toute façon ce qui distingue ces deux-là ;
+ * en dernier ressort seulement, un suffixe.
+ */
+export function joinAliases(fromTopic: string, toTopic: string): [string, string] {
+  const domains = topicDomains([fromTopic, toTopic]);
+  const domain = (topic: string) => sqlAlias(domains.get(topic) ?? '');
+  const tail = (topic: string) => sqlAlias(
+    topic.split(/[._-]+/).filter(s => s && !/^\d+$/.test(s)).pop() ?? '');
+
+  for (const pick of [domain, tail]) {
+    const first = pick(fromTopic);
+    const second = pick(toTopic);
+    if (first && second && first !== second) return [first, second];
+  }
+  const base = tail(fromTopic) || domain(fromTopic) || 'a';
+  return [`${base}_1`, `${base}_2`];
+}
+
+/** Un identifiant SQL sans guillemets, ou la chaîne vide s'il n'en reste rien d'exploitable. */
+function sqlAlias(value: string): string {
+  const cleaned = value.replace(/[^A-Za-z0-9_]/g, '_');
+  // Un alias ne peut pas commencer par un chiffre : sans ça la requête meurt au parseur.
+  return /^[A-Za-z_]/.test(cleaned) ? cleaned : '';
+}
+
 // ── Export ────────────────────────────────────────────────────────────────────
 
 const EXPORT_PAD = 32;
