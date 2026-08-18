@@ -57,7 +57,7 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
         try {
             return call(systemPrompt, userPrompt, constrain ? schema : null);
         } catch (LlmHttpSupport.ClientErrorException e) {
-            if (!constrain) {
+            if (!constrain || !looksLikeSchemaRefusal(e.status())) {
                 throw e;
             }
             // The endpoint rejected the request and a schema was the only unusual thing in it.
@@ -71,6 +71,22 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
             structuredOutputUnsupported = true;
             return call(systemPrompt, userPrompt, null);
         }
+    }
+
+    /**
+     * Whether a 4xx can plausibly mean "I do not implement {@code response_format}".
+     *
+     * <p>Only a rejected <em>request body</em> can: 400 and 422 are what a gateway answers to a field
+     * it does not understand. The latch used to fire on any 4xx, and the two that matter are 401 and
+     * 404 — a wrong key and a wrong model or path. Those disable structured output permanently for
+     * the client's lifetime, and that lifetime is longer than it looks: {@link LlmClientProvider}
+     * fingerprints provider, base URL and key, so correcting a mistyped <em>model</em> in Settings
+     * reuses the same client. The deployment then runs unconstrained for ever, silently, because of
+     * a typo that was fixed minutes later — the failure mode a fallback exists to prevent, arrived at
+     * through the fallback itself.
+     */
+    private static boolean looksLikeSchemaRefusal(int status) {
+        return status == 400 || status == 422;
     }
 
     private LlmResponse call(String systemPrompt, String userPrompt, LlmOutputSchema schema) {

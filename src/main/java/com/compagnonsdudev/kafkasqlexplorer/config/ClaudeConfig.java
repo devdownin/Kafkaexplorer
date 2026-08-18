@@ -164,8 +164,19 @@ public class ClaudeConfig {
         return apiKey != null && !apiKey.isBlank();
     }
 
+    /**
+     * Whether the configured endpoint is on this host — and therefore whether nothing sent to the
+     * model leaves the machine.
+     *
+     * <p>This is a privacy claim, not a convenience flag: the Process Mining page renders it as
+     * "It is a loopback address, so no message content leaves this host." It used to be true by
+     * <em>provider</em> — {@code provider == OLLAMA} short-circuited the check — so pointing Ollama
+     * at a GPU box (a thoroughly ordinary setup: {@code CLAUDE_BASE_URL=http://gpu-box:11434/v1})
+     * kept the reassurance on screen while every message digest went over the network. A claim about
+     * where data goes has to be read off the address the data is actually sent to.
+     */
     public boolean isLocalDeployment() {
-        return provider == Provider.OLLAMA || isLoopbackUrl(getResolvedBaseUrl());
+        return isLoopbackUrl(getResolvedBaseUrl());
     }
 
     public String getProviderLabel() {
@@ -186,13 +197,33 @@ public class ClaudeConfig {
         };
     }
 
+    /**
+     * Whether a URL names this host. The <em>host</em> is compared, not the URL text: a substring
+     * scan answered yes for {@code https://localhost.example.com/} and for any path or query that
+     * happened to contain the word — on the one flag that tells an operator their data stays put.
+     * A URL that cannot be parsed is not local, since the safe answer to "am I sure this is on this
+     * machine" is no.
+     */
     private boolean isLoopbackUrl(String value) {
         if (value == null || value.isBlank()) {
             return false;
         }
-        String normalized = value.toLowerCase();
-        return normalized.contains("localhost")
-            || normalized.contains("127.0.0.1")
-            || normalized.contains("0.0.0.0");
+        String host;
+        try {
+            host = java.net.URI.create(value.strip()).getHost();
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+        if (host == null) {
+            return false;
+        }
+        // Brackets survive getHost() for an IPv6 literal.
+        host = host.toLowerCase(java.util.Locale.ROOT).replace("[", "").replace("]", "");
+        return host.equals("localhost")
+            || host.endsWith(".localhost")
+            || host.startsWith("127.")
+            || host.equals("0.0.0.0")
+            || host.equals("::1")
+            || host.equals("0:0:0:0:0:0:0:1");
     }
 }

@@ -2,7 +2,9 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.compagnonsdudev.kafkasqlexplorer.service;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.compagnonsdudev.kafkasqlexplorer.config.ClaudeConfig;
 import com.compagnonsdudev.kafkasqlexplorer.config.ProcessMiningConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.AnomalyReport;
@@ -41,7 +43,20 @@ public class LlmAnalysisService {
      * provider configured at startup. See {@link LlmClientProvider}.
      */
     private final Supplier<LlmClient> llmClient;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    /**
+     * Lenient about keys it does not know, because the answer comes from a model rather than from
+     * another service. A bare {@code new ObjectMapper()} keeps Jackson's default
+     * {@code FAIL_ON_UNKNOWN_PROPERTIES}, so a model that added one helpful key — a {@code summary}
+     * beside {@code comments}, a {@code confidence} on an anomaly — failed the <em>whole</em>
+     * analysis, and the failure was reported with a hint naming {@code claude.max-tokens}, which
+     * would not have fixed it. Every unconstrained path leads here: SpectraLLM, which has no notion
+     * of schemas; an {@code OPENAI_COMPATIBLE} gateway, which {@code AUTO} deliberately leaves
+     * alone; {@code structured-output: OFF}; and any endpoint that refused a schema once. Extra keys
+     * are not a reason to throw an analysis away.
+     */
+    private final ObjectMapper objectMapper = JsonMapper.builder()
+        .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+        .build();
 
     /**
      * The shape the answer must take. Sent alongside the prompt, not instead of it: a provider that
@@ -504,6 +519,13 @@ Chaque message est un résumé du payload d'origine :
 
         String json = LlmJsonSupport.extractJsonPayload(rawResponse);
 
+        // A reasoning model that never stopped thinking produced no answer at all. Saying so beats
+        // the generic parse error that used to follow, which sent the reader looking for a
+        // malformed brace in text the model never got round to writing.
+        if (json.isBlank()) {
+            return ProcessMiningResult.failed(reasoningOnlyHint(rawResponse), response.usage());
+        }
+
         try {
             ProcessMiningResult parsed = objectMapper.readValue(json, ProcessMiningResult.class);
             // Attach RAG citations (SpectraLLM); other providers return none.
@@ -533,6 +555,20 @@ Chaque message est un résumé du payload d'origine :
                 + ") or narrow the analysis to fewer topics.";
         }
         return "";
+    }
+
+    /**
+     * Why an answer carried no JSON. The two cases are worth separating: a model still reasoning
+     * when it hit the cap has a setting to raise, whereas one that answered in prose has a prompt or
+     * a model to change.
+     */
+    private String reasoningOnlyHint(String rawResponse) {
+        if (LlmJsonSupport.hasUnterminatedReasoning(rawResponse)) {
+            return "The model spent its whole output budget reasoning and never reached an answer."
+                + " Raise claude.max-tokens (currently " + claudeConfig.getMaxTokens()
+                + "), or use a model that does not think before answering.";
+        }
+        return "The model's answer contained no JSON object.";
     }
 
     private ProcessMiningResult errorResult(String message) {

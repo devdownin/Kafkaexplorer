@@ -162,6 +162,48 @@ class LlmStructuredOutputTest {
         assertTrue(e.getMessage().contains("model not found"), e.getMessage());
     }
 
+    /**
+     * A 4xx that cannot mean "I do not implement {@code response_format}" must not disable
+     * structured output.
+     *
+     * <p>The latch used to fire on any 4xx, and the two that matter are 401 and 404 — a wrong key
+     * and a wrong model or path. Those are configuration mistakes an operator fixes within the
+     * minute, but the latch outlives the fix: {@link LlmClientProvider} fingerprints provider, base
+     * URL and key, and the <em>model</em> is in none of them, so correcting a mistyped model reuses
+     * this very client. The deployment then ran unconstrained for ever, silently, because of a typo
+     * that had already been corrected.
+     */
+    @Test
+    void aWrongModelDoesNotDisableStructuredOutputForGood() throws Exception {
+        ClaudeConfig config = startServer(List.of(
+            new StubResponse(404, "{\"error\":{\"message\":\"model not found\"}}"),
+            new StubResponse(200, okBody())));
+
+        OpenAiCompatibleLlmClient client = new OpenAiCompatibleLlmClient(config);
+        assertThrows(RuntimeException.class, () -> client.generateWithMeta("SYS", "USR", schema()));
+        assertEquals(1, requestBodies.size(),
+            "a 404 says nothing about response_format, so there is nothing to retry without it");
+
+        // The operator corrects the model name; the client is the same one, and must still constrain.
+        client.generateWithMeta("SYS", "USR", schema());
+        assertEquals(2, requestBodies.size());
+        assertTrue(requestBodies.get(1).contains("response_format"),
+            "structured output must survive a failure that was never about the schema");
+    }
+
+    /** 422 is the other way a gateway says "I do not understand this field". */
+    @Test
+    void treatsUnprocessableEntityAsASchemaRefusalToo() throws Exception {
+        ClaudeConfig config = startServer(List.of(
+            new StubResponse(422, "{\"error\":{\"message\":\"response_format not supported\"}}"),
+            new StubResponse(200, okBody())));
+
+        new OpenAiCompatibleLlmClient(config).generateWithMeta("SYS", "USR", schema());
+
+        assertEquals(2, requestBodies.size());
+        assertFalse(requestBodies.get(1).contains("response_format"));
+    }
+
     @Test
     void doesNotConstrainWhenTheSettingIsOff() throws Exception {
         ClaudeConfig config = startServer(List.of(new StubResponse(200, okBody())));
