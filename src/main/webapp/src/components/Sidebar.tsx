@@ -38,8 +38,8 @@ const Sidebar: FC<SidebarProps> = ({ isCollapsed, onToggle, mobileOpen = false, 
   return (
     <aside
       className={`fixed left-0 top-0 h-full flex flex-col px-3 py-4 z-50 bg-surface-container-low transition-all duration-300 w-64 ${
-        isCollapsed ? 'md:w-[68px]' : 'md:w-64'
-      } ${mobileOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 border-r border-outline-variant/60`}
+        isCollapsed ? 'lg:w-[68px]' : 'lg:w-64'
+      } ${mobileOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0 border-r border-outline-variant/60`}
     >
       {/* Logo */}
       <div className={`flex items-center mb-6 ${isCollapsed ? 'justify-center' : 'justify-between px-1'}`}>
@@ -55,7 +55,7 @@ const Sidebar: FC<SidebarProps> = ({ isCollapsed, onToggle, mobileOpen = false, 
           <button
             onClick={onToggle}
             aria-label="Collapse sidebar"
-            className="hidden md:inline-flex p-1.5 rounded-md hover:bg-surface-container-high text-outline hover:text-on-surface transition-colors shrink-0"
+            className="hidden lg:inline-flex p-1.5 rounded-md hover:bg-surface-container-high text-outline hover:text-on-surface transition-colors shrink-0"
           >
             <span aria-hidden="true" className="material-symbols-outlined text-[18px]">left_panel_close</span>
           </button>
@@ -64,7 +64,7 @@ const Sidebar: FC<SidebarProps> = ({ isCollapsed, onToggle, mobileOpen = false, 
         <button
           onClick={onMobileClose}
           aria-label="Close navigation"
-          className="md:hidden p-1.5 rounded-md hover:bg-surface-container-high text-outline hover:text-on-surface transition-colors shrink-0"
+          className="lg:hidden p-1.5 rounded-md hover:bg-surface-container-high text-outline hover:text-on-surface transition-colors shrink-0"
         >
           <span aria-hidden="true" className="material-symbols-outlined text-[20px]">close</span>
         </button>
@@ -75,7 +75,7 @@ const Sidebar: FC<SidebarProps> = ({ isCollapsed, onToggle, mobileOpen = false, 
           onClick={onToggle}
           aria-label="Expand sidebar"
           title="Expand"
-          className="hidden md:inline-flex mx-auto mb-4 p-1.5 rounded-md hover:bg-surface-container-high text-outline hover:text-on-surface transition-colors"
+          className="hidden lg:inline-flex mx-auto mb-4 p-1.5 rounded-md hover:bg-surface-container-high text-outline hover:text-on-surface transition-colors"
         >
           <span aria-hidden="true" className="material-symbols-outlined text-[18px]">left_panel_open</span>
         </button>

@@ -1412,3 +1412,50 @@ export function readLayout(): WorkbenchLayout {
       ? stored.assistantOpen : DEFAULT_LAYOUT.assistantOpen,
   };
 }
+
+// ── Fenêtre trop étroite ─────────────────────────────────────────────────────
+
+/**
+ * En dessous de cette largeur, cette page ne propose pas une surface d'écriture.
+ *
+ * Le chiffre n'est pas choisi : `MOBILE-LAYOUT-SCOPE.md` a mesuré Monaco contre la largeur de
+ * fenêtre, et l'éditeur ne dépasse 200 px de rendu qu'à partir de 1024 — 5 px à 390, 5 px à 768,
+ * 192 px à 1024. C'est aussi le seuil auquel le rail de navigation entre dans le flux
+ * (`DESKTOP_QUERY` dans `Layout.tsx`) : les deux décrivent le même « il y a la place ».
+ */
+export const WIDE_WINDOW_MIN_PX = 1024;
+
+export const NARROW_NOTICE_KEY = 'kse:query-narrow-notice';
+
+export interface NarrowAlternative {
+  label: string;
+  to: string;
+  /** Ce que l'écran répond, pour que le choix ne se fasse pas au nom seul. */
+  answers: string;
+}
+
+/**
+ * Les écrans qui, eux, fonctionnent dans une fenêtre étroite.
+ *
+ * Mesurés, pas supposés : à 390 px le document ne déborde sur aucun d'eux et rien n'y est tronqué
+ * (tableau « Nothing scrolls sideways » du document de cadrage). Les nommer est la moitié utile du
+ * bandeau — « cet écran demande une fenêtre plus large » tout court renvoie l'opérateur nulle part,
+ * au moment précis où il cherche une réponse. Leur seul défaut mesuré est la taille des cibles
+ * tactiles, qui est app-wide et n'a rien à voir avec la largeur.
+ */
+export const NARROW_ALTERNATIVES: NarrowAlternative[] = [
+  // Le Topic Explorer est mesuré bon à 390 px lui aussi, mais il n'a pas de route sans nom de
+  // topic (`/topic/:name`) : y renvoyer sans en nommer un tomberait sur le 404. C'est le Dashboard
+  // qui y mène, et c'est ce que dit la ligne.
+  { label: 'Dashboard', to: '/', answers: 'topics, sizes, and the way into a topic’s messages' },
+  { label: 'Audit', to: '/audit', answers: 'the last cluster health run' },
+  { label: 'Cluster', to: '/cluster', answers: 'brokers, quorum and client groups' },
+];
+
+export function readNarrowNoticeDismissed(): boolean {
+  return readStored<boolean>(NARROW_NOTICE_KEY, false) === true;
+}
+
+export function dismissNarrowNotice(): boolean {
+  return writeStored(NARROW_NOTICE_KEY, true);
+}

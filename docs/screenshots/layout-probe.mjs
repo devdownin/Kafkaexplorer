@@ -15,6 +15,7 @@
 //   node server.mjs /tmp/kse-site 4173 &
 //   node layout-probe.mjs http://127.0.0.1:4173
 //   node layout-probe.mjs http://127.0.0.1:4173 --sweep   # editor width vs viewport width
+//   node layout-probe.mjs http://127.0.0.1:4173 --detail  # names the containers that clip
 
 import { createRequire } from 'node:module';
 
@@ -70,19 +71,61 @@ const MEASURE = () => {
    * is `visible` or `hidden` are counted, i.e. those that spill or clip with no way to reach the
    * rest of their content.
    */
-  const clipped = [...document.querySelectorAll('*')]
+  /*
+   * `sr-only` clips by construction — it is a 1px box whose whole purpose is to carry text to a
+   * screen reader and not to the eye. Counting it as "content cut off" says the opposite of what
+   * is true, so it is excluded before anything else.
+   */
+  const isScreenReaderOnly = el => String(el.className).split(/\s+/).includes('sr-only');
+
+  /*
+   * Whether the rest of a clipped element's content can still be reached, which is the only
+   * question that matters: `truncate` plus a `title` carrying the full value is a deliberate
+   * pattern this codebase uses everywhere (the exact number behind `1.2K`, the absolute date
+   * behind a relative one), and so is a cell inside a strip that scrolls. What has neither is the
+   * finding.
+   */
+  const reachability = el => {
+    const title = el.getAttribute('title');
+    if (title && title.trim().length > 0) return 'title';
+    if (el.querySelector('[title]')) return 'title-inside';
+    for (let a = el.parentElement; a; a = a.parentElement) {
+      const ox = getComputedStyle(a).overflowX;
+      if ((ox === 'auto' || ox === 'scroll') && a.scrollWidth > a.clientWidth + 2) return 'scrollable-ancestor';
+      const at = a.getAttribute('title');
+      if (at && at.trim().length > 0) return 'title-ancestor';
+    }
+    return 'none';
+  };
+
+  const clippedAll = [...document.querySelectorAll('*')]
     .filter(el => {
       if (el.clientWidth === 0 || el.scrollWidth <= el.clientWidth + 2) return false;
+      if (isScreenReaderOnly(el)) return false;
       const overflowX = getComputedStyle(el).overflowX;
       return overflowX === 'visible' || overflowX === 'hidden';
-    })
-    .slice(0, 8)
-    .map(el => ({
-      tag: el.tagName.toLowerCase(),
-      cls: String(el.className).slice(0, 40),
-      scrollW: el.scrollWidth,
-      clientW: el.clientWidth,
-    }));
+    });
+  /*
+   * The count is the whole set; the sample is what a reader can act on. These used to be the same
+   * array, cut to 8 before being counted — so every page reported "8 clipped" at every width, and
+   * MOBILE-LAYOUT-SCOPE.md read that cap as a measurement. A number that is silently a ceiling is
+   * worse than no number: it looked like a constant, which is exactly what invited the reading
+   * "not a narrow-width regression".
+   */
+  const clippedCount = clippedAll.length;
+  const describe = el => ({
+    tag: el.tagName.toLowerCase(),
+    cls: String(el.className).slice(0, 60),
+    id: el.id || null,
+    aria: el.getAttribute('aria-label'),
+    reach: reachability(el),
+    text: (el.textContent || '').trim().slice(0, 40),
+    scrollW: el.scrollWidth,
+    clientW: el.clientWidth,
+  });
+  const unreachable = clippedAll.filter(el => reachability(el) === 'none');
+  const clipped = unreachable.slice(0, 8).map(describe);
+  const clippedSample = clippedAll.slice(0, 4).map(describe);
 
   const targets = [...document.querySelectorAll('button, [role="button"], a, input, select')]
     .map(el => {
@@ -103,6 +146,9 @@ const MEASURE = () => {
     monacoW: widthOf(document.querySelector('.monaco-editor')),
     schemaBrowserW: widthOf(schemaBrowser),
     clipped,
+    clippedSample,
+    clippedCount,
+    unreachableCount: unreachable.length,
     targets: targets.length,
     tooSmall: tooSmall.length,
     tooSmallSample: tooSmall.slice(0, 4).map(t => `${t.label} (${t.w}x${t.h})`),
@@ -150,18 +196,32 @@ if (mode === '--sweep') {
     for (const p of PAGES) {
       const page = await newPage(browser, vp.width, vp.height, vp.name !== 'desktop');
       let line;
+      let m = null;
       try {
         await page.goto(baseUrl + p.url, { waitUntil: 'networkidle', timeout: 30_000 });
         await page.waitForTimeout(p.settleMs ?? 1200);
-        const m = await page.evaluate(MEASURE);
+        m = await page.evaluate(MEASURE);
         line = `  ${p.name.padEnd(15)} overflows=${String(m.bodyOverflows).padEnd(5)}`
-          + ` clipped=${String(m.clipped.length).padEnd(2)}`
+          + ` clipped=${String(m.clippedCount).padEnd(3)}`
+          + ` unreachable=${String(m.unreachableCount).padEnd(2)}`
           + ` targets<24px=${m.tooSmall}/${m.targets}`
           + (m.monacoW === null ? '' : `  monaco=${m.monacoW}px`);
       } catch (e) {
         line = `  ${p.name.padEnd(15)} FAILED ${String(e).split('\n')[0].slice(0, 90)}`;
       }
       console.log(line);
+      if (mode === '--detail' && m) {
+        // What is actually clipping, so W7 is a reading rather than another counting exercise.
+        // The unreachable ones first — they are the only ones that are a defect.
+        for (const c of m.clipped) {
+          console.log(`      UNREACHABLE ${c.tag}${c.id ? '#' + c.id : ''} `
+            + `${c.aria ? '[' + c.aria + '] ' : ''}${c.scrollW}>${c.clientW} `
+            + `"${c.text}" .${c.cls}`);
+        }
+        for (const c of (m.clippedSample || [])) {
+          console.log(`      ${c.reach.padEnd(19)} ${c.tag} ${c.scrollW}>${c.clientW} .${c.cls}`);
+        }
+      }
       await page.close();
     }
   }

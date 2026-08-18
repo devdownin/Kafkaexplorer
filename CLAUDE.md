@@ -461,12 +461,36 @@ codebase; the report also carries a "constaté, non traité" section (the absenc
 layout, and two statements of identical text being indistinguishable to `resolveOrigin`).
 
 `MOBILE-LAYOUT-SCOPE.md` scopes the one item that audit left open — the absence of a mobile
-layout — and is a *scoping* document, not a fix: it carries measurements taken with
-`docs/screenshots/layout-probe.mjs` (the SQL editor renders **5 CSS pixels** of Monaco at 390 px
-and at 768 px, the schema browser holding a fixed 288 px that never yields; crossing the `md`
-breakpoint makes it worse, the shell's navigation turning from a drawer into a 256 px in-flow
-rail), the product decision the work depends on, and sized work items for each answer. Nothing in
-it is implemented. Re-run the probe before trusting its numbers.
+layout — with measurements taken by `docs/screenshots/layout-probe.mjs`, the product decision the
+work depends on, and sized work items for each answer. **Three of its nine items have shipped**
+(W0, W2, W7 — Option C plus the two that are right under every answer); W1 and W3–W6 are open, and
+the product question is still unanswered. What is load-bearing:
+
+- **The shell's "desktop" threshold is `lg`, not `md`** (`DESKTOP_QUERY` in `components/Layout.tsx`,
+  with matching `lg:` classes in `Sidebar` and `Header` — they describe one threshold and must move
+  together). At 768 px the navigation used to stop being an off-canvas drawer and take 256 px in
+  the flow while the SQL editor's schema browser kept its fixed 288 px, so Monaco fell from 64 px
+  at 640 to **5 px** at 768: a tablet in landscape was worse off than a phone. Nobody chose that;
+  two independent width decisions met. The measured effect of the move is 768 → 192 px and
+  900 → 324 px. Below 640 the editor is still five pixels wide — that is the 288 px browser, W1,
+  untouched.
+- **`/query` says so under `lg`** (`components/query/NarrowWindowNotice.tsx`) and names the screens
+  that do work at that width, which is the half that helps; it deliberately does not name the Topic
+  Explorer, measured clean at 390 px but reachable only with a topic name, so a link there lands on
+  the 404.
+- **The probe used to print a ceiling as a measurement.** `clipped` was cut to eight entries before
+  being counted, so five of seven pages read "8 clipped" at every width and the document concluded
+  the clipping was width-independent truncation by design. It now counts the set, samples for
+  `--detail`, excludes `sr-only` (which clips by construction) and reports whether the rest of each
+  clipped element is reachable at all — a `title` on it, on a descendant or on an ancestor, or an
+  ancestor that scrolls. W7 was scoped as confirming nothing hides unreachable content and **found
+  the opposite**: a metric card's name, description and SQL line all carried `truncate` with no
+  `title` anywhere, and the Cluster page's property names overflowed a grid cell with neither
+  ellipsis nor title. Those are fixed; what remains is W8.
+- Re-run the probe before trusting any number in that document, and read a zero in its
+  `unreachable` column as unconfirmed rather than proven: the pages that fetch asynchronously clip
+  nothing while their cards are still arriving. Making those counts stable enough to gate a build
+  is W6.
 
 An earlier full bug & optimisation audit covered the whole codebase: all critical (C1–C4), major (M1–M8), minor and optimisation findings have been fixed here. Its report, `AUDIT.md`, was deleted from the tree in 31767bd — so the corrective decisions survive only as the behaviour of the code and the notes in this file, which is worth knowing before refactoring `AuditService`, `KafkaLiveConsumer`, `MetricService` or the direct SELECT engine: what looks like an odd choice in those four is usually a fix, and `git show 31767bd^:AUDIT.md` is where the reasoning is.
 

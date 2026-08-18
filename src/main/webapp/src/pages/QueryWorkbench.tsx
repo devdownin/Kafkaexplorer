@@ -36,6 +36,7 @@ import { ResultsGrid } from '../components/query/ResultsGrid';
 import { WindowAssistant } from '../components/query/WindowAssistant';
 import { SchemaBrowser, type SchemaInfo, type SavedQuery } from '../components/query/SchemaBrowser';
 import { DdlPreviewModal } from '../components/query/DdlPreviewModal';
+import { NarrowWindowNotice } from '../components/query/NarrowWindowNotice';
 import { RowDetail } from '../components/query/RowDetail';
 import { randomId } from '../randomId';
 import { copyText } from '../clipboard';
@@ -1523,7 +1524,14 @@ const QueryWorkbench: React.FC = () => {
 
   // ── Render ────────────────────────────────────────────────────────────────────
   return (
-    <div className="flex h-full overflow-hidden">
+    /*
+     * Colonne, pour que le bandeau « fenêtre trop étroite » ait une place au-dessus de la scène
+     * sans rien pousser hors de l'écran : la ligne éditeur/résultats garde `flex-1 min-h-0`, donc
+     * elle continue de se partager exactement la hauteur restante.
+     */
+    <div className="flex flex-col h-full overflow-hidden">
+      <NarrowWindowNotice />
+      <div className="flex flex-1 min-h-0 overflow-hidden">
 
       {ddlPreviewTopic && (
         <DdlPreviewModal
@@ -2168,6 +2176,7 @@ const QueryWorkbench: React.FC = () => {
           </div>
         </div>
       </main>
+      </div>
     </div>
   );
 };

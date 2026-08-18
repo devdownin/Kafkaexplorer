@@ -321,9 +321,13 @@ const Cluster: React.FC = () => {
               { key: 'offsets.retention.minutes',        label: 'How long offsets are stored after last commit' },
             ].map(item => (
               <div key={item.key} className="grid grid-cols-12 gap-4 items-center py-2 border-b border-outline-variant/60 last:border-0 hover:bg-primary/5 transition-colors px-2 rounded">
-                <div className="col-span-6">
-                  <code className="text-primary text-[13px] font-mono">{item.key}</code>
-                  <p className="text-[10px] text-on-surface-variant uppercase mt-0.5">{item.label}</p>
+                {/* `min-w-0` + `truncate` + `title` : sans ça la cellule de grille laissait le nom
+                    de propriété déborder d'un conteneur en `overflow: hidden` — coupé sans points
+                    de suspension et sans aucun moyen de lire la fin (W7 de
+                    MOBILE-LAYOUT-SCOPE.md : 256 px de contenu dans 123 px, à 390 px de fenêtre). */}
+                <div className="col-span-6 min-w-0">
+                  <code title={item.key} className="block truncate text-primary text-[13px] font-mono">{item.key}</code>
+                  <p title={item.label} className="truncate text-[10px] text-on-surface-variant uppercase mt-0.5">{item.label}</p>
                 </div>
                 <div className="col-span-2 text-right font-bold text-on-surface">{getConfig(item.key)}</div>
                 <div className="col-span-4 text-[11px] text-on-surface-variant text-right">
@@ -445,21 +449,21 @@ const Cluster: React.FC = () => {
           </h2>
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1">
-              <span className="text-[10px] font-bold uppercase text-on-surface-variant">num.network.threads</span>
+              <span title="num.network.threads" className="truncate text-[10px] font-bold uppercase text-on-surface-variant">num.network.threads</span>
               <div className="bg-surface-container-high p-2.5 border border-outline-variant/60 rounded-lg flex justify-between items-center">
                 <span className="font-bold text-on-surface">{getConfig('num.network.threads')}</span>
                 <span className="material-symbols-outlined text-sm text-primary/40">settings_ethernet</span>
               </div>
             </div>
             <div className="flex flex-col gap-1">
-              <span className="text-[10px] font-bold uppercase text-on-surface-variant">num.io.threads</span>
+              <span title="num.io.threads" className="truncate text-[10px] font-bold uppercase text-on-surface-variant">num.io.threads</span>
               <div className="bg-surface-container-high p-2.5 border border-outline-variant/60 rounded-lg flex justify-between items-center">
                 <span className="font-bold text-on-surface">{getConfig('num.io.threads')}</span>
                 <span className="material-symbols-outlined text-sm text-primary/40">storage</span>
               </div>
             </div>
             <div className="col-span-2 flex flex-col gap-1">
-              <span className="text-[10px] font-bold uppercase text-on-surface-variant">queued.max.requests</span>
+              <span title="queued.max.requests" className="truncate text-[10px] font-bold uppercase text-on-surface-variant">queued.max.requests</span>
               <div className="bg-surface-container-high p-2.5 border border-outline-variant/60 rounded-lg flex justify-between items-center">
                 <span className="font-bold text-on-surface">{getConfig('queued.max.requests')}</span>
                 <span className="text-[10px] text-on-surface-variant">Latency buffer</span>

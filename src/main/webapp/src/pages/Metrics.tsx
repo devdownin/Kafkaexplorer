@@ -394,7 +394,11 @@ const MetricCard: React.FC<{
       <div className="flex items-center justify-between px-4 pt-4 pb-2 gap-2">
         <div className="flex items-center gap-2 min-w-0">
           <span className={`w-2 h-2 rounded-full shrink-0 ${st.dot} ${status === 'ok' ? 'animate-pulse' : ''}`} />
-          <h3 className="font-semibold text-on-surface truncate font-mono text-[13px]">{metric.name}</h3>
+          {/* `truncate` sans `title` coupe une valeur que plus rien ne rend : la sonde de mise en
+              page (W7 de MOBILE-LAYOUT-SCOPE.md) a trouvé ici un nom de métrique tronqué à 147 px
+              sur 280, inatteignable. La convention du dépôt est que ce qui est compacté garde sa
+              valeur exacte dans un `title`. */}
+          <h3 title={metric.name} className="font-semibold text-on-surface truncate font-mono text-[13px]">{metric.name}</h3>
           <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase shrink-0 ${tm.badge}`}>
             {metric.type}
           </span>
@@ -439,7 +443,7 @@ const MetricCard: React.FC<{
             : '—'}
         </div>
         <div className="flex items-center gap-3 mt-0.5 flex-wrap">
-          {metric.description && <p className="text-xs text-on-surface-variant truncate">{metric.description}</p>}
+          {metric.description && <p title={metric.description} className="text-xs text-on-surface-variant truncate">{metric.description}</p>}
           {metric.warningThreshold !== null && (
             <span className="flex items-center gap-0.5 text-[10px] text-warning font-mono shrink-0">
               <span className="material-symbols-outlined text-[11px]">warning</span>≥ {metric.warningThreshold.toLocaleString()}
@@ -532,7 +536,10 @@ const MetricCard: React.FC<{
           était enregistrée. Le type l'annonçait `string`, ce qu'il n'a jamais été. */}
       <div className="group border-t border-outline-variant/60 bg-background-dark/40 px-4 py-2.5 flex items-start gap-2">
         <span className="material-symbols-outlined text-primary/40 text-base shrink-0 mt-0.5">code</span>
-        <pre className="flex-1 text-[10px] font-mono text-on-surface-variant truncate leading-relaxed whitespace-nowrap overflow-hidden">
+        <pre
+          title={metric.sql ? metric.sql.replace(/\s+/g, ' ') : describeTemplate(metric)}
+          className="flex-1 text-[10px] font-mono text-on-surface-variant truncate leading-relaxed whitespace-nowrap overflow-hidden"
+        >
           {metric.sql
             ? metric.sql.replace(/\s+/g, ' ')
             : describeTemplate(metric)}

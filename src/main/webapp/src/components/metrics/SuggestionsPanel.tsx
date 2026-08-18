@@ -115,7 +115,10 @@ const SuggestionCard: React.FC<{
         </p>
       )}
 
-      <div className="flex items-center gap-2 mt-auto pt-1">
+      {/* `flex-wrap` : à 310 px de carte les deux boutons demandent 320 px et la rangée débordait
+          d'un conteneur en `overflow: hidden` — la fin du second bouton n'était atteignable par
+          rien (W7 de MOBILE-LAYOUT-SCOPE.md). */}
+      <div className="flex flex-wrap items-center gap-2 mt-auto pt-1">
         <Button
           variant={suggestion.alreadyConfigured ? 'ghost' : 'primary'}
           size="sm"

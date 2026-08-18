@@ -220,6 +220,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   had already fixed by hand. The restore is bounded and best-effort — driven by the end offsets, an
   unreadable record costs that record and not the restore, and a broker that cannot be reached at
   startup leaves an empty store and a log line rather than a boot that hangs.
+- **A "this screen needs a wider window" notice on the SQL editor**, under `lg`, naming the screens
+  that do work at that width and what each answers. The page was not broken in the usual sense —
+  nothing overflows, nothing overlaps — it was unusable without saying so, which is worse: the
+  operator concludes the application is down. It dismisses, and the dismissal sticks.
 - **The Metrics page says when the audit its proposals rest on has moved on.** The panel derived on
   page load and never again, so an audit run in another tab left thresholds computed from the
   previous run without a word. It now distinguishes the three cases that call for different
@@ -229,6 +233,22 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A tablet in landscape was worse off than a phone.** At exactly 768 px the shell's navigation
+  stopped being an off-canvas drawer and took 256 px in the flow, while the SQL editor's schema
+  browser kept its fixed 288 px — so Monaco fell from 64 px of rendered width at 640 px to **5 px**
+  at 768. Nobody had chosen that; two independent width decisions met. The shell's threshold is now
+  `lg`, and the measured effect is 768 → 192 px and 900 → 324 px.
+- **`layout-probe.mjs` printed a ceiling where a measurement was expected.** Its list of clipped
+  containers was cut to eight entries *before* being counted, so five of seven pages reported
+  "8 clipped" at every viewport width, and `MOBILE-LAYOUT-SCOPE.md` read that constancy as evidence
+  that the clipping was width-independent truncation by design. The probe now counts the whole set,
+  excludes `sr-only` (which clips by construction), and reports whether each clipped element's
+  remaining content can be reached at all.
+- **Truncated values with no way to read them.** Following from the above: a metric card's name,
+  its description and its SQL line all carried `truncate` with no `title` anywhere — 280 px of
+  metric name rendered into 147 px, with the rest unreachable — and the Cluster page's property
+  names overflowed a grid cell with neither ellipsis nor title. The codebase's own convention is
+  that a compacted value keeps its exact form in a `title`; these had not followed it.
 - **A failed container launch could fail a release.** `KafkaClusterIntegrationTest` started its
   Testcontainers broker with no startup retry, and a launch that failed — twice in twelve hours on
   hosted runners, once on a pull request and once on a push to `main` — took the whole `mvn verify`
