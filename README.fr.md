@@ -11,6 +11,7 @@
 [![GHCR](https://img.shields.io/badge/ghcr.io-kafkaexplorer-2496ED?logo=github&logoColor=white)](https://github.com/devdownin/Kafkaexplorer/pkgs/container/kafkaexplorer)
 [![Java 25](https://img.shields.io/badge/Java-25-orange)](pom.xml)
 [![Kafka 4.3](https://img.shields.io/badge/Kafka-4.3_KRaft-231F20?logo=apachekafka)](https://kafka.apache.org/)
+[![Flink 2.3](https://img.shields.io/badge/Flink-2.3-E6526F?logo=apacheflink&logoColor=white)](https://flink.apache.org/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 [Site web](https://devdownin.github.io/Kafkaexplorer/) · [Tour des fonctionnalités](docs/FEATURES.md) · [Démarrage rapide](#-démarrage-rapide) · [Contribuer](CONTRIBUTING.md) · [🇬🇧 English](README.md)
