@@ -12,7 +12,8 @@ import type { DataModelEntity, DataModelResponse } from '../api/types';
 import {
   MAX_TOPICS, NODE_W, HEADER_H, ROW_H,
   filterTopics, toggleTopic, selectAll, topicsFromQuery, buildQuery,
-  displayedColumns, entityHeight, computeLayout, edgeAnchors,
+  displayedColumns, entityHeight, computeLayout, computeEdgeGeometry,
+  crowFootPath, oneBarPath, graphBounds, fitTransform, topicDomains, domainColors,
   CONFIDENCE_STYLE, describeModel,
 } from './dataModel';
 
@@ -29,11 +30,13 @@ const EntityNode: React.FC<{
   x: number; y: number;
   selected: boolean;
   dimmed: boolean;
+  /** Teinte du domaine du topic — c'est elle qui fait apparaître les sous-systèmes. */
+  tint: { header: string; accent: string };
   onClick: () => void;
-}> = ({ entity, x, y, selected, dimmed, onClick }) => {
+}> = ({ entity, x, y, selected, dimmed, tint, onClick }) => {
   const { columns, hidden } = displayedColumns(entity);
   const height = entityHeight(entity);
-  const stroke = selected ? '#ffffff' : '#a3adff';
+  const stroke = selected ? '#ffffff' : tint.accent;
 
   return (
     <g
@@ -54,13 +57,13 @@ const EntityNode: React.FC<{
     >
       {selected && (
         <rect x={x - 4} y={y - 4} width={NODE_W + 8} height={height + 8} rx={10}
-          fill="#a3adff" fillOpacity={0.08} stroke="#a3adff" strokeWidth={1} strokeOpacity={0.3} />
+          fill={tint.accent} fillOpacity={0.08} stroke={tint.accent} strokeWidth={1} strokeOpacity={0.3} />
       )}
       <rect x={x} y={y} width={NODE_W} height={height} rx={8}
-        fill="#12151a" stroke={stroke} strokeWidth={selected ? 2 : 1.2} />
-      {/* En-tête : nom de table + topic d'origine */}
-      <rect x={x} y={y} width={NODE_W} height={HEADER_H} rx={8} fill="#1d2333" />
-      <rect x={x} y={y + HEADER_H - 8} width={NODE_W} height={8} fill="#1d2333" />
+        fill="#12151a" stroke={stroke} strokeWidth={selected ? 2 : 1.2} strokeOpacity={selected ? 1 : 0.7} />
+      {/* En-tête : nom de table + topic d'origine, teinté par domaine */}
+      <rect x={x} y={y} width={NODE_W} height={HEADER_H} rx={8} fill={tint.header} />
+      <rect x={x} y={y + HEADER_H - 8} width={NODE_W} height={8} fill={tint.header} />
       <text x={x + 10} y={y + 18} fill="white" fontSize={12} fontWeight="bold"
         fontFamily="JetBrains Mono, monospace">
         {entity.id.length > 26 ? entity.id.slice(0, 25) + '…' : entity.id}
@@ -71,7 +74,7 @@ const EntityNode: React.FC<{
         {entity.messageCount !== null ? ` · ${entity.messageCount.toLocaleString()} msg` : ''}
       </text>
       <line x1={x} y1={y + HEADER_H} x2={x + NODE_W} y2={y + HEADER_H}
-        stroke="#a3adff" strokeOpacity={0.25} />
+        stroke={tint.accent} strokeOpacity={0.35} />
       {/* Colonnes */}
       {columns.map((column, i) => {
         const rowY = y + HEADER_H + (i + 1) * ROW_H - 6;
@@ -123,6 +126,8 @@ const DataModel: React.FC = () => {
   const abortRef = useRef<AbortController | null>(null);
   /** L'URL que la page vient d'écrire elle-même — la relire ne doit pas relancer le modèle. */
   const selfWrittenSearch = useRef<string | null>(null);
+  /** Vrai entre une génération réussie et le cadrage du graphe fraîchement monté. */
+  const pendingFit = useRef(false);
 
   const generate = useCallback(async (topics: string[]) => {
     if (topics.length === 0) return;
@@ -140,7 +145,9 @@ const DataModel: React.FC = () => {
       setModel(res.data);
       setRanTopics(topics);
       setSelectedId(null);
-      setTransform({ x: 0, y: 0, scale: 1 });
+      // Cadré au viewport une fois le nouveau graphe rendu — un reset vers scale(1) fixe
+      // laissait un grand modèle déborder hors écran.
+      pendingFit.current = true;
       const search = buildQuery(topics);
       selfWrittenSearch.current = search;
       navigate({ search }, { replace: true });
@@ -175,6 +182,18 @@ const DataModel: React.FC = () => {
   const relations = useMemo(() => model?.relations ?? [], [model]);
   const positions = useMemo(() => computeLayout(entities, relations), [entities, relations]);
   const entityById = useMemo(() => new Map(entities.map(e => [e.id, e])), [entities]);
+  /** Géométrie des arêtes : ancrées sur les lignes de colonnes, écartées quand elles se partagent une ancre. */
+  const edgeGeometry = useMemo(
+    () => computeEdgeGeometry(relations, entities, positions),
+    [relations, entities, positions]);
+  const domains = useMemo(() => topicDomains(entities.map(e => e.topic)), [entities]);
+  const tints = useMemo(() => domainColors(domains), [domains]);
+  const tintOf = useCallback((topic: string) =>
+    tints.get(domains.get(topic) ?? '') ?? { header: '#1d2333', accent: '#a3adff' },
+    [tints, domains]);
+  const domainLegend = useMemo(
+    () => [...tints.entries()].filter(() => tints.size > 1),
+    [tints]);
 
   const neighborIds = useMemo<Set<string> | null>(() => {
     if (!selectedId) return null;
@@ -238,7 +257,20 @@ const DataModel: React.FC = () => {
     e.currentTarget.style.cursor = 'grab';
   }, []);
 
-  const resetView = useCallback(() => setTransform({ x: 0, y: 0, scale: 1 }), []);
+  /** Cadre le graphe entier dans le viewport — le geste de reset, et celui d'après-génération. */
+  const fitToViewport = useCallback(() => {
+    const rect = svgRef.current?.getBoundingClientRect();
+    const bounds = graphBounds(entities, positions);
+    if (!rect || !bounds || rect.width === 0) return;
+    setTransform(fitTransform(bounds, rect.width, rect.height));
+  }, [entities, positions]);
+
+  // Après une génération, le SVG du nouveau modèle est monté à ce moment-là seulement.
+  useEffect(() => {
+    if (!pendingFit.current) return;
+    pendingFit.current = false;
+    fitToViewport();
+  }, [fitToViewport]);
 
   const onGraphKeyDown = useCallback((e: React.KeyboardEvent<SVGSVGElement>) => {
     const step = e.shiftKey ? 160 : 48;
@@ -249,12 +281,12 @@ const DataModel: React.FC = () => {
       case 'ArrowDown':  setTransform(t => ({ ...t, y: t.y - step })); break;
       case '+': case '=': zoomFromCenter(1.25); break;
       case '-': case '_': zoomFromCenter(0.8); break;
-      case '0': resetView(); break;
+      case '0': fitToViewport(); break;
       case 'Escape': setSelectedId(null); break;
       default: return;
     }
     e.preventDefault();
-  }, [resetView, zoomFromCenter]);
+  }, [fitToViewport, zoomFromCenter]);
 
   // ── Rendu ───────────────────────────────────────────────────────────────────
 
@@ -337,6 +369,22 @@ const DataModel: React.FC = () => {
                   <span>{grade.toLowerCase()} — {style.label}</span>
                 </div>
               ))}
+              <p className="text-[10px] text-outline leading-snug pt-0.5">
+                Crow's foot marks the referencing (many) side, the bar the referenced (one) side.
+              </p>
+            </div>
+          )}
+          {/* Légende des domaines : les en-têtes sont teintés par famille de topics. */}
+          {model && domainLegend.length > 0 && (
+            <div className="space-y-1">
+              <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Topic domains</p>
+              {domainLegend.map(([domain, tint]) => (
+                <div key={domain} className="flex items-center gap-2 text-[10px] text-on-surface-variant">
+                  <span aria-hidden="true" className="w-3 h-3 rounded-sm shrink-0 border"
+                    style={{ backgroundColor: tint.header, borderColor: tint.accent }} />
+                  <span className="font-mono truncate">{domain}</span>
+                </div>
+              ))}
             </div>
           )}
         </div>
@@ -376,7 +424,7 @@ const DataModel: React.FC = () => {
               className="p-2 hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface border-b border-outline-variant/60 transition-colors">
               <span aria-hidden="true" className="material-symbols-outlined text-lg">remove</span>
             </button>
-            <button onClick={resetView} aria-label="Reset view" title="Reset view"
+            <button onClick={fitToViewport} aria-label="Fit graph to view" title="Fit to view"
               className="p-2 hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface transition-colors">
               <span aria-hidden="true" className="material-symbols-outlined text-lg">center_focus_weak</span>
             </button>
@@ -422,45 +470,36 @@ const DataModel: React.FC = () => {
             onKeyDown={onGraphKeyDown}
             onClick={e => { if (e.target === e.currentTarget) setSelectedId(null); }}
           >
-            <defs>
-              {(Object.entries(CONFIDENCE_STYLE)).map(([grade, style]) => (
-                <marker key={grade} id={`arrow-dm-${grade}`} markerWidth="8" markerHeight="6"
-                  refX="7" refY="3" orient="auto">
-                  <polygon points="0 0, 8 3, 0 6" fill={style.color} opacity="0.8" />
-                </marker>
-              ))}
-            </defs>
-
             <g transform={`translate(${transform.x}, ${transform.y}) scale(${transform.scale})`}>
 
-              {/* Arêtes */}
+              {/* Arêtes : ancrées sur la ligne de leur colonne, cardinalité en patte-d'oie —
+                  la patte-d'oie côté référent (N), la barre côté référencé (1). Le style de
+                  trait reste réservé à la confiance de la déduction. */}
               {relations.map((relation, i) => {
-                const from = positions[relation.from];
-                const to = positions[relation.to];
-                const fromEntity = entityById.get(relation.from);
-                const toEntity = entityById.get(relation.to);
-                if (!from || !to || !fromEntity || !toEntity) return null;
+                const geometry = edgeGeometry[i];
+                if (!geometry) return null;
 
                 const hi = selectedId !== null
                   && (relation.from === selectedId || relation.to === selectedId);
                 const dim = neighborIds !== null && !hi;
                 const style = CONFIDENCE_STYLE[relation.confidence];
-                const { x1, y1, x2, y2 } = edgeAnchors(
-                  { ...from, height: entityHeight(fromEntity) },
-                  { ...to, height: entityHeight(toEntity) });
+                const { x1, y1, x2, y2, d1, d2 } = geometry;
                 const mx = (x1 + x2) / 2;
+                const opacity = dim ? 0.06 : hi ? 0.95 : 0.55;
 
                 return (
-                  <g key={i}>
+                  <g key={i} opacity={opacity}>
                     <path
                       d={`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`}
                       fill="none"
                       stroke={style.color}
                       strokeWidth={hi ? 2.2 : 1.5}
                       strokeDasharray={style.dash}
-                      opacity={dim ? 0.06 : hi ? 0.95 : 0.55}
-                      markerEnd={dim ? undefined : `url(#arrow-dm-${relation.confidence})`}
                     />
+                    <path d={crowFootPath(x1, y1, d1)} fill="none" stroke={style.color}
+                      strokeWidth={hi ? 1.8 : 1.3} />
+                    <path d={oneBarPath(x2, y2, d2)} fill="none" stroke={style.color}
+                      strokeWidth={hi ? 1.8 : 1.3} />
                     {!dim && (
                       <text x={mx} y={(y1 + y2) / 2 - 6} textAnchor="middle" fill={style.color}
                         fontSize={9} fontFamily="JetBrains Mono, monospace" opacity={hi ? 1 : 0.7}>
@@ -482,6 +521,7 @@ const DataModel: React.FC = () => {
                     x={pos.x} y={pos.y}
                     selected={selectedId === entity.id}
                     dimmed={neighborIds !== null && !neighborIds.has(entity.id)}
+                    tint={tintOf(entity.topic)}
                     onClick={() => setSelectedId(prev => (prev === entity.id ? null : entity.id))}
                   />
                 );

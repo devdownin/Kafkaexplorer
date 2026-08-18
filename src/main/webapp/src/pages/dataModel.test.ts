@@ -4,9 +4,11 @@
 import { describe, it, expect } from 'vitest';
 import type { DataModelEntity, DataModelRelation, DataModelResponse } from '../api/types';
 import {
-  MAX_TOPICS, MAX_COLUMNS_SHOWN, NODE_W, HEADER_H, ROW_H, FOOTER_H,
+  MAX_TOPICS, MAX_COLUMNS_SHOWN, NODE_W, HEADER_H, ROW_H, FOOTER_H, DOMAIN_PALETTE,
   filterTopics, toggleTopic, selectAll, topicsFromQuery, buildQuery,
-  displayedColumns, entityHeight, computeLayout, edgeAnchors, describeModel,
+  displayedColumns, entityHeight, computeLayout, describeModel,
+  columnRowY, anchorSpread, computeEdgeGeometry, crowFootPath, oneBarPath,
+  graphBounds, fitTransform, topicDomains, domainColors,
 } from './dataModel';
 
 function entity(id: string, columnCount: number, overrides: Partial<DataModelEntity> = {}): DataModelEntity {
@@ -147,26 +149,153 @@ describe('computeLayout', () => {
   });
 });
 
-describe('edgeAnchors', () => {
-  it('connects right side to left side when the target is to the right', () => {
-    const { x1, x2 } = edgeAnchors(
-      { x: 0, y: 0, height: 100 }, { x: 400, y: 0, height: 100 });
-    expect(x1).toBe(NODE_W);
-    expect(x2).toBe(400);
+describe('columnRowY', () => {
+  it('gives the centre of the displayed row', () => {
+    const e = entity('t', 3);
+    expect(columnRowY(e, 'col_1')).toBe(HEADER_H + 1 * ROW_H + ROW_H / 2);
   });
 
-  it('connects left side to right side when the target is to the left', () => {
-    const { x1, x2 } = edgeAnchors(
-      { x: 400, y: 0, height: 100 }, { x: 0, y: 0, height: 100 });
-    expect(x1).toBe(400);
-    expect(x2).toBe(NODE_W);
+  it('is null for a column folded into the overflow, and for no column at all', () => {
+    const e = entity('t', MAX_COLUMNS_SHOWN + 3);
+    expect(columnRowY(e, `col_${MAX_COLUMNS_SHOWN + 2}`)).toBeNull();
+    expect(columnRowY(e, null)).toBeNull();
+    expect(columnRowY(e, 'nope')).toBeNull();
+  });
+});
+
+describe('computeEdgeGeometry', () => {
+  const positions = { facts: { x: 0, y: 0 }, dims: { x: 400, y: 50 } };
+
+  function pair(): DataModelEntity[] {
+    const facts = entity('facts', 4);
+    facts.columns[2] = { name: 'dim_id', type: 'STRING', primaryKey: false, references: 'dims' };
+    const dims = entity('dims', 3, { primaryKey: 'dim_id' });
+    dims.columns[1] = { name: 'dim_id', type: 'STRING', primaryKey: true, references: null };
+    return [facts, dims];
+  }
+
+  it('anchors each end on its column row, not the node centre', () => {
+    const [geometry] = computeEdgeGeometry(
+      [{ ...relation('facts', 'dims', 'dim_id'), toColumn: 'dim_id' }], pair(), positions);
+    // Key columns are displayed first, so dim_id is row 0 in both nodes.
+    expect(geometry!.y1).toBe(0 + HEADER_H + ROW_H / 2);
+    expect(geometry!.y2).toBe(50 + HEADER_H + ROW_H / 2);
+    expect(geometry!.x1).toBe(NODE_W);
+    expect(geometry!.x2).toBe(400);
+    expect(geometry!.d1).toBe(1);
+    expect(geometry!.d2).toBe(-1);
   });
 
-  it('anchors at each node\'s vertical centre, whatever its height', () => {
-    const { y1, y2 } = edgeAnchors(
-      { x: 0, y: 0, height: 200 }, { x: 400, y: 100, height: 60 });
-    expect(y1).toBe(100);
-    expect(y2).toBe(130);
+  it('a null toColumn falls back to the target key row, then the centre', () => {
+    const [withPk] = computeEdgeGeometry(
+      [relation('facts', 'dims', 'dim_id')], pair(), positions);
+    expect(withPk!.y2).toBe(50 + HEADER_H + ROW_H / 2);
+
+    const noKey = [entity('facts', 1), entity('dims', 2)];
+    const [centred] = computeEdgeGeometry(
+      [relation('facts', 'dims', 'col_0')], noKey, positions);
+    expect(centred!.y2).toBe(50 + entityHeight(noKey[1]) / 2);
+  });
+
+  it('flips sides when the target is to the left', () => {
+    const [geometry] = computeEdgeGeometry(
+      [relation('dims', 'facts', 'col_0')], pair(), positions);
+    expect(geometry!.x1).toBe(400);
+    expect(geometry!.d1).toBe(-1);
+    expect(geometry!.x2).toBe(NODE_W);
+    expect(geometry!.d2).toBe(1);
+  });
+
+  it('spreads edges sharing the same anchor instead of stacking them', () => {
+    const entities = [entity('a', 2), entity('b', 2), entity('sink', 2, { primaryKey: 'col_0' })];
+    const threePos = { a: { x: 0, y: 0 }, b: { x: 0, y: 300 }, sink: { x: 400, y: 100 } };
+    const [first, second] = computeEdgeGeometry(
+      [relation('a', 'sink', 'col_0'), relation('b', 'sink', 'col_0')], entities, threePos);
+    expect(first!.y2).not.toBe(second!.y2);
+    // Centred around the shared row: the mean is the unspread anchor.
+    const row = 100 + HEADER_H + ROW_H / 2;
+    expect((first!.y2 + second!.y2) / 2).toBe(row);
+  });
+
+  it('a relation citing an unknown entity yields null, not a crash', () => {
+    const [geometry] = computeEdgeGeometry(
+      [relation('facts', 'ghost', 'x_id')], pair(), positions);
+    expect(geometry).toBeNull();
+  });
+});
+
+describe('anchorSpread', () => {
+  it('is zero for a lone edge and symmetric for several', () => {
+    expect(anchorSpread(0, 1)).toBe(0);
+    expect(anchorSpread(0, 2)).toBe(-5);
+    expect(anchorSpread(1, 2)).toBe(5);
+    expect(anchorSpread(1, 3)).toBe(0);
+  });
+});
+
+describe('cardinality glyphs', () => {
+  it('the crow foot fans from 10px out back to the node edge', () => {
+    expect(crowFootPath(100, 50, 1)).toBe('M110,50 L100,45 M110,50 L100,50 M110,50 L100,55');
+    expect(crowFootPath(100, 50, -1)).toContain('M90,50');
+  });
+
+  it('the one-bar sits 7px out, perpendicular', () => {
+    expect(oneBarPath(100, 50, -1)).toBe('M93,45 L93,55');
+  });
+});
+
+describe('graphBounds / fitTransform', () => {
+  it('bounds cover positions plus real node sizes', () => {
+    const a = entity('a', 2);
+    const b = entity('b', 8);
+    const bounds = graphBounds([a, b], { a: { x: 0, y: 0 }, b: { x: 300, y: 100 } });
+    expect(bounds).toEqual({
+      minX: 0, minY: 0, maxX: 300 + NODE_W, maxY: 100 + entityHeight(b),
+    });
+  });
+
+  it('bounds are null with nothing placed', () => {
+    expect(graphBounds([entity('a', 1)], {})).toBeNull();
+  });
+
+  it('fit centres the graph and never scales above 1', () => {
+    const t = fitTransform({ minX: 0, minY: 0, maxX: 100, maxY: 100 }, 1000, 800);
+    expect(t.scale).toBe(1);
+    expect(t.x).toBe((1000 - 100) / 2);
+    expect(t.y).toBe((800 - 100) / 2);
+  });
+
+  it('fit shrinks a graph larger than the viewport', () => {
+    const t = fitTransform({ minX: 0, minY: 0, maxX: 4000, maxY: 100 }, 1000, 800, 40);
+    expect(t.scale).toBeCloseTo((1000 - 80) / 4000);
+  });
+});
+
+describe('topicDomains / domainColors', () => {
+  it('drops the leading segments every topic shares', () => {
+    const domains = topicDomains(['demo.orders.nested', 'demo.payments.captured', 'demo.orders']);
+    expect(domains.get('demo.orders.nested')).toBe('orders');
+    expect(domains.get('demo.payments.captured')).toBe('payments');
+    expect(domains.get('demo.orders')).toBe('orders');
+  });
+
+  it('keeps the first segment when nothing is shared, and survives single-segment names', () => {
+    const domains = topicDomains(['orders', 'billing.invoices']);
+    expect(domains.get('orders')).toBe('orders');
+    expect(domains.get('billing.invoices')).toBe('billing');
+  });
+
+  it('does not strip a shared segment when a topic has nothing left behind it', () => {
+    // "demo" alone would end up with no segment if the head were dropped.
+    const domains = topicDomains(['demo', 'demo.orders']);
+    expect(domains.get('demo')).toBe('demo');
+    expect(domains.get('demo.orders')).toBe('demo');
+  });
+
+  it('assigns stable tints to sorted domains', () => {
+    const colors = domainColors(new Map([['t1', 'zeta'], ['t2', 'alpha']]));
+    expect(colors.get('alpha')).toBe(DOMAIN_PALETTE[0]);
+    expect(colors.get('zeta')).toBe(DOMAIN_PALETTE[1]);
   });
 });
 

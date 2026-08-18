@@ -189,17 +189,208 @@ export function computeLayout(
   return positions;
 }
 
-/** Points d'ancrage d'une arête : bord droit → bord gauche quand la cible est à droite, symétrique sinon. */
-export function edgeAnchors(
-  from: { x: number; y: number; height: number },
-  to: { x: number; y: number; height: number },
-): { x1: number; y1: number; x2: number; y2: number } {
-  const fromCenterY = from.y + from.height / 2;
-  const toCenterY = to.y + to.height / 2;
-  if (to.x >= from.x) {
-    return { x1: from.x + NODE_W, y1: fromCenterY, x2: to.x, y2: toCenterY };
+// ── Géométrie des arêtes ──────────────────────────────────────────────────────
+
+/**
+ * Ordonnée (relative au nœud) du centre de la ligne d'une colonne affichée, ou `null` quand la
+ * colonne n'est pas listée (repliée dans « +N more ») — l'appelant retombe alors sur le centre
+ * du nœud plutôt que de pointer une ligne qui n'existe pas à l'écran.
+ */
+export function columnRowY(entity: DataModelEntity, columnName: string | null): number | null {
+  if (columnName === null) return null;
+  const index = displayedColumns(entity).columns.findIndex(c => c.name === columnName);
+  if (index < 0) return null;
+  return HEADER_H + index * ROW_H + ROW_H / 2;
+}
+
+/** Écart du i-ème élément parmi n, centré sur zéro — ce qui sépare deux arêtes partageant une ancre. */
+export function anchorSpread(index: number, count: number, gap = 10): number {
+  return (index - (count - 1) / 2) * gap;
+}
+
+export interface EdgeGeometry {
+  x1: number; y1: number; x2: number; y2: number;
+  /** Direction du glyphe à chaque bout : +1 s'il s'étend vers +x depuis le bord du nœud. */
+  d1: 1 | -1; d2: 1 | -1;
+}
+
+/**
+ * La géométrie de chaque arête, ancrée **sur la ligne de la colonne** qui la porte — c'est ce
+ * qui fait qu'un diagramme ER se lit sans étiquette : l'arête part de `order_id` et arrive sur
+ * la ligne clé de la cible. Côté source, la colonne référente ; côté cible, `toColumn`, sinon
+ * la clé détectée, sinon le centre du nœud. Les arêtes partageant une même ancre sont
+ * écartées (`anchorSpread`) pour ne pas se superposer, étiquettes comprises. Une relation
+ * citant une entité absente donne `null` — l'arête est sautée, jamais un crash de rendu.
+ */
+export function computeEdgeGeometry(
+  relations: DataModelRelation[],
+  entities: DataModelEntity[],
+  positions: Positions,
+): (EdgeGeometry | null)[] {
+  const byId = new Map(entities.map(e => [e.id, e]));
+
+  const raw = relations.map(relation => {
+    const from = byId.get(relation.from);
+    const to = byId.get(relation.to);
+    const fromPos = positions[relation.from];
+    const toPos = positions[relation.to];
+    if (!from || !to || !fromPos || !toPos) return null;
+
+    const y1 = fromPos.y + (columnRowY(from, relation.fromColumn) ?? entityHeight(from) / 2);
+    const y2 = toPos.y
+      + (columnRowY(to, relation.toColumn) ?? columnRowY(to, to.primaryKey) ?? entityHeight(to) / 2);
+
+    if (toPos.x >= fromPos.x) {
+      return { x1: fromPos.x + NODE_W, y1, x2: toPos.x, y2, d1: 1 as const, d2: -1 as const };
+    }
+    return { x1: fromPos.x, y1, x2: toPos.x + NODE_W, y2, d1: -1 as const, d2: 1 as const };
+  });
+
+  // Écartement : groupées par ancre exacte (nœud + bord + ordonnée), chaque bout séparément —
+  // chaque membre sait quel bout de sa relation est ancré là, un même nœud pouvant recevoir
+  // des bouts « source » et « cible » sur la même ancre.
+  const groups = new Map<string, { relIndex: number; end: 1 | 2 }[]>();
+  raw.forEach((g, i) => {
+    if (!g) return;
+    const r = relations[i];
+    const ends: [string, 1 | 2][] = [
+      [`${r.from}|${g.d1}|${g.y1}`, 1],
+      [`${r.to}|${g.d2}|${g.y2}`, 2],
+    ];
+    for (const [key, end] of ends) {
+      const list = groups.get(key) ?? [];
+      list.push({ relIndex: i, end });
+      groups.set(key, list);
+    }
+  });
+  const offsets = new Map<number, { dy1: number; dy2: number }>();
+  raw.forEach((_, i) => offsets.set(i, { dy1: 0, dy2: 0 }));
+  groups.forEach(members => {
+    if (members.length < 2) return;
+    members.forEach((member, rank) => {
+      const offset = offsets.get(member.relIndex)!;
+      const dy = anchorSpread(rank, members.length);
+      if (member.end === 1) offset.dy1 += dy; else offset.dy2 += dy;
+    });
+  });
+
+  return raw.map((g, i) => {
+    if (!g) return null;
+    const { dy1, dy2 } = offsets.get(i)!;
+    return { ...g, y1: g.y1 + dy1, y2: g.y2 + dy2 };
+  });
+}
+
+/**
+ * Patte-d'oie (côté « plusieurs », l'entité référente) : trois branches qui touchent le bord du
+ * nœud. `d` pointe du bord du nœud vers l'arête. Une clé étrangère est presque toujours N→1 —
+ * la notation dit la cardinalité, le style de trait reste réservé à la confiance.
+ */
+export function crowFootPath(x: number, y: number, d: 1 | -1): string {
+  const px = x + d * 10;
+  return `M${px},${y} L${x},${y - 5} M${px},${y} L${x},${y} M${px},${y} L${x},${y + 5}`;
+}
+
+/** Barre du côté « un » (l'entité référencée), perpendiculaire à l'arête près du bord du nœud. */
+export function oneBarPath(x: number, y: number, d: 1 | -1): string {
+  const bx = x + d * 7;
+  return `M${bx},${y - 5} L${bx},${y + 5}`;
+}
+
+// ── Cadrage ───────────────────────────────────────────────────────────────────
+
+export interface Bounds { minX: number; minY: number; maxX: number; maxY: number }
+
+/** L'emprise du graphe, hauteurs réelles des nœuds comprises. `null` sans nœud placé. */
+export function graphBounds(entities: DataModelEntity[], positions: Positions): Bounds | null {
+  let bounds: Bounds | null = null;
+  for (const entity of entities) {
+    const pos = positions[entity.id];
+    if (!pos) continue;
+    const maxX = pos.x + NODE_W;
+    const maxY = pos.y + entityHeight(entity);
+    bounds = bounds === null
+      ? { minX: pos.x, minY: pos.y, maxX, maxY }
+      : {
+          minX: Math.min(bounds.minX, pos.x),
+          minY: Math.min(bounds.minY, pos.y),
+          maxX: Math.max(bounds.maxX, maxX),
+          maxY: Math.max(bounds.maxY, maxY),
+        };
   }
-  return { x1: from.x, y1: fromCenterY, x2: to.x + NODE_W, y2: toCenterY };
+  return bounds;
+}
+
+/**
+ * La transformation qui cadre le graphe dans le viewport : centré, à l'échelle qui le fait
+ * tenir — plafonnée à 1, agrandir un petit modèle au-delà de sa taille naturelle ne le rend
+ * pas plus lisible. C'est le geste que Stream Flow a déjà : un reset vers `scale(1)` fixe
+ * laissait la moitié d'un grand graphe hors écran.
+ */
+export function fitTransform(
+  bounds: Bounds,
+  viewportWidth: number,
+  viewportHeight: number,
+  padding = 40,
+): { x: number; y: number; scale: number } {
+  const width = Math.max(1, bounds.maxX - bounds.minX);
+  const height = Math.max(1, bounds.maxY - bounds.minY);
+  const scale = Math.max(0.1, Math.min(
+    1,
+    (viewportWidth - 2 * padding) / width,
+    (viewportHeight - 2 * padding) / height,
+  ));
+  return {
+    scale,
+    x: (viewportWidth - width * scale) / 2 - bounds.minX * scale,
+    y: (viewportHeight - height * scale) / 2 - bounds.minY * scale,
+  };
+}
+
+// ── Domaines de topics ────────────────────────────────────────────────────────
+
+/**
+ * Le domaine de chaque topic : le premier segment de son nom, après avoir retiré les segments
+ * de tête que **tous** les topics partagent (`demo.orders.nested` et `demo.payments.captured`
+ * → `orders` et `payments`, pas deux fois `demo`). Décidé sur l'ensemble, pas topic par
+ * topic — c'est ce qui fait apparaître les sous-systèmes au lieu d'un groupe unique.
+ */
+export function topicDomains(topics: string[]): Map<string, string> {
+  const segments = new Map(topics.map(t => [t, t.split(/[._-]+/).filter(Boolean)]));
+  let dropped = 0;
+  for (;;) {
+    const heads = new Set<string>();
+    let allDeep = topics.length > 0;
+    for (const parts of segments.values()) {
+      if (parts.length - dropped < 2) { allDeep = false; break; }
+      heads.add(parts[dropped].toLowerCase());
+    }
+    if (!allDeep || heads.size !== 1) break;
+    dropped += 1;
+  }
+  const domains = new Map<string, string>();
+  for (const [topic, parts] of segments) {
+    domains.set(topic, (parts[dropped] ?? parts[0] ?? topic).toLowerCase());
+  }
+  return domains;
+}
+
+/** Teintes d'en-tête par domaine : fond sombre + accent, cyclées sur les domaines triés. */
+export const DOMAIN_PALETTE: { header: string; accent: string }[] = [
+  { header: '#252a4a', accent: '#a3adff' },
+  { header: '#1c3a2f', accent: '#7ee2a8' },
+  { header: '#3a2f1c', accent: '#f5c264' },
+  { header: '#3a1c2c', accent: '#f597b0' },
+  { header: '#1c303a', accent: '#7ec9e2' },
+  { header: '#2c1c3a', accent: '#c9a9f7' },
+  { header: '#33321c', accent: '#d8d97e' },
+  { header: '#3a221c', accent: '#f59782' },
+];
+
+/** Domaine → teinte, assignation stable (domaines triés) pour que deux runs se ressemblent. */
+export function domainColors(domains: Map<string, string>): Map<string, { header: string; accent: string }> {
+  const unique = [...new Set(domains.values())].sort();
+  return new Map(unique.map((domain, i) => [domain, DOMAIN_PALETTE[i % DOMAIN_PALETTE.length]]));
 }
 
 // ── Habillage ─────────────────────────────────────────────────────────────────
