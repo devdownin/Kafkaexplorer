@@ -451,6 +451,14 @@ was asked for — reliability, ergonomics, optimisation, UI quality. All finding
 codebase; the report also carries a "constaté, non traité" section (the per-keystroke autocomplete
 rebuild, the non-foldable Window Assistant, the absence of a mobile layout, no undo for a closed tab).
 
+`MOBILE-LAYOUT-SCOPE.md` scopes the one item that audit left open — the absence of a mobile
+layout — and is a *scoping* document, not a fix: it carries measurements taken with
+`docs/screenshots/layout-probe.mjs` (the SQL editor renders **5 CSS pixels** of Monaco at 390 px
+and at 768 px, the schema browser holding a fixed 288 px that never yields; crossing the `md`
+breakpoint makes it worse, the shell's navigation turning from a drawer into a 256 px in-flow
+rail), the product decision the work depends on, and sized work items for each answer. Nothing in
+it is implemented. Re-run the probe before trusting its numbers.
+
 An earlier full bug & optimisation audit covered the whole codebase: all critical (C1–C4), major (M1–M8), minor and optimisation findings have been fixed here. Its report, `AUDIT.md`, was deleted from the tree in 31767bd — so the corrective decisions survive only as the behaviour of the code and the notes in this file, which is worth knowing before refactoring `AuditService`, `KafkaLiveConsumer`, `MetricService` or the direct SELECT engine: what looks like an odd choice in those four is usually a fix, and `git show 31767bd^:AUDIT.md` is where the reasoning is.
 
 ## License
