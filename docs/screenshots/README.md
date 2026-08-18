@@ -27,6 +27,24 @@ GitHub Pages on every view. Without the binary the run still succeeds and says s
 — compression is not what this script is for, but nobody should discover the omission from a
 commit diff either.
 
+## Measuring the layout, not photographing it
+
+`layout-probe.mjs` runs against the same server and reports numbers instead of images: whether a
+page scrolls sideways, which containers clip content with no way to reach the rest, how many
+interactive targets fall below the 24 x 24 CSS px of WCAG 2.5.8, and — on the SQL editor, where
+the question is sharpest — the width actually left to the Monaco editor.
+
+```bash
+node layout-probe.mjs http://127.0.0.1:4173            # seven pages x three viewports
+node layout-probe.mjs http://127.0.0.1:4173 --sweep    # editor width against viewport width
+```
+
+It exists because "the page has no mobile story" was an assertion nobody had measured, and it is
+where the tables in [`MOBILE-LAYOUT-SCOPE.md`](../../MOBILE-LAYOUT-SCOPE.md) come from. A
+screenshot shows that something is wrong; a measurement says how wrong, and at which width it
+stops being wrong. Re-run it before trusting that document — a single CSS change can move every
+number in it.
+
 ## What is real and what is not
 
 **The UI is real.** Every pixel is the compiled `src/main/webapp` — the same components,
