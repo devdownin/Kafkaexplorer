@@ -284,4 +284,47 @@ describe('DataModel page', () => {
     await openTopics(user);
     expect(screen.getByRole('button', { name: /No deduced relation \(1\)/ })).toBeInTheDocument();
   });
+
+  it('jumps to an entity chosen from the search and opens its inspector', async () => {
+    const user = userEvent.setup();
+    stubApi();
+    await renderPage('/data-model?topics=demo.orders.1.received,demo.payments.authorized');
+
+    await screen.findByText('2 entities · 1 relation deduced');
+    await openTopics(user);
+    await user.type(screen.getByLabelText('Jump to an entity'), 'demo_payments_authorized');
+
+    expect(await screen.findByRole('heading', { level: 2, name: 'demo_payments_authorized' }))
+      .toBeInTheDocument();
+  });
+
+  it('compares two selections and reports what differs, without touching the model on screen', async () => {
+    const user = userEvent.setup();
+    const withSensor: DataModelResponse = {
+      ...model,
+      entities: [...model.entities, {
+        id: 'demo_iot_sensors', topic: 'demo.iot.sensors', format: 'JSON',
+        primaryKey: null, messageCount: 500,
+        columns: [{ name: 'reading', type: 'DOUBLE', primaryKey: false, references: null }],
+      }],
+      topicsRequested: 3, topicsAnalyzed: 3,
+    };
+    mockedAxios.post.mockImplementation((_url, body) => Promise.resolve({
+      data: (body as { topics: string[] }).topics.includes('demo.iot.sensors') ? withSensor : model,
+    }));
+    mockedAxios.get.mockResolvedValue({ data: {} });
+    await renderPage('/data-model?topics=demo.orders.1.received,demo.payments.authorized');
+
+    await screen.findByText('2 entities · 1 relation deduced');
+    await openTopics(user);
+    await user.click(screen.getByRole('button', { name: /Compare with another selection/ }));
+    await user.type(
+      screen.getByLabelText('Add comparison topics by name, list or pattern'),
+      'demo.orders.1.received,demo.payments.authorized,demo.iot.sensors{Enter}');
+    await user.click(screen.getByRole('button', { name: /^Compare$/ }));
+
+    expect(await screen.findByText(/\+1 entity/)).toBeInTheDocument();
+    // The comparison is a second, independent call — the model drawn on screen is untouched.
+    expect(screen.getByText('2 entities · 1 relation deduced')).toBeInTheDocument();
+  });
 });

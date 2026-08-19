@@ -8,9 +8,10 @@ import {
   filterTopics, toggleTopic, selectAll, topicsFromQuery, buildQuery,
   displayedColumns, entityHeight, computeLayout, describeModel, splitByConnectivity,
   columnRowY, anchorSpread, computeEdgeGeometry, crowFootPath, oneBarPath,
-  graphBounds, fitTransform, topicDomains, domainColors,
+  graphBounds, fitTransform, centerOnEntity, topicDomains, domainColors,
   formatCount, describeRelation, matchingColumns, describeColumnMatches,
   buildExportSvg, exportNotes, escapeXml, toMermaidEr, buildJoinSql, joinAliases,
+  capTopics, relationKey, diffModels, diffIsEmpty, describeDiff,
 } from './dataModel';
 
 function entity(id: string, columnCount: number, overrides: Partial<DataModelEntity> = {}): DataModelEntity {
@@ -270,6 +271,93 @@ describe('graphBounds / fitTransform', () => {
   it('fit shrinks a graph larger than the viewport', () => {
     const t = fitTransform({ minX: 0, minY: 0, maxX: 4000, maxY: 100 }, 1000, 800, 40);
     expect(t.scale).toBeCloseTo((1000 - 80) / 4000);
+  });
+
+  it('an unset topPadding reproduces the old symmetric centring exactly', () => {
+    // Regression pin: existing callers that never pass topPadding must see no change at all.
+    const bounds = { minX: 10, minY: 20, maxX: 4010, maxY: 620 };
+    const withDefault = fitTransform(bounds, 1200, 900, 40);
+    const explicitlySymmetric = fitTransform(bounds, 1200, 900, 40, 40);
+    expect(withDefault).toEqual(explicitlySymmetric);
+  });
+
+  it('a larger topPadding pushes a height-constrained graph down and clear of the reserved band', () => {
+    // The banner overlay covers the top of the viewport without shrinking the SVG: a graph
+    // whose height is the binding constraint used to centre almost flush with the top, right
+    // under it. Because scale is also height-bound here, growing topPadding shrinks scale too —
+    // so this checks what must hold regardless: the content clears the reserved band, and
+    // shrinks rather than overflowing it.
+    const bounds = { minX: 0, minY: 0, maxX: 300, maxY: 2000 };
+    const symmetric = fitTransform(bounds, 1200, 900, 40);
+    const reserved = fitTransform(bounds, 1200, 900, 40, 160);
+    expect(reserved.y).toBeGreaterThan(symmetric.y);
+    expect(reserved.scale).toBeLessThan(symmetric.scale);
+    // The fitted content's top edge must clear the reserved band, not just move down a little.
+    expect(reserved.y + bounds.minY * reserved.scale).toBeGreaterThanOrEqual(160);
+  });
+
+  it('topPadding has no effect when width, not height, is the binding constraint', () => {
+    // A wide, short graph is scaled down by its width alone; reserving vertical room changes
+    // nothing about that — the padding sides (left/right) it actually depends on are untouched.
+    const bounds = { minX: 0, minY: 0, maxX: 4000, maxY: 50 };
+    const symmetric = fitTransform(bounds, 1200, 900, 40);
+    const reserved = fitTransform(bounds, 1200, 900, 40, 160);
+    expect(reserved.scale).toBe(symmetric.scale);
+    expect(reserved.x).toBe(symmetric.x);
+  });
+
+  it('a topPadding that leaves no room still returns a finite, positive scale', () => {
+    const bounds = { minX: 0, minY: 0, maxX: 100, maxY: 100 };
+    const t = fitTransform(bounds, 1200, 900, 40, 2000);
+    expect(Number.isFinite(t.scale)).toBe(true);
+    expect(t.scale).toBeGreaterThan(0);
+  });
+});
+
+describe('centerOnEntity', () => {
+  const e = entity('orders', 3);
+
+  it('centers the entity box in the viewport', () => {
+    const t = centerOnEntity(e, { x: 100, y: 200 }, 1200, 900, 1, 0.8);
+    const cx = 100 + NODE_W / 2;
+    const cy = 200 + entityHeight(e) / 2;
+    expect(t.x).toBeCloseTo(600 - cx * t.scale);
+    expect(t.y).toBeCloseTo(450 - cy * t.scale);
+  });
+
+  it('raises the scale up to minScale when zoomed further out than that', () => {
+    const t = centerOnEntity(e, { x: 0, y: 0 }, 1200, 900, 0.3, 0.8);
+    expect(t.scale).toBe(0.8);
+  });
+
+  it('keeps the current scale when already at least as close', () => {
+    const t = centerOnEntity(e, { x: 0, y: 0 }, 1200, 900, 0.9, 0.8);
+    expect(t.scale).toBe(0.9);
+  });
+
+  it('never exceeds scale 1 even below minScale\'s floor', () => {
+    const t = centerOnEntity(e, { x: 0, y: 0 }, 1200, 900, 0.1, 1.5);
+    expect(t.scale).toBe(1);
+  });
+});
+
+describe('capTopics', () => {
+  it('keeps everything under the cap, with no overflow', () => {
+    const topics = ['a', 'b', 'c'];
+    expect(capTopics(topics)).toEqual({ kept: topics, overflow: [] });
+  });
+
+  it('splits at the cap and names what is left out — never a silent truncation', () => {
+    const topics = Array.from({ length: 35 }, (_, i) => `t${i}`);
+    const { kept, overflow } = capTopics(topics);
+    expect(kept).toHaveLength(MAX_TOPICS);
+    expect(overflow).toHaveLength(5);
+    expect(kept).toEqual(topics.slice(0, MAX_TOPICS));
+    expect(overflow).toEqual(topics.slice(MAX_TOPICS));
+  });
+
+  it('an empty list stays empty', () => {
+    expect(capTopics([])).toEqual({ kept: [], overflow: [] });
   });
 });
 
@@ -711,5 +799,97 @@ describe('buildJoinSql', () => {
 
   it('returns null when an endpoint is not in the model', () => {
     expect(buildJoinSql(rel({ to: 'ghost' }), [payments])).toBeNull();
+  });
+});
+
+describe('relationKey / diffModels / describeDiff', () => {
+  const base: DataModelResponse = {
+    entities: [], relations: [], warnings: [],
+    topicsRequested: 2, topicsAnalyzed: 2, truncated: false,
+  };
+
+  it('two calls with the same shape produce the same key, regardless of confidence or reason', () => {
+    const a = relation('orders', 'payments', 'order_id');
+    const b = { ...a, confidence: 'MEDIUM' as const, reason: 'a different run, a different wording' };
+    expect(relationKey(a)).toBe(relationKey(b));
+  });
+
+  it('no difference between two identical models', () => {
+    const model: DataModelResponse = {
+      ...base,
+      entities: [entity('a', 1), entity('b', 1)],
+      relations: [relation('a', 'b')],
+    };
+    const diff = diffModels(model, model);
+    expect(diffIsEmpty(diff)).toBe(true);
+    expect(describeDiff(diff)).toBe('No difference — same entities and relations.');
+  });
+
+  it('an entity present only in the second selection is added, not the reverse', () => {
+    const before: DataModelResponse = { ...base, entities: [entity('a', 1)] };
+    const after: DataModelResponse = { ...base, entities: [entity('a', 1), entity('b', 1)] };
+    const diff = diffModels(before, after);
+    expect(diff.addedEntities.map(e => e.id)).toEqual(['b']);
+    expect(diff.removedEntities).toHaveLength(0);
+    expect(diff.unchangedEntityCount).toBe(1);
+  });
+
+  it('an entity dropped from the second selection is removed', () => {
+    const before: DataModelResponse = { ...base, entities: [entity('a', 1), entity('b', 1)] };
+    const after: DataModelResponse = { ...base, entities: [entity('a', 1)] };
+    const diff = diffModels(before, after);
+    expect(diff.removedEntities.map(e => e.id)).toEqual(['b']);
+    expect(diff.addedEntities).toHaveLength(0);
+  });
+
+  it('a relation appearing only after is added; one only before is removed', () => {
+    const before: DataModelResponse = { ...base, relations: [relation('a', 'b', 'x_id')] };
+    const after: DataModelResponse = { ...base, relations: [relation('a', 'c', 'y_id')] };
+    const diff = diffModels(before, after);
+    expect(diff.addedRelations).toHaveLength(1);
+    expect(diff.addedRelations[0].to).toBe('c');
+    expect(diff.removedRelations).toHaveLength(1);
+    expect(diff.removedRelations[0].to).toBe('b');
+    expect(diff.unchangedRelationCount).toBe(0);
+  });
+
+  it('the same relation at a different confidence is a change, not an add+remove pair', () => {
+    const before: DataModelResponse = {
+      ...base, relations: [{ ...relation('a', 'b'), confidence: 'MEDIUM' }],
+    };
+    const after: DataModelResponse = {
+      ...base, relations: [{ ...relation('a', 'b'), confidence: 'HIGH' }],
+    };
+    const diff = diffModels(before, after);
+    expect(diff.addedRelations).toHaveLength(0);
+    expect(diff.removedRelations).toHaveLength(0);
+    expect(diff.changedRelations).toHaveLength(1);
+    expect(diff.changedRelations[0]).toMatchObject({ from: 'MEDIUM', to: 'HIGH' });
+  });
+
+  it('an unchanged relation counts as unchanged, not as a silent add', () => {
+    const model: DataModelResponse = { ...base, relations: [relation('a', 'b')] };
+    const diff = diffModels(model, { ...model, relations: [...model.relations] });
+    expect(diff.addedRelations).toHaveLength(0);
+    expect(diff.unchangedRelationCount).toBe(1);
+  });
+
+  it('describeDiff summarises every kind of change present, and only those', () => {
+    const before: DataModelResponse = {
+      ...base,
+      entities: [entity('a', 1), entity('b', 1)],
+      relations: [{ ...relation('a', 'b', 'x_id'), confidence: 'MEDIUM' }],
+    };
+    const after: DataModelResponse = {
+      ...base,
+      entities: [entity('a', 1), entity('c', 1)],
+      relations: [{ ...relation('a', 'b', 'x_id'), confidence: 'HIGH' }, relation('a', 'c', 'z_id')],
+    };
+    const summary = describeDiff(diffModels(before, after));
+    expect(summary).toContain('+1 entity');
+    expect(summary).toContain('-1 entity');
+    expect(summary).toContain('+1 relation');
+    expect(summary).toContain('1 confidence changed');
+    expect(summary.split(', ')).toHaveLength(4); // no removed-relations clause, since there are none
   });
 });
