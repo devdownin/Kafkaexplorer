@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { addTopicEntries, describeTopicEntry } from './topicSelection';
+import { addTopicEntries, describeTopicEntry, suggestBroaderPattern } from './topicSelection';
 
 /** Un plafond quelconque, pour les cas qui en exercent un. Data Model passe le sien. */
 const CAP = 30;
@@ -88,7 +88,7 @@ describe('addTopicEntries', () => {
 });
 
 describe('describeTopicEntry', () => {
-  const empty = { selection: [], added: [], unmatched: [], overflow: [], cap: null };
+  const empty = { selection: [], added: [], unmatched: [], overflow: [], suggestions: {}, cap: null };
 
   it('counts what went in', () => {
     expect(describeTopicEntry({ ...empty, selection: ['a', 'b'], added: ['a', 'b'] }))
@@ -103,11 +103,61 @@ describe('describeTopicEntry', () => {
     })).toBe(`1 topic added · no topic matches nope.* · 2 left out — the request is capped at ${CAP} topics`);
   });
 
+  it('names the broader form when an anchored pattern found nothing', () => {
+    expect(describeTopicEntry({
+      ...empty, unmatched: ['orders*'], suggestions: { 'orders*': '*orders*' },
+    })).toBe('no topic matches orders* (try *orders*)');
+  });
+
+  it('stays quiet about a broader form when there is none to offer', () => {
+    expect(describeTopicEntry({ ...empty, unmatched: ['nope.*'] }))
+      .toBe('no topic matches nope.*');
+  });
+
   it('says so when everything was already selected — the input must not look inert', () => {
     expect(describeTopicEntry({ ...empty, selection: ['a'] })).toBe('Already selected');
   });
 
   it('has nothing to say about an empty input', () => {
     expect(describeTopicEntry(empty)).toBeNull();
+  });
+});
+
+/*
+ * Les motifs sont ancrés, ce qui les rend précis : `demo.*` ne ramène pas `internal.demo.x`.
+ * La contrepartie est que `orders*` ne trouve rien sur un catalogue en `demo.orders.…`, ce qui se
+ * lit comme « ce topic n'existe pas ». L'échappatoire `*orders*` existait déjà ; ce qui manquait
+ * était de la connaître. On propose donc, sans jamais élargir tout seul — élargir aurait dilué la
+ * précision de tous les autres motifs pour offrir ce que la syntaxe donne déjà.
+ */
+describe('suggestBroaderPattern', () => {
+  const catalog = ['demo.orders.1.received', 'demo.orders.2.validated', 'demo.payments.authorized'];
+
+  it('offers the wrapped form when it is the one that would have matched', () => {
+    expect(suggestBroaderPattern('orders*', catalog)).toBe('*orders*');
+  });
+
+  it('offers nothing when broadening would find nothing either', () => {
+    expect(suggestBroaderPattern('nope*', catalog)).toBeNull();
+  });
+
+  it('offers nothing for a pattern that is already wrapped', () => {
+    expect(suggestBroaderPattern('*orders*', catalog)).toBeNull();
+  });
+
+  it('ignores a plain name — it is not a pattern, and is accepted as typed', () => {
+    expect(suggestBroaderPattern('demo.orders.9.new', catalog)).toBeNull();
+  });
+
+  it('reaches the note through addTopicEntries, which is where a user meets it', () => {
+    const entry = addTopicEntries([], 'orders*', catalog);
+    expect(entry.added).toEqual([]);
+    expect(describeTopicEntry(entry)).toBe('no topic matches orders* (try *orders*)');
+  });
+
+  it('does not broaden on its own: the anchored pattern still decides what is added', () => {
+    // Ce qui compte le plus ici — une suggestion ne doit rien sélectionner.
+    expect(addTopicEntries([], 'orders*', catalog).selection).toEqual([]);
+    expect(addTopicEntries([], 'demo.*', catalog).added).toHaveLength(3);
   });
 });
