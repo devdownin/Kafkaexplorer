@@ -49,6 +49,7 @@ C4Component
         Component(query_ctrl, "QueryController", "Spring MVC", "Handles SQL execution requests.")
         Component(audit_ctrl, "AuditController", "Spring MVC", "Manages cluster-wide audits.")
         Component(metric_ctrl, "MetricController", "Spring MVC", "Metric CRUD, previews and KPI suggestions.")
+        Component(model_ctrl, "DataModelController", "Spring MVC", "Builds the deduced entity-relation model.")
 
         Component(flink_svc, "FlinkSqlService", "Service", "Manages Flink job lifecycle. Uses dedicated ExecutorService for non-blocking result fetching.")
         Component(kafka_svc, "KafkaAdminService", "Service", "Interfaces with Kafka AdminClient. Features Caffeine-based caching and strict timeouts.")
@@ -56,6 +57,7 @@ C4Component
         Component(inference_svc, "SchemaInferenceService", "Service", "Detects JSON/XML structures and generates schemas.")
         Component(metric_svc, "MetricService", "Service", "Schedules metric queries and bridges them to Micrometer/Prometheus. Templates: count delta, transit latency, consumer time lag.")
         Component(suggest_svc, "MetricSuggestionService", "Service", "Derives contextual KPIs from audit reports and Stream Flow traces. Proposes, never creates.")
+        Component(model_svc, "DataModelService", "Service", "Reads topics as entities and deduces graded relations from key-column names. States its evidence; never invents a key.")
 
         Component(cache, "Caffeine Cache", "Cache", "Stores topic metadata to reduce Kafka load.")
     }
@@ -72,6 +74,9 @@ C4Component
     Rel(metric_svc, kafka_svc, "Reads offsets and record timestamps")
     Rel(suggest_svc, audit_svc, "Reads the last report")
     Rel(suggest_svc, kafka_svc, "Reads the groups a KPI would name")
+    Rel(model_ctrl, model_svc, "Uses")
+    Rel(model_svc, inference_svc, "Infers each topic's columns")
+    Rel(model_svc, kafka_svc, "Samples messages and counts")
 ```
 
 ## Key Architectural Decisions (Robustness & Performance)

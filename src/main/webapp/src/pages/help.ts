@@ -648,11 +648,11 @@ export const SHORTCUTS: Shortcut[] = [
   { key: 'Esc', desc: 'Close a modal, or deselect the focused node', where: 'Global · Graphs' },
   { key: '/', desc: 'Focus the search field', where: 'Topic Explorer' },
   { key: 'j / k', desc: 'Walk up and down the hits', where: 'Topic Explorer' },
-  { key: 'Scroll / drag', desc: 'Zoom and pan — pointer or touch', where: 'Lineage · Stream Flow' },
-  { key: '↑ ↓ ← →', desc: 'Pan the graph (hold Shift for larger steps)', where: 'Lineage · Stream Flow' },
-  { key: '+ / −', desc: 'Zoom the graph in and out', where: 'Lineage · Stream Flow' },
-  { key: '0', desc: 'Fit the graph back into view', where: 'Lineage · Stream Flow' },
-  { key: 'Tab, then Enter', desc: 'Move between graph nodes and open the focused one', where: 'Lineage · Stream Flow' },
+  { key: 'Scroll / drag', desc: 'Zoom and pan — pointer or touch', where: 'Lineage · Stream Flow · Data Model' },
+  { key: '↑ ↓ ← →', desc: 'Pan the graph (hold Shift for larger steps)', where: 'Lineage · Stream Flow · Data Model' },
+  { key: '+ / −', desc: 'Zoom the graph in and out', where: 'Lineage · Stream Flow · Data Model' },
+  { key: '0', desc: 'Fit the graph back into view', where: 'Lineage · Stream Flow · Data Model' },
+  { key: 'Tab, then Enter', desc: 'Move between graph nodes and open the focused one', where: 'Lineage · Stream Flow · Data Model' },
 ];
 
 /**

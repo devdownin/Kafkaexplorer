@@ -96,6 +96,7 @@ window, plus duplicates and poison records for the audit to find.
 - 📝 **A real SQL editor** — Monaco (the VS Code engine), auto-completion scoped to the tables your query actually cites, query history, earliest/latest read modes, windowing assistant.
 - 🔎 **Search that says what it scanned** — text, regex, field path, JSONPath, XPath, record key or Kafka header, over the whole topic, with hits, records scanned, why the pass stopped, and a cursor to continue. A search here is never silently partial.
 - 🕸️ **Lineage & tracing** — an interactive graph of topics → tables → live jobs, resolved by Flink's own parser; plus cross-topic message tracing by key, header, JSONPath or XPath, streaming its hops as it finds them and comparing two keys side by side.
+- 🗺️ **A data model you did not have to draw** — read a set of topics as tables, with the relations between them deduced from key-column names. Kafka has no foreign keys, so every edge is graded, states its evidence, and opens as a ready `JOIN` — one relation or a whole subgraph.
 - 🩺 **One-click cluster audit** — poison messages, duplicates, flow drop-offs and latency, graded by severity, computed across your whole cluster in the background and diffable against the previous run.
 - 📉 **Consumer lag that grades itself** — who reads a topic and how far behind, with `stalled` (nothing assigned), `partial` (never committed on some partitions) and `ahead` called out rather than folded into one number.
 - ⏱️ **Backlog in time, not just in records** — the same 4 000 messages are four seconds of traffic on one topic and four days on another. Ask any group how long its oldest unread message has been waiting, from the topic page or as a scheduled metric; a partition that could not be read says so instead of reporting zero.
@@ -129,7 +130,11 @@ can be checked rather than believed.
 **Data Model** — pick a set of topics and read them as tables: each becomes a card carrying its
 inferred columns, and the relations between them are deduced from key-column names. Kafka has no
 foreign keys, so every edge is a claim rather than a fact — it is graded, drawn in a line style
-that says which grade it is, and states in plain words the evidence it rests on.
+that says which grade it is, and states in plain words the evidence it rests on. The key column is
+detected, never invented: an entity with no id-like field simply has no key. A relation, or a whole
+subgraph, opens as a ready `JOIN` in the SQL editor — and is refused rather than given an invented
+predicate when the deduced relations do not connect it. Exports as SVG, PNG or a Mermaid
+`erDiagram`, each carrying the coverage line and what is *not* drawn.
 
 ![Data Model: four topics read as tables — customers, orders, payments and shipments — with three deduced relations drawn in crow's-foot notation between their key columns](https://devdownin.github.io/Kafkaexplorer/img/data-model.png)
 
