@@ -55,6 +55,35 @@ describe('topic selection', () => {
     expect(toggleTopic(['t'], 't')).toEqual([]);
   });
 
+  /*
+   * Le champ de saisie annonce `demo.orders.*` dans son placeholder ; le filtre juste en dessous
+   * ne comprenait pas cette syntaxe et rendait une liste vide, ce qui se lit comme « aucun topic »
+   * plutôt que « pas la bonne syntaxe ». C'est le défaut signalé.
+   */
+  it('the filter understands a pattern, like the field above it advertises', () => {
+    const catalog = ['demo.orders.1.received', 'demo.orders.2.validated', 'demo.payments.authorized'];
+    expect(filterTopics(catalog, 'demo.orders.*'))
+      .toEqual(['demo.orders.1.received', 'demo.orders.2.validated']);
+  });
+
+  it('a pattern filter is anchored, so it shows exactly what the field would add', () => {
+    const catalog = ['demo.orders.1.received', 'other.demo.orders.x'];
+    expect(filterTopics(catalog, 'demo.orders.*')).toEqual(['demo.orders.1.received']);
+  });
+
+  it('plain text stays a substring match — that is what a filter is', () => {
+    expect(filterTopics(['demo.Orders', 'demo.payments'], 'ORD')).toEqual(['demo.Orders']);
+  });
+
+  it('a pattern is case-insensitive too, like the substring path has always been', () => {
+    expect(filterTopics(['demo.Orders.1'], 'demo.orders.*')).toEqual(['demo.Orders.1']);
+  });
+
+  it('a pattern matching nothing shows nothing, without throwing on the regex characters', () => {
+    expect(filterTopics(['demo.orders.1'], 'nope.*')).toEqual([]);
+    expect(filterTopics(['a+b(c)'], 'a+b(c)')).toEqual(['a+b(c)']);
+  });
+
   it('select-all respects the server cap and skips internal topics', () => {
     const visible = ['internal.audit.history', ...Array.from({ length: 40 }, (_, i) => `t${i}`)];
     const selected = selectAll([], visible);

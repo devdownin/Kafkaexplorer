@@ -6,6 +6,7 @@ import axios from 'axios';
 import { Checkbox, Combobox, Field, Input, NumberInput, Select } from '../ui';
 import { useToast } from '../Toast';
 import { addTopicEntries, describeTopicEntry } from '../../topicSelection';
+import { filterTopics } from '../../pages/dataModel';
 
 export interface SnapshotConfig {
   mode: 'EARLIEST' | 'LATEST_N' | 'TIMESTAMP';
@@ -45,9 +46,9 @@ const TopicSelectorPanel: React.FC<TopicSelectorPanelProps> = ({ onStart, loadin
     fetchTopics();
   }, []);
 
-  const filteredTopics = allTopics.filter(t =>
-    t.toLowerCase().includes(filter.toLowerCase())
-  );
+  // Même règle que Data Model, par la même fonction : le champ au-dessus annonce
+  // `demo.orders.*`, donc ce filtre-ci doit répondre au même texte. Il ne le faisait pas.
+  const filteredTopics = filterTopics(allTopics, filter);
 
   const toggleTopic = (topic: string) => {
     setSelectedTopics(prev =>
@@ -122,7 +123,7 @@ const TopicSelectorPanel: React.FC<TopicSelectorPanelProps> = ({ onStart, loadin
           <span className="material-symbols-outlined text-on-surface-variant text-base">search</span>
           <input
             className="flex-1 bg-transparent text-sm outline-none placeholder-on-surface-variant"
-            placeholder="Filter the list below..."
+            placeholder="Filter the list below — demo.orders.* works too"
             value={filter}
             onChange={e => setFilter(e.target.value)}
           />
