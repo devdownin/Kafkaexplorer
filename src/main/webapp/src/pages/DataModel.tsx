@@ -23,9 +23,11 @@ import {
   diffModels, describeDiff, diffIsEmpty,
   filterRelations, describeRelationFilter, orphanKeyColumns, describeOrphanKey,
   shortenColumnName, readSelectionDraft, saveSelectionDraft,
+  minimapLayout, visibleGraphRect, graphFullyVisible, centerOnGraphPoint,
+  readSavedModels, saveModel, deleteSavedModel, buildMultiJoinSql,
   CONFIDENCE_STYLE, describeModel,
 } from './dataModel';
-import type { OrphanKey } from './dataModel';
+import type { OrphanKey, SavedModel } from './dataModel';
 import type { DataModelRelation, RelationConfidence } from '../api/types';
 
 /**
@@ -33,6 +35,10 @@ import type { DataModelRelation, RelationConfidence } from '../api/types';
  * tables, colonnes inférées) et les relations déduites, rendues en diagramme entité-relation.
  * Toute la logique décidable vit dans `dataModel.ts` ; ici il n'y a que le rendu et le câblage.
  */
+
+/** Boîte de la minicarte, en pixels — assez grande pour situer, assez petite pour ne pas gêner. */
+const MINIMAP_W = 168;
+const MINIMAP_H = 120;
 
 // ── Nœud-table ────────────────────────────────────────────────────────────────
 
@@ -185,6 +191,13 @@ const DataModel: React.FC = () => {
    */
   const [shownConfidences, setShownConfidences] = useState<Set<RelationConfidence>>(
     () => new Set<RelationConfidence>(['HIGH', 'MEDIUM', 'LOW']));
+  /** Sélections nommées, gardées par le navigateur — l'URL est partageable mais anonyme. */
+  const [savedModels, setSavedModels] = useState<SavedModel[]>(() => readSavedModels());
+  const [saveName, setSaveName] = useState('');
+  /** Les entités à joindre en une requête — un sous-graphe, pas une relation isolée. */
+  const [joinSet, setJoinSet] = useState<string[]>([]);
+  /** Taille réelle du canevas, pour la minicarte et le cadrage. */
+  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   /** Comparaison avec une seconde sélection : pas d'historique côté serveur, donc deux appels
       indépendants et un diff calculé côté client — voir `diffModels`. */
   const [compareOpen, setCompareOpen] = useState(false);
@@ -373,6 +386,32 @@ const DataModel: React.FC = () => {
     setJumpQuery('');
   }, [entityById, positions]);
 
+  /**
+   * La minicarte : bornes du graphe, disposition dans sa boîte, et rectangle de ce qui est
+   * visible. Elle n'apparaît que lorsque le graphe **déborde** — tout à l'écran, elle ne
+   * montrerait qu'un cadre couvrant sa propre boîte, un ornement qui n'apprend rien.
+   */
+  const bounds = useMemo(
+    () => graphBounds(graphEntities, positions), [graphEntities, positions]);
+  const minimap = useMemo(() => {
+    if (!bounds || viewportSize.width === 0) return null;
+    if (graphFullyVisible(bounds, transform, viewportSize.width, viewportSize.height)) return null;
+    return {
+      layout: minimapLayout(bounds, MINIMAP_W, MINIMAP_H),
+      visible: visibleGraphRect(transform, viewportSize.width, viewportSize.height),
+      bounds,
+    };
+  }, [bounds, transform, viewportSize]);
+
+  /** Le sous-graphe à joindre, restreint aux entités encore présentes dans le modèle. */
+  const joinEntities = useMemo(
+    () => joinSet.filter(id => entityById.has(id)), [joinSet, entityById]);
+  const multiJoin = useMemo(
+    () => (joinEntities.length >= 2
+      ? buildMultiJoinSql(joinEntities, entities, relations)
+      : null),
+    [joinEntities, entities, relations]);
+
   const columnMatches = useMemo(
     () => matchingColumns(entities, columnQuery), [entities, columnQuery]);
   const columnMatchNote = useMemo(
@@ -436,6 +475,25 @@ const DataModel: React.FC = () => {
   /** Le formulaire a-t-il bougé depuis le modèle affiché ? Un graphe périmé doit le dire. */
   const stale = model !== null && (
     selection.length !== ranTopics.length || selection.some(t => !ranTopics.includes(t)));
+
+  /**
+   * La taille du canevas, suivie plutôt que lue à la demande : la minicarte doit savoir ce qui
+   * est visible à chaque rendu, et `getBoundingClientRect` dans un `useMemo` ne se réévalue pas
+   * quand la fenêtre change de taille.
+   */
+  useEffect(() => {
+    const element = svgRef.current;
+    if (!element) return;
+    const measure = () => {
+      const rect = element.getBoundingClientRect();
+      setViewportSize(prev => (prev.width === rect.width && prev.height === rect.height
+        ? prev : { width: rect.width, height: rect.height }));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [model, graphEntities.length]);
 
   // ── Zoom / pan / clavier (mêmes gestes que Lineage et Stream Flow) ──────────
 
@@ -940,6 +998,115 @@ const DataModel: React.FC = () => {
             </div>
           )}
 
+          {/* Le sous-graphe à joindre. Il refuse plutôt que d'inventer un prédicat : un ensemble
+              que les relations déduites ne relient pas n'a pas de jointure, et `problem` le dit
+              au lieu de rendre un bouton grisé et muet. */}
+          {model && joinEntities.length > 0 && (
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">
+                  Join ({joinEntities.length})
+                </p>
+                <button onClick={() => setJoinSet([])} aria-label="Clear the join selection"
+                  className="text-outline hover:text-on-surface">
+                  <span aria-hidden="true" className="material-symbols-outlined text-sm">close</span>
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {joinEntities.map(id => (
+                  <span key={id}
+                    className="inline-flex items-center gap-1 bg-surface-container-high rounded-full pl-2 pr-1 py-0.5 text-[10px] font-mono text-on-surface-variant max-w-full">
+                    <span className="truncate" title={id}>{id}</span>
+                    <button onClick={() => setJoinSet(set => set.filter(x => x !== id))}
+                      aria-label={`Remove ${id} from the join`} className="hover:text-on-surface shrink-0">
+                      <span aria-hidden="true" className="material-symbols-outlined text-[12px]">close</span>
+                    </button>
+                  </span>
+                ))}
+              </div>
+              {multiJoin?.problem && (
+                <p className="text-[10px] text-warning leading-snug">{multiJoin.problem}</p>
+              )}
+              {multiJoin?.sql && (
+                <Link
+                  to={`/query?sql=${encodeURIComponent(multiJoin.sql)}`}
+                  className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline"
+                  title={multiJoin.caveats.length > 0
+                    ? `Opens in the SQL editor. ${multiJoin.caveats.join(' ')}`
+                    : 'Opens the join this subgraph describes in the SQL editor.'}
+                >
+                  <span aria-hidden="true" className="material-symbols-outlined text-[14px]">terminal</span>
+                  Open {joinEntities.length}-table join as SQL
+                  {multiJoin.caveats.length > 0 && (
+                    <span className="text-[9px] text-warning">
+                      ({multiJoin.caveats.length} caveat{multiJoin.caveats.length > 1 ? 's' : ''})
+                    </span>
+                  )}
+                </Link>
+              )}
+              {joinEntities.length === 1 && (
+                <p className="text-[10px] text-outline leading-snug">
+                  Add a second entity — a join needs two tables.
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Sélections nommées : l'URL est partageable mais anonyme, et rien ne dit qu'elle
+              décrit *le* modèle de commande. Local à ce navigateur, et la phrase le dit. */}
+          <div className="space-y-1.5">
+            <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">
+              Saved selections
+            </p>
+            <form
+              className="flex gap-1"
+              onSubmit={e => {
+                e.preventDefault();
+                if (saveName.trim() === '' || selection.length === 0) return;
+                setSavedModels(saveModel(saveName, selection));
+                setSaveName('');
+                toast(`Saved “${saveName.trim()}” on this browser`, 'success');
+              }}
+            >
+              <input
+                value={saveName}
+                onChange={e => setSaveName(e.target.value)}
+                placeholder="Name this selection…"
+                aria-label="Name this selection"
+                className="flex-1 min-w-0 bg-surface-container-low border border-outline-variant rounded-md px-2 py-1 text-xs text-on-surface outline-none focus:border-primary/40 placeholder:text-outline"
+              />
+              <Button type="submit" variant="ghost" size="sm"
+                disabled={saveName.trim() === '' || selection.length === 0}>
+                Save
+              </Button>
+            </form>
+            {savedModels.length === 0 ? (
+              <p className="text-[10px] text-outline leading-snug">
+                None yet. A saved selection lives on this browser only — the URL is what you share.
+              </p>
+            ) : savedModels.map(saved => (
+              <div key={saved.name} className="flex items-center gap-1">
+                <button
+                  onClick={() => { setSelection(saved.topics); generate(saved.topics); }}
+                  className="flex-1 min-w-0 text-left text-[11px] px-1.5 py-1 rounded text-on-surface-variant hover:bg-surface-container-high transition-colors"
+                  title={saved.topics.join(', ')}
+                >
+                  <span className="truncate block">{saved.name}</span>
+                  <span className="text-[9px] text-outline">
+                    {saved.topics.length} topic{saved.topics.length > 1 ? 's' : ''}
+                  </span>
+                </button>
+                <button
+                  onClick={() => setSavedModels(deleteSavedModel(saved.name))}
+                  aria-label={`Delete the saved selection ${saved.name}`}
+                  className="text-outline hover:text-error shrink-0"
+                >
+                  <span aria-hidden="true" className="material-symbols-outlined text-sm">delete</span>
+                </button>
+              </div>
+            ))}
+          </div>
+
           {/* Comparaison avec une seconde sélection : un modèle n'a pas d'historique côté
               serveur (contrairement à l'audit), donc deux sélections rejouées en direct et un
               diff calculé côté client — voir `diffModels`. */}
@@ -1095,6 +1262,57 @@ const DataModel: React.FC = () => {
           </div>
         )}
 
+        {/* Minicarte : uniquement quand le graphe déborde du viewport — voir `graphFullyVisible`.
+            Un clic y déplace la vue, ce qui est le seul geste qu'une vue d'ensemble doit offrir :
+            elle situe, et permet d'aller là où l'on regarde. */}
+        {minimap && (
+          <div className="absolute bottom-6 right-4 z-10 bg-surface-container/95 border border-outline-variant rounded-lg shadow-xl overflow-hidden">
+            <svg
+              width={MINIMAP_W} height={MINIMAP_H}
+              role="button" tabIndex={0}
+              aria-label="Graph overview — click to move the view"
+              className="block cursor-pointer focus:outline-none focus-visible:ring-1 focus-visible:ring-primary/60"
+              onClick={e => {
+                const box = e.currentTarget.getBoundingClientRect();
+                const { layout } = minimap;
+                const point = {
+                  x: (e.clientX - box.left - layout.offsetX) / layout.scale,
+                  y: (e.clientY - box.top - layout.offsetY) / layout.scale,
+                };
+                setTransform(t => centerOnGraphPoint(
+                  point, viewportSize.width, viewportSize.height, t.scale));
+              }}
+            >
+              {graphEntities.map(entity => {
+                const pos = positions[entity.id];
+                if (!pos) return null;
+                const { layout } = minimap;
+                return (
+                  <rect
+                    key={entity.id}
+                    x={pos.x * layout.scale + layout.offsetX}
+                    y={pos.y * layout.scale + layout.offsetY}
+                    width={Math.max(1, NODE_W * layout.scale)}
+                    height={Math.max(1, entityHeight(entity) * layout.scale)}
+                    rx={1}
+                    fill={selectedId === entity.id ? '#a3adff' : tintOf(entity.topic).accent}
+                    fillOpacity={selectedId === entity.id ? 0.9 : 0.45}
+                  />
+                );
+              })}
+              {/* Ce qui est à l'écran, en clair sur le reste. */}
+              <rect
+                x={minimap.visible.minX * minimap.layout.scale + minimap.layout.offsetX}
+                y={minimap.visible.minY * minimap.layout.scale + minimap.layout.offsetY}
+                width={Math.max(2, (minimap.visible.maxX - minimap.visible.minX) * minimap.layout.scale)}
+                height={Math.max(2, (minimap.visible.maxY - minimap.visible.minY) * minimap.layout.scale)}
+                fill="#ffffff" fillOpacity={0.1}
+                stroke="#ffffff" strokeOpacity={0.7} strokeWidth={1}
+              />
+            </svg>
+          </div>
+        )}
+
         {error && (
           <div className="absolute inset-x-0 top-16 z-10 flex justify-center px-6">
             <ErrorPanel error={error} onRetry={() => generate(selection)}
@@ -1245,6 +1463,20 @@ const DataModel: React.FC = () => {
               <span aria-hidden="true" className="material-symbols-outlined text-[14px]">open_in_new</span>
               Open in Topic Explorer
             </Link>
+            {/* Ajouter au sous-graphe à joindre : « ouvre cette relation » existe déjà par
+                relation, mais recoller trois tables à la main est le vrai geste sur un schéma
+                en étoile. La requête se construit dans le panneau de gauche. */}
+            <button
+              onClick={() => setJoinSet(set => (set.includes(selectedId)
+                ? set.filter(id => id !== selectedId)
+                : [...set, selectedId]))}
+              className="mt-2 flex items-center gap-1 text-[11px] text-on-surface-variant hover:text-on-surface transition-colors"
+            >
+              <span aria-hidden="true" className="material-symbols-outlined text-[14px]">
+                {joinSet.includes(selectedId) ? 'playlist_remove' : 'playlist_add'}
+              </span>
+              {joinSet.includes(selectedId) ? 'Remove from the join' : 'Add to the join'}
+            </button>
           </div>
 
           <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">

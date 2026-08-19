@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import type { DataModelEntity, DataModelRelation, DataModelResponse } from '../api/types';
 import {
   MAX_TOPICS, MAX_COLUMNS_SHOWN, NODE_W, HEADER_H, ROW_H, FOOTER_H, DOMAIN_PALETTE,
@@ -14,8 +14,16 @@ import {
   capTopics, relationKey, diffModels, diffIsEmpty, describeDiff,
   filterRelations, describeRelationFilter, orphanKeyColumns, describeOrphanKey,
   shortenColumnName, readSelectionDraft, saveSelectionDraft,
+  minimapLayout, visibleGraphRect, graphFullyVisible, centerOnGraphPoint,
+  readSavedModels, saveModel, deleteSavedModel, clearSavedModels, MAX_SAVED_MODELS,
+  SAVED_MODELS_KEY, joinAliasesFor, buildMultiJoinSql,
 } from './dataModel';
 import type { RelationConfidence } from '../api/types';
+
+// Ce module écrit dans localStorage (brouillon de sélection, sélections nommées) : sans remise
+// à zéro, un test lit ce que le précédent a laissé, et l'ordre d'exécution devient une
+// dépendance cachée.
+beforeEach(() => localStorage.clear());
 
 function entity(id: string, columnCount: number, overrides: Partial<DataModelEntity> = {}): DataModelEntity {
   return {
@@ -911,6 +919,220 @@ describe('selection draft', () => {
     localStorage.setItem('kse:draft:data-model',
       JSON.stringify({ v: 1, at: Date.now(), value: [1, null, 'kept'] }));
     expect(readSelectionDraft()).toEqual(['kept']);
+  });
+});
+
+describe('minimap', () => {
+  const bounds = { minX: 0, minY: 0, maxX: 2000, maxY: 1000 };
+
+  it('fits the whole graph inside the box', () => {
+    const layout = minimapLayout(bounds, 168, 120, 4);
+    expect(2000 * layout.scale).toBeLessThanOrEqual(168 - 8 + 0.001);
+    expect(1000 * layout.scale).toBeLessThanOrEqual(120 - 8 + 0.001);
+  });
+
+  it('reports what is visible in graph coordinates', () => {
+    const visible = visibleGraphRect({ x: -100, y: -50, scale: 2 }, 400, 200);
+    expect(visible).toEqual({ minX: 50, minY: 25, maxX: 250, maxY: 125 });
+  });
+
+  it('a graph entirely on screen needs no minimap — it would only frame its own box', () => {
+    expect(graphFullyVisible(bounds, { x: 0, y: 0, scale: 0.05 }, 400, 200)).toBe(true);
+  });
+
+  it('a graph that overflows does need one', () => {
+    expect(graphFullyVisible(bounds, { x: 0, y: 0, scale: 1 }, 400, 200)).toBe(false);
+  });
+
+  it('clicking a point centres the viewport on it, at the current scale', () => {
+    const t = centerOnGraphPoint({ x: 1000, y: 500 }, 400, 200, 0.5);
+    expect(t.scale).toBe(0.5);
+    const visible = visibleGraphRect(t, 400, 200);
+    expect((visible.minX + visible.maxX) / 2).toBeCloseTo(1000);
+    expect((visible.minY + visible.maxY) / 2).toBeCloseTo(500);
+  });
+});
+
+describe('saved selections', () => {
+  it('round-trips a named selection', () => {
+    saveModel('Order pipeline', ['demo.orders', 'demo.payments'], 111);
+    expect(readSavedModels()).toEqual([
+      { name: 'Order pipeline', topics: ['demo.orders', 'demo.payments'], at: 111 },
+    ]);
+  });
+
+  it('saving under an existing name replaces it in place rather than stacking a homonym', () => {
+    saveModel('Pipeline', ['a'], 1);
+    saveModel('Pipeline', ['a', 'b'], 2);
+    const models = readSavedModels();
+    expect(models).toHaveLength(1);
+    expect(models[0].topics).toEqual(['a', 'b']);
+  });
+
+  it('the newest save comes first', () => {
+    saveModel('first', ['a'], 1);
+    saveModel('second', ['b'], 2);
+    expect(readSavedModels().map(m => m.name)).toEqual(['second', 'first']);
+  });
+
+  it('deletes by name and leaves the rest', () => {
+    saveModel('keep', ['a'], 1);
+    saveModel('drop', ['b'], 2);
+    expect(deleteSavedModel('drop').map(m => m.name)).toEqual(['keep']);
+    expect(readSavedModels().map(m => m.name)).toEqual(['keep']);
+  });
+
+  it('refuses a blank name or an empty selection rather than storing an unusable entry', () => {
+    saveModel('   ', ['a']);
+    saveModel('named', []);
+    expect(readSavedModels()).toEqual([]);
+  });
+
+  it('is bounded', () => {
+    for (let i = 0; i < MAX_SAVED_MODELS + 5; i++) saveModel(`m${i}`, ['a'], i);
+    expect(readSavedModels()).toHaveLength(MAX_SAVED_MODELS);
+  });
+
+  it('an envelope of an unknown shape is erased rather than guessed at', () => {
+    localStorage.setItem(SAVED_MODELS_KEY, JSON.stringify({ v: 99, models: [{ name: 'x', topics: ['a'] }] }));
+    expect(readSavedModels()).toEqual([]);
+    expect(localStorage.getItem(SAVED_MODELS_KEY)).toBeNull();
+  });
+
+  it('unreadable JSON is erased rather than thrown on', () => {
+    localStorage.setItem(SAVED_MODELS_KEY, '{not json');
+    expect(readSavedModels()).toEqual([]);
+  });
+
+  it('drops entries that carry no usable topic', () => {
+    localStorage.setItem(SAVED_MODELS_KEY, JSON.stringify({
+      v: 1,
+      models: [{ name: 'ok', topics: ['a', 2, null] }, { name: 'empty', topics: [] }],
+    }));
+    expect(readSavedModels()).toEqual([{ name: 'ok', topics: ['a'], at: 0 }]);
+  });
+
+  it('nothing stored reads as an empty list', () => {
+    clearSavedModels();
+    expect(readSavedModels()).toEqual([]);
+  });
+});
+
+describe('joinAliasesFor / buildMultiJoinSql', () => {
+  const col = (name: string, over: Partial<DataModelEntity['columns'][number]> = {}) => ({
+    name, type: 'STRING', primaryKey: false, references: null, keyBase: null, ...over,
+  });
+  const ent = (id: string, topic: string, columns: DataModelEntity['columns'],
+               primaryKey: string | null = null): DataModelEntity =>
+    ({ ...entity(id, 0), topic, columns, primaryKey });
+
+  const orders = ent('demo_orders', 'demo.orders.received',
+    [col('order_id', { primaryKey: true }), col('status')], 'order_id');
+  const payments = ent('demo_payments', 'demo.payments.authorized',
+    [col('payment_id', { primaryKey: true }), col('order_id', { references: 'demo_orders' })],
+    'payment_id');
+  const shipments = ent('demo_shipments', 'demo.shipments.dispatched',
+    [col('shipment_id', { primaryKey: true }), col('order_id', { references: 'demo_orders' })],
+    'shipment_id');
+
+  const rel = (from: string, to: string, fromColumn: string, toColumn: string | null)
+    : DataModelRelation => ({
+      from, to, fromColumn, toColumn, confidence: 'HIGH', reason: `${fromColumn} names ${to}.`,
+    });
+
+  it('gives every topic a distinct, SQL-legal alias', () => {
+    const aliases = joinAliasesFor([orders.topic, payments.topic, shipments.topic]);
+    expect(new Set(aliases).size).toBe(3);
+    aliases.forEach(a => expect(a).toMatch(/^[A-Za-z_]/));
+  });
+
+  it('numbers homonyms rather than emitting the same alias twice', () => {
+    // Deux topics dont le segment distinctif est un chiffre : aucun nom exploitable.
+    const aliases = joinAliasesFor(['demo.orders.1', 'demo.orders.2']);
+    expect(new Set(aliases).size).toBe(2);
+    aliases.forEach(a => expect(a).toMatch(/^[A-Za-z_]/));
+  });
+
+  it('joins three entities along their deduced relations', () => {
+    const result = buildMultiJoinSql(
+      ['demo_payments', 'demo_orders', 'demo_shipments'],
+      [orders, payments, shipments],
+      [rel('demo_payments', 'demo_orders', 'order_id', 'order_id'),
+       rel('demo_shipments', 'demo_orders', 'order_id', 'order_id')]);
+
+    expect(result.problem).toBeNull();
+    expect(result.sql).toContain('FROM demo_payments AS');
+    // Deux JOIN pour trois tables : un arbre couvrant, pas un produit cartésien.
+    expect(result.sql!.match(/^JOIN /gm)).toHaveLength(2);
+    expect(result.sql).toContain('LIMIT 50');
+  });
+
+  it('every JOIN predicate cites a table already introduced', () => {
+    const result = buildMultiJoinSql(
+      ['demo_payments', 'demo_orders', 'demo_shipments'],
+      [orders, payments, shipments],
+      [rel('demo_payments', 'demo_orders', 'order_id', 'order_id'),
+       rel('demo_shipments', 'demo_orders', 'order_id', 'order_id')]);
+
+    const lines = result.sql!.split('\n');
+    const introduced = new Set<string>();
+    for (const line of lines) {
+      const from = /^FROM \S+ AS (\S+)/.exec(line);
+      if (from) { introduced.add(from[1]); continue; }
+      const join = /^JOIN \S+ AS (\S+)/.exec(line);
+      if (join) { introduced.add(join[1]); continue; }
+      const on = /^ {2}ON (\S+?)\.\S+ = (\S+?)\./.exec(line);
+      if (on) {
+        expect(introduced.has(on[1])).toBe(true);
+        expect(introduced.has(on[2])).toBe(true);
+      }
+    }
+  });
+
+  it('refuses a set the deduced relations do not connect, and says so', () => {
+    const lonely = ent('demo_iot', 'demo.iot.sensors', [col('reading')]);
+    const result = buildMultiJoinSql(
+      ['demo_payments', 'demo_orders', 'demo_iot'],
+      [orders, payments, lonely],
+      [rel('demo_payments', 'demo_orders', 'order_id', 'order_id')]);
+
+    expect(result.sql).toBeNull();
+    expect(result.problem).toContain('demo_iot');
+  });
+
+  it('refuses fewer than two entities', () => {
+    const result = buildMultiJoinSql(['demo_orders'], [orders], []);
+    expect(result.sql).toBeNull();
+    expect(result.problem).toContain('at least two');
+  });
+
+  it('falls back to the target key when a relation names no column, and says it', () => {
+    const result = buildMultiJoinSql(
+      ['demo_payments', 'demo_orders'], [orders, payments],
+      [rel('demo_payments', 'demo_orders', 'order_id', null)]);
+    expect(result.sql).toContain('.order_id');
+  });
+
+  it('refuses an edge whose target has neither a named column nor a detected key', () => {
+    const keyless = ent('demo_orders', 'demo.orders.received', [col('status')]);
+    const result = buildMultiJoinSql(
+      ['demo_payments', 'demo_orders'], [keyless, payments],
+      [rel('demo_payments', 'demo_orders', 'order_id', null)]);
+    expect(result.sql).toBeNull();
+    expect(result.problem).toContain('demo_orders');
+  });
+
+  it('leaves nested fields out of the projection and reports how many', () => {
+    const nested = ent('demo_payments', 'demo.payments.authorized', [
+      col('payment_id', { primaryKey: true }),
+      col('order_id', { references: 'demo_orders' }),
+      col('card.last4'),
+    ], 'payment_id');
+    const result = buildMultiJoinSql(
+      ['demo_payments', 'demo_orders'], [orders, nested],
+      [rel('demo_payments', 'demo_orders', 'order_id', 'order_id')]);
+    expect(result.sql).not.toContain('card.last4');
+    expect(result.caveats.some(c => c.includes('1 nested field'))).toBe(true);
   });
 });
 

@@ -562,6 +562,178 @@ export function describeOrphanKey(orphan: OrphanKey): string {
   return `Reads as a key naming '${orphan.base}' — no selected topic is named after it.`;
 }
 
+// ── Minicarte ─────────────────────────────────────────────────────────────────
+
+export interface MinimapLayout {
+  scale: number;
+  /** Décalage en coordonnées de la boîte, pour centrer le graphe dedans. */
+  offsetX: number;
+  offsetY: number;
+}
+
+/** La transformation qui fait tenir tout le graphe dans la boîte de la minicarte. */
+export function minimapLayout(bounds: Bounds, boxWidth: number, boxHeight: number,
+                              padding = 4): MinimapLayout {
+  const width = Math.max(1, bounds.maxX - bounds.minX);
+  const height = Math.max(1, bounds.maxY - bounds.minY);
+  const scale = Math.min(
+    (boxWidth - 2 * padding) / width,
+    (boxHeight - 2 * padding) / height,
+  );
+  return {
+    scale,
+    offsetX: (boxWidth - width * scale) / 2 - bounds.minX * scale,
+    offsetY: (boxHeight - height * scale) / 2 - bounds.minY * scale,
+  };
+}
+
+/** Le rectangle du graphe actuellement visible, en coordonnées du graphe. */
+export function visibleGraphRect(
+  transform: { x: number; y: number; scale: number },
+  viewportWidth: number,
+  viewportHeight: number,
+): Bounds {
+  const minX = -transform.x / transform.scale;
+  const minY = -transform.y / transform.scale;
+  return {
+    minX,
+    minY,
+    maxX: minX + viewportWidth / transform.scale,
+    maxY: minY + viewportHeight / transform.scale,
+  };
+}
+
+/**
+ * Le graphe tient-il entièrement dans le viewport ?
+ *
+ * C'est la condition d'affichage de la minicarte : quand tout est déjà à l'écran, elle ne
+ * montrerait qu'un rectangle couvrant sa propre boîte — un ornement qui n'apprend rien et prend
+ * un coin du canevas.
+ */
+export function graphFullyVisible(
+  bounds: Bounds,
+  transform: { x: number; y: number; scale: number },
+  viewportWidth: number,
+  viewportHeight: number,
+): boolean {
+  const visible = visibleGraphRect(transform, viewportWidth, viewportHeight);
+  return visible.minX <= bounds.minX && visible.minY <= bounds.minY
+    && visible.maxX >= bounds.maxX && visible.maxY >= bounds.maxY;
+}
+
+/** La transformation qui centre le viewport sur un point du graphe — le clic dans la minicarte. */
+export function centerOnGraphPoint(
+  point: { x: number; y: number },
+  viewportWidth: number,
+  viewportHeight: number,
+  scale: number,
+): { x: number; y: number; scale: number } {
+  return {
+    scale,
+    x: viewportWidth / 2 - point.x * scale,
+    y: viewportHeight / 2 - point.y * scale,
+  };
+}
+
+// ── Modèles enregistrés ───────────────────────────────────────────────────────
+
+export const SAVED_MODELS_KEY = 'kse:data-model-saved';
+/** Au-delà, la liste cesse d'être un raccourci et devient elle-même à parcourir. */
+export const MAX_SAVED_MODELS = 20;
+const SAVED_ENVELOPE_VERSION = 1;
+
+export interface SavedModel {
+  name: string;
+  topics: string[];
+  /** Quand elle a été enregistrée — affichée, jamais utilisée pour périmer l'entrée. */
+  at: number;
+}
+
+interface SavedEnvelope { v: number; models: SavedModel[] }
+
+/**
+ * Les sélections nommées, gardées par le navigateur.
+ *
+ * L'URL rend une sélection partageable mais anonyme : rien ne dit qu'elle est *le* modèle de
+ * commande, et la retrouver suppose d'avoir gardé le lien. Même forme que `flowChains` — une
+ * enveloppe versionnée effacée plutôt que devinée, un nombre borné d'entrées, une écriture au
+ * mieux — avec **une différence assumée : pas de péremption**. Un brouillon est un accident de
+ * navigation, qu'il est juste d'oublier au bout d'une semaine ; un enregistrement nommé est un
+ * geste délibéré, et l'effacer sans que personne l'ait demandé serait une perte de données.
+ */
+export function readSavedModels(): SavedModel[] {
+  let raw: string | null;
+  try {
+    raw = localStorage.getItem(SAVED_MODELS_KEY);
+  } catch {
+    return [];
+  }
+  if (!raw) return [];
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    clearSavedModels();
+    return [];
+  }
+
+  const envelope = parsed as SavedEnvelope;
+  if (!envelope || typeof envelope !== 'object' || envelope.v !== SAVED_ENVELOPE_VERSION
+      || !Array.isArray(envelope.models)) {
+    clearSavedModels();
+    return [];
+  }
+
+  return envelope.models
+    .filter((m): m is SavedModel => !!m && typeof m === 'object'
+      && typeof m.name === 'string' && m.name !== '' && Array.isArray(m.topics))
+    .map(m => ({
+      name: m.name,
+      topics: m.topics.filter((t): t is string => typeof t === 'string' && t !== ''),
+      at: typeof m.at === 'number' ? m.at : 0,
+    }))
+    .filter(m => m.topics.length > 0)
+    .slice(0, MAX_SAVED_MODELS);
+}
+
+function writeSavedModels(models: SavedModel[]): void {
+  try {
+    localStorage.setItem(SAVED_MODELS_KEY,
+      JSON.stringify({ v: SAVED_ENVELOPE_VERSION, models } satisfies SavedEnvelope));
+  } catch {
+    // Quota plein, mode privé : enregistrer est un confort, jamais un blocage.
+  }
+}
+
+export function clearSavedModels(): void {
+  try {
+    localStorage.removeItem(SAVED_MODELS_KEY);
+  } catch { /* idem */ }
+}
+
+/**
+ * Enregistre une sélection sous un nom. Un nom déjà pris est **remplacé, en place** : c'est ce
+ * que « enregistrer sous le même nom » veut dire partout ailleurs, et empiler deux entrées
+ * homonymes rendrait la liste inutilisable.
+ */
+export function saveModel(name: string, topics: string[],
+                          now: number = Date.now()): SavedModel[] {
+  const trimmed = name.trim();
+  if (trimmed === '' || topics.length === 0) return readSavedModels();
+  const existing = readSavedModels().filter(m => m.name !== trimmed);
+  const models = [{ name: trimmed, topics: [...topics], at: now }, ...existing]
+    .slice(0, MAX_SAVED_MODELS);
+  writeSavedModels(models);
+  return models;
+}
+
+export function deleteSavedModel(name: string): SavedModel[] {
+  const models = readSavedModels().filter(m => m.name !== name);
+  writeSavedModels(models);
+  return models;
+}
+
 // ── Domaines de topics ────────────────────────────────────────────────────────
 
 /**
@@ -789,18 +961,10 @@ export function buildJoinSql(
  * en dernier ressort seulement, un suffixe.
  */
 export function joinAliases(fromTopic: string, toTopic: string): [string, string] {
-  const domains = topicDomains([fromTopic, toTopic]);
-  const domain = (topic: string) => sqlAlias(domains.get(topic) ?? '');
-  const tail = (topic: string) => sqlAlias(
-    topic.split(/[._-]+/).filter(s => s && !/^\d+$/.test(s)).pop() ?? '');
-
-  for (const pick of [domain, tail]) {
-    const first = pick(fromTopic);
-    const second = pick(toTopic);
-    if (first && second && first !== second) return [first, second];
-  }
-  const base = tail(fromTopic) || domain(fromTopic) || 'a';
-  return [`${base}_1`, `${base}_2`];
+  // Le cas binaire du général : deux façons de nommer les mêmes tables finiraient par diverger,
+  // et c'est un défaut que le test de ce module a déjà attrapé une fois.
+  const [first, second] = joinAliasesFor([fromTopic, toTopic]);
+  return [first, second];
 }
 
 /** Un identifiant SQL sans guillemets, ou la chaîne vide s'il n'en reste rien d'exploitable. */
@@ -808,6 +972,182 @@ function sqlAlias(value: string): string {
   const cleaned = value.replace(/[^A-Za-z0-9_]/g, '_');
   // Un alias ne peut pas commencer par un chiffre : sans ça la requête meurt au parseur.
   return /^[A-Za-z_]/.test(cleaned) ? cleaned : '';
+}
+
+/**
+ * Les alias de N topics — même arbitrage que `joinAliases`, généralisé : le segment distinctif
+ * d'abord, la queue ensuite, et à défaut un suffixe numéroté. Le suffixe est per-topic ici plutôt
+ * que dérivé du premier, sinon trois tables se retrouveraient nommées d'après une seule.
+ */
+export function joinAliasesFor(topics: string[]): string[] {
+  const domains = topicDomains(topics);
+  const domain = (topic: string) => sqlAlias(domains.get(topic) ?? '');
+  const tail = (topic: string) => sqlAlias(
+    topic.split(/[._-]+/).filter(s => s && !/^\d+$/.test(s)).pop() ?? '');
+
+  for (const pick of [domain, tail]) {
+    const names = topics.map(pick);
+    if (names.every(n => n !== '') && new Set(names).size === names.length) return names;
+  }
+
+  // Rien de distinct : on garde le meilleur nom disponible et on numérote les homonymes.
+  const bases = topics.map(topic => tail(topic) || domain(topic) || 'a');
+  const totals = new Map<string, number>();
+  bases.forEach(base => totals.set(base, (totals.get(base) ?? 0) + 1));
+  const seen = new Map<string, number>();
+  return bases.map(base => {
+    if (totals.get(base) === 1) return base;
+    const n = (seen.get(base) ?? 0) + 1;
+    seen.set(base, n);
+    return `${base}_${n}`;
+  });
+}
+
+export interface MultiJoinResult {
+  /** `null` quand aucune requête ne peut être écrite — `problem` dit alors pourquoi. */
+  sql: string | null;
+  caveats: string[];
+  problem: string | null;
+}
+
+/**
+ * La requête qui joint **plusieurs** entités le long des relations déduites entre elles.
+ *
+ * `buildJoinSql` répond à « ouvre cette relation » ; celle-ci répond à « ouvre ce sous-graphe »,
+ * qui est la vraie forme de la question sur un schéma en étoile — recoller trois tables à la main
+ * en enchaînant deux requêtes à deux tables est précisément le travail que ce diagramme connaît
+ * déjà.
+ *
+ * Elle **refuse plutôt que d'inventer un prédicat**, la même règle que la version binaire, et
+ * elle le dit : un ensemble que les relations déduites ne relient pas n'a pas de jointure, et en
+ * fabriquer une reviendrait à poser une égalité que rien n'étaye. L'arbre couvrant est construit
+ * en largeur depuis la première entité, donc chaque table jointe l'est à une table déjà présente
+ * — un `JOIN` dont le prédicat cite une table pas encore introduite ne s'analyse pas.
+ */
+export function buildMultiJoinSql(
+  entityIds: string[],
+  entities: DataModelEntity[],
+  relations: DataModelRelation[],
+): MultiJoinResult {
+  const selected = entityIds
+    .map(id => entities.find(e => e.id === id))
+    .filter((e): e is DataModelEntity => e !== undefined);
+
+  if (selected.length < 2) {
+    return { sql: null, caveats: [], problem: 'Pick at least two entities to join.' };
+  }
+
+  const caveats: string[] = [];
+  const inSet = new Set(selected.map(e => e.id));
+  const byId = new Map(selected.map(e => [e.id, e]));
+
+  /** Le prédicat qu'une relation décrit, ou `null` si elle n'en décrit aucun. */
+  const predicateOf = (relation: DataModelRelation): string | null => {
+    const to = byId.get(relation.to);
+    if (!to) return null;
+    if (relation.toColumn !== null) return relation.toColumn;
+    if (to.primaryKey === null) return null;
+    return to.primaryKey;
+  };
+
+  // Arêtes utilisables : les deux extrémités dans l'ensemble, et un prédicat résoluble.
+  const usable = relations.filter(r => inSet.has(r.from) && inSet.has(r.to)
+    && predicateOf(r) !== null);
+
+  const adjacency = new Map<string, DataModelRelation[]>();
+  for (const relation of usable) {
+    (adjacency.get(relation.from) ?? adjacency.set(relation.from, []).get(relation.from)!).push(relation);
+    (adjacency.get(relation.to) ?? adjacency.set(relation.to, []).get(relation.to)!).push(relation);
+  }
+
+  // Parcours en largeur : chaque table entre en se joignant à une table déjà introduite.
+  const root = selected[0];
+  const joined = new Set<string>([root.id]);
+  const order: { entity: DataModelEntity; relation: DataModelRelation }[] = [];
+  const queue = [root.id];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    for (const relation of adjacency.get(current) ?? []) {
+      const nextId = relation.from === current ? relation.to : relation.from;
+      if (joined.has(nextId)) continue;
+      joined.add(nextId);
+      order.push({ entity: byId.get(nextId)!, relation });
+      queue.push(nextId);
+    }
+  }
+
+  const unreached = selected.filter(e => !joined.has(e.id));
+  if (unreached.length > 0) {
+    return {
+      sql: null,
+      caveats: [],
+      problem: `No deduced relation connects ${unreached.map(e => e.id).join(', ')} to the rest `
+        + 'of the selection — a join needs a predicate for every table, and inventing one would '
+        + 'assert an equality nothing supports.',
+    };
+  }
+
+  const topics = [root, ...order.map(o => o.entity)].map(e => e.topic);
+  const aliasList = joinAliasesFor(topics);
+  const aliasOf = new Map<string, string>();
+  aliasOf.set(root.id, aliasList[0]);
+  order.forEach((step, i) => aliasOf.set(step.entity.id, aliasList[i + 1]));
+
+  const joinColumns = new Map<string, Set<string>>();
+  const noteColumn = (id: string, column: string) => {
+    const set = joinColumns.get(id) ?? new Set<string>();
+    set.add(column);
+    joinColumns.set(id, set);
+  };
+  for (const step of order) {
+    const target = predicateOf(step.relation)!;
+    noteColumn(step.relation.from, step.relation.fromColumn);
+    noteColumn(step.relation.to, target);
+    if (step.relation.fromColumn.includes('.') || target.includes('.')) {
+      caveats.push('A join column is a nested path — check how it resolves before running.');
+    }
+  }
+
+  const projected = (entity: DataModelEntity): string[] => {
+    const alias = aliasOf.get(entity.id)!;
+    const keys = joinColumns.get(entity.id) ?? new Set<string>();
+    const flat = entity.columns.filter(c => !c.name.includes('.'));
+    if (flat.length < entity.columns.length) {
+      caveats.push(`${entity.columns.length - flat.length} nested field(s) of ${entity.id} are `
+        + 'left out of the projection — a nested path behind a table alias does not mean the '
+        + 'same thing in Flink SQL as it does on the diagram.');
+    }
+    const ordered = [
+      ...flat.filter(c => keys.has(c.name) || c.primaryKey),
+      ...flat.filter(c => !keys.has(c.name) && !c.primaryKey),
+    ];
+    return ordered.slice(0, JOIN_MAX_COLUMNS).map(c => `    ${alias}.${c.name}`);
+  };
+
+  const columns = [root, ...order.map(o => o.entity)].flatMap(projected);
+
+  const joinLines = order.map(step => {
+    const target = predicateOf(step.relation)!;
+    const fromAlias = aliasOf.get(step.relation.from)!;
+    const toAlias = aliasOf.get(step.relation.to)!;
+    return `JOIN ${step.entity.id} AS ${aliasOf.get(step.entity.id)}\n`
+      + `  ON ${fromAlias}.${step.relation.fromColumn} = ${toAlias}.${target}`;
+  });
+
+  const grades = [...new Set(order.map(o => o.relation.confidence.toLowerCase()))].join(', ');
+  const sql = [
+    `-- ${selected.length} entities joined along ${order.length} deduced relation(s) (${grades}).`,
+    ...order.map(o => `-- ${o.relation.reason}`),
+    ...[...new Set(caveats)].map(c => `-- ${c}`),
+    '-- Regular join: Flink keeps every side in state — fine here, not on large topics.',
+    'SELECT',
+    columns.join(',\n'),
+    `FROM ${root.id} AS ${aliasOf.get(root.id)}`,
+    ...joinLines,
+    'LIMIT 50',
+  ].join('\n');
+
+  return { sql, caveats: [...new Set(caveats)], problem: null };
 }
 
 // ── Export ────────────────────────────────────────────────────────────────────
