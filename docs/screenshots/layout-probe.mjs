@@ -40,6 +40,17 @@ const PAGES = [
   { name: 'sql-editor', url: `/query?sql=${encodeURIComponent(SQL)}`, settleMs: 2500 },
   { name: 'topic-explorer', url: '/topic/demo.orders.5.shipped?mode=CONTAINS&q=ORD-1042&dir=NEWEST' },
   { name: 'stream-flow', url: '/stream-flow?key=ORD-1042&exact=1' },
+  // Like the capture, reached by the query string a shared link carries — the selection replays
+  // on open. Given longer to settle than the default: the page POSTs the model and only then
+  // lays the graph out and fits it to the viewport, and measuring it mid-fit would report a
+  // framing that never reaches the screen.
+  {
+    name: 'data-model',
+    url: '/data-model?topics=' + encodeURIComponent(
+      ['demo.customers', 'demo.orders.1.received',
+       'demo.payments.authorized', 'demo.shipments.dispatched'].join(',')),
+    settleMs: 2500,
+  },
   { name: 'audit', url: '/audit' },
   { name: 'metrics', url: '/metrics' },
   { name: 'cluster', url: '/cluster' },
@@ -165,7 +176,17 @@ const newPage = (browser, width, height, touch, storage) => browser.newPage({
   storageState: storage,
 });
 
-const browser = await chromium.launch();
+/*
+ * `CHROMIUM_PATH` points at a Chromium that is already there — the same escape hatch
+ * `capture.mjs` carries, for the same failure. Playwright looks for its browsers under the
+ * version *it* expects, so on an image that supplies the browser (`PLAYWRIGHT_BROWSERS_PATH`)
+ * while playwright was installed separately, the two build numbers diverge and the launch fails
+ * demanding a download the image forbids. This file launched bare and so could not run there at
+ * all, which is the whole reason its numbers are supposed to be re-measured rather than trusted.
+ * Unset, Playwright's own lookup is unchanged and CI needs nothing.
+ */
+const browser = await chromium.launch(
+  process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
 
 if (mode === '--sweep') {
   /*

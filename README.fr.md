@@ -27,7 +27,7 @@ Pensé pour les data engineers, les architectes, et tous ceux qui se sont un jou
 ![Le tableau de bord : chaque topic, son nombre de messages, son état et la date de son dernier message](docs/img/dashboard.png)
 
 <details>
-<summary>Autres écrans — Topic Explorer, Éditeur SQL, Stream Flow, Audit, Cluster</summary>
+<summary>Autres écrans — Topic Explorer, Éditeur SQL, Stream Flow, Modèle de données, Audit, Cluster</summary>
 
 **Topic Explorer** — cherchez dans tout le topic, et lisez ce qui a réellement été couvert.
 ![Topic Explorer](docs/img/topic-explorer.png)
@@ -37,6 +37,9 @@ Pensé pour les data engineers, les architectes, et tous ceux qui se sont un jou
 
 **Stream Flow** — une clé d'enregistrement à travers le cluster, avec la latence de chaque saut et un tableau de preuves vérifiable.
 ![Stream Flow](docs/img/stream-flow.png)
+
+**Modèle de données** — les topics lus comme des tables, avec les relations entre eux déduites et graduées.
+![Modèle de données](docs/img/data-model.png)
 
 **Audit du cluster** — constats gradués, et chaque run énonce son propre périmètre.
 ![Audit du cluster](docs/img/audit.png)
@@ -54,6 +57,7 @@ Ces captures sont générées, pas prises à la main : `docs/screenshots/` pilot
 - 🧠 **Schémas sans configuration** — les topics sont échantillonnés, leur structure inférée (JSON, XML, Avro via Schema Registry) et enregistrée comme table Flink en un clic.
 - 📝 **Un vrai éditeur SQL** — Monaco (le moteur de VS Code), auto-complétion des topics et tables, historique de requêtes, lecture earliest/latest.
 - 🕸️ **Lignage & traçage** — un graphe interactif topics → tables → jobs actifs, résolu par le parseur de Flink lui-même ; plus le traçage d'un message à travers les topics par clé, header, JSONPath ou XPath, qui affiche ses sauts au fil de la recherche, dit exactement ce qu'il a lu, reprend là où le budget l'a arrêté, et compare deux clés côte à côte.
+- 🗺️ **Un modèle de données que vous n'avez pas eu à dessiner** — choisissez des topics et lisez-les comme des tables, avec les relations entre elles déduites des noms de colonnes clés. Kafka n'a pas de clés étrangères : chaque arête est donc une affirmation, qui porte son grade de confiance, énonce son évidence en toutes lettres, et s'ouvre en `JOIN` prêt à l'emploi — une relation ou tout un sous-graphe.
 - 🩺 **Audit du cluster en un clic** — messages toxiques, doublons, pertes en ligne et latence des flux, calculés sur tout le cluster en tâche de fond.
 - 🤖 **Process mining assisté par IA** — reconstruisez vos flux métier en flowcharts et traquez les anomalies avec Claude, un LLM local (Ollama…) ou un [SpectraLLM](https://github.com/devdownin/SpectraLLM) privé.
 - 🔭 **Nativement Kafka 4** — quorum de contrôleurs KRaft, groupes KIP-848, share groups (KIP-932) et versions de features, visibles dans l'UI et exportés vers Prometheus.
@@ -101,6 +105,7 @@ Ouvrez ensuite **http://localhost:8080** et commencez à cliquer. C'est tout.
 | Comparer deux topics côte à côte, diff par ID | **Compare** |
 | Suivre un message à travers tout un pipeline | **Stream Flow** |
 | Visualiser topics → tables → jobs en cours | **Lineage** |
+| Lire un ensemble de topics comme un diagramme entité-relation | **Data Model** — relations déduites, graduées, ouvrables en SQL |
 | Transformer du SQL en métriques Prometheus avec graphiques | **Metrics** |
 | Se voir proposer des KPI tirés de ce que le cluster a montré | **Metrics** — proposés d'après l'audit et les traces |
 | Vérifier la santé de tout le cluster en un clic | **Audit** |

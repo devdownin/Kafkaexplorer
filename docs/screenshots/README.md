@@ -2,7 +2,7 @@
 
 `docs/img/*.png` is what the [Docker Hub overview page](../DOCKERHUB.md), the READMEs and the
 GitHub Pages site show. They are produced here, not taken by hand, so that a UI change can be
-reflected by re-running one command instead of someone remembering to re-photograph seven
+reflected by re-running one command instead of someone remembering to re-photograph eight
 screens at the same window size.
 
 ```bash
@@ -23,12 +23,14 @@ On an image that ships its own Chromium (`PLAYWRIGHT_BROWSERS_PATH`) while Playw
 installed separately, the two version numbers diverge and the launch fails asking for a
 download the image forbids. Point **`CHROMIUM_PATH`** at the binary that is already there
 (`CHROMIUM_PATH=/opt/pw-browsers/chromium-*/chrome-linux/chrome`); unset, Playwright's own
-lookup is unchanged, so CI needs nothing.
+lookup is unchanged, so CI needs nothing. Both scripts honour it — `layout-probe.mjs` launched
+bare until the Data Model page was added to it, so on such an image the one script whose whole
+point is that its numbers get re-measured was the one that could not run.
 
 **Install `pngquant` too** (`apt install pngquant`, `brew install pngquant`, or point
 `PNGQUANT` at a binary). Each shot is quantised to an 8-bit palette, which on flat UI colour
 and text is visually indistinguishable from the original and takes the eight from ~2.9 MB to
-~970 kB. That is not repository housekeeping: the Docker Hub overview loads five of them from
+~970 kB. That is not repository housekeeping: the Docker Hub overview loads all eight of them from
 GitHub Pages on every view. Without the binary the run still succeeds and says so at the end
 — compression is not what this script is for, but nobody should discover the omission from a
 commit diff either.
@@ -41,7 +43,7 @@ interactive targets fall below the 24 x 24 CSS px of WCAG 2.5.8, and — on the 
 the question is sharpest — the width actually left to the Monaco editor.
 
 ```bash
-node layout-probe.mjs http://127.0.0.1:4173            # seven pages x three viewports
+node layout-probe.mjs http://127.0.0.1:4173            # eight pages x three viewports
 node layout-probe.mjs http://127.0.0.1:4173 --sweep    # editor width against viewport width
 ```
 

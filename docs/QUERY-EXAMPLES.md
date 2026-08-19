@@ -1,6 +1,6 @@
 # Query Examples
 
-All examples below run out of the box against the bundled demo topics (`docker compose up -d` seeds 76 of them — see the [feature tour](FEATURES.md#11-demo--sandbox-environment)).
+All examples below run out of the box against the bundled demo topics (`docker compose up -d` seeds 76 of them — see the [feature tour](FEATURES.md#12-demo--sandbox-environment)).
 
 ## XML with XPath
 ```sql

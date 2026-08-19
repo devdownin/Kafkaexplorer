@@ -13,6 +13,33 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A Data Model page (`/data-model`, `POST /api/data-model`) — a set of topics read as an
+  entity-relation diagram.** Each topic becomes a table card carrying its inferred columns, and the
+  relations between them are deduced from key-column names. Kafka has no foreign keys, so every
+  edge is a claim rather than a fact: it is graded `HIGH` / `MEDIUM` / `LOW`, drawn in a line style
+  that says which, and states its evidence in plain words. The key column is *detected, never
+  invented* — an entity with no id-like field simply has no key, words merely ending in "id"
+  (`paid`, `valid`) are not identifiers, and a name echoing its own topic is identity rather than a
+  reference. Cardinality travels in crow's-foot notation so the line style is free to mean
+  confidence and nothing else, and each edge is anchored on the row of the column that carries it,
+  which is what makes a link legible without reading its label.
+- **A relation, or a whole subgraph, opens as a query.** A `HIGH` relation *is* a join predicate,
+  and the diagram is the only place in the application where that predicate is already known.
+  Several entities added to a join set yield one query, built from a spanning tree so that every
+  `JOIN` predicate cites a table already introduced. It refuses rather than inventing a predicate:
+  a set the deduced relations do not connect has no join, and the unreachable entity is named.
+- **Reading a large model**: the confidence legend doubles as a filter (each grade a checkbox with
+  its count) that hides lines without rearranging the diagram; entities no relation touches are set
+  aside rather than diluting it; a minimap appears only when the graph overflows the viewport; a
+  "jump to an entity" search centres one by name; and a field-highlight box answers "who else
+  carries this key?" with no request. A column that reads as a foreign key but produced no relation
+  is flagged, so a diagram that looks incomplete says why.
+- **Shareable, saveable, exportable**: the selection round-trips through the URL and replays on
+  open, the unrun selection survives leaving the page, named selections are kept by the browser,
+  and the diagram exports as SVG, PNG or a Mermaid `erDiagram` — the textual one for what the
+  images cannot do, be re-read and diffed. Every export carries the coverage line and states what
+  is *not* drawn: a diagram detached from the application cannot be interrogated, so one that does
+  not state its bounds reads as a complete model.
 - **Contextual KPI suggestions on the Metrics page** (`POST /api/metrics/suggestions`). The page knew
   nothing about the cluster it measures: its quick-start cards posed a `COUNT(*)` on the first table
   found, identical everywhere. Proposals are now derived from what has actually been observed — the

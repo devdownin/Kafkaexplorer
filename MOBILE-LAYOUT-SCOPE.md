@@ -31,6 +31,11 @@ node layout-probe.mjs http://127.0.0.1:4173            # the table below
 node layout-probe.mjs http://127.0.0.1:4173 --sweep    # the editor against viewport width
 ```
 
+On an image that supplies its own Chromium while playwright was installed separately, point
+`CHROMIUM_PATH` at the binary that is already there — the probe honours it exactly as `capture.mjs`
+does. It did not until the `data-model` row below was measured, which is the reason that row was
+missing: the script could not be run here at all.
+
 Every figure below comes from that script. What it establishes is layout: widths, overflow,
 clipping, target sizes. What it does **not** establish is how any of this feels under a thumb —
 it drives desktop Chromium with `hasTouch`, which is not a device. That gap is why W4 exists
@@ -49,6 +54,7 @@ no `title`, no scrollable ancestor, not `sr-only`:
 | sql-editor | 15 clipped, 4 unreachable | 8 / 1 | 9 / 3 |
 | topic-explorer | 23 clipped, 0 unreachable | 21 / 19 | 18 / 18 |
 | stream-flow | 15 clipped, 2 unreachable | 12 / 2 | 22 / 2 |
+| data-model | 0 clipped, 0 unreachable | 0 / 0 | 0 / 0 |
 | audit | 0 clipped, 0 unreachable | 0 / 0 | 0 / 0 |
 | metrics | 18 clipped, 13 unreachable | 13 / 8 | 11 / 6 |
 | cluster | 12 clipped, 2 unreachable | 2 / 0 | 5 / 0 |
@@ -130,12 +136,22 @@ Interactive elements below the 24 × 24 CSS px of WCAG 2.5.8 (Target Size, Minim
 | sql-editor | 69 / 103 | audit | 30 / 54 |
 | dashboard | 32 / 60 | stream-flow | 19 / 43 |
 | topic-explorer | 14 / 64 | metrics | 8 / 53 |
-| cluster | 1 / 20 | | |
+| cluster | 1 / 20 | data-model | 38 / 76 |
 
-**These counts are the same at 390 and at 1440** — the elements do not change size with the
-viewport. So this is existing accessibility debt that a mouse forgives and a thumb does not. It is
-listed separately (W5) on purpose: folded into "mobile", it would be deprioritised whenever mobile
-is, and it is worth doing on a desktop-only product.
+**These counts barely move between 390 and 1440** — the elements do not change size with the
+viewport, only their number does, as a narrow layout adds a drawer trigger or drops a control
+(`data-model` is the widest spread: 42 at 390 against the 38 tabled here). So this is existing
+accessibility debt that a mouse forgives and a thumb does not. It is listed separately (W5) on
+purpose: folded into "mobile", it would be deprioritised whenever mobile is, and it is worth doing
+on a desktop-only product.
+
+**And it is one fix far more than it is forty.** On `data-model`, where the ratio is highest after
+the SQL editor, 40 of the 42 targets at 390 are *outside* the graph, and the great majority are
+native `<input type="checkbox">` rendered at **13 × 13** — the browser default — one per topic in
+the selector list, plus the three confidence filters. Only 2 are SVG graph elements, which is the
+opposite of what the graph-heavy page looks like it would report. A styled checkbox control would
+therefore move the count on every screen carrying a list of them at once. That is the sort of thing
+W5's triage is for, and it is worth knowing before the number is read as forty separate problems.
 
 The count includes inline links and icon-only controls; some are legitimately small by the
 standard's own exceptions (inline text links). Triage is part of W5, not a reason to discount the

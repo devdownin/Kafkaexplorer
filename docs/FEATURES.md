@@ -66,14 +66,28 @@ The assistant transforms the message preview into a query design tool:
 
 ![Stream Flow: key ORD-1042 traced across six topics, the chain drawn from first sightings, each hop carrying its latency from the previous one, the slowest highlighted, and an evidence table giving partition, offset and payload for every hop](img/stream-flow.png)
 
-## 7. Advanced Topic Comparison
+## 7. Data Model (Deduced Entity-Relation Diagram)
+Pick a set of topics and read them as a schema. Each topic becomes an entity card carrying its inferred columns; the relations between them are deduced from key-column names and drawn in crow's-foot notation between the exact column rows they connect.
+
+- **Every edge is a claim, and says so**: Kafka has no foreign keys, so a relation is graded `HIGH` (the referencing column and the target's own key agree), `MEDIUM` (a name match alone) or `LOW` (only a shared key column), and carries the evidence in plain words. The line style means confidence and nothing else — cardinality is carried by the crow's foot, so the two never compete for the same channel.
+- **The key column is detected, never invented**: an entity with no id-like field simply has no key. Words merely ending in "id" (`paid`, `valid`) are not identifiers, and a name echoing its own topic (`order_id` on an orders topic) is identity rather than a reference.
+- **A column that reads as a foreign key but produced no relation is flagged** (`?`), rather than being indistinguishable from an ordinary column — a diagram that looks incomplete should say why it is. The message states only what is checkable: no selected topic carries that name.
+- **The confidence legend is also the filter**: each grade is a checkbox with its count, so a model rich in name-only matches stops drowning the edges the target's own key actually supports. It hides lines without rearranging the diagram, and a relation hidden from the graph is still listed in the inspector, marked.
+- **A relation opens as a query**, and so does a subgraph: a `HIGH` relation *is* a join predicate, and this is the only place in the application where that predicate is already known. Add several entities to a join set and get one query joining all of them, built so every `JOIN` predicate cites a table already introduced. It **refuses rather than inventing a predicate** — a set the deduced relations do not connect has no join, and the entity that cannot be reached is named.
+- **Reading a large model**: entity headers are tinted by topic domain, entities no relation touches are set aside rather than diluting the graph (counted, still inspectable), a minimap appears *only* when the graph overflows the viewport, and a "jump to an entity" search centres one by name. A field-highlight box answers "who else carries this key?" without a request.
+- **Shareable, saveable, exportable**: the selection round-trips through the URL so a model replays on open; named selections are kept by the browser; and the diagram exports as SVG, PNG or a Mermaid `erDiagram` — the textual one existing for what the images cannot do, be re-read and diffed. Every export carries the coverage line and states what is *not* drawn, because a diagram detached from the app cannot be interrogated.
+- **Bounded, and it says so**: 30 topics per request, 20 s per topic. A topic that yields no schema or whose read fails costs that topic — reported with its reason — never the model.
+
+![Data Model: four topics read as tables — customers, orders, payments and shipments — with three deduced relations drawn in crow's-foot notation between their key columns](img/data-model.png)
+
+## 8. Advanced Topic Comparison
 - **Side-by-Side Analysis**: Compare messages from two Kafka topics in independent columns.
 - **Shared SQL Template**: Apply identical logic to both topics using a shared Flink SQL editor with `{topic}` placeholder support.
 - **Time Synchronization**: Linked time range filters for temporal correlation between datasets.
 - **Intelligent Diffing**: Specify an ID column to highlight value discrepancies and identify missing records across topics.
 - **Live Metrics**: Real-time display of message counts and throughput (msg/s) for the selected topics and time ranges.
 
-## 8. Automated Functional Audit
+## 9. Automated Functional Audit
 - **Asynchronous Auditing**: Launch long-running cluster-wide audits in the background (dedicated executor, bounded per-topic parallelism).
 - **Technical Health Checks**: Automatic detection of "poison messages" (malformed JSON/XML) and exact record counting via the direct Kafka SELECT engine.
 - **Duplicate Detection**: In-process scan (up to 10 000 messages per topic) counting keys that appear more than once, based on common ID fields (e.g., `id`, `order_id`, `*_id`).
@@ -83,7 +97,7 @@ The assistant transforms the message preview into a query design tool:
 
 ![Cluster Audit: 28 topics, 2 critical and 3 warning, a health score of 89%, the scope of the run stated, and a per-topic table carrying each finding](img/audit.png)
 
-## 9. Security & Robustness
+## 10. Security & Robustness
 - **XXE Protection**: Strict disabling of external DTD entities for all XML parsers (Schema Inferrer, UDF, Formatter).
 - **SQL Validation**: Whitelist of authorized commands (`SELECT`, `EXPLAIN`, `CREATE TABLE`) to prevent destructive DML operations.
 - **Credential Masking**: DDL shown in the UI (topic detail, DDL preview, lineage) has SSL passwords and SASL/Confluent secrets redacted.
@@ -91,7 +105,7 @@ The assistant transforms the message preview into a query design tool:
 - **Guarded Cluster Repointing**: Changing the Kafka connection while an audit, a Flink job or a live Process Mining session is still running is refused (HTTP 409) and the response names what is running — one report must not describe two clusters. The refusal can be overridden explicitly; what was already running keeps reading the previous cluster.
 - **Failures That Stay On Screen**: An error that needs acting on is shown as a panel with the server's own message — readable title, hint, raw text one click away — not a toast that fades in three seconds.
 
-## 10. Process Mining & AI Analysis (LLM)
+## 11. Process Mining & AI Analysis (LLM)
 Kafka Explorer integrates AI to analyze message flows and detect anomalies:
 - **Automatic Field Profiling**: Detects `CORRELATION_ID`, `TIMESTAMP`, and `STATUS` fields across topics.
 - **Flow Reconstruction**: Generates Mermaid flowcharts of your business processes.
@@ -99,7 +113,7 @@ Kafka Explorer integrates AI to analyze message flows and detect anomalies:
 - **Audit checklist**: A built-in library of ready-to-use audit prompts (ordering, duplicates, orphan flows, latency/SLA, schema drift, missing required fields, invalid status transitions, error/retries, amount outliers, PII exposure, correlation integrity). Tick the checks — plus an optional free-form instruction — to focus the LLM on a specific audit, in both snapshot and live modes. Audits that need a field the profiling step didn't detect (e.g. amount outliers with no `AMOUNT` field) are greyed out automatically. Served from `GET /api/process-mining/audit-templates`.
 - **Multi-Provider Support**: Compatible with **Claude (Anthropic)**, **Open Source models** (via OpenAI-compatible APIs like Ollama), and **SpectraLLM** (self-hosted private RAG/fine-tuned models). See the [LLM provider guide](LLM-PROVIDERS.md).
 
-## 11. Demo & Sandbox Environment
+## 12. Demo & Sandbox Environment
 `setup-demo.sh` seeds **76 topics** automatically (78 with Schema Registry), so every feature on this page has a dataset to run against. Each stack runs it for you — `docker compose up -d` and it is there.
 
 Every business record carries a **record key** and **Kafka headers** (`correlation-id`, W3C `traceparent`, `source-system`, `event-type`, `produced-at`). Without them, exact-key tracing, key-partition narrowing, header search, log compaction and the audit's key-based duplicate detection would have nothing to run against.
@@ -119,7 +133,7 @@ Every business record carries a **record key** and **Kafka headers** (`correlati
 
 Seeding is batched — one producer per topic, not one per message — and topics are created 8 at a time. Two knobs: `DEMO_HOP_DELAY` (seconds between the traced pipeline's hops, default 2; set to 0 for the fastest seeding, at the cost of flat hop latencies) and `DEMO_PARALLEL` (concurrent Kafka CLI processes, default 8).
 
-## 12. Kafka 4 / KRaft Observability
+## 13. Kafka 4 / KRaft Observability
 - **KRaft Controller Quorum** (Cluster page): metadata-log leader, epoch and high watermark, plus a voters/observers table with per-replica lag and last fetch / last caught-up timestamps. Hidden automatically on Zookeeper-based clusters.
 - **Client Groups** (Cluster page): every registered group with its type — `CLASSIC`, `CONSUMER` (KIP-848), `SHARE` (KIP-932 queues) or `STREAMS` — and state.
 
@@ -129,7 +143,7 @@ Seeding is batched — one producer per topic, not one per message — and topic
 - **Prometheus quorum gauges** (`/actuator/prometheus`): `kafka_quorum_leader_id`, `kafka_quorum_leader_epoch`, `kafka_quorum_high_watermark` and `kafka_quorum_replica_lag{replicaId,role}` — alert on a lagging voter or a controller failover.
 - **KIP-848 rebalances (opt-in)**: set `kafka.consumer-group-protocol: consumer` (env `KAFKA_CONSUMER_GROUP_PROTOCOL=consumer`) to switch the live Process Mining consumer to the next-gen incremental rebalance protocol. Requires Kafka 4.x brokers; the default `classic` keeps compatibility with older brokers. The bundled Docker stacks enable it out of the box.
 
-## 13. Metrics & Contextual KPIs
+## 14. Metrics & Contextual KPIs
 Any query the engine can run becomes a Prometheus series, scraped from `/actuator/prometheus`.
 
 - **Four Prometheus types**: `GAUGE` (point-in-time), `COUNTER` (cumulative, delta-tracked between polls), `HISTOGRAM` (Prometheus-native buckets) and `SUMMARY` (client-side p50/p75/p90/p95/p99). Series are `explorer_metric_{gauge,counter,histogram,summary}`, tagged `metric_id` / `metric_name` / `metric_type` plus every non-`metric_value` column the query returns.
