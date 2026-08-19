@@ -1362,6 +1362,38 @@ export function describeModel(response: DataModelResponse): string {
   return `${scope} · ${relations}`;
 }
 
+// ── Construction en cours ─────────────────────────────────────────────────────
+
+/**
+ * Ce qu'on peut honnêtement dire pendant qu'un modèle se construit.
+ *
+ * `POST /api/data-model` est **une seule requête** : le serveur lit les topics en parallèle et ne
+ * répond qu'une fois tout inféré. Le navigateur ne sait donc pas quel topic est en cours, et il
+ * n'y a **aucun pourcentage à afficher** — en inventer un (« 40 % », dérivé du temps écoulé) serait
+ * une mesure fabriquée, exactement ce que cette page refuse partout ailleurs. Ce qui est vrai et
+ * utile : combien de topics sont lus, et depuis combien de temps.
+ *
+ * Le budget par topic (20 s côté serveur) n'est délibérément pas cité : c'est une constante du
+ * serveur, et une UI qui la recopie ment le jour où elle change.
+ */
+export function describeBuildProgress(topics: number, elapsedMs: number): string {
+  const scope = `Reading ${topics} ${topics === 1 ? 'topic' : 'topics'}`;
+  const seconds = Math.floor(elapsedMs / 1000);
+  if (seconds < 1) return `${scope}…`;
+  if (seconds < 60) return `${scope}… ${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${scope}… ${minutes}m ${String(seconds % 60).padStart(2, '0')}s`;
+}
+
+/**
+ * La phrase qui accompagne un graphe encore à l'écran pendant qu'un autre se construit. Sans
+ * elle, l'ancien modèle passe pour le nouveau — et c'est le cas le plus trompeur, puisque rien
+ * ne bouge à l'écran.
+ */
+export function describeStaleGraphDuringBuild(hasPreviousModel: boolean): string | null {
+  return hasPreviousModel ? 'The diagram behind is the previous model, until this one answers.' : null;
+}
+
 // ── Comparaison de deux sélections ─────────────────────────────────────────────
 
 /**

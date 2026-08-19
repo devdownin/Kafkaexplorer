@@ -25,6 +25,8 @@ export { Stat } from './Stat';
 export type { StatProps } from './Stat';
 export { Field, Input, Select, Textarea } from './Field';
 export type { FieldProps, InputProps, SelectProps, TextareaProps } from './Field';
+export { Checkbox } from './Checkbox';
+export type { CheckboxProps } from './Checkbox';
 export { Combobox } from './Combobox';
 export type { ComboboxProps } from './Combobox';
 export { TopicInput } from './TopicInput';

@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 
 import React from 'react';
-import { Button, Combobox, ErrorPanel, HelpTip, Input, Select, Tooltip } from '../ui';
+import { Button, Checkbox, Combobox, ErrorPanel, HelpTip, Input, Select, Tooltip } from '../ui';
 import type { QueryErrorInfo } from '../../pages/queryError';
 import {
   DIRECTIONS,
@@ -177,10 +177,9 @@ const TopicSearchPanel: React.FC<Props> = ({
 
         <span className="flex items-center gap-1">
           <label className="flex items-center gap-1.5 text-[12px] text-on-surface-variant cursor-pointer">
-            <input
-              type="checkbox"
+            <Checkbox
               checked={criteria.caseSensitive}
-              onChange={e => set('caseSensitive', e.target.checked)}
+              onChange={value => set('caseSensitive', value)}
             />
             Case sensitive
           </label>
@@ -196,10 +195,9 @@ const TopicSearchPanel: React.FC<Props> = ({
         {keyScoped && keyPartitioningApplies(criteria) && (
           <span className="flex items-center gap-1">
             <label className="flex items-center gap-1.5 text-[12px] text-on-surface-variant cursor-pointer">
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={criteria.keyPartitioning}
-                onChange={e => set('keyPartitioning', e.target.checked)}
+                onChange={value => set('keyPartitioning', value)}
               />
               Only this key&#39;s partition
             </label>
@@ -217,10 +215,9 @@ const TopicSearchPanel: React.FC<Props> = ({
           <>
             <span className="flex items-center gap-1">
               <label className="flex items-center gap-1.5 text-[12px] text-on-surface-variant cursor-pointer">
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={criteria.searchKey}
-                  onChange={e => set('searchKey', e.target.checked)}
+                  onChange={value => set('searchKey', value)}
                 />
                 Search keys too
               </label>
@@ -232,10 +229,9 @@ const TopicSearchPanel: React.FC<Props> = ({
             </span>
             <span className="flex items-center gap-1">
               <label className="flex items-center gap-1.5 text-[12px] text-on-surface-variant cursor-pointer">
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={criteria.searchHeaders}
-                  onChange={e => set('searchHeaders', e.target.checked)}
+                  onChange={value => set('searchHeaders', value)}
                 />
                 Search headers too
               </label>

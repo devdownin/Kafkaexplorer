@@ -5,7 +5,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { Link } from 'react-router-dom';
 import axios from 'axios';
 import {
-  PageHeader, Button, Stat, Badge, EmptyState, Card, Input, Select, Tooltip,
+  PageHeader, Button, Checkbox, Stat, Badge, EmptyState, Card, Input, Select, Tooltip,
   Table, TableHead, TableBody, TableRow, Th, Td, TopicInput, type BadgeTone,
 } from '../components/ui';
 import type { AuditHistory, AuditReport, AuditRunSummary, HealthStatus } from '../api/types';
@@ -458,11 +458,10 @@ const Audit: React.FC = () => {
                     : 'border-outline-variant bg-transparent hover:border-outline'
                 }`}
               >
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={options[key]}
-                  onChange={e => setOptions(o => ({ ...o, [key]: e.target.checked }))}
-                  className="mt-0.5 accent-[var(--color-primary)] shrink-0"
+                  onChange={value => setOptions(o => ({ ...o, [key]: value }))}
+                  className="mt-0.5"
                 />
                 <div className="min-w-0">
                   <div className="flex items-center gap-1.5">

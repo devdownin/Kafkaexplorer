@@ -17,6 +17,7 @@ import {
   minimapLayout, visibleGraphRect, graphFullyVisible, centerOnGraphPoint,
   readSavedModels, saveModel, deleteSavedModel, clearSavedModels, MAX_SAVED_MODELS,
   SAVED_MODELS_KEY, joinAliasesFor, buildMultiJoinSql,
+  describeBuildProgress, describeStaleGraphDuringBuild,
 } from './dataModel';
 import type { RelationConfidence } from '../api/types';
 
@@ -1277,5 +1278,26 @@ describe('relationKey / diffModels / describeDiff', () => {
     expect(summary).toContain('+1 relation');
     expect(summary).toContain('1 confidence changed');
     expect(summary.split(', ')).toHaveLength(4); // no removed-relations clause, since there are none
+  });
+});
+
+describe('describeBuildProgress / describeStaleGraphDuringBuild', () => {
+  it('names the scope before a second has passed, with no invented percentage', () => {
+    expect(describeBuildProgress(15, 0)).toBe('Reading 15 topics…');
+    expect(describeBuildProgress(15, 900)).toBe('Reading 15 topics…');
+  });
+
+  it('counts seconds, then minutes, because the wait is minutes on a large selection', () => {
+    expect(describeBuildProgress(15, 42_000)).toBe('Reading 15 topics… 42s');
+    expect(describeBuildProgress(15, 125_000)).toBe('Reading 15 topics… 2m 05s');
+  });
+
+  it('reads correctly for a single topic', () => {
+    expect(describeBuildProgress(1, 3_000)).toBe('Reading 1 topic… 3s');
+  });
+
+  it('says the graph on screen is the previous one — only when there is one', () => {
+    expect(describeStaleGraphDuringBuild(true)).toContain('previous model');
+    expect(describeStaleGraphDuringBuild(false)).toBeNull();
   });
 });

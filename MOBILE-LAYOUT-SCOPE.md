@@ -54,7 +54,7 @@ no `title`, no scrollable ancestor, not `sr-only`:
 | sql-editor | 15 clipped, 4 unreachable | 8 / 1 | 9 / 3 |
 | topic-explorer | 23 clipped, 0 unreachable | 21 / 19 | 18 / 18 |
 | stream-flow | 15 clipped, 2 unreachable | 12 / 2 | 22 / 2 |
-| data-model | 0 clipped, 0 unreachable | 0 / 0 | 0 / 0 |
+| data-model | 0 clipped, 0 unreachable | 0 / 0 | 1 / 0 |
 | audit | 0 clipped, 0 unreachable | 0 / 0 | 0 / 0 |
 | metrics | 18 clipped, 13 unreachable | 13 / 8 | 11 / 6 |
 | cluster | 12 clipped, 2 unreachable | 2 / 0 | 5 / 0 |
@@ -133,25 +133,28 @@ Interactive elements below the 24 × 24 CSS px of WCAG 2.5.8 (Target Size, Minim
 
 | page | ratio | page | ratio |
 |---|---|---|---|
-| sql-editor | 69 / 103 | audit | 30 / 54 |
-| dashboard | 32 / 60 | stream-flow | 19 / 43 |
-| topic-explorer | 14 / 64 | metrics | 8 / 53 |
-| cluster | 1 / 20 | data-model | 38 / 76 |
+| sql-editor | 69 / 103 | audit | 24 / 54 |
+| dashboard | 32 / 60 | stream-flow | 20 / 56 |
+| topic-explorer | 11 / 64 | metrics | 8 / 53 |
+| cluster | 1 / 20 | data-model | 5 / 76 |
 
 **These counts barely move between 390 and 1440** — the elements do not change size with the
-viewport, only their number does, as a narrow layout adds a drawer trigger or drops a control
-(`data-model` is the widest spread: 42 at 390 against the 38 tabled here). So this is existing
-accessibility debt that a mouse forgives and a thumb does not. It is listed separately (W5) on
-purpose: folded into "mobile", it would be deprioritised whenever mobile is, and it is worth doing
-on a desktop-only product.
+viewport, only their number does, as a narrow layout adds a drawer trigger or drops a control. So
+this is existing accessibility debt that a mouse forgives and a thumb does not. It is listed
+separately (W5) on purpose: folded into "mobile", it would be deprioritised whenever mobile is, and
+it is worth doing on a desktop-only product.
 
-**And it is one fix far more than it is forty.** On `data-model`, where the ratio is highest after
-the SQL editor, 40 of the 42 targets at 390 are *outside* the graph, and the great majority are
-native `<input type="checkbox">` rendered at **13 × 13** — the browser default — one per topic in
-the selector list, plus the three confidence filters. Only 2 are SVG graph elements, which is the
-opposite of what the graph-heavy page looks like it would report. A styled checkbox control would
-therefore move the count on every screen carrying a list of them at once. That is the sort of thing
-W5's triage is for, and it is worth knowing before the number is read as forty separate problems.
+**The largest single cause was one control, and it is fixed.** The first measurement had
+`data-model` at 42 targets at 390 — the worst ratio after the SQL editor — and the composition was
+the opposite of what a graph-heavy page looks like it would report: only **2** were SVG graph
+elements. The rest were almost all native `<input type="checkbox">` rendered at **13 × 13**, the
+browser default, one per topic in the selector list. So it was never forty problems but one
+control, and `components/ui/Checkbox` now renders a real 24 × 24 target across the six screens
+that carry checkboxes. Measured effect, same probe: `data-model` **42 → 9** at 390, `audit`
+**30 → 24**, `topic-explorer` **14 → 11**. The table above is the post-fix reading.
+
+What is left is genuinely varied — icon-only controls, inline links, small SVG affordances — which
+is the triage W5 was always about, on a much smaller pile.
 
 The count includes inline links and icon-only controls; some are legitimately small by the
 standard's own exceptions (inline text links). Triage is part of W5, not a reason to discount the
@@ -200,8 +203,8 @@ Sized in ideal days, each independently shippable and useful on its own.
 | W2 | The `md` regression: keep the nav a drawer until `lg`, or let `/query` opt out of the in-flow rail | 0.5 | shell change — check the other six pages | **done** |
 | W3 | Stack instead of split under `lg`: Editor / Results as two panes you switch between | 2 | W1 | open |
 | W4 | Monaco under a real thumb: measure on a device, write down the answer | 1 | — | open |
-| W5 | Tap targets to 24 × 24, app-wide, with triage | 2 | — | open |
-| W6 | Thresholds in `layout-probe.mjs` + a CI job, so this cannot silently regress | 0.5 | W1–W3 | open |
+| W5 | Tap targets to 24 × 24, app-wide, with triage | 2 | — | **the big one done** — `components/ui/Checkbox` at 24 × 24 across six screens; the varied remainder is open |
+| W6 | Thresholds in `layout-probe.mjs` + a CI job, so this cannot silently regress | 0.5 | — | **done** — `--check` gates overflow and target budgets in `ci.yml` |
 | W7 | Identify the clipped containers; confirm none hides unreachable content | 0.5 | — | **done — and the answer was no** |
 | W8 | The unreachable containers W7 left: the SQL editor's toolbar strip under `lg`, and whatever `--detail` still names once the pages are given time to settle | 1 | W1, W6 | open |
 
