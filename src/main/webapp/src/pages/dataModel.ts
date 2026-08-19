@@ -10,6 +10,7 @@
 
 import type {
   DataModelEntity,
+  DataModelLimits,
   DataModelRelation,
   DataModelResponse,
   RelationConfidence,
@@ -17,8 +18,26 @@ import type {
 import { clearDraft, readDraft, writeDraft } from '../draftStore';
 import { isTopicPattern, matchesTopicPattern } from './streamFlow';
 
-/** Miroir du plafond serveur (`DataModelService.MAX_TOPICS`) : l'UI prévient avant d'envoyer. */
-export const MAX_TOPICS = 30;
+/**
+ * Ce qu'une génération analyse par défaut — le même nombre que `DataModelService`.
+ *
+ * Ce n'est plus un plafond, et ce n'est plus un miroir : le plafond est configurable côté serveur
+ * (`explorer.data-model-max-topics`) et la page le lit par `GET /api/data-model/limits`, au lieu
+ * d'en garder une copie qui divergeait le jour où le serveur changeait. Ceci n'est que la valeur
+ * de départ du champ, quand la page n'a pas encore obtenu les bornes.
+ */
+export const DEFAULT_MAX_TOPICS = 30;
+
+/**
+ * Ramène une valeur saisie dans les bornes que le serveur annonce. Tant qu'elles ne sont pas
+ * connues, le plafond est celui du défaut : on ne suppose pas un serveur plus permissif qu'il
+ * ne l'est — une demande refusée coûte une génération entière.
+ */
+export function clampMaxTopics(value: number, limits: DataModelLimits | null): number {
+  const ceiling = Math.max(1, limits?.maxTopics ?? DEFAULT_MAX_TOPICS);
+  if (!Number.isFinite(value)) return Math.min(DEFAULT_MAX_TOPICS, ceiling);
+  return Math.min(Math.max(1, Math.floor(value)), ceiling);
+}
 
 /**
  * Applique le plafond serveur à une sélection déjà résolue — celle que porte une URL partagée,
@@ -31,8 +50,9 @@ export const MAX_TOPICS = 30;
  * manuellement. Ce qui dépasse est **rendu**, comme partout ailleurs sur cette page — jamais
  * tronqué en silence.
  */
-export function capTopics(topics: string[]): { kept: string[]; overflow: string[] } {
-  return { kept: topics.slice(0, MAX_TOPICS), overflow: topics.slice(MAX_TOPICS) };
+export function capTopics(topics: string[], cap: number): { kept: string[]; overflow: string[] } {
+  const limit = Math.max(1, cap);
+  return { kept: topics.slice(0, limit), overflow: topics.slice(limit) };
 }
 
 // ── Sélection des topics ──────────────────────────────────────────────────────
@@ -67,15 +87,15 @@ export function toggleTopic(selection: string[], topic: string): string[] {
 }
 
 /**
- * Coche tout ce que le filtre montre, sans dépasser le plafond serveur : envoyer 200 topics
+ * Coche tout ce que le filtre montre, sans dépasser le plafond de la génération : envoyer 200 topics
  * pour en voir 30 analysés serait exactement la troncature silencieuse que le serveur nomme.
  * Les topics `internal.*` — ceux que l'application s'écrit à elle-même — sont ignorés.
  */
-export function selectAll(selection: string[], visible: string[]): string[] {
+export function selectAll(selection: string[], visible: string[], cap: number): string[] {
   const next = [...selection];
   for (const topic of visible) {
     if (topic.startsWith('internal.')) continue;
-    if (next.length >= MAX_TOPICS) break;
+    if (next.length >= cap) break;
     if (!next.includes(topic)) next.push(topic);
   }
   return next;
@@ -108,13 +128,13 @@ export function buildQuery(topics: string[]): string {
  */
 const SELECTION_DRAFT = 'data-model';
 
-export function readSelectionDraft(): string[] | null {
+export function readSelectionDraft(cap: number): string[] | null {
   const draft = readDraft<unknown>(SELECTION_DRAFT, null);
   if (!Array.isArray(draft)) return null;
   // Un brouillon écrit par une version antérieure peut contenir n'importe quoi : on ne garde
   // que des noms de topics, et le plafond s'applique comme partout ailleurs sur cette page.
   const topics = draft.filter((t): t is string => typeof t === 'string' && t !== '');
-  return topics.length === 0 ? null : capTopics(topics).kept;
+  return topics.length === 0 ? null : capTopics(topics, cap).kept;
 }
 
 export function saveSelectionDraft(topics: string[]): void {

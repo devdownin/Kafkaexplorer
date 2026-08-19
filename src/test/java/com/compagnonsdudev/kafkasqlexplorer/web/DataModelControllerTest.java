@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.compagnonsdudev.kafkasqlexplorer.web;
 
+import com.compagnonsdudev.kafkasqlexplorer.config.ExplorerConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.DataModelResponse;
 import com.compagnonsdudev.kafkasqlexplorer.service.DataModelService;
 import org.junit.jupiter.api.BeforeEach;
@@ -13,6 +14,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.util.List;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -33,13 +35,13 @@ class DataModelControllerTest {
     void setUp() {
         dataModelService = Mockito.mock(DataModelService.class);
         mockMvc = MockMvcBuilders
-                .standaloneSetup(new DataModelController(dataModelService))
+                .standaloneSetup(new DataModelController(dataModelService, new ExplorerConfig()))
                 .build();
     }
 
     @Test
     void aSelectionReturnsTheModelAsJson() throws Exception {
-        Mockito.when(dataModelService.buildModel(anyList())).thenReturn(
+        Mockito.when(dataModelService.buildModel(anyList(), any())).thenReturn(
                 new DataModelResponse(List.of(), List.of(), List.of(), 2, 0, false));
 
         mockMvc.perform(post("/api/data-model")
@@ -73,7 +75,7 @@ class DataModelControllerTest {
 
     @Test
     void aSelectionOfBlankTopicsAnswers400WithTheServicesReason() throws Exception {
-        Mockito.when(dataModelService.buildModel(anyList()))
+        Mockito.when(dataModelService.buildModel(anyList(), any()))
                 .thenThrow(new IllegalArgumentException("At least one topic is required."));
 
         mockMvc.perform(post("/api/data-model")
@@ -81,6 +83,58 @@ class DataModelControllerTest {
                         .content("{\"topics\":[\"  \"]}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("At least one topic is required."));
+    }
+
+    /**
+     * The page reads its bounds rather than carrying a copy of them — the mirror that used to sit
+     * beside the Java constant is exactly the drift this endpoint removes.
+     */
+    @Test
+    void theLimitsAreServedSoTheBrowserNeedNotHardcodeThem() throws Exception {
+        mockMvc.perform(get("/api/data-model/limits"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.maxTopics").value(100))
+                .andExpect(jsonPath("$.defaultMaxTopics").value(DataModelService.DEFAULT_MAX_TOPICS));
+    }
+
+    @Test
+    void theCeilingServedIsTheConfiguredOne() throws Exception {
+        ExplorerConfig config = new ExplorerConfig();
+        config.setDataModelMaxTopics(250);
+        MockMvc mvc = MockMvcBuilders
+                .standaloneSetup(new DataModelController(dataModelService, config)).build();
+
+        mvc.perform(get("/api/data-model/limits"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.maxTopics").value(250));
+    }
+
+    /** The per-run value reaches the service rather than being dropped on the floor. */
+    @Test
+    void theRequestedMaxTopicsIsPassedThrough() throws Exception {
+        Mockito.when(dataModelService.buildModel(anyList(), any())).thenReturn(
+                new DataModelResponse(List.of(), List.of(), List.of(), 1, 0, false));
+
+        mockMvc.perform(post("/api/data-model")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"topics\":[\"demo.orders\"],\"maxTopics\":60}"))
+                .andExpect(status().isOk());
+
+        Mockito.verify(dataModelService).buildModel(List.of("demo.orders"), 60);
+    }
+
+    /** An absent maxTopics binds as null, not a failed request — the body may be minimal. */
+    @Test
+    void anAbsentMaxTopicsBindsAsNull() throws Exception {
+        Mockito.when(dataModelService.buildModel(anyList(), any())).thenReturn(
+                new DataModelResponse(List.of(), List.of(), List.of(), 1, 0, false));
+
+        mockMvc.perform(post("/api/data-model")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"topics\":[\"demo.orders\"]}"))
+                .andExpect(status().isOk());
+
+        Mockito.verify(dataModelService).buildModel(List.of("demo.orders"), null);
     }
 
     /**

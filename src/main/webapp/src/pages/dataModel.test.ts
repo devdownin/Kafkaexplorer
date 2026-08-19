@@ -4,7 +4,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { DataModelEntity, DataModelRelation, DataModelResponse } from '../api/types';
 import {
-  MAX_TOPICS, MAX_COLUMNS_SHOWN, NODE_W, HEADER_H, ROW_H, FOOTER_H, DOMAIN_PALETTE,
+  DEFAULT_MAX_TOPICS, MAX_COLUMNS_SHOWN, NODE_W, HEADER_H, ROW_H, FOOTER_H, DOMAIN_PALETTE,
   filterTopics, toggleTopic, selectAll, topicsFromQuery, buildQuery,
   displayedColumns, entityHeight, computeLayout, describeModel, splitByConnectivity,
   columnRowY, anchorSpread, computeEdgeGeometry, crowFootPath, oneBarPath,
@@ -13,7 +13,7 @@ import {
   buildExportSvg, exportNotes, escapeXml, toMermaidEr, buildJoinSql, joinAliases,
   capTopics, relationKey, diffModels, diffIsEmpty, describeDiff,
   filterRelations, describeRelationFilter, orphanKeyColumns, describeOrphanKey,
-  shortenColumnName, readSelectionDraft, saveSelectionDraft,
+  shortenColumnName, readSelectionDraft, saveSelectionDraft, clampMaxTopics,
   minimapLayout, visibleGraphRect, graphFullyVisible, centerOnGraphPoint,
   readSavedModels, saveModel, deleteSavedModel, clearSavedModels, MAX_SAVED_MODELS,
   SAVED_MODELS_KEY, joinAliasesFor, buildMultiJoinSql,
@@ -86,13 +86,13 @@ describe('topic selection', () => {
 
   it('select-all respects the server cap and skips internal topics', () => {
     const visible = ['internal.audit.history', ...Array.from({ length: 40 }, (_, i) => `t${i}`)];
-    const selected = selectAll([], visible);
-    expect(selected).toHaveLength(MAX_TOPICS);
+    const selected = selectAll([], visible, DEFAULT_MAX_TOPICS);
+    expect(selected).toHaveLength(DEFAULT_MAX_TOPICS);
     expect(selected).not.toContain('internal.audit.history');
   });
 
   it('select-all keeps what was already selected', () => {
-    expect(selectAll(['z'], ['a'])).toEqual(['z', 'a']);
+    expect(selectAll(['z'], ['a'], DEFAULT_MAX_TOPICS)).toEqual(['z', 'a']);
   });
 });
 
@@ -393,23 +393,53 @@ describe('centerOnEntity', () => {
   });
 });
 
+describe('clampMaxTopics', () => {
+  const limits = { maxTopics: 100, defaultMaxTopics: 30 };
+
+  it('lets a run ask for more than the default, up to the server ceiling', () => {
+    expect(clampMaxTopics(60, limits)).toBe(60);
+    expect(clampMaxTopics(100, limits)).toBe(100);
+  });
+
+  it('never lets the field promise more than the server allows', () => {
+    expect(clampMaxTopics(500, limits)).toBe(100);
+  });
+
+  // Le plafond inconnu est le défaut, pas l'infini : une génération refusée après plusieurs
+  // minutes d'inférence est un pire résultat qu'un champ momentanément trop prudent.
+  it('assumes the default ceiling while the limits are unknown', () => {
+    expect(clampMaxTopics(80, null)).toBe(30);
+    expect(clampMaxTopics(10, null)).toBe(10);
+  });
+
+  it('refuses zero, negatives and a field left illisible', () => {
+    expect(clampMaxTopics(0, limits)).toBe(1);
+    expect(clampMaxTopics(-5, limits)).toBe(1);
+    expect(clampMaxTopics(Number.NaN, limits)).toBe(30);
+  });
+
+  it('a ceiling below the default wins over it — the server is the authority', () => {
+    expect(clampMaxTopics(30, { maxTopics: 5, defaultMaxTopics: 30 })).toBe(5);
+  });
+});
+
 describe('capTopics', () => {
   it('keeps everything under the cap, with no overflow', () => {
     const topics = ['a', 'b', 'c'];
-    expect(capTopics(topics)).toEqual({ kept: topics, overflow: [] });
+    expect(capTopics(topics, DEFAULT_MAX_TOPICS)).toEqual({ kept: topics, overflow: [] });
   });
 
   it('splits at the cap and names what is left out — never a silent truncation', () => {
     const topics = Array.from({ length: 35 }, (_, i) => `t${i}`);
-    const { kept, overflow } = capTopics(topics);
-    expect(kept).toHaveLength(MAX_TOPICS);
+    const { kept, overflow } = capTopics(topics, DEFAULT_MAX_TOPICS);
+    expect(kept).toHaveLength(DEFAULT_MAX_TOPICS);
     expect(overflow).toHaveLength(5);
-    expect(kept).toEqual(topics.slice(0, MAX_TOPICS));
-    expect(overflow).toEqual(topics.slice(MAX_TOPICS));
+    expect(kept).toEqual(topics.slice(0, DEFAULT_MAX_TOPICS));
+    expect(overflow).toEqual(topics.slice(DEFAULT_MAX_TOPICS));
   });
 
   it('an empty list stays empty', () => {
-    expect(capTopics([])).toEqual({ kept: [], overflow: [] });
+    expect(capTopics([], DEFAULT_MAX_TOPICS)).toEqual({ kept: [], overflow: [] });
   });
 });
 
@@ -925,22 +955,22 @@ describe('shortenColumnName', () => {
 describe('selection draft', () => {
   it('round-trips an unrun selection', () => {
     saveSelectionDraft(['demo.orders', 'demo.payments']);
-    expect(readSelectionDraft()).toEqual(['demo.orders', 'demo.payments']);
+    expect(readSelectionDraft(DEFAULT_MAX_TOPICS)).toEqual(['demo.orders', 'demo.payments']);
   });
 
   it('an emptied selection clears the draft rather than storing nothing usefully', () => {
     saveSelectionDraft(['demo.orders']);
     saveSelectionDraft([]);
-    expect(readSelectionDraft()).toBeNull();
+    expect(readSelectionDraft(DEFAULT_MAX_TOPICS)).toBeNull();
   });
 
   it('nothing stored reads as no draft', () => {
-    expect(readSelectionDraft()).toBeNull();
+    expect(readSelectionDraft(DEFAULT_MAX_TOPICS)).toBeNull();
   });
 
   it('the cap applies on read, like every other path into the selection', () => {
     saveSelectionDraft(Array.from({ length: 40 }, (_, i) => `t${i}`));
-    expect(readSelectionDraft()).toHaveLength(MAX_TOPICS);
+    expect(readSelectionDraft(DEFAULT_MAX_TOPICS)).toHaveLength(DEFAULT_MAX_TOPICS);
   });
 
   it('a draft of the wrong shape is ignored rather than trusted', () => {
@@ -948,7 +978,7 @@ describe('selection draft', () => {
     // Ce qu'une version antérieure aurait pu écrire : des entrées qui ne sont pas des topics.
     localStorage.setItem('kse:draft:data-model',
       JSON.stringify({ v: 1, at: Date.now(), value: [1, null, 'kept'] }));
-    expect(readSelectionDraft()).toEqual(['kept']);
+    expect(readSelectionDraft(DEFAULT_MAX_TOPICS)).toEqual(['kept']);
   });
 });
 

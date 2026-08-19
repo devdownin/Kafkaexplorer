@@ -88,6 +88,12 @@ explorer:
   # Consumer lag (GET /api/topic/{name}/consumers, and the audit's consumer-lag check). Each group
   # costs a coordinator lookup, so the read is capped and the response says when the cap bit.
   consumer-group-max-groups: 200
+  # Ceiling on how many topics one POST /api/data-model may analyse. The request carries its own,
+  # lower, per-run budget (30 by default, a field on the page, read back from
+  # GET /api/data-model/limits); this is what bounds it, so a mistyped number cannot tie the
+  # inference pool up for hours. Each topic costs a sample read plus schema inference, ~20 s worst
+  # case, so raising this raises the worst-case wall clock of one request in proportion.
+  data-model-max-topics: 100
   # Deletes, at startup, the consumer groups older builds left on the cluster (they committed
   # offsets under a random group id on every metadata read). This is the only write this
   # application ever makes to a cluster: off by default, and restricted to groups that carry one

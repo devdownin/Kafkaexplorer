@@ -237,6 +237,7 @@ allocates; a cluster audit over thousands of topics is the workload that wants m
 | `EXPLORER_AUDIT_MAX_DURATION_MS` | `1800000` | Budget for one full cluster audit; `0` disables it. |
 | `EXPLORER_SEARCH_MAX_SCAN` | `20000` | Records one topic-search pass may read. |
 | `EXPLORER_STREAM_FLOW_MAX_TOPICS` | `250` | Topics a whole-cluster trace reads (the most recently active ones). |
+| `EXPLORER_DATA_MODEL_MAX_TOPICS` | `100` | Ceiling on the topics one data-model run may analyse. The page carries the per-run budget (30 by default) and reads this ceiling from the server, so raising it needs no rebuild — each topic costs a sample read plus schema inference. |
 | `EXPLORER_CLEANUP_OWN_GROUPS` | `false` | Delete, at startup, the consumer groups older builds of this app left on the cluster. The only write it ever makes: restricted to its own group names that the broker reports EMPTY or DEAD. |
 | `EXPLORER_LAG_METRICS_TOPICS` | `[]` | Topics whose consumer lag is exported to Prometheus, named rather than discovered — a series per group × topic is how a metrics backend gets killed. Empty starts no polling at all. |
 | `EXPLORER_LAG_METRICS_TIME` | `false` | Also export that backlog **in time** (`kafka_consumer_group_lag_seconds`). Opt-in because it is the only lag gauge that reads a record rather than metadata. |

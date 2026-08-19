@@ -77,7 +77,8 @@ function stubApi(response: DataModelResponse | Error = model) {
   mockedAxios.post.mockImplementation(() => (response instanceof Error
     ? Promise.reject(response)
     : Promise.resolve({ data: response })));
-  mockedAxios.get.mockResolvedValue({ data: {} });
+  // `GET /api/data-model/limits` : la page lit ses bornes au lieu d'en garder une copie.
+  mockedAxios.get.mockResolvedValue({ data: { maxTopics: 100, defaultMaxTopics: 30 } });
 }
 
 async function renderPage(initialEntry = '/data-model') {
@@ -145,7 +146,7 @@ describe('DataModel page', () => {
     await user.click(screen.getByRole('button', { name: /Generate model/ }));
     await waitFor(() => expect(mockedAxios.post).toHaveBeenCalledWith(
       '/api/data-model',
-      { topics: ['demo.orders.1.received', 'demo.orders.2.validated'] },
+      { topics: ['demo.orders.1.received', 'demo.orders.2.validated'], maxTopics: 30 },
       expect.anything(),
     ));
   });
@@ -203,9 +204,54 @@ describe('DataModel page', () => {
 
     await waitFor(() => expect(mockedAxios.post).toHaveBeenCalledWith(
       '/api/data-model',
-      { topics: ['demo.orders.1.received'] },
+      { topics: ['demo.orders.1.received'], maxTopics: 30 },
       expect.anything(),
     ));
+  });
+
+  /**
+   * Le plafond était 30 en dur des deux côtés. Il vit maintenant dans la configuration serveur,
+   * la page le lit, et le champ borne ce qu'elle envoie — sans quoi elle promettrait une
+   * génération que le serveur refuserait au bout de plusieurs minutes d'inférence.
+   */
+  it('sends the topic budget the field is set to, bounded by the ceiling the server serves',
+    async () => {
+      const user = userEvent.setup();
+      stubApi();
+      await renderPage();
+
+      await openTopics(user);
+      const field = await screen.findByLabelText('Max topics');
+      await waitFor(() => expect(field).toHaveAttribute('max', '100'));
+
+      await user.clear(field);
+      await user.type(field, '60');
+      await user.tab();
+
+      await user.click(screen.getByRole('checkbox', { name: /demo.orders.1.received/ }));
+      await user.click(screen.getByRole('button', { name: /Generate model/ }));
+
+      await waitFor(() => expect(mockedAxios.post).toHaveBeenCalledWith(
+        '/api/data-model',
+        { topics: ['demo.orders.1.received'], maxTopics: 60 },
+        expect.anything(),
+      ));
+    });
+
+  it('will not let the field promise more than the server allows', async () => {
+    const user = userEvent.setup();
+    stubApi();
+    await renderPage();
+
+    await openTopics(user);
+    const field = await screen.findByLabelText('Max topics');
+    await waitFor(() => expect(field).toHaveAttribute('max', '100'));
+
+    await user.clear(field);
+    await user.type(field, '500');
+    await user.tab();
+
+    await waitFor(() => expect(field).toHaveValue(100));
   });
 
   it('replays a selection carried by the URL, which is what makes a model shareable', async () => {
@@ -214,7 +260,7 @@ describe('DataModel page', () => {
 
     await waitFor(() => expect(mockedAxios.post).toHaveBeenCalledWith(
       '/api/data-model',
-      { topics: ['demo.orders.1.received', 'demo.payments.authorized'] },
+      { topics: ['demo.orders.1.received', 'demo.payments.authorized'], maxTopics: 30 },
       expect.anything(),
     ));
     expect(await screen.findByText('2 entities · 1 relation deduced')).toBeInTheDocument();
