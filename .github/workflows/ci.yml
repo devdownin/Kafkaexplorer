@@ -490,7 +490,11 @@ jobs:
     name: Capture the documentation screenshots
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 15 was sized for the capture alone. This job now also runs the layout gate, which walks the
+    # same eight pages again per viewport and waits each one out to `networkidle` — the first run
+    # with it hit the old ceiling and was killed. The gate is restricted to two viewports for the
+    # same reason; see CHECK_VIEWPORTS in layout-probe.mjs.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 

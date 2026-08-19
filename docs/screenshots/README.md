@@ -48,8 +48,12 @@ node layout-probe.mjs http://127.0.0.1:4173 --sweep    # editor width against vi
 node layout-probe.mjs http://127.0.0.1:4173 --check    # what CI gates on; non-zero on a regression
 ```
 
-`--check` is W6: it asserts that no page scrolls sideways at any width, and that no page carries
-more sub-24px targets than the budget recorded beside `TARGET_BUDGET`. A page added to `PAGES`
+`--check` is W6: it asserts that no page scrolls sideways, and that no page carries more
+sub-24px targets than the budget recorded beside `TARGET_BUDGET`. It walks **phone and desktop
+only** — the gate runs on every pull request and each viewport is eight page loads waited out to
+`networkidle`, which put the job past its timeout the first time all three ran. The extremes are
+the ones that matter: overflow appears at the narrow end, and the peak target count is at one end
+or the other. A page added to `PAGES`
 without a budget entry fails the check rather than being measured and never gated. Clipping is
 **reported and not gated**, deliberately — it turns on text metrics, so the same string wraps
 differently under another font stack and a ceiling set here would fail on a runner for a reason

@@ -84,6 +84,18 @@ const TARGET_BUDGET = {
   'cluster': 1,
 };
 
+/*
+ * `--check` measures the two extremes only. The full three-viewport run is what a person runs by
+ * hand; the gate runs on every pull request, and each viewport is eight page loads waited out to
+ * `networkidle` — the capture step alone is ~4 minutes for eight, so three viewports put this job
+ * past its budget the first time it ran. Phone and desktop are kept because they are where the
+ * two gated properties actually differ: horizontal overflow appears at the narrow end, and the
+ * highest target count is at one end or the other (`stream-flow` peaks at desktop, `data-model` at
+ * phone). Tablet is a third reading of numbers that, as the table in MOBILE-LAYOUT-SCOPE.md says,
+ * barely move — so it costs a third of the runtime to confirm what the extremes already bound.
+ */
+const CHECK_VIEWPORTS = ['phone', 'desktop'];
+
 const VIEWPORTS = [
   { name: 'phone', width: 390, height: 844 },   // iPhone 14 class
   { name: 'tablet', width: 768, height: 1024 }, // exactly the `md` breakpoint
@@ -243,7 +255,10 @@ if (mode === '--sweep') {
     }
   }
 } else {
-  for (const vp of VIEWPORTS) {
+  const walked = mode === '--check'
+    ? VIEWPORTS.filter(v => CHECK_VIEWPORTS.includes(v.name))
+    : VIEWPORTS;
+  for (const vp of walked) {
     console.log(`\n===== ${vp.name} (${vp.width}x${vp.height}) =====`);
     for (const p of PAGES) {
       const page = await newPage(browser, vp.width, vp.height, vp.name !== 'desktop');
