@@ -7,7 +7,7 @@ import axios from 'axios';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useCatalog } from '../catalogStore';
 import { useIsDesktop } from '../breakpoints';
-import { addTopicEntries, describeTopicEntry } from '../topicSelection';
+import { addTopicEntries, describeTopicEntry, suggestBroaderPattern } from '../topicSelection';
 import { Button, Checkbox, EmptyState, ErrorPanel, Badge, TopicInput, Combobox, Spinner } from '../components/ui';
 import { useToast } from '../components/Toast';
 import { describeApiError } from './queryError';
@@ -359,6 +359,14 @@ const DataModel: React.FC = () => {
   const visibleTopics = useMemo(
     () => filterTopics(catalogTopics, filter),
     [catalogTopics, filter]);
+  /**
+   * Un motif ancré qui ne montre rien alors qu'une forme élargie montrerait quelque chose. Une
+   * liste vide se lit comme « aucun topic » ; c'est ici « motif ancré », et les deux appellent des
+   * gestes différents.
+   */
+  const filterHint = useMemo(
+    () => (visibleTopics.length === 0 ? suggestBroaderPattern(filter.trim(), catalogTopics) : null),
+    [visibleTopics.length, filter, catalogTopics]);
 
   const entities = useMemo(() => model?.entities ?? [], [model]);
   const relations = useMemo(() => model?.relations ?? [], [model]);
@@ -789,6 +797,12 @@ const DataModel: React.FC = () => {
               className="bg-transparent outline-none text-xs text-on-surface w-full placeholder:text-outline"
             />
           </div>
+          {filterHint && (
+            <p className="text-[10px] text-warning leading-snug" role="status">
+              Nothing matches — patterns are anchored. Try <span className="font-mono">{filterHint}</span>.
+            </p>
+          )}
+
           <div className="flex gap-2">
             <Button variant="ghost" size="sm" className="flex-1"
               onClick={() => setSelection(sel => selectAll(sel, visibleTopics))}

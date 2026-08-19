@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 
-import { expandTopicPatterns, parseTopicList } from './pages/streamFlow';
+import { expandTopicPatterns, isTopicPattern, parseTopicList } from './pages/streamFlow';
 
 /**
  * Choisir des topics : un nom, une liste collée, ou un motif.
@@ -29,10 +29,40 @@ export interface TopicEntry {
   added: string[];
   /** Motifs qui ne correspondent à aucun topic du catalogue. */
   unmatched: string[];
+  /**
+   * Pour un motif sans correspondance, la version élargie qui en aurait — `orders*` → `*orders*`.
+   * Absent quand élargir ne donnerait rien non plus : proposer une syntaxe qui échoue aussi
+   * serait pire que se taire.
+   */
+  suggestions: Record<string, string>;
   /** Topics laissés dehors par le plafond, vide quand il n'y en a pas. */
   overflow: string[];
   /** Le plafond appliqué, ou `null` — c'est lui qui permet de le nommer dans le compte rendu. */
   cap: number | null;
+}
+
+/**
+ * Le motif élargi qui aurait trouvé quelque chose, ou `null`.
+ *
+ * Les motifs sont **ancrés** : `demo.orders.*` désigne ce qui est *sous* `demo.orders`, et c'est
+ * ce qui les rend précis — `demo.*` ne ramène pas `internal.demo.x`. La contrepartie est que
+ * `orders*` ne correspond à rien sur un catalogue en `demo.orders.…`, ce qui se lit comme « ce
+ * topic n'existe pas » plutôt que comme « ce motif est ancré ».
+ *
+ * L'échappatoire existe déjà — `*orders*` fonctionne — donc ce qui manquait n'était pas la
+ * syntaxe mais le fait de la connaître. Élargir automatiquement aurait été le mauvais correctif :
+ * ça aurait dilué la précision de tous les autres motifs pour offrir ce que la syntaxe donne
+ * déjà. On propose, on n'applique pas.
+ *
+ * `null` quand le motif est déjà entouré d'étoiles, ou quand l'élargir ne donnerait rien non
+ * plus : suggérer une syntaxe qui échoue aussi est pire que se taire.
+ */
+export function suggestBroaderPattern(pattern: string, catalog: string[]): string | null {
+  if (!isTopicPattern(pattern)) return null;
+  if (pattern.startsWith('*') && pattern.endsWith('*')) return null;
+  const broader = `*${pattern.replace(/^\*+/, '').replace(/\*+$/, '')}*`;
+  if (broader === pattern) return null;
+  return expandTopicPatterns([broader], catalog).topics.length > 0 ? broader : null;
 }
 
 /**
@@ -59,7 +89,7 @@ export function addTopicEntries(
 ): TopicEntry {
   const entries = parseTopicList(text);
   if (entries.length === 0) {
-    return { selection, added: [], unmatched: [], overflow: [], cap };
+    return { selection, added: [], unmatched: [], overflow: [], suggestions: {}, cap };
   }
 
   const { topics, unmatched } = expandTopicPatterns(entries, catalog);
@@ -75,7 +105,12 @@ export function addTopicEntries(
     next.push(topic);
     added.push(topic);
   }
-  return { selection: next, added, unmatched, overflow, cap };
+  const suggestions: Record<string, string> = {};
+  for (const miss of unmatched) {
+    const broader = suggestBroaderPattern(miss, catalog);
+    if (broader) suggestions[miss] = broader;
+  }
+  return { selection: next, added, unmatched, overflow, suggestions, cap };
 }
 
 /**
@@ -89,7 +124,12 @@ export function describeTopicEntry(entry: TopicEntry): string | null {
     parts.push(`${entry.added.length} topic${entry.added.length > 1 ? 's' : ''} added`);
   }
   if (entry.unmatched.length > 0) {
-    parts.push(`no topic matches ${entry.unmatched.join(', ')}`);
+    // Le motif ancré n'a rien trouvé : dire lequel, et — quand il y en a une — la forme élargie
+    // qui aurait trouvé. « aucun topic » et « motif ancré » sont deux réponses différentes.
+    const missed = entry.unmatched
+      .map(m => (entry.suggestions[m] ? `${m} (try ${entry.suggestions[m]})` : m))
+      .join(', ');
+    parts.push(`no topic matches ${missed}`);
   }
   if (entry.overflow.length > 0) {
     parts.push(`${entry.overflow.length} left out — the request is capped at ${entry.cap} topics`);

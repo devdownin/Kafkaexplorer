@@ -165,6 +165,19 @@ describe('DataModel page', () => {
     expect(screen.queryByRole('checkbox', { name: /demo.payments.authorized/ })).toBeNull();
   });
 
+  it('an anchored filter that shows nothing says so, and names the form that would work', async () => {
+    const user = userEvent.setup();
+    stubApi();
+    await renderPage();
+
+    await openTopics(user);
+    await user.type(screen.getByLabelText('Filter topics'), 'orders*');
+
+    // Une liste vide se lit « aucun topic » ; ici c'est « motif ancré ».
+    expect(await screen.findByText(/patterns are anchored/i)).toBeInTheDocument();
+    expect(screen.getByText('*orders*')).toBeInTheDocument();
+  });
+
   it('reports a pattern that matches nothing rather than sending it as a topic name', async () => {
     const user = userEvent.setup();
     stubApi();
