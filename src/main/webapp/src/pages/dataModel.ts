@@ -18,6 +18,21 @@ import type {
 /** Miroir du plafond serveur (`DataModelService.MAX_TOPICS`) : l'UI prévient avant d'envoyer. */
 export const MAX_TOPICS = 30;
 
+/**
+ * Applique le plafond serveur à une sélection déjà résolue — celle que porte une URL partagée,
+ * jamais des motifs à étendre. `addTopicEntries` fait ce travail pour la saisie manuelle
+ * (nom, liste, motif) ; ce chemin-là est différent, une URL colle directement une liste de noms
+ * de topics, mais avait échappé au plafond entièrement : `topicsFromQuery` ne borne rien, donc
+ * une URL portant plus de 30 topics (composée avant que le plafond ne baisse, ou collée à la
+ * main) faisait afficher « Topics (32/30) » sans le dire, envoyait les 32 au serveur, et
+ * bloquait ensuite toute nouvelle case à cocher tant que l'opérateur n'en décochait pas
+ * manuellement. Ce qui dépasse est **rendu**, comme partout ailleurs sur cette page — jamais
+ * tronqué en silence.
+ */
+export function capTopics(topics: string[]): { kept: string[]; overflow: string[] } {
+  return { kept: topics.slice(0, MAX_TOPICS), overflow: topics.slice(MAX_TOPICS) };
+}
+
 // ── Sélection des topics ──────────────────────────────────────────────────────
 
 /** Filtre insensible à la casse, topics internes de l'explorateur exclus du « tout cocher ». */
@@ -351,18 +366,29 @@ export function fitTransform(
   viewportWidth: number,
   viewportHeight: number,
   padding = 40,
+  /**
+   * Réserve verticale au-dessus du graphe, distincte de `padding`. Le bandeau de couverture et
+   * d'avertissements se dessine par-dessus le SVG sans réduire sa taille : sans cette réserve,
+   * un graphe contraint par sa hauteur — un hub très référencé, par exemple, une forme tout à
+   * fait ordinaire — se centre à quelques pixels du haut du viewport, pile sous le bandeau, et
+   * un avertissement (qui peut tenir sur deux lignes) rend cette situation courante plutôt
+   * qu'exceptionnelle. Par défaut égal à `padding`, ce qui reproduit exactement l'ancien centrage
+   * symétrique — l'appelant qui ne connaît pas la hauteur du bandeau n'a rien à changer.
+   */
+  topPadding = padding,
 ): { x: number; y: number; scale: number } {
   const width = Math.max(1, bounds.maxX - bounds.minX);
   const height = Math.max(1, bounds.maxY - bounds.minY);
+  const availableHeight = viewportHeight - topPadding - padding;
   const scale = Math.max(0.1, Math.min(
     1,
     (viewportWidth - 2 * padding) / width,
-    (viewportHeight - 2 * padding) / height,
+    availableHeight / height,
   ));
   return {
     scale,
     x: (viewportWidth - width * scale) / 2 - bounds.minX * scale,
-    y: (viewportHeight - height * scale) / 2 - bounds.minY * scale,
+    y: topPadding + (availableHeight - height * scale) / 2 - bounds.minY * scale,
   };
 }
 

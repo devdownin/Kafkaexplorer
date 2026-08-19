@@ -11,6 +11,7 @@ import {
   graphBounds, fitTransform, topicDomains, domainColors,
   formatCount, describeRelation, matchingColumns, describeColumnMatches,
   buildExportSvg, exportNotes, escapeXml, toMermaidEr, buildJoinSql, joinAliases,
+  capTopics,
 } from './dataModel';
 
 function entity(id: string, columnCount: number, overrides: Partial<DataModelEntity> = {}): DataModelEntity {
@@ -270,6 +271,66 @@ describe('graphBounds / fitTransform', () => {
   it('fit shrinks a graph larger than the viewport', () => {
     const t = fitTransform({ minX: 0, minY: 0, maxX: 4000, maxY: 100 }, 1000, 800, 40);
     expect(t.scale).toBeCloseTo((1000 - 80) / 4000);
+  });
+
+  it('an unset topPadding reproduces the old symmetric centring exactly', () => {
+    // Regression pin: existing callers that never pass topPadding must see no change at all.
+    const bounds = { minX: 10, minY: 20, maxX: 4010, maxY: 620 };
+    const withDefault = fitTransform(bounds, 1200, 900, 40);
+    const explicitlySymmetric = fitTransform(bounds, 1200, 900, 40, 40);
+    expect(withDefault).toEqual(explicitlySymmetric);
+  });
+
+  it('a larger topPadding pushes a height-constrained graph down and clear of the reserved band', () => {
+    // The banner overlay covers the top of the viewport without shrinking the SVG: a graph
+    // whose height is the binding constraint used to centre almost flush with the top, right
+    // under it. Because scale is also height-bound here, growing topPadding shrinks scale too —
+    // so this checks what must hold regardless: the content clears the reserved band, and
+    // shrinks rather than overflowing it.
+    const bounds = { minX: 0, minY: 0, maxX: 300, maxY: 2000 };
+    const symmetric = fitTransform(bounds, 1200, 900, 40);
+    const reserved = fitTransform(bounds, 1200, 900, 40, 160);
+    expect(reserved.y).toBeGreaterThan(symmetric.y);
+    expect(reserved.scale).toBeLessThan(symmetric.scale);
+    // The fitted content's top edge must clear the reserved band, not just move down a little.
+    expect(reserved.y + bounds.minY * reserved.scale).toBeGreaterThanOrEqual(160);
+  });
+
+  it('topPadding has no effect when width, not height, is the binding constraint', () => {
+    // A wide, short graph is scaled down by its width alone; reserving vertical room changes
+    // nothing about that — the padding sides (left/right) it actually depends on are untouched.
+    const bounds = { minX: 0, minY: 0, maxX: 4000, maxY: 50 };
+    const symmetric = fitTransform(bounds, 1200, 900, 40);
+    const reserved = fitTransform(bounds, 1200, 900, 40, 160);
+    expect(reserved.scale).toBe(symmetric.scale);
+    expect(reserved.x).toBe(symmetric.x);
+  });
+
+  it('a topPadding that leaves no room still returns a finite, positive scale', () => {
+    const bounds = { minX: 0, minY: 0, maxX: 100, maxY: 100 };
+    const t = fitTransform(bounds, 1200, 900, 40, 2000);
+    expect(Number.isFinite(t.scale)).toBe(true);
+    expect(t.scale).toBeGreaterThan(0);
+  });
+});
+
+describe('capTopics', () => {
+  it('keeps everything under the cap, with no overflow', () => {
+    const topics = ['a', 'b', 'c'];
+    expect(capTopics(topics)).toEqual({ kept: topics, overflow: [] });
+  });
+
+  it('splits at the cap and names what is left out — never a silent truncation', () => {
+    const topics = Array.from({ length: 35 }, (_, i) => `t${i}`);
+    const { kept, overflow } = capTopics(topics);
+    expect(kept).toHaveLength(MAX_TOPICS);
+    expect(overflow).toHaveLength(5);
+    expect(kept).toEqual(topics.slice(0, MAX_TOPICS));
+    expect(overflow).toEqual(topics.slice(MAX_TOPICS));
+  });
+
+  it('an empty list stays empty', () => {
+    expect(capTopics([])).toEqual({ kept: [], overflow: [] });
   });
 });
 

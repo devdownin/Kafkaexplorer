@@ -15,7 +15,7 @@ import type { QueryErrorInfo } from './queryError';
 import type { DataModelEntity, DataModelResponse } from '../api/types';
 import {
   MAX_TOPICS, NODE_W, HEADER_H, ROW_H,
-  filterTopics, toggleTopic, selectAll, topicsFromQuery, buildQuery,
+  filterTopics, toggleTopic, selectAll, topicsFromQuery, buildQuery, capTopics,
   displayedColumns, entityHeight, computeLayout, computeEdgeGeometry, splitByConnectivity,
   crowFootPath, oneBarPath, graphBounds, fitTransform, topicDomains, domainColors,
   formatCount, describeRelation, matchingColumns, describeColumnMatches,
@@ -161,6 +161,8 @@ const DataModel: React.FC = () => {
   const svgRef = useRef<SVGSVGElement>(null);
   /** Le groupe qui porte le pan/zoom : l'export sérialise ses enfants, pas sa transformation. */
   const graphGroupRef = useRef<SVGGElement>(null);
+  /** Le bandeau (couverture + avertissements) : mesuré pour que le cadrage lui réserve la place. */
+  const bannerRef = useRef<HTMLDivElement>(null);
   const isPanning = useRef(false);
   const lastPos = useRef({ x: 0, y: 0 });
   const requestSeq = useRef(0);
@@ -220,13 +222,19 @@ const DataModel: React.FC = () => {
   }, [navigate]);
 
   // Une URL portant `?topics=` se rejoue à l'ouverture — c'est ce qui rend un modèle partageable.
+  // `capTopics` s'applique ici : le plafond ne passait que par la saisie manuelle, donc une URL
+  // composée avant qu'il ne baisse — ou collée à la main — l'ignorait entièrement.
   useEffect(() => {
     if (location.search === selfWrittenSearch.current) return;
     const fromUrl = topicsFromQuery(location.search);
     if (fromUrl.length === 0) return;
+    const { kept, overflow } = capTopics(fromUrl);
     // eslint-disable-next-line react-hooks/set-state-in-effect -- rejeu d'une URL partagée
-    setSelection(fromUrl);
-    generate(fromUrl);
+    setSelection(kept);
+    if (overflow.length > 0) {
+      toast(`${overflow.length} left out — the request is capped at ${MAX_TOPICS} topics`, 'error');
+    }
+    generate(kept);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- au montage et sur navigation seulement
   }, [location.search]);
 
@@ -335,12 +343,23 @@ const DataModel: React.FC = () => {
     e.currentTarget.style.cursor = 'grab';
   }, []);
 
-  /** Cadre le graphe entier dans le viewport — le geste de reset, et celui d'après-génération. */
+  /**
+   * Cadre le graphe entier dans le viewport — le geste de reset, et celui d'après-génération.
+   *
+   * Le bandeau (couverture + avertissements) se dessine par-dessus le SVG sans réduire sa
+   * taille : sans réserve, un graphe contraint par sa hauteur — un hub très référencé, une forme
+   * ordinaire — se centre à quelques pixels du haut du viewport, pile sous le bandeau, et un
+   * avertissement présent rend cette situation courante plutôt qu'exceptionnelle. Sa hauteur
+   * réelle est mesurée plutôt que supposée : elle varie avec le nombre d'avertissements, leur
+   * longueur (un texte qui passe sur deux lignes), et la présence du bouton de tiroir mobile.
+   */
   const fitToViewport = useCallback(() => {
     const rect = svgRef.current?.getBoundingClientRect();
     const bounds = graphBounds(graphEntities, positions);
     if (!rect || !bounds || rect.width === 0) return;
-    setTransform(fitTransform(bounds, rect.width, rect.height));
+    const bannerRect = bannerRef.current?.getBoundingClientRect();
+    const topPadding = bannerRect ? Math.max(40, bannerRect.bottom - rect.top + 16) : 40;
+    setTransform(fitTransform(bounds, rect.width, rect.height, 40, topPadding));
   }, [graphEntities, positions]);
 
   // Après une génération, le SVG du nouveau modèle est monté à ce moment-là seulement.
@@ -733,7 +752,7 @@ const DataModel: React.FC = () => {
       <main className="flex-1 relative overflow-hidden graph-bg bg-background-dark">
 
         {/* Bandeau : couverture + avertissements */}
-        <div className="absolute top-4 left-4 right-4 z-10 flex flex-col items-start gap-2 pointer-events-none">
+        <div ref={bannerRef} className="absolute top-4 left-4 right-4 z-10 flex flex-col items-start gap-2 pointer-events-none">
           {/* Sous le seuil, c'est la seule porte vers la sélection : elle est donc toujours là,
               y compris sur l'état vide, où c'est précisément le geste suivant. */}
           {!isDesktop && (
