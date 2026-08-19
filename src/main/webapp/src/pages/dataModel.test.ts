@@ -8,10 +8,10 @@ import {
   filterTopics, toggleTopic, selectAll, topicsFromQuery, buildQuery,
   displayedColumns, entityHeight, computeLayout, describeModel, splitByConnectivity,
   columnRowY, anchorSpread, computeEdgeGeometry, crowFootPath, oneBarPath,
-  graphBounds, fitTransform, topicDomains, domainColors,
+  graphBounds, fitTransform, centerOnEntity, topicDomains, domainColors,
   formatCount, describeRelation, matchingColumns, describeColumnMatches,
   buildExportSvg, exportNotes, escapeXml, toMermaidEr, buildJoinSql, joinAliases,
-  capTopics,
+  capTopics, relationKey, diffModels, diffIsEmpty, describeDiff,
 } from './dataModel';
 
 function entity(id: string, columnCount: number, overrides: Partial<DataModelEntity> = {}): DataModelEntity {
@@ -311,6 +311,33 @@ describe('graphBounds / fitTransform', () => {
     const t = fitTransform(bounds, 1200, 900, 40, 2000);
     expect(Number.isFinite(t.scale)).toBe(true);
     expect(t.scale).toBeGreaterThan(0);
+  });
+});
+
+describe('centerOnEntity', () => {
+  const e = entity('orders', 3);
+
+  it('centers the entity box in the viewport', () => {
+    const t = centerOnEntity(e, { x: 100, y: 200 }, 1200, 900, 1, 0.8);
+    const cx = 100 + NODE_W / 2;
+    const cy = 200 + entityHeight(e) / 2;
+    expect(t.x).toBeCloseTo(600 - cx * t.scale);
+    expect(t.y).toBeCloseTo(450 - cy * t.scale);
+  });
+
+  it('raises the scale up to minScale when zoomed further out than that', () => {
+    const t = centerOnEntity(e, { x: 0, y: 0 }, 1200, 900, 0.3, 0.8);
+    expect(t.scale).toBe(0.8);
+  });
+
+  it('keeps the current scale when already at least as close', () => {
+    const t = centerOnEntity(e, { x: 0, y: 0 }, 1200, 900, 0.9, 0.8);
+    expect(t.scale).toBe(0.9);
+  });
+
+  it('never exceeds scale 1 even below minScale\'s floor', () => {
+    const t = centerOnEntity(e, { x: 0, y: 0 }, 1200, 900, 0.1, 1.5);
+    expect(t.scale).toBe(1);
   });
 });
 
@@ -772,5 +799,97 @@ describe('buildJoinSql', () => {
 
   it('returns null when an endpoint is not in the model', () => {
     expect(buildJoinSql(rel({ to: 'ghost' }), [payments])).toBeNull();
+  });
+});
+
+describe('relationKey / diffModels / describeDiff', () => {
+  const base: DataModelResponse = {
+    entities: [], relations: [], warnings: [],
+    topicsRequested: 2, topicsAnalyzed: 2, truncated: false,
+  };
+
+  it('two calls with the same shape produce the same key, regardless of confidence or reason', () => {
+    const a = relation('orders', 'payments', 'order_id');
+    const b = { ...a, confidence: 'MEDIUM' as const, reason: 'a different run, a different wording' };
+    expect(relationKey(a)).toBe(relationKey(b));
+  });
+
+  it('no difference between two identical models', () => {
+    const model: DataModelResponse = {
+      ...base,
+      entities: [entity('a', 1), entity('b', 1)],
+      relations: [relation('a', 'b')],
+    };
+    const diff = diffModels(model, model);
+    expect(diffIsEmpty(diff)).toBe(true);
+    expect(describeDiff(diff)).toBe('No difference — same entities and relations.');
+  });
+
+  it('an entity present only in the second selection is added, not the reverse', () => {
+    const before: DataModelResponse = { ...base, entities: [entity('a', 1)] };
+    const after: DataModelResponse = { ...base, entities: [entity('a', 1), entity('b', 1)] };
+    const diff = diffModels(before, after);
+    expect(diff.addedEntities.map(e => e.id)).toEqual(['b']);
+    expect(diff.removedEntities).toHaveLength(0);
+    expect(diff.unchangedEntityCount).toBe(1);
+  });
+
+  it('an entity dropped from the second selection is removed', () => {
+    const before: DataModelResponse = { ...base, entities: [entity('a', 1), entity('b', 1)] };
+    const after: DataModelResponse = { ...base, entities: [entity('a', 1)] };
+    const diff = diffModels(before, after);
+    expect(diff.removedEntities.map(e => e.id)).toEqual(['b']);
+    expect(diff.addedEntities).toHaveLength(0);
+  });
+
+  it('a relation appearing only after is added; one only before is removed', () => {
+    const before: DataModelResponse = { ...base, relations: [relation('a', 'b', 'x_id')] };
+    const after: DataModelResponse = { ...base, relations: [relation('a', 'c', 'y_id')] };
+    const diff = diffModels(before, after);
+    expect(diff.addedRelations).toHaveLength(1);
+    expect(diff.addedRelations[0].to).toBe('c');
+    expect(diff.removedRelations).toHaveLength(1);
+    expect(diff.removedRelations[0].to).toBe('b');
+    expect(diff.unchangedRelationCount).toBe(0);
+  });
+
+  it('the same relation at a different confidence is a change, not an add+remove pair', () => {
+    const before: DataModelResponse = {
+      ...base, relations: [{ ...relation('a', 'b'), confidence: 'MEDIUM' }],
+    };
+    const after: DataModelResponse = {
+      ...base, relations: [{ ...relation('a', 'b'), confidence: 'HIGH' }],
+    };
+    const diff = diffModels(before, after);
+    expect(diff.addedRelations).toHaveLength(0);
+    expect(diff.removedRelations).toHaveLength(0);
+    expect(diff.changedRelations).toHaveLength(1);
+    expect(diff.changedRelations[0]).toMatchObject({ from: 'MEDIUM', to: 'HIGH' });
+  });
+
+  it('an unchanged relation counts as unchanged, not as a silent add', () => {
+    const model: DataModelResponse = { ...base, relations: [relation('a', 'b')] };
+    const diff = diffModels(model, { ...model, relations: [...model.relations] });
+    expect(diff.addedRelations).toHaveLength(0);
+    expect(diff.unchangedRelationCount).toBe(1);
+  });
+
+  it('describeDiff summarises every kind of change present, and only those', () => {
+    const before: DataModelResponse = {
+      ...base,
+      entities: [entity('a', 1), entity('b', 1)],
+      relations: [{ ...relation('a', 'b', 'x_id'), confidence: 'MEDIUM' }],
+    };
+    const after: DataModelResponse = {
+      ...base,
+      entities: [entity('a', 1), entity('c', 1)],
+      relations: [{ ...relation('a', 'b', 'x_id'), confidence: 'HIGH' }, relation('a', 'c', 'z_id')],
+    };
+    const summary = describeDiff(diffModels(before, after));
+    expect(summary).toContain('+1 entity');
+    expect(summary).toContain('-1 entity');
+    expect(summary).toContain('+1 relation');
+    expect(summary).toContain('1 confidence changed');
+    expect(summary.split(', ')).toHaveLength(4); // no removed-relations clause, since there are none
   });
 });

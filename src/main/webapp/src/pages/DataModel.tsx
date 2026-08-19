@@ -8,7 +8,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useCatalog } from '../catalogStore';
 import { useIsDesktop } from '../breakpoints';
 import { addTopicEntries, describeTopicEntry } from '../topicSelection';
-import { Button, EmptyState, ErrorPanel, Badge, TopicInput } from '../components/ui';
+import { Button, EmptyState, ErrorPanel, Badge, TopicInput, Combobox } from '../components/ui';
 import { useToast } from '../components/Toast';
 import { describeApiError } from './queryError';
 import type { QueryErrorInfo } from './queryError';
@@ -17,9 +17,10 @@ import {
   MAX_TOPICS, NODE_W, HEADER_H, ROW_H,
   filterTopics, toggleTopic, selectAll, topicsFromQuery, buildQuery, capTopics,
   displayedColumns, entityHeight, computeLayout, computeEdgeGeometry, splitByConnectivity,
-  crowFootPath, oneBarPath, graphBounds, fitTransform, topicDomains, domainColors,
+  crowFootPath, oneBarPath, graphBounds, fitTransform, centerOnEntity, topicDomains, domainColors,
   formatCount, describeRelation, matchingColumns, describeColumnMatches,
   buildExportSvg, exportNotes, toMermaidEr, buildJoinSql,
+  diffModels, describeDiff, diffIsEmpty,
   CONFIDENCE_STYLE, describeModel,
 } from './dataModel';
 import type { DataModelRelation } from '../api/types';
@@ -157,6 +158,17 @@ const DataModel: React.FC = () => {
   const [unrelatedOpen, setUnrelatedOpen] = useState(false);
   /** Infobulle d'arête : la preuve de la déduction, au survol comme au focus clavier. */
   const [edgeTip, setEdgeTip] = useState<{ relation: DataModelRelation; x: number; y: number } | null>(null);
+  /** Recherche d'une entité pour la centrer — retrouver une table par son nom dans un grand modèle. */
+  const [jumpQuery, setJumpQuery] = useState('');
+  /** Comparaison avec une seconde sélection : pas d'historique côté serveur, donc deux appels
+      indépendants et un diff calculé côté client — voir `diffModels`. */
+  const [compareOpen, setCompareOpen] = useState(false);
+  const [compareSelection, setCompareSelection] = useState<string[]>([]);
+  const [compareDraft, setCompareDraft] = useState('');
+  const [compareModel, setCompareModel] = useState<DataModelResponse | null>(null);
+  const [comparing, setComparing] = useState(false);
+  const [compareError, setCompareError] = useState<QueryErrorInfo | null>(null);
+  const compareAbortRef = useRef<AbortController | null>(null);
 
   const svgRef = useRef<SVGSVGElement>(null);
   /** Le groupe qui porte le pan/zoom : l'export sérialise ses enfants, pas sa transformation. */
@@ -221,6 +233,51 @@ const DataModel: React.FC = () => {
     }
   }, [navigate]);
 
+  /**
+   * Ajoute la saisie à la sélection *de comparaison* — même geste que `addTopics`, sur son
+   * propre état : les deux sélections doivent pouvoir diverger librement.
+   */
+  const addCompareTopics = useCallback(() => {
+    const entry = addTopicEntries(compareSelection, compareDraft, catalogTopics, MAX_TOPICS);
+    setCompareSelection(entry.selection);
+    setCompareDraft('');
+    const note = describeTopicEntry(entry);
+    if (note) {
+      toast(note, entry.unmatched.length > 0 || entry.overflow.length > 0 ? 'error' : 'success');
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- toast est stable
+  }, [compareSelection, compareDraft, catalogTopics]);
+
+  /**
+   * Le second modèle de la comparaison. Indépendant du modèle affiché : ni son état de
+   * chargement, ni son erreur, ni son résultat ne touchent l'URL ou le graphe principal — la
+   * comparaison est une question posée à côté, pas une deuxième génération.
+   */
+  const runCompare = useCallback(async () => {
+    if (compareSelection.length === 0) return;
+    compareAbortRef.current?.abort();
+    const controller = new AbortController();
+    compareAbortRef.current = controller;
+    setComparing(true);
+    setCompareError(null);
+    try {
+      const res = await axios.post<DataModelResponse>('/api/data-model', { topics: compareSelection },
+        { signal: controller.signal, timeout: 120_000 });
+      setCompareModel(res.data);
+    } catch (err) {
+      if (axios.isCancel(err)) return;
+      setCompareError(describeApiError(err, 'Failed to build the comparison model'));
+    } finally {
+      setComparing(false);
+    }
+  }, [compareSelection]);
+
+  useEffect(() => () => compareAbortRef.current?.abort(), []);
+
+  const diff = useMemo(
+    () => (model && compareModel ? diffModels(model, compareModel) : null),
+    [model, compareModel]);
+
   // Une URL portant `?topics=` se rejoue à l'ouverture — c'est ce qui rend un modèle partageable.
   // `capTopics` s'applique ici : le plafond ne passait que par la saisie manuelle, donc une URL
   // composée avant qu'il ne baisse — ou collée à la main — l'ignorait entièrement.
@@ -262,6 +319,22 @@ const DataModel: React.FC = () => {
   const edgeGeometry = useMemo(
     () => computeEdgeGeometry(relations, graphEntities, positions),
     [relations, graphEntities, positions]);
+  /**
+   * Centre le viewport sur une entité choisie dans la recherche — sans passer par un cadrage
+   * de tout le graphe, qui dézoomerait sur trente tables pour n'en montrer qu'une. Restreinte
+   * aux entités *dessinées* : une entité repliée dans « No deduced relation » n'a pas de
+   * position à centrer sur, et la liste des sans-relation existe déjà pour la sélectionner.
+   */
+  const jumpToEntity = useCallback((id: string) => {
+    const entity = entityById.get(id);
+    const pos = positions[id];
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!entity || !pos || !rect) return;
+    setSelectedId(id);
+    setTransform(t => centerOnEntity(entity, pos, rect.width, rect.height, t.scale));
+    setJumpQuery('');
+  }, [entityById, positions]);
+
   const columnMatches = useMemo(
     () => matchingColumns(entities, columnQuery), [entities, columnQuery]);
   const columnMatchNote = useMemo(
@@ -638,6 +711,22 @@ const DataModel: React.FC = () => {
             </div>
           )}
 
+          {/* Retrouver une table par son nom : trente cartes sur un canevas ne se parcourent
+              pas bien à la souris, et c'est le premier geste devant un grand modèle. Restreint
+              aux entités dessinées — voir `jumpToEntity`. */}
+          {model && graphEntities.length > 1 && (
+            <Combobox
+              value={jumpQuery}
+              onChange={v => { setJumpQuery(v); if (entityById.has(v)) jumpToEntity(v); }}
+              options={graphEntities.map(e => e.id)}
+              placeholder="Jump to an entity…"
+              aria-label="Jump to an entity"
+              onEnter={() => {
+                if (entityById.has(jumpQuery)) jumpToEntity(jumpQuery);
+              }}
+            />
+          )}
+
           {/* Recherche d'un champ à travers les entités : « qui d'autre transporte cette
               clé ? » est la question qu'on se pose devant ce diagramme, et la réponse est déjà
               côté navigateur — aucune requête. */}
@@ -743,6 +832,100 @@ const DataModel: React.FC = () => {
                   <span className="font-mono truncate">{domain}</span>
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* Comparaison avec une seconde sélection : un modèle n'a pas d'historique côté
+              serveur (contrairement à l'audit), donc deux sélections rejouées en direct et un
+              diff calculé côté client — voir `diffModels`. */}
+          {model && (
+            <div className="space-y-1.5 pt-2 border-t border-outline-variant/40">
+              <button
+                onClick={() => setCompareOpen(open => !open)}
+                aria-expanded={compareOpen}
+                className="w-full flex items-center gap-1.5 text-[10px] font-bold text-on-surface-variant uppercase tracking-wider hover:text-on-surface transition-colors"
+              >
+                <span aria-hidden="true" className="material-symbols-outlined text-[14px]">
+                  {compareOpen ? 'expand_more' : 'chevron_right'}
+                </span>
+                Compare with another selection
+              </button>
+              {compareOpen && (
+                <div className="space-y-2 pl-1">
+                  <TopicInput
+                    aria-label="Add comparison topics by name, list or pattern"
+                    value={compareDraft}
+                    onChange={setCompareDraft}
+                    onEnter={addCompareTopics}
+                    placeholder="Topic, demo.orders.*, or a pasted list…"
+                  />
+                  {compareSelection.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {compareSelection.map(t => (
+                        <span key={t}
+                          className="inline-flex items-center gap-1 bg-surface-container-high rounded-full pl-2 pr-1 py-0.5 text-[10px] font-mono text-on-surface-variant max-w-full">
+                          <span className="truncate" title={t}>{t}</span>
+                          <button onClick={() => setCompareSelection(sel => sel.filter(x => x !== t))}
+                            aria-label={`Remove ${t} from the comparison`} className="hover:text-on-surface shrink-0">
+                            <span aria-hidden="true" className="material-symbols-outlined text-[12px]">close</span>
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <Button variant="outline" size="sm" className="w-full" loading={comparing}
+                    onClick={runCompare} disabled={comparing || compareSelection.length === 0}>
+                    {comparing ? 'Comparing…' : 'Compare'}
+                  </Button>
+                  {compareError && (
+                    <p className="text-[10px] text-error leading-snug">
+                      {compareError.title}{compareError.hint ? ` — ${compareError.hint}` : ''}
+                    </p>
+                  )}
+                  {/* Le diff : ce que la seconde sélection donne en plus, en moins, ou en
+                      confiance différente — jamais deux graphes superposés, illisibles au-delà
+                      de quelques entités. */}
+                  {diff && (
+                    <div className="space-y-1.5 bg-surface-container-low rounded-lg p-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-[10px] text-on-surface font-semibold leading-snug">
+                          {describeDiff(diff)}
+                        </p>
+                        <button onClick={() => setCompareModel(null)} aria-label="Clear comparison"
+                          className="text-outline hover:text-on-surface shrink-0">
+                          <span aria-hidden="true" className="material-symbols-outlined text-sm">close</span>
+                        </button>
+                      </div>
+                      {!diffIsEmpty(diff) && (
+                        <div className="space-y-0.5 text-[10px] leading-snug max-h-48 overflow-y-auto custom-scrollbar">
+                          {diff.addedEntities.map(e => (
+                            <p key={`ae-${e.id}`} className="text-[#7ee2a8] font-mono truncate" title={e.topic}>+ {e.id}</p>
+                          ))}
+                          {diff.removedEntities.map(e => (
+                            <p key={`re-${e.id}`} className="text-error font-mono truncate line-through" title={e.topic}>- {e.id}</p>
+                          ))}
+                          {diff.addedRelations.map((r, i) => (
+                            <p key={`ar-${i}`} className="text-[#7ee2a8] font-mono truncate">
+                              + {r.from}.{r.fromColumn} → {r.to}
+                            </p>
+                          ))}
+                          {diff.removedRelations.map((r, i) => (
+                            <p key={`rr-${i}`} className="text-error font-mono truncate line-through">
+                              - {r.from}.{r.fromColumn} → {r.to}
+                            </p>
+                          ))}
+                          {diff.changedRelations.map((c, i) => (
+                            <p key={`cr-${i}`} className="text-[#f5c264] font-mono truncate">
+                              ~ {c.relation.from}.{c.relation.fromColumn} → {c.relation.to}
+                              {' '}({c.from.toLowerCase()} → {c.to.toLowerCase()})
+                            </p>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>

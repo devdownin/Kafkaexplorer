@@ -392,6 +392,31 @@ export function fitTransform(
   };
 }
 
+/**
+ * Centre le viewport sur une entité précise, sans passer par un cadrage de tout le graphe :
+ * un modèle de trente tables se parcourt mal à la souris, et retrouver une entité par son nom
+ * est la question qu'on se pose devant lui. L'échelle courante est conservée si elle est déjà
+ * assez proche pour lire la table (`minScale`) ; sinon elle est relevée jusque-là — un modèle
+ * vu d'assez loin pour tenir en entier ne laisse pas lire un nom de colonne.
+ */
+export function centerOnEntity(
+  entity: DataModelEntity,
+  pos: { x: number; y: number },
+  viewportWidth: number,
+  viewportHeight: number,
+  currentScale: number,
+  minScale = 0.8,
+): { x: number; y: number; scale: number } {
+  const scale = Math.min(1, Math.max(currentScale, minScale));
+  const cx = pos.x + NODE_W / 2;
+  const cy = pos.y + entityHeight(entity) / 2;
+  return {
+    scale,
+    x: viewportWidth / 2 - cx * scale,
+    y: viewportHeight / 2 - cy * scale,
+  };
+}
+
 // ── Domaines de topics ────────────────────────────────────────────────────────
 
 /**
@@ -837,4 +862,94 @@ export function describeModel(response: DataModelResponse): string {
     : `${entities} (of ${response.topicsRequested} topics selected)`;
   const relations = `${response.relations.length} ${response.relations.length === 1 ? 'relation' : 'relations'} deduced`;
   return `${scope} · ${relations}`;
+}
+
+// ── Comparaison de deux sélections ─────────────────────────────────────────────
+
+/**
+ * Un modèle n'a pas d'historique côté serveur — contrairement à l'audit, rien ne le persiste —
+ * donc « comparer » ici veut dire : deux sélections de topics, deux appels indépendants à
+ * `POST /api/data-model`, et un diff calculé côté client sur les deux réponses. C'est le même
+ * choix que la page Compare pour Stream Flow : rejouer en direct plutôt que lire un historique
+ * qui n'existe pas.
+ *
+ * Les relations n'ont pas d'id stable côté serveur — elles sont recalculées à chaque appel — donc
+ * l'appariement se fait sur ce qui les décrit : la paire de colonnes qu'elles relient. Deux
+ * relations identiques sur ce plan mais de confiance différente sont un changement, pas une
+ * paire ajout+suppression : la même affirmation, mieux ou moins bien étayée d'un run à l'autre.
+ */
+export function relationKey(relation: DataModelRelation): string {
+  return `${relation.from} ${relation.fromColumn} ${relation.to} ${relation.toColumn ?? ''}`;
+}
+
+export interface RelationConfidenceChange {
+  relation: DataModelRelation;
+  from: RelationConfidence;
+  to: RelationConfidence;
+}
+
+export interface ModelDiff {
+  addedEntities: DataModelEntity[];
+  removedEntities: DataModelEntity[];
+  addedRelations: DataModelRelation[];
+  removedRelations: DataModelRelation[];
+  changedRelations: RelationConfidenceChange[];
+  unchangedEntityCount: number;
+  unchangedRelationCount: number;
+}
+
+export function diffModels(before: DataModelResponse, after: DataModelResponse): ModelDiff {
+  const beforeIds = new Set(before.entities.map(e => e.id));
+  const afterIds = new Set(after.entities.map(e => e.id));
+  const addedEntities = after.entities.filter(e => !beforeIds.has(e.id));
+  const removedEntities = before.entities.filter(e => !afterIds.has(e.id));
+
+  const beforeByKey = new Map(before.relations.map(r => [relationKey(r), r]));
+  const afterByKey = new Map(after.relations.map(r => [relationKey(r), r]));
+
+  const addedRelations: DataModelRelation[] = [];
+  const changedRelations: RelationConfidenceChange[] = [];
+  let unchangedRelationCount = 0;
+  afterByKey.forEach((relation, key) => {
+    const prior = beforeByKey.get(key);
+    if (!prior) { addedRelations.push(relation); return; }
+    if (prior.confidence !== relation.confidence) {
+      changedRelations.push({ relation, from: prior.confidence, to: relation.confidence });
+    } else {
+      unchangedRelationCount += 1;
+    }
+  });
+  const removedRelations: DataModelRelation[] = [];
+  beforeByKey.forEach((relation, key) => {
+    if (!afterByKey.has(key)) removedRelations.push(relation);
+  });
+
+  return {
+    addedEntities,
+    removedEntities,
+    addedRelations,
+    removedRelations,
+    changedRelations,
+    unchangedEntityCount: after.entities.length - addedEntities.length,
+    unchangedRelationCount,
+  };
+}
+
+/** Vrai quand les deux sélections produisent exactement le même modèle. */
+export function diffIsEmpty(diff: ModelDiff): boolean {
+  return diff.addedEntities.length === 0 && diff.removedEntities.length === 0
+    && diff.addedRelations.length === 0 && diff.removedRelations.length === 0
+    && diff.changedRelations.length === 0;
+}
+
+/** Une phrase, comme `describeModel` — pour la ligne de résumé au-dessus du détail. */
+export function describeDiff(diff: ModelDiff): string {
+  if (diffIsEmpty(diff)) return 'No difference — same entities and relations.';
+  const parts: string[] = [];
+  if (diff.addedEntities.length > 0) parts.push(`+${diff.addedEntities.length} ${diff.addedEntities.length === 1 ? 'entity' : 'entities'}`);
+  if (diff.removedEntities.length > 0) parts.push(`-${diff.removedEntities.length} ${diff.removedEntities.length === 1 ? 'entity' : 'entities'}`);
+  if (diff.addedRelations.length > 0) parts.push(`+${diff.addedRelations.length} relation${diff.addedRelations.length === 1 ? '' : 's'}`);
+  if (diff.removedRelations.length > 0) parts.push(`-${diff.removedRelations.length} relation${diff.removedRelations.length === 1 ? '' : 's'}`);
+  if (diff.changedRelations.length > 0) parts.push(`${diff.changedRelations.length} confidence changed`);
+  return parts.join(', ');
 }
