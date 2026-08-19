@@ -45,8 +45,8 @@ const model: DataModelResponse = {
       primaryKey: 'order_id',
       messageCount: 1_240_000,
       columns: [
-        { name: 'order_id', type: 'STRING', primaryKey: true, references: null },
-        { name: 'status', type: 'STRING', primaryKey: false, references: null },
+        { name: 'order_id', type: 'STRING', primaryKey: true, references: null, keyBase: null },
+        { name: 'status', type: 'STRING', primaryKey: false, references: null, keyBase: null },
       ],
     },
     {
@@ -56,8 +56,8 @@ const model: DataModelResponse = {
       primaryKey: 'payment_id',
       messageCount: 1183,
       columns: [
-        { name: 'payment_id', type: 'STRING', primaryKey: true, references: null },
-        { name: 'order_id', type: 'STRING', primaryKey: false, references: 'demo_orders_1_received' },
+        { name: 'payment_id', type: 'STRING', primaryKey: true, references: null, keyBase: null },
+        { name: 'order_id', type: 'STRING', primaryKey: false, references: 'demo_orders_1_received', keyBase: null },
       ],
     },
   ],
@@ -272,7 +272,7 @@ describe('DataModel page', () => {
       entities: [...model.entities, {
         id: 'demo_iot_sensors', topic: 'demo.iot.sensors', format: 'JSON',
         primaryKey: null, messageCount: 7200,
-        columns: [{ name: 'reading', type: 'DOUBLE', primaryKey: false, references: null }],
+        columns: [{ name: 'reading', type: 'DOUBLE', primaryKey: false, references: null, keyBase: null }],
       }],
       topicsRequested: 3, topicsAnalyzed: 3,
     });
@@ -338,7 +338,9 @@ describe('DataModel page', () => {
         ...model.entities[1],
         columns: [
           ...model.entities[1].columns,
-          { name: 'customer_id', type: 'STRING', primaryKey: false, references: null },
+          // Ce que le serveur renvoie : le nom désigne 'customer', et aucune relation n'en est
+          // sortie — donc aucun topic sélectionné ne porte ce nom.
+          { name: 'customer_id', type: 'STRING', primaryKey: false, references: null, keyBase: 'customer' },
         ],
       }],
     });
@@ -360,7 +362,7 @@ describe('DataModel page', () => {
       entities: [...model.entities, {
         id: 'demo_iot_sensors', topic: 'demo.iot.sensors', format: 'JSON',
         primaryKey: null, messageCount: 500,
-        columns: [{ name: 'reading', type: 'DOUBLE', primaryKey: false, references: null }],
+        columns: [{ name: 'reading', type: 'DOUBLE', primaryKey: false, references: null, keyBase: null }],
       }],
       topicsRequested: 3, topicsAnalyzed: 3,
     };

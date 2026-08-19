@@ -82,6 +82,71 @@ class DataModelServiceTest {
         assertEquals("account", DataModelService.idBaseOf("customerAccountId"));
     }
 
+    // ── referencingBase: what a name points at, as opposed to what it merely reads like ───
+
+    @Test
+    void aNameEchoingItsOwnTopicIsIdentityNotReference() {
+        // 'order_id' on an orders topic identifies this entity; it points at nobody else, which
+        // is exactly why deduceRelations skips it.
+        assertNull(DataModelService.referencingBase("order_id",
+                DataModelService.topicTokens("demo.orders.1.received")));
+    }
+
+    @Test
+    void aNameEchoingAnotherEntityPointsAtIt() {
+        assertEquals("customer", DataModelService.referencingBase("customer_id",
+                DataModelService.topicTokens("demo.orders.1.received")));
+    }
+
+    @Test
+    void aBareIdPointsAtNobody() {
+        assertNull(DataModelService.referencingBase("id",
+                DataModelService.topicTokens("demo.orders")));
+    }
+
+    @Test
+    void anOrdinaryColumnPointsAtNobody() {
+        List<String> tokens = DataModelService.topicTokens("demo.invoices");
+        assertNull(DataModelService.referencingBase("amount", tokens));
+        assertNull(DataModelService.referencingBase("paid", tokens));
+    }
+
+    @Test
+    void theColumnsCarryTheSameBaseTheDeductionUses() {
+        // A column that points somewhere but found no target keeps its base, and that is what
+        // lets the UI mark it: a non-null keyBase with a null references means no selected topic
+        // carries the name — a target present in the model always yields a relation.
+        DataModelEntity orders = entity("demo.orders.1.received",
+                schema("order_id", "STRING", "customer_id", "STRING", "amount", "DOUBLE"));
+        Map<String, DataModelColumn> byName = orders.columns().stream()
+                .collect(java.util.stream.Collectors.toMap(DataModelColumn::name, c -> c));
+
+        assertEquals("customer", byName.get("customer_id").keyBase());
+        assertNull(byName.get("customer_id").references());
+        assertNull(byName.get("order_id").keyBase());
+        assertNull(byName.get("amount").keyBase());
+    }
+
+    @Test
+    void aBaseThatPointsAtAnEntityInTheModelAlwaysYieldsARelation() {
+        // The invariant the UI's wording rests on: when the target is in the model, a relation
+        // comes out — so a column left with a base and no reference means the target is absent,
+        // which is a fact rather than a guess.
+        DataModelEntity payments = entity("demo.payments.authorized",
+                schema("payment_id", "STRING", "order_id", "STRING"));
+        DataModelEntity orders = entity("demo.orders.1.received",
+                schema("order_id", "STRING"));
+
+        DataModelColumn fk = payments.columns().stream()
+                .filter(c -> c.name().equals("order_id")).findFirst().orElseThrow();
+        assertEquals("order", fk.keyBase());
+
+        List<DataModelRelation> relations =
+                DataModelService.deduceRelations(List.of(payments, orders));
+        assertTrue(relations.stream().anyMatch(r -> r.from().equals(payments.id())
+                && r.fromColumn().equals("order_id") && r.to().equals(orders.id())));
+    }
+
     // ── detectPrimaryKey ──────────────────────────────────────────────────────────────────
 
     @Test
@@ -111,8 +176,12 @@ class DataModelServiceTest {
 
     private static DataModelEntity entity(String topic, Map<String, String> schema) {
         String pk = DataModelService.detectPrimaryKey(topic, schema.keySet());
+        // Mirrors inferEntity, keyBase included: a fixture shaped unlike what the service emits
+        // would test a response that never occurs.
+        List<String> ownTokens = DataModelService.topicTokens(topic);
         List<DataModelColumn> columns = schema.entrySet().stream()
-                .map(e -> new DataModelColumn(e.getKey(), e.getValue(), e.getKey().equals(pk), null))
+                .map(e -> new DataModelColumn(e.getKey(), e.getValue(), e.getKey().equals(pk), null,
+                        DataModelService.referencingBase(e.getKey(), ownTokens)))
                 .toList();
         return new DataModelEntity(DdlGeneratorService.toTableName(topic), topic,
                 MessageFormat.JSON, columns, pk, null);

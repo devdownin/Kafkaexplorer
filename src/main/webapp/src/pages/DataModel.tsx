@@ -22,6 +22,7 @@ import {
   buildExportSvg, exportNotes, toMermaidEr, buildJoinSql,
   diffModels, describeDiff, diffIsEmpty,
   filterRelations, describeRelationFilter, orphanKeyColumns, describeOrphanKey,
+  shortenColumnName, readSelectionDraft, saveSelectionDraft,
   CONFIDENCE_STYLE, describeModel,
 } from './dataModel';
 import type { OrphanKey } from './dataModel';
@@ -103,7 +104,7 @@ const EntityNode: React.FC<{
         // pourquoi. Le détail — et la seule moitié vérifiable de la cause — est dans l'inspecteur.
         const orphan = orphanKeys?.has(column.name) ?? false;
         const marker = column.primaryKey ? '🔑' : column.references ? '→' : orphan ? '?' : '';
-        const name = column.name.length > 22 ? column.name.slice(0, 21) + '…' : column.name;
+        const name = shortenColumnName(column.name, 22);
         const lit = highlighted?.has(column.name) ?? false;
         return (
           <g key={column.name}>
@@ -115,6 +116,9 @@ const EntityNode: React.FC<{
               fontWeight={lit ? 'bold' : 'normal'}
               fill={lit ? '#f5c264' : column.primaryKey ? '#7ee2a8'
                 : column.references ? '#f5c264' : orphan ? '#8d8577' : '#c5cad6'}>
+              {/* Un chemin raccourci garde son original atteignable — même règle que le compte
+                  compacté de l'en-tête : une valeur abrégée sans son original ne se vérifie plus. */}
+              {name !== column.name && <title>{column.name}</title>}
               {marker ? `${marker} ` : ''}{name}
             </text>
             <text x={x + NODE_W - 10} y={rowY} textAnchor="end" fontSize={9}
@@ -150,7 +154,13 @@ const DataModel: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
 
-  const [selection, setSelection] = useState<string[]>([]);
+  /**
+   * La sélection s'initialise depuis l'URL — un modèle se partage tel quel. À défaut d'URL qui
+   * en décrive une, la sélection non lancée de la visite précédente reprend sa place ; l'URL
+   * l'emporte toujours, sinon un lien partagé écraserait le formulaire de son destinataire.
+   */
+  const [selection, setSelection] = useState<string[]>(
+    () => (topicsFromQuery(location.search).length > 0 ? [] : readSelectionDraft() ?? []));
   const [filter, setFilter] = useState('');
   /** Saisie libre : un nom, une liste collée, ou un motif `demo.orders.*` — comme Stream Flow. */
   const [topicDraft, setTopicDraft] = useState('');
@@ -310,6 +320,9 @@ const DataModel: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- au montage et sur navigation seulement
   }, [location.search]);
 
+  // Le brouillon suit la sélection, et s'efface de lui-même quand elle revient à vide.
+  useEffect(() => { saveSelectionDraft(selection); }, [selection]);
+
   useEffect(() => () => abortRef.current?.abort(), []);
 
   // ── Dérivés ─────────────────────────────────────────────────────────────────
@@ -403,7 +416,7 @@ const DataModel: React.FC = () => {
   const orphansByEntity = useMemo(() => {
     const map = new Map<string, OrphanKey[]>();
     for (const entity of entities) {
-      const orphans = orphanKeyColumns(entity, entities);
+      const orphans = orphanKeyColumns(entity);
       if (orphans.length > 0) map.set(entity.id, orphans);
     }
     return map;

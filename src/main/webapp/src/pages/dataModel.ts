@@ -14,6 +14,7 @@ import type {
   DataModelResponse,
   RelationConfidence,
 } from '../api/types';
+import { clearDraft, readDraft, writeDraft } from '../draftStore';
 
 /** Miroir du plafond serveur (`DataModelService.MAX_TOPICS`) : l'UI prévient avant d'envoyer. */
 export const MAX_TOPICS = 30;
@@ -79,6 +80,31 @@ export function buildQuery(topics: string[]): string {
   return `?${params.toString()}`;
 }
 
+/**
+ * La sélection non lancée, gardée d'une visite à l'autre.
+ *
+ * L'URL ne porte qu'une sélection **déjà exécutée** — elle est réécrite après chaque génération.
+ * Choisir quinze topics, aller vérifier un nom de champ dans le Topic Explorer et revenir
+ * rendait donc un formulaire vide, alors que Stream Flow a exactement le même geste et a été
+ * corrigé pour ça. Même module, même règle : une URL qui décrit une sélection l'emporte
+ * toujours, sinon un lien partagé écraserait le formulaire de son destinataire.
+ */
+const SELECTION_DRAFT = 'data-model';
+
+export function readSelectionDraft(): string[] | null {
+  const draft = readDraft<unknown>(SELECTION_DRAFT, null);
+  if (!Array.isArray(draft)) return null;
+  // Un brouillon écrit par une version antérieure peut contenir n'importe quoi : on ne garde
+  // que des noms de topics, et le plafond s'applique comme partout ailleurs sur cette page.
+  const topics = draft.filter((t): t is string => typeof t === 'string' && t !== '');
+  return topics.length === 0 ? null : capTopics(topics).kept;
+}
+
+export function saveSelectionDraft(topics: string[]): void {
+  if (topics.length === 0) clearDraft(SELECTION_DRAFT);
+  else writeDraft(SELECTION_DRAFT, topics);
+}
+
 // ── Dimensionnement des nœuds ─────────────────────────────────────────────────
 
 export const NODE_W = 230;
@@ -98,9 +124,23 @@ export interface DisplayedColumns {
  * Les colonnes affichées d'un nœud : clés (primaire puis référentes) d'abord — ce sont elles
  * qui portent les arêtes, les cacher rendrait le graphe illisible — puis l'ordre du schéma.
  */
+/**
+ * Une colonne porte-t-elle une information de clé ? La clé primaire et une référence résolue,
+ * évidemment — mais aussi une colonne qui *se lit* comme une clé étrangère sans avoir produit de
+ * relation (`keyBase`), qui est justement celle que le diagramme marque d'un `?`.
+ *
+ * Elle était absente de ce classement, donc sur une entité à charge utile imbriquée — beaucoup
+ * de chemins pointés, vite au-delà du plafond de 12 — le marqueur disparaissait dans le
+ * `+N more` exactement quand la carte est chargée, c'est-à-dire quand il sert le plus.
+ */
+function carriesKeyInfo(column: DataModelEntity['columns'][number]): boolean {
+  return column.primaryKey || column.references !== null
+    || (column.keyBase !== null && column.keyBase !== '');
+}
+
 export function displayedColumns(entity: DataModelEntity): DisplayedColumns {
-  const keys = entity.columns.filter(c => c.primaryKey || c.references);
-  const rest = entity.columns.filter(c => !c.primaryKey && !c.references);
+  const keys = entity.columns.filter(carriesKeyInfo);
+  const rest = entity.columns.filter(c => !carriesKeyInfo(c));
   const ordered = [...keys, ...rest];
   if (ordered.length <= MAX_COLUMNS_SHOWN) return { columns: ordered, hidden: 0 };
   return {
@@ -452,51 +492,37 @@ export function describeRelationFilter(total: number, shown: number): string | n
 // ── Colonnes qui ressemblent à une clé sans porter de relation ─────────────────
 
 /**
- * Miroir de `DataModelService.idBaseOf` — le mot de base d'un champ qui se lit comme un
- * identifiant. `order_id` → `order` ; `id` seul → `""` (un identifiant de l'entité elle-même) ;
- * `amount` → `null`. Seul le dernier segment du chemin compte, donc `customer.id` se lit comme
- * un identifiant appartenant à `customer`.
+ * Raccourcit un nom de colonne pour la carte, **en gardant la fin**.
  *
- * C'est un miroir, avec la même discipline que `components/processmining/schemaMapping.ts` :
- * il n'est **jamais plus strict que le serveur**. Ce qu'il produit ne décide de rien — il ne
- * sert qu'à signaler une colonne à l'écran — et dans le doute, ne rien signaler vaut mieux que
- * d'accuser une colonne ordinaire d'être une clé cassée.
+ * Les chemins imbriqués gardent leur notation pointée (`shipping.address.city`), et une coupe
+ * par la droite — `shipping.address.ci…` — ampute précisément la partie qui distingue une
+ * colonne d'une autre : trois champs d'un même sous-objet deviennent trois lignes identiques.
+ * C'est le préfixe qui est redondant sur une carte où il se répète, donc c'est lui qu'on élide.
+ *
+ * Un nom sans point est tronqué par la droite comme avant : il n'a pas de partie redondante, et
+ * en couper le début rendrait le champ méconnaissable.
  */
-const SNAKE_ID = /^(?:(.*?)[_-])?(?:id|uuid|key|ref|reference|code)$/i;
-const CAMEL_ID = /^(.*?)(?:Id|Uuid|Key|Ref|Reference|Code)$/;
+export function shortenColumnName(name: string, max: number): string {
+  if (name.length <= max) return name;
+  if (!name.includes('.')) return `${name.slice(0, max - 1)}…`;
 
-export function idBaseOf(fieldPath: string): string | null {
-  const leaf = fieldPath.slice(fieldPath.lastIndexOf('.') + 1);
-  const match = SNAKE_ID.exec(leaf) ?? CAMEL_ID.exec(leaf);
-  if (!match) return null;
-  const base = match[1];
-  if (base === undefined || base === '') return '';
-  // Convention FK `<entité><suffixe>` : dans un composé camelCase, le mot de l'entité est celui
-  // qui précède le suffixe. Découpe sur une frontière minuscule→majuscule seulement, sinon un
-  // nom tout en capitales serait éclaté lettre par lettre.
-  const humps = base.split(/(?<=\p{Lower})(?=\p{Upper})/u);
-  return humps[humps.length - 1].toLowerCase();
-}
-
-/** Miroir de `DataModelService.topicTokens`. */
-function topicTokens(topic: string): string[] {
-  return topic.toLowerCase().split(/[._-]+/).filter(s => s !== '' && !/^\d+$/.test(s));
-}
-
-/** Miroir de `DataModelService.tokenMatches` — pluriels anglais seulement, comme le serveur. */
-function tokenMatches(token: string, base: string): boolean {
-  if (token === base) return true;
-  return token === `${base}s` || token === `${base}es`
-    || (token.endsWith('ies') && base.endsWith('y')
-        && token.slice(0, base.length - 1) === base.slice(0, base.length - 1));
+  // Garde le plus de segments de queue possible ; si la feuille seule dépasse déjà, on la coupe
+  // par la droite plutôt que de rendre une ellipse seule.
+  const segments = name.split('.');
+  let tail = segments[segments.length - 1];
+  if (tail.length + 1 > max) return `…${tail.slice(0, max - 2)}…`;
+  for (let i = segments.length - 2; i >= 0; i--) {
+    const candidate = `${segments[i]}.${tail}`;
+    if (candidate.length + 1 > max) break;
+    tail = candidate;
+  }
+  return `…${tail}`;
 }
 
 export interface OrphanKey {
   column: string;
   /** Le mot d'entité que le nom désigne — `customer_id` → `customer`. */
   base: string;
-  /** Une autre entité du modèle porte-t-elle ce nom ? C'est la moitié vérifiable de l'explication. */
-  namedEntityInModel: boolean;
 }
 
 /**
@@ -504,38 +530,36 @@ export interface OrphanKey {
  * sortie. Sans ça elles sont indiscernables d'une colonne ordinaire, et un diagramme qui paraît
  * incomplet ne dit pas pourquoi il l'est.
  *
- * Un `id` nu est exclu : sa base est vide, donc il identifie *cette* entité et ne désigne
- * personne d'autre. La clé primaire l'est aussi — elle ne référence rien par construction.
+ * La question « ce nom désigne-t-il une autre entité ? » est tranchée par le serveur et voyage
+ * dans `keyBase` : c'est la règle exacte que `deduceRelations` applique avant de chercher une
+ * cible. Elle a d'abord été réimplémentée ici, et ce miroir avait un défaut que le serveur n'a
+ * pas — une colonne dont le nom reprend les mots de son propre topic (`order_id` sur un topic
+ * orders) est une identité, pas une référence, et se faisait marquer à tort.
  *
- * Rien n'est deviné sur la cause. La seule moitié vérifiable côté navigateur est de savoir si
- * une entité du modèle porte ce nom : sinon le topic visé n'est simplement pas dans la
- * sélection, et c'est actionnable. Quand il y est, on dit que la déduction n'a pas conclu — pas
- * pourquoi.
+ * La clé primaire reste exclue explicitement : le serveur ne peut pas la désigner par ce chemin
+ * (son nom échoit à la règle ci-dessus), mais la garde est gratuite et rend la règle lisible.
  */
-export function orphanKeyColumns(
-  entity: DataModelEntity,
-  entities: DataModelEntity[],
-): OrphanKey[] {
+export function orphanKeyColumns(entity: DataModelEntity): OrphanKey[] {
   const orphans: OrphanKey[] = [];
   for (const column of entity.columns) {
     if (column.primaryKey || column.references !== null) continue;
-    const base = idBaseOf(column.name);
-    if (base === null || base === '') continue;
-    orphans.push({
-      column: column.name,
-      base,
-      namedEntityInModel: entities.some(other => other.id !== entity.id
-        && topicTokens(other.topic).some(token => tokenMatches(token, base))),
-    });
+    if (column.keyBase === null || column.keyBase === '') continue;
+    orphans.push({ column: column.name, base: column.keyBase });
   }
   return orphans;
 }
 
-/** La phrase qui accompagne une colonne orpheline dans l'inspecteur. */
+/**
+ * La phrase qui accompagne une colonne orpheline dans l'inspecteur.
+ *
+ * Une seule branche, et c'est le gain du passage côté serveur : une cible présente dans le
+ * modèle produit *toujours* une relation, donc une base sans référence veut dire exactement que
+ * le topic visé n'est pas dans la sélection. C'était auparavant une vérification côté
+ * navigateur, avec une seconde phrase pour le cas où elle disait le contraire — un cas qui ne
+ * pouvait pas se produire.
+ */
 export function describeOrphanKey(orphan: OrphanKey): string {
-  return orphan.namedEntityInModel
-    ? `Reads as a key naming '${orphan.base}', but the deduction drew no relation from it.`
-    : `Reads as a key naming '${orphan.base}' — no selected topic is named after it.`;
+  return `Reads as a key naming '${orphan.base}' — no selected topic is named after it.`;
 }
 
 // ── Domaines de topics ────────────────────────────────────────────────────────

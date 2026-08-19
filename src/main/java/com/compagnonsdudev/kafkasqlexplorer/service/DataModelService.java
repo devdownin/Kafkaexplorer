@@ -184,9 +184,11 @@ public class DataModelService {
         Map<String, String> schema = schemaInferenceService.inferSchema(topic, format, samples);
 
         String primaryKey = detectPrimaryKey(topic, schema.keySet());
+        List<String> ownTokens = topicTokens(topic);
         List<DataModelColumn> columns = schema.entrySet().stream()
                 .map(e -> new DataModelColumn(e.getKey(), e.getValue(),
-                        e.getKey().equals(primaryKey), null))
+                        e.getKey().equals(primaryKey), null,
+                        referencingBase(e.getKey(), ownTokens)))
                 .toList();
 
         return new DataModelEntity(DdlGeneratorService.toTableName(topic), topic, format,
@@ -242,6 +244,22 @@ public class DataModelService {
     }
 
     /**
+     * The entity word a field name <em>points at</em>, or {@code null} when it points at nobody:
+     * either it does not read as an identifier ({@code amount}), or it identifies the entity
+     * that carries it — a bare {@code id}, or a name echoing the topic's own words
+     * ({@code order_id} on {@code demo.orders.received}), which is identity, not reference.
+     *
+     * <p>The single rule behind two things that must never disagree: which columns
+     * {@link #deduceRelations} looks for a target from, and which ones the UI may mark as
+     * reading like a foreign key. Both call this; neither restates it.
+     */
+    static String referencingBase(String fieldPath, List<String> ownTokens) {
+        String base = idBaseOf(fieldPath);
+        if (base == null || base.isEmpty()) return null;
+        return ownTokens.stream().anyMatch(t -> tokenMatches(t, base)) ? null : base;
+    }
+
+    /**
      * The column that identifies this entity, or {@code null}. A field whose base word matches
      * the topic's own name ({@code order_id} on topic {@code orders}) wins over a bare
      * {@code id}: the former is a deliberate name, the latter a convention. Top-level fields
@@ -276,10 +294,8 @@ public class DataModelService {
         for (DataModelEntity from : entities) {
             List<String> ownTokens = topicTokens(from.topic());
             for (DataModelColumn column : from.columns()) {
-                String base = idBaseOf(column.name());
-                if (base == null || base.isEmpty()) continue;
-                // The entity's own key is its identity, not a reference to someone else.
-                if (ownTokens.stream().anyMatch(t -> tokenMatches(t, base))) continue;
+                String base = referencingBase(column.name(), ownTokens);
+                if (base == null) continue;
 
                 for (DataModelEntity to : entities) {
                     if (to == from) continue;
@@ -363,7 +379,8 @@ public class DataModelService {
                     .map(c -> {
                         String ref = refByColumn.get(entity.id() + ' ' + c.name());
                         return ref == null ? c
-                                : new DataModelColumn(c.name(), c.type(), c.primaryKey(), ref);
+                                : new DataModelColumn(c.name(), c.type(), c.primaryKey(), ref,
+                                        c.keyBase());
                     })
                     .toList();
             marked.add(new DataModelEntity(entity.id(), entity.topic(), entity.format(),
