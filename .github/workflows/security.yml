@@ -59,7 +59,7 @@ jobs:
           fetch-depth: 0
 
       - name: TruffleHog
-        uses: trufflesecurity/trufflehog@bc2cd3e45e3aa4a6c627bd0c424580f86dde1855 # v3.90.10
+        uses: trufflesecurity/trufflehog@bcfcf73aaf4759d4dadc2783177c245a02792318 # v3.97.0
         with:
           path: ./
           # Empty base = scan the whole history rather than the event's commit range. The
