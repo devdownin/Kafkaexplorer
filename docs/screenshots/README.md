@@ -45,7 +45,16 @@ the question is sharpest — the width actually left to the Monaco editor.
 ```bash
 node layout-probe.mjs http://127.0.0.1:4173            # eight pages x three viewports
 node layout-probe.mjs http://127.0.0.1:4173 --sweep    # editor width against viewport width
+node layout-probe.mjs http://127.0.0.1:4173 --check    # what CI gates on; non-zero on a regression
 ```
+
+`--check` is W6: it asserts that no page scrolls sideways at any width, and that no page carries
+more sub-24px targets than the budget recorded beside `TARGET_BUDGET`. A page added to `PAGES`
+without a budget entry fails the check rather than being measured and never gated. Clipping is
+**reported and not gated**, deliberately — it turns on text metrics, so the same string wraps
+differently under another font stack and a ceiling set here would fail on a runner for a reason
+unrelated to the change under test. `ci.yml` runs it in the screenshot job, which already has the
+server, the SPA and Chromium.
 
 It exists because "the page has no mobile story" was an assertion nobody had measured, and it is
 where the tables in [`MOBILE-LAYOUT-SCOPE.md`](../../MOBILE-LAYOUT-SCOPE.md) come from. A

@@ -14,7 +14,7 @@ import {
   // Recharts exporte lui aussi un `Tooltip` (celui des graphes) : le nôtre est aliasé pour que
   // le fichier dise lequel des deux il utilise à chaque endroit.
   Tooltip as InfoTooltip,
-  PageHeader, Button, Stat, Select, EmptyState, CardSkeleton, TopicInput,
+  PageHeader, Button, Checkbox, Stat, Select, EmptyState, CardSkeleton, TopicInput,
   Field, Input, Textarea, useConfirm,
   ErrorPanel,
 } from '../components/ui';
@@ -1506,11 +1506,10 @@ const Metrics: React.FC = () => {
                                   checked ? 'bg-primary/10' : 'hover:bg-primary/5'
                                 }`}
                               >
-                                <input
-                                  type="checkbox"
+                                <Checkbox
                                   checked={checked}
                                   onChange={() => toggleLabelField(field)}
-                                  className="mt-0.5 rounded border-primary/30 bg-background-dark text-primary focus:ring-primary"
+                                  className="mt-0.5"
                                 />
                                 <div className="min-w-0">
                                   <div className="font-mono text-[11px] text-on-surface break-all">{field}</div>

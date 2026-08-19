@@ -4,7 +4,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import axios from 'axios';
 import {
-  PageHeader, Button, CardSkeleton, Field, Input, NumberInput, PasswordInput, useConfirm,
+  PageHeader, Button, CardSkeleton, Checkbox, Field, Input, NumberInput, PasswordInput, useConfirm,
   useUnsavedGuard,
 } from '../components/ui';
 import { clearDraft, readDraft, useDraftConflict, writeDraft } from '../draftStore';
@@ -657,10 +657,9 @@ const Config: React.FC = () => {
 
           {config.llmProvider === 'SPECTRA' && (
             <label className="mt-4 flex items-start gap-3 rounded-lg border border-outline-variant/60 bg-background-dark/20 px-4 py-3 cursor-pointer">
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={config.llmUseRag ?? false}
-                onChange={e => setConfig(prev => ({ ...prev, llmUseRag: e.target.checked }))}
+                onChange={value => setConfig(prev => ({ ...prev, llmUseRag: value }))}
                 className="mt-0.5"
               />
               <span>

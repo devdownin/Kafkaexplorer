@@ -8,7 +8,7 @@ import userEvent from '@testing-library/user-event';
 import {
   Button, Badge, Field, Input, EmptyState, ErrorPanel, Stat,
   Table, TableHead, TableBody, TableRow, Th, Td, TableSkeleton,
-  Tooltip, HelpTip,
+  Tooltip, HelpTip, Checkbox,
 } from './index';
 
 describe('Button', () => {
@@ -230,5 +230,50 @@ describe('ErrorPanel', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Dismiss error' }));
     expect(onRetry).toHaveBeenCalledOnce();
     expect(onDismiss).toHaveBeenCalledOnce();
+  });
+});
+
+describe('Checkbox', () => {
+  it('is a real checkbox, so semantics and keyboard come from the browser', () => {
+    render(<Checkbox checked={false} onChange={() => {}} aria-label="Draw low edges" />);
+    const box = screen.getByRole('checkbox', { name: 'Draw low edges' });
+    expect(box).toBeInTheDocument();
+    expect(box).not.toBeChecked();
+  });
+
+  it('reports the new value, not the event', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Checkbox checked={false} onChange={onChange} aria-label="opt in" />);
+    await user.click(screen.getByRole('checkbox'));
+    expect(onChange).toHaveBeenCalledWith(true);
+  });
+
+  it('does not fire when disabled', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Checkbox checked={false} onChange={onChange} disabled aria-label="opt in" />);
+    await user.click(screen.getByRole('checkbox'));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  /*
+   * The size is the whole reason this component exists — 24 x 24 is the WCAG 2.5.8 minimum, and
+   * the native default it replaces measures 13 x 13. jsdom has no layout, so the rendered size
+   * cannot be asserted here; the utility classes that set it are pinned instead, and the real
+   * measurement lives in `layout-probe.mjs`, which counts targets below the threshold.
+   */
+  it('carries the sizing that makes it a 24 x 24 target', () => {
+    render(<Checkbox checked={false} onChange={() => {}} aria-label="sized" />);
+    const box = screen.getByRole('checkbox');
+    expect(box.className).toContain('h-6');
+    expect(box.className).toContain('w-6');
+  });
+
+  it('keeps a caller class for alignment without dropping its own', () => {
+    render(<Checkbox checked={false} onChange={() => {}} className="mt-0.5" aria-label="aligned" />);
+    const box = screen.getByRole('checkbox');
+    expect(box.className).toContain('mt-0.5');
+    expect(box.className).toContain('h-6');
   });
 });

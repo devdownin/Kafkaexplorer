@@ -538,9 +538,26 @@ jobs:
             curl -fsS http://127.0.0.1:4173/api/dashboard >/dev/null 2>&1 && break
             sleep 1
           done
-          # capture.mjs exits non-zero if any screen fails — five of six would mean the sixth
-          # silently disappears from the documentation.
+          # capture.mjs exits non-zero if any screen fails — seven of eight would mean the
+          # eighth silently disappears from the documentation.
           NODE_PATH="$(npm root -g)" node docs/screenshots/capture.mjs http://127.0.0.1:4173 fresh
+
+      # W6 from MOBILE-LAYOUT-SCOPE.md. Every figure in that document was a reading from
+      # whenever someone last remembered to take one; this makes a regression fail a build
+      # instead. It reuses the server, the SPA and the Chromium this job already has — a job of
+      # its own would rebuild all three to run a script that takes under a minute.
+      - name: Check the layout has not regressed
+        run: |
+          set -euo pipefail
+          # Its own server on its own port: whether the one the capture step backgrounded is
+          # still listening is an implementation detail of the runner, and a gate that depends
+          # on it fails for a reason that has nothing to do with the change under test.
+          node docs/screenshots/server.mjs site 4174 &
+          for _ in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:4174/api/dashboard >/dev/null 2>&1 && break
+            sleep 1
+          done
+          NODE_PATH="$(npm root -g)" node docs/screenshots/layout-probe.mjs http://127.0.0.1:4174 --check
 
       - name: Upload the fresh captures
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

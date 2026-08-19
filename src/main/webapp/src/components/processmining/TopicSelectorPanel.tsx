@@ -3,7 +3,7 @@
 
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Combobox, Field, Input, NumberInput, Select } from '../ui';
+import { Checkbox, Combobox, Field, Input, NumberInput, Select } from '../ui';
 import { useToast } from '../Toast';
 import { addTopicEntries, describeTopicEntry } from '../../topicSelection';
 
@@ -146,11 +146,9 @@ const TopicSelectorPanel: React.FC<TopicSelectorPanelProps> = ({ onStart, loadin
                 key={topic}
                 className="flex items-center gap-3 px-4 py-2 hover:bg-primary/5 cursor-pointer group"
               >
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={selectedTopics.includes(topic)}
                   onChange={() => toggleTopic(topic)}
-                  className="rounded border-outline-variant text-primary focus:ring-primary/30 bg-transparent"
                 />
                 <span className="text-sm font-mono text-on-surface truncate group-hover:text-primary transition-colors">
                   {topic}

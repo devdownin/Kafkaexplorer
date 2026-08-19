@@ -56,6 +56,34 @@ const PAGES = [
   { name: 'cluster', url: '/cluster' },
 ];
 
+/*
+ * Ceilings for `--check`, the mode CI runs. This is W6 from MOBILE-LAYOUT-SCOPE.md: without it,
+ * every number in that document is a reading from whenever someone last remembered to take one.
+ *
+ * **What is gated, and what deliberately is not.** Two things are asserted hard: that no page
+ * scrolls sideways at any width, and that no page carries more sub-24px targets than it does
+ * today. Both come from element sizes set by utility classes, so they are the same on any
+ * machine. Clipping and unreachability are *reported* and not gated, because they turn on text
+ * metrics — the same string wraps differently under a different font stack, so a ceiling set
+ * here would fail on a runner for a reason that has nothing to do with the change under test.
+ * A gate with false positives is a gate people learn to re-run until it passes, which is worse
+ * than no gate at all.
+ *
+ * The target ceilings are the measured maximum across the three viewports, so they are a "no
+ * worse than today" line rather than a target. Lower them when a page improves — the point is
+ * that the number cannot drift upward unnoticed.
+ */
+const TARGET_BUDGET = {
+  'dashboard': 32,
+  'sql-editor': 72,
+  'topic-explorer': 11,
+  'stream-flow': 20,
+  'data-model': 9,
+  'audit': 24,
+  'metrics': 8,
+  'cluster': 1,
+};
+
 const VIEWPORTS = [
   { name: 'phone', width: 390, height: 844 },   // iPhone 14 class
   { name: 'tablet', width: 768, height: 1024 }, // exactly the `md` breakpoint
@@ -188,6 +216,9 @@ const newPage = (browser, width, height, touch, storage) => browser.newPage({
 const browser = await chromium.launch(
   process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
 
+/** Filled by the page walk below, and read by `--check` once the browser is closed. */
+const checkResults = [];
+
 if (mode === '--sweep') {
   /*
    * The editor against the width it is given, in two states: as it opens, and tuned as far as a
@@ -227,8 +258,14 @@ if (mode === '--sweep') {
           + ` unreachable=${String(m.unreachableCount).padEnd(2)}`
           + ` targets<24px=${m.tooSmall}/${m.targets}`
           + (m.monacoW === null ? '' : `  monaco=${m.monacoW}px`);
+        checkResults.push({
+          page: p.name, viewport: vp.name, failed: null,
+          bodyOverflows: m.bodyOverflows, tooSmall: m.tooSmall,
+        });
       } catch (e) {
-        line = `  ${p.name.padEnd(15)} FAILED ${String(e).split('\n')[0].slice(0, 90)}`;
+        const reason = String(e).split('\n')[0].slice(0, 90);
+        line = `  ${p.name.padEnd(15)} FAILED ${reason}`;
+        checkResults.push({ page: p.name, viewport: vp.name, failed: reason });
       }
       console.log(line);
       if (mode === '--detail' && m) {
@@ -249,3 +286,38 @@ if (mode === '--sweep') {
 }
 
 await browser.close();
+
+if (mode === '--check') {
+  const failures = [];
+
+  // A page added to PAGES without a budget would be measured and never gated — the silent gap
+  // this mode exists to close.
+  for (const p of PAGES) {
+    if (!(p.name in TARGET_BUDGET)) {
+      failures.push(`${p.name}: no entry in TARGET_BUDGET — add one (see the comment above it)`);
+    }
+  }
+
+  for (const r of checkResults) {
+    if (r.failed) {
+      failures.push(`${r.page} @ ${r.viewport}: could not be measured — ${r.failed}`);
+      continue;
+    }
+    if (r.bodyOverflows) {
+      failures.push(`${r.page} @ ${r.viewport}: the document scrolls sideways`);
+    }
+    const budget = TARGET_BUDGET[r.page];
+    if (budget !== undefined && r.tooSmall > budget) {
+      failures.push(`${r.page} @ ${r.viewport}: ${r.tooSmall} targets under 24x24, budget ${budget}`);
+    }
+  }
+
+  if (failures.length > 0) {
+    console.error('\nLayout check failed:');
+    for (const f of failures) console.error(`  - ${f}`);
+    console.error('\nIf the change is deliberate, update TARGET_BUDGET in this file and the '
+      + 'tables in MOBILE-LAYOUT-SCOPE.md from a fresh run.');
+    process.exit(1);
+  }
+  console.log('\nLayout check passed: nothing scrolls sideways, no page exceeds its target budget.');
+}

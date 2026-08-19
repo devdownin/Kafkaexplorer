@@ -8,7 +8,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useCatalog } from '../catalogStore';
 import { useIsDesktop } from '../breakpoints';
 import { addTopicEntries, describeTopicEntry } from '../topicSelection';
-import { Button, EmptyState, ErrorPanel, Badge, TopicInput, Combobox } from '../components/ui';
+import { Button, Checkbox, EmptyState, ErrorPanel, Badge, TopicInput, Combobox, Spinner } from '../components/ui';
 import { useToast } from '../components/Toast';
 import { describeApiError } from './queryError';
 import type { QueryErrorInfo } from './queryError';
@@ -24,6 +24,7 @@ import {
   filterRelations, describeRelationFilter, orphanKeyColumns, describeOrphanKey,
   shortenColumnName, readSelectionDraft, saveSelectionDraft,
   minimapLayout, visibleGraphRect, graphFullyVisible, centerOnGraphPoint,
+  describeBuildProgress, describeStaleGraphDuringBuild,
   readSavedModels, saveModel, deleteSavedModel, buildMultiJoinSql,
   CONFIDENCE_STYLE, describeModel,
 } from './dataModel';
@@ -198,6 +199,8 @@ const DataModel: React.FC = () => {
   const [joinSet, setJoinSet] = useState<string[]>([]);
   /** Taille réelle du canevas, pour la minicarte et le cadrage. */
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
+  /** Depuis quand la génération courante tourne — la seule mesure honnête pendant l'attente. */
+  const [buildElapsedMs, setBuildElapsedMs] = useState(0);
   /** Comparaison avec une seconde sélection : pas d'historique côté serveur, donc deux appels
       indépendants et un diff calculé côté client — voir `diffModels`. */
   const [compareOpen, setCompareOpen] = useState(false);
@@ -247,6 +250,7 @@ const DataModel: React.FC = () => {
     const seq = ++requestSeq.current;
 
     setLoading(true);
+    setBuildElapsedMs(0);
     setError(null);
     try {
       const res = await axios.post<DataModelResponse>('/api/data-model', { topics },
@@ -335,6 +339,18 @@ const DataModel: React.FC = () => {
 
   // Le brouillon suit la sélection, et s'efface de lui-même quand elle revient à vide.
   useEffect(() => { saveSelectionDraft(selection); }, [selection]);
+
+  /**
+   * Le temps écoulé, pendant la génération seulement. Une seconde de granularité : c'est une
+   * attente de plusieurs minutes sur une grande sélection, et un compteur plus fin n'apprendrait
+   * rien de plus tout en faisant rendre la page dix fois plus souvent.
+   */
+  useEffect(() => {
+    if (!loading) return;
+    const startedAt = Date.now();
+    const id = setInterval(() => setBuildElapsedMs(Date.now() - startedAt), 1000);
+    return () => clearInterval(id);
+  }, [loading]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
@@ -800,9 +816,8 @@ const DataModel: React.FC = () => {
                 className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-xs font-mono cursor-pointer transition-colors ${
                   checked ? 'bg-primary/10 text-on-surface' : 'text-on-surface-variant hover:bg-surface-container-high'
                 } ${full ? 'opacity-40 cursor-not-allowed' : ''}`}>
-                <input type="checkbox" checked={checked} disabled={full}
-                  onChange={() => setSelection(sel => toggleTopic(sel, topic))}
-                  className="accent-[#a3adff] shrink-0" />
+                <Checkbox checked={checked} disabled={full}
+                  onChange={() => setSelection(sel => toggleTopic(sel, topic))} />
                 <span className="truncate" title={topic}>{topic}</span>
               </label>
             );
@@ -922,14 +937,13 @@ const DataModel: React.FC = () => {
                     </button>
                   ))}
                   <label className="flex items-center gap-2 text-[10px] text-on-surface-variant pt-1 cursor-pointer">
-                    <input type="checkbox" checked={showUnrelated}
+                    <Checkbox checked={showUnrelated}
                       onChange={() => {
                         // Le graphe change de taille : il faut le recadrer, sinon les nœuds
                         // qui apparaissent le font hors de l'écran.
                         pendingFit.current = true;
                         setShowUnrelated(v => !v);
-                      }}
-                      className="accent-[#a3adff] shrink-0" />
+                      }} />
                     Draw them in the diagram
                   </label>
                 </div>
@@ -953,16 +967,14 @@ const DataModel: React.FC = () => {
                     className={`flex items-center gap-2 text-[10px] cursor-pointer transition-colors ${
                       shownConfidences.has(grade) ? 'text-on-surface-variant' : 'text-outline'
                     }`}>
-                    <input
-                      type="checkbox"
+                    <Checkbox
                       checked={shownConfidences.has(grade)}
                       aria-label={`Draw ${grade.toLowerCase()}-confidence relations`}
                       onChange={() => setShownConfidences(prev => {
                         const next = new Set(prev);
                         if (!next.delete(grade)) next.add(grade);
                         return next;
-                      })}
-                      className="accent-[#a3adff] shrink-0" />
+                      })} />
                     <svg width="24" height="6" aria-hidden="true" className="shrink-0">
                       <line x1="0" y1="3" x2="24" y2="3" stroke={style.color} strokeWidth="2"
                         strokeDasharray={style.dash}
@@ -1317,6 +1329,30 @@ const DataModel: React.FC = () => {
           <div className="absolute inset-x-0 top-16 z-10 flex justify-center px-6">
             <ErrorPanel error={error} onRetry={() => generate(selection)}
               onDismiss={() => setError(null)} className="max-w-xl w-full" />
+          </div>
+        )}
+
+        {/* Pendant la construction. Sans ça, le canevas est soit vide pendant plusieurs minutes
+            (première génération), soit occupé par le modèle précédent sans rien qui le dise —
+            le cas le plus trompeur des deux, puisque rien ne bouge à l'écran.
+            Indéterminé assumé : une seule requête, donc aucun pourcentage à afficher. */}
+        {loading && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-background-dark/70 backdrop-blur-[1px]">
+            <div className="flex flex-col items-center gap-3 px-6 text-center" role="status">
+              <Spinner />
+              <p className="text-sm text-on-surface font-medium tabular-nums">
+                {describeBuildProgress(selection.length, buildElapsedMs)}
+              </p>
+              <p className="max-w-xs text-[11px] text-on-surface-variant leading-snug">
+                Each topic is sampled and its schema inferred. The server answers once, so there is
+                no per-topic progress to show.
+              </p>
+              {describeStaleGraphDuringBuild(model !== null) && (
+                <p className="max-w-xs text-[11px] text-warning leading-snug">
+                  {describeStaleGraphDuringBuild(model !== null)}
+                </p>
+              )}
+            </div>
           </div>
         )}
 
