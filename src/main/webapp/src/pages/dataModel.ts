@@ -15,6 +15,7 @@ import type {
   RelationConfidence,
 } from '../api/types';
 import { clearDraft, readDraft, writeDraft } from '../draftStore';
+import { isTopicPattern, matchesTopicPattern } from './streamFlow';
 
 /** Miroir du plafond serveur (`DataModelService.MAX_TOPICS`) : l'UI prévient avant d'envoyer. */
 export const MAX_TOPICS = 30;
@@ -36,11 +37,27 @@ export function capTopics(topics: string[]): { kept: string[]; overflow: string[
 
 // ── Sélection des topics ──────────────────────────────────────────────────────
 
-/** Filtre insensible à la casse, topics internes de l'explorateur exclus du « tout cocher ». */
+/**
+ * Filtre la liste à cocher. Insensible à la casse, et **il comprend les motifs**.
+ *
+ * Il ne les comprenait pas, et c'était un piège : le champ juste au-dessus annonce
+ * `demo.orders.*` dans son placeholder, alors taper la même chose ici ne rendait rien du tout.
+ * Deux champs voisins sur un même panneau, dont l'un enseigne une syntaxe, ne peuvent pas
+ * répondre différemment au même texte — et un filtre qui rend une liste vide se lit comme
+ * « aucun topic », pas comme « cette syntaxe n'est pas la mienne ».
+ *
+ * Un texte sans `*` reste une sous-chaîne, ce qu'on attend d'un filtre. Dès qu'il y a un `*`,
+ * c'est `matchesTopicPattern` qui décide — la règle exacte de la sélection, donc ancrée : ce que
+ * le filtre montre est ce que la saisie ajouterait.
+ */
 export function filterTopics(topics: string[], filter: string): string[] {
-  const needle = filter.trim().toLowerCase();
+  const needle = filter.trim();
   if (!needle) return topics;
-  return topics.filter(t => t.toLowerCase().includes(needle));
+  if (isTopicPattern(needle)) {
+    return topics.filter(topic => matchesTopicPattern(topic, needle));
+  }
+  const lower = needle.toLowerCase();
+  return topics.filter(t => t.toLowerCase().includes(lower));
 }
 
 export function toggleTopic(selection: string[], topic: string): string[] {

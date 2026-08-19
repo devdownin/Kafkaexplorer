@@ -476,10 +476,32 @@ export function parseTopicList(text: string): string[] {
     .filter(entry => entry.length > 0 && !seen.has(entry) && seen.add(entry));
 }
 
+/**
+ * Le motif contient-il un joker ? La question se pose partout où une saisie peut être un nom ou
+ * un motif, et deux façons de la poser finiraient par diverger.
+ */
+export function isTopicPattern(text: string): boolean {
+  return text.includes('*');
+}
+
+/**
+ * Un topic correspond-il à ce motif ? Ancré des deux côtés : `demo.orders.*` désigne ce qui est
+ * *sous* `demo.orders`, pas tout ce qui contient ces mots. C'est la règle de la sélection, et
+ * c'est celle que le filtre de la liste applique aussi — deux champs voisins sur un même panneau,
+ * dont l'un annonce `demo.orders.*` dans son placeholder, ne peuvent pas répondre différemment au
+ * même texte.
+ */
+export function matchesTopicPattern(topic: string, pattern: string): boolean {
+  return patternToRegExp(pattern).test(topic);
+}
+
 /** `orders.*` → toutes les correspondances du catalogue. `*` seul est le seul caractère spécial. */
 function patternToRegExp(pattern: string): RegExp {
   const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
-  return new RegExp(`^${escaped}$`);
+  // Insensible à la casse, comme le filtre de liste l'a toujours été pour une sous-chaîne. Sans
+  // risque : un motif n'est jamais confronté qu'à des topics qui existent, donc il ne peut pas en
+  // inventer un — au pire il en retient un que l'opérateur voulait de toute façon.
+  return new RegExp(`^${escaped}$`, 'i');
 }
 
 /**
@@ -494,12 +516,11 @@ export function expandTopicPatterns(
   const topics: string[] = [];
   const unmatched: string[] = [];
   for (const entry of entries) {
-    if (!entry.includes('*')) {
+    if (!isTopicPattern(entry)) {
       topics.push(entry);
       continue;
     }
-    const matcher = patternToRegExp(entry);
-    const matches = known.filter(topic => matcher.test(topic));
+    const matches = known.filter(topic => matchesTopicPattern(topic, entry));
     if (matches.length === 0) {
       unmatched.push(entry);
     } else {

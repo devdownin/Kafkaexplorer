@@ -150,6 +150,21 @@ describe('DataModel page', () => {
     ));
   });
 
+  it('filters the checkbox list with a pattern, the syntax the field above advertises', async () => {
+    const user = userEvent.setup();
+    stubApi();
+    await renderPage();
+
+    await openTopics(user);
+    await user.type(screen.getByLabelText('Filter topics'), 'demo.orders.*');
+
+    // Les deux topics du motif restent listés…
+    expect(screen.getByRole('checkbox', { name: /demo.orders.1.received/ })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /demo.orders.2.validated/ })).toBeInTheDocument();
+    // …et rien d'autre : le filtre montre exactement ce que la saisie ajouterait.
+    expect(screen.queryByRole('checkbox', { name: /demo.payments.authorized/ })).toBeNull();
+  });
+
   it('reports a pattern that matches nothing rather than sending it as a topic name', async () => {
     const user = userEvent.setup();
     stubApi();

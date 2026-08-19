@@ -784,7 +784,7 @@ const DataModel: React.FC = () => {
             <input
               value={filter}
               onChange={e => setFilter(e.target.value)}
-              placeholder="Filter the list below…"
+              placeholder="Filter the list below — demo.orders.* works too"
               aria-label="Filter topics"
               className="bg-transparent outline-none text-xs text-on-surface w-full placeholder:text-outline"
             />
