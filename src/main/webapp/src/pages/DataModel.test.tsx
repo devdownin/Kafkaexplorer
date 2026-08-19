@@ -298,6 +298,61 @@ describe('DataModel page', () => {
       .toBeInTheDocument();
   });
 
+  it('hides relations of a grade turned off, and says how many it hid', async () => {
+    const user = userEvent.setup();
+    stubApi();
+    await renderPage('/data-model?topics=demo.orders.1.received,demo.payments.authorized');
+
+    await screen.findByText('2 entities · 1 relation deduced');
+    await openTopics(user);
+    // Le modèle ne porte qu'une relation, HIGH : l'éteindre doit tout retirer du dessin.
+    await user.click(screen.getByRole('checkbox', { name: /Draw high-confidence relations/ }));
+
+    expect(await screen.findByText('1 of 1 relations hidden by the confidence filter'))
+      .toBeInTheDocument();
+    // La couverture décrit toujours le modèle, pas le filtre : le serveur a bien déduit 1 relation.
+    expect(screen.getByText('2 entities · 1 relation deduced')).toBeInTheDocument();
+  });
+
+  it('the inspector still lists a filtered-out relation, marked rather than omitted', async () => {
+    const user = userEvent.setup();
+    stubApi();
+    await renderPage('/data-model?topics=demo.orders.1.received,demo.payments.authorized');
+
+    await screen.findByText('2 entities · 1 relation deduced');
+    await openTopics(user);
+    await user.click(screen.getByRole('checkbox', { name: /Draw high-confidence relations/ }));
+    await user.click(screen.getByRole('button', { name: /^demo_payments_authorized,/ }));
+
+    // La preuve reste atteignable — c'est le panneau de preuve, pas le dessin…
+    expect(await screen.findByText(/names topic 'demo.orders.1.received'/)).toBeInTheDocument();
+    // …et il dit pourquoi aucun trait ne lui correspond à l'écran.
+    expect(screen.getByText(/Hidden from the diagram by the confidence filter/)).toBeInTheDocument();
+  });
+
+  it('flags a key-like column that yielded no relation, and says what it could check', async () => {
+    const user = userEvent.setup();
+    stubApi({
+      ...model,
+      entities: [model.entities[0], {
+        ...model.entities[1],
+        columns: [
+          ...model.entities[1].columns,
+          { name: 'customer_id', type: 'STRING', primaryKey: false, references: null },
+        ],
+      }],
+    });
+    await renderPage('/data-model?topics=demo.orders.1.received,demo.payments.authorized');
+
+    await screen.findByText('2 entities · 1 relation deduced');
+    await user.click(screen.getByRole('button', { name: /^demo_payments_authorized,/ }));
+
+    expect(await screen.findByText(/Key-like, no relation \(1\)/)).toBeInTheDocument();
+    // Aucun topic sélectionné ne s'appelle « customer » : c'est la moitié vérifiable, et elle
+    // est actionnable — ajouter ce topic à la sélection.
+    expect(screen.getByText(/no selected topic is named after it/)).toBeInTheDocument();
+  });
+
   it('compares two selections and reports what differs, without touching the model on screen', async () => {
     const user = userEvent.setup();
     const withSensor: DataModelResponse = {

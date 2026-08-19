@@ -12,7 +12,9 @@ import {
   formatCount, describeRelation, matchingColumns, describeColumnMatches,
   buildExportSvg, exportNotes, escapeXml, toMermaidEr, buildJoinSql, joinAliases,
   capTopics, relationKey, diffModels, diffIsEmpty, describeDiff,
+  filterRelations, describeRelationFilter, idBaseOf, orphanKeyColumns, describeOrphanKey,
 } from './dataModel';
+import type { RelationConfidence } from '../api/types';
 
 function entity(id: string, columnCount: number, overrides: Partial<DataModelEntity> = {}): DataModelEntity {
   return {
@@ -799,6 +801,147 @@ describe('buildJoinSql', () => {
 
   it('returns null when an endpoint is not in the model', () => {
     expect(buildJoinSql(rel({ to: 'ghost' }), [payments])).toBeNull();
+  });
+});
+
+describe('filterRelations / describeRelationFilter', () => {
+  const all = new Set<RelationConfidence>(['HIGH', 'MEDIUM', 'LOW']);
+  const relations: DataModelRelation[] = [
+    { ...relation('a', 'b'), confidence: 'HIGH' },
+    { ...relation('b', 'c'), confidence: 'MEDIUM' },
+    { ...relation('c', 'd'), confidence: 'LOW' },
+  ];
+
+  it('every grade enabled keeps every relation', () => {
+    expect(filterRelations(relations, all)).toHaveLength(3);
+  });
+
+  it('drops exactly the grades that are off', () => {
+    const kept = filterRelations(relations, new Set<RelationConfidence>(['HIGH']));
+    expect(kept).toHaveLength(1);
+    expect(kept[0].confidence).toBe('HIGH');
+  });
+
+  it('no grade enabled draws nothing, without throwing', () => {
+    expect(filterRelations(relations, new Set<RelationConfidence>())).toEqual([]);
+  });
+
+  it('says nothing when the filter hides nothing — a permanent "0 hidden" teaches you to skip the line', () => {
+    expect(describeRelationFilter(3, 3)).toBeNull();
+    expect(describeRelationFilter(0, 0)).toBeNull();
+  });
+
+  it('states what it hid, out of how many', () => {
+    expect(describeRelationFilter(9, 4)).toBe('5 of 9 relations hidden by the confidence filter');
+  });
+});
+
+/*
+ * `idBaseOf` is a mirror of `DataModelService.idBaseOf`, so the expectations below are the ones
+ * `DataModelServiceTest` already pins on the server — copied deliberately rather than invented,
+ * since a mirror tested against its own reading of itself proves nothing. The server is the
+ * authority; if these two ever disagree, this file is the one that is wrong.
+ */
+describe('idBaseOf (mirror of the server heuristic)', () => {
+  it('reads a snake_case foreign key', () => {
+    expect(idBaseOf('order_id')).toBe('order');
+    expect(idBaseOf('product-ref')).toBe('product');
+    expect(idBaseOf('customer_uuid')).toBe('customer');
+  });
+
+  it('reads a camelCase foreign key, keeping the hump just before the suffix', () => {
+    expect(idBaseOf('orderId')).toBe('order');
+    expect(idBaseOf('customerAccountId')).toBe('account');
+  });
+
+  it('a bare identifier owns the entity itself, so its base is empty rather than absent', () => {
+    expect(idBaseOf('id')).toBe('');
+    expect(idBaseOf('uuid')).toBe('');
+    expect(idBaseOf('ID')).toBe('');
+  });
+
+  it('a word that merely ends in "id" is not an identifier — the trap the server names', () => {
+    expect(idBaseOf('paid')).toBeNull();
+    expect(idBaseOf('valid')).toBeNull();
+    expect(idBaseOf('amount')).toBeNull();
+  });
+
+  it('only the last path segment counts, so a nested id belongs to its parent', () => {
+    expect(idBaseOf('customer.id')).toBe('');
+    expect(idBaseOf('payload.order_id')).toBe('order');
+  });
+
+  it('an ALL_CAPS base is lower-cased whole, never shattered per letter', () => {
+    expect(idBaseOf('CUSTOMER_ID')).toBe('customer');
+  });
+});
+
+describe('orphanKeyColumns / describeOrphanKey', () => {
+  function withColumns(id: string, columns: DataModelEntity['columns'], topic?: string): DataModelEntity {
+    return { ...entity(id, 0), topic: topic ?? id.replace(/_/g, '.'), columns };
+  }
+
+  const col = (name: string, over: Partial<DataModelEntity['columns'][number]> = {}) => ({
+    name, type: 'STRING', primaryKey: false, references: null, ...over,
+  });
+
+  it('flags a key-like column that yielded no relation', () => {
+    const e = withColumns('demo_payments', [
+      col('payment_id', { primaryKey: true }),
+      col('customer_id'),
+      col('amount'),
+    ]);
+    const orphans = orphanKeyColumns(e, [e]);
+    expect(orphans.map(o => o.column)).toEqual(['customer_id']);
+    expect(orphans[0].base).toBe('customer');
+  });
+
+  it('a column a relation did come out of is not an orphan', () => {
+    const e = withColumns('demo_payments', [
+      col('order_id', { references: 'demo_orders' }),
+    ]);
+    expect(orphanKeyColumns(e, [e])).toEqual([]);
+  });
+
+  it('the primary key references nothing by construction, so it is never an orphan', () => {
+    const e = withColumns('demo_orders', [col('order_id', { primaryKey: true })]);
+    expect(orphanKeyColumns(e, [e])).toEqual([]);
+  });
+
+  it('a bare id identifies this entity and names nobody else', () => {
+    const e = withColumns('demo_orders', [col('id'), col('status')]);
+    expect(orphanKeyColumns(e, [e])).toEqual([]);
+  });
+
+  it('an ordinary column is never flagged — a false flag is worse than a missing one', () => {
+    const e = withColumns('demo_invoices', [col('paid'), col('valid'), col('total')]);
+    expect(orphanKeyColumns(e, [e])).toEqual([]);
+  });
+
+  it('says which half is checkable: no selected topic carries the name', () => {
+    const e = withColumns('demo_payments', [col('customer_id')], 'demo.payments.authorized');
+    const [orphan] = orphanKeyColumns(e, [e]);
+    expect(orphan.namedEntityInModel).toBe(false);
+    expect(describeOrphanKey(orphan)).toContain('no selected topic is named after it');
+  });
+
+  it('and when one does, it states that the deduction did not conclude, never why', () => {
+    const payments = withColumns('demo_payments', [col('customer_id')], 'demo.payments.authorized');
+    const customers = withColumns('demo_customers', [col('name')], 'demo.customers.v1');
+    const [orphan] = orphanKeyColumns(payments, [payments, customers]);
+    expect(orphan.namedEntityInModel).toBe(true);
+    expect(describeOrphanKey(orphan)).toContain('drew no relation from it');
+  });
+
+  it('matches an English plural topic the way the server does', () => {
+    const e = withColumns('demo_payments', [col('company_id')], 'demo.payments.v1');
+    const companies = withColumns('demo_companies', [col('name')], 'demo.companies.v1');
+    expect(orphanKeyColumns(e, [e, companies])[0].namedEntityInModel).toBe(true);
+  });
+
+  it('an entity never resolves against itself', () => {
+    const orders = withColumns('demo_orders', [col('order_id')], 'demo.orders.v1');
+    expect(orphanKeyColumns(orders, [orders])[0].namedEntityInModel).toBe(false);
   });
 });
 
