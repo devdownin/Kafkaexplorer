@@ -7,6 +7,7 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.DataModelEntity;
 import com.compagnonsdudev.kafkasqlexplorer.domain.DataModelRelation;
 import com.compagnonsdudev.kafkasqlexplorer.domain.DataModelResponse;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MessageFormat;
+import com.compagnonsdudev.kafkasqlexplorer.config.ExplorerConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.RelationConfidence;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
@@ -56,7 +57,8 @@ import java.util.regex.Pattern;
  * they only produce an edge if an entity actually owns that name, which is the same rule as
  * everything else rather than a hand-kept blacklist.
  *
- * <p>Bounded on both axes: at most {@link #MAX_TOPICS} topics per request (the rest are
+ * <p>Bounded on both axes: at most {@link #DEFAULT_MAX_TOPICS} topics per request unless it asks
+ * for more, capped by {@code explorer.data-model-max-topics} (the rest are
  * named in a warning, never silently dropped) and a wall-clock budget per topic read. A topic
  * whose read fails costs that topic — reported with its reason — not the model.
  */
@@ -66,10 +68,11 @@ public class DataModelService {
     private static final Logger log = LoggerFactory.getLogger(DataModelService.class);
 
     /**
-     * Cap per request. Each topic costs a consumer open + a sample read; past thirty the
-     * request stops being interactive, and the warning tells the user to narrow the selection.
+     * What one request analyses when it does not say. The ceiling that bounds a request which
+     * *does* say lives in {@code explorer.data-model-max-topics}: this is a sensible default for
+     * a first look, that one is what stops a mistyped number tying up the pool for hours.
      */
-    static final int MAX_TOPICS = 30;
+    public static final int DEFAULT_MAX_TOPICS = 30;
 
     /** Per-topic wall clock. Schema inference on an unreachable partition must not pin the request. */
     private static final long PER_TOPIC_TIMEOUT_MS = 20_000;
@@ -89,12 +92,15 @@ public class DataModelService {
 
     private final KafkaAdminService kafkaAdminService;
     private final SchemaInferenceService schemaInferenceService;
+    private final ExplorerConfig explorerConfig;
     private final ExecutorService executorService;
 
     public DataModelService(KafkaAdminService kafkaAdminService,
-                            SchemaInferenceService schemaInferenceService) {
+                            SchemaInferenceService schemaInferenceService,
+                            ExplorerConfig explorerConfig) {
         this.kafkaAdminService = kafkaAdminService;
         this.schemaInferenceService = schemaInferenceService;
+        this.explorerConfig = explorerConfig;
         AtomicInteger counter = new AtomicInteger();
         ThreadFactory factory = runnable -> {
             Thread thread = new Thread(runnable, "data-model-" + counter.incrementAndGet());
@@ -110,6 +116,17 @@ public class DataModelService {
     }
 
     public DataModelResponse buildModel(List<String> requestedTopics) {
+        return buildModel(requestedTopics, null);
+    }
+
+    /**
+     * @param requestedMaxTopics how many topics this run may analyse, or {@code null} for
+     *                           {@link #DEFAULT_MAX_TOPICS}. Clamped to at least 1 and to
+     *                           {@code explorer.data-model-max-topics}: the caller chooses within
+     *                           a bound it does not get to raise, and what the clamp refused is
+     *                           said in the warnings rather than applied in silence.
+     */
+    public DataModelResponse buildModel(List<String> requestedTopics, Integer requestedMaxTopics) {
         List<String> topics = requestedTopics.stream()
                 .filter(t -> t != null && !t.isBlank())
                 .map(String::trim)
@@ -120,10 +137,18 @@ public class DataModelService {
         }
 
         List<String> warnings = new ArrayList<>();
-        boolean truncated = topics.size() > MAX_TOPICS;
-        List<String> inScope = truncated ? topics.subList(0, MAX_TOPICS) : topics;
+        int ceiling = Math.max(1, explorerConfig.getDataModelMaxTopics());
+        int asked = requestedMaxTopics == null ? DEFAULT_MAX_TOPICS : requestedMaxTopics;
+        int maxTopics = Math.min(Math.max(1, asked), ceiling);
+        if (asked > ceiling) {
+            warnings.add("This run asked for " + asked + " topics; the server allows "
+                    + ceiling + " (explorer.data-model-max-topics).");
+        }
+
+        boolean truncated = topics.size() > maxTopics;
+        List<String> inScope = truncated ? topics.subList(0, maxTopics) : topics;
         if (truncated) {
-            warnings.add("Only the first " + MAX_TOPICS + " of the " + topics.size()
+            warnings.add("Only the first " + maxTopics + " of the " + topics.size()
                     + " selected topics were analyzed — narrow the selection to cover the rest.");
         }
 

@@ -679,3 +679,16 @@ export interface DataModelResponse {
   topicsAnalyzed: number;
   truncated: boolean;
 }
+
+/**
+ * `GET /api/data-model/limits` — les bornes du serveur, pour que la page n'en garde pas une
+ * copie. `maxTopics` est le plafond dur (`explorer.data-model-max-topics`) : ce qu'une
+ * génération ne peut pas dépasser quoi qu'elle demande. `defaultMaxTopics` est ce qu'elle
+ * analyse quand elle ne demande rien.
+ *
+ * @java DataModelLimits
+ */
+export interface DataModelLimits {
+  maxTopics: number;
+  defaultMaxTopics: number;
+}

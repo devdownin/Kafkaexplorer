@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.compagnonsdudev.kafkasqlexplorer.service;
 
+import com.compagnonsdudev.kafkasqlexplorer.config.ExplorerConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.DataModelColumn;
 import com.compagnonsdudev.kafkasqlexplorer.domain.DataModelEntity;
 import com.compagnonsdudev.kafkasqlexplorer.domain.DataModelRelation;
@@ -39,13 +40,14 @@ class DataModelServiceTest {
 
     private KafkaAdminService kafkaAdminService;
     private SchemaInferenceService schemaInferenceService;
+    private final ExplorerConfig explorerConfig = new ExplorerConfig();
     private DataModelService service;
 
     @BeforeEach
     void setUp() {
         kafkaAdminService = mock(KafkaAdminService.class);
         schemaInferenceService = mock(SchemaInferenceService.class);
-        service = new DataModelService(kafkaAdminService, schemaInferenceService);
+        service = new DataModelService(kafkaAdminService, schemaInferenceService, explorerConfig);
     }
 
     @AfterEach
@@ -353,7 +355,7 @@ class DataModelServiceTest {
     void pastTheCapTopicsAreDroppedWithAWarningNotSilently() throws Exception {
         when(kafkaAdminService.getTopicsSize(anyList())).thenReturn(Map.of());
         List<String> topics = new java.util.ArrayList<>();
-        for (int i = 0; i < DataModelService.MAX_TOPICS + 5; i++) {
+        for (int i = 0; i < DataModelService.DEFAULT_MAX_TOPICS + 5; i++) {
             String topic = "t" + i;
             topics.add(topic);
             stubTopic(topic, schema("id", "STRING"));
@@ -362,8 +364,56 @@ class DataModelServiceTest {
         DataModelResponse response = service.buildModel(topics);
 
         assertTrue(response.truncated());
-        assertEquals(DataModelService.MAX_TOPICS, response.topicsAnalyzed());
-        assertTrue(response.warnings().stream().anyMatch(w -> w.contains("first " + DataModelService.MAX_TOPICS)));
+        assertEquals(DataModelService.DEFAULT_MAX_TOPICS, response.topicsAnalyzed());
+        assertTrue(response.warnings().stream().anyMatch(w -> w.contains("first " + DataModelService.DEFAULT_MAX_TOPICS)));
+    }
+
+    @Test
+    void aRunMayAskForMoreThanTheDefault() throws Exception {
+        when(kafkaAdminService.getTopicsSize(anyList())).thenReturn(Map.of());
+        List<String> topics = stubTopics(DataModelService.DEFAULT_MAX_TOPICS + 5);
+
+        DataModelResponse response = service.buildModel(topics, 40);
+
+        assertFalse(response.truncated());
+        assertEquals(topics.size(), response.topicsAnalyzed());
+    }
+
+    @Test
+    void aRunCannotRaiseTheCeilingItIsGiven() throws Exception {
+        // The point of the ceiling: the caller chooses within it, never past it, and what was
+        // refused is said rather than applied in silence.
+        explorerConfig.setDataModelMaxTopics(32);
+        when(kafkaAdminService.getTopicsSize(anyList())).thenReturn(Map.of());
+        List<String> topics = stubTopics(40);
+
+        DataModelResponse response = service.buildModel(topics, 500);
+
+        assertEquals(32, response.topicsAnalyzed());
+        assertTrue(response.truncated());
+        assertTrue(response.warnings().stream()
+                .anyMatch(w -> w.contains("asked for 500") && w.contains("allows 32")));
+    }
+
+    @Test
+    void anAbsentOrAbsurdRequestFallsBackToSomethingUsable() throws Exception {
+        when(kafkaAdminService.getTopicsSize(anyList())).thenReturn(Map.of());
+        List<String> topics = stubTopics(3);
+
+        // null → the default; a nonsense value floors at one topic rather than analysing none.
+        assertEquals(3, service.buildModel(topics, null).topicsAnalyzed());
+        assertEquals(1, service.buildModel(topics, 0).topicsAnalyzed());
+        assertEquals(1, service.buildModel(topics, -7).topicsAnalyzed());
+    }
+
+    private List<String> stubTopics(int count) {
+        List<String> topics = new java.util.ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            String topic = "t" + i;
+            topics.add(topic);
+            stubTopic(topic, schema("id", "STRING"));
+        }
+        return topics;
     }
 
     private void stubTopic(String topic, Map<String, String> schema) {

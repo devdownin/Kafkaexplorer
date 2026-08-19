@@ -2,10 +2,13 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.compagnonsdudev.kafkasqlexplorer.web;
 
+import com.compagnonsdudev.kafkasqlexplorer.config.ExplorerConfig;
+import com.compagnonsdudev.kafkasqlexplorer.domain.DataModelLimits;
 import com.compagnonsdudev.kafkasqlexplorer.domain.DataModelRequest;
 import com.compagnonsdudev.kafkasqlexplorer.service.DataModelService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -25,9 +28,23 @@ import java.util.Map;
 public class DataModelController {
 
     private final DataModelService dataModelService;
+    private final ExplorerConfig explorerConfig;
 
-    public DataModelController(DataModelService dataModelService) {
+    public DataModelController(DataModelService dataModelService, ExplorerConfig explorerConfig) {
         this.dataModelService = dataModelService;
+        this.explorerConfig = explorerConfig;
+    }
+
+    /**
+     * The bounds the page has to respect, so it does not carry its own copy of them. Under
+     * {@code /api/data-model/limits} rather than on the dashboard: the dashboard describes the
+     * cluster, and a number that belongs to one screen has no business widening that contract.
+     */
+    @GetMapping("/api/data-model/limits")
+    public DataModelLimits limits() {
+        return new DataModelLimits(
+                Math.max(1, explorerConfig.getDataModelMaxTopics()),
+                DataModelService.DEFAULT_MAX_TOPICS);
     }
 
     /**
@@ -43,7 +60,7 @@ public class DataModelController {
                     .body(Map.of("message", "Select at least one topic to build the model from."));
         }
         try {
-            return ResponseEntity.ok(dataModelService.buildModel(topics));
+            return ResponseEntity.ok(dataModelService.buildModel(topics, request.maxTopics()));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(Map.of("message", e.getMessage()));

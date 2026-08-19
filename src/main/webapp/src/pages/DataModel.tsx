@@ -8,13 +8,13 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useCatalog } from '../catalogStore';
 import { useIsDesktop } from '../breakpoints';
 import { addTopicEntries, describeTopicEntry, suggestBroaderPattern } from '../topicSelection';
-import { Button, Checkbox, EmptyState, ErrorPanel, Badge, TopicInput, Combobox, Spinner } from '../components/ui';
+import { Button, Checkbox, EmptyState, ErrorPanel, Badge, TopicInput, Combobox, NumberInput, Spinner } from '../components/ui';
 import { useToast } from '../components/Toast';
 import { describeApiError } from './queryError';
 import type { QueryErrorInfo } from './queryError';
-import type { DataModelEntity, DataModelResponse } from '../api/types';
+import type { DataModelEntity, DataModelLimits, DataModelResponse } from '../api/types';
 import {
-  MAX_TOPICS, NODE_W, HEADER_H, ROW_H,
+  DEFAULT_MAX_TOPICS, NODE_W, HEADER_H, ROW_H,
   filterTopics, toggleTopic, selectAll, topicsFromQuery, buildQuery, capTopics,
   displayedColumns, entityHeight, computeLayout, computeEdgeGeometry, splitByConnectivity,
   crowFootPath, oneBarPath, graphBounds, fitTransform, centerOnEntity, topicDomains, domainColors,
@@ -24,7 +24,7 @@ import {
   filterRelations, describeRelationFilter, orphanKeyColumns, describeOrphanKey,
   shortenColumnName, readSelectionDraft, saveSelectionDraft,
   minimapLayout, visibleGraphRect, graphFullyVisible, centerOnGraphPoint,
-  describeBuildProgress, describeStaleGraphDuringBuild,
+  describeBuildProgress, describeStaleGraphDuringBuild, clampMaxTopics,
   readSavedModels, saveModel, deleteSavedModel, buildMultiJoinSql,
   CONFIDENCE_STYLE, describeModel,
 } from './dataModel';
@@ -167,7 +167,14 @@ const DataModel: React.FC = () => {
    * l'emporte toujours, sinon un lien partagé écraserait le formulaire de son destinataire.
    */
   const [selection, setSelection] = useState<string[]>(
-    () => (topicsFromQuery(location.search).length > 0 ? [] : readSelectionDraft() ?? []));
+    () => (topicsFromQuery(location.search).length > 0 ? [] : readSelectionDraft(DEFAULT_MAX_TOPICS) ?? []));
+  /**
+   * Combien de topics cette génération analyse. C'était une constante de 30 recopiée du serveur ;
+   * c'est maintenant un choix, borné par le plafond que le serveur annonce.
+   */
+  const [maxTopics, setMaxTopics] = useState(DEFAULT_MAX_TOPICS);
+  /** Les bornes du serveur. `null` tant qu'elles ne sont pas connues — on n'en invente pas. */
+  const [limits, setLimits] = useState<DataModelLimits | null>(null);
   const [filter, setFilter] = useState('');
   /** Saisie libre : un nom, une liste collée, ou un motif `demo.orders.*` — comme Stream Flow. */
   const [topicDraft, setTopicDraft] = useState('');
@@ -232,7 +239,7 @@ const DataModel: React.FC = () => {
    * que ce qu'on a demandé.
    */
   const addTopics = useCallback(() => {
-    const entry = addTopicEntries(selection, topicDraft, catalogTopics, MAX_TOPICS);
+    const entry = addTopicEntries(selection, topicDraft, catalogTopics, maxTopics);
     setSelection(entry.selection);
     setTopicDraft('');
     const note = describeTopicEntry(entry);
@@ -240,7 +247,7 @@ const DataModel: React.FC = () => {
       toast(note, entry.unmatched.length > 0 || entry.overflow.length > 0 ? 'error' : 'success');
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- toast est stable
-  }, [selection, topicDraft, catalogTopics]);
+  }, [selection, topicDraft, catalogTopics, maxTopics]);
 
   const generate = useCallback(async (topics: string[]) => {
     if (topics.length === 0) return;
@@ -253,7 +260,7 @@ const DataModel: React.FC = () => {
     setBuildElapsedMs(0);
     setError(null);
     try {
-      const res = await axios.post<DataModelResponse>('/api/data-model', { topics },
+      const res = await axios.post<DataModelResponse>('/api/data-model', { topics, maxTopics },
         { signal: controller.signal, timeout: 120_000 });
       if (seq !== requestSeq.current) return;
       setModel(res.data);
@@ -273,14 +280,14 @@ const DataModel: React.FC = () => {
     } finally {
       if (seq === requestSeq.current) setLoading(false);
     }
-  }, [navigate]);
+  }, [navigate, maxTopics]);
 
   /**
    * Ajoute la saisie à la sélection *de comparaison* — même geste que `addTopics`, sur son
    * propre état : les deux sélections doivent pouvoir diverger librement.
    */
   const addCompareTopics = useCallback(() => {
-    const entry = addTopicEntries(compareSelection, compareDraft, catalogTopics, MAX_TOPICS);
+    const entry = addTopicEntries(compareSelection, compareDraft, catalogTopics, maxTopics);
     setCompareSelection(entry.selection);
     setCompareDraft('');
     const note = describeTopicEntry(entry);
@@ -288,7 +295,7 @@ const DataModel: React.FC = () => {
       toast(note, entry.unmatched.length > 0 || entry.overflow.length > 0 ? 'error' : 'success');
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- toast est stable
-  }, [compareSelection, compareDraft, catalogTopics]);
+  }, [compareSelection, compareDraft, catalogTopics, maxTopics]);
 
   /**
    * Le second modèle de la comparaison. Indépendant du modèle affiché : ni son état de
@@ -303,7 +310,8 @@ const DataModel: React.FC = () => {
     setComparing(true);
     setCompareError(null);
     try {
-      const res = await axios.post<DataModelResponse>('/api/data-model', { topics: compareSelection },
+      const res = await axios.post<DataModelResponse>('/api/data-model',
+        { topics: compareSelection, maxTopics },
         { signal: controller.signal, timeout: 120_000 });
       setCompareModel(res.data);
     } catch (err) {
@@ -312,7 +320,7 @@ const DataModel: React.FC = () => {
     } finally {
       setComparing(false);
     }
-  }, [compareSelection]);
+  }, [compareSelection, maxTopics]);
 
   useEffect(() => () => compareAbortRef.current?.abort(), []);
 
@@ -327,15 +335,33 @@ const DataModel: React.FC = () => {
     if (location.search === selfWrittenSearch.current) return;
     const fromUrl = topicsFromQuery(location.search);
     if (fromUrl.length === 0) return;
-    const { kept, overflow } = capTopics(fromUrl);
+    const { kept, overflow } = capTopics(fromUrl, maxTopics);
     // eslint-disable-next-line react-hooks/set-state-in-effect -- rejeu d'une URL partagée
     setSelection(kept);
     if (overflow.length > 0) {
-      toast(`${overflow.length} left out — the request is capped at ${MAX_TOPICS} topics`, 'error');
+      toast(`${overflow.length} left out — this run is capped at ${maxTopics} topics`, 'error');
     }
     generate(kept);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- au montage et sur navigation seulement
   }, [location.search]);
+
+  /**
+   * Les bornes viennent du serveur, elles ne sont pas recopiées ici : c'est précisément le miroir
+   * qui divergeait le jour où `explorer.data-model-max-topics` bougeait. Un échec laisse le champ
+   * au défaut plutôt que d'inventer un plafond plus haut — une génération refusée après plusieurs
+   * minutes d'inférence est le pire des deux résultats.
+   */
+  useEffect(() => {
+    let alive = true;
+    axios.get<DataModelLimits>('/api/data-model/limits')
+      .then(res => {
+        if (!alive) return;
+        setLimits(res.data);
+        setMaxTopics(current => clampMaxTopics(current, res.data));
+      })
+      .catch(() => { /* le défaut tient lieu de réponse */ });
+    return () => { alive = false; };
+  }, []);
 
   // Le brouillon suit la sélection, et s'efface de lui-même quand elle revient à vide.
   useEffect(() => { saveSelectionDraft(selection); }, [selection]);
@@ -768,7 +794,7 @@ const DataModel: React.FC = () => {
         <div className="p-4 space-y-3 border-b border-outline-variant/60">
           <div className="flex items-center justify-between gap-2">
             <h2 className="text-xs font-bold text-on-surface-variant uppercase tracking-widest">
-              Topics ({selection.length}/{MAX_TOPICS})
+              Topics ({selection.length}/{maxTopics})
             </h2>
             {!isDesktop && (
               <button onClick={() => setTopicsDrawerOpen(false)} aria-label="Close the topic selector"
@@ -803,9 +829,32 @@ const DataModel: React.FC = () => {
             </p>
           )}
 
+          {/* Combien de topics cette génération analyse. C'était 30 en dur des deux côtés ; le
+              plafond vit maintenant dans `explorer.data-model-max-topics` et la page le lit,
+              plutôt que d'en garder une copie qui se périme. Monter le nombre coûte du temps
+              d'inférence (une vingtaine de secondes par topic au pire), d'où le libellé. */}
+          <div className="flex items-center gap-2">
+            <label htmlFor="dm-max-topics"
+              className="text-[11px] text-on-surface-variant whitespace-nowrap">
+              Max topics
+            </label>
+            <NumberInput
+              id="dm-max-topics"
+              className="w-20"
+              value={maxTopics}
+              onChange={next => setMaxTopics(clampMaxTopics(next, limits))}
+              fallback={limits?.defaultMaxTopics ?? DEFAULT_MAX_TOPICS}
+              min={1}
+              max={limits?.maxTopics ?? DEFAULT_MAX_TOPICS}
+            />
+            <span className="text-[10px] text-outline leading-tight">
+              up to {limits?.maxTopics ?? DEFAULT_MAX_TOPICS} — each one is read and inferred
+            </span>
+          </div>
+
           <div className="flex gap-2">
             <Button variant="ghost" size="sm" className="flex-1"
-              onClick={() => setSelection(sel => selectAll(sel, visibleTopics))}
+              onClick={() => setSelection(sel => selectAll(sel, visibleTopics, maxTopics))}
               disabled={visibleTopics.length === 0}>
               Select shown
             </Button>
@@ -824,7 +873,7 @@ const DataModel: React.FC = () => {
           )}
           {visibleTopics.map(topic => {
             const checked = selection.includes(topic);
-            const full = !checked && selection.length >= MAX_TOPICS;
+            const full = !checked && selection.length >= maxTopics;
             return (
               <label key={topic}
                 className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-xs font-mono cursor-pointer transition-colors ${

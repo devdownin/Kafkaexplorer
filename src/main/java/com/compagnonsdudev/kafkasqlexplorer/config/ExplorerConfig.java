@@ -78,6 +78,14 @@ public class ExplorerConfig {
      * what an operator is asking about.
      */
     private String auditDuplicateScanFrom = "LATEST";
+    /**
+     * Hard ceiling on how many topics one {@code POST /api/data-model} may analyse. The request
+     * carries its own, lower, per-run value — this is what bounds it, so a mistyped number cannot
+     * tie the inference pool up for hours. Each topic costs up to
+     * {@code DataModelService.PER_TOPIC_TIMEOUT_MS}, so 100 is roughly a half-hour worst case,
+     * the same order as the audit's own budget.
+     */
+    private int dataModelMaxTopics = 100;
     private int inferenceSampleSize = 10;
     private long inferencePollTimeoutMs = 2000;
     private boolean allowCrossJoin = false;
@@ -252,6 +260,14 @@ public class ExplorerConfig {
 
     public void setAuditDuplicateScanFrom(String auditDuplicateScanFrom) {
         this.auditDuplicateScanFrom = auditDuplicateScanFrom;
+    }
+
+    public int getDataModelMaxTopics() {
+        return dataModelMaxTopics;
+    }
+
+    public void setDataModelMaxTopics(int dataModelMaxTopics) {
+        this.dataModelMaxTopics = dataModelMaxTopics;
     }
 
     public int getInferenceSampleSize() {
