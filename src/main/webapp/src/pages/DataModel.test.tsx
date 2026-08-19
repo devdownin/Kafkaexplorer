@@ -45,8 +45,8 @@ const model: DataModelResponse = {
       primaryKey: 'order_id',
       messageCount: 1_240_000,
       columns: [
-        { name: 'order_id', type: 'STRING', primaryKey: true, references: null },
-        { name: 'status', type: 'STRING', primaryKey: false, references: null },
+        { name: 'order_id', type: 'STRING', primaryKey: true, references: null, keyBase: null },
+        { name: 'status', type: 'STRING', primaryKey: false, references: null, keyBase: null },
       ],
     },
     {
@@ -56,8 +56,8 @@ const model: DataModelResponse = {
       primaryKey: 'payment_id',
       messageCount: 1183,
       columns: [
-        { name: 'payment_id', type: 'STRING', primaryKey: true, references: null },
-        { name: 'order_id', type: 'STRING', primaryKey: false, references: 'demo_orders_1_received' },
+        { name: 'payment_id', type: 'STRING', primaryKey: true, references: null, keyBase: null },
+        { name: 'order_id', type: 'STRING', primaryKey: false, references: 'demo_orders_1_received', keyBase: null },
       ],
     },
   ],
@@ -272,7 +272,7 @@ describe('DataModel page', () => {
       entities: [...model.entities, {
         id: 'demo_iot_sensors', topic: 'demo.iot.sensors', format: 'JSON',
         primaryKey: null, messageCount: 7200,
-        columns: [{ name: 'reading', type: 'DOUBLE', primaryKey: false, references: null }],
+        columns: [{ name: 'reading', type: 'DOUBLE', primaryKey: false, references: null, keyBase: null }],
       }],
       topicsRequested: 3, topicsAnalyzed: 3,
     });
@@ -338,7 +338,9 @@ describe('DataModel page', () => {
         ...model.entities[1],
         columns: [
           ...model.entities[1].columns,
-          { name: 'customer_id', type: 'STRING', primaryKey: false, references: null },
+          // Ce que le serveur renvoie : le nom désigne 'customer', et aucune relation n'en est
+          // sortie — donc aucun topic sélectionné ne porte ce nom.
+          { name: 'customer_id', type: 'STRING', primaryKey: false, references: null, keyBase: 'customer' },
         ],
       }],
     });
@@ -353,6 +355,56 @@ describe('DataModel page', () => {
     expect(screen.getByText(/no selected topic is named after it/)).toBeInTheDocument();
   });
 
+  it('builds one query from a subgraph, not two pairwise joins stitched by hand', async () => {
+    const user = userEvent.setup();
+    stubApi();
+    await renderPage('/data-model?topics=demo.orders.1.received,demo.payments.authorized');
+
+    await screen.findByText('2 entities · 1 relation deduced');
+    await user.click(screen.getByRole('button', { name: /^demo_payments_authorized,/ }));
+    await user.click(await screen.findByRole('button', { name: /Add to the join/ }));
+    await user.click(screen.getByRole('button', { name: /^demo_orders_1_received,/ }));
+    await user.click(await screen.findByRole('button', { name: /Add to the join/ }));
+
+    await openTopics(user);
+    const link = await screen.findByRole('link', { name: /Open 2-table join as SQL/ });
+    const sql = decodeURIComponent(link.getAttribute('href')!.split('?sql=')[1]);
+    expect(sql).toContain('JOIN');
+    expect(sql).toContain('LIMIT 50');
+  });
+
+  it('a join set of one says what it needs rather than offering a dead link', async () => {
+    const user = userEvent.setup();
+    stubApi();
+    await renderPage('/data-model?topics=demo.orders.1.received,demo.payments.authorized');
+
+    await screen.findByText('2 entities · 1 relation deduced');
+    await user.click(screen.getByRole('button', { name: /^demo_payments_authorized,/ }));
+    await user.click(await screen.findByRole('button', { name: /Add to the join/ }));
+
+    await openTopics(user);
+    expect(await screen.findByText(/a join needs two tables/)).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /join as SQL/ })).toBeNull();
+  });
+
+  it('saves a named selection on this browser and reloads it', async () => {
+    const user = userEvent.setup();
+    stubApi();
+    await renderPage('/data-model?topics=demo.orders.1.received,demo.payments.authorized');
+
+    await screen.findByText('2 entities · 1 relation deduced');
+    await openTopics(user);
+    await user.type(screen.getByLabelText('Name this selection'), 'Order pipeline');
+    await user.click(screen.getByRole('button', { name: /^Save$/ }));
+
+    // Elle réapparaît dans la liste, avec le nombre de topics qu'elle porte.
+    expect(await screen.findByText('Order pipeline')).toBeInTheDocument();
+    expect(screen.getByText('2 topics')).toBeInTheDocument();
+    // Et la page dit que c'est local à ce navigateur, pas partagé.
+    expect(screen.getByRole('button', { name: /Delete the saved selection Order pipeline/ }))
+      .toBeInTheDocument();
+  });
+
   it('compares two selections and reports what differs, without touching the model on screen', async () => {
     const user = userEvent.setup();
     const withSensor: DataModelResponse = {
@@ -360,7 +412,7 @@ describe('DataModel page', () => {
       entities: [...model.entities, {
         id: 'demo_iot_sensors', topic: 'demo.iot.sensors', format: 'JSON',
         primaryKey: null, messageCount: 500,
-        columns: [{ name: 'reading', type: 'DOUBLE', primaryKey: false, references: null }],
+        columns: [{ name: 'reading', type: 'DOUBLE', primaryKey: false, references: null, keyBase: null }],
       }],
       topicsRequested: 3, topicsAnalyzed: 3,
     };

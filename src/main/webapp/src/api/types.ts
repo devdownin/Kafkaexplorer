@@ -615,6 +615,19 @@ export interface DataModelColumn {
   primaryKey: boolean;
   /** Id de l'entité que cette colonne référence, `null` pour une colonne ordinaire. */
   references: string | null;
+  /**
+   * Le mot d'entité que le nom de cette colonne *désigne* (`order_id` → `order`), `null` quand
+   * il ne désigne personne — soit il ne se lit pas comme un identifiant (`amount`, ou `paid` et
+   * `valid`, qui finissent seulement par « id »), soit il nomme *cette* entité (`id`, ou
+   * `order_id` sur un topic orders), ce qui est une identité et non une référence.
+   *
+   * C'est la règle que le serveur applique avant de chercher une cible, exposée pour que l'UI
+   * puisse marquer une colonne qui se lit comme une clé étrangère sans avoir produit de
+   * relation. Un `keyBase` non nul avec un `references` nul veut donc dire exactement une
+   * chose — aucun topic sélectionné ne porte ce nom — puisqu'une cible présente dans le modèle
+   * produit toujours une relation.
+   */
+  keyBase: string | null;
 }
 
 /**

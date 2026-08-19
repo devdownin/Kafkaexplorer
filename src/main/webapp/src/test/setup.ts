@@ -24,6 +24,17 @@ if (!Element.prototype.scrollIntoView) {
 // graphe n'a pas à redécouvrir la panne, et un bouchon par fichier finit par diverger.
 if (!('ResizeObserver' in globalThis)) {
   class ResizeObserverStub implements ResizeObserver {
+    // Le rappel est **accepté**, pas ignoré : le vrai `ResizeObserver` en prend un, et un bouchon
+    // dont la signature diffère de l'API qu'il remplace laisse passer un appel que rien ne
+    // vérifie — CodeQL a signalé exactement ça sur `new ResizeObserver(measure)`, que TypeScript
+    // ne pouvait pas voir (`implements` ne contrôle pas le constructeur).
+    //
+    // Il n'est jamais invoqué, et c'est délibéré : jsdom n'a aucune mise en page, donc aucune
+    // taille à rapporter. Fabriquer un faux événement de redimensionnement ferait croire à une
+    // mesure là où il n'y en a pas — même règle que partout ici, une mesure qu'on n'a pas prise
+    // ne se rend pas comme un zéro. D'où le paramètre non retenu plutôt qu'un champ jamais lu.
+    constructor(_callback: ResizeObserverCallback) {}
+
     observe() {}
     unobserve() {}
     disconnect() {}

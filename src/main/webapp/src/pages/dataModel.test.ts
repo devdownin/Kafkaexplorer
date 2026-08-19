@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import type { DataModelEntity, DataModelRelation, DataModelResponse } from '../api/types';
 import {
   MAX_TOPICS, MAX_COLUMNS_SHOWN, NODE_W, HEADER_H, ROW_H, FOOTER_H, DOMAIN_PALETTE,
@@ -12,9 +12,18 @@ import {
   formatCount, describeRelation, matchingColumns, describeColumnMatches,
   buildExportSvg, exportNotes, escapeXml, toMermaidEr, buildJoinSql, joinAliases,
   capTopics, relationKey, diffModels, diffIsEmpty, describeDiff,
-  filterRelations, describeRelationFilter, idBaseOf, orphanKeyColumns, describeOrphanKey,
+  filterRelations, describeRelationFilter, orphanKeyColumns, describeOrphanKey,
+  shortenColumnName, readSelectionDraft, saveSelectionDraft,
+  minimapLayout, visibleGraphRect, graphFullyVisible, centerOnGraphPoint,
+  readSavedModels, saveModel, deleteSavedModel, clearSavedModels, MAX_SAVED_MODELS,
+  SAVED_MODELS_KEY, joinAliasesFor, buildMultiJoinSql,
 } from './dataModel';
 import type { RelationConfidence } from '../api/types';
+
+// Ce module écrit dans localStorage (brouillon de sélection, sélections nommées) : sans remise
+// à zéro, un test lit ce que le précédent a laissé, et l'ordre d'exécution devient une
+// dépendance cachée.
+beforeEach(() => localStorage.clear());
 
 function entity(id: string, columnCount: number, overrides: Partial<DataModelEntity> = {}): DataModelEntity {
   return {
@@ -22,7 +31,7 @@ function entity(id: string, columnCount: number, overrides: Partial<DataModelEnt
     topic: id.replace(/_/g, '.'),
     format: 'JSON',
     columns: Array.from({ length: columnCount }, (_, i) => ({
-      name: `col_${i}`, type: 'STRING', primaryKey: false, references: null,
+      name: `col_${i}`, type: 'STRING', primaryKey: false, references: null, keyBase: null
     })),
     primaryKey: null,
     messageCount: null,
@@ -89,10 +98,21 @@ describe('displayedColumns / entityHeight', () => {
   it('key columns are shown first — they carry the edges', () => {
     const e = entity('t', MAX_COLUMNS_SHOWN + 2);
     e.columns[MAX_COLUMNS_SHOWN + 1] = {
-      name: 'order_id', type: 'STRING', primaryKey: true, references: null,
+      name: 'order_id', type: 'STRING', primaryKey: true, references: null, keyBase: null
     };
     const { columns } = displayedColumns(e);
     expect(columns[0].name).toBe('order_id');
+  });
+
+  it('a key-like column with no relation is ranked with the keys, not lost to the overflow', () => {
+    // C'est celle que le diagramme marque d'un `?` : sur une charge utile imbriquée elle
+    // partait dans le `+N more` exactement quand la carte est chargée, donc quand elle sert.
+    const e = entity('t', MAX_COLUMNS_SHOWN + 2);
+    e.columns[MAX_COLUMNS_SHOWN + 1] = {
+      name: 'customer_id', type: 'STRING', primaryKey: false, references: null, keyBase: 'customer',
+    };
+    const { columns } = displayedColumns(e);
+    expect(columns[0].name).toBe('customer_id');
   });
 
   it('height follows the displayed rows, plus one for the overflow line', () => {
@@ -173,9 +193,9 @@ describe('computeEdgeGeometry', () => {
 
   function pair(): DataModelEntity[] {
     const facts = entity('facts', 4);
-    facts.columns[2] = { name: 'dim_id', type: 'STRING', primaryKey: false, references: 'dims' };
+    facts.columns[2] = { name: 'dim_id', type: 'STRING', primaryKey: false, references: 'dims', keyBase: null };
     const dims = entity('dims', 3, { primaryKey: 'dim_id' });
-    dims.columns[1] = { name: 'dim_id', type: 'STRING', primaryKey: true, references: null };
+    dims.columns[1] = { name: 'dim_id', type: 'STRING', primaryKey: true, references: null, keyBase: null };
     return [facts, dims];
   }
 
@@ -466,14 +486,14 @@ describe('describeRelation', () => {
 describe('matchingColumns / describeColumnMatches', () => {
   const orders = entity('orders', 2, {
     columns: [
-      { name: 'order_id', type: 'STRING', primaryKey: true, references: null },
-      { name: 'amount', type: 'DOUBLE', primaryKey: false, references: null },
+      { name: 'order_id', type: 'STRING', primaryKey: true, references: null, keyBase: null },
+      { name: 'amount', type: 'DOUBLE', primaryKey: false, references: null, keyBase: null },
     ],
   });
   const payments = entity('payments', 2, {
     columns: [
-      { name: 'ORDER_ID', type: 'STRING', primaryKey: false, references: 'orders' },
-      { name: 'customer.id', type: 'STRING', primaryKey: false, references: null },
+      { name: 'ORDER_ID', type: 'STRING', primaryKey: false, references: 'orders', keyBase: null },
+      { name: 'customer.id', type: 'STRING', primaryKey: false, references: null, keyBase: null },
     ],
   });
 
@@ -604,13 +624,13 @@ describe('toMermaidEr', () => {
     const orders = entity('demo_orders', 0, {
       primaryKey: 'order_id',
       columns: [
-        { name: 'order_id', type: 'STRING', primaryKey: true, references: null },
-        { name: 'amount', type: 'DOUBLE', primaryKey: false, references: null },
+        { name: 'order_id', type: 'STRING', primaryKey: true, references: null, keyBase: null },
+        { name: 'amount', type: 'DOUBLE', primaryKey: false, references: null, keyBase: null },
       ],
     });
     const payments = entity('demo_payments', 0, {
       columns: [
-        { name: 'order_id', type: 'STRING', primaryKey: false, references: 'demo_orders' },
+        { name: 'order_id', type: 'STRING', primaryKey: false, references: 'demo_orders', keyBase: null },
       ],
     });
     return {
@@ -648,7 +668,7 @@ describe('toMermaidEr', () => {
 
   it('sanitises identifiers but keeps the original name as a comment', () => {
     const nested = entity('t', 0, {
-      columns: [{ name: 'customer.address.city', type: 'STRING', primaryKey: false, references: null }],
+      columns: [{ name: 'customer.address.city', type: 'STRING', primaryKey: false, references: null, keyBase: null }],
     });
     const mermaid = toMermaidEr(
       { entities: [nested], relations: [], warnings: [], topicsRequested: 1, topicsAnalyzed: 1, truncated: false },
@@ -704,18 +724,18 @@ describe('buildJoinSql', () => {
     topic: 'demo.orders.1.received',
     primaryKey: 'order_id',
     columns: [
-      { name: 'order_id', type: 'STRING', primaryKey: true, references: null },
-      { name: 'status', type: 'STRING', primaryKey: false, references: null },
-      { name: 'amount_cents', type: 'BIGINT', primaryKey: false, references: null },
+      { name: 'order_id', type: 'STRING', primaryKey: true, references: null, keyBase: null },
+      { name: 'status', type: 'STRING', primaryKey: false, references: null, keyBase: null },
+      { name: 'amount_cents', type: 'BIGINT', primaryKey: false, references: null, keyBase: null },
     ],
   });
   const payments = entity('demo_payments', 0, {
     topic: 'demo.payments.authorized',
     primaryKey: 'payment_id',
     columns: [
-      { name: 'payment_id', type: 'STRING', primaryKey: true, references: null },
-      { name: 'order_id', type: 'STRING', primaryKey: false, references: 'demo_orders' },
-      { name: 'method', type: 'STRING', primaryKey: false, references: null },
+      { name: 'payment_id', type: 'STRING', primaryKey: true, references: null, keyBase: null },
+      { name: 'order_id', type: 'STRING', primaryKey: false, references: 'demo_orders', keyBase: null },
+      { name: 'method', type: 'STRING', primaryKey: false, references: null, keyBase: null },
     ],
   });
   const rel = (over: Partial<DataModelRelation> = {}): DataModelRelation => ({
@@ -763,7 +783,7 @@ describe('buildJoinSql', () => {
     const keyless = entity('demo_orders', 0, {
       topic: 'demo.orders.1.received',
       primaryKey: null,
-      columns: [{ name: 'status', type: 'STRING', primaryKey: false, references: null }],
+      columns: [{ name: 'status', type: 'STRING', primaryKey: false, references: null, keyBase: null }],
     });
     expect(buildJoinSql(rel({ toColumn: null }), [keyless, payments])).toBeNull();
   });
@@ -773,9 +793,9 @@ describe('buildJoinSql', () => {
       topic: 'demo.payments.authorized',
       primaryKey: 'payment_id',
       columns: [
-        { name: 'payment_id', type: 'STRING', primaryKey: true, references: null },
-        { name: 'order_id', type: 'STRING', primaryKey: false, references: 'demo_orders' },
-        { name: 'card.last4', type: 'STRING', primaryKey: false, references: null },
+        { name: 'payment_id', type: 'STRING', primaryKey: true, references: null, keyBase: null },
+        { name: 'order_id', type: 'STRING', primaryKey: false, references: 'demo_orders', keyBase: null },
+        { name: 'card.last4', type: 'STRING', primaryKey: false, references: null, keyBase: null },
       ],
     });
     const join = buildJoinSql(rel(), [orders, nested])!;
@@ -789,7 +809,7 @@ describe('buildJoinSql', () => {
       primaryKey: 'payment_id',
       columns: Array.from({ length: 20 }, (_, i) => ({
         name: i === 0 ? 'order_id' : `f_${i}`, type: 'STRING',
-        primaryKey: false, references: null,
+        primaryKey: false, references: null, keyBase: null
       })),
     });
     const join = buildJoinSql(rel(), [orders, wide])!;
@@ -842,106 +862,329 @@ describe('filterRelations / describeRelationFilter', () => {
  * since a mirror tested against its own reading of itself proves nothing. The server is the
  * authority; if these two ever disagree, this file is the one that is wrong.
  */
-describe('idBaseOf (mirror of the server heuristic)', () => {
-  it('reads a snake_case foreign key', () => {
-    expect(idBaseOf('order_id')).toBe('order');
-    expect(idBaseOf('product-ref')).toBe('product');
-    expect(idBaseOf('customer_uuid')).toBe('customer');
+describe('shortenColumnName', () => {
+  it('leaves a name that fits untouched', () => {
+    expect(shortenColumnName('order_id', 22)).toBe('order_id');
   });
 
-  it('reads a camelCase foreign key, keeping the hump just before the suffix', () => {
-    expect(idBaseOf('orderId')).toBe('order');
-    expect(idBaseOf('customerAccountId')).toBe('account');
+  it('cuts a flat name from the right — it has no redundant part', () => {
+    expect(shortenColumnName('a_very_long_column_name_here', 12)).toBe('a_very_long…');
   });
 
-  it('a bare identifier owns the entity itself, so its base is empty rather than absent', () => {
-    expect(idBaseOf('id')).toBe('');
-    expect(idBaseOf('uuid')).toBe('');
-    expect(idBaseOf('ID')).toBe('');
+  it('keeps the leaf of a dotted path and elides the prefix', () => {
+    // Cutting from the right gives 'shipping.address.ci…', which amputates exactly the part
+    // that tells one column of a sub-object from another.
+    const short = shortenColumnName('shipping.address.city', 14);
+    expect(short.startsWith('…')).toBe(true);
+    expect(short.endsWith('city')).toBe(true);
+    expect(short.length).toBeLessThanOrEqual(14);
   });
 
-  it('a word that merely ends in "id" is not an identifier — the trap the server names', () => {
-    expect(idBaseOf('paid')).toBeNull();
-    expect(idBaseOf('valid')).toBeNull();
-    expect(idBaseOf('amount')).toBeNull();
+  it('keeps as many trailing segments as fit', () => {
+    expect(shortenColumnName('a.b.c.d', 6)).toBe('…b.c.d');
+    expect(shortenColumnName('a.b.c.d', 5)).toBe('…c.d');
   });
 
-  it('only the last path segment counts, so a nested id belongs to its parent', () => {
-    expect(idBaseOf('customer.id')).toBe('');
-    expect(idBaseOf('payload.order_id')).toBe('order');
+  it('a leaf longer than the budget is cut rather than reduced to an ellipsis alone', () => {
+    const short = shortenColumnName('shipping.averyveryverylongleafname', 10);
+    expect(short.length).toBeLessThanOrEqual(10);
+    expect(short).toContain('avery');
+  });
+});
+
+describe('selection draft', () => {
+  it('round-trips an unrun selection', () => {
+    saveSelectionDraft(['demo.orders', 'demo.payments']);
+    expect(readSelectionDraft()).toEqual(['demo.orders', 'demo.payments']);
   });
 
-  it('an ALL_CAPS base is lower-cased whole, never shattered per letter', () => {
-    expect(idBaseOf('CUSTOMER_ID')).toBe('customer');
+  it('an emptied selection clears the draft rather than storing nothing usefully', () => {
+    saveSelectionDraft(['demo.orders']);
+    saveSelectionDraft([]);
+    expect(readSelectionDraft()).toBeNull();
+  });
+
+  it('nothing stored reads as no draft', () => {
+    expect(readSelectionDraft()).toBeNull();
+  });
+
+  it('the cap applies on read, like every other path into the selection', () => {
+    saveSelectionDraft(Array.from({ length: 40 }, (_, i) => `t${i}`));
+    expect(readSelectionDraft()).toHaveLength(MAX_TOPICS);
+  });
+
+  it('a draft of the wrong shape is ignored rather than trusted', () => {
+    saveSelectionDraft(['ok']);
+    // Ce qu'une version antérieure aurait pu écrire : des entrées qui ne sont pas des topics.
+    localStorage.setItem('kse:draft:data-model',
+      JSON.stringify({ v: 1, at: Date.now(), value: [1, null, 'kept'] }));
+    expect(readSelectionDraft()).toEqual(['kept']);
+  });
+});
+
+describe('minimap', () => {
+  const bounds = { minX: 0, minY: 0, maxX: 2000, maxY: 1000 };
+
+  it('fits the whole graph inside the box', () => {
+    const layout = minimapLayout(bounds, 168, 120, 4);
+    expect(2000 * layout.scale).toBeLessThanOrEqual(168 - 8 + 0.001);
+    expect(1000 * layout.scale).toBeLessThanOrEqual(120 - 8 + 0.001);
+  });
+
+  it('reports what is visible in graph coordinates', () => {
+    const visible = visibleGraphRect({ x: -100, y: -50, scale: 2 }, 400, 200);
+    expect(visible).toEqual({ minX: 50, minY: 25, maxX: 250, maxY: 125 });
+  });
+
+  it('a graph entirely on screen needs no minimap — it would only frame its own box', () => {
+    expect(graphFullyVisible(bounds, { x: 0, y: 0, scale: 0.05 }, 400, 200)).toBe(true);
+  });
+
+  it('a graph that overflows does need one', () => {
+    expect(graphFullyVisible(bounds, { x: 0, y: 0, scale: 1 }, 400, 200)).toBe(false);
+  });
+
+  it('clicking a point centres the viewport on it, at the current scale', () => {
+    const t = centerOnGraphPoint({ x: 1000, y: 500 }, 400, 200, 0.5);
+    expect(t.scale).toBe(0.5);
+    const visible = visibleGraphRect(t, 400, 200);
+    expect((visible.minX + visible.maxX) / 2).toBeCloseTo(1000);
+    expect((visible.minY + visible.maxY) / 2).toBeCloseTo(500);
+  });
+});
+
+describe('saved selections', () => {
+  it('round-trips a named selection', () => {
+    saveModel('Order pipeline', ['demo.orders', 'demo.payments'], 111);
+    expect(readSavedModels()).toEqual([
+      { name: 'Order pipeline', topics: ['demo.orders', 'demo.payments'], at: 111 },
+    ]);
+  });
+
+  it('saving under an existing name replaces it in place rather than stacking a homonym', () => {
+    saveModel('Pipeline', ['a'], 1);
+    saveModel('Pipeline', ['a', 'b'], 2);
+    const models = readSavedModels();
+    expect(models).toHaveLength(1);
+    expect(models[0].topics).toEqual(['a', 'b']);
+  });
+
+  it('the newest save comes first', () => {
+    saveModel('first', ['a'], 1);
+    saveModel('second', ['b'], 2);
+    expect(readSavedModels().map(m => m.name)).toEqual(['second', 'first']);
+  });
+
+  it('deletes by name and leaves the rest', () => {
+    saveModel('keep', ['a'], 1);
+    saveModel('drop', ['b'], 2);
+    expect(deleteSavedModel('drop').map(m => m.name)).toEqual(['keep']);
+    expect(readSavedModels().map(m => m.name)).toEqual(['keep']);
+  });
+
+  it('refuses a blank name or an empty selection rather than storing an unusable entry', () => {
+    saveModel('   ', ['a']);
+    saveModel('named', []);
+    expect(readSavedModels()).toEqual([]);
+  });
+
+  it('is bounded', () => {
+    for (let i = 0; i < MAX_SAVED_MODELS + 5; i++) saveModel(`m${i}`, ['a'], i);
+    expect(readSavedModels()).toHaveLength(MAX_SAVED_MODELS);
+  });
+
+  it('an envelope of an unknown shape is erased rather than guessed at', () => {
+    localStorage.setItem(SAVED_MODELS_KEY, JSON.stringify({ v: 99, models: [{ name: 'x', topics: ['a'] }] }));
+    expect(readSavedModels()).toEqual([]);
+    expect(localStorage.getItem(SAVED_MODELS_KEY)).toBeNull();
+  });
+
+  it('unreadable JSON is erased rather than thrown on', () => {
+    localStorage.setItem(SAVED_MODELS_KEY, '{not json');
+    expect(readSavedModels()).toEqual([]);
+  });
+
+  it('drops entries that carry no usable topic', () => {
+    localStorage.setItem(SAVED_MODELS_KEY, JSON.stringify({
+      v: 1,
+      models: [{ name: 'ok', topics: ['a', 2, null] }, { name: 'empty', topics: [] }],
+    }));
+    expect(readSavedModels()).toEqual([{ name: 'ok', topics: ['a'], at: 0 }]);
+  });
+
+  it('nothing stored reads as an empty list', () => {
+    clearSavedModels();
+    expect(readSavedModels()).toEqual([]);
+  });
+});
+
+describe('joinAliasesFor / buildMultiJoinSql', () => {
+  const col = (name: string, over: Partial<DataModelEntity['columns'][number]> = {}) => ({
+    name, type: 'STRING', primaryKey: false, references: null, keyBase: null, ...over,
+  });
+  const ent = (id: string, topic: string, columns: DataModelEntity['columns'],
+               primaryKey: string | null = null): DataModelEntity =>
+    ({ ...entity(id, 0), topic, columns, primaryKey });
+
+  const orders = ent('demo_orders', 'demo.orders.received',
+    [col('order_id', { primaryKey: true }), col('status')], 'order_id');
+  const payments = ent('demo_payments', 'demo.payments.authorized',
+    [col('payment_id', { primaryKey: true }), col('order_id', { references: 'demo_orders' })],
+    'payment_id');
+  const shipments = ent('demo_shipments', 'demo.shipments.dispatched',
+    [col('shipment_id', { primaryKey: true }), col('order_id', { references: 'demo_orders' })],
+    'shipment_id');
+
+  const rel = (from: string, to: string, fromColumn: string, toColumn: string | null)
+    : DataModelRelation => ({
+      from, to, fromColumn, toColumn, confidence: 'HIGH', reason: `${fromColumn} names ${to}.`,
+    });
+
+  it('gives every topic a distinct, SQL-legal alias', () => {
+    const aliases = joinAliasesFor([orders.topic, payments.topic, shipments.topic]);
+    expect(new Set(aliases).size).toBe(3);
+    aliases.forEach(a => expect(a).toMatch(/^[A-Za-z_]/));
+  });
+
+  it('numbers homonyms rather than emitting the same alias twice', () => {
+    // Deux topics dont le segment distinctif est un chiffre : aucun nom exploitable.
+    const aliases = joinAliasesFor(['demo.orders.1', 'demo.orders.2']);
+    expect(new Set(aliases).size).toBe(2);
+    aliases.forEach(a => expect(a).toMatch(/^[A-Za-z_]/));
+  });
+
+  it('joins three entities along their deduced relations', () => {
+    const result = buildMultiJoinSql(
+      ['demo_payments', 'demo_orders', 'demo_shipments'],
+      [orders, payments, shipments],
+      [rel('demo_payments', 'demo_orders', 'order_id', 'order_id'),
+       rel('demo_shipments', 'demo_orders', 'order_id', 'order_id')]);
+
+    expect(result.problem).toBeNull();
+    expect(result.sql).toContain('FROM demo_payments AS');
+    // Deux JOIN pour trois tables : un arbre couvrant, pas un produit cartésien.
+    expect(result.sql!.match(/^JOIN /gm)).toHaveLength(2);
+    expect(result.sql).toContain('LIMIT 50');
+  });
+
+  it('every JOIN predicate cites a table already introduced', () => {
+    const result = buildMultiJoinSql(
+      ['demo_payments', 'demo_orders', 'demo_shipments'],
+      [orders, payments, shipments],
+      [rel('demo_payments', 'demo_orders', 'order_id', 'order_id'),
+       rel('demo_shipments', 'demo_orders', 'order_id', 'order_id')]);
+
+    const lines = result.sql!.split('\n');
+    const introduced = new Set<string>();
+    for (const line of lines) {
+      const from = /^FROM \S+ AS (\S+)/.exec(line);
+      if (from) { introduced.add(from[1]); continue; }
+      const join = /^JOIN \S+ AS (\S+)/.exec(line);
+      if (join) { introduced.add(join[1]); continue; }
+      const on = /^ {2}ON (\S+?)\.\S+ = (\S+?)\./.exec(line);
+      if (on) {
+        expect(introduced.has(on[1])).toBe(true);
+        expect(introduced.has(on[2])).toBe(true);
+      }
+    }
+  });
+
+  it('refuses a set the deduced relations do not connect, and says so', () => {
+    const lonely = ent('demo_iot', 'demo.iot.sensors', [col('reading')]);
+    const result = buildMultiJoinSql(
+      ['demo_payments', 'demo_orders', 'demo_iot'],
+      [orders, payments, lonely],
+      [rel('demo_payments', 'demo_orders', 'order_id', 'order_id')]);
+
+    expect(result.sql).toBeNull();
+    expect(result.problem).toContain('demo_iot');
+  });
+
+  it('refuses fewer than two entities', () => {
+    const result = buildMultiJoinSql(['demo_orders'], [orders], []);
+    expect(result.sql).toBeNull();
+    expect(result.problem).toContain('at least two');
+  });
+
+  it('falls back to the target key when a relation names no column, and says it', () => {
+    const result = buildMultiJoinSql(
+      ['demo_payments', 'demo_orders'], [orders, payments],
+      [rel('demo_payments', 'demo_orders', 'order_id', null)]);
+    expect(result.sql).toContain('.order_id');
+  });
+
+  it('refuses an edge whose target has neither a named column nor a detected key', () => {
+    const keyless = ent('demo_orders', 'demo.orders.received', [col('status')]);
+    const result = buildMultiJoinSql(
+      ['demo_payments', 'demo_orders'], [keyless, payments],
+      [rel('demo_payments', 'demo_orders', 'order_id', null)]);
+    expect(result.sql).toBeNull();
+    expect(result.problem).toContain('demo_orders');
+  });
+
+  it('leaves nested fields out of the projection and reports how many', () => {
+    const nested = ent('demo_payments', 'demo.payments.authorized', [
+      col('payment_id', { primaryKey: true }),
+      col('order_id', { references: 'demo_orders' }),
+      col('card.last4'),
+    ], 'payment_id');
+    const result = buildMultiJoinSql(
+      ['demo_payments', 'demo_orders'], [orders, nested],
+      [rel('demo_payments', 'demo_orders', 'order_id', 'order_id')]);
+    expect(result.sql).not.toContain('card.last4');
+    expect(result.caveats.some(c => c.includes('1 nested field'))).toBe(true);
   });
 });
 
 describe('orphanKeyColumns / describeOrphanKey', () => {
-  function withColumns(id: string, columns: DataModelEntity['columns'], topic?: string): DataModelEntity {
-    return { ...entity(id, 0), topic: topic ?? id.replace(/_/g, '.'), columns };
-  }
-
   const col = (name: string, over: Partial<DataModelEntity['columns'][number]> = {}) => ({
-    name, type: 'STRING', primaryKey: false, references: null, ...over,
+    name, type: 'STRING', primaryKey: false, references: null, keyBase: null, ...over,
   });
 
-  it('flags a key-like column that yielded no relation', () => {
+  function withColumns(id: string, columns: DataModelEntity['columns']): DataModelEntity {
+    return { ...entity(id, 0), columns };
+  }
+
+  it('flags a column the server said points somewhere, that produced no relation', () => {
     const e = withColumns('demo_payments', [
       col('payment_id', { primaryKey: true }),
-      col('customer_id'),
+      col('customer_id', { keyBase: 'customer' }),
       col('amount'),
     ]);
-    const orphans = orphanKeyColumns(e, [e]);
+    const orphans = orphanKeyColumns(e);
     expect(orphans.map(o => o.column)).toEqual(['customer_id']);
     expect(orphans[0].base).toBe('customer');
   });
 
   it('a column a relation did come out of is not an orphan', () => {
     const e = withColumns('demo_payments', [
-      col('order_id', { references: 'demo_orders' }),
+      col('order_id', { keyBase: 'order', references: 'demo_orders' }),
     ]);
-    expect(orphanKeyColumns(e, [e])).toEqual([]);
+    expect(orphanKeyColumns(e)).toEqual([]);
   });
 
-  it('the primary key references nothing by construction, so it is never an orphan', () => {
-    const e = withColumns('demo_orders', [col('order_id', { primaryKey: true })]);
-    expect(orphanKeyColumns(e, [e])).toEqual([]);
+  it('the primary key is never an orphan', () => {
+    const e = withColumns('demo_orders', [col('order_id', { primaryKey: true, keyBase: 'order' })]);
+    expect(orphanKeyColumns(e)).toEqual([]);
   });
 
-  it('a bare id identifies this entity and names nobody else', () => {
-    const e = withColumns('demo_orders', [col('id'), col('status')]);
-    expect(orphanKeyColumns(e, [e])).toEqual([]);
+  it('a column the server judged to point at nobody is never flagged', () => {
+    // The server returns keyBase null for an ordinary column, for a bare id, and for a name
+    // echoing its own topic — three cases, one answer, and none of them is a broken key.
+    const e = withColumns('demo_orders', [col('amount'), col('id'), col('order_id')]);
+    expect(orphanKeyColumns(e)).toEqual([]);
   });
 
-  it('an ordinary column is never flagged — a false flag is worse than a missing one', () => {
-    const e = withColumns('demo_invoices', [col('paid'), col('valid'), col('total')]);
-    expect(orphanKeyColumns(e, [e])).toEqual([]);
+  it('an empty keyBase is treated as pointing at nobody', () => {
+    const e = withColumns('demo_orders', [col('id', { keyBase: '' })]);
+    expect(orphanKeyColumns(e)).toEqual([]);
   });
 
-  it('says which half is checkable: no selected topic carries the name', () => {
-    const e = withColumns('demo_payments', [col('customer_id')], 'demo.payments.authorized');
-    const [orphan] = orphanKeyColumns(e, [e]);
-    expect(orphan.namedEntityInModel).toBe(false);
-    expect(describeOrphanKey(orphan)).toContain('no selected topic is named after it');
-  });
-
-  it('and when one does, it states that the deduction did not conclude, never why', () => {
-    const payments = withColumns('demo_payments', [col('customer_id')], 'demo.payments.authorized');
-    const customers = withColumns('demo_customers', [col('name')], 'demo.customers.v1');
-    const [orphan] = orphanKeyColumns(payments, [payments, customers]);
-    expect(orphan.namedEntityInModel).toBe(true);
-    expect(describeOrphanKey(orphan)).toContain('drew no relation from it');
-  });
-
-  it('matches an English plural topic the way the server does', () => {
-    const e = withColumns('demo_payments', [col('company_id')], 'demo.payments.v1');
-    const companies = withColumns('demo_companies', [col('name')], 'demo.companies.v1');
-    expect(orphanKeyColumns(e, [e, companies])[0].namedEntityInModel).toBe(true);
-  });
-
-  it('an entity never resolves against itself', () => {
-    const orders = withColumns('demo_orders', [col('order_id')], 'demo.orders.v1');
-    expect(orphanKeyColumns(orders, [orders])[0].namedEntityInModel).toBe(false);
+  it('states the one thing that is now true by construction, not by check', () => {
+    // A target present in the model always yields a relation, so a base with no reference means
+    // the topic is absent from the selection — actionable, and not a guess.
+    expect(describeOrphanKey({ column: 'customer_id', base: 'customer' }))
+      .toBe("Reads as a key naming 'customer' — no selected topic is named after it.");
   });
 });
 
