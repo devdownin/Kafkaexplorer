@@ -21,9 +21,11 @@ import {
   formatCount, describeRelation, matchingColumns, describeColumnMatches,
   buildExportSvg, exportNotes, toMermaidEr, buildJoinSql,
   diffModels, describeDiff, diffIsEmpty,
+  filterRelations, describeRelationFilter, orphanKeyColumns, describeOrphanKey,
   CONFIDENCE_STYLE, describeModel,
 } from './dataModel';
-import type { DataModelRelation } from '../api/types';
+import type { OrphanKey } from './dataModel';
+import type { DataModelRelation, RelationConfidence } from '../api/types';
 
 /**
  * La page Modèle de données : une sélection de topics → les entités (topics lus comme des
@@ -42,8 +44,10 @@ const EntityNode: React.FC<{
   tint: { header: string; accent: string };
   /** Colonnes que la recherche de champ désigne dans cette entité. */
   highlighted: Set<string> | undefined;
+  /** Colonnes qui se lisent comme une clé étrangère sans qu'aucune relation en soit sortie. */
+  orphanKeys: Set<string> | undefined;
   onClick: () => void;
-}> = ({ entity, x, y, selected, dimmed, tint, highlighted, onClick }) => {
+}> = ({ entity, x, y, selected, dimmed, tint, highlighted, orphanKeys, onClick }) => {
   const { columns, hidden } = displayedColumns(entity);
   const height = entityHeight(entity);
   const stroke = selected ? '#ffffff' : tint.accent;
@@ -94,7 +98,11 @@ const EntityNode: React.FC<{
       {/* Colonnes */}
       {columns.map((column, i) => {
         const rowY = y + HEADER_H + (i + 1) * ROW_H - 6;
-        const marker = column.primaryKey ? '🔑' : column.references ? '→' : '';
+        // `?` : se lit comme une clé étrangère, mais rien n'en est sorti. Sans marqueur elle est
+        // indiscernable d'une colonne ordinaire, et le diagramme paraît incomplet sans dire
+        // pourquoi. Le détail — et la seule moitié vérifiable de la cause — est dans l'inspecteur.
+        const orphan = orphanKeys?.has(column.name) ?? false;
+        const marker = column.primaryKey ? '🔑' : column.references ? '→' : orphan ? '?' : '';
         const name = column.name.length > 22 ? column.name.slice(0, 21) + '…' : column.name;
         const lit = highlighted?.has(column.name) ?? false;
         return (
@@ -105,7 +113,8 @@ const EntityNode: React.FC<{
             )}
             <text x={x + 10} y={rowY} fontSize={10} fontFamily="JetBrains Mono, monospace"
               fontWeight={lit ? 'bold' : 'normal'}
-              fill={lit ? '#f5c264' : column.primaryKey ? '#7ee2a8' : column.references ? '#f5c264' : '#c5cad6'}>
+              fill={lit ? '#f5c264' : column.primaryKey ? '#7ee2a8'
+                : column.references ? '#f5c264' : orphan ? '#8d8577' : '#c5cad6'}>
               {marker ? `${marker} ` : ''}{name}
             </text>
             <text x={x + NODE_W - 10} y={rowY} textAnchor="end" fontSize={9}
@@ -160,6 +169,12 @@ const DataModel: React.FC = () => {
   const [edgeTip, setEdgeTip] = useState<{ relation: DataModelRelation; x: number; y: number } | null>(null);
   /** Recherche d'une entité pour la centrer — retrouver une table par son nom dans un grand modèle. */
   const [jumpQuery, setJumpQuery] = useState('');
+  /**
+   * Grades de confiance dessinés. Une commande de lecture : elle masque des traits, elle ne
+   * change ni la réponse du serveur, ni la disposition, ni ce que l'inspecteur montre.
+   */
+  const [shownConfidences, setShownConfidences] = useState<Set<RelationConfidence>>(
+    () => new Set<RelationConfidence>(['HIGH', 'MEDIUM', 'LOW']));
   /** Comparaison avec une seconde sélection : pas d'historique côté serveur, donc deux appels
       indépendants et un diff calculé côté client — voir `diffModels`. */
   const [compareOpen, setCompareOpen] = useState(false);
@@ -315,10 +330,20 @@ const DataModel: React.FC = () => {
     [showUnrelated, entities, connected, isolated.length]);
   const positions = useMemo(
     () => computeLayout(graphEntities, relations), [graphEntities, relations]);
+  /**
+   * Les arêtes réellement dessinées. La disposition ci-dessus reste calculée sur **toutes** les
+   * relations : basculer un grade masque des traits, il ne réarrange pas le diagramme sous les
+   * yeux de l'opérateur.
+   */
+  const visibleRelations = useMemo(
+    () => filterRelations(relations, shownConfidences), [relations, shownConfidences]);
+  const filterNote = useMemo(
+    () => describeRelationFilter(relations.length, visibleRelations.length),
+    [relations.length, visibleRelations.length]);
   /** Géométrie des arêtes : ancrées sur les lignes de colonnes, écartées quand elles se partagent une ancre. */
   const edgeGeometry = useMemo(
-    () => computeEdgeGeometry(relations, graphEntities, positions),
-    [relations, graphEntities, positions]);
+    () => computeEdgeGeometry(visibleRelations, graphEntities, positions),
+    [visibleRelations, graphEntities, positions]);
   /**
    * Centre le viewport sur une entité choisie dans la recherche — sans passer par un cadrage
    * de tout le graphe, qui dézoomerait sur trente tables pour n'en montrer qu'une. Restreinte
@@ -356,15 +381,44 @@ const DataModel: React.FC = () => {
   const neighborIds = useMemo<Set<string> | null>(() => {
     if (!selectedId || !positions[selectedId]) return null;
     const ids = new Set<string>([selectedId]);
-    relations.forEach(r => {
+    // Sur les relations *visibles* : la mise en avant décrit ce qui est dessiné, et un voisin
+    // éclairé sans trait qui le relie ne s'explique pas.
+    visibleRelations.forEach(r => {
       if (r.from === selectedId || r.to === selectedId) { ids.add(r.from); ids.add(r.to); }
     });
     return ids;
-  }, [selectedId, relations, positions]);
+  }, [selectedId, visibleRelations, positions]);
 
+  /** L'inspecteur montre **toutes** les relations de l'entité : c'est le panneau de preuve, pas
+      le dessin. Celles que le filtre masque sont marquées plutôt qu'omises. */
   const selectedRelations = useMemo(
     () => (selectedId ? relations.filter(r => r.from === selectedId || r.to === selectedId) : []),
     [selectedId, relations]);
+
+  /**
+   * Les colonnes qui se lisent comme une clé sans porter de relation, par entité. Calculé une
+   * fois pour tout le modèle : la résolution consulte toutes les entités, donc la faire par nœud
+   * au rendu serait quadratique à chaque frame de pan.
+   */
+  const orphansByEntity = useMemo(() => {
+    const map = new Map<string, OrphanKey[]>();
+    for (const entity of entities) {
+      const orphans = orphanKeyColumns(entity, entities);
+      if (orphans.length > 0) map.set(entity.id, orphans);
+    }
+    return map;
+  }, [entities]);
+
+  const selectedOrphans = useMemo(
+    () => (selectedId ? orphansByEntity.get(selectedId) ?? [] : []),
+    [selectedId, orphansByEntity]);
+
+  /** La même chose en ensembles de noms : ce dont un nœud a besoin pour marquer ses lignes. */
+  const orphanKeySets = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    orphansByEntity.forEach((orphans, id) => map.set(id, new Set(orphans.map(o => o.column))));
+    return map;
+  }, [orphansByEntity]);
 
   /** Le formulaire a-t-il bougé depuis le modèle affiché ? Un graphe périmé doit le dire. */
   const stale = model !== null && (
@@ -475,15 +529,19 @@ const DataModel: React.FC = () => {
     const caption = {
       title: 'Kafka data model',
       coverage: describeModel(model),
-      notes: exportNotes(model, entities.length - graphEntities.length),
+      notes: exportNotes(model, entities.length - graphEntities.length,
+        relations.length - visibleRelations.length),
     };
 
     const svg = buildExportSvg(
       inner,
       bounds,
       caption,
-      relations.length > 0
+      // Légende restreinte aux grades réellement dessinés : une ligne décrivant un style de
+      // trait absent de l'image apprend une convention que l'image ne montre pas.
+      visibleRelations.length > 0
         ? (Object.entries(CONFIDENCE_STYLE) as [keyof typeof CONFIDENCE_STYLE, typeof CONFIDENCE_STYLE.HIGH][])
+            .filter(([grade]) => shownConfidences.has(grade))
             .map(([grade, style]) => ({
               color: style.color, dash: style.dash, label: `${grade.toLowerCase()} — ${style.label}`,
             }))
@@ -508,7 +566,10 @@ const DataModel: React.FC = () => {
     if (format === 'mermaid') {
       // La seule forme qui se relit et se différencie : un PNG dans une revue ne dit pas ce
       // qui a changé depuis la version d'avant.
-      save(new Blob([toMermaidEr(model, caption)], { type: 'text/plain;charset=utf-8' }), 'mmd');
+      // Le SVG sérialise le DOM, donc il est déjà filtré ; Mermaid réémet depuis la réponse, et
+      // deux exports du même écran qui ne disent pas la même chose seraient pires que le filtre.
+      save(new Blob([toMermaidEr({ ...model, relations: visibleRelations }, caption)],
+        { type: 'text/plain;charset=utf-8' }), 'mmd');
       return;
     }
 
@@ -549,7 +610,8 @@ const DataModel: React.FC = () => {
     } finally {
       setExporting(false);
     }
-  }, [model, selectedId, graphEntities, positions, entities.length, relations.length, domainLegend]);
+  }, [model, selectedId, graphEntities, positions, entities.length, relations.length,
+      visibleRelations, shownConfidences, domainLegend]);
 
   const onGraphKeyDown = useCallback((e: React.KeyboardEvent<SVGSVGElement>) => {
     const step = e.shiftKey ? 160 : 48;
@@ -803,19 +865,49 @@ const DataModel: React.FC = () => {
               )}
             </div>
           )}
-          {/* Légende des confiances : une arête déduite doit dire sur quoi elle repose. */}
+          {/* Légende des confiances — et le filtre, sur les mêmes lignes. Une arête déduite doit
+              dire sur quoi elle repose ; un modèle riche en concordances de noms seules noie les
+              arêtes que la clé de la cible étaye vraiment, d'où la case à cocher par grade. Une
+              seule liste : deux listes des trois mêmes grades, l'une légende et l'autre filtre,
+              se contrediraient à la première divergence. */}
           {model && relations.length > 0 && (
             <div className="space-y-1">
-              <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Relation confidence</p>
-              {(Object.entries(CONFIDENCE_STYLE) as [keyof typeof CONFIDENCE_STYLE, typeof CONFIDENCE_STYLE.HIGH][]).map(([grade, style]) => (
-                <div key={grade} className="flex items-center gap-2 text-[10px] text-on-surface-variant">
-                  <svg width="24" height="6" aria-hidden="true">
-                    <line x1="0" y1="3" x2="24" y2="3" stroke={style.color} strokeWidth="2"
-                      strokeDasharray={style.dash} />
-                  </svg>
-                  <span>{grade.toLowerCase()} — {style.label}</span>
-                </div>
-              ))}
+              <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">
+                Relation confidence
+              </p>
+              {(Object.entries(CONFIDENCE_STYLE) as [keyof typeof CONFIDENCE_STYLE, typeof CONFIDENCE_STYLE.HIGH][]).map(([grade, style]) => {
+                const count = relations.filter(r => r.confidence === grade).length;
+                return (
+                  <label key={grade}
+                    className={`flex items-center gap-2 text-[10px] cursor-pointer transition-colors ${
+                      shownConfidences.has(grade) ? 'text-on-surface-variant' : 'text-outline'
+                    }`}>
+                    <input
+                      type="checkbox"
+                      checked={shownConfidences.has(grade)}
+                      aria-label={`Draw ${grade.toLowerCase()}-confidence relations`}
+                      onChange={() => setShownConfidences(prev => {
+                        const next = new Set(prev);
+                        if (!next.delete(grade)) next.add(grade);
+                        return next;
+                      })}
+                      className="accent-[#a3adff] shrink-0" />
+                    <svg width="24" height="6" aria-hidden="true" className="shrink-0">
+                      <line x1="0" y1="3" x2="24" y2="3" stroke={style.color} strokeWidth="2"
+                        strokeDasharray={style.dash}
+                        strokeOpacity={shownConfidences.has(grade) ? 1 : 0.3} />
+                    </svg>
+                    <span>{grade.toLowerCase()} — {style.label}</span>
+                    <span className="ml-auto shrink-0 tabular-nums text-outline">{count}</span>
+                  </label>
+                );
+              })}
+              {/* Ce que le filtre retire, dit une fois — et seulement quand il retire. */}
+              {filterNote && (
+                <p className="text-[10px] text-warning leading-snug pt-0.5" role="status">
+                  {filterNote}
+                </p>
+              )}
               <p className="text-[10px] text-outline leading-snug pt-0.5">
                 Crow's foot marks the referencing (many) side, the bar the referenced (one) side.
               </p>
@@ -1034,7 +1126,7 @@ const DataModel: React.FC = () => {
               {/* Arêtes : ancrées sur la ligne de leur colonne, cardinalité en patte-d'oie —
                   la patte-d'oie côté référent (N), la barre côté référencé (1). Le style de
                   trait reste réservé à la confiance de la déduction. */}
-              {relations.map((relation, i) => {
+              {visibleRelations.map((relation, i) => {
                 const geometry = edgeGeometry[i];
                 if (!geometry) return null;
 
@@ -1106,6 +1198,7 @@ const DataModel: React.FC = () => {
                     dimmed={neighborIds !== null && !neighborIds.has(entity.id)}
                     tint={tintOf(entity.topic)}
                     highlighted={columnMatches.get(entity.id)}
+                    orphanKeys={orphanKeySets.get(entity.id)}
                     onClick={() => setSelectedId(prev => (prev === entity.id ? null : entity.id))}
                   />
                 );
@@ -1161,6 +1254,23 @@ const DataModel: React.FC = () => {
                   No key column was detected — none of the fields reads as an identifier.
                 </p>
               )}
+              {/* Une colonne qui se lit comme une clé étrangère et dont aucune relation n'est
+                  sortie était indiscernable d'une colonne ordinaire : le diagramme paraissait
+                  incomplet sans dire pourquoi. Rien n'est deviné sur la cause — seule la moitié
+                  vérifiable est affirmée, à savoir si un topic sélectionné porte ce nom. */}
+              {selectedOrphans.length > 0 && (
+                <div className="mt-3 space-y-1.5 border-t border-outline-variant/40 pt-2">
+                  <p className="text-[10px] font-bold text-[#f5c264] uppercase tracking-wider">
+                    Key-like, no relation ({selectedOrphans.length})
+                  </p>
+                  {selectedOrphans.map(orphan => (
+                    <div key={orphan.column} className="text-[10px] leading-snug">
+                      <span className="font-mono text-on-surface">{orphan.column}</span>
+                      <span className="text-outline"> — {describeOrphanKey(orphan)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </section>
 
             <section>
@@ -1187,6 +1297,14 @@ const DataModel: React.FC = () => {
                         {relation.confidence}
                       </span>
                     </div>
+                    {/* L'inspecteur est le panneau de preuve : il montre tout, y compris ce que
+                        le filtre retire du dessin — mais alors il le dit, sinon la relation
+                        listée ici sans trait à l'écran ne s'explique pas. */}
+                    {!shownConfidences.has(relation.confidence) && (
+                      <p className="text-[10px] text-warning leading-snug">
+                        Hidden from the diagram by the confidence filter.
+                      </p>
+                    )}
                     {/* La preuve, en toutes lettres : une arête déduite sans son évidence est une
                         supposition dessinée comme un fait. */}
                     <p className="text-on-surface-variant leading-snug">{relation.reason}</p>

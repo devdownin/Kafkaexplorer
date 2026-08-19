@@ -417,6 +417,127 @@ export function centerOnEntity(
   };
 }
 
+// ── Filtre de confiance ───────────────────────────────────────────────────────
+
+/**
+ * Les relations à *dessiner*, parmi celles que le serveur a déduites.
+ *
+ * Un modèle riche en concordances de noms seules (`MEDIUM`) ou en simples colonnes de clé
+ * partagées (`LOW`) noie les arêtes `HIGH` — celles où la colonne référente et la clé de la
+ * cible concordent — sous des traits que rien n'étaye vraiment. Le filtre est donc une commande
+ * de *lecture* : il ne change ni ce que le serveur a répondu, ni ce que l'inspecteur montre.
+ *
+ * Ce qu'il ne touche pas, délibérément : la disposition et la répartition connectées/isolées
+ * restent calculées sur **toutes** les relations. Basculer un grade doit masquer des traits, pas
+ * réarranger le diagramme sous les yeux de l'opérateur — et surtout, « No deduced relation (N) »
+ * doit continuer de vouloir dire *aucune*, jamais « aucune parmi celles que vous regardez ».
+ */
+export function filterRelations(
+  relations: DataModelRelation[],
+  enabled: ReadonlySet<RelationConfidence>,
+): DataModelRelation[] {
+  return relations.filter(relation => enabled.has(relation.confidence));
+}
+
+/**
+ * Ce que le filtre retire, en toutes lettres. `null` quand il ne retire rien : une mention
+ * permanente disant « 0 masquée » apprendrait à ne plus lire la ligne.
+ */
+export function describeRelationFilter(total: number, shown: number): string | null {
+  const hidden = total - shown;
+  if (hidden <= 0) return null;
+  return `${hidden} of ${total} relations hidden by the confidence filter`;
+}
+
+// ── Colonnes qui ressemblent à une clé sans porter de relation ─────────────────
+
+/**
+ * Miroir de `DataModelService.idBaseOf` — le mot de base d'un champ qui se lit comme un
+ * identifiant. `order_id` → `order` ; `id` seul → `""` (un identifiant de l'entité elle-même) ;
+ * `amount` → `null`. Seul le dernier segment du chemin compte, donc `customer.id` se lit comme
+ * un identifiant appartenant à `customer`.
+ *
+ * C'est un miroir, avec la même discipline que `components/processmining/schemaMapping.ts` :
+ * il n'est **jamais plus strict que le serveur**. Ce qu'il produit ne décide de rien — il ne
+ * sert qu'à signaler une colonne à l'écran — et dans le doute, ne rien signaler vaut mieux que
+ * d'accuser une colonne ordinaire d'être une clé cassée.
+ */
+const SNAKE_ID = /^(?:(.*?)[_-])?(?:id|uuid|key|ref|reference|code)$/i;
+const CAMEL_ID = /^(.*?)(?:Id|Uuid|Key|Ref|Reference|Code)$/;
+
+export function idBaseOf(fieldPath: string): string | null {
+  const leaf = fieldPath.slice(fieldPath.lastIndexOf('.') + 1);
+  const match = SNAKE_ID.exec(leaf) ?? CAMEL_ID.exec(leaf);
+  if (!match) return null;
+  const base = match[1];
+  if (base === undefined || base === '') return '';
+  // Convention FK `<entité><suffixe>` : dans un composé camelCase, le mot de l'entité est celui
+  // qui précède le suffixe. Découpe sur une frontière minuscule→majuscule seulement, sinon un
+  // nom tout en capitales serait éclaté lettre par lettre.
+  const humps = base.split(/(?<=\p{Lower})(?=\p{Upper})/u);
+  return humps[humps.length - 1].toLowerCase();
+}
+
+/** Miroir de `DataModelService.topicTokens`. */
+function topicTokens(topic: string): string[] {
+  return topic.toLowerCase().split(/[._-]+/).filter(s => s !== '' && !/^\d+$/.test(s));
+}
+
+/** Miroir de `DataModelService.tokenMatches` — pluriels anglais seulement, comme le serveur. */
+function tokenMatches(token: string, base: string): boolean {
+  if (token === base) return true;
+  return token === `${base}s` || token === `${base}es`
+    || (token.endsWith('ies') && base.endsWith('y')
+        && token.slice(0, base.length - 1) === base.slice(0, base.length - 1));
+}
+
+export interface OrphanKey {
+  column: string;
+  /** Le mot d'entité que le nom désigne — `customer_id` → `customer`. */
+  base: string;
+  /** Une autre entité du modèle porte-t-elle ce nom ? C'est la moitié vérifiable de l'explication. */
+  namedEntityInModel: boolean;
+}
+
+/**
+ * Les colonnes qui **se lisent comme une clé étrangère** et dont pourtant aucune relation n'est
+ * sortie. Sans ça elles sont indiscernables d'une colonne ordinaire, et un diagramme qui paraît
+ * incomplet ne dit pas pourquoi il l'est.
+ *
+ * Un `id` nu est exclu : sa base est vide, donc il identifie *cette* entité et ne désigne
+ * personne d'autre. La clé primaire l'est aussi — elle ne référence rien par construction.
+ *
+ * Rien n'est deviné sur la cause. La seule moitié vérifiable côté navigateur est de savoir si
+ * une entité du modèle porte ce nom : sinon le topic visé n'est simplement pas dans la
+ * sélection, et c'est actionnable. Quand il y est, on dit que la déduction n'a pas conclu — pas
+ * pourquoi.
+ */
+export function orphanKeyColumns(
+  entity: DataModelEntity,
+  entities: DataModelEntity[],
+): OrphanKey[] {
+  const orphans: OrphanKey[] = [];
+  for (const column of entity.columns) {
+    if (column.primaryKey || column.references !== null) continue;
+    const base = idBaseOf(column.name);
+    if (base === null || base === '') continue;
+    orphans.push({
+      column: column.name,
+      base,
+      namedEntityInModel: entities.some(other => other.id !== entity.id
+        && topicTokens(other.topic).some(token => tokenMatches(token, base))),
+    });
+  }
+  return orphans;
+}
+
+/** La phrase qui accompagne une colonne orpheline dans l'inspecteur. */
+export function describeOrphanKey(orphan: OrphanKey): string {
+  return orphan.namedEntityInModel
+    ? `Reads as a key naming '${orphan.base}', but the deduction drew no relation from it.`
+    : `Reads as a key naming '${orphan.base}' — no selected topic is named after it.`;
+}
+
 // ── Domaines de topics ────────────────────────────────────────────────────────
 
 /**
@@ -759,11 +880,24 @@ const EXPORT_MAX_NOTES = 4;
  * côté et les réserves du serveur. Un diagramme détaché de l'application ne peut plus être
  * interrogé — s'il ne porte pas ses limites, il se lit comme un modèle complet.
  */
-export function exportNotes(response: DataModelResponse, hiddenEntities: number): string[] {
+export function exportNotes(
+  response: DataModelResponse,
+  hiddenEntities: number,
+  /**
+   * Arêtes retirées par le filtre de confiance. Le SVG sérialise le DOM, donc un export pris
+   * sous filtre est déjà filtré : sans cette mention il se lirait comme le modèle entier, ce que
+   * cette fonction existe précisément pour empêcher.
+   */
+  hiddenRelations = 0,
+): string[] {
   const notes: string[] = [];
   if (hiddenEntities > 0) {
     notes.push(`${hiddenEntities} ${hiddenEntities === 1 ? 'entity has' : 'entities have'}`
       + ' no deduced relation and are not drawn.');
+  }
+  if (hiddenRelations > 0) {
+    notes.push(`${hiddenRelations} ${hiddenRelations === 1 ? 'relation is' : 'relations are'}`
+      + ' hidden by the confidence filter and not drawn.');
   }
   const warnings = response.warnings ?? [];
   notes.push(...warnings.slice(0, EXPORT_MAX_NOTES));
