@@ -14,6 +14,7 @@ import {
   capTopics, relationKey, diffModels, diffIsEmpty, describeDiff,
   filterRelations, describeRelationFilter, orphanKeyColumns, describeOrphanKey,
   shortenColumnName, readSelectionDraft, saveSelectionDraft, clampMaxTopics,
+  maxTopicsFromQuery, requestTimeoutMs, describeBuildBudget, MIN_REQUEST_TIMEOUT_MS,
   minimapLayout, visibleGraphRect, graphFullyVisible, centerOnGraphPoint,
   readSavedModels, saveModel, deleteSavedModel, clearSavedModels, MAX_SAVED_MODELS,
   SAVED_MODELS_KEY, joinAliasesFor, buildMultiJoinSql,
@@ -394,7 +395,7 @@ describe('centerOnEntity', () => {
 });
 
 describe('clampMaxTopics', () => {
-  const limits = { maxTopics: 100, defaultMaxTopics: 30 };
+  const limits = { maxTopics: 100, defaultMaxTopics: 30, perTopicTimeoutMs: 20_000, inferenceThreads: 4 };
 
   it('lets a run ask for more than the default, up to the server ceiling', () => {
     expect(clampMaxTopics(60, limits)).toBe(60);
@@ -419,7 +420,59 @@ describe('clampMaxTopics', () => {
   });
 
   it('a ceiling below the default wins over it — the server is the authority', () => {
-    expect(clampMaxTopics(30, { maxTopics: 5, defaultMaxTopics: 30 })).toBe(5);
+    expect(clampMaxTopics(30, { maxTopics: 5, defaultMaxTopics: 30, perTopicTimeoutMs: 20_000, inferenceThreads: 4 })).toBe(5);
+  });
+});
+
+describe('the budget travels in the URL', () => {
+  it('a link replays the budget its run was built under', () => {
+    const url = buildQuery(['a', 'b'], 60);
+    expect(maxTopicsFromQuery(url)).toBe(60);
+    expect(topicsFromQuery(url)).toEqual(['a', 'b']);
+  });
+
+  // Un lien n'a pas à porter un paramètre qui ne dit rien, et les URLs déjà partagées ne bougent pas.
+  it('the default is left out of the URL entirely', () => {
+    expect(buildQuery(['a'], DEFAULT_MAX_TOPICS)).toBe('?topics=a');
+    expect(buildQuery(['a'])).toBe('?topics=a');
+  });
+
+  it('an absent or unusable value reads as no budget, never an invented one', () => {
+    expect(maxTopicsFromQuery('?topics=a')).toBeNull();
+    expect(maxTopicsFromQuery('?topics=a&max=nope')).toBeNull();
+    expect(maxTopicsFromQuery('?topics=a&max=0')).toBeNull();
+    expect(maxTopicsFromQuery('?topics=a&max=-4')).toBeNull();
+  });
+});
+
+describe('requestTimeoutMs', () => {
+  const limits = { maxTopics: 100, defaultMaxTopics: 30, perTopicTimeoutMs: 20_000, inferenceThreads: 4 };
+
+  // Le défaut fixe de deux minutes reste le plancher : une petite génération se comporte
+  // exactement comme avant.
+  it('keeps the floor for a run the server can answer well within it', () => {
+    expect(requestTimeoutMs(4, limits)).toBe(MIN_REQUEST_TIMEOUT_MS);
+    expect(requestTimeoutMs(1, limits)).toBe(MIN_REQUEST_TIMEOUT_MS);
+  });
+
+  // 100 topics sur 4 fils, 20 s chacun : 25 vagues, soit 500 s — largement au-delà des deux
+  // minutes que la page attendait, ce qui faisait abandonner axios pendant que le serveur
+  // travaillait encore.
+  it('waits for the worst case the server describes on a large run', () => {
+    expect(requestTimeoutMs(100, limits)).toBe(25 * 20_000 + 15_000);
+    expect(requestTimeoutMs(100, limits)).toBeGreaterThan(MIN_REQUEST_TIMEOUT_MS);
+  });
+
+  it('falls back to the floor while the limits are unknown or unusable', () => {
+    expect(requestTimeoutMs(100, null)).toBe(MIN_REQUEST_TIMEOUT_MS);
+    expect(requestTimeoutMs(100, { ...limits, inferenceThreads: 0 })).toBe(MIN_REQUEST_TIMEOUT_MS);
+    expect(requestTimeoutMs(100, { ...limits, perTopicTimeoutMs: 0 })).toBe(MIN_REQUEST_TIMEOUT_MS);
+  });
+
+  it('states the bound as a bound, and only when it exceeds the floor', () => {
+    expect(describeBuildBudget(4, limits)).toBeNull();
+    expect(describeBuildBudget(100, null)).toBeNull();
+    expect(describeBuildBudget(100, limits)).toBe('Up to 9 min if every topic is slow to answer.');
   });
 });
 
@@ -953,14 +1006,15 @@ describe('shortenColumnName', () => {
 });
 
 describe('selection draft', () => {
-  it('round-trips an unrun selection', () => {
-    saveSelectionDraft(['demo.orders', 'demo.payments']);
-    expect(readSelectionDraft(DEFAULT_MAX_TOPICS)).toEqual(['demo.orders', 'demo.payments']);
+  it('round-trips an unrun selection with the budget it was chosen under', () => {
+    saveSelectionDraft(['demo.orders', 'demo.payments'], 60);
+    expect(readSelectionDraft(DEFAULT_MAX_TOPICS))
+      .toEqual({ topics: ['demo.orders', 'demo.payments'], maxTopics: 60 });
   });
 
   it('an emptied selection clears the draft rather than storing nothing usefully', () => {
-    saveSelectionDraft(['demo.orders']);
-    saveSelectionDraft([]);
+    saveSelectionDraft(['demo.orders'], 30);
+    saveSelectionDraft([], 30);
     expect(readSelectionDraft(DEFAULT_MAX_TOPICS)).toBeNull();
   });
 
@@ -968,17 +1022,29 @@ describe('selection draft', () => {
     expect(readSelectionDraft(DEFAULT_MAX_TOPICS)).toBeNull();
   });
 
-  it('the cap applies on read, like every other path into the selection', () => {
-    saveSelectionDraft(Array.from({ length: 40 }, (_, i) => `t${i}`));
-    expect(readSelectionDraft(DEFAULT_MAX_TOPICS)).toHaveLength(DEFAULT_MAX_TOPICS);
+  // Le budget relu borne la relecture : sans ça, une sélection de 40 topics choisie sous un
+  // budget de 60 revenait tronquée à 30 par le seul défaut de l'appelant.
+  it('the draft is capped by its own budget, not by the caller\'s default', () => {
+    saveSelectionDraft(Array.from({ length: 40 }, (_, i) => `t${i}`), 60);
+    expect(readSelectionDraft(DEFAULT_MAX_TOPICS)?.topics).toHaveLength(40);
+  });
+
+  it('a draft with no budget of its own falls back to the cap it is read with', () => {
+    saveSelectionDraft(Array.from({ length: 40 }, (_, i) => `t${i}`), 100);
+    localStorage.setItem('kse:draft:data-model', JSON.stringify({
+      v: 1, at: Date.now(), value: Array.from({ length: 40 }, (_, i) => `t${i}`),
+    }));
+    const draft = readSelectionDraft(DEFAULT_MAX_TOPICS);
+    expect(draft?.topics).toHaveLength(DEFAULT_MAX_TOPICS);
+    expect(draft?.maxTopics).toBeNull();
   });
 
   it('a draft of the wrong shape is ignored rather than trusted', () => {
-    saveSelectionDraft(['ok']);
+    saveSelectionDraft(['ok'], 30);
     // Ce qu'une version antérieure aurait pu écrire : des entrées qui ne sont pas des topics.
     localStorage.setItem('kse:draft:data-model',
-      JSON.stringify({ v: 1, at: Date.now(), value: [1, null, 'kept'] }));
-    expect(readSelectionDraft(DEFAULT_MAX_TOPICS)).toEqual(['kept']);
+      JSON.stringify({ v: 1, at: Date.now(), value: { topics: [1, null, 'kept'], maxTopics: 'x' } }));
+    expect(readSelectionDraft(DEFAULT_MAX_TOPICS)).toEqual({ topics: ['kept'], maxTopics: null });
   });
 });
 
@@ -1015,37 +1081,51 @@ describe('minimap', () => {
 
 describe('saved selections', () => {
   it('round-trips a named selection', () => {
-    saveModel('Order pipeline', ['demo.orders', 'demo.payments'], 111);
+    saveModel('Order pipeline', ['demo.orders', 'demo.payments'], 30, 111);
     expect(readSavedModels()).toEqual([
-      { name: 'Order pipeline', topics: ['demo.orders', 'demo.payments'], at: 111 },
+      { name: 'Order pipeline', topics: ['demo.orders', 'demo.payments'], maxTopics: 30, at: 111 },
     ]);
   });
 
   it('saving under an existing name replaces it in place rather than stacking a homonym', () => {
-    saveModel('Pipeline', ['a'], 1);
-    saveModel('Pipeline', ['a', 'b'], 2);
+    saveModel('Pipeline', ['a'], 30, 1);
+    saveModel('Pipeline', ['a', 'b'], 30, 2);
     const models = readSavedModels();
     expect(models).toHaveLength(1);
     expect(models[0].topics).toEqual(['a', 'b']);
   });
 
   it('the newest save comes first', () => {
-    saveModel('first', ['a'], 1);
-    saveModel('second', ['b'], 2);
+    saveModel('first', ['a'], 30, 1);
+    saveModel('second', ['b'], 30, 2);
     expect(readSavedModels().map(m => m.name)).toEqual(['second', 'first']);
   });
 
   it('deletes by name and leaves the rest', () => {
-    saveModel('keep', ['a'], 1);
-    saveModel('drop', ['b'], 2);
+    saveModel('keep', ['a'], 30, 1);
+    saveModel('drop', ['b'], 30, 2);
     expect(deleteSavedModel('drop').map(m => m.name)).toEqual(['keep']);
     expect(readSavedModels().map(m => m.name)).toEqual(['keep']);
   });
 
   it('refuses a blank name or an empty selection rather than storing an unusable entry', () => {
-    saveModel('   ', ['a']);
-    saveModel('named', []);
+    saveModel('   ', ['a'], 30, 30);
+    saveModel('named', [], 30, 30);
     expect(readSavedModels()).toEqual([]);
+  });
+
+  it('keeps the budget the selection was chosen under', () => {
+    saveModel('orders', ['a', 'b'], 60, 1);
+    expect(readSavedModels()[0].maxTopics).toBe(60);
+  });
+
+  // Une entrée écrite avant que le budget ne soit réglable se relit : elle reprend le défaut,
+  // elle n'est pas jetée.
+  it('an entry written before the budget existed reads back with none', () => {
+    localStorage.setItem('kse:data-model-saved', JSON.stringify({
+      v: 1, models: [{ name: 'legacy', topics: ['a'], at: 1 }],
+    }));
+    expect(readSavedModels()[0]).toEqual({ name: 'legacy', topics: ['a'], maxTopics: null, at: 1 });
   });
 
   it('is bounded', () => {
@@ -1069,7 +1149,7 @@ describe('saved selections', () => {
       v: 1,
       models: [{ name: 'ok', topics: ['a', 2, null] }, { name: 'empty', topics: [] }],
     }));
-    expect(readSavedModels()).toEqual([{ name: 'ok', topics: ['a'], at: 0 }]);
+    expect(readSavedModels()).toEqual([{ name: 'ok', topics: ['a'], maxTopics: null, at: 0 }]);
   });
 
   it('nothing stored reads as an empty list', () => {

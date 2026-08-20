@@ -684,11 +684,17 @@ export interface DataModelResponse {
  * `GET /api/data-model/limits` — les bornes du serveur, pour que la page n'en garde pas une
  * copie. `maxTopics` est le plafond dur (`explorer.data-model-max-topics`) : ce qu'une
  * génération ne peut pas dépasser quoi qu'elle demande. `defaultMaxTopics` est ce qu'elle
- * analyse quand elle ne demande rien.
+ * analyse quand elle ne demande rien. Les deux derniers disent combien de temps une génération
+ * peut prendre, ce dont la page a besoin pour dimensionner sa propre attente — et qu'elle ne
+ * doit surtout pas recopier en dur.
  *
  * @java DataModelLimits
  */
 export interface DataModelLimits {
   maxTopics: number;
   defaultMaxTopics: number;
+  /** Combien de temps un topic peut prendre avant d'être abandonné, côté serveur. */
+  perTopicTimeoutMs: number;
+  /** Combien de topics sont inférés en parallèle. */
+  inferenceThreads: number;
 }

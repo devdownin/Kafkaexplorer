@@ -44,7 +44,9 @@ public class DataModelController {
     public DataModelLimits limits() {
         return new DataModelLimits(
                 Math.max(1, explorerConfig.getDataModelMaxTopics()),
-                DataModelService.DEFAULT_MAX_TOPICS);
+                DataModelService.DEFAULT_MAX_TOPICS,
+                DataModelService.PER_TOPIC_TIMEOUT_MS,
+                DataModelService.THREAD_POOL_SIZE);
     }
 
     /**
