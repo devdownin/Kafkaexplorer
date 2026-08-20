@@ -17,11 +17,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import axios from 'axios';
 import type { DataModelResponse } from '../api/types';
+import { readPanelOpen } from './dataModel';
 
 vi.mock('axios');
 const mockedAxios = vi.mocked(axios, true);
@@ -108,6 +109,18 @@ async function renderPage(initialEntry = '/data-model') {
 /** Ouvre le tiroir de sélection — sous le seuil desktop, c'est la seule porte vers les topics. */
 async function openTopics(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: /^Topics \(/ }));
+}
+
+/**
+ * Bascule le bouchon `matchMedia` sur « desktop » le temps d'un test. C'est la seule disposition
+ * où le panneau se replie en rail, et le repli est précisément ce qui rend sa largeur au canevas :
+ * le laisser hors des tests le laisserait hors de tout contrôle.
+ */
+function asDesktop(): () => void {
+  const original = window.matchMedia;
+  window.matchMedia = (query: string) =>
+    ({ ...original(query), matches: true }) as MediaQueryList;
+  return () => { window.matchMedia = original; };
 }
 
 beforeEach(() => {
@@ -411,6 +424,68 @@ describe('DataModel page', () => {
     expect(screen.getByText('1 not drawn')).toBeInTheDocument();
     await openTopics(user);
     expect(screen.getByRole('button', { name: /No deduced relation \(1\)/ })).toBeInTheDocument();
+  });
+
+  /*
+   * Ces entités-là occupaient une grille sous le graphe dès que l'option était cochée, et une
+   * liste sans hauteur bornée sinon. Elles vivent maintenant dans une vraie liste, ouverte par
+   * défaut : c'est ce qui rend au canevas la place que le diagramme réclame.
+   */
+  it('lists the entities it does not draw, and says why they have no edge', async () => {
+    const user = userEvent.setup();
+    stubApi({
+      ...model,
+      entities: [...model.entities, {
+        id: 'demo_iot_sensors', topic: 'demo.iot.sensors', format: 'JSON',
+        primaryKey: null, messageCount: 7200,
+        columns: [{ name: 'reading', type: 'DOUBLE', primaryKey: false, references: null, keyBase: null }],
+      }],
+      topicsRequested: 3, topicsAnalyzed: 3,
+    });
+    await renderPage('/data-model?topics=demo.orders.1.received,demo.payments.authorized,demo.iot.sensors');
+
+    await screen.findByText('3 entities · 1 relation deduced');
+    await openTopics(user);
+
+    const list = screen.getByRole('listbox', { name: 'Entities with no deduced relation' });
+    expect(list).toBeInTheDocument();
+    const options = within(list).getAllByRole('option');
+    expect(options).toHaveLength(1);
+    expect(options[0]).toHaveTextContent('demo_iot_sensors');
+    // Un compte seul se lit comme une troncature ; la liste dit que c'est une réponse.
+    expect(screen.getByText(/no deduced relation — listed here rather than drawn/))
+      .toBeInTheDocument();
+
+    // Et elle reste le chemin vers l'inspecteur de ces entités, qui n'ont pas de nœud à cliquer.
+    await user.click(within(list).getByRole('button', { name: 'demo_iot_sensors' }));
+    expect(await screen.findByRole('heading', { name: 'demo_iot_sensors' })).toBeInTheDocument();
+  });
+
+  /*
+   * Le panneau coûte 256 px en permanence à la seule chose que cette page existe pour montrer.
+   * Il se replie donc, et le repli suit l'opérateur d'une visite à l'autre.
+   */
+  it('folds the selection panel to a rail on desktop, and remembers it', async () => {
+    const restore = asDesktop();
+    try {
+      const user = userEvent.setup();
+      stubApi();
+      await renderPage('/data-model?topics=demo.orders.1.received,demo.payments.authorized');
+      await screen.findByText('2 entities · 1 relation deduced');
+
+      // Déployé, la sélection est là sans tiroir à ouvrir.
+      expect(screen.getByLabelText('Filter topics')).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'Hide the topic selector' }));
+      expect(screen.queryByLabelText('Filter topics')).not.toBeInTheDocument();
+      expect(readPanelOpen(true)).toBe(false);
+
+      await user.click(screen.getByRole('button', { name: 'Show the topic selector' }));
+      expect(screen.getByLabelText('Filter topics')).toBeInTheDocument();
+      expect(readPanelOpen(false)).toBe(true);
+    } finally {
+      restore();
+    }
   });
 
   it('jumps to an entity chosen from the search and opens its inspector', async () => {

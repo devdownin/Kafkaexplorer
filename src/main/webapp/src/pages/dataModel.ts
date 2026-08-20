@@ -191,12 +191,92 @@ export function saveSelectionDraft(topics: string[], maxTopics: number): void {
 
 // ── Dimensionnement des nœuds ─────────────────────────────────────────────────
 
-export const NODE_W = 230;
-export const HEADER_H = 42;
-export const ROW_H = 20;
-export const FOOTER_H = 8;
-/** Au-delà, les colonnes restantes sont comptées plutôt que listées — un nœud n'est pas une page. */
-export const MAX_COLUMNS_SHOWN = 12;
+/**
+ * La taille d'une boîte-table, et tout ce qui en dépend.
+ *
+ * C'était six constantes de module, donc une seule taille pour un modèle de deux entités comme
+ * pour un de cent — et c'est cette constante qui décidait, sans que rien ne le dise, si le
+ * diagramme pouvait tenir en entier à l'écran. Une boîte de 230 px avec douze lignes est
+ * confortable à trois tables et se cadre à l'échelle 0,25 à cinquante, où plus aucun nom de
+ * colonne ne se lit : le graphe « tient » et n'apprend plus rien.
+ *
+ * Le calibre est donc **choisi** (`chooseNodeSizing`) entre `MIN_NODE_W` et `MAX_NODE_W` selon la
+ * place réellement disponible. Une boîte plus étroite qui liste moins de colonnes réduit l'emprise
+ * du graphe, donc relève l'échelle de cadrage — et le texte rendu (corps × échelle) finit *plus
+ * gros* qu'avec une grande boîte trop dézoomée. C'est le seul arbitrage qui compte ici : moins de
+ * colonnes lisibles vaut mieux que toutes les colonnes illisibles.
+ */
+export interface NodeSizing {
+  /** Largeur de la boîte. Toujours entre `MIN_NODE_W` et `MAX_NODE_W`. */
+  width: number;
+  headerH: number;
+  rowH: number;
+  footerH: number;
+  /** Au-delà, les colonnes restantes sont comptées plutôt que listées — un nœud n'est pas une page. */
+  maxColumns: number;
+  /** Écarts de la disposition : entre colonnes, entre nœuds empilés, dans la grille des isolés. */
+  colGap: number;
+  rowGap: number;
+  orphanGap: number;
+  /** Corps de chaque texte du nœud, et longueur au-delà de laquelle il est élidé. */
+  titleSize: number; titleChars: number;
+  subtitleSize: number; subtitleChars: number;
+  rowSize: number; rowChars: number;
+  typeSize: number;
+}
+
+/**
+ * Les bornes de la boîte, assumées et nommées.
+ *
+ * En dessous de `MIN_NODE_W` un nom de table qualifié n'est plus reconnaissable même à l'échelle 1 :
+ * rétrécir encore échangerait une illisibilité contre une autre. Au-dessus de `MAX_NODE_W` une
+ * table cesse de se lire d'un coup d'œil et le graphe s'étale sans rien gagner.
+ */
+export const MIN_NODE_W = 160;
+export const MAX_NODE_W = 300;
+
+/** Le calibre large : peu d'entités, beaucoup de place — on montre tout ce qu'on peut. */
+export const COMFORTABLE_NODE_SIZING: NodeSizing = {
+  width: MAX_NODE_W, headerH: 46, rowH: 22, footerH: 10, maxColumns: 20,
+  colGap: 195, rowGap: 55, orphanGap: 78,
+  titleSize: 13, titleChars: 34,
+  subtitleSize: 10, subtitleChars: 42,
+  rowSize: 11, rowChars: 30,
+  typeSize: 10,
+};
+
+/** Le calibre historique, inchangé — c'est lui que toutes les signatures prennent par défaut. */
+export const DEFAULT_NODE_SIZING: NodeSizing = {
+  width: 230, headerH: 42, rowH: 20, footerH: 8, maxColumns: 12,
+  colGap: 150, rowGap: 50, orphanGap: 60,
+  titleSize: 12, titleChars: 26,
+  subtitleSize: 9, subtitleChars: 32,
+  rowSize: 10, rowChars: 22,
+  typeSize: 9,
+};
+
+/** Le calibre serré : c'est lui qui fait tenir un grand modèle à une échelle encore lisible. */
+export const COMPACT_NODE_SIZING: NodeSizing = {
+  width: MIN_NODE_W, headerH: 32, rowH: 15, footerH: 6, maxColumns: 6,
+  colGap: 104, rowGap: 34, orphanGap: 42,
+  titleSize: 10, titleChars: 20,
+  subtitleSize: 8, subtitleChars: 24,
+  rowSize: 9, rowChars: 15,
+  typeSize: 8,
+};
+
+/** Du plus large au plus serré : `chooseNodeSizing` prend le premier qui reste lisible. */
+export const NODE_SIZINGS: NodeSizing[] = [
+  COMFORTABLE_NODE_SIZING, DEFAULT_NODE_SIZING, COMPACT_NODE_SIZING,
+];
+
+// Les anciennes constantes, dérivées du calibre par défaut : elles restent la référence de tout
+// appelant qui ne choisit pas de calibre, et de ce que les tests de disposition épinglent.
+export const NODE_W = DEFAULT_NODE_SIZING.width;
+export const HEADER_H = DEFAULT_NODE_SIZING.headerH;
+export const ROW_H = DEFAULT_NODE_SIZING.rowH;
+export const FOOTER_H = DEFAULT_NODE_SIZING.footerH;
+export const MAX_COLUMNS_SHOWN = DEFAULT_NODE_SIZING.maxColumns;
 
 export interface DisplayedColumns {
   columns: DataModelEntity['columns'];
@@ -222,30 +302,66 @@ function carriesKeyInfo(column: DataModelEntity['columns'][number]): boolean {
     || (column.keyBase !== null && column.keyBase !== '');
 }
 
-export function displayedColumns(entity: DataModelEntity): DisplayedColumns {
+export function displayedColumns(
+  entity: DataModelEntity,
+  sizing: NodeSizing = DEFAULT_NODE_SIZING,
+): DisplayedColumns {
   const keys = entity.columns.filter(carriesKeyInfo);
   const rest = entity.columns.filter(c => !carriesKeyInfo(c));
   const ordered = [...keys, ...rest];
-  if (ordered.length <= MAX_COLUMNS_SHOWN) return { columns: ordered, hidden: 0 };
+  if (ordered.length <= sizing.maxColumns) return { columns: ordered, hidden: 0 };
   return {
-    columns: ordered.slice(0, MAX_COLUMNS_SHOWN),
-    hidden: ordered.length - MAX_COLUMNS_SHOWN,
+    columns: ordered.slice(0, sizing.maxColumns),
+    hidden: ordered.length - sizing.maxColumns,
   };
 }
 
 /** Hauteur d'un nœud : en-tête + lignes affichées (+ la ligne « +N more » le cas échéant). */
-export function entityHeight(entity: DataModelEntity): number {
-  const { columns, hidden } = displayedColumns(entity);
-  return HEADER_H + (columns.length + (hidden > 0 ? 1 : 0)) * ROW_H + FOOTER_H;
+export function entityHeight(
+  entity: DataModelEntity,
+  sizing: NodeSizing = DEFAULT_NODE_SIZING,
+): number {
+  const { columns, hidden } = displayedColumns(entity, sizing);
+  return sizing.headerH + (columns.length + (hidden > 0 ? 1 : 0)) * sizing.rowH + sizing.footerH;
 }
 
 // ── Disposition ───────────────────────────────────────────────────────────────
 
-const COL_GAP = 150;
-const ROW_GAP = 50;
 const MARGIN = 40;
-/** Grille des nœuds sans aucune relation. */
-const ORPHAN_COLS = 4;
+
+/**
+ * Largeur de la grille des nœuds sans aucune relation.
+ *
+ * C'était quatre colonnes quel que soit leur nombre : à trente isolés, la grille faisait huit
+ * rangées et doublait à elle seule la hauteur de l'emprise, donc divisait par deux l'échelle de
+ * cadrage de tout le reste. La grille suit maintenant la forme d'un viewport — plus large que
+ * haute — pour coûter le moins de hauteur possible, bornée pour ne pas partir à l'horizontale sur
+ * un modèle qui n'a que ça à montrer.
+ */
+export function orphanColumns(count: number): number {
+  if (count <= 0) return 1;
+  return Math.min(8, Math.max(4, Math.ceil(Math.sqrt(count * 1.7))));
+}
+
+/**
+ * Combien de nœuds au plus dans une même colonne de la disposition en couches.
+ *
+ * Il n'y avait pas de borne : une couche prenait autant de hauteur qu'elle avait de nœuds. Sur la
+ * forme la plus banale d'un modèle de données — un hub que trente topics référencent — cela donne
+ * une colonne de trente boîtes, soit une emprise de 424 × 5 099 px, qui ne peut par construction
+ * *jamais* remplir un écran : le cadrage est contraint par la hauteur, l'échelle tombe à 0,14 et
+ * les deux tiers de la largeur restent vides. Une couche trop peuplée se replie donc sur
+ * plusieurs sous-colonnes adjacentes, et la disposition tend vers un rectangle plutôt que vers un
+ * trait vertical.
+ *
+ * Ce que ça coûte, et qui est assumé : une arête entrant dans la seconde sous-colonne passe
+ * derrière les nœuds de la première (les arêtes sont dessinées avant les nœuds, donc elle
+ * disparaît sous une boîte au lieu de la traverser). Sur un éventail de trente arêtes convergeant
+ * vers un hub, aucune disposition ne les sépare de toute façon.
+ */
+export function maxNodesPerColumn(count: number): number {
+  return Math.max(1, Math.ceil(Math.sqrt(Math.max(1, count) * 0.75)));
+}
 
 export type Positions = Record<string, { x: number; y: number }>;
 
@@ -272,6 +388,48 @@ export function splitByConnectivity(
   };
 }
 
+export interface DrawnEntities {
+  /** Ce que le canevas dessine. */
+  drawn: DataModelEntity[];
+  /** Ce qui est rangé dans la liste à côté — jamais perdu, jamais dessiné. */
+  setAside: DataModelEntity[];
+}
+
+/**
+ * Ce que le diagramme dessine, et ce qui part dans la liste.
+ *
+ * La règle vivait dans une expression ternaire de la page ; elle décide pourtant de la moitié de
+ * la place disponible, puisque chaque entité sans relation ajoute une case à la grille du bas et
+ * fait donc baisser l'échelle de cadrage de **tout le reste**. C'est la raison d'être de la liste :
+ * une entité qu'aucune relation ne touche n'apprend rien sur un diagramme de relations, et lui
+ * garder une place sur le canevas coûte au seul contenu qui en dit quelque chose.
+ *
+ * Une exception, et une seule : quand *aucune* relation n'a été déduite, tout mettre de côté
+ * laisserait un canevas vide après une génération réussie — une page qui ne montre rien alors
+ * qu'elle a un modèle. Dans ce cas la grille est le diagramme.
+ */
+export function drawnEntities(
+  entities: DataModelEntity[],
+  relations: DataModelRelation[],
+  showSetAside: boolean,
+): DrawnEntities {
+  const { connected, isolated } = splitByConnectivity(entities, relations);
+  if (showSetAside || connected.length === 0) return { drawn: entities, setAside: [] };
+  return { drawn: connected, setAside: isolated };
+}
+
+/**
+ * Ce que la liste annonce au-dessus d'elle-même. Elle dit ce qu'elle contient *et* pourquoi ces
+ * entités n'ont pas de trait : « 4 » seul se lit comme une troncature, alors que c'est une
+ * réponse — aucune relation ne les touche.
+ */
+export function describeSetAside(count: number, drawn: boolean): string {
+  const noun = `${count} ${count === 1 ? 'entity' : 'entities'}`;
+  return drawn
+    ? `${noun} with no deduced relation, drawn in the grid below the graph`
+    : `${noun} with no deduced relation — listed here rather than drawn, so the diagram keeps the room`;
+}
+
 /**
  * Disposition en couches, celle du graphe de lignage : les entités que personne ne référence
  * ouvrent la première colonne, chaque relation pousse sa cible d'une colonne vers la droite.
@@ -281,6 +439,7 @@ export function splitByConnectivity(
 export function computeLayout(
   entities: DataModelEntity[],
   relations: DataModelRelation[],
+  sizing: NodeSizing = DEFAULT_NODE_SIZING,
 ): Positions {
   if (entities.length === 0) return {};
 
@@ -323,25 +482,37 @@ export function computeLayout(
 
   const positions: Positions = {};
   let graphBottom = MARGIN;
-  layers.forEach((layer, col) => {
-    let y = MARGIN;
-    layer.forEach(id => {
-      positions[id] = { x: col * (NODE_W + COL_GAP) + MARGIN, y };
-      y += entityHeight(byId.get(id)!) + ROW_GAP;
-    });
-    graphBottom = Math.max(graphBottom, y);
+  // Une couche trop peuplée se replie sur plusieurs sous-colonnes adjacentes : sans ça, un hub
+  // référencé par trente topics donne une colonne de trente boîtes qu'aucun écran ne cadre.
+  const perColumn = maxNodesPerColumn(connected.length);
+  let column = 0;
+  layers.forEach(layer => {
+    const subColumns = Math.max(1, Math.ceil(layer.length / perColumn));
+    // Réparti à égalité plutôt que « perColumn puis le reste » : deux colonnes de cinq se lisent
+    // mieux qu'une de sept et une de trois, et l'emprise en hauteur est la même.
+    const perSubColumn = Math.ceil(layer.length / subColumns);
+    for (let c = 0; c < subColumns; c++) {
+      let y = MARGIN;
+      for (const id of layer.slice(c * perSubColumn, (c + 1) * perSubColumn)) {
+        positions[id] = { x: (column + c) * (sizing.width + sizing.colGap) + MARGIN, y };
+        y += entityHeight(byId.get(id)!, sizing) + sizing.rowGap;
+      }
+      graphBottom = Math.max(graphBottom, y);
+    }
+    column += subColumns;
   });
 
   if (isolated.length > 0) {
-    const gridTop = layers.length > 0 ? graphBottom + ROW_GAP : MARGIN;
+    const gridTop = layers.length > 0 ? graphBottom + sizing.rowGap : MARGIN;
+    const cols = orphanColumns(isolated.length);
     // Hauteur par rangée = le plus haut de la rangée, pour que rien ne se chevauche.
     let y = gridTop;
-    for (let i = 0; i < isolated.length; i += ORPHAN_COLS) {
-      const row = isolated.slice(i, i + ORPHAN_COLS);
+    for (let i = 0; i < isolated.length; i += cols) {
+      const row = isolated.slice(i, i + cols);
       row.forEach((e, colIndex) => {
-        positions[e.id] = { x: colIndex * (NODE_W + 60) + MARGIN, y };
+        positions[e.id] = { x: colIndex * (sizing.width + sizing.orphanGap) + MARGIN, y };
       });
-      y += Math.max(...row.map(entityHeight)) + ROW_GAP;
+      y += Math.max(...row.map(e => entityHeight(e, sizing))) + sizing.rowGap;
     }
   }
   return positions;
@@ -354,11 +525,15 @@ export function computeLayout(
  * colonne n'est pas listée (repliée dans « +N more ») — l'appelant retombe alors sur le centre
  * du nœud plutôt que de pointer une ligne qui n'existe pas à l'écran.
  */
-export function columnRowY(entity: DataModelEntity, columnName: string | null): number | null {
+export function columnRowY(
+  entity: DataModelEntity,
+  columnName: string | null,
+  sizing: NodeSizing = DEFAULT_NODE_SIZING,
+): number | null {
   if (columnName === null) return null;
-  const index = displayedColumns(entity).columns.findIndex(c => c.name === columnName);
+  const index = displayedColumns(entity, sizing).columns.findIndex(c => c.name === columnName);
   if (index < 0) return null;
-  return HEADER_H + index * ROW_H + ROW_H / 2;
+  return sizing.headerH + index * sizing.rowH + sizing.rowH / 2;
 }
 
 /** Écart du i-ème élément parmi n, centré sur zéro — ce qui sépare deux arêtes partageant une ancre. */
@@ -384,6 +559,7 @@ export function computeEdgeGeometry(
   relations: DataModelRelation[],
   entities: DataModelEntity[],
   positions: Positions,
+  sizing: NodeSizing = DEFAULT_NODE_SIZING,
 ): (EdgeGeometry | null)[] {
   const byId = new Map(entities.map(e => [e.id, e]));
 
@@ -394,14 +570,17 @@ export function computeEdgeGeometry(
     const toPos = positions[relation.to];
     if (!from || !to || !fromPos || !toPos) return null;
 
-    const y1 = fromPos.y + (columnRowY(from, relation.fromColumn) ?? entityHeight(from) / 2);
+    const y1 = fromPos.y
+      + (columnRowY(from, relation.fromColumn, sizing) ?? entityHeight(from, sizing) / 2);
     const y2 = toPos.y
-      + (columnRowY(to, relation.toColumn) ?? columnRowY(to, to.primaryKey) ?? entityHeight(to) / 2);
+      + (columnRowY(to, relation.toColumn, sizing)
+        ?? columnRowY(to, to.primaryKey, sizing)
+        ?? entityHeight(to, sizing) / 2);
 
     if (toPos.x >= fromPos.x) {
-      return { x1: fromPos.x + NODE_W, y1, x2: toPos.x, y2, d1: 1 as const, d2: -1 as const };
+      return { x1: fromPos.x + sizing.width, y1, x2: toPos.x, y2, d1: 1 as const, d2: -1 as const };
     }
-    return { x1: fromPos.x, y1, x2: toPos.x + NODE_W, y2, d1: -1 as const, d2: 1 as const };
+    return { x1: fromPos.x, y1, x2: toPos.x + sizing.width, y2, d1: -1 as const, d2: 1 as const };
   });
 
   // Écartement : groupées par ancre exacte (nœud + bord + ordonnée), chaque bout séparément —
@@ -460,13 +639,17 @@ export function oneBarPath(x: number, y: number, d: 1 | -1): string {
 export interface Bounds { minX: number; minY: number; maxX: number; maxY: number }
 
 /** L'emprise du graphe, hauteurs réelles des nœuds comprises. `null` sans nœud placé. */
-export function graphBounds(entities: DataModelEntity[], positions: Positions): Bounds | null {
+export function graphBounds(
+  entities: DataModelEntity[],
+  positions: Positions,
+  sizing: NodeSizing = DEFAULT_NODE_SIZING,
+): Bounds | null {
   let bounds: Bounds | null = null;
   for (const entity of entities) {
     const pos = positions[entity.id];
     if (!pos) continue;
-    const maxX = pos.x + NODE_W;
-    const maxY = pos.y + entityHeight(entity);
+    const maxX = pos.x + sizing.width;
+    const maxY = pos.y + entityHeight(entity, sizing);
     bounds = bounds === null
       ? { minX: pos.x, minY: pos.y, maxX, maxY }
       : {
@@ -480,10 +663,50 @@ export function graphBounds(entities: DataModelEntity[], positions: Positions): 
 }
 
 /**
+ * Au-delà de cette échelle, agrandir n'apprend plus rien : les textes du nœud sont dessinés à
+ * corps fixe, donc un modèle d'une table finirait en affiche. En deçà de 1 — ce qui était le
+ * plafond — un petit modèle laissait au contraire les trois quarts du canevas vides, ce qui est
+ * exactement le reproche fait à cette page.
+ */
+export const MAX_FIT_SCALE = 1.75;
+
+/**
+ * Plancher d'échelle : en dessous, plus rien n'est lisible et le graphe cesse d'être manipulable
+ * (un panoramique ne déplacerait plus rien de perceptible). Un graphe qui l'atteint déborde et
+ * se parcourt à la minicarte — c'est un aveu, pas un cadrage.
+ */
+export const MIN_FIT_SCALE = 0.1;
+
+/**
+ * L'échelle qui fait tenir le graphe, seule — ce que `fitTransform` calcule et ce que
+ * `chooseNodeSizing` compare d'un calibre à l'autre. Les deux ne veulent pas du même plancher :
+ * le cadrage en a besoin, la **comparaison** doit s'en passer, sinon deux calibres qui touchent
+ * tous les deux le plancher se déclarent équivalents alors que l'un tient dans dix fois moins de
+ * place — et le comparateur choisissait alors la plus grosse boîte sur le modèle qui la supporte
+ * le moins.
+ */
+export function fitScale(
+  bounds: Bounds,
+  viewportWidth: number,
+  viewportHeight: number,
+  padding = 40,
+  topPadding = padding,
+  maxScale = 1,
+  minScale = MIN_FIT_SCALE,
+): number {
+  const width = Math.max(1, bounds.maxX - bounds.minX);
+  const height = Math.max(1, bounds.maxY - bounds.minY);
+  return Math.max(minScale, Math.min(
+    maxScale,
+    (viewportWidth - 2 * padding) / width,
+    (viewportHeight - topPadding - padding) / height,
+  ));
+}
+
+/**
  * La transformation qui cadre le graphe dans le viewport : centré, à l'échelle qui le fait
- * tenir — plafonnée à 1, agrandir un petit modèle au-delà de sa taille naturelle ne le rend
- * pas plus lisible. C'est le geste que Stream Flow a déjà : un reset vers `scale(1)` fixe
- * laissait la moitié d'un grand graphe hors écran.
+ * tenir. C'est le geste que Stream Flow a déjà : un reset vers `scale(1)` fixe laissait la
+ * moitié d'un grand graphe hors écran.
  */
 export function fitTransform(
   bounds: Bounds,
@@ -500,20 +723,74 @@ export function fitTransform(
    * symétrique — l'appelant qui ne connaît pas la hauteur du bandeau n'a rien à changer.
    */
   topPadding = padding,
+  /**
+   * Plafond d'agrandissement. Il vaut 1 par défaut — ce qu'il a toujours valu — pour qu'un
+   * appelant qui ne se prononce pas voie exactement le comportement d'avant ; la page, elle,
+   * passe `MAX_FIT_SCALE`, parce qu'un modèle de trois tables doit occuper le canevas.
+   */
+  maxScale = 1,
 ): { x: number; y: number; scale: number } {
   const width = Math.max(1, bounds.maxX - bounds.minX);
   const height = Math.max(1, bounds.maxY - bounds.minY);
   const availableHeight = viewportHeight - topPadding - padding;
-  const scale = Math.max(0.1, Math.min(
-    1,
-    (viewportWidth - 2 * padding) / width,
-    availableHeight / height,
-  ));
+  const scale = fitScale(bounds, viewportWidth, viewportHeight, padding, topPadding, maxScale);
   return {
     scale,
     x: (viewportWidth - width * scale) / 2 - bounds.minX * scale,
     y: topPadding + (availableHeight - height * scale) / 2 - bounds.minY * scale,
   };
+}
+
+/**
+ * En dessous, un texte de nœud n'est plus lu, il est deviné. C'est le seuil qui fait passer au
+ * calibre suivant : mesuré sur le **texte rendu** (corps du calibre × échelle de cadrage), qui est
+ * la seule grandeur que l'œil voit — un corps de 11 px cadré à 0,4 est plus petit qu'un corps de
+ * 9 px cadré à 0,9, alors que la « grande » boîte semblait le choix confortable.
+ */
+export const MIN_READABLE_TEXT_PX = 7;
+
+export interface FitOptions {
+  padding?: number;
+  topPadding?: number;
+  maxScale?: number;
+}
+
+/**
+ * Le calibre de boîte qui fait le mieux tenir *ce* modèle dans *ce* viewport.
+ *
+ * Chaque calibre candidat est disposé et cadré pour de vrai — la disposition est en O(n) et le
+ * modèle est borné à cent entités, donc trois passes ne coûtent rien à côté de ce qu'elles
+ * évitent — et le premier qui garde son texte lisible gagne. Aucun ne l'est ? Alors c'est celui
+ * dont le texte rendu est le plus grand : sur un modèle de cinquante tables, aucune boîte ne rend
+ * un diagramme confortable, et le choix honnête est celui qui en montre le plus.
+ *
+ * Le calibre par défaut est rendu tant que rien n'est mesurable (viewport nul, modèle vide) :
+ * choisir sur une taille de zéro donnerait un résultat absurde qui resterait affiché.
+ */
+export function chooseNodeSizing(
+  entities: DataModelEntity[],
+  relations: DataModelRelation[],
+  viewport: ViewportSize,
+  options: FitOptions = {},
+): NodeSizing {
+  if (entities.length === 0 || viewport.width < 1 || viewport.height < 1) {
+    return DEFAULT_NODE_SIZING;
+  }
+  const { padding = 40, topPadding = padding, maxScale = MAX_FIT_SCALE } = options;
+
+  let best = DEFAULT_NODE_SIZING;
+  let bestRendered = -1;
+  for (const sizing of NODE_SIZINGS) {
+    const bounds = graphBounds(entities, computeLayout(entities, relations, sizing), sizing);
+    if (!bounds) continue;
+    // Sans plancher : c'est une comparaison, pas un cadrage — voir `fitScale`.
+    const scale = fitScale(
+      bounds, viewport.width, viewport.height, padding, topPadding, maxScale, 0);
+    const rendered = sizing.rowSize * scale;
+    if (rendered >= MIN_READABLE_TEXT_PX) return sizing;
+    if (rendered > bestRendered) { bestRendered = rendered; best = sizing; }
+  }
+  return best;
 }
 
 /**
@@ -559,10 +836,14 @@ export function centerOnEntity(
   viewportHeight: number,
   currentScale: number,
   minScale = 0.8,
+  sizing: NodeSizing = DEFAULT_NODE_SIZING,
 ): { x: number; y: number; scale: number } {
-  const scale = Math.min(1, Math.max(currentScale, minScale));
-  const cx = pos.x + NODE_W / 2;
-  const cy = pos.y + entityHeight(entity) / 2;
+  // Le plafond de 1 borne le *plancher*, pas l'échelle courante : `Math.min(1, …)` appliqué au
+  // résultat faisait dézoomer un cadrage déjà plus près que 1 — sauter sur une entité est un
+  // geste pour s'en approcher, jamais pour s'en éloigner.
+  const scale = Math.max(currentScale, Math.min(1, minScale));
+  const cx = pos.x + sizing.width / 2;
+  const cy = pos.y + entityHeight(entity, sizing) / 2;
   return {
     scale,
     x: viewportWidth / 2 - cx * scale,
@@ -746,6 +1027,35 @@ export function centerOnGraphPoint(
     x: viewportWidth / 2 - point.x * scale,
     y: viewportHeight / 2 - point.y * scale,
   };
+}
+
+// ── Repli du panneau de sélection ─────────────────────────────────────────────
+
+export const PANEL_KEY = 'kse:data-model-panel';
+
+/**
+ * Le panneau de sélection coûte 256 px en permanence, et une fois le modèle généré il ne sert
+ * plus à rien tant qu'on lit le diagramme — qui est la seule chose que cette page existe pour
+ * montrer. Il se replie donc en rail, et l'état suit l'opérateur d'une visite à l'autre : même
+ * mécanique que le panneau de critères de Stream Flow (`streamFlow.ts`), volontairement sous une
+ * clé distincte, les deux replis ne décrivant pas le même geste.
+ */
+export function readPanelOpen(fallback: boolean): boolean {
+  try {
+    const raw = localStorage.getItem(PANEL_KEY);
+    // Une valeur inconnue retombe sur le défaut : un stockage abîmé ne décide pas de la mise en page.
+    return raw === '1' ? true : raw === '0' ? false : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export function writePanelOpen(open: boolean): void {
+  try {
+    localStorage.setItem(PANEL_KEY, open ? '1' : '0');
+  } catch {
+    // Quota ou mode privé : le repli reste un confort, jamais un blocage.
+  }
 }
 
 // ── Modèles enregistrés ───────────────────────────────────────────────────────

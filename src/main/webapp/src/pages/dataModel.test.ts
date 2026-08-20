@@ -16,6 +16,10 @@ import {
   shortenColumnName, readSelectionDraft, saveSelectionDraft, clampMaxTopics,
   maxTopicsFromQuery, requestTimeoutMs, describeBuildBudget, MIN_REQUEST_TIMEOUT_MS,
   isSignificantResize, RESIZE_EPSILON_PX,
+  NODE_SIZINGS, MIN_NODE_W, MAX_NODE_W, MAX_FIT_SCALE, MIN_FIT_SCALE, fitScale,
+  COMFORTABLE_NODE_SIZING, DEFAULT_NODE_SIZING, COMPACT_NODE_SIZING, chooseNodeSizing,
+  orphanColumns, maxNodesPerColumn, drawnEntities, describeSetAside,
+  readPanelOpen, writePanelOpen, PANEL_KEY,
   minimapLayout, visibleGraphRect, graphFullyVisible, centerOnGraphPoint,
   readSavedModels, saveModel, deleteSavedModel, clearSavedModels, MAX_SAVED_MODELS,
   SAVED_MODELS_KEY, joinAliasesFor, buildMultiJoinSql,
@@ -204,6 +208,126 @@ describe('computeLayout', () => {
     expect(positions.a).toBeDefined();
     expect(positions.b).toBeDefined();
   });
+
+  /*
+   * Un hub que trente topics référencent est la forme la plus banale d'un modèle de données, et
+   * elle produisait une colonne de trente boîtes : 424 × 5 099 px, une emprise qu'aucun écran ne
+   * peut cadrer autrement qu'en tombant à l'échelle 0,14 avec les deux tiers de la largeur vides.
+   */
+  it('a crowded layer wraps into adjacent sub-columns instead of one very tall column', () => {
+    const hub = entity('hub', 3);
+    const spokes = Array.from({ length: 24 }, (_, i) => entity(`spoke${i}`, 3));
+    const relations = spokes.map(s => relation(s.id, 'hub'));
+    const positions = computeLayout([hub, ...spokes], relations);
+
+    const spokeXs = new Set(spokes.map(s => positions[s.id].x));
+    expect(spokeXs.size).toBeGreaterThan(1);
+    // Et la couche reste une couche : le hub est toujours à droite de tous ses référents.
+    expect(positions.hub.x).toBeGreaterThan(Math.max(...spokeXs));
+
+    // Aucune sous-colonne ne dépasse la borne annoncée.
+    const perColumn = maxNodesPerColumn(25);
+    const counts = new Map<number, number>();
+    spokes.forEach(s => counts.set(positions[s.id].x, (counts.get(positions[s.id].x) ?? 0) + 1));
+    expect(Math.max(...counts.values())).toBeLessThanOrEqual(perColumn);
+  });
+
+  it('the wrapped layout is wide enough to be fitted, where the single column never was', () => {
+    const hub = entity('hub', 6);
+    const spokes = Array.from({ length: 24 }, (_, i) => entity(`spoke${i}`, 6));
+    const relations = spokes.map(s => relation(s.id, 'hub'));
+    const entities = [hub, ...spokes];
+    const bounds = graphBounds(entities, computeLayout(entities, relations))!;
+    // Ce qui compte n'est pas un chiffre précis mais la forme : plus large que haute, donc
+    // cadrable sur un écran qui l'est aussi.
+    expect(bounds.maxX - bounds.minX).toBeGreaterThan(bounds.maxY - bounds.minY);
+  });
+
+  it('a layer small enough to stack is left stacked', () => {
+    // Deux nœuds dans la première couche ne se replient pas : le repli est un remède, pas une règle.
+    const positions = computeLayout(
+      [entity('a', 2), entity('b', 2), entity('sink', 2)],
+      [relation('a', 'sink'), relation('b', 'sink')]);
+    expect(positions.a.x).toBe(positions.b.x);
+  });
+
+  it('the isolated grid widens with its population rather than staying four wide', () => {
+    expect(orphanColumns(0)).toBe(1);
+    expect(orphanColumns(4)).toBe(4);
+    expect(orphanColumns(40)).toBe(8);
+    // Bornée : un modèle qui n'a que des isolées ne part pas à l'horizontale.
+    expect(orphanColumns(400)).toBe(8);
+  });
+});
+
+/*
+ * Le calibre des boîtes. Il était constant, donc le même à trois entités qu'à cent — et c'est lui
+ * qui décidait en silence si le diagramme pouvait tenir à l'écran de façon lisible.
+ */
+describe('chooseNodeSizing', () => {
+  const viewport = { width: 1280, height: 800 };
+
+  function star(spokes: number, columns: number) {
+    const entities = [entity('hub', columns),
+      ...Array.from({ length: spokes }, (_, i) => entity(`spoke${i}`, columns))];
+    const relations = entities.slice(1).map(e => relation(e.id, 'hub'));
+    return { entities, relations };
+  }
+
+  it('every tier stays between the stated bounds', () => {
+    for (const sizing of NODE_SIZINGS) {
+      expect(sizing.width).toBeGreaterThanOrEqual(MIN_NODE_W);
+      expect(sizing.width).toBeLessThanOrEqual(MAX_NODE_W);
+    }
+  });
+
+  it('a small model gets the widest boxes — there is room, so it is used', () => {
+    const { entities, relations } = star(1, 4);
+    expect(chooseNodeSizing(entities, relations, viewport)).toBe(COMFORTABLE_NODE_SIZING);
+  });
+
+  it('a large model gets compact boxes, which is what keeps its text readable', () => {
+    const { entities, relations } = star(29, 15);
+    const sizing = chooseNodeSizing(entities, relations, viewport);
+    expect(sizing).toBe(COMPACT_NODE_SIZING);
+
+    // Ce n'est pas un dogme : le calibre serré rend le texte *plus grand* à l'écran, parce que
+    // l'emprise plus faible relève l'échelle de cadrage. C'est tout l'arbitrage.
+    const renderedWith = (s: typeof sizing) => s.rowSize * fitScale(
+      graphBounds(entities, computeLayout(entities, relations, s), s)!,
+      viewport.width, viewport.height, 40, 40, MAX_FIT_SCALE, 0);
+    expect(renderedWith(COMPACT_NODE_SIZING))
+      .toBeGreaterThan(renderedWith(COMFORTABLE_NODE_SIZING));
+  });
+
+  /*
+   * Régression : la comparaison passait par `fitTransform`, dont le plancher de 0,1 écrase la
+   * différence entre deux calibres qui le touchent tous les deux. Le départage se faisait alors
+   * sur le seul corps du texte, et c'est la *plus grosse* boîte qui gagnait — exactement sur le
+   * modèle qui la supporte le moins.
+   */
+  it('a model too large for any tier still picks the one that shows the most', () => {
+    const { entities, relations } = star(80, 25);
+    expect(chooseNodeSizing(entities, relations, viewport)).toBe(COMPACT_NODE_SIZING);
+  });
+
+  it('nothing measurable yields the default rather than an absurd choice', () => {
+    const { entities, relations } = star(3, 4);
+    expect(chooseNodeSizing(entities, relations, { width: 0, height: 0 }))
+      .toBe(DEFAULT_NODE_SIZING);
+    expect(chooseNodeSizing([], [], viewport)).toBe(DEFAULT_NODE_SIZING);
+  });
+
+  it('the chosen tier drives the layout it was chosen for', () => {
+    const { entities, relations } = star(29, 15);
+    const sizing = chooseNodeSizing(entities, relations, viewport);
+    const positions = computeLayout(entities, relations, sizing);
+    const bounds = graphBounds(entities, positions, sizing)!;
+    // Les boîtes larges donneraient une emprise strictement plus grande.
+    const wide = graphBounds(entities,
+      computeLayout(entities, relations, COMFORTABLE_NODE_SIZING), COMFORTABLE_NODE_SIZING)!;
+    expect(bounds.maxX - bounds.minX).toBeLessThan(wide.maxX - wide.minX);
+  });
 });
 
 describe('columnRowY', () => {
@@ -366,6 +490,74 @@ describe('graphBounds / fitTransform', () => {
     expect(Number.isFinite(t.scale)).toBe(true);
     expect(t.scale).toBeGreaterThan(0);
   });
+
+  /*
+   * Le plafond de 1 laissait un modèle de trois tables occuper le quart du canevas : « le graphe
+   * n'utilise pas la place disponible » est exactement ce reproche-là.
+   */
+  it('a maxScale above 1 lets a small graph fill the canvas, and still centres it', () => {
+    const bounds = { minX: 0, minY: 0, maxX: 200, maxY: 200 };
+    const t = fitTransform(bounds, 1200, 900, 40, 40, MAX_FIT_SCALE);
+    expect(t.scale).toBe(MAX_FIT_SCALE);
+    expect(t.x).toBeCloseTo((1200 - 200 * MAX_FIT_SCALE) / 2);
+  });
+
+  it('the default maxScale is still 1, so a caller that does not ask sees no change', () => {
+    const bounds = { minX: 0, minY: 0, maxX: 200, maxY: 200 };
+    expect(fitTransform(bounds, 1200, 900).scale).toBe(1);
+  });
+
+  it('fitScale is what fitTransform uses, and its floor is optional', () => {
+    const huge = { minX: 0, minY: 0, maxX: 100_000, maxY: 100 };
+    expect(fitTransform(huge, 1200, 900).scale).toBe(MIN_FIT_SCALE);
+    expect(fitScale(huge, 1200, 900, 40, 40, 1, 0)).toBeLessThan(MIN_FIT_SCALE);
+  });
+});
+
+describe('drawn vs set aside', () => {
+  it('an entity no relation touches is listed, not drawn', () => {
+    const entities = [entity('a', 2), entity('b', 2), entity('lonely', 2)];
+    const { drawn, setAside } = drawnEntities(entities, [relation('a', 'b')], false);
+    expect(drawn.map(e => e.id)).toEqual(['a', 'b']);
+    expect(setAside.map(e => e.id)).toEqual(['lonely']);
+  });
+
+  it('the opt-in draws them, and then nothing is set aside', () => {
+    const entities = [entity('a', 2), entity('b', 2), entity('lonely', 2)];
+    const { drawn, setAside } = drawnEntities(entities, [relation('a', 'b')], true);
+    expect(drawn).toHaveLength(3);
+    expect(setAside).toEqual([]);
+  });
+
+  /*
+   * L'exception, et la seule : tout mettre de côté quand rien n'est relié laisserait un canevas
+   * vide après une génération réussie — une page qui ne montre rien alors qu'elle a un modèle.
+   */
+  it('with no relation at all the grid is the diagram, rather than an empty canvas', () => {
+    const entities = [entity('a', 2), entity('b', 2)];
+    const { drawn, setAside } = drawnEntities(entities, [], false);
+    expect(drawn).toHaveLength(2);
+    expect(setAside).toEqual([]);
+  });
+
+  it('the list says why those entities have no edge, not just how many', () => {
+    expect(describeSetAside(4, false)).toContain('no deduced relation');
+    expect(describeSetAside(1, false)).toContain('1 entity');
+    expect(describeSetAside(3, true)).toContain('drawn in the grid');
+  });
+});
+
+describe('panel collapse', () => {
+  it('round-trips, and an unset or corrupt value falls back to the caller default', () => {
+    expect(readPanelOpen(true)).toBe(true);
+    expect(readPanelOpen(false)).toBe(false);
+    writePanelOpen(false);
+    expect(readPanelOpen(true)).toBe(false);
+    writePanelOpen(true);
+    expect(readPanelOpen(false)).toBe(true);
+    localStorage.setItem(PANEL_KEY, 'yes');
+    expect(readPanelOpen(false)).toBe(false);
+  });
 });
 
 describe('centerOnEntity', () => {
@@ -392,6 +584,16 @@ describe('centerOnEntity', () => {
   it('never exceeds scale 1 even below minScale\'s floor', () => {
     const t = centerOnEntity(e, { x: 0, y: 0 }, 1200, 900, 0.1, 1.5);
     expect(t.scale).toBe(1);
+  });
+
+  /*
+   * Le plafond de 1 bornait le résultat, donc sauter sur une entité depuis un cadrage plus proche
+   * que 1 — ce qu'un petit modèle donne maintenant — *dézoomait*. Sauter sur une table est un
+   * geste pour s'en approcher.
+   */
+  it('keeps a closer-than-1 framing instead of zooming back out to it', () => {
+    expect(centerOnEntity(e, { x: 0, y: 0 }, 1200, 900, MAX_FIT_SCALE, 0.8).scale)
+      .toBe(MAX_FIT_SCALE);
   });
 });
 
