@@ -124,6 +124,30 @@ explorer:
   lag-metrics-time: false
   flink-job-store-path: data/flink-jobs.json
   flink-job-retention-hours: 24
+  # Keep what the Settings page is used to change — the bootstrap address, the connection mode and
+  # its SSL/Confluent credentials, the whole LLM configuration — so that stopping the application
+  # does not discard it. POST /api/config used to mutate two singletons and write nothing: the one
+  # screen whose purpose is data entry was the only one whose input did not survive a restart, and
+  # it reverted to the values below without saying so.
+  #
+  # A file rather than an internal.* Kafka topic, unlike every other store here, because these
+  # settings CONTAIN the bootstrap address: a topic could neither receive a save that repoints the
+  # cluster nor be found at boot. It sits beside the Flink job store under data/, a named volume in
+  # every bundled stack.
+  #
+  # Precedence at startup is: environment variable / -D / command line, then this file, then the
+  # values in this YAML. The environment wins so that changing KAFKA_BOOTSTRAP_SERVERS in a compose
+  # file is never silently ignored by a file written weeks earlier — and the boot log names the
+  # fields that applied to.
+  settings-persistence: true
+  settings-store-path: data/settings.json
+  # Whether the credentials entered on that page (SSL passwords, the Confluent secret, the LLM API
+  # key) are written to the file. True, because storing everything except the passwords keeps half
+  # the promise and keeps it silently: the mode and the keystore path come back, and the connection
+  # fails for a password nothing said had been dropped. The file is created readable by its owner
+  # alone and the values never travel back out of the API. Set false for a deployment that will not
+  # have them on disk — the omitted fields are then named in the save's answer and in the boot log.
+  settings-store-secrets: true
   # SELECT execution: true = try the real Flink planner first and fall back to the in-process
   # direct Kafka reader on failure; false = always use the direct reader. A circuit breaker
   # disables the planner path after repeated failures (e.g. if the FlinkRelMetadataQuery NPE

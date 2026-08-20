@@ -9,6 +9,10 @@ import {
 } from '../components/ui';
 import { clearDraft, readDraft, useDraftConflict, writeDraft } from '../draftStore';
 import { draftableOnly, mergeDraft } from './configDraft';
+import {
+  describePersistence, describeSaveOutcome, splitPersistence,
+  type SettingsPersistence,
+} from './settingsPersistence';
 import type { LlmTestResponse } from '../api/types';
 
 interface ClusterConfig {
@@ -111,6 +115,14 @@ const Config: React.FC = () => {
   const savedRef = useRef<string>('');
   const [dirty, setDirty] = useState(false);
   const draftConflict = useDraftConflict(DRAFT_KEYS);
+  /*
+   * Ce que le serveur dit de la conservation des réglages — tenu à part de `config` : ce ne sont
+   * pas des champs du formulaire, et les y laisser entrer les ferait compter dans la comparaison
+   * « modifié » et dans le brouillon écrit en `localStorage`.
+   */
+  const [persistence, setPersistence] = useState<SettingsPersistence>({});
+  const [saveNote, setSaveNote] = useState<string | null>(null);
+  const persistenceNotice = useMemo(() => describePersistence(persistence), [persistence]);
 
   /*
    * Le serveur donne la base — c'est lui qui dit ce qui est réellement en vigueur, et lui seul
@@ -122,8 +134,10 @@ const Config: React.FC = () => {
     const fetchConfig = async () => {
       let saved: ClusterConfig | null = null;
       try {
-        const res = await axios.get<ClusterConfig>('/api/config');
-        saved = res.data;
+        const res = await axios.get<ClusterConfig & SettingsPersistence>('/api/config');
+        const split = splitPersistence(res.data);
+        saved = split.settings;
+        setPersistence(split.persistence);
       } catch {
         // Backend may not expose REST config yet - use defaults
       }
@@ -181,12 +195,19 @@ const Config: React.FC = () => {
    * d'afficher « Failed to save configuration » sur un refus parfaitement délibéré.
    */
   const applyConfig = async (force: boolean) => {
-    const res = await axios.post<ClusterConfig>('/api/config', force ? { ...config, force } : config);
+    const res = await axios.post<ClusterConfig & SettingsPersistence>(
+      '/api/config', force ? { ...config, force } : config);
+    const { settings, persistence: kept } = splitPersistence(res.data);
     setConfig(prev => {
-      const next = { ...prev, ...res.data };
+      const next = { ...prev, ...settings };
       savedRef.current = JSON.stringify(next);
       return next;
     });
+    setPersistence(kept);
+    // Ce que l'enregistrement a réellement obtenu quand ce n'est pas ce qui était promis : un
+    // magasin qu'on n'a pas pu écrire laisse des réglages qui marchent maintenant et disparaissent
+    // au redémarrage. Ça ne peut pas rester sous un simple « Saved! ».
+    setSaveNote(describeSaveOutcome(kept));
     setSaveSuccess(true);
     setTimeout(() => setSaveSuccess(false), 3000);
   };
@@ -195,6 +216,7 @@ const Config: React.FC = () => {
     if (!checkBeforeSubmit()) return;
     setSaving(true);
     setError(null);
+    setSaveNote(null);
     setSaveSuccess(false);
     try {
       await applyConfig(false);
@@ -228,9 +250,11 @@ const Config: React.FC = () => {
     setTesting(true);
     setTestResult(null);
     try {
-      const res = await axios.post<ClusterConfig>('/api/config', config);
-      setConfig(prev => ({ ...prev, ...res.data }));
-      setTestResult(res.data.isConnected ?? false);
+      const res = await axios.post<ClusterConfig & SettingsPersistence>('/api/config', config);
+      const { settings, persistence: kept } = splitPersistence(res.data);
+      setConfig(prev => ({ ...prev, ...settings }));
+      setPersistence(kept);
+      setTestResult(settings.isConnected ?? false);
     } catch {
       setTestResult(false);
     } finally {
@@ -413,6 +437,33 @@ const Config: React.FC = () => {
             {testResult ? 'Connection successful' : 'Connection failed'}
           </div>
         )}
+      </div>
+
+      {/*
+        Ce que cette page peut promettre. Elle applique des réglages à un processus ; savoir s'ils
+        lui survivent change ce qu'on vient y faire — sur un déploiement qui n'en garde rien, le
+        vrai correctif est dans sa configuration, pas dans ce formulaire. Le silence ferait lire le
+        cas rassurant, qui a été le mauvais pendant longtemps.
+      */}
+      <div
+        className={`rounded-lg border p-3 flex items-start gap-2 text-[13px] ${
+          persistenceNotice.tone === 'not-kept'
+            ? 'border-warning/25 bg-warning/10 text-warning'
+            : persistenceNotice.tone === 'partial'
+              ? 'border-outline-variant bg-surface-container text-on-surface-variant'
+              : 'border-outline-variant/60 bg-surface-container/60 text-on-surface-variant'
+        }`}
+      >
+        <span className="material-symbols-outlined text-[18px] shrink-0">
+          {persistenceNotice.tone === 'not-kept' ? 'warning'
+            : persistenceNotice.tone === 'unknown' ? 'hourglass_empty' : 'save'}
+        </span>
+        <div>
+          <p className="font-medium">{persistenceNotice.text}</p>
+          {persistenceNotice.detail && (
+            <p className="text-on-surface-variant/80 mt-0.5">{persistenceNotice.detail}</p>
+          )}
+        </div>
       </div>
 
       {/* Cluster Connection */}
@@ -741,6 +792,17 @@ const Config: React.FC = () => {
         <div className="rounded-lg border border-error/25 bg-error/10 p-3 flex items-center gap-2 text-error text-[13px]" role="alert">
           <span className="material-symbols-outlined text-[18px]">error</span>
           {errorCount === 1 ? '1 field needs attention.' : `${errorCount} fields need attention.`}
+        </div>
+      )}
+
+      {/*
+        Reste à l'écran, contrairement au « Saved! » de trois secondes sur le bouton : ce qui est
+        dit ici, c'est que l'enregistrement n'a pas obtenu ce qu'il promettait.
+      */}
+      {saveNote && (
+        <div className="rounded-lg border border-warning/25 bg-warning/10 p-3 flex items-start gap-2 text-warning text-[13px]" role="status">
+          <span className="material-symbols-outlined text-[18px] shrink-0">info</span>
+          <span>{saveNote}</span>
         </div>
       )}
 

@@ -3,22 +3,28 @@
 package com.compagnonsdudev.kafkasqlexplorer.web;
 
 import com.compagnonsdudev.kafkasqlexplorer.config.ClaudeConfig;
+import com.compagnonsdudev.kafkasqlexplorer.config.ExplorerConfig;
 import com.compagnonsdudev.kafkasqlexplorer.config.KafkaConfig;
 import com.compagnonsdudev.kafkasqlexplorer.service.AuditService;
 import com.compagnonsdudev.kafkasqlexplorer.service.FlinkSqlService;
 import com.compagnonsdudev.kafkasqlexplorer.service.KafkaAdminService;
 import com.compagnonsdudev.kafkasqlexplorer.service.LlmClientProvider;
+import com.compagnonsdudev.kafkasqlexplorer.service.SettingsStore;
 import com.compagnonsdudev.kafkasqlexplorer.service.SseEmitterManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mockito;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import java.nio.file.Path;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -41,12 +47,19 @@ class ConfigControllerTest {
     private AuditService auditService;
     private FlinkSqlService flinkSqlService;
     private SseEmitterManager sseEmitterManager;
+    private ClaudeConfig claudeConfig;
+    private SettingsStore settingsStore;
+    private Path storePath;
     private MockMvc mockMvc;
+
+    @TempDir
+    Path tempDir;
 
     @BeforeEach
     void setUp() {
         kafkaConfig = new KafkaConfig();
         kafkaConfig.setBootstrapServers("old:9092");
+        claudeConfig = new ClaudeConfig();
         kafkaAdminService = Mockito.mock(KafkaAdminService.class);
         auditService = Mockito.mock(AuditService.class);
         flinkSqlService = Mockito.mock(FlinkSqlService.class);
@@ -54,10 +67,21 @@ class ConfigControllerTest {
         when(flinkSqlService.getActiveJobsDetails()).thenReturn(Map.of());
         when(sseEmitterManager.activeSessions()).thenReturn(0);
 
+        storePath = tempDir.resolve("settings.json");
+        settingsStore = new SettingsStore(explorerConfigStoringAt(storePath.toString(), true));
+
         mockMvc = MockMvcBuilders
-            .standaloneSetup(new ConfigController(kafkaConfig, kafkaAdminService, new ClaudeConfig(),
-                auditService, flinkSqlService, sseEmitterManager, new LlmClientProvider(new ClaudeConfig())))
+            .standaloneSetup(new ConfigController(kafkaConfig, kafkaAdminService, claudeConfig,
+                auditService, flinkSqlService, sseEmitterManager, new LlmClientProvider(claudeConfig),
+                settingsStore))
             .build();
+    }
+
+    private static ExplorerConfig explorerConfigStoringAt(String path, boolean secrets) {
+        ExplorerConfig config = new ExplorerConfig();
+        config.setSettingsStorePath(path);
+        config.setSettingsStoreSecrets(secrets);
+        return config;
     }
 
     /** `/config` belongs to the SPA. A controller mapping there answers a refresh with a 500. */
@@ -167,6 +191,143 @@ class ConfigControllerTest {
         mockMvc.perform(post("/api/config").contentType(MediaType.APPLICATION_JSON)
                 .content("{\"llmModel\":\"claude-opus-4-6\"}"))
             .andExpect(status().isOk());
+    }
+
+    // ── Persistence ───────────────────────────────────────────────────────────
+    // The Settings page is the one screen whose whole purpose is data entry, and it was the only
+    // one whose input did not survive a restart: applyConfig mutated two singletons and wrote
+    // nothing anywhere.
+
+    @Test
+    void whatWasAppliedIsWrittenToTheStore() throws Exception {
+        mockMvc.perform(post("/api/config").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"bootstrapServers\":\"new:9092\",\"llmModel\":\"qwen3:8b\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.settingsPersistedNow").value(true));
+
+        Map<String, String> stored = SettingsStore.read(storePath).values();
+        assertEquals("new:9092", stored.get("kafka.bootstrap-servers"));
+        assertEquals("qwen3:8b", stored.get("claude.model"));
+    }
+
+    /**
+     * A field the operator never touched is not taken over from {@code application.yml}.
+     *
+     * <p>A store that captured the whole configuration would freeze this release's defaults into
+     * the file, so a default changed in a later version could never reach the deployment again —
+     * and nothing would say why.
+     */
+    @Test
+    void onlyTheFieldsThatWereEnteredAreStored() throws Exception {
+        mockMvc.perform(post("/api/config").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"llmModel\":\"qwen3:8b\"}"))
+            .andExpect(status().isOk());
+
+        Map<String, String> stored = SettingsStore.read(storePath).values();
+        assertEquals(Map.of("claude.model", "qwen3:8b"), stored);
+    }
+
+    /** A second save keeps what the first one took over, and adds to it. */
+    @Test
+    void aLaterSaveKeepsTheFieldsAnEarlierOneTookOver() throws Exception {
+        mockMvc.perform(post("/api/config").contentType(MediaType.APPLICATION_JSON)
+            .content("{\"bootstrapServers\":\"new:9092\"}")).andExpect(status().isOk());
+        mockMvc.perform(post("/api/config").contentType(MediaType.APPLICATION_JSON)
+            .content("{\"llmModel\":\"qwen3:8b\"}")).andExpect(status().isOk());
+
+        Map<String, String> stored = SettingsStore.read(storePath).values();
+        assertEquals("new:9092", stored.get("kafka.bootstrap-servers"));
+        assertEquals("qwen3:8b", stored.get("claude.model"));
+    }
+
+    /**
+     * The value stored is the one the operator will see, not the one the request carried.
+     *
+     * <p>Applying is allowed to derive a value: switching provider fills a blank base URL with that
+     * provider's default. A store that held the request body would hand back something that was
+     * never on screen.
+     */
+    @Test
+    void theStoredValueIsTheOneThatEndedUpInForce() throws Exception {
+        claudeConfig.setBaseUrl("");
+
+        mockMvc.perform(post("/api/config").contentType(MediaType.APPLICATION_JSON)
+            .content("{\"llmProvider\":\"ANTHROPIC\"}")).andExpect(status().isOk());
+
+        Map<String, String> stored = SettingsStore.read(storePath).values();
+        assertEquals("ANTHROPIC", stored.get("claude.provider"));
+        assertEquals("https://api.anthropic.com", stored.get("claude.base-url"),
+            "the base URL applyConfig derived from the provider change");
+    }
+
+    /**
+     * A credential left out because secrets are off is <b>named</b>, in the answer the page shows.
+     *
+     * <p>Storing everything except the passwords keeps half the promise: the mode and the keystore
+     * path come back, and the connection then fails for a password nothing said had been dropped.
+     */
+    @Test
+    void aSecretThatWasNotStoredIsNamedRatherThanDroppedSilently() throws Exception {
+        Path path = tempDir.resolve("no-secrets.json");
+        SettingsStore store = new SettingsStore(explorerConfigStoringAt(path.toString(), false));
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(new ConfigController(kafkaConfig,
+            kafkaAdminService, claudeConfig, auditService, flinkSqlService, sseEmitterManager,
+            new LlmClientProvider(claudeConfig), store)).build();
+
+        mvc.perform(post("/api/config").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"keystorePassword\":\"hunter2\",\"keystorePath\":\"/tmp\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.settingsNotStored[0]").value("keystorePassword"));
+
+        SettingsStore.StoredSettings stored = SettingsStore.read(path);
+        assertFalse(stored.values().containsKey("kafka.keystore-password"));
+        assertTrue(stored.secretsOmitted().contains("kafka.keystore-password"),
+            "the boot has to be able to say which credential it is missing");
+        assertEquals("/tmp", stored.values().get("kafka.keystore-path"),
+            "the rest of the save is still kept");
+    }
+
+    /**
+     * A store that cannot be written leaves settings that work now and are gone on the next
+     * restart. That is exactly the surprise this mechanism exists to remove, so the save says so
+     * rather than implying success with a 200.
+     */
+    @Test
+    void aStoreThatCannotBeWrittenIsReportedRatherThanFailingTheSave() throws Exception {
+        // A path whose parent is an existing regular file: createDirectories cannot make it.
+        Path blocker = tempDir.resolve("blocker");
+        java.nio.file.Files.writeString(blocker, "not a directory");
+        SettingsStore store = new SettingsStore(
+            explorerConfigStoringAt(blocker.resolve("settings.json").toString(), true));
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(new ConfigController(kafkaConfig,
+            kafkaAdminService, claudeConfig, auditService, flinkSqlService, sseEmitterManager,
+            new LlmClientProvider(claudeConfig), store)).build();
+
+        mvc.perform(post("/api/config").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"bootstrapServers\":\"new:9092\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.settingsPersistedNow").value(false))
+            .andExpect(jsonPath("$.settingsPersistenceError").isNotEmpty());
+
+        assertEquals("new:9092", kafkaConfig.getBootstrapServers(), "still applied to this process");
+    }
+
+    /** The page has to be able to say whether what is typed on it will outlive the process. */
+    @Test
+    void theConfigResponseStatesWhetherSettingsAreKept() throws Exception {
+        mockMvc.perform(get("/api/config"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.settingsPersisted").value(true))
+            .andExpect(jsonPath("$.settingsStorePath").isNotEmpty());
+    }
+
+    /** Nothing is written when the request is refused — the store must not diverge from the beans. */
+    @Test
+    void aRefusedSaveWritesNothing() throws Exception {
+        mockMvc.perform(post("/api/config").contentType(MediaType.APPLICATION_JSON)
+            .content("{\"mode\":\"SASL_SSL\"}")).andExpect(status().isBadRequest());
+
+        assertTrue(SettingsStore.read(storePath).isEmpty());
     }
 
     /** Live Process Mining sessions and Flink jobs count as work in flight too. */
