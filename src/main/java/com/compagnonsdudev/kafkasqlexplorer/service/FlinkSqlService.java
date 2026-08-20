@@ -592,6 +592,10 @@ public class FlinkSqlService {
                 // dependent, so on an *engine* failure we fall back to the in-process direct Kafka
                 // reader and the query still succeeds. A failure caused by the statement itself is
                 // returned instead — see the no-fallback note below.
+                // Why the planner did not answer, kept for the fallback to report. Without it the
+                // caller was told whatever the *direct reader* complained about, which describes a
+                // different query engine's opinion of a statement it was never meant to run.
+                String engineFailure = null;
                 if (explorerConfig.isFlinkSelectEnabled() && !flinkSelectDisabled) {
                     try {
                         QueryResult flinkResult = executeViaFlinkPlanner(queryId, sqlToExecute, "SELECT", limit, timeout, startTime);
@@ -604,17 +608,20 @@ public class FlinkSqlService {
                         if (flinkResult.error().startsWith("Query timed out")) {
                             flinkSelectFailures.set(0);
                             log.warn("Flink SELECT timed out — falling back to direct Kafka read for this query");
+                            engineFailure = flinkResult.error();
                         } else {
                             QueryResult rejected = rejectIfUserError(
                                 flinkResult.error(), sqlToExecute, startTime, autoReg.deferredToDirectReader());
                             if (rejected != null) return rejected;
                             recordFlinkSelectFailure(flinkResult.error());
+                            engineFailure = flinkResult.error();
                         }
                     } catch (Throwable t) {
                         QueryResult rejected = rejectIfUserError(
                             SqlErrorClassifier.explain(t), sqlToExecute, startTime, autoReg.deferredToDirectReader());
                         if (rejected != null) return rejected;
                         recordFlinkSelectFailure(t.toString());
+                        engineFailure = SqlErrorClassifier.explain(t);
                     }
                 }
                 /*
@@ -633,7 +640,28 @@ public class FlinkSqlService {
                           + "The Flink planner did not answer, so it was not run — rather than reading the "
                           + "topics directly and returning rows that ignore the WITH clause.");
                 }
+                /*
+                 * A SELECT that names no table never falls back either, for the same reason as the
+                 * CTE above: the direct reader begins by regex-matching a name out of `FROM`, so on
+                 * `SELECT 1 + 1` it can only answer "Cannot parse table name from SQL" — its own
+                 * complaint about a statement it was never meant to run, handed to the user in
+                 * place of the engine's real one. That is exactly what the startup warmup probe
+                 * reported for months: the true cause (a job that could not be submitted) sat one
+                 * WARN line above, while the line everyone read named a table nobody had written.
+                 */
+                if (extractPrimaryTable(sqlToExecute) == null) {
+                    return new QueryResult(Collections.emptyList(), Collections.emptyList(),
+                            System.currentTimeMillis() - startTime,
+                            engineFailure != null ? engineFailure : plannerUnavailableMessage());
+                }
                 QueryResult qr = kafkaDirectSelect(sqlToExecute, readMode, limit, startTime);
+                // Say that the planner is out of the picture for the rest of this process, on the
+                // queries it actually affects. The latch was written in one place and read in one
+                // place and surfaced nowhere, so a user got `engine: KAFKA_DIRECT` — no JOIN, no
+                // subquery — with nothing saying it had become permanent.
+                if (flinkSelectDisabled) {
+                    qr = withExtraWarning(qr, plannerUnavailableMessage());
+                }
                 // Propagate auto-registration flag so the frontend can refresh its schema browser.
                 return autoReg.registered() ? withRegisteredFlag(qr) : qr;
             }
@@ -681,6 +709,42 @@ public class FlinkSqlService {
         flinkSelectFailures.set(0);
         return new QueryResult(Collections.emptyList(), Collections.emptyList(),
             System.currentTimeMillis() - startTime, classification.message(), false, "FLINK");
+    }
+
+    /**
+     * Why the Flink planner is not answering, in the words a user can act on.
+     *
+     * <p>Two different states read identically from the outside — an operator turned the planner
+     * off, or the circuit breaker turned it off after {@link #FLINK_SELECT_FAILURE_THRESHOLD}
+     * failures — and the second one is invisible without this: it latches for the lifetime of the
+     * process, so every later query silently gets an engine that supports neither JOIN nor
+     * subqueries.
+     */
+    private String plannerUnavailableMessage() {
+        if (!explorerConfig.isFlinkSelectEnabled()) {
+            return "The Flink planner is disabled (explorer.flink-select-enabled=false), and this "
+                 + "query needs it — the direct Kafka reader only reads a topic named after FROM.";
+        }
+        if (flinkSelectDisabled) {
+            return "The Flink planner failed " + FLINK_SELECT_FAILURE_THRESHOLD + " times and is "
+                 + "disabled for the rest of this process, so queries fall back to the direct Kafka "
+                 + "reader, which supports neither JOIN nor subqueries. Restart the application to "
+                 + "retry it; the log records why it failed.";
+        }
+        return "The Flink planner did not answer, and this query needs it — the direct Kafka reader "
+             + "only reads a topic named after FROM.";
+    }
+
+    /** Appends one caveat, keeping those the direct reader already reported. */
+    private static QueryResult withExtraWarning(QueryResult qr, String warning) {
+        List<String> merged = new ArrayList<>(qr.warnings() == null ? List.of() : qr.warnings());
+        if (!merged.contains(warning)) merged.add(warning);
+        return qr.withWarnings(merged);
+    }
+
+    /** Whether the circuit breaker has taken the Flink planner out for this process. */
+    public boolean isFlinkSelectDisabled() {
+        return flinkSelectDisabled;
     }
 
     private QueryResult withRegisteredFlag(QueryResult qr) {

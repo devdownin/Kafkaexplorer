@@ -232,6 +232,32 @@ jobs:
           docker compose exec -T explorer sh -c 'test -s /app/logs/kafkaexplorer.log' \
             || { echo "::error::no log file written"; exit 1; }
 
+          # The Flink engine works in *this* image too. `release-image` asserts the same thing
+          # on Dockerfile.release; this is the from-source `Dockerfile`, which is what every
+          # compose stack runs and therefore what most people actually start. The two runtime
+          # stages are meant to be identical and are built here precisely so they cannot drift
+          # unnoticed — so the assertion has to exist on both, or the drift it guards against is
+          # only half watched. Same failure: behind `JarLauncher` the system class loader cannot
+          # see BOOT-INF/lib, Flink deserializes the job graph with it, and every SELECT falls
+          # back to a reader that supports neither JOIN nor subqueries.
+          #
+          # Waited for, not grepped once: the probe runs after ApplicationReadyEvent and takes a
+          # few seconds, so it can still be in flight when the container first reports healthy.
+          # A gate that flakes is a gate people learn to ignore.
+          warm=""
+          for _ in $(seq 1 24); do
+            docker compose logs --no-color explorer > /tmp/explorer.log 2>&1 || true
+            if grep -q 'Failed to execute job' /tmp/explorer.log; then
+              grep -n -m3 -B2 'Failed to execute job' /tmp/explorer.log || true
+              echo "::error::a Flink job failed to submit in the from-source image — see FlinkConfig.applyJobClasspath"
+              exit 1
+            fi
+            if grep -q 'Flink planner warmed up' /tmp/explorer.log; then warm=yes; break; fi
+            sleep 5
+          done
+          [ -n "$warm" ] \
+            || { echo "::error::the Flink warmup probe never reported success within 120s — the planner path is broken in the from-source image, or the probe no longer runs"; exit 1; }
+
       - name: Wait for the demo seeding, then assert it is idempotent
         run: |
           set -euo pipefail
@@ -399,6 +425,35 @@ jobs:
             grep -q "$topic" "$logs" \
               || { echo "::error::the restore of $topic reported nothing — it is back at DEBUG"; exit 1; }
           done
+
+          # --- The Flink runtime actually works in the packaged artefact -----------------
+          # This is the only place anything runs the SQL engine the way it is shipped, and
+          # for a while it did not work at all. A job submitted to the embedded MiniCluster
+          # carries no user jars, and Flink reads "no jars and no classpath" as "this job
+          # needs nothing of its own" — so it deserializes the job graph with
+          # `ClassLoader.getSystemClassLoader()`. That is right on a real cluster and wrong
+          # in every packaged form of this application: behind `JarLauncher` (what this
+          # image runs) the dependencies live in BOOT-INF/lib, the system loader sees the
+          # launcher and nothing else, and the first operator came back as
+          # `ClassNotFoundException: …CodeGenOperatorFactory`. Every SELECT then fell back
+          # to the direct Kafka reader — so rows kept arriving, from a reader that supports
+          # neither JOIN nor subqueries — and CREATE TABLE and INSERT INTO, which have no
+          # fallback, simply failed. The suite stayed green throughout: it runs on a plain
+          # classpath, where the application loader *is* the system loader.
+          #
+          # The warmup probe is what makes this checkable here: `SELECT 1`, no table, no
+          # broker needed, and it submits a real job. Its success line is therefore the
+          # cheapest possible proof that job submission works in the shipped image. Both
+          # outcomes are asserted rather than just grepping for the failure, so this fails
+          # if the probe stops running at all (disabled, renamed, moved off the boot path)
+          # instead of quietly passing on an absent line.
+          if grep -q 'Failed to execute job' "$logs"; then
+            grep -n -m3 -B2 'Failed to execute job' "$logs" || true
+            echo "::error::a Flink job failed to submit in the release image — the packaged app cannot run SQL; see FlinkConfig.applyJobClasspath"
+            exit 1
+          fi
+          grep -q 'Flink planner warmed up' "$logs" \
+            || { echo "::error::the Flink warmup probe never reported success — the planner path is broken in the packaged image, or the probe no longer runs"; exit 1; }
 
           docker rm -f release-probe
 
