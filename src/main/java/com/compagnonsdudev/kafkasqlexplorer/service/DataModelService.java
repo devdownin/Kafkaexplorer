@@ -322,6 +322,11 @@ public class DataModelService {
      */
     static List<DataModelRelation> deduceRelations(List<DataModelEntity> entities) {
         List<DataModelRelation> relations = new ArrayList<>();
+        // Keys are joined on NUL, which no topic name, entity id or column name can contain, so
+        // two different triples cannot collide into one key. Written as the escape `'\0'` and not
+        // as the byte itself: a literal NUL in the source made `file` report this as `data` and
+        // `grep -r` skip it with "binary file matches" — which quietly took the file out of every
+        // codebase-wide search, this repository's own doc checks included.
         Set<String> seen = new HashSet<>();
 
         for (DataModelEntity from : entities) {
@@ -334,7 +339,7 @@ public class DataModelService {
                     if (to == from) continue;
                     if (topicTokens(to.topic()).stream().noneMatch(t -> tokenMatches(t, base))) continue;
 
-                    String dedupeKey = from.id() + ' ' + to.id() + ' ' + column.name();
+                    String dedupeKey = from.id() + '\0' + to.id() + '\0' + column.name();
                     if (!seen.add(dedupeKey)) continue;
 
                     String toColumn = resolveTargetColumn(to, column.name());
@@ -364,7 +369,7 @@ public class DataModelService {
                 if (pkBase == null || pkBase.isEmpty()) continue;
                 if (!fromColumns.contains(pk)) continue;
                 if (from.primaryKey() != null && from.primaryKey().equals(pk)) continue;
-                String dedupeKey = from.id() + ' ' + to.id() + ' ' + pk;
+                String dedupeKey = from.id() + '\0' + to.id() + '\0' + pk;
                 if (!seen.add(dedupeKey)) continue;
                 relations.add(new DataModelRelation(from.id(), to.id(), pk, pk,
                         RelationConfidence.LOW,
@@ -404,13 +409,13 @@ public class DataModelService {
         for (DataModelRelation relation : relations) {
             // First relation wins for a column that references several entities; the full list
             // stays available in the relations themselves.
-            refByColumn.putIfAbsent(relation.from() + ' ' + relation.fromColumn(), relation.to());
+            refByColumn.putIfAbsent(relation.from() + '\0' + relation.fromColumn(), relation.to());
         }
         List<DataModelEntity> marked = new ArrayList<>(entities.size());
         for (DataModelEntity entity : entities) {
             List<DataModelColumn> columns = entity.columns().stream()
                     .map(c -> {
-                        String ref = refByColumn.get(entity.id() + ' ' + c.name());
+                        String ref = refByColumn.get(entity.id() + '\0' + c.name());
                         return ref == null ? c
                                 : new DataModelColumn(c.name(), c.type(), c.primaryKey(), ref,
                                         c.keyBase());

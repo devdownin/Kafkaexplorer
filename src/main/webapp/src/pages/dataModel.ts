@@ -2008,7 +2008,7 @@ export function describeStaleGraphDuringBuild(hasPreviousModel: boolean): string
  * paire ajout+suppression : la même affirmation, mieux ou moins bien étayée d'un run à l'autre.
  */
 export function relationKey(relation: DataModelRelation): string {
-  return `${relation.from} ${relation.fromColumn} ${relation.to} ${relation.toColumn ?? ''}`;
+  return `${relation.from}\0${relation.fromColumn}\0${relation.to}\0${relation.toColumn ?? ''}`;
 }
 
 export interface RelationConfidenceChange {

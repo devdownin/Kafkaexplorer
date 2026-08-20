@@ -322,21 +322,72 @@ jobs:
       - name: Boot it
         # No broker: the app must still start and answer liveness. Readiness is expected
         # to be DOWN here, which is precisely what makes the split worth having.
+        #
+        # That "no broker" is also what makes this the one place in CI where the startup
+        # audit's findings can be guarded. The stack in the `docker` job runs a healthy
+        # broker, so the failure mode measured there — an application that says a great deal
+        # and explains nothing while it cannot reach a cluster — cannot occur. Here it is the
+        # default state, so the assertions below cost nothing extra and watch the exact
+        # scenario that produced them.
         run: |
           set -euo pipefail
           docker run -d --name release-probe -p 127.0.0.1:8080:8080 kafka-explorer-release:ci
+          up=""
           for _ in $(seq 1 36); do
             if curl -fsS http://127.0.0.1:8080/actuator/health/liveness 2>/dev/null | grep -q '"status":"UP"'; then
-              uid=$(docker exec release-probe id -u | tr -d '[:space:]')
-              [ "$uid" = "10001" ] || { echo "::error::release image runs as uid $uid"; exit 1; }
-              docker rm -f release-probe
-              exit 0
+              up=yes
+              break
             fi
             sleep 5
           done
-          docker logs release-probe | tail -100
-          echo "::error::the release image never answered liveness"
-          exit 1
+          if [ -z "$up" ]; then
+            docker logs release-probe | tail -100
+            echo "::error::the release image never answered liveness"
+            exit 1
+          fi
+
+          uid=$(docker exec release-probe id -u | tr -d '[:space:]')
+          [ "$uid" = "10001" ] || { echo "::error::release image runs as uid $uid"; exit 1; }
+
+          # A fixed window of unreachable-broker life, so the count below measures the same
+          # thing from one run to the next.
+          sleep 30
+          logs=$(mktemp)
+          docker logs release-probe > "$logs" 2>&1
+
+          # --- The startup audit's regression guard -------------------------------------
+          # One class (the admin client's AdminMetadataManager) wrote `Rebootstrapping with
+          # Cluster(…)` at INFO on every metadata retry: measured at 101 943 of 103 775 lines,
+          # ~2 300 a second, ~1.6 MB a minute into a named volume — burying the connection
+          # failure it was reporting. It is pinned to WARN in application.yml, and the same
+          # boot now costs ~410 lines.
+          #
+          # The ceiling is deliberately an order of magnitude above what is observed rather
+          # than a tight fit. A gate that flakes is a gate people learn to ignore — the lesson
+          # MOBILE-LAYOUT-SCOPE.md records about the layout probe — and nothing here needs
+          # precision: a returned flood is ~70 000 lines in this window, so 5 000 separates
+          # the two by more than tenfold in both directions.
+          lines=$(wc -l < "$logs")
+          echo "boot + 30s with no broker: $lines log lines"
+          [ "$lines" -le 5000 ] || {
+            echo "::error::$lines log lines in 30s without a broker (ceiling 5000) — something is logging per retry again; check logging.level in application.yml"
+            awk '{print $5}' "$logs" | sort | uniq -c | sort -rn | head -5
+            exit 1
+          }
+
+          # ...and the other half: the log must still *explain itself*. Both startup restores
+          # used to report their failure at DEBUG, i.e. no line at all on a default install,
+          # so an unreachable broker produced an application that had silently forgotten its
+          # metric configurations and its validated field mappings with nothing connecting
+          # the two. Each names its own topic, whichever of the two paths it took.
+          grep -q 'did not answer' "$logs" \
+            || { echo "::error::the startup summary does not name the unreachable broker"; exit 1; }
+          for topic in internal.metrics.config internal.field.mappings; do
+            grep -q "$topic" "$logs" \
+              || { echo "::error::the restore of $topic reported nothing — it is back at DEBUG"; exit 1; }
+          done
+
+          docker rm -f release-probe
 
       # The release now ships an SBOM, and nothing read it. A pinned-by-digest JRE base is
       # what makes a build reproducible and is also what freezes its security patches
