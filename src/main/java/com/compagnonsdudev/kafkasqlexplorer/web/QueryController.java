@@ -142,24 +142,31 @@ public class QueryController {
      *
      * <p>400 on a name that could not go into a statement, rather than quoting it and hoping: a
      * backtick in a path variable is SQL injection into an engine that runs whatever DDL it is
-     * given. 200 with {@code dropped: false} when there was simply nothing of that name — the same
-     * rule as {@code cancel}, where "nothing to do" is an outcome of a well-formed request and not
-     * a client error, and the caller has to be able to tell the two apart.
+     * given, and the refused text is not echoed back. Otherwise 200 with the outcome named — the
+     * same rule as {@code cancel}, where "nothing to do" is the result of a well-formed request
+     * rather than a client error, and the caller has to be able to tell the cases apart.
+     * {@link FlinkSqlService.DropOutcome} has three of them because a boolean had only two and so
+     * reported "no such table" whenever the engine had refused to drop one that plainly exists.
      */
     @DeleteMapping(value = "/table/{tableName}", produces = "application/json")
     public Map<String, Object> dropTable(@PathVariable("tableName") String tableName) {
-        boolean dropped;
+        FlinkSqlService.DropOutcome outcome;
         try {
-            dropped = flinkSqlService.dropTable(tableName);
+            outcome = flinkSqlService.dropTable(tableName);
         } catch (IllegalArgumentException e) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
         }
         Map<String, Object> result = new HashMap<>();
         result.put("table", tableName);
-        result.put("dropped", dropped);
-        result.put("message", dropped
-            ? "Table " + tableName + " was dropped and will not be restored at startup."
-            : "No table named " + tableName + " was registered or stored.");
+        result.put("dropped", outcome == FlinkSqlService.DropOutcome.DROPPED);
+        result.put("outcome", outcome.name());
+        // Three outcomes, three sentences. The boolean alone reported "there was no such table"
+        // whenever the engine had refused to drop one that plainly exists.
+        result.put("message", switch (outcome) {
+            case DROPPED -> "Table " + tableName + " was dropped and will not be restored at startup.";
+            case NOT_FOUND -> "No table named " + tableName + " was registered or stored.";
+            case REFUSED -> "Table " + tableName + " could not be dropped — see the server log.";
+        });
         return result;
     }
 

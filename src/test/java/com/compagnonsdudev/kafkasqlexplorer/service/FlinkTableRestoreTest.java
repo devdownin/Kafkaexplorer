@@ -139,7 +139,7 @@ class FlinkTableRestoreTest {
         Process first = start(storePath);
         first.service().executeSql(QueryRequest.sql(DDL, 1, null, null));
 
-        assertTrue(first.service().dropTable("kse_restore_probe"));
+        assertEquals(FlinkSqlService.DropOutcome.DROPPED, first.service().dropTable("kse_restore_probe"));
         assertFalse(first.service().listTables().contains("kse_restore_probe"));
 
         Process second = start(storePath);
@@ -152,7 +152,41 @@ class FlinkTableRestoreTest {
     void droppingSomethingThatWasNeverThereSaysSoRatherThanFailing() throws Exception {
         Process process = start(tempDir.resolve("flink-tables.json"));
 
-        assertFalse(process.service().dropTable("kse_never_created"));
+        assertEquals(FlinkSqlService.DropOutcome.NOT_FOUND, process.service().dropTable("kse_never_created"));
+    }
+
+    /**
+     * A table only the store knows is still removable.
+     *
+     * <p>It can legitimately be in the store and not in Flink — written by an older build, or
+     * already dropped — and if that could not be removed, the boot would go on replaying a
+     * definition nobody can get rid of.
+     */
+    @Test
+    void aTableTheStoreKnowsButFlinkDoesNotIsStillForgotten() throws Exception {
+        Path storePath = tempDir.resolve("flink-tables.json");
+        Process process = start(storePath);
+        process.store().remember("CREATE TABLE kse_only_stored (id INT) WITH ('connector' = 'datagen')");
+        assertFalse(process.service().listTables().contains("kse_only_stored"),
+            "this Flink runtime never ran that statement");
+
+        assertEquals(FlinkSqlService.DropOutcome.DROPPED, process.service().dropTable("kse_only_stored"));
+        assertTrue(process.store().all().isEmpty());
+    }
+
+    /**
+     * The name that reaches the statement is resolved against what exists, not interpolated from
+     * the request — so a name matching nothing is answered without submitting a DROP that was
+     * never going to work.
+     */
+    @Test
+    void aNameThatMatchesNothingDropsNothingAndSubmitsNoStatement() throws Exception {
+        Process process = start(tempDir.resolve("flink-tables.json"));
+        process.service().executeSql(QueryRequest.sql(DDL, 1, null, null));
+
+        assertEquals(FlinkSqlService.DropOutcome.NOT_FOUND, process.service().dropTable("kse_restore_prob"), "a near-miss is not a match");
+        assertTrue(process.service().listTables().contains("kse_restore_probe"),
+            "and the real table was left alone");
     }
 
     /** A backtick in a path variable is SQL injection into an engine that runs whatever it is given. */

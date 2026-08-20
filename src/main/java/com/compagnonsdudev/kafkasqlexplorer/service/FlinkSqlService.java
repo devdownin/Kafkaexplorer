@@ -722,16 +722,25 @@ public class FlinkSqlService {
      *
      * @return whether anything was actually dropped or forgotten
      */
-    public boolean dropTable(String name) {
-        // Matched here rather than merely tested, so that what flows on to the statement, the log
-        // and the store is the whitelist's own match instead of the caller's string. The two are
-        // equal by construction; taking the match is what makes that visible at every use below,
-        // to a reader and to static analysis alike.
-        Matcher identifier = FlinkTableStore.SAFE_IDENTIFIER.matcher(name == null ? "" : name);
-        // The keyword exclusion travels with the pattern, or this would quietly loosen the guard
-        // it is meant to be tightening — see FlinkTableStore.isSafeIdentifier, which both this and
-        // the store apply, and which the store's own test pins.
-        if (!identifier.matches() || !FlinkTableStore.isSafeIdentifier(name)) {
+    /**
+     * What dropping a table achieved — the shape {@link CancelOutcome} already uses here, and for
+     * the same reason.
+     *
+     * <p>A boolean could not tell "there was no such table" from "there was, and the engine refused
+     * it", so the answer asserted the first whenever the second happened. That is the class of
+     * claim this codebase removes everywhere else: a message that states something nobody checked.
+     */
+    public enum DropOutcome {
+        /** Removed from Flink's catalogue, from the store of kept definitions, or from both. */
+        DROPPED,
+        /** Neither Flink nor the store had a table of that name, so there was nothing to do. */
+        NOT_FOUND,
+        /** It existed and could not be dropped; the reason is on the server log. */
+        REFUSED
+    }
+
+    public DropOutcome dropTable(String name) {
+        if (!FlinkTableStore.isSafeIdentifier(name)) {
             // The offending text is not echoed. It is a path variable, so it goes into the answer
             // and could go into a log; a name refused for containing something that does not
             // belong in an identifier is the last thing to repeat back verbatim.
@@ -739,39 +748,54 @@ public class FlinkSqlService {
                 "That is not a table name this application will put into a statement: only letters, "
                     + "digits, '_' and '$' are accepted, and it must not start with a digit.");
         }
-        String table = identifier.group();
+        // Resolved against what exists, never interpolated. What reaches the statement, the log and
+        // the store is this application's own string — Flink's catalogue entry or the store's key —
+        // and the request only ever selects between them. That is a stronger guarantee than
+        // matching the request against a pattern and trusting the match downstream, and it is the
+        // one a reader can check without leaving this method.
+        String table = knownTableNamed(name);
+        if (table == null) {
+            // Nothing of that name in either place, so there is nothing to drop and no statement
+            // worth submitting. The caller is told plainly rather than being shown the failure of
+            // a DROP that was never going to work.
+            return DropOutcome.NOT_FOUND;
+        }
         boolean dropped = false;
         try {
             executeMutationSql("drop-table", "DROP TABLE `" + table + "`");
             dropped = true;
         } catch (Exception e) {
-            // Reported, not thrown: the store still has to be cleaned up below, and "Flink does
-            // not have this table" is a normal answer here rather than a failure.
-            log.info("DROP TABLE `{}` did not run: {}", oneLine(table), SqlErrorClassifier.explain(e));
+            // Reported, not thrown: the store still has to be cleaned up below, and a table the
+            // store knows while Flink does not — one an older build wrote, or one already dropped
+            // — is a normal answer here rather than a failure.
+            log.info("DROP TABLE `{}` did not run: {}", table, SqlErrorClassifier.explain(e));
         }
         boolean forgotten = flinkTableStore.forget(table);
-        return dropped || forgotten;
+        // Known but neither dropped nor forgotten: it is in Flink's catalogue and the engine would
+        // not remove it. Saying "no such table" there would be the answer to a question nobody
+        // asked, about a table that is plainly still present in the schema browser.
+        return dropped || forgotten ? DropOutcome.DROPPED : DropOutcome.REFUSED;
     }
 
     /**
-     * Text that came from a request, fit for one line of a log.
+     * This application's own spelling of a table the request named, or {@code null}.
      *
-     * <p><b>This strips nothing at runtime here</b>, and that is worth stating rather than hiding:
-     * {@link #dropTable} refuses anything that is not {@code [A-Za-z_][A-Za-z0-9_$]*} before
-     * reaching its log line, so the value cannot hold a line break by the time it arrives. It is
-     * applied anyway for two reasons. A log sink should not depend on a guard fifteen lines above
-     * it staying correct through every later edit — the whole point of a forged log line is that it
-     * lands in the file that is meant to be the record of what happened, where nobody thinks to
-     * doubt it. And the guard is a predicate on another class, so neither a reader arriving at this
-     * line nor static analysis can see it from here; CodeQL reported exactly that and was right to,
-     * even though the value was already safe.
+     * <p>Flink's catalogue first, then the definitions kept for replay: a table can legitimately be
+     * in the store and not in Flink — written by an older build, or already dropped — and it still
+     * has to be removable, or the boot would go on replaying a definition nobody can get rid of.
      *
-     * <p>Deliberately not applied to the flattened exception beside it. A Flink error can quote the
-     * statement it failed on, so that is a wider question about every {@code explain()} call in the
-     * codebase rather than something to settle in one method.
+     * <p>The comparison is exact. {@code FlinkTableStore.forget} matches case-insensitively as a
+     * courtesy to a name read off a screen, but that is about forgetting an entry, whereas this
+     * name is going into a statement, and Flink identifiers are case-sensitive.
      */
-    private static String oneLine(String value) {
-        return value == null ? "" : value.replaceAll("[\\r\\n]", "");
+    private String knownTableNamed(String requested) {
+        for (String table : listTables()) {
+            if (table.equals(requested)) return table;
+        }
+        for (FlinkTableStore.StoredTable stored : flinkTableStore.all()) {
+            if (stored.name().equals(requested)) return stored.name();
+        }
+        return null;
     }
 
     /**

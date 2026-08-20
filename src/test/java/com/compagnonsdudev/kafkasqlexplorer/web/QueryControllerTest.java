@@ -234,9 +234,45 @@ class QueryControllerTest {
     void thereIsNoServerSideTablePage() throws Exception {
         mockMvc.perform(get("/table/orders")).andExpect(status().isNotFound());
 
-        when(flinkSqlService.dropTable("orders")).thenReturn(true);
+        when(flinkSqlService.dropTable("orders")).thenReturn(FlinkSqlService.DropOutcome.DROPPED);
         mockMvc.perform(delete("/api/query/table/orders"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.dropped").value(true));
+    }
+
+    /**
+     * Three outcomes, three sentences.
+     *
+     * <p>The endpoint answered with a boolean, so "there was no such table" was what it said
+     * whenever the engine had refused to drop one that plainly exists — a claim about something
+     * nobody had checked, on a table still sitting in the schema browser.
+     */
+    @Test
+    void theAnswerDistinguishesNothingToDropFromARefusal() throws Exception {
+        when(flinkSqlService.dropTable("absent")).thenReturn(FlinkSqlService.DropOutcome.NOT_FOUND);
+        mockMvc.perform(delete("/api/query/table/absent"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.dropped").value(false))
+            .andExpect(jsonPath("$.outcome").value("NOT_FOUND"))
+            .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("was registered or stored")));
+
+        when(flinkSqlService.dropTable("stubborn")).thenReturn(FlinkSqlService.DropOutcome.REFUSED);
+        mockMvc.perform(delete("/api/query/table/stubborn"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.dropped").value(false))
+            .andExpect(jsonPath("$.outcome").value("REFUSED"))
+            .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("could not be dropped")));
+    }
+
+    /** A name that cannot go into a statement is refused, and is not echoed back. */
+    @Test
+    void aTableNameThatIsNotAnIdentifierIsRefused() throws Exception {
+        when(flinkSqlService.dropTable(org.mockito.ArgumentMatchers.anyString()))
+            .thenThrow(new IllegalArgumentException("That is not a table name this application "
+                + "will put into a statement: only letters, digits, '_' and '$' are accepted, and "
+                + "it must not start with a digit."));
+
+        mockMvc.perform(delete("/api/query/table/{name}", "orders'"))
+            .andExpect(status().isBadRequest());
     }
 }
