@@ -46,6 +46,25 @@ public class ExplorerConfig {
      */
     private boolean flinkWarmupEnabled = true;
 
+    /**
+     * How long one state restore may wait for the broker to answer its first metadata call at
+     * startup.
+     *
+     * <p>Two beans read a topic while the context is still building — {@code MetricService}
+     * (metric configurations) and {@code FieldMappingStore} (validated Process Mining mappings) —
+     * and both did so under the Kafka client's 5 s default API timeout. Measured on this codebase
+     * with no broker listening: those two waits are <b>10.1 s of a 14.5 s boot</b>, spent
+     * discovering twice, over two clients, that nothing is there. The cost is paid on exactly the
+     * deployment that is already in trouble.
+     *
+     * <p>Three seconds is a wide margin over a healthy metadata call (tens of milliseconds on a
+     * local broker, well under a second through a TLS + SASL handshake) and it is what the
+     * restore consumers use as their API timeout. Raise it for a cluster that is genuinely slow to
+     * answer at boot; the restore that gives up now says so at WARN, so a value set too low is
+     * visible in the log rather than silent.
+     */
+    private long startupRestoreTimeoutMs = 3000;
+
     private String auditHistoryTopic = "internal.audit.history";
     /**
      * Records read from the end of the audit-history topic when listing past runs. The topic is
@@ -486,5 +505,13 @@ public class ExplorerConfig {
 
     public void setFlinkWarmupEnabled(boolean flinkWarmupEnabled) {
         this.flinkWarmupEnabled = flinkWarmupEnabled;
+    }
+
+    public long getStartupRestoreTimeoutMs() {
+        return startupRestoreTimeoutMs;
+    }
+
+    public void setStartupRestoreTimeoutMs(long startupRestoreTimeoutMs) {
+        this.startupRestoreTimeoutMs = startupRestoreTimeoutMs;
     }
 }

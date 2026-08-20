@@ -10,6 +10,7 @@ import com.compagnonsdudev.kafkasqlexplorer.service.FieldProfilingService;
 import com.compagnonsdudev.kafkasqlexplorer.service.KafkaLiveConsumer;
 import com.compagnonsdudev.kafkasqlexplorer.service.LlmAnalysisService;
 import com.compagnonsdudev.kafkasqlexplorer.service.SseEmitterManager;
+import com.compagnonsdudev.kafkasqlexplorer.service.StartupRestore;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -49,8 +50,17 @@ class ProcessMiningControllerTest {
                 kafkaLiveConsumer,
                 Mockito.mock(SseEmitterManager.class),
                 Mockito.mock(AuditPromptCatalog.class),
-                new FieldMappingStore(new KafkaConfig(), new ExplorerConfig())))
+                newFieldMappingStore()))
             .build();
+    }
+
+    /**
+     * A real store, but one that never opens a consumer: this controller does not read it, and a
+     * restore against no broker would only spend the startup budget for nothing.
+     */
+    private static FieldMappingStore newFieldMappingStore() {
+        ExplorerConfig config = new ExplorerConfig();
+        return new FieldMappingStore(new KafkaConfig(), config, new StartupRestore(config));
     }
 
     @Test

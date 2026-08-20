@@ -22,6 +22,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tag;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
@@ -149,6 +150,7 @@ public class MetricService {
     private final ExplorerConfig  explorerConfig;
     private final KafkaAdminService kafkaAdminService;
     private final MessageFieldExtractorService messageFieldExtractorService;
+    private final StartupRestore startupRestore;
     private final ObjectMapper    objectMapper = new ObjectMapper();
 
     /** Shared producer for config persistence — creating a KafkaProducer per save is expensive. */
@@ -175,21 +177,44 @@ public class MetricService {
     public MetricService(FlinkSqlService flinkSqlService, MeterRegistry meterRegistry,
                          KafkaConfig kafkaConfig, ExplorerConfig explorerConfig,
                          KafkaAdminService kafkaAdminService,
-                         MessageFieldExtractorService messageFieldExtractorService) {
+                         MessageFieldExtractorService messageFieldExtractorService,
+                         StartupRestore startupRestore) {
         this.flinkSqlService = flinkSqlService;
         this.meterRegistry   = meterRegistry;
         this.kafkaConfig     = kafkaConfig;
         this.explorerConfig  = explorerConfig;
         this.kafkaAdminService = kafkaAdminService;
         this.messageFieldExtractorService = messageFieldExtractorService;
+        this.startupRestore = startupRestore;
     }
 
     // ── Bootstrap ─────────────────────────────────────────────────────────────
 
+    /**
+     * Restores the configured metrics, then seeds examples <b>only if the store is known to be
+     * empty</b>.
+     *
+     * <p>That distinction is the whole of this method. "No metric is configured" and "the metric
+     * configurations could not be read" are two different answers, and seeding acts on the first:
+     * it mints four metrics with fresh ids and writes them back to {@code internal.metrics.config},
+     * beside an operator's own metrics that this process simply failed to read. Guarding on
+     * {@code metrics.isEmpty()} alone made an unreachable broker at boot look exactly like a first
+     * run. It has been harmless so far only by accident — Flink holds no table at boot, so
+     * {@code seedDefaultMetrics} returns early — and an accident is not a guard.
+     */
     @PostConstruct
     public void init() {
-        restoreFromKafka();
+        boolean restored = restoreFromKafka();
         migrateStaleMetrics();
+        if (!restored) {
+            if (metrics.isEmpty()) {
+                // Said only when it changes the outcome: a partial restore that did bring metrics
+                // back would not have seeded anyway, and has already reported itself.
+                log.warn("No example metric was seeded: the existing configuration could not be "
+                    + "read, so an empty store here does not mean the cluster has none.");
+            }
+            return;
+        }
         if (metrics.isEmpty()) {
             seedDefaultMetrics();
         }
@@ -1338,20 +1363,58 @@ public class MetricService {
         closeConfigProducer();
     }
 
-    private void restoreFromKafka() {
+    /** The restore runs during startup, so it is bounded on both the calls and the whole read. */
+    private static final long RESTORE_BUDGET_MS = 10_000;
+
+    /**
+     * Test seam, and the reason there is one: the restore's outcome now decides whether the store
+     * seeds example metrics, so it has to be drivable without a broker.
+     */
+    Consumer<String, String> createConsumer() {
         Properties props = new Properties();
         props.putAll(kafkaConfig.getKafkaProperties());
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG,   StringDeserializer.class.getName());
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         ExplorerConsumerGroups.configure(props, "metrics-restorer");
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
-        // Fail fast when the broker is unreachable — this runs during application startup.
-        props.put(ConsumerConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, "5000");
-        props.put(ConsumerConfig.REQUEST_TIMEOUT_MS_CONFIG, "4000");
-        try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props)) {
-            List<PartitionInfo> partitionInfos = consumer.partitionsFor(explorerConfig.getMetricsConfigTopic());
+        // Fail fast when the broker is unreachable — this runs during application startup, and the
+        // client default of 5 s was measured at half of a boot with nothing listening. The budget
+        // is shared with the other startup restore and configurable; see StartupRestore.
+        props.put(ConsumerConfig.DEFAULT_API_TIMEOUT_MS_CONFIG,
+            String.valueOf(startupRestore.discoveryTimeoutMs()));
+        props.put(ConsumerConfig.REQUEST_TIMEOUT_MS_CONFIG,
+            String.valueOf(startupRestore.requestTimeoutMs()));
+        return new KafkaConsumer<>(props);
+    }
+
+    /**
+     * Reads the metric configurations back, and <b>says which of the three answers it got</b>.
+     *
+     * <p>It used to end in {@code log.debug("Restore from Kafka failed: " + e.getMessage())}, which
+     * is two defects in one line: DEBUG is no line at all on a default install, and
+     * {@code getMessage()} is {@code null} for an NPE — so the commonest reason a Metrics page
+     * comes up empty left the log saying either nothing or {@code null}. It also announced
+     * "Restored N metric configuration(s)" after a loop that exits on its deadline just as
+     * readily as on the end offsets, so a read cut in half reported its fraction as the whole.
+     *
+     * @return {@code true} when the topic was read to its end — which includes a topic that does
+     *         not exist yet, since that is a complete answer about an empty store
+     */
+    boolean restoreFromKafka() {
+        String topic = explorerConfig.getMetricsConfigTopic();
+        String earlier = startupRestore.brokerUnreachableReason();
+        if (earlier != null) {
+            log.warn("Metric configurations were not restored from {}: the broker had already "
+                + "failed to answer an earlier startup read ({}). The metrics configured on this "
+                + "cluster are not available to this process.", topic, earlier);
+            return false;
+        }
+
+        long startedAt = System.currentTimeMillis();
+        try (Consumer<String, String> consumer = createConsumer()) {
+            List<PartitionInfo> partitionInfos = consumer.partitionsFor(topic);
             if (partitionInfos == null || partitionInfos.isEmpty()) {
-                return; // topic does not exist yet — nothing to restore
+                return true; // topic does not exist yet — nothing to restore
             }
             List<TopicPartition> partitions = partitionInfos.stream()
                 .map(pi -> new TopicPartition(pi.topic(), pi.partition()))
@@ -1363,7 +1426,7 @@ public class MetricService {
             // Poll until every partition reaches its end offset. An empty poll does NOT mean
             // the topic is exhausted (the first poll after assignment is typically empty
             // while the fetch is in flight), so completion is tracked by position instead.
-            long deadline = System.currentTimeMillis() + 10_000;
+            long deadline = startedAt + RESTORE_BUDGET_MS;
             while (System.currentTimeMillis() < deadline && !reachedEndOffsets(consumer, endOffsets)) {
                 ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(300));
                 for (ConsumerRecord<String, String> record : records) {
@@ -1378,17 +1441,35 @@ public class MetricService {
                     } catch (Exception e) {
                         // One corrupt record must not abort the whole restore
                         log.warn("Skipping unreadable metric config at {}:{}: {}",
-                            record.partition(), record.offset(), e.getMessage());
+                            record.partition(), record.offset(), SqlErrorClassifier.explain(e));
                     }
                 }
             }
-            log.info("Restored {} metric configuration(s) from Kafka", metrics.size());
+            boolean complete = reachedEndOffsets(consumer, endOffsets);
+            long ms = System.currentTimeMillis() - startedAt;
+            if (!complete) {
+                log.warn("Only part of {} was read: the {} ms restore budget ran out after {} ms "
+                    + "with {} metric configuration(s) restored. The rest are absent from this "
+                    + "process and will not be refreshed or exported.",
+                    topic, RESTORE_BUDGET_MS, ms, metrics.size());
+            } else {
+                log.info("Restored {} metric configuration(s) from {} in {} ms",
+                    metrics.size(), topic, ms);
+            }
+            return complete;
         } catch (Exception e) {
-            log.debug("Restore from Kafka failed: {}", e.getMessage());
+            long ms = System.currentTimeMillis() - startedAt;
+            String reason = SqlErrorClassifier.explain(e);
+            if (ms >= startupRestore.discoveryTimeoutMs()) {
+                startupRestore.brokerDidNotAnswer("metric configurations", reason);
+            }
+            log.warn("Metric configurations could not be restored from {} after {} ms: {}",
+                topic, ms, reason);
+            return false;
         }
     }
 
-    private boolean reachedEndOffsets(KafkaConsumer<String, String> consumer,
+    private boolean reachedEndOffsets(Consumer<String, String> consumer,
                                       Map<TopicPartition, Long> endOffsets) {
         for (Map.Entry<TopicPartition, Long> entry : endOffsets.entrySet()) {
             if (consumer.position(entry.getKey()) < entry.getValue()) {

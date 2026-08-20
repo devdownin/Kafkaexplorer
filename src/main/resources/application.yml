@@ -129,6 +129,13 @@ explorer:
   # disables the planner path after repeated failures (e.g. if the FlinkRelMetadataQuery NPE
   # is still present in the running Flink version).
   flink-select-enabled: true
+  # How long one state restore may wait for the broker's first answer while the context is still
+  # building. Two beans read a topic there — the metric configurations and the Process Mining field
+  # mappings — and both used the Kafka client's 5 s default: measured with nothing listening, those
+  # two waits were 10.1 s of a 14.5 s boot, spent discovering twice that nothing is there. Three
+  # seconds is a wide margin over a healthy metadata call; the restore that gives up says so at
+  # WARN, and the next one reads that verdict instead of paying for it again.
+  startup-restore-timeout-ms: 3000
 
 # Process Mining ingestion tuning. Defaults target "complex" payloads — JSON documents around
 # 1 MB with ~10 levels of nesting — which are never buffered nor prompted verbatim: each record
@@ -213,7 +220,29 @@ claude:
 logging:
   file:
     name: logs/kafkaexplorer.log
+  logback:
+    rollingpolicy:
+      # Spring Boot's default total-size-cap is 0B, i.e. no cap at all, and `logs/` is a named
+      # volume in every bundled stack. A broker that stops answering used to write ~1.6 MB a
+      # minute here (see the AdminMetadataManager note below), so the one thing that must not
+      # happen is an application filling the host's disk while reporting a problem. The cap is on
+      # the archive as a whole, not per file.
+      max-file-size: 10MB
+      total-size-cap: 200MB
+      max-history: 7
   level:
     # INFO by default — switch to DEBUG locally when diagnosing query issues
     com.compagnonsdudev.kafkasqlexplorer: INFO
     org.apache.flink: WARN
+    # Measured, not guessed at: with nothing listening on the bootstrap address, a 45 s run of
+    # this application logged 103 775 lines, of which 101 943 — 98.2 % — were this one class
+    # writing `Rebootstrapping with Cluster(…)` at INFO, once per admin-client metadata retry,
+    # about 2 300 times a second. The application's own package contributed six lines in the same
+    # window. That is not a log an operator can read at the exact moment they need to: it buries
+    # the connection failure it is reporting, costs CPU, and fills the log volume.
+    #
+    # WARN rather than OFF: the class keeps whatever it has to say at WARN or above, and the
+    # broker's unreachability is still reported — by NetworkClient (which backs off, ~140 lines
+    # in the same window) and by this application's own startup summary, which names the address
+    # and the reason. What is removed is the retry-by-retry narration of a fact already stated.
+    org.apache.kafka.clients.admin.internals.AdminMetadataManager: WARN

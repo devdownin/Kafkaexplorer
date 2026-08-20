@@ -83,7 +83,7 @@ public class KafkaAdminService {
      * Shared AdminClient instance for the application.
      * We initialize it once and reuse it across multiple requests.
      */
-    private AdminClient adminClient;
+    private volatile AdminClient adminClient;
 
     /**
      * Test seam — {@code KafkaAdminServiceConsumerLagTest} drives a mocked AdminClient through it.
@@ -100,16 +100,30 @@ public class KafkaAdminService {
         this.kafkaConfig = kafkaConfig;
     }
 
+    /**
+     * Builds the admin client, and is also what {@code POST /api/config} calls to repoint the
+     * application at another cluster — so it runs with the rest of the application live around it.
+     *
+     * <p>It used to close the previous client and <em>then</em> create the replacement, leaving
+     * every other thread holding a closed {@code AdminClient} for the duration: a dashboard poll or
+     * a readiness probe landing in that window failed with "The AdminClient is closed", which reads
+     * as an unreachable cluster rather than as a settings save in progress. The field was not
+     * {@code volatile} either, so nothing published the new client to those threads. Build first,
+     * publish, close the old one last — the swap is then a single visible write, and the worst a
+     * concurrent caller sees is one call answered by the previous cluster, which is what
+     * {@code POST /api/config} already promises about work in flight.
+     */
     @PostConstruct
     public void init() {
-        if (this.adminClient != null) {
-            // Bounded for the same reason as close() below: this runs when the cluster is
-            // repointed, which is very often *because* the previous one stopped answering.
-            this.adminClient.close(Duration.ofSeconds(5));
-        }
+        AdminClient previous = this.adminClient;
         Properties props = new Properties();
         props.putAll(kafkaConfig.getKafkaProperties());
         this.adminClient = AdminClient.create(props);
+        if (previous != null) {
+            // Bounded for the same reason as close() below: this runs when the cluster is
+            // repointed, which is very often *because* the previous one stopped answering.
+            previous.close(Duration.ofSeconds(5));
+        }
 
         if (kafkaConfig.getSchemaRegistryUrl() != null) {
             this.schemaRegistryClient = new CachedSchemaRegistryClient(kafkaConfig.getSchemaRegistryUrl(), 100);
@@ -1326,10 +1340,20 @@ public class KafkaAdminService {
      */
     public record PingResult(boolean reachable, String error) {}
 
+    /** How long the reachability probe waits before calling the broker unreachable. */
+    static final long PING_TIMEOUT_MS = 2_000;
+
     public PingResult pingDetail() {
         try {
-            adminClient.listTopics().names().get(2, TimeUnit.SECONDS);
+            adminClient.listTopics().names().get(PING_TIMEOUT_MS, TimeUnit.MILLISECONDS);
             return new PingResult(true, null);
+        } catch (TimeoutException e) {
+            // A future's TimeoutException carries no message, so SqlErrorClassifier.explain() can
+            // only fall back to the class name — and "TimeoutException" told an operator neither
+            // what timed out nor how long we waited, on the one message the connection pill and
+            // the startup summary both quote verbatim. The budget is known here, so it is said.
+            // Without the address: every caller already shows it beside this message.
+            return new PingResult(false, "No answer within " + PING_TIMEOUT_MS + " ms");
         } catch (Exception e) {
             return new PingResult(false, SqlErrorClassifier.explain(e));
         }

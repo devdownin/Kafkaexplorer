@@ -55,7 +55,7 @@ class FieldMappingStoreTest {
     }
 
     private FieldMappingStore newStore(KafkaConfig kafkaConfig, ExplorerConfig explorerConfig) {
-        return new FieldMappingStore(kafkaConfig, explorerConfig) {
+        return new FieldMappingStore(kafkaConfig, explorerConfig, new StartupRestore(explorerConfig)) {
             @Override
             Producer<String, String> createProducer() {
                 return producer;
@@ -193,7 +193,9 @@ class FieldMappingStoreTest {
      */
     @Test
     void aFailingRestoreLeavesTheStoreUsable() {
-        FieldMappingStore failing = new FieldMappingStore(mock(KafkaConfig.class), new ExplorerConfig()) {
+        ExplorerConfig config = new ExplorerConfig();
+        FieldMappingStore failing = new FieldMappingStore(
+            mock(KafkaConfig.class), config, new StartupRestore(config)) {
             @Override
             Consumer<String, String> createConsumer() {
                 throw new IllegalStateException("no broker");
@@ -209,6 +211,53 @@ class FieldMappingStoreTest {
 
         failing.put(mapping("map-9", "t", "$.id"));
         assertTrue(failing.find("map-9").isPresent());
+    }
+
+    /**
+     * An absent topic is a complete answer about an empty store; an unreachable broker is not.
+     *
+     * <p>The difference is what decides whether {@code MetricService} seeds its examples, and what
+     * the log is allowed to claim. It was invisible before: both ended in the same
+     * {@code log.debug}, i.e. no line at all on a default install.
+     */
+    @Test
+    void anAbsentTopicIsACompleteReadAndAFailureIsNot() {
+        assertTrue(store.restoreFromKafka());
+
+        ExplorerConfig config = new ExplorerConfig();
+        FieldMappingStore failing = new FieldMappingStore(
+            mock(KafkaConfig.class), config, new StartupRestore(config)) {
+            @Override
+            Consumer<String, String> createConsumer() {
+                throw new IllegalStateException("no broker");
+            }
+        };
+
+        assertFalse(failing.restoreFromKafka());
+    }
+
+    /**
+     * The second restore of a boot reads the first one's verdict instead of re-paying for it.
+     *
+     * <p>Both restores hit the same broker within a second of each other, and each used to wait out
+     * its own 5 s API timeout to establish the same fact — 10.1 s of a 14.5 s boot, measured with
+     * nothing listening. Here the verdict is already recorded, so no consumer is opened at all:
+     * {@code createConsumer} would throw if it were.
+     */
+    @Test
+    void aBrokerAlreadyKnownUnreachableIsNotAskedTwice() {
+        ExplorerConfig config = new ExplorerConfig();
+        StartupRestore startupRestore = new StartupRestore(config);
+        startupRestore.brokerDidNotAnswer("metric configurations", "Connection refused");
+
+        FieldMappingStore second = new FieldMappingStore(mock(KafkaConfig.class), config, startupRestore) {
+            @Override
+            Consumer<String, String> createConsumer() {
+                throw new AssertionError("the broker had already been declared unreachable");
+            }
+        };
+
+        assertFalse(second.restoreFromKafka());
     }
 
     @Test

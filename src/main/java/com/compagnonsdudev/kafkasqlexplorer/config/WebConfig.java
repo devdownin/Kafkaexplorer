@@ -64,6 +64,13 @@ public class WebConfig implements WebMvcConfigurer {
                 "topicConsumers", "lineage", "auditHistory");
         cacheManager.setCaffeine(Caffeine.newBuilder()
                 .expireAfterWrite(explorerConfig.getCacheExpireSeconds(), TimeUnit.SECONDS)
+                // Two things at once, and the second is why it is here rather than being a matter
+                // of taste: Micrometer binds every one of these caches and logs an INFO line per
+                // cache at each boot saying it can register nothing but `cache.size` without this
+                // — eight lines of a start that is meant to be readable. And the meters it then
+                // does register are the ones worth having on an application whose read path leans
+                // on a 30 s cache: a hit ratio is what says whether the broker is being spared.
+                .recordStats()
                 .maximumSize(100));
         return cacheManager;
     }
