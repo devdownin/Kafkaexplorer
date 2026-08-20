@@ -17,11 +17,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import axios from 'axios';
 import type { DataModelResponse } from '../api/types';
+import { readPanelOpen } from './dataModel';
 
 vi.mock('axios');
 const mockedAxios = vi.mocked(axios, true);
@@ -108,6 +109,18 @@ async function renderPage(initialEntry = '/data-model') {
 /** Ouvre le tiroir de sélection — sous le seuil desktop, c'est la seule porte vers les topics. */
 async function openTopics(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: /^Topics \(/ }));
+}
+
+/**
+ * Bascule le bouchon `matchMedia` sur « desktop » le temps d'un test. C'est la seule disposition
+ * où le panneau se replie en rail, et le repli est précisément ce qui rend sa largeur au canevas :
+ * le laisser hors des tests le laisserait hors de tout contrôle.
+ */
+function asDesktop(): () => void {
+  const original = window.matchMedia;
+  window.matchMedia = (query: string) =>
+    ({ ...original(query), matches: true }) as MediaQueryList;
+  return () => { window.matchMedia = original; };
 }
 
 beforeEach(() => {
@@ -411,6 +424,199 @@ describe('DataModel page', () => {
     expect(screen.getByText('1 not drawn')).toBeInTheDocument();
     await openTopics(user);
     expect(screen.getByRole('button', { name: /No deduced relation \(1\)/ })).toBeInTheDocument();
+  });
+
+  /*
+   * Ces entités-là occupaient une grille sous le graphe dès que l'option était cochée, et une
+   * liste sans hauteur bornée sinon. Elles vivent maintenant dans une vraie liste, ouverte par
+   * défaut : c'est ce qui rend au canevas la place que le diagramme réclame.
+   */
+  it('lists the entities it does not draw, and says why they have no edge', async () => {
+    const user = userEvent.setup();
+    stubApi({
+      ...model,
+      entities: [...model.entities, {
+        id: 'demo_iot_sensors', topic: 'demo.iot.sensors', format: 'JSON',
+        primaryKey: null, messageCount: 7200,
+        columns: [{ name: 'reading', type: 'DOUBLE', primaryKey: false, references: null, keyBase: null }],
+      }],
+      topicsRequested: 3, topicsAnalyzed: 3,
+    });
+    await renderPage('/data-model?topics=demo.orders.1.received,demo.payments.authorized,demo.iot.sensors');
+
+    await screen.findByText('3 entities · 1 relation deduced');
+    await openTopics(user);
+
+    const list = screen.getByRole('listbox', { name: 'Entities with no deduced relation' });
+    expect(list).toBeInTheDocument();
+    const options = within(list).getAllByRole('option');
+    expect(options).toHaveLength(1);
+    expect(options[0]).toHaveTextContent('demo_iot_sensors');
+    // Un compte seul se lit comme une troncature ; la liste dit que c'est une réponse.
+    expect(screen.getByText(/no deduced relation — listed here rather than drawn/))
+      .toBeInTheDocument();
+
+    // Et elle reste le chemin vers l'inspecteur de ces entités, qui n'ont pas de nœud à cliquer.
+    await user.click(within(list).getByRole('button', { name: 'demo_iot_sensors' }));
+    expect(await screen.findByRole('heading', { name: 'demo_iot_sensors' })).toBeInTheDocument();
+  });
+
+  /*
+   * L'export sérialise le DOM vivant, donc il partait au calibre de l'écran — un calibre choisi
+   * pour *un viewport*, qui replie les colonnes en « +N more » pour faire tenir le diagramme.
+   * Un SVG n'a pas de viewport : il se zoome sans fin, et il figeait pourtant ce repli pour
+   * toujours. Le fichier part maintenant au calibre le plus large.
+   *
+   * jsdom n'a aucune mise en page, donc le canevas mesure zéro et l'écran est au calibre par
+   * défaut (12 colonnes) : une entité de 15 colonnes replie les trois dernières à l'écran et
+   * doit les porter dans le fichier.
+   */
+  it('exports the columns the screen folds away, not the screen\'s calibre', async () => {
+    const user = userEvent.setup();
+    const wide = {
+      ...model,
+      entities: [{
+        ...model.entities[0],
+        columns: Array.from({ length: 15 }, (_, i) => ({
+          name: `col_${i}`, type: 'STRING', primaryKey: i === 0, references: null, keyBase: null,
+        })),
+      }, model.entities[1]],
+    };
+    stubApi(wide);
+
+    // Seulement les deux méthodes : remplacer le global `URL` lui-même casse le `new URL(...)`
+    // de react-router, qui navigue au moment où le modèle répond.
+    const blobs: Blob[] = [];
+    const originalCreate = URL.createObjectURL;
+    const originalRevoke = URL.revokeObjectURL;
+    URL.createObjectURL = vi.fn((blob: Blob) => { blobs.push(blob); return 'blob:stub'; });
+    URL.revokeObjectURL = vi.fn();
+    try {
+      await renderPage('/data-model?topics=demo.orders.1.received,demo.payments.authorized');
+      await screen.findByText('2 entities · 1 relation deduced');
+
+      // À l'écran, les trois dernières colonnes sont repliées.
+      expect(screen.getByText('+3 more columns')).toBeInTheDocument();
+
+      await openTopics(user);
+      await user.click(screen.getByRole('button', { name: 'SVG' }));
+
+      expect(blobs).toHaveLength(1);
+      const svg = await blobs[0].text();
+      expect(svg).toContain('col_14');
+      expect(svg).not.toContain('more columns');
+
+      // Et l'écran est rendu à son calibre : l'export ne laisse pas la page élargie.
+      expect(screen.getByText('+3 more columns')).toBeInTheDocument();
+    } finally {
+      URL.createObjectURL = originalCreate;
+      URL.revokeObjectURL = originalRevoke;
+    }
+  });
+
+  /*
+   * `auto` optimise la lisibilité — moins de colonnes mais plus grosses. C'est le bon défaut et
+   * pas toujours ce qu'on veut : chercher une colonne précise sur un grand modèle demande de les
+   * voir toutes, quitte à zoomer, et l'automatisme ne laissait aucun recours.
+   */
+  it('lets the box size be forced, and says what auto had chosen', async () => {
+    const user = userEvent.setup();
+    const wide = {
+      ...model,
+      entities: [{
+        ...model.entities[0],
+        columns: Array.from({ length: 15 }, (_, i) => ({
+          name: `col_${i}`, type: 'STRING', primaryKey: i === 0, references: null, keyBase: null,
+        })),
+      }, model.entities[1]],
+    };
+    stubApi(wide);
+    await renderPage('/data-model?topics=demo.orders.1.received,demo.payments.authorized');
+    await screen.findByText('2 entities · 1 relation deduced');
+
+    // jsdom ne mesure rien, donc l'automatisme retombe sur le calibre par défaut : 12 colonnes.
+    expect(screen.getByText('+3 more columns')).toBeInTheDocument();
+    await openTopics(user);
+    expect(screen.getByText(/Auto chose default boxes/)).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText('Box size'), 'comfortable');
+    // Les quinze colonnes tiennent dans le calibre large : plus rien n'est replié.
+    expect(screen.queryByText(/more columns/)).toBeNull();
+    // Et la page cesse d'annoncer un choix automatique qu'elle ne fait plus.
+    expect(screen.queryByText(/Auto chose/)).toBeNull();
+
+    await user.selectOptions(screen.getByLabelText('Box size'), 'compact');
+    expect(screen.getByText('+9 more columns')).toBeInTheDocument();
+  });
+
+  /*
+   * Cinquante entités sans relation est un résultat ordinaire sur une grande sélection, et la
+   * liste défile bien avant. Le filtre n'apparaît qu'au-delà du seuil : en dessous il est du bruit.
+   */
+  it('filters the set-aside list once it is long enough to need it', async () => {
+    const user = userEvent.setup();
+    const lonely: DataModelResponse['entities'] = Array.from({ length: 10 }, (_, i) => ({
+      id: `demo_iot_sensor_${i}`, topic: `demo.iot.sensor.${i}`, format: 'JSON' as const,
+      primaryKey: null, messageCount: 7200,
+      columns: [{ name: 'reading', type: 'DOUBLE', primaryKey: false, references: null, keyBase: null }],
+    }));
+    stubApi({
+      ...model,
+      entities: [...model.entities, ...lonely,
+        { id: 'demo_audit_log', topic: 'demo.audit.log', format: 'JSON' as const, primaryKey: null,
+          messageCount: 12,
+          columns: [{ name: 'line', type: 'STRING', primaryKey: false, references: null, keyBase: null }] }],
+      topicsRequested: 13, topicsAnalyzed: 13,
+    });
+    await renderPage('/data-model?topics=demo.orders.1.received,demo.payments.authorized');
+
+    await screen.findByText('13 entities · 1 relation deduced');
+    await openTopics(user);
+    const list = () => screen.getByRole('listbox', { name: 'Entities with no deduced relation' });
+    expect(within(list()).getAllByRole('option')).toHaveLength(11);
+
+    const filter = screen.getByLabelText('Filter entities with no deduced relation');
+    await user.type(filter, 'audit');
+    expect(within(list()).getAllByRole('option')).toHaveLength(1);
+    expect(screen.getByText('1 of 11 shown')).toBeInTheDocument();
+
+    // Un motif, la syntaxe que l'autre champ du même panneau enseigne.
+    await user.clear(filter);
+    await user.type(filter, 'demo.iot.*');
+    expect(within(list()).getAllByRole('option')).toHaveLength(10);
+
+    // Zéro se lit comme un zéro, pas comme une liste vide.
+    await user.clear(filter);
+    await user.type(filter, 'nothing');
+    expect(within(list()).queryAllByRole('option')).toHaveLength(0);
+    expect(screen.getByText(/No set-aside entity matches/)).toBeInTheDocument();
+  });
+
+  /*
+   * Le panneau coûte 256 px en permanence à la seule chose que cette page existe pour montrer.
+   * Il se replie donc, et le repli suit l'opérateur d'une visite à l'autre.
+   */
+  it('folds the selection panel to a rail on desktop, and remembers it', async () => {
+    const restore = asDesktop();
+    try {
+      const user = userEvent.setup();
+      stubApi();
+      await renderPage('/data-model?topics=demo.orders.1.received,demo.payments.authorized');
+      await screen.findByText('2 entities · 1 relation deduced');
+
+      // Déployé, la sélection est là sans tiroir à ouvrir.
+      expect(screen.getByLabelText('Filter topics')).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'Hide the topic selector' }));
+      expect(screen.queryByLabelText('Filter topics')).not.toBeInTheDocument();
+      expect(readPanelOpen(true)).toBe(false);
+
+      await user.click(screen.getByRole('button', { name: 'Show the topic selector' }));
+      expect(screen.getByLabelText('Filter topics')).toBeInTheDocument();
+      expect(readPanelOpen(false)).toBe(true);
+    } finally {
+      restore();
+    }
   });
 
   it('jumps to an entity chosen from the search and opens its inspector', async () => {

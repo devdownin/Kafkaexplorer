@@ -14,14 +14,17 @@ import { describeApiError } from './queryError';
 import type { QueryErrorInfo } from './queryError';
 import type { DataModelEntity, DataModelLimits, DataModelResponse } from '../api/types';
 import {
-  DEFAULT_MAX_TOPICS, NODE_W, HEADER_H, ROW_H,
+  DEFAULT_MAX_TOPICS, MAX_FIT_SCALE,
   filterTopics, toggleTopic, selectAll, topicsFromQuery, buildQuery, capTopics,
   displayedColumns, entityHeight, computeLayout, computeEdgeGeometry, splitByConnectivity,
+  drawnEntities, describeSetAside, readPanelOpen, writePanelOpen,
   crowFootPath, oneBarPath, graphBounds, fitTransform, centerOnEntity, topicDomains, domainColors,
   formatCount, describeRelation, matchingColumns, describeColumnMatches,
   buildExportSvg, exportNotes, toMermaidEr, buildJoinSql,
   diffModels, describeDiff, diffIsEmpty,
   filterRelations, describeRelationFilter, orphanKeyColumns, describeOrphanKey,
+  COMFORTABLE_NODE_SIZING, resolveNodeSizing, describeDensity, describeDensityCost,
+  renderedTextPx, filterEntities, describeSetAsideFilter, SET_ASIDE_FILTER_MIN,
   shortenColumnName, readSelectionDraft, saveSelectionDraft, maxTopicsFromQuery,
   minimapLayout, visibleGraphRect, graphFullyVisible, centerOnGraphPoint,
   describeBuildProgress, describeStaleGraphDuringBuild, clampMaxTopics, isSignificantResize,
@@ -29,7 +32,7 @@ import {
   readSavedModels, saveModel, deleteSavedModel, buildMultiJoinSql,
   CONFIDENCE_STYLE, describeModel,
 } from './dataModel';
-import type { OrphanKey, SavedModel } from './dataModel';
+import type { DensityChoice, NodeSizing, OrphanKey, SavedModel } from './dataModel';
 import type { DataModelRelation, RelationConfidence } from '../api/types';
 
 /**
@@ -42,7 +45,16 @@ import type { DataModelRelation, RelationConfidence } from '../api/types';
 const MINIMAP_W = 168;
 const MINIMAP_H = 120;
 
+/** Marge autour du graphe cadré, et respiration sous le bandeau. */
+const GRAPH_PADDING = 40;
+const BANNER_GAP = 16;
+
 // ── Nœud-table ────────────────────────────────────────────────────────────────
+
+/** Coupe par la droite en gardant l'ellipse — le nom complet reste sur le `<title>` de la ligne. */
+function elide(value: string, max: number): string {
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
 
 const EntityNode: React.FC<{
   entity: DataModelEntity;
@@ -55,14 +67,22 @@ const EntityNode: React.FC<{
   highlighted: Set<string> | undefined;
   /** Colonnes qui se lisent comme une clé étrangère sans qu'aucune relation en soit sortie. */
   orphanKeys: Set<string> | undefined;
+  /** Le calibre choisi pour ce modèle : largeur, hauteurs de ligne, corps et élisions. */
+  sizing: NodeSizing;
   onClick: () => void;
-}> = ({ entity, x, y, selected, dimmed, tint, highlighted, orphanKeys, onClick }) => {
-  const { columns, hidden } = displayedColumns(entity);
-  const height = entityHeight(entity);
+}> = ({ entity, x, y, selected, dimmed, tint, highlighted, orphanKeys, sizing, onClick }) => {
+  const { columns, hidden } = displayedColumns(entity, sizing);
+  const height = entityHeight(entity, sizing);
   const stroke = selected ? '#ffffff' : tint.accent;
   const exactCount = entity.messageCount !== null
     ? `${entity.messageCount.toLocaleString()} messages`
     : 'message count unavailable';
+  const width = sizing.width;
+  // Les repères internes suivent le calibre en proportion : au calibre par défaut ils
+  // retrouvent exactement les valeurs écrites en dur jusqu'ici (18, 33, 6).
+  const titleY = Math.round(sizing.headerH * 0.43);
+  const subtitleY = Math.round(sizing.headerH * 0.79);
+  const rowBaseline = Math.round(sizing.rowH * 0.3);
 
   return (
     <g
@@ -85,42 +105,43 @@ const EntityNode: React.FC<{
           compacté sans son original est une information qu'on ne peut plus vérifier. */}
       <title>{`${entity.topic} · ${exactCount}`}</title>
       {selected && (
-        <rect x={x - 4} y={y - 4} width={NODE_W + 8} height={height + 8} rx={10}
+        <rect x={x - 4} y={y - 4} width={width + 8} height={height + 8} rx={10}
           fill={tint.accent} fillOpacity={0.08} stroke={tint.accent} strokeWidth={1} strokeOpacity={0.3} />
       )}
-      <rect x={x} y={y} width={NODE_W} height={height} rx={8}
+      <rect x={x} y={y} width={width} height={height} rx={8}
         fill="#12151a" stroke={stroke} strokeWidth={selected ? 2 : 1.2} strokeOpacity={selected ? 1 : 0.7} />
       {/* En-tête : nom de table + topic d'origine, teinté par domaine */}
-      <rect x={x} y={y} width={NODE_W} height={HEADER_H} rx={8} fill={tint.header} />
-      <rect x={x} y={y + HEADER_H - 8} width={NODE_W} height={8} fill={tint.header} />
-      <text x={x + 10} y={y + 18} fill="white" fontSize={12} fontWeight="bold"
+      <rect x={x} y={y} width={width} height={sizing.headerH} rx={8} fill={tint.header} />
+      <rect x={x} y={y + sizing.headerH - 8} width={width} height={8} fill={tint.header} />
+      <text x={x + 10} y={y + titleY} fill="white" fontSize={sizing.titleSize} fontWeight="bold"
         fontFamily="JetBrains Mono, monospace">
-        {entity.id.length > 26 ? entity.id.slice(0, 25) + '…' : entity.id}
+        {elide(entity.id, sizing.titleChars)}
       </text>
-      <text x={x + 10} y={y + 33} fill="#79839a" fontSize={9} fontFamily="Inter, sans-serif">
-        {entity.topic.length > 32 ? entity.topic.slice(0, 31) + '…' : entity.topic}
+      <text x={x + 10} y={y + subtitleY} fill="#79839a" fontSize={sizing.subtitleSize}
+        fontFamily="Inter, sans-serif">
+        {elide(entity.topic, sizing.subtitleChars)}
         {entity.format ? ` · ${entity.format}` : ''}
         {entity.messageCount !== null ? ` · ${formatCount(entity.messageCount)} msg` : ''}
       </text>
-      <line x1={x} y1={y + HEADER_H} x2={x + NODE_W} y2={y + HEADER_H}
+      <line x1={x} y1={y + sizing.headerH} x2={x + width} y2={y + sizing.headerH}
         stroke={tint.accent} strokeOpacity={0.35} />
       {/* Colonnes */}
       {columns.map((column, i) => {
-        const rowY = y + HEADER_H + (i + 1) * ROW_H - 6;
+        const rowY = y + sizing.headerH + (i + 1) * sizing.rowH - rowBaseline;
         // `?` : se lit comme une clé étrangère, mais rien n'en est sorti. Sans marqueur elle est
         // indiscernable d'une colonne ordinaire, et le diagramme paraît incomplet sans dire
         // pourquoi. Le détail — et la seule moitié vérifiable de la cause — est dans l'inspecteur.
         const orphan = orphanKeys?.has(column.name) ?? false;
         const marker = column.primaryKey ? '🔑' : column.references ? '→' : orphan ? '?' : '';
-        const name = shortenColumnName(column.name, 22);
+        const name = shortenColumnName(column.name, sizing.rowChars);
         const lit = highlighted?.has(column.name) ?? false;
         return (
           <g key={column.name}>
             {lit && (
-              <rect x={x + 4} y={rowY - ROW_H + 6} width={NODE_W - 8} height={ROW_H} rx={3}
-                fill="#f5c264" fillOpacity={0.18} />
+              <rect x={x + 4} y={rowY - sizing.rowH + rowBaseline} width={width - 8}
+                height={sizing.rowH} rx={3} fill="#f5c264" fillOpacity={0.18} />
             )}
-            <text x={x + 10} y={rowY} fontSize={10} fontFamily="JetBrains Mono, monospace"
+            <text x={x + 10} y={rowY} fontSize={sizing.rowSize} fontFamily="JetBrains Mono, monospace"
               fontWeight={lit ? 'bold' : 'normal'}
               fill={lit ? '#f5c264' : column.primaryKey ? '#7ee2a8'
                 : column.references ? '#f5c264' : orphan ? '#8d8577' : '#c5cad6'}>
@@ -129,7 +150,7 @@ const EntityNode: React.FC<{
               {name !== column.name && <title>{column.name}</title>}
               {marker ? `${marker} ` : ''}{name}
             </text>
-            <text x={x + NODE_W - 10} y={rowY} textAnchor="end" fontSize={9}
+            <text x={x + width - 10} y={rowY} textAnchor="end" fontSize={sizing.typeSize}
               fontFamily="JetBrains Mono, monospace" fill="#79839a">
               {column.type}
             </text>
@@ -137,8 +158,8 @@ const EntityNode: React.FC<{
         );
       })}
       {hidden > 0 && (
-        <text x={x + 10} y={y + HEADER_H + (columns.length + 1) * ROW_H - 6}
-          fontSize={9} fontFamily="Inter, sans-serif" fill="#79839a" fontStyle="italic">
+        <text x={x + 10} y={y + sizing.headerH + (columns.length + 1) * sizing.rowH - rowBaseline}
+          fontSize={sizing.typeSize} fontFamily="Inter, sans-serif" fill="#79839a" fontStyle="italic">
           +{hidden} more column{hidden > 1 ? 's' : ''}
         </text>
       )}
@@ -159,6 +180,13 @@ const DataModel: React.FC = () => {
    */
   const isDesktop = useIsDesktop();
   const [topicsDrawerOpen, setTopicsDrawerOpen] = useState(false);
+  /**
+   * Sur desktop, le panneau se replie en rail. Il coûte 256 px en permanence à la seule chose que
+   * cette page existe pour montrer, et une fois le modèle généré il ne sert plus qu'à le
+   * régénérer : le repli suit l'opérateur d'une visite à l'autre, comme celui de Stream Flow.
+   */
+  const [panelOpen, setPanelOpen] = useState(() =>
+    readPanelOpen(typeof window === 'undefined' || window.innerWidth >= 1024));
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -201,9 +229,12 @@ const DataModel: React.FC = () => {
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
   /** Recherche d'un champ à travers les entités — « qui d'autre transporte cette clé ? ». */
   const [columnQuery, setColumnQuery] = useState('');
-  /** Les entités sans relation encombrent le diagramme ; repliées par défaut, jamais cachées. */
+  /**
+   * Les entités sans relation ne sont pas dessinées ; elles vivent dans la liste du panneau, qui
+   * est ouverte par défaut — c'est là qu'elles sont, une liste repliée les rendrait introuvables.
+   */
   const [showUnrelated, setShowUnrelated] = useState(false);
-  const [unrelatedOpen, setUnrelatedOpen] = useState(false);
+  const [unrelatedOpen, setUnrelatedOpen] = useState(true);
   /** Infobulle d'arête : la preuve de la déduction, au survol comme au focus clavier. */
   const [edgeTip, setEdgeTip] = useState<{ relation: DataModelRelation; x: number; y: number } | null>(null);
   /** Recherche d'une entité pour la centrer — retrouver une table par son nom dans un grand modèle. */
@@ -221,6 +252,28 @@ const DataModel: React.FC = () => {
   const [joinSet, setJoinSet] = useState<string[]>([]);
   /** Taille réelle du canevas, pour la minicarte et le cadrage. */
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
+  /**
+   * La réserve verticale que le bandeau impose, mesurée plutôt que supposée — il grandit avec le
+   * nombre d'avertissements. Elle est gardée en état parce que **deux** décisions en dépendent :
+   * le cadrage, qui la mesure au moment où il cadre, et le choix du calibre, qui vit dans un
+   * `useMemo` et n'a aucun DOM à interroger. Le calibre l'évaluait donc à 40 px pendant que le
+   * cadrage en réservait 150 : sur un modèle contraint par sa hauteur, un calibre pouvait être
+   * élu pour une lisibilité que le cadrage réel ne lui laissait pas.
+   */
+  const [topPadding, setTopPadding] = useState(GRAPH_PADDING);
+  /**
+   * Le calibre imposé le temps d'une sérialisation. `null` le reste du temps — voir
+   * `exportDiagram` : c'est ce qui rend au fichier les colonnes que l'écran replie.
+   */
+  const [exportSizing, setExportSizing] = useState<NodeSizing | null>(null);
+  /**
+   * Le calibre demandé. `auto` optimise la lisibilité, ce qui est le bon défaut et pas toujours
+   * ce qu'on veut : chercher une colonne précise sur un grand modèle demande de les voir toutes,
+   * quitte à zoomer. Non persisté — voir `DensityChoice`.
+   */
+  const [density, setDensity] = useState<DensityChoice>('auto');
+  /** Filtre de la liste des entités sans relation : à cinquante entrées elle défile. */
+  const [setAsideFilter, setSetAsideFilter] = useState('');
   /** Depuis quand la génération courante tourne — la seule mesure honnête pendant l'attente. */
   const [buildElapsedMs, setBuildElapsedMs] = useState(0);
   /** Comparaison avec une seconde sélection : pas d'historique côté serveur, donc deux appels
@@ -262,6 +315,20 @@ const DataModel: React.FC = () => {
    * un motif sans correspondance et un plafond atteint sont deux façons de repartir avec moins
    * que ce qu'on a demandé.
    */
+  /**
+   * Replier ou déployer le panneau change la largeur du canevas de 256 px — c'est un geste dont le
+   * but *est* la place du graphe, donc le cadrage redevient celui de la page : sans ça le graphe
+   * garderait un cadrage calculé pour un rectangle deux fois plus étroit, et l'espace regagné
+   * resterait vide.
+   */
+  const togglePanel = useCallback(() => {
+    viewAdjusted.current = false;
+    setPanelOpen(open => {
+      writePanelOpen(!open);
+      return !open;
+    });
+  }, []);
+
   const addTopics = useCallback(() => {
     const entry = addTopicEntries(selection, topicDraft, catalogTopics, maxTopics);
     setSelection(entry.selection);
@@ -435,12 +502,39 @@ const DataModel: React.FC = () => {
   const entityById = useMemo(() => new Map(entities.map(e => [e.id, e])), [entities]);
   const { connected, isolated } = useMemo(
     () => splitByConnectivity(entities, relations), [entities, relations]);
-  /** Ce que le graphe dessine : sans les entités isolées, elles diluent le signal — les relations. */
+  /**
+   * Ce que le graphe dessine : sans les entités isolées, elles diluent le signal — les relations —
+   * et chacune ajoute une case à la grille du bas, donc fait baisser l'échelle de cadrage de tout
+   * le reste. Elles vivent dans la liste du panneau, où elles restent sélectionnables.
+   */
   const graphEntities = useMemo(
-    () => (showUnrelated || isolated.length === entities.length ? entities : connected),
-    [showUnrelated, entities, connected, isolated.length]);
+    () => drawnEntities(entities, relations, showUnrelated).drawn,
+    [entities, relations, showUnrelated]);
+  /**
+   * Le calibre des boîtes, choisi pour *ce* modèle dans *ce* viewport : une boîte plus étroite
+   * qui liste moins de colonnes réduit l'emprise du graphe, donc relève l'échelle de cadrage, donc
+   * agrandit le texte réellement affiché. Voir `chooseNodeSizing`.
+   */
+  const chosenSizing = useMemo(
+    () => resolveNodeSizing(density, graphEntities, relations, viewportSize,
+      { maxScale: MAX_FIT_SCALE, topPadding }),
+    [density, graphEntities, relations, viewportSize, topPadding]);
+  /**
+   * Ce que le calibre courant donne réellement à lire. C'est ce qui permet de dire à l'opérateur
+   * qui impose un calibre ce qu'il coûte — et à `auto` d'avouer les modèles où aucun calibre ne
+   * s'en sort.
+   */
+  const densityCost = useMemo(
+    () => describeDensityCost(renderedTextPx(chosenSizing, graphEntities, relations, viewportSize,
+      { maxScale: MAX_FIT_SCALE, topPadding })),
+    [chosenSizing, graphEntities, relations, viewportSize, topPadding]);
+  /**
+   * Le calibre réellement rendu. Il vaut celui que la page a choisi, sauf le temps d'un export :
+   * un fichier détaché n'a pas de viewport, donc rien n'y justifie de replier des colonnes.
+   */
+  const sizing = exportSizing ?? chosenSizing;
   const positions = useMemo(
-    () => computeLayout(graphEntities, relations), [graphEntities, relations]);
+    () => computeLayout(graphEntities, relations, sizing), [graphEntities, relations, sizing]);
   /**
    * Les arêtes réellement dessinées. La disposition ci-dessus reste calculée sur **toutes** les
    * relations : basculer un grade masque des traits, il ne réarrange pas le diagramme sous les
@@ -453,8 +547,8 @@ const DataModel: React.FC = () => {
     [relations.length, visibleRelations.length]);
   /** Géométrie des arêtes : ancrées sur les lignes de colonnes, écartées quand elles se partagent une ancre. */
   const edgeGeometry = useMemo(
-    () => computeEdgeGeometry(visibleRelations, graphEntities, positions),
-    [visibleRelations, graphEntities, positions]);
+    () => computeEdgeGeometry(visibleRelations, graphEntities, positions, sizing),
+    [visibleRelations, graphEntities, positions, sizing]);
   /**
    * Centre le viewport sur une entité choisie dans la recherche — sans passer par un cadrage
    * de tout le graphe, qui dézoomerait sur trente tables pour n'en montrer qu'une. Restreinte
@@ -468,9 +562,9 @@ const DataModel: React.FC = () => {
     if (!entity || !pos || !rect) return;
     setSelectedId(id);
     viewAdjusted.current = true;
-    setTransform(t => centerOnEntity(entity, pos, rect.width, rect.height, t.scale));
+    setTransform(t => centerOnEntity(entity, pos, rect.width, rect.height, t.scale, 0.8, sizing));
     setJumpQuery('');
-  }, [entityById, positions]);
+  }, [entityById, positions, sizing]);
 
   /**
    * La minicarte : bornes du graphe, disposition dans sa boîte, et rectangle de ce qui est
@@ -478,7 +572,7 @@ const DataModel: React.FC = () => {
    * montrerait qu'un cadre couvrant sa propre boîte, un ornement qui n'apprend rien.
    */
   const bounds = useMemo(
-    () => graphBounds(graphEntities, positions), [graphEntities, positions]);
+    () => graphBounds(graphEntities, positions, sizing), [graphEntities, positions, sizing]);
   const minimap = useMemo(() => {
     if (!bounds || viewportSize.width === 0) return null;
     if (graphFullyVisible(bounds, transform, viewportSize.width, viewportSize.height)) return null;
@@ -498,6 +592,9 @@ const DataModel: React.FC = () => {
       : null),
     [joinEntities, entities, relations]);
 
+  /** Ce que le filtre de la liste des mises de côté laisse voir. */
+  const visibleIsolated = useMemo(
+    () => filterEntities(isolated, setAsideFilter), [isolated, setAsideFilter]);
   const columnMatches = useMemo(
     () => matchingColumns(entities, columnQuery), [entities, columnQuery]);
   const columnMatchNote = useMemo(
@@ -567,6 +664,19 @@ const DataModel: React.FC = () => {
    * est visible à chaque rendu, et `getBoundingClientRect` dans un `useMemo` ne se réévalue pas
    * quand la fenêtre change de taille.
    */
+  /**
+   * La hauteur que le bandeau (couverture + avertissements) prend au graphe. Il se dessine
+   * `absolute` par-dessus le SVG sans le rétrécir, donc rien dans la mise en page ne la déclare :
+   * elle se mesure. Une seule définition, parce que le cadrage et le choix du calibre doivent
+   * répondre la même chose — c'est leur désaccord qui est corrigé ici.
+   */
+  const measureTopPadding = useCallback(() => {
+    const rect = svgRef.current?.getBoundingClientRect();
+    const bannerRect = bannerRef.current?.getBoundingClientRect();
+    if (!rect || !bannerRect) return GRAPH_PADDING;
+    return Math.max(GRAPH_PADDING, bannerRect.bottom - rect.top + BANNER_GAP);
+  }, []);
+
   useEffect(() => {
     const element = svgRef.current;
     if (!element) return;
@@ -574,12 +684,15 @@ const DataModel: React.FC = () => {
       const rect = element.getBoundingClientRect();
       setViewportSize(prev => (prev.width === rect.width && prev.height === rect.height
         ? prev : { width: rect.width, height: rect.height }));
+      setTopPadding(measureTopPadding());
     };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(element);
+    // Le bandeau aussi : sa hauteur change avec les avertissements, pas avec celle du canevas.
+    if (bannerRef.current) observer.observe(bannerRef.current);
     return () => observer.disconnect();
-  }, [model, graphEntities.length]);
+  }, [model, graphEntities.length, measureTopPadding]);
 
   // ── Zoom / pan / clavier (mêmes gestes que Lineage et Stream Flow) ──────────
 
@@ -641,14 +754,21 @@ const DataModel: React.FC = () => {
    */
   const fitToViewport = useCallback(() => {
     const rect = svgRef.current?.getBoundingClientRect();
-    const bounds = graphBounds(graphEntities, positions);
+    const bounds = graphBounds(graphEntities, positions, sizing);
     if (!rect || !bounds || rect.width === 0) return;
-    const bannerRect = bannerRef.current?.getBoundingClientRect();
-    const topPadding = bannerRect ? Math.max(40, bannerRect.bottom - rect.top + 16) : 40;
-    setTransform(fitTransform(bounds, rect.width, rect.height, 40, topPadding));
+    // Mesurée ici plutôt que lue dans l'état : l'état retarde d'un rendu, et le cadrage
+    // d'après-génération tombe exactement dans ce rendu-là — celui où les avertissements
+    // viennent d'apparaître. La même valeur est reposée en état pour que le choix du calibre,
+    // qui ne peut pas mesurer, converge dessus.
+    const reserved = measureTopPadding();
+    setTopPadding(reserved);
+    // `MAX_FIT_SCALE` plutôt que 1 : un modèle de trois tables laissait les trois quarts du
+    // canevas vides parce que le cadrage refusait d'agrandir au-delà de la taille naturelle.
+    setTransform(fitTransform(
+      bounds, rect.width, rect.height, GRAPH_PADDING, reserved, MAX_FIT_SCALE));
     viewAdjusted.current = false;
     fittedSize.current = { width: rect.width, height: rect.height };
-  }, [graphEntities, positions]);
+  }, [graphEntities, positions, sizing, measureTopPadding]);
 
   /**
    * La place disponible a changé : le canevas rétrécit quand l'inspecteur s'ouvre (320 px sur
@@ -667,6 +787,19 @@ const DataModel: React.FC = () => {
     }
     fitToViewport();
   }, [viewportSize, model, graphEntities.length, fitToViewport]);
+
+  /**
+   * Un changement de calibre déplace **tous** les nœuds : le cadrage d'avant décrit une
+   * disposition qui n'existe plus, y compris pour quelqu'un qui avait cadré à la main — ce n'est
+   * plus le même dessin. Il est donc recadré sans consulter `viewAdjusted`, contrairement à un
+   * simple redimensionnement.
+   */
+  const lastSizing = useRef(chosenSizing);
+  useEffect(() => {
+    if (lastSizing.current === chosenSizing) return;
+    lastSizing.current = chosenSizing;
+    pendingFit.current = true;
+  }, [chosenSizing]);
 
   // Après une génération, le SVG du nouveau modèle est monté à ce moment-là seulement.
   useEffect(() => {
@@ -696,21 +829,61 @@ const DataModel: React.FC = () => {
     // trois quarts effacée. `flushSync` pour que le DOM soit à jour avant la sérialisation.
     if (selectedId !== null) flushSync(() => setSelectedId(null));
 
-    const group = graphGroupRef.current;
-    const bounds = graphBounds(graphEntities, positions);
-    if (!group || !bounds) return;
-
-    const serializer = new XMLSerializer();
-    const inner = Array.from(group.childNodes)
-      .map(node => serializer.serializeToString(node))
-      .join('');
-
     const caption = {
       title: 'Kafka data model',
       coverage: describeModel(model),
       notes: exportNotes(model, entities.length - graphEntities.length,
         relations.length - visibleRelations.length),
     };
+
+    const save = (blob: Blob, extension: string) => {
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `data-model.${extension}`;
+      link.click();
+      URL.revokeObjectURL(url);
+    };
+
+    if (format === 'mermaid') {
+      // La seule forme qui se relit et se différencie : un PNG dans une revue ne dit pas ce
+      // qui a changé depuis la version d'avant. Elle réémet depuis la réponse, donc elle ne
+      // dépend ni du DOM ni du calibre — et elle a toujours porté *toutes* les colonnes.
+      // Le SVG sérialise le DOM, donc il est déjà filtré ; Mermaid reçoit les relations
+      // filtrées, deux exports du même écran qui ne disent pas la même chose seraient pires.
+      save(new Blob([toMermaidEr({ ...model, relations: visibleRelations }, caption)],
+        { type: 'text/plain;charset=utf-8' }), 'mmd');
+      return;
+    }
+
+    /*
+     * Le calibre d'écran est choisi pour *un viewport* : sur un grand modèle il replie les
+     * colonnes en « +N more » pour que le diagramme tienne. Un fichier exporté n'a pas de
+     * viewport — un SVG se zoome sans fin, un PNG est rendu à 2× — donc rien n'y justifie ce
+     * repli, et l'export figeait pourtant « +14 more columns » pour toujours. Le diagramme est
+     * donc sérialisé au calibre le plus large, le temps de deux rendus synchrones : la règle
+     * « un seul moteur de rendu » tient toujours, c'est le DOM vivant qui part, simplement pas
+     * à la taille de l'écran.
+     */
+    const exportPositions = computeLayout(graphEntities, relations, COMFORTABLE_NODE_SIZING);
+    const bounds = graphBounds(graphEntities, exportPositions, COMFORTABLE_NODE_SIZING);
+    if (!bounds) return;
+
+    let inner: string;
+    flushSync(() => setExportSizing(COMFORTABLE_NODE_SIZING));
+    try {
+      const group = graphGroupRef.current;
+      if (!group) return;
+      const serializer = new XMLSerializer();
+      inner = Array.from(group.childNodes)
+        .map(node => serializer.serializeToString(node))
+        .join('');
+    } finally {
+      // Rendu avant que le navigateur ne peigne : les deux commits tiennent dans la même tâche,
+      // donc l'écran ne clignote pas — et `finally` garantit qu'une sérialisation qui échoue ne
+      // laisse pas la page bloquée sur le calibre d'export.
+      flushSync(() => setExportSizing(null));
+    }
 
     const svg = buildExportSvg(
       inner,
@@ -728,27 +901,8 @@ const DataModel: React.FC = () => {
       domainLegend.map(([domain, tint]) => ({ color: tint.accent, label: domain })),
     );
 
-    const save = (blob: Blob, extension: string) => {
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `data-model.${extension}`;
-      link.click();
-      URL.revokeObjectURL(url);
-    };
-
     if (format === 'svg') {
       save(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }), 'svg');
-      return;
-    }
-
-    if (format === 'mermaid') {
-      // La seule forme qui se relit et se différencie : un PNG dans une revue ne dit pas ce
-      // qui a changé depuis la version d'avant.
-      // Le SVG sérialise le DOM, donc il est déjà filtré ; Mermaid réémet depuis la réponse, et
-      // deux exports du même écran qui ne disent pas la même chose seraient pires que le filtre.
-      save(new Blob([toMermaidEr({ ...model, relations: visibleRelations }, caption)],
-        { type: 'text/plain;charset=utf-8' }), 'mmd');
       return;
     }
 
@@ -789,7 +943,7 @@ const DataModel: React.FC = () => {
     } finally {
       setExporting(false);
     }
-  }, [model, selectedId, graphEntities, positions, entities.length, relations.length,
+  }, [model, selectedId, graphEntities, relations, entities.length,
       visibleRelations, shownConfidences, domainLegend]);
 
   const onGraphKeyDown = useCallback((e: React.KeyboardEvent<SVGSVGElement>) => {
@@ -846,7 +1000,31 @@ const DataModel: React.FC = () => {
           onClick={() => setTopicsDrawerOpen(false)} />
       )}
 
+      {/* Rail de réouverture — le panneau replié laisse toute la largeur au graphe. Même
+          mécanique que Stream Flow, sur une page dont le canevas est l'essentiel du contenu. */}
+      {isDesktop && !panelOpen && (
+        <div className="w-10 shrink-0 border-r border-outline-variant/60 bg-surface-container-low flex flex-col items-center gap-3 py-4">
+          <button
+            type="button"
+            onClick={togglePanel}
+            aria-expanded={false}
+            aria-label="Show the topic selector"
+            title="Show the topic selector"
+            className="text-on-surface-variant hover:text-on-surface"
+          >
+            <span aria-hidden="true" className="material-symbols-outlined text-[20px]">chevron_right</span>
+          </button>
+          <span
+            className="text-[10px] font-semibold uppercase tracking-widest text-outline whitespace-nowrap"
+            style={{ writingMode: 'vertical-rl' }}
+          >
+            Topics ({selection.length})
+          </span>
+        </div>
+      )}
+
       {/* ── Panneau de sélection ── */}
+      {(!isDesktop || panelOpen) && (
       <aside className={isDesktop
         ? 'w-64 border-r border-outline-variant/60 bg-background-dark flex flex-col shrink-0'
         : `absolute inset-y-0 left-0 z-40 w-[min(18rem,85vw)] border-r border-outline-variant/60 bg-background-dark flex flex-col shadow-2xl transition-transform ${topicsDrawerOpen ? 'translate-x-0' : '-translate-x-full'}`}
@@ -856,7 +1034,13 @@ const DataModel: React.FC = () => {
             <h2 className="text-xs font-bold text-on-surface-variant uppercase tracking-widest">
               Topics ({selection.length}/{maxTopics})
             </h2>
-            {!isDesktop && (
+            {isDesktop ? (
+              <button onClick={togglePanel} aria-expanded={true}
+                aria-label="Hide the topic selector" title="Hide the topic selector — the graph takes the room"
+                className="text-on-surface-variant hover:text-on-surface transition-colors">
+                <span aria-hidden="true" className="material-symbols-outlined text-lg">chevron_left</span>
+              </button>
+            ) : (
               <button onClick={() => setTopicsDrawerOpen(false)} aria-label="Close the topic selector"
                 className="text-on-surface-variant hover:text-on-surface transition-colors">
                 <span aria-hidden="true" className="material-symbols-outlined text-lg">close</span>
@@ -1028,14 +1212,49 @@ const DataModel: React.FC = () => {
             </div>
           )}
 
-          {/* Entités qu'aucune relation ne touche : elles diluent le signal du diagramme, qui
-              est justement les relations. Rangées à part — comptées, ouvrables, inspectables —
-              plutôt que cachées ou étalées sous le graphe. */}
-          {model && isolated.length > 0 && connected.length > 0 && (
+          {/* Le calibre des boîtes. `auto` optimise la lisibilité — moins de colonnes mais plus
+              grosses — ce qui est le bon défaut sans être toujours ce qu'on veut : chercher une
+              colonne précise sur un grand modèle demande de les voir toutes, quitte à zoomer.
+              Ce que le choix coûte est dit sous le champ plutôt que découvert à l'écran. */}
+          {model && graphEntities.length > 0 && (
+            <div className="space-y-1">
+              <label htmlFor="dm-density"
+                className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider block">
+                Box size
+              </label>
+              <select
+                id="dm-density"
+                value={density}
+                onChange={e => setDensity(e.target.value as DensityChoice)}
+                className="w-full bg-surface-container-low border border-outline-variant rounded-md px-2 py-1.5 text-xs text-on-surface outline-none focus:border-primary/40"
+              >
+                <option value="auto">Auto — fit for readability</option>
+                <option value="comfortable">Comfortable — widest, most columns</option>
+                <option value="default">Default</option>
+                <option value="compact">Compact — smallest, fewest columns</option>
+              </select>
+              {describeDensity(density, chosenSizing) && (
+                <p className="text-[10px] text-outline leading-snug">
+                  {describeDensity(density, chosenSizing)}
+                </p>
+              )}
+              {densityCost && (
+                <p className="text-[10px] text-warning leading-snug" role="status">{densityCost}</p>
+              )}
+            </div>
+          )}
+
+          {/* Entités qu'aucune relation ne touche. Elles diluent le signal du diagramme — qui est
+              justement les relations — et chacune ajoute une case à la grille sous le graphe, donc
+              fait baisser l'échelle de cadrage de tout le reste. Elles vivent donc dans une vraie
+              liste bornée en hauteur : comptées, sélectionnables, inspectables, et surtout sans
+              coûter au canevas la place que le diagramme réclame. */}
+          {model && isolated.length > 0 && (
             <div className="space-y-1">
               <button
                 onClick={() => setUnrelatedOpen(open => !open)}
                 aria-expanded={unrelatedOpen}
+                aria-controls="dm-unrelated-list"
                 className="w-full flex items-center gap-1.5 text-[10px] font-bold text-on-surface-variant uppercase tracking-wider hover:text-on-surface transition-colors"
               >
                 <span aria-hidden="true" className="material-symbols-outlined text-[14px]">
@@ -1044,31 +1263,77 @@ const DataModel: React.FC = () => {
                 No deduced relation ({isolated.length})
               </button>
               {unrelatedOpen && (
-                <div className="space-y-1 pl-1">
-                  {isolated.map(entity => (
-                    <button
-                      key={entity.id}
-                      onClick={() => setSelectedId(prev => (prev === entity.id ? null : entity.id))}
-                      className={`w-full text-left text-[11px] font-mono truncate px-1.5 py-1 rounded transition-colors ${
-                        selectedId === entity.id
-                          ? 'bg-primary/15 text-on-surface'
-                          : 'text-on-surface-variant hover:bg-surface-container-high'
-                      }`}
-                      title={entity.topic}
-                    >
-                      {entity.id}
-                    </button>
-                  ))}
-                  <label className="flex items-center gap-2 text-[10px] text-on-surface-variant pt-1 cursor-pointer">
-                    <Checkbox checked={showUnrelated}
-                      onChange={() => {
-                        // Le graphe change de taille : il faut le recadrer, sinon les nœuds
-                        // qui apparaissent le font hors de l'écran.
-                        pendingFit.current = true;
-                        setShowUnrelated(v => !v);
-                      }} />
-                    Draw them in the diagram
-                  </label>
+                <div className="space-y-1.5">
+                  {/* La liste dit ce qu'elle contient *et* pourquoi : un compte seul se lit comme
+                      une troncature, alors que c'est une réponse. */}
+                  <p className="text-[10px] text-outline leading-snug">
+                    {describeSetAside(isolated.length, showUnrelated || connected.length === 0)}
+                  </p>
+                  {/* À cinquante entrées la liste défile, et cinquante entités sans relation est
+                      un résultat ordinaire sur une grande sélection. Même grammaire que le filtre
+                      de topics du même panneau : sous-chaîne, ou motif dès qu'il y a un `*`. */}
+                  {isolated.length >= SET_ASIDE_FILTER_MIN && (
+                    <div className="flex items-center gap-2 bg-surface-container-low border border-outline-variant rounded-md px-2.5 py-1.5 focus-within:border-primary/40 transition-colors">
+                      <span aria-hidden="true" className="material-symbols-outlined text-on-surface-variant text-base shrink-0">search</span>
+                      <input
+                        value={setAsideFilter}
+                        onChange={e => setSetAsideFilter(e.target.value)}
+                        placeholder="Filter these — demo.iot.* works too"
+                        aria-label="Filter entities with no deduced relation"
+                        className="bg-transparent outline-none text-xs text-on-surface w-full placeholder:text-outline"
+                      />
+                      {setAsideFilter && (
+                        <button onClick={() => setSetAsideFilter('')}
+                          aria-label="Clear the set-aside filter"
+                          className="text-outline hover:text-on-surface shrink-0">
+                          <span aria-hidden="true" className="material-symbols-outlined text-sm">close</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {describeSetAsideFilter(visibleIsolated.length, isolated.length) && (
+                    <p className="text-[10px] text-outline leading-snug" role="status">
+                      {describeSetAsideFilter(visibleIsolated.length, isolated.length)}
+                    </p>
+                  )}
+                  <ul
+                    id="dm-unrelated-list"
+                    role="listbox"
+                    aria-label="Entities with no deduced relation"
+                    className="max-h-44 overflow-y-auto custom-scrollbar rounded-md border border-outline-variant/60 bg-surface-container-low divide-y divide-outline-variant/30"
+                  >
+                    {visibleIsolated.map(entity => (
+                      <li key={entity.id} role="option" aria-selected={selectedId === entity.id}>
+                        <button
+                          onClick={() => setSelectedId(prev => (prev === entity.id ? null : entity.id))}
+                          className={`w-full text-left text-[11px] font-mono truncate px-2 py-1.5 transition-colors ${
+                            selectedId === entity.id
+                              ? 'bg-primary/15 text-on-surface'
+                              : 'text-on-surface-variant hover:bg-surface-container-high'
+                          }`}
+                          title={entity.topic}
+                        >
+                          {entity.id}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                  {/* L'option reste offerte — mais elle est bien une option : dessiner ces
+                      entités reprend au diagramme la place que cette liste lui rend. Elle
+                      disparaît quand il n'y a rien d'autre à dessiner, où elle ne déciderait
+                      plus de rien. */}
+                  {connected.length > 0 && (
+                    <label className="flex items-center gap-2 text-[10px] text-on-surface-variant cursor-pointer">
+                      <Checkbox checked={showUnrelated}
+                        onChange={() => {
+                          // Le graphe change de taille : il faut le recadrer, sinon les nœuds
+                          // qui apparaissent le font hors de l'écran.
+                          pendingFit.current = true;
+                          setShowUnrelated(v => !v);
+                        }} />
+                      Draw them in the diagram too
+                    </label>
+                  )}
                 </div>
               )}
             </div>
@@ -1342,6 +1607,7 @@ const DataModel: React.FC = () => {
           )}
         </div>
       </aside>
+      )}
 
       {/* ── Canevas ── */}
       <main className="flex-1 relative overflow-hidden graph-bg bg-background-dark">
@@ -1433,8 +1699,8 @@ const DataModel: React.FC = () => {
                     key={entity.id}
                     x={pos.x * layout.scale + layout.offsetX}
                     y={pos.y * layout.scale + layout.offsetY}
-                    width={Math.max(1, NODE_W * layout.scale)}
-                    height={Math.max(1, entityHeight(entity) * layout.scale)}
+                    width={Math.max(1, sizing.width * layout.scale)}
+                    height={Math.max(1, entityHeight(entity, sizing) * layout.scale)}
                     rx={1}
                     fill={selectedId === entity.id ? '#a3adff' : tintOf(entity.topic).accent}
                     fillOpacity={selectedId === entity.id ? 0.9 : 0.45}
@@ -1600,6 +1866,7 @@ const DataModel: React.FC = () => {
                     tint={tintOf(entity.topic)}
                     highlighted={columnMatches.get(entity.id)}
                     orphanKeys={orphanKeySets.get(entity.id)}
+                    sizing={sizing}
                     onClick={() => setSelectedId(prev => (prev === entity.id ? null : entity.id))}
                   />
                 );
