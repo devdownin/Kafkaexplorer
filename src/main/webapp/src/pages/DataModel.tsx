@@ -22,9 +22,10 @@ import {
   buildExportSvg, exportNotes, toMermaidEr, buildJoinSql,
   diffModels, describeDiff, diffIsEmpty,
   filterRelations, describeRelationFilter, orphanKeyColumns, describeOrphanKey,
-  shortenColumnName, readSelectionDraft, saveSelectionDraft,
+  shortenColumnName, readSelectionDraft, saveSelectionDraft, maxTopicsFromQuery,
   minimapLayout, visibleGraphRect, graphFullyVisible, centerOnGraphPoint,
   describeBuildProgress, describeStaleGraphDuringBuild, clampMaxTopics,
+  requestTimeoutMs, describeBuildBudget,
   readSavedModels, saveModel, deleteSavedModel, buildMultiJoinSql,
   CONFIDENCE_STYLE, describeModel,
 } from './dataModel';
@@ -166,15 +167,29 @@ const DataModel: React.FC = () => {
    * en décrive une, la sélection non lancée de la visite précédente reprend sa place ; l'URL
    * l'emporte toujours, sinon un lien partagé écraserait le formulaire de son destinataire.
    */
-  const [selection, setSelection] = useState<string[]>(
-    () => (topicsFromQuery(location.search).length > 0 ? [] : readSelectionDraft(DEFAULT_MAX_TOPICS) ?? []));
+  // Lu une fois, au premier rendu : la sélection et le budget en sortent tous les deux, et un
+  // état paresseux (plutôt qu'une ref) est ce que les deux `useState` suivants peuvent lire.
+  const [initialDraft] = useState(
+    () => (topicsFromQuery(location.search).length > 0 ? null : readSelectionDraft(DEFAULT_MAX_TOPICS)));
+  const [selection, setSelection] = useState<string[]>(() => initialDraft?.topics ?? []);
   /**
    * Combien de topics cette génération analyse. C'était une constante de 30 recopiée du serveur ;
    * c'est maintenant un choix, borné par le plafond que le serveur annonce.
    */
-  const [maxTopics, setMaxTopics] = useState(DEFAULT_MAX_TOPICS);
+  const [maxTopics, setMaxTopics] = useState(
+    () => maxTopicsFromQuery(location.search)
+      ?? initialDraft?.maxTopics
+      ?? DEFAULT_MAX_TOPICS);
   /** Les bornes du serveur. `null` tant qu'elles ne sont pas connues — on n'en invente pas. */
   const [limits, setLimits] = useState<DataModelLimits | null>(null);
+  /**
+   * Les bornes ont-elles fini d'arriver — obtenues **ou** échouées ? Une URL partagée se rejoue
+   * au montage, et elle partait avant la réponse de `/limits` : la génération se dimensionnait
+   * donc toujours sur le plancher d'attente, précisément dans le cas — un grand modèle reçu par
+   * lien — où l'attente dérivée est ce qui manque. Un GET est infiniment moins cher que la
+   * génération qu'il précède ; un échec fait passer quand même, sur le plancher.
+   */
+  const [limitsSettled, setLimitsSettled] = useState(false);
   const [filter, setFilter] = useState('');
   /** Saisie libre : un nom, une liste collée, ou un motif `demo.orders.*` — comme Stream Flow. */
   const [topicDraft, setTopicDraft] = useState('');
@@ -249,7 +264,7 @@ const DataModel: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- toast est stable
   }, [selection, topicDraft, catalogTopics, maxTopics]);
 
-  const generate = useCallback(async (topics: string[]) => {
+  const generate = useCallback(async (topics: string[], budget: number = maxTopics) => {
     if (topics.length === 0) return;
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -260,8 +275,11 @@ const DataModel: React.FC = () => {
     setBuildElapsedMs(0);
     setError(null);
     try {
-      const res = await axios.post<DataModelResponse>('/api/data-model', { topics, maxTopics },
-        { signal: controller.signal, timeout: 120_000 });
+      // L'attente est dérivée de ce que le serveur dit de son propre pire cas, jamais d'une
+      // constante recopiée : deux minutes fixes suffisaient à 30 topics et plus à 100.
+      const res = await axios.post<DataModelResponse>('/api/data-model',
+        { topics, maxTopics: budget },
+        { signal: controller.signal, timeout: requestTimeoutMs(topics.length, limits) });
       if (seq !== requestSeq.current) return;
       setModel(res.data);
       setRanTopics(topics);
@@ -271,7 +289,7 @@ const DataModel: React.FC = () => {
       // Cadré au viewport une fois le nouveau graphe rendu — un reset vers scale(1) fixe
       // laissait un grand modèle déborder hors écran.
       pendingFit.current = true;
-      const search = buildQuery(topics);
+      const search = buildQuery(topics, budget);
       selfWrittenSearch.current = search;
       navigate({ search }, { replace: true });
     } catch (err) {
@@ -280,7 +298,7 @@ const DataModel: React.FC = () => {
     } finally {
       if (seq === requestSeq.current) setLoading(false);
     }
-  }, [navigate, maxTopics]);
+  }, [navigate, maxTopics, limits]);
 
   /**
    * Ajoute la saisie à la sélection *de comparaison* — même geste que `addTopics`, sur son
@@ -312,7 +330,7 @@ const DataModel: React.FC = () => {
     try {
       const res = await axios.post<DataModelResponse>('/api/data-model',
         { topics: compareSelection, maxTopics },
-        { signal: controller.signal, timeout: 120_000 });
+        { signal: controller.signal, timeout: requestTimeoutMs(compareSelection.length, limits) });
       setCompareModel(res.data);
     } catch (err) {
       if (axios.isCancel(err)) return;
@@ -320,7 +338,7 @@ const DataModel: React.FC = () => {
     } finally {
       setComparing(false);
     }
-  }, [compareSelection, maxTopics]);
+  }, [compareSelection, maxTopics, limits]);
 
   useEffect(() => () => compareAbortRef.current?.abort(), []);
 
@@ -333,17 +351,24 @@ const DataModel: React.FC = () => {
   // composée avant qu'il ne baisse — ou collée à la main — l'ignorait entièrement.
   useEffect(() => {
     if (location.search === selfWrittenSearch.current) return;
+    // Attendre les bornes : elles décident combien de temps cette génération sera attendue.
+    if (!limitsSettled) return;
     const fromUrl = topicsFromQuery(location.search);
     if (fromUrl.length === 0) return;
-    const { kept, overflow } = capTopics(fromUrl, maxTopics);
+    // Le budget voyage avec la sélection : un lien décrivant une génération de cinquante topics
+    // s'ouvrait sinon à 30, en perdait vingt, et annonçait qu'ils étaient « laissés de côté »
+    // d'un modèle qui avait pourtant été construit sur les cinquante.
+    const budget = maxTopicsFromQuery(location.search) ?? maxTopics;
+    const { kept, overflow } = capTopics(fromUrl, budget);
     // eslint-disable-next-line react-hooks/set-state-in-effect -- rejeu d'une URL partagée
     setSelection(kept);
+    setMaxTopics(budget);
     if (overflow.length > 0) {
-      toast(`${overflow.length} left out — this run is capped at ${maxTopics} topics`, 'error');
+      toast(`${overflow.length} left out — this run is capped at ${budget} topics`, 'error');
     }
-    generate(kept);
+    generate(kept, budget);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- au montage et sur navigation seulement
-  }, [location.search]);
+  }, [location.search, limitsSettled]);
 
   /**
    * Les bornes viennent du serveur, elles ne sont pas recopiées ici : c'est précisément le miroir
@@ -359,12 +384,13 @@ const DataModel: React.FC = () => {
         setLimits(res.data);
         setMaxTopics(current => clampMaxTopics(current, res.data));
       })
-      .catch(() => { /* le défaut tient lieu de réponse */ });
+      .catch(() => { /* le défaut tient lieu de réponse */ })
+      .finally(() => { if (alive) setLimitsSettled(true); });
     return () => { alive = false; };
   }, []);
 
   // Le brouillon suit la sélection, et s'efface de lui-même quand elle revient à vide.
-  useEffect(() => { saveSelectionDraft(selection); }, [selection]);
+  useEffect(() => { saveSelectionDraft(selection, maxTopics); }, [selection, maxTopics]);
 
   /**
    * Le temps écoulé, pendant la génération seulement. Une seconde de granularité : c'est une
@@ -1138,7 +1164,7 @@ const DataModel: React.FC = () => {
               onSubmit={e => {
                 e.preventDefault();
                 if (saveName.trim() === '' || selection.length === 0) return;
-                setSavedModels(saveModel(saveName, selection));
+                setSavedModels(saveModel(saveName, selection, maxTopics));
                 setSaveName('');
                 toast(`Saved “${saveName.trim()}” on this browser`, 'success');
               }}
@@ -1162,7 +1188,12 @@ const DataModel: React.FC = () => {
             ) : savedModels.map(saved => (
               <div key={saved.name} className="flex items-center gap-1">
                 <button
-                  onClick={() => { setSelection(saved.topics); generate(saved.topics); }}
+                  onClick={() => {
+                    const budget = saved.maxTopics ?? DEFAULT_MAX_TOPICS;
+                    setSelection(saved.topics);
+                    setMaxTopics(budget);
+                    generate(saved.topics, budget);
+                  }}
                   className="flex-1 min-w-0 text-left text-[11px] px-1.5 py-1 rounded text-on-surface-variant hover:bg-surface-container-high transition-colors"
                   title={saved.topics.join(', ')}
                 >
@@ -1410,6 +1441,11 @@ const DataModel: React.FC = () => {
                 Each topic is sampled and its schema inferred. The server answers once, so there is
                 no per-topic progress to show.
               </p>
+              {describeBuildBudget(selection.length, limits) && (
+                <p className="max-w-xs text-[11px] text-on-surface-variant leading-snug tabular-nums">
+                  {describeBuildBudget(selection.length, limits)}
+                </p>
+              )}
               {describeStaleGraphDuringBuild(model !== null) && (
                 <p className="max-w-xs text-[11px] text-warning leading-snug">
                   {describeStaleGraphDuringBuild(model !== null)}

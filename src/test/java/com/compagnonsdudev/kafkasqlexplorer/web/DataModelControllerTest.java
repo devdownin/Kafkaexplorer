@@ -97,6 +97,21 @@ class DataModelControllerTest {
                 .andExpect(jsonPath("$.defaultMaxTopics").value(DataModelService.DEFAULT_MAX_TOPICS));
     }
 
+    /**
+     * The page sizes its own HTTP wait on these two: a run is one POST that answers when every
+     * topic is inferred, and the browser waited a flat two minutes — survivable at 30 topics,
+     * not at 100. They are served rather than copied into the page, for the same reason the
+     * ceiling is.
+     */
+    @Test
+    void theTimingNumbersTheBrowserNeedsToSizeItsWaitAreServed() throws Exception {
+        mockMvc.perform(get("/api/data-model/limits"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.perTopicTimeoutMs")
+                        .value((int) DataModelService.PER_TOPIC_TIMEOUT_MS))
+                .andExpect(jsonPath("$.inferenceThreads").value(DataModelService.THREAD_POOL_SIZE));
+    }
+
     @Test
     void theCeilingServedIsTheConfiguredOne() throws Exception {
         ExplorerConfig config = new ExplorerConfig();

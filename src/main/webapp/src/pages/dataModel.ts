@@ -110,10 +110,35 @@ export function topicsFromQuery(search: string): string[] {
   return [...new Set(raw.split(',').map(t => t.trim()).filter(Boolean))];
 }
 
-export function buildQuery(topics: string[]): string {
+/**
+ * Le budget que porte l'URL, `null` quand elle n'en porte pas.
+ *
+ * L'URL ne portait que la liste de topics, ce qui suffisait tant que le plafond valait 30 des
+ * deux côtés. Depuis qu'il se règle, un lien décrivant une génération de cinquante topics
+ * s'ouvrait chez son destinataire avec un champ à 30, `capTopics` en retirait vingt et un toast
+ * annonçait qu'ils étaient « laissés de côté » — d'un modèle qui, lui, avait bien été construit
+ * sur les cinquante. Un lien doit rejouer la génération qu'il décrit, budget compris.
+ *
+ * Une valeur illisible vaut « pas de budget » plutôt qu'une valeur inventée : le champ garde
+ * alors son défaut, ce qui est la même réponse que pour une URL qui n'en porte pas.
+ */
+export function maxTopicsFromQuery(search: string): number | null {
+  const raw = new URLSearchParams(search).get('max');
+  if (!raw) return null;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 1) return null;
+  return Math.floor(parsed);
+}
+
+/**
+ * L'URL d'une génération. `maxTopics` n'y figure que s'il diffère du défaut — un lien n'a pas à
+ * porter un paramètre qui ne dit rien, et c'est ce qui garde inchangées les URLs déjà partagées.
+ */
+export function buildQuery(topics: string[], maxTopics: number = DEFAULT_MAX_TOPICS): string {
   if (topics.length === 0) return '';
   const params = new URLSearchParams();
   params.set('topics', topics.join(','));
+  if (maxTopics !== DEFAULT_MAX_TOPICS) params.set('max', String(maxTopics));
   return `?${params.toString()}`;
 }
 
@@ -128,18 +153,40 @@ export function buildQuery(topics: string[]): string {
  */
 const SELECTION_DRAFT = 'data-model';
 
-export function readSelectionDraft(cap: number): string[] | null {
-  const draft = readDraft<unknown>(SELECTION_DRAFT, null);
-  if (!Array.isArray(draft)) return null;
-  // Un brouillon écrit par une version antérieure peut contenir n'importe quoi : on ne garde
-  // que des noms de topics, et le plafond s'applique comme partout ailleurs sur cette page.
-  const topics = draft.filter((t): t is string => typeof t === 'string' && t !== '');
-  return topics.length === 0 ? null : capTopics(topics, cap).kept;
+/** Une sélection non lancée : les topics **et** le budget sous lequel ils devaient être lus. */
+export interface SelectionDraft {
+  topics: string[];
+  /** `null` quand le brouillon n'en porte pas — écrit par une version antérieure. */
+  maxTopics: number | null;
 }
 
-export function saveSelectionDraft(topics: string[]): void {
+/**
+ * Le brouillon est lu **avant** que le plafond serveur ne soit connu, donc il ne peut pas être
+ * borné ici par le vrai plafond. Il l'est par `cap`, ce que l'appelant sait de mieux à cet
+ * instant ; le budget relu est rendu tel quel et c'est `clampMaxTopics` qui le ramènera dans
+ * les bornes dès que `GET /api/data-model/limits` aura répondu.
+ */
+export function readSelectionDraft(cap: number): SelectionDraft | null {
+  const draft = readDraft<unknown>(SELECTION_DRAFT, null);
+  // Une version antérieure écrivait le tableau nu. Il se relit, plutôt que d'être jeté : le
+  // brouillon est précisément ce qu'on ne veut pas perdre en changeant de version.
+  const raw = Array.isArray(draft)
+    ? { topics: draft as unknown[], maxTopics: null }
+    : draft as { topics?: unknown; maxTopics?: unknown } | null;
+  if (!raw || !Array.isArray(raw.topics)) return null;
+
+  const topics = raw.topics.filter((t): t is string => typeof t === 'string' && t !== '');
+  if (topics.length === 0) return null;
+  const budget = typeof raw.maxTopics === 'number' && Number.isFinite(raw.maxTopics)
+    && raw.maxTopics >= 1
+    ? Math.floor(raw.maxTopics)
+    : null;
+  return { topics: capTopics(topics, budget ?? cap).kept, maxTopics: budget };
+}
+
+export function saveSelectionDraft(topics: string[], maxTopics: number): void {
   if (topics.length === 0) clearDraft(SELECTION_DRAFT);
-  else writeDraft(SELECTION_DRAFT, topics);
+  else writeDraft(SELECTION_DRAFT, { topics, maxTopics } satisfies SelectionDraft);
 }
 
 // ── Dimensionnement des nœuds ─────────────────────────────────────────────────
@@ -682,6 +729,11 @@ const SAVED_ENVELOPE_VERSION = 1;
 export interface SavedModel {
   name: string;
   topics: string[];
+  /**
+   * Le budget sous lequel la sélection devait être lue. `null` sur une entrée écrite avant que
+   * le budget ne soit réglable — elle se relit, elle reprend simplement le défaut.
+   */
+  maxTopics: number | null;
   /** Quand elle a été enregistrée — affichée, jamais utilisée pour périmer l'entrée. */
   at: number;
 }
@@ -728,6 +780,9 @@ export function readSavedModels(): SavedModel[] {
     .map(m => ({
       name: m.name,
       topics: m.topics.filter((t): t is string => typeof t === 'string' && t !== ''),
+      maxTopics: typeof m.maxTopics === 'number' && Number.isFinite(m.maxTopics) && m.maxTopics >= 1
+        ? Math.floor(m.maxTopics)
+        : null,
       at: typeof m.at === 'number' ? m.at : 0,
     }))
     .filter(m => m.topics.length > 0)
@@ -754,12 +809,12 @@ export function clearSavedModels(): void {
  * que « enregistrer sous le même nom » veut dire partout ailleurs, et empiler deux entrées
  * homonymes rendrait la liste inutilisable.
  */
-export function saveModel(name: string, topics: string[],
+export function saveModel(name: string, topics: string[], maxTopics: number,
                           now: number = Date.now()): SavedModel[] {
   const trimmed = name.trim();
   if (trimmed === '' || topics.length === 0) return readSavedModels();
   const existing = readSavedModels().filter(m => m.name !== trimmed);
-  const models = [{ name: trimmed, topics: [...topics], at: now }, ...existing]
+  const models = [{ name: trimmed, topics: [...topics], maxTopics, at: now }, ...existing]
     .slice(0, MAX_SAVED_MODELS);
   writeSavedModels(models);
   return models;
@@ -1413,6 +1468,55 @@ export function describeModel(response: DataModelResponse): string {
  * Le budget par topic (20 s côté serveur) n'est délibérément pas cité : c'est une constante du
  * serveur, et une UI qui la recopie ment le jour où elle change.
  */
+/**
+ * Le plancher d'attente du navigateur. C'était la valeur *unique* — `timeout: 120_000`, écrite
+ * en dur aux deux points d'appel — ce qui allait tant que le plafond valait 30 topics et
+ * n'allait plus à 100 : une génération dont les topics répondent lentement dépasse deux minutes,
+ * axios abandonne, l'opérateur voit une erreur de délai *pendant que le serveur travaille
+ * encore*, et la tentative suivante repart de zéro. Ça reste le plancher, pour qu'une petite
+ * génération se comporte exactement comme avant.
+ */
+export const MIN_REQUEST_TIMEOUT_MS = 120_000;
+
+/** Marge au-dessus du pire cas serveur : le réseau et la sérialisation de la réponse. */
+const REQUEST_TIMEOUT_SLACK_MS = 15_000;
+
+/**
+ * Combien de temps attendre une génération de `topics` topics.
+ *
+ * Le pire cas côté serveur est `ceil(topics / threads) × budget par topic` : les topics partent
+ * tous en même temps sur un pool borné, et chacun a son propre délai. Les deux nombres viennent
+ * de `GET /api/data-model/limits` — **jamais recopiés ici**, c'est exactement la règle qui
+ * interdit à cette page de citer le budget par topic dans son overlay : un constante serveur
+ * recopiée dans l'UI ment le jour où elle change.
+ *
+ * Sans les bornes, on garde le plancher : attendre moins que ce que le serveur peut mettre est
+ * un défaut, attendre plus n'en est pas un — l'utilisateur garde le bouton Stop.
+ */
+export function requestTimeoutMs(topics: number, limits: DataModelLimits | null): number {
+  if (!limits || limits.inferenceThreads < 1 || limits.perTopicTimeoutMs < 1) {
+    return MIN_REQUEST_TIMEOUT_MS;
+  }
+  const waves = Math.ceil(Math.max(1, topics) / limits.inferenceThreads);
+  const worstCase = waves * limits.perTopicTimeoutMs + REQUEST_TIMEOUT_SLACK_MS;
+  return Math.max(MIN_REQUEST_TIMEOUT_MS, worstCase);
+}
+
+/**
+ * La borne haute de l'attente, dite à l'opérateur — et seulement quand elle dépasse le plancher,
+ * sinon c'est du bruit sur une génération qui prendra quelques secondes.
+ *
+ * C'est une **borne**, pas une prédiction : la phrase le dit, parce qu'une durée annoncée sans
+ * cette précision se lit comme une estimation, et une estimation fabriquée est précisément ce
+ * que cette page refuse (cf. `describeBuildProgress`, qui n'invente aucun pourcentage).
+ */
+export function describeBuildBudget(topics: number, limits: DataModelLimits | null): string | null {
+  const budget = requestTimeoutMs(topics, limits);
+  if (budget <= MIN_REQUEST_TIMEOUT_MS) return null;
+  const minutes = Math.ceil(budget / 60_000);
+  return `Up to ${minutes} min if every topic is slow to answer.`;
+}
+
 export function describeBuildProgress(topics: number, elapsedMs: number): string {
   const scope = `Reading ${topics} ${topics === 1 ? 'topic' : 'topics'}`;
   const seconds = Math.floor(elapsedMs / 1000);

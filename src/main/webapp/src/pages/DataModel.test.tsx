@@ -78,23 +78,31 @@ function stubApi(response: DataModelResponse | Error = model) {
     ? Promise.reject(response)
     : Promise.resolve({ data: response })));
   // `GET /api/data-model/limits` : la page lit ses bornes au lieu d'en garder une copie.
-  mockedAxios.get.mockResolvedValue({ data: { maxTopics: 100, defaultMaxTopics: 30 } });
+  mockedAxios.get.mockResolvedValue({ data: {
+    maxTopics: 100, defaultMaxTopics: 30, perTopicTimeoutMs: 20_000, inferenceThreads: 4,
+  } });
 }
 
 async function renderPage(initialEntry = '/data-model') {
   const { default: DataModel } = await import('./DataModel');
   const { ToastProvider } = await import('../components/Toast');
   const { ConfirmProvider } = await import('../components/ui');
-  return render(
-    <ToastProvider>
-      <ConfirmProvider>
-        <RouterProvider router={createMemoryRouter(
-          [{ path: '/data-model', element: <DataModel /> }, { path: '/query', element: <p>SQL editor</p> }],
-          { initialEntries: [initialEntry] },
-        )} />
-      </ConfirmProvider>
-    </ToastProvider>,
+  // Le routeur est rendu accessible : la page réécrit l'URL après chaque génération, et c'est
+  // l'historique mémoire qu'elle écrit — `window.location` ne bouge pas sous un memory router.
+  const router = createMemoryRouter(
+    [{ path: '/data-model', element: <DataModel /> }, { path: '/query', element: <p>SQL editor</p> }],
+    { initialEntries: [initialEntry] },
   );
+  return {
+    ...render(
+      <ToastProvider>
+        <ConfirmProvider>
+          <RouterProvider router={router} />
+        </ConfirmProvider>
+      </ToastProvider>,
+    ),
+    router,
+  };
 }
 
 /** Ouvre le tiroir de sélection — sous le seuil desktop, c'est la seule porte vers les topics. */
@@ -237,6 +245,52 @@ describe('DataModel page', () => {
         expect.anything(),
       ));
     });
+
+  /**
+   * Le lien porte le budget. Sans lui, une génération de cinquante topics partagée s'ouvrait
+   * chez son destinataire avec un champ à 30, en perdait vingt, et annonçait qu'ils étaient
+   * « laissés de côté » — d'un modèle qui avait pourtant été construit sur les cinquante.
+   */
+  it('replays the budget a shared link was built under, not the default', async () => {
+    stubApi();
+    await renderPage('/data-model?topics=demo.orders.1.received,demo.payments.authorized&max=60');
+
+    await waitFor(() => expect(mockedAxios.post).toHaveBeenCalledWith(
+      '/api/data-model',
+      { topics: ['demo.orders.1.received', 'demo.payments.authorized'], maxTopics: 60 },
+      expect.anything(),
+    ));
+  });
+
+  it('writes the budget into the URL it produces, so the link replays the run', async () => {
+    const user = userEvent.setup();
+    stubApi();
+    const { router } = await renderPage();
+
+    await openTopics(user);
+    const field = await screen.findByLabelText('Max topics');
+    await waitFor(() => expect(field).toHaveAttribute('max', '100'));
+    await user.clear(field);
+    await user.type(field, '60');
+    await user.tab();
+
+    await user.click(screen.getByRole('checkbox', { name: /demo.orders.1.received/ }));
+    await user.click(screen.getByRole('button', { name: /Generate model/ }));
+
+    await waitFor(() => expect(router.state.location.search).toContain('max=60'));
+  });
+
+  // Deux minutes fixes suffisaient à 30 topics et plus à 100 : axios abandonnait pendant que le
+  // serveur travaillait encore. L'attente est dérivée de ce que le serveur dit de son pire cas.
+  it('waits longer than the fixed two minutes when the run is large enough to need it', async () => {
+    const many = Array.from({ length: 60 }, (_, i) => `demo.t${i}`);
+    stubApi();
+    await renderPage(`/data-model?topics=${many.join(',')}&max=100`);
+
+    await waitFor(() => expect(mockedAxios.post).toHaveBeenCalled());
+    const [, , config] = mockedAxios.post.mock.calls[0] as [string, unknown, { timeout: number }];
+    expect(config.timeout).toBeGreaterThan(120_000);
+  });
 
   it('will not let the field promise more than the server allows', async () => {
     const user = userEvent.setup();

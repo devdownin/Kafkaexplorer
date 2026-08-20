@@ -74,10 +74,18 @@ public class DataModelService {
      */
     public static final int DEFAULT_MAX_TOPICS = 30;
 
-    /** Per-topic wall clock. Schema inference on an unreachable partition must not pin the request. */
-    private static final long PER_TOPIC_TIMEOUT_MS = 20_000;
+    /**
+     * Per-topic wall clock. Schema inference on an unreachable partition must not pin the request.
+     *
+     * <p>Public because it is half of how long a whole run may take, and the browser has to size
+     * its own wait on that — it is served through {@link
+     * com.compagnonsdudev.kafkasqlexplorer.domain.DataModelLimits} rather than copied into the
+     * page, which would be a second hand-kept copy of a server constant.
+     */
+    public static final long PER_TOPIC_TIMEOUT_MS = 20_000;
 
-    private static final int THREAD_POOL_SIZE = 4;
+    /** How many topics are inferred at once — the other half of a run's worst-case wall clock. */
+    public static final int THREAD_POOL_SIZE = 4;
 
     /**
      * A field that reads as an identifier. Two shapes, matched separately so that words which
