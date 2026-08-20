@@ -57,6 +57,40 @@ EXPOSE 8080
 # container memory limit means being OOM-killed rather than running a GC.
 ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75.0"
 
+# --- Class Data Sharing ---------------------------------------------------------------
+# A training run at build time, so the first boot of every container does not re-parse and
+# re-verify the same classes. Measured on this application against the layout above — the
+# extracted layers behind `JarLauncher`, i.e. exactly what runs here — with no broker
+# listening: **7.74 s without the archive, 6.39 s with it**, and 12 911 of the 24 343
+# classes loaded come from it, application classes included.
+#
+# `-Dspring.context.exit=onRefresh` is what makes this affordable: the context is built
+# and the JVM exits at the refresh event, which lands after Tomcat is *initialized* and
+# before it starts listening — so the run costs a few seconds and binds nothing. It does
+# reach the two startup state restores, which find no broker here and give up on their
+# shared budget — a few seconds of build, and the reason that budget is now shared.
+#
+# Three things are deliberate. The archive is written in the *runtime* stage and not in a
+# `--platform=$BUILDPLATFORM` one like the extractor: a CDS archive is architecture-
+# specific, so the arm64 variant has to produce its own, under emulation, which is the
+# real cost of this (a slower multi-arch release build) alongside ~90 MB of image. The
+# flag goes on the ENTRYPOINT and not into JAVA_TOOL_OPTIONS: that variable is documented
+# as replaced wholesale when an operator sets it, so a container started with a tuned
+# `-XX:MaxRAMPercentage` would have silently dropped the archive and paid for it anyway.
+# It also keeps the flag away from this training run, where `-XX:SharedArchiveFile` and
+# `-XX:ArchiveClassesAtExit` together are an error. And it stays `-Xshare:auto`, the
+# default: a JVM that cannot map the archive must start anyway rather than refuse to boot
+# over an optimisation — which is precisely why ci.yml asserts the archive really is
+# mapped, or a mis-wiring would ship ~90 MB of dead weight in silence.
+#
+# Output is deliberately not swallowed: a training run that fails fails the build, and a
+# build that fails with no reason on screen is the defect this whole audit removed.
+RUN java -XX:ArchiveClassesAtExit=/app/application.jsa \
+         -Dspring.context.exit=onRefresh \
+         org.springframework.boot.loader.launch.JarLauncher \
+ && rm -f /app/logs/*.log \
+ && chown 10001:10001 /app/application.jsa
+
 # Liveness, not the aggregate `/actuator/health`: the aggregate carries the Kafka
 # readiness indicator, so a broker restart would flip the container to `unhealthy` while
 # the app is still perfectly alive and still able to be repointed elsewhere.
@@ -67,4 +101,4 @@ HEALTHCHECK --interval=15s --timeout=3s --start-period=60s --retries=10 \
 USER 10001:10001
 
 # The extracted layout, not `-jar app.jar` — there is no fat JAR in this image any more.
-ENTRYPOINT ["java", "org.springframework.boot.loader.launch.JarLauncher"]
+ENTRYPOINT ["java", "-XX:SharedArchiveFile=/app/application.jsa", "org.springframework.boot.loader.launch.JarLauncher"]

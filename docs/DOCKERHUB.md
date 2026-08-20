@@ -344,6 +344,12 @@ the previous version's.
 It is also **the exact JAR attached to the [GitHub Release](https://github.com/devdownin/Kafkaexplorer/releases)** —
 built and tested once by CI, then copied in, never recompiled unverified inside the image.
 
+The image also carries a **Class Data Sharing archive**, built at image-build time against
+this exact layout, so a container does not re-parse and re-verify the same classes on every
+start: measured at **7.7 s to boot without it, 6.4 s with**, with more than half the classes
+loaded coming from the archive. It costs about 90 MB of image, and nothing needs to be
+configured — the JVM maps it automatically, and starts normally if it ever cannot.
+
 ## 📚 Links
 
 - **Source & issues** — https://github.com/devdownin/Kafkaexplorer
