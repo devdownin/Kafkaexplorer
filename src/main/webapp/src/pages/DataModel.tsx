@@ -17,13 +17,14 @@ import {
   DEFAULT_MAX_TOPICS, MAX_FIT_SCALE,
   filterTopics, toggleTopic, selectAll, topicsFromQuery, buildQuery, capTopics,
   displayedColumns, entityHeight, computeLayout, computeEdgeGeometry, splitByConnectivity,
-  chooseNodeSizing, drawnEntities, describeSetAside, readPanelOpen, writePanelOpen,
+  drawnEntities, describeSetAside, readPanelOpen, writePanelOpen,
   crowFootPath, oneBarPath, graphBounds, fitTransform, centerOnEntity, topicDomains, domainColors,
   formatCount, describeRelation, matchingColumns, describeColumnMatches,
   buildExportSvg, exportNotes, toMermaidEr, buildJoinSql,
   diffModels, describeDiff, diffIsEmpty,
   filterRelations, describeRelationFilter, orphanKeyColumns, describeOrphanKey,
-  COMFORTABLE_NODE_SIZING,
+  COMFORTABLE_NODE_SIZING, resolveNodeSizing, describeDensity, describeDensityCost,
+  renderedTextPx, filterEntities, describeSetAsideFilter, SET_ASIDE_FILTER_MIN,
   shortenColumnName, readSelectionDraft, saveSelectionDraft, maxTopicsFromQuery,
   minimapLayout, visibleGraphRect, graphFullyVisible, centerOnGraphPoint,
   describeBuildProgress, describeStaleGraphDuringBuild, clampMaxTopics, isSignificantResize,
@@ -31,7 +32,7 @@ import {
   readSavedModels, saveModel, deleteSavedModel, buildMultiJoinSql,
   CONFIDENCE_STYLE, describeModel,
 } from './dataModel';
-import type { NodeSizing, OrphanKey, SavedModel } from './dataModel';
+import type { DensityChoice, NodeSizing, OrphanKey, SavedModel } from './dataModel';
 import type { DataModelRelation, RelationConfidence } from '../api/types';
 
 /**
@@ -265,6 +266,14 @@ const DataModel: React.FC = () => {
    * `exportDiagram` : c'est ce qui rend au fichier les colonnes que l'écran replie.
    */
   const [exportSizing, setExportSizing] = useState<NodeSizing | null>(null);
+  /**
+   * Le calibre demandé. `auto` optimise la lisibilité, ce qui est le bon défaut et pas toujours
+   * ce qu'on veut : chercher une colonne précise sur un grand modèle demande de les voir toutes,
+   * quitte à zoomer. Non persisté — voir `DensityChoice`.
+   */
+  const [density, setDensity] = useState<DensityChoice>('auto');
+  /** Filtre de la liste des entités sans relation : à cinquante entrées elle défile. */
+  const [setAsideFilter, setSetAsideFilter] = useState('');
   /** Depuis quand la génération courante tourne — la seule mesure honnête pendant l'attente. */
   const [buildElapsedMs, setBuildElapsedMs] = useState(0);
   /** Comparaison avec une seconde sélection : pas d'historique côté serveur, donc deux appels
@@ -507,9 +516,18 @@ const DataModel: React.FC = () => {
    * agrandit le texte réellement affiché. Voir `chooseNodeSizing`.
    */
   const chosenSizing = useMemo(
-    () => chooseNodeSizing(graphEntities, relations, viewportSize,
+    () => resolveNodeSizing(density, graphEntities, relations, viewportSize,
       { maxScale: MAX_FIT_SCALE, topPadding }),
-    [graphEntities, relations, viewportSize, topPadding]);
+    [density, graphEntities, relations, viewportSize, topPadding]);
+  /**
+   * Ce que le calibre courant donne réellement à lire. C'est ce qui permet de dire à l'opérateur
+   * qui impose un calibre ce qu'il coûte — et à `auto` d'avouer les modèles où aucun calibre ne
+   * s'en sort.
+   */
+  const densityCost = useMemo(
+    () => describeDensityCost(renderedTextPx(chosenSizing, graphEntities, relations, viewportSize,
+      { maxScale: MAX_FIT_SCALE, topPadding })),
+    [chosenSizing, graphEntities, relations, viewportSize, topPadding]);
   /**
    * Le calibre réellement rendu. Il vaut celui que la page a choisi, sauf le temps d'un export :
    * un fichier détaché n'a pas de viewport, donc rien n'y justifie de replier des colonnes.
@@ -574,6 +592,9 @@ const DataModel: React.FC = () => {
       : null),
     [joinEntities, entities, relations]);
 
+  /** Ce que le filtre de la liste des mises de côté laisse voir. */
+  const visibleIsolated = useMemo(
+    () => filterEntities(isolated, setAsideFilter), [isolated, setAsideFilter]);
   const columnMatches = useMemo(
     () => matchingColumns(entities, columnQuery), [entities, columnQuery]);
   const columnMatchNote = useMemo(
@@ -1191,6 +1212,38 @@ const DataModel: React.FC = () => {
             </div>
           )}
 
+          {/* Le calibre des boîtes. `auto` optimise la lisibilité — moins de colonnes mais plus
+              grosses — ce qui est le bon défaut sans être toujours ce qu'on veut : chercher une
+              colonne précise sur un grand modèle demande de les voir toutes, quitte à zoomer.
+              Ce que le choix coûte est dit sous le champ plutôt que découvert à l'écran. */}
+          {model && graphEntities.length > 0 && (
+            <div className="space-y-1">
+              <label htmlFor="dm-density"
+                className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider block">
+                Box size
+              </label>
+              <select
+                id="dm-density"
+                value={density}
+                onChange={e => setDensity(e.target.value as DensityChoice)}
+                className="w-full bg-surface-container-low border border-outline-variant rounded-md px-2 py-1.5 text-xs text-on-surface outline-none focus:border-primary/40"
+              >
+                <option value="auto">Auto — fit for readability</option>
+                <option value="comfortable">Comfortable — widest, most columns</option>
+                <option value="default">Default</option>
+                <option value="compact">Compact — smallest, fewest columns</option>
+              </select>
+              {describeDensity(density, chosenSizing) && (
+                <p className="text-[10px] text-outline leading-snug">
+                  {describeDensity(density, chosenSizing)}
+                </p>
+              )}
+              {densityCost && (
+                <p className="text-[10px] text-warning leading-snug" role="status">{densityCost}</p>
+              )}
+            </div>
+          )}
+
           {/* Entités qu'aucune relation ne touche. Elles diluent le signal du diagramme — qui est
               justement les relations — et chacune ajoute une case à la grille sous le graphe, donc
               fait baisser l'échelle de cadrage de tout le reste. Elles vivent donc dans une vraie
@@ -1216,13 +1269,40 @@ const DataModel: React.FC = () => {
                   <p className="text-[10px] text-outline leading-snug">
                     {describeSetAside(isolated.length, showUnrelated || connected.length === 0)}
                   </p>
+                  {/* À cinquante entrées la liste défile, et cinquante entités sans relation est
+                      un résultat ordinaire sur une grande sélection. Même grammaire que le filtre
+                      de topics du même panneau : sous-chaîne, ou motif dès qu'il y a un `*`. */}
+                  {isolated.length >= SET_ASIDE_FILTER_MIN && (
+                    <div className="flex items-center gap-2 bg-surface-container-low border border-outline-variant rounded-md px-2.5 py-1.5 focus-within:border-primary/40 transition-colors">
+                      <span aria-hidden="true" className="material-symbols-outlined text-on-surface-variant text-base shrink-0">search</span>
+                      <input
+                        value={setAsideFilter}
+                        onChange={e => setSetAsideFilter(e.target.value)}
+                        placeholder="Filter these — demo.iot.* works too"
+                        aria-label="Filter entities with no deduced relation"
+                        className="bg-transparent outline-none text-xs text-on-surface w-full placeholder:text-outline"
+                      />
+                      {setAsideFilter && (
+                        <button onClick={() => setSetAsideFilter('')}
+                          aria-label="Clear the set-aside filter"
+                          className="text-outline hover:text-on-surface shrink-0">
+                          <span aria-hidden="true" className="material-symbols-outlined text-sm">close</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {describeSetAsideFilter(visibleIsolated.length, isolated.length) && (
+                    <p className="text-[10px] text-outline leading-snug" role="status">
+                      {describeSetAsideFilter(visibleIsolated.length, isolated.length)}
+                    </p>
+                  )}
                   <ul
                     id="dm-unrelated-list"
                     role="listbox"
                     aria-label="Entities with no deduced relation"
                     className="max-h-44 overflow-y-auto custom-scrollbar rounded-md border border-outline-variant/60 bg-surface-container-low divide-y divide-outline-variant/30"
                   >
-                    {isolated.map(entity => (
+                    {visibleIsolated.map(entity => (
                       <li key={entity.id} role="option" aria-selected={selectedId === entity.id}>
                         <button
                           onClick={() => setSelectedId(prev => (prev === entity.id ? null : entity.id))}

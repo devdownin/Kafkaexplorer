@@ -515,6 +515,84 @@ describe('DataModel page', () => {
   });
 
   /*
+   * `auto` optimise la lisibilité — moins de colonnes mais plus grosses. C'est le bon défaut et
+   * pas toujours ce qu'on veut : chercher une colonne précise sur un grand modèle demande de les
+   * voir toutes, quitte à zoomer, et l'automatisme ne laissait aucun recours.
+   */
+  it('lets the box size be forced, and says what auto had chosen', async () => {
+    const user = userEvent.setup();
+    const wide = {
+      ...model,
+      entities: [{
+        ...model.entities[0],
+        columns: Array.from({ length: 15 }, (_, i) => ({
+          name: `col_${i}`, type: 'STRING', primaryKey: i === 0, references: null, keyBase: null,
+        })),
+      }, model.entities[1]],
+    };
+    stubApi(wide);
+    await renderPage('/data-model?topics=demo.orders.1.received,demo.payments.authorized');
+    await screen.findByText('2 entities · 1 relation deduced');
+
+    // jsdom ne mesure rien, donc l'automatisme retombe sur le calibre par défaut : 12 colonnes.
+    expect(screen.getByText('+3 more columns')).toBeInTheDocument();
+    await openTopics(user);
+    expect(screen.getByText(/Auto chose default boxes/)).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText('Box size'), 'comfortable');
+    // Les quinze colonnes tiennent dans le calibre large : plus rien n'est replié.
+    expect(screen.queryByText(/more columns/)).toBeNull();
+    // Et la page cesse d'annoncer un choix automatique qu'elle ne fait plus.
+    expect(screen.queryByText(/Auto chose/)).toBeNull();
+
+    await user.selectOptions(screen.getByLabelText('Box size'), 'compact');
+    expect(screen.getByText('+9 more columns')).toBeInTheDocument();
+  });
+
+  /*
+   * Cinquante entités sans relation est un résultat ordinaire sur une grande sélection, et la
+   * liste défile bien avant. Le filtre n'apparaît qu'au-delà du seuil : en dessous il est du bruit.
+   */
+  it('filters the set-aside list once it is long enough to need it', async () => {
+    const user = userEvent.setup();
+    const lonely: DataModelResponse['entities'] = Array.from({ length: 10 }, (_, i) => ({
+      id: `demo_iot_sensor_${i}`, topic: `demo.iot.sensor.${i}`, format: 'JSON' as const,
+      primaryKey: null, messageCount: 7200,
+      columns: [{ name: 'reading', type: 'DOUBLE', primaryKey: false, references: null, keyBase: null }],
+    }));
+    stubApi({
+      ...model,
+      entities: [...model.entities, ...lonely,
+        { id: 'demo_audit_log', topic: 'demo.audit.log', format: 'JSON' as const, primaryKey: null,
+          messageCount: 12,
+          columns: [{ name: 'line', type: 'STRING', primaryKey: false, references: null, keyBase: null }] }],
+      topicsRequested: 13, topicsAnalyzed: 13,
+    });
+    await renderPage('/data-model?topics=demo.orders.1.received,demo.payments.authorized');
+
+    await screen.findByText('13 entities · 1 relation deduced');
+    await openTopics(user);
+    const list = () => screen.getByRole('listbox', { name: 'Entities with no deduced relation' });
+    expect(within(list()).getAllByRole('option')).toHaveLength(11);
+
+    const filter = screen.getByLabelText('Filter entities with no deduced relation');
+    await user.type(filter, 'audit');
+    expect(within(list()).getAllByRole('option')).toHaveLength(1);
+    expect(screen.getByText('1 of 11 shown')).toBeInTheDocument();
+
+    // Un motif, la syntaxe que l'autre champ du même panneau enseigne.
+    await user.clear(filter);
+    await user.type(filter, 'demo.iot.*');
+    expect(within(list()).getAllByRole('option')).toHaveLength(10);
+
+    // Zéro se lit comme un zéro, pas comme une liste vide.
+    await user.clear(filter);
+    await user.type(filter, 'nothing');
+    expect(within(list()).queryAllByRole('option')).toHaveLength(0);
+    expect(screen.getByText(/No set-aside entity matches/)).toBeInTheDocument();
+  });
+
+  /*
    * Le panneau coûte 256 px en permanence à la seule chose que cette page existe pour montrer.
    * Il se replie donc, et le repli suit l'opérateur d'une visite à l'autre.
    */

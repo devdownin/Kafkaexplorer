@@ -19,6 +19,8 @@ import {
   NODE_SIZINGS, MIN_NODE_W, MAX_NODE_W, MAX_FIT_SCALE, MIN_FIT_SCALE, fitScale,
   COMFORTABLE_NODE_SIZING, DEFAULT_NODE_SIZING, COMPACT_NODE_SIZING, chooseNodeSizing,
   orphanColumns, maxNodesPerColumn, drawnEntities, describeSetAside,
+  resolveNodeSizing, describeDensity, describeDensityCost, renderedTextPx,
+  MIN_READABLE_TEXT_PX, filterEntities, describeSetAsideFilter,
   readPanelOpen, writePanelOpen, PANEL_KEY,
   minimapLayout, visibleGraphRect, graphFullyVisible, centerOnGraphPoint,
   readSavedModels, saveModel, deleteSavedModel, clearSavedModels, MAX_SAVED_MODELS,
@@ -535,6 +537,88 @@ describe('graphBounds / fitTransform', () => {
     const huge = { minX: 0, minY: 0, maxX: 100_000, maxY: 100 };
     expect(fitTransform(huge, 1200, 900).scale).toBe(MIN_FIT_SCALE);
     expect(fitScale(huge, 1200, 900, 40, 40, 1, 0)).toBeLessThan(MIN_FIT_SCALE);
+  });
+});
+
+/*
+ * Le calibre automatique optimise la lisibilité, ce qui est le bon défaut sans être toujours ce
+ * qu'on veut : chercher une colonne précise sur un grand modèle demande de les voir toutes.
+ */
+describe('density override', () => {
+  const viewport = { width: 1280, height: 800 };
+  const entities = [entity('hub', 20),
+    ...Array.from({ length: 29 }, (_, i) => entity(`s${i}`, 20))];
+  const relations = entities.slice(1).map(e => relation(e.id, 'hub'));
+
+  it('auto is the automatic pick, and the three others short-circuit it', () => {
+    expect(resolveNodeSizing('auto', entities, relations, viewport))
+      .toBe(chooseNodeSizing(entities, relations, viewport));
+    expect(resolveNodeSizing('comfortable', entities, relations, viewport))
+      .toBe(COMFORTABLE_NODE_SIZING);
+    expect(resolveNodeSizing('default', entities, relations, viewport))
+      .toBe(DEFAULT_NODE_SIZING);
+    expect(resolveNodeSizing('compact', entities, relations, viewport))
+      .toBe(COMPACT_NODE_SIZING);
+  });
+
+  it('an explicit calibre wins even where auto refuses it', () => {
+    // Sur ce modèle-là l'automatisme choisit le compact ; demander le large doit l'emporter,
+    // c'est tout l'objet de la commande.
+    expect(chooseNodeSizing(entities, relations, viewport)).toBe(COMPACT_NODE_SIZING);
+    expect(resolveNodeSizing('comfortable', entities, relations, viewport).maxColumns)
+      .toBe(COMFORTABLE_NODE_SIZING.maxColumns);
+  });
+
+  it('says what auto chose, and says nothing when the choice is already on screen', () => {
+    expect(describeDensity('auto', COMPACT_NODE_SIZING)).toBe('Auto chose compact boxes for this model.');
+    expect(describeDensity('compact', COMPACT_NODE_SIZING)).toBeNull();
+  });
+
+  it('names the cost of a calibre that renders below the readable floor', () => {
+    expect(describeDensityCost(MIN_READABLE_TEXT_PX)).toBeNull();
+    expect(describeDensityCost(3.2)).toContain('3.2 px');
+    expect(describeDensityCost(3.2)).toContain('zoom in');
+  });
+
+  it('the rendered size is the body times the fit, which is what the eye sees', () => {
+    // Le large rend plus petit que le serré sur ce modèle : c'est l'arbitrage tout entier.
+    expect(renderedTextPx(COMFORTABLE_NODE_SIZING, entities, relations, viewport))
+      .toBeLessThan(renderedTextPx(COMPACT_NODE_SIZING, entities, relations, viewport));
+  });
+
+  it('nothing measurable falls back to the body itself rather than to zero', () => {
+    expect(renderedTextPx(DEFAULT_NODE_SIZING, [], [], viewport)).toBe(DEFAULT_NODE_SIZING.rowSize);
+    expect(renderedTextPx(DEFAULT_NODE_SIZING, entities, relations, { width: 0, height: 0 }))
+      .toBe(DEFAULT_NODE_SIZING.rowSize);
+  });
+});
+
+describe('set-aside filter', () => {
+  const list = [
+    entity('demo_iot_sensor_0', 2), entity('demo_iot_sensor_1', 2), entity('demo_audit_log', 2),
+  ];
+
+  it('matches the table name or the topic — both are on screen', () => {
+    expect(filterEntities(list, 'sensor').map(e => e.id))
+      .toEqual(['demo_iot_sensor_0', 'demo_iot_sensor_1']);
+    // `entity()` derives the topic by turning underscores into dots.
+    expect(filterEntities(list, 'demo.audit').map(e => e.id)).toEqual(['demo_audit_log']);
+  });
+
+  it('understands a pattern, like the topic filter in the same panel', () => {
+    expect(filterEntities(list, 'demo.iot.*').map(e => e.id))
+      .toEqual(['demo_iot_sensor_0', 'demo_iot_sensor_1']);
+    expect(filterEntities(list, 'nope.*')).toEqual([]);
+  });
+
+  it('an empty filter shows everything', () => {
+    expect(filterEntities(list, '  ')).toHaveLength(3);
+  });
+
+  it('says what it kept, and zero reads as zero', () => {
+    expect(describeSetAsideFilter(3, 3)).toBeNull();
+    expect(describeSetAsideFilter(1, 3)).toBe('1 of 3 shown');
+    expect(describeSetAsideFilter(0, 3)).toContain('No set-aside entity matches');
   });
 });
 

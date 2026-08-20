@@ -423,6 +423,47 @@ export function drawnEntities(
  * entités n'ont pas de trait : « 4 » seul se lit comme une troncature, alors que c'est une
  * réponse — aucune relation ne les touche.
  */
+/**
+ * En dessous, un champ de filtre est du bruit : la liste tient à l'écran et se lit d'un coup
+ * d'œil. Au-dessus, elle défile, et cinquante entités sans relation est un résultat parfaitement
+ * ordinaire sur une grande sélection.
+ */
+export const SET_ASIDE_FILTER_MIN = 8;
+
+/**
+ * Filtre la liste des entités mises de côté. Même grammaire que le filtre de topics juste
+ * au-dessus dans le même panneau (`filterTopics`) — sous-chaîne, ou motif ancré dès qu'il y a
+ * un `*` — parce que deux champs voisins ne peuvent pas répondre différemment au même texte.
+ *
+ * Il compare **le nom de table et le topic**, les deux : la liste affiche l'identifiant Flink
+ * (`demo_iot_sensor_0`) et porte le topic en infobulle, donc les deux sont à l'écran et l'un ou
+ * l'autre sera tapé.
+ */
+export function filterEntities(
+  entities: DataModelEntity[],
+  filter: string,
+): DataModelEntity[] {
+  const needle = filter.trim();
+  if (!needle) return entities;
+  if (isTopicPattern(needle)) {
+    return entities.filter(e => matchesTopicPattern(e.topic, needle)
+      || matchesTopicPattern(e.id, needle));
+  }
+  const lower = needle.toLowerCase();
+  return entities.filter(e => e.id.toLowerCase().includes(lower)
+    || e.topic.toLowerCase().includes(lower));
+}
+
+/**
+ * Ce que le filtre de cette liste a retenu. `null` quand il ne filtre rien — une mention
+ * permanente « 6 sur 6 » apprendrait à ne plus lire la ligne. Zéro doit se lire comme un zéro.
+ */
+export function describeSetAsideFilter(shown: number, total: number): string | null {
+  if (shown === total) return null;
+  if (shown === 0) return `No set-aside entity matches — ${total} in the list.`;
+  return `${shown} of ${total} shown`;
+}
+
 export function describeSetAside(count: number, drawn: boolean): string {
   const noun = `${count} ${count === 1 ? 'entity' : 'entities'}`;
   return drawn
@@ -791,6 +832,84 @@ export function chooseNodeSizing(
     if (rendered > bestRendered) { bestRendered = rendered; best = sizing; }
   }
   return best;
+}
+
+/**
+ * Le corps réellement affiché du texte de ligne pour un calibre donné : son corps multiplié par
+ * l'échelle à laquelle il se cadrerait. C'est la grandeur que `chooseNodeSizing` compare, et la
+ * seule que l'œil voie — sortie ici parce que l'interface doit pouvoir la dire quand un calibre
+ * est imposé à la main, où plus rien ne garantit qu'elle reste lisible.
+ */
+export function renderedTextPx(
+  sizing: NodeSizing,
+  entities: DataModelEntity[],
+  relations: DataModelRelation[],
+  viewport: ViewportSize,
+  options: FitOptions = {},
+): number {
+  if (entities.length === 0 || viewport.width < 1 || viewport.height < 1) return sizing.rowSize;
+  const { padding = 40, topPadding = padding, maxScale = MAX_FIT_SCALE } = options;
+  const bounds = graphBounds(entities, computeLayout(entities, relations, sizing), sizing);
+  if (!bounds) return sizing.rowSize;
+  return sizing.rowSize * fitScale(
+    bounds, viewport.width, viewport.height, padding, topPadding, maxScale, 0);
+}
+
+/**
+ * Le calibre est **choisi par la page, pas imposé par elle**.
+ *
+ * `chooseNodeSizing` optimise pour la lisibilité, ce qui est le bon défaut et n'est pas toujours
+ * ce qu'on veut : un opérateur qui cherche une colonne précise sur un modèle de cinquante tables
+ * préfère les voir toutes et zoomer, et l'automatisme lui répondait « six colonnes sur vingt »
+ * sans recours. `auto` reste le défaut ; les trois autres valeurs court-circuitent le calcul.
+ *
+ * Délibérément **non persisté**, contrairement au repli du panneau : le bon calibre dépend du
+ * modèle affiché, donc un `comfortable` gardé d'une visite à l'autre s'appliquerait un jour à un
+ * modèle de cent entités et le rendrait illisible sans que rien ne l'explique. `auto` couvre déjà
+ * celui qui préfère le compact, puisqu'il l'élit dès que le modèle le demande.
+ */
+export type DensityChoice = 'auto' | 'comfortable' | 'default' | 'compact';
+
+export const DENSITY_SIZINGS: Record<Exclude<DensityChoice, 'auto'>, NodeSizing> = {
+  comfortable: COMFORTABLE_NODE_SIZING,
+  default: DEFAULT_NODE_SIZING,
+  compact: COMPACT_NODE_SIZING,
+};
+
+export function resolveNodeSizing(
+  choice: DensityChoice,
+  entities: DataModelEntity[],
+  relations: DataModelRelation[],
+  viewport: ViewportSize,
+  options: FitOptions = {},
+): NodeSizing {
+  if (choice !== 'auto') return DENSITY_SIZINGS[choice];
+  return chooseNodeSizing(entities, relations, viewport, options);
+}
+
+/** Le nom du calibre, par identité — l'interface doit pouvoir dire ce que `auto` a élu. */
+export function densityLabel(sizing: NodeSizing): Exclude<DensityChoice, 'auto'> {
+  if (sizing === COMFORTABLE_NODE_SIZING) return 'comfortable';
+  if (sizing === COMPACT_NODE_SIZING) return 'compact';
+  return 'default';
+}
+
+/**
+ * Ce que `auto` a décidé, en toutes lettres. `null` sur un choix explicite : le sélecteur le dit
+ * déjà, et répéter la valeur choisie juste en dessous n'apprend rien.
+ */
+export function describeDensity(choice: DensityChoice, sizing: NodeSizing): string | null {
+  return choice === 'auto' ? `Auto chose ${densityLabel(sizing)} boxes for this model.` : null;
+}
+
+/**
+ * Ce que le calibre courant coûte, quand il coûte quelque chose : un texte qui se rend sous le
+ * seuil de lisibilité. Dit quel que soit le choix — `auto` y tombe aussi quand aucun calibre ne
+ * s'en sort — parce que c'est un fait sur ce qui est à l'écran, pas un reproche à l'opérateur.
+ */
+export function describeDensityCost(renderedPx: number): string | null {
+  if (renderedPx >= MIN_READABLE_TEXT_PX) return null;
+  return `Column names render around ${renderedPx.toFixed(1)} px at this fit — zoom in to read them.`;
 }
 
 /**
