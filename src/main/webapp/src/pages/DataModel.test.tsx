@@ -462,6 +462,59 @@ describe('DataModel page', () => {
   });
 
   /*
+   * L'export sérialise le DOM vivant, donc il partait au calibre de l'écran — un calibre choisi
+   * pour *un viewport*, qui replie les colonnes en « +N more » pour faire tenir le diagramme.
+   * Un SVG n'a pas de viewport : il se zoome sans fin, et il figeait pourtant ce repli pour
+   * toujours. Le fichier part maintenant au calibre le plus large.
+   *
+   * jsdom n'a aucune mise en page, donc le canevas mesure zéro et l'écran est au calibre par
+   * défaut (12 colonnes) : une entité de 15 colonnes replie les trois dernières à l'écran et
+   * doit les porter dans le fichier.
+   */
+  it('exports the columns the screen folds away, not the screen\'s calibre', async () => {
+    const user = userEvent.setup();
+    const wide = {
+      ...model,
+      entities: [{
+        ...model.entities[0],
+        columns: Array.from({ length: 15 }, (_, i) => ({
+          name: `col_${i}`, type: 'STRING', primaryKey: i === 0, references: null, keyBase: null,
+        })),
+      }, model.entities[1]],
+    };
+    stubApi(wide);
+
+    // Seulement les deux méthodes : remplacer le global `URL` lui-même casse le `new URL(...)`
+    // de react-router, qui navigue au moment où le modèle répond.
+    const blobs: Blob[] = [];
+    const originalCreate = URL.createObjectURL;
+    const originalRevoke = URL.revokeObjectURL;
+    URL.createObjectURL = vi.fn((blob: Blob) => { blobs.push(blob); return 'blob:stub'; });
+    URL.revokeObjectURL = vi.fn();
+    try {
+      await renderPage('/data-model?topics=demo.orders.1.received,demo.payments.authorized');
+      await screen.findByText('2 entities · 1 relation deduced');
+
+      // À l'écran, les trois dernières colonnes sont repliées.
+      expect(screen.getByText('+3 more columns')).toBeInTheDocument();
+
+      await openTopics(user);
+      await user.click(screen.getByRole('button', { name: 'SVG' }));
+
+      expect(blobs).toHaveLength(1);
+      const svg = await blobs[0].text();
+      expect(svg).toContain('col_14');
+      expect(svg).not.toContain('more columns');
+
+      // Et l'écran est rendu à son calibre : l'export ne laisse pas la page élargie.
+      expect(screen.getByText('+3 more columns')).toBeInTheDocument();
+    } finally {
+      URL.createObjectURL = originalCreate;
+      URL.revokeObjectURL = originalRevoke;
+    }
+  });
+
+  /*
    * Le panneau coûte 256 px en permanence à la seule chose que cette page existe pour montrer.
    * Il se replie donc, et le repli suit l'opérateur d'une visite à l'autre.
    */

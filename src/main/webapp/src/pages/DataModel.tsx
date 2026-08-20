@@ -23,6 +23,7 @@ import {
   buildExportSvg, exportNotes, toMermaidEr, buildJoinSql,
   diffModels, describeDiff, diffIsEmpty,
   filterRelations, describeRelationFilter, orphanKeyColumns, describeOrphanKey,
+  COMFORTABLE_NODE_SIZING,
   shortenColumnName, readSelectionDraft, saveSelectionDraft, maxTopicsFromQuery,
   minimapLayout, visibleGraphRect, graphFullyVisible, centerOnGraphPoint,
   describeBuildProgress, describeStaleGraphDuringBuild, clampMaxTopics, isSignificantResize,
@@ -42,6 +43,10 @@ import type { DataModelRelation, RelationConfidence } from '../api/types';
 /** Boîte de la minicarte, en pixels — assez grande pour situer, assez petite pour ne pas gêner. */
 const MINIMAP_W = 168;
 const MINIMAP_H = 120;
+
+/** Marge autour du graphe cadré, et respiration sous le bandeau. */
+const GRAPH_PADDING = 40;
+const BANNER_GAP = 16;
 
 // ── Nœud-table ────────────────────────────────────────────────────────────────
 
@@ -246,6 +251,20 @@ const DataModel: React.FC = () => {
   const [joinSet, setJoinSet] = useState<string[]>([]);
   /** Taille réelle du canevas, pour la minicarte et le cadrage. */
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
+  /**
+   * La réserve verticale que le bandeau impose, mesurée plutôt que supposée — il grandit avec le
+   * nombre d'avertissements. Elle est gardée en état parce que **deux** décisions en dépendent :
+   * le cadrage, qui la mesure au moment où il cadre, et le choix du calibre, qui vit dans un
+   * `useMemo` et n'a aucun DOM à interroger. Le calibre l'évaluait donc à 40 px pendant que le
+   * cadrage en réservait 150 : sur un modèle contraint par sa hauteur, un calibre pouvait être
+   * élu pour une lisibilité que le cadrage réel ne lui laissait pas.
+   */
+  const [topPadding, setTopPadding] = useState(GRAPH_PADDING);
+  /**
+   * Le calibre imposé le temps d'une sérialisation. `null` le reste du temps — voir
+   * `exportDiagram` : c'est ce qui rend au fichier les colonnes que l'écran replie.
+   */
+  const [exportSizing, setExportSizing] = useState<NodeSizing | null>(null);
   /** Depuis quand la génération courante tourne — la seule mesure honnête pendant l'attente. */
   const [buildElapsedMs, setBuildElapsedMs] = useState(0);
   /** Comparaison avec une seconde sélection : pas d'historique côté serveur, donc deux appels
@@ -487,9 +506,15 @@ const DataModel: React.FC = () => {
    * qui liste moins de colonnes réduit l'emprise du graphe, donc relève l'échelle de cadrage, donc
    * agrandit le texte réellement affiché. Voir `chooseNodeSizing`.
    */
-  const sizing = useMemo(
-    () => chooseNodeSizing(graphEntities, relations, viewportSize, { maxScale: MAX_FIT_SCALE }),
-    [graphEntities, relations, viewportSize]);
+  const chosenSizing = useMemo(
+    () => chooseNodeSizing(graphEntities, relations, viewportSize,
+      { maxScale: MAX_FIT_SCALE, topPadding }),
+    [graphEntities, relations, viewportSize, topPadding]);
+  /**
+   * Le calibre réellement rendu. Il vaut celui que la page a choisi, sauf le temps d'un export :
+   * un fichier détaché n'a pas de viewport, donc rien n'y justifie de replier des colonnes.
+   */
+  const sizing = exportSizing ?? chosenSizing;
   const positions = useMemo(
     () => computeLayout(graphEntities, relations, sizing), [graphEntities, relations, sizing]);
   /**
@@ -618,6 +643,19 @@ const DataModel: React.FC = () => {
    * est visible à chaque rendu, et `getBoundingClientRect` dans un `useMemo` ne se réévalue pas
    * quand la fenêtre change de taille.
    */
+  /**
+   * La hauteur que le bandeau (couverture + avertissements) prend au graphe. Il se dessine
+   * `absolute` par-dessus le SVG sans le rétrécir, donc rien dans la mise en page ne la déclare :
+   * elle se mesure. Une seule définition, parce que le cadrage et le choix du calibre doivent
+   * répondre la même chose — c'est leur désaccord qui est corrigé ici.
+   */
+  const measureTopPadding = useCallback(() => {
+    const rect = svgRef.current?.getBoundingClientRect();
+    const bannerRect = bannerRef.current?.getBoundingClientRect();
+    if (!rect || !bannerRect) return GRAPH_PADDING;
+    return Math.max(GRAPH_PADDING, bannerRect.bottom - rect.top + BANNER_GAP);
+  }, []);
+
   useEffect(() => {
     const element = svgRef.current;
     if (!element) return;
@@ -625,12 +663,15 @@ const DataModel: React.FC = () => {
       const rect = element.getBoundingClientRect();
       setViewportSize(prev => (prev.width === rect.width && prev.height === rect.height
         ? prev : { width: rect.width, height: rect.height }));
+      setTopPadding(measureTopPadding());
     };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(element);
+    // Le bandeau aussi : sa hauteur change avec les avertissements, pas avec celle du canevas.
+    if (bannerRef.current) observer.observe(bannerRef.current);
     return () => observer.disconnect();
-  }, [model, graphEntities.length]);
+  }, [model, graphEntities.length, measureTopPadding]);
 
   // ── Zoom / pan / clavier (mêmes gestes que Lineage et Stream Flow) ──────────
 
@@ -694,14 +735,19 @@ const DataModel: React.FC = () => {
     const rect = svgRef.current?.getBoundingClientRect();
     const bounds = graphBounds(graphEntities, positions, sizing);
     if (!rect || !bounds || rect.width === 0) return;
-    const bannerRect = bannerRef.current?.getBoundingClientRect();
-    const topPadding = bannerRect ? Math.max(40, bannerRect.bottom - rect.top + 16) : 40;
+    // Mesurée ici plutôt que lue dans l'état : l'état retarde d'un rendu, et le cadrage
+    // d'après-génération tombe exactement dans ce rendu-là — celui où les avertissements
+    // viennent d'apparaître. La même valeur est reposée en état pour que le choix du calibre,
+    // qui ne peut pas mesurer, converge dessus.
+    const reserved = measureTopPadding();
+    setTopPadding(reserved);
     // `MAX_FIT_SCALE` plutôt que 1 : un modèle de trois tables laissait les trois quarts du
     // canevas vides parce que le cadrage refusait d'agrandir au-delà de la taille naturelle.
-    setTransform(fitTransform(bounds, rect.width, rect.height, 40, topPadding, MAX_FIT_SCALE));
+    setTransform(fitTransform(
+      bounds, rect.width, rect.height, GRAPH_PADDING, reserved, MAX_FIT_SCALE));
     viewAdjusted.current = false;
     fittedSize.current = { width: rect.width, height: rect.height };
-  }, [graphEntities, positions, sizing]);
+  }, [graphEntities, positions, sizing, measureTopPadding]);
 
   /**
    * La place disponible a changé : le canevas rétrécit quand l'inspecteur s'ouvre (320 px sur
@@ -727,12 +773,12 @@ const DataModel: React.FC = () => {
    * plus le même dessin. Il est donc recadré sans consulter `viewAdjusted`, contrairement à un
    * simple redimensionnement.
    */
-  const lastSizing = useRef(sizing);
+  const lastSizing = useRef(chosenSizing);
   useEffect(() => {
-    if (lastSizing.current === sizing) return;
-    lastSizing.current = sizing;
+    if (lastSizing.current === chosenSizing) return;
+    lastSizing.current = chosenSizing;
     pendingFit.current = true;
-  }, [sizing]);
+  }, [chosenSizing]);
 
   // Après une génération, le SVG du nouveau modèle est monté à ce moment-là seulement.
   useEffect(() => {
@@ -762,21 +808,61 @@ const DataModel: React.FC = () => {
     // trois quarts effacée. `flushSync` pour que le DOM soit à jour avant la sérialisation.
     if (selectedId !== null) flushSync(() => setSelectedId(null));
 
-    const group = graphGroupRef.current;
-    const bounds = graphBounds(graphEntities, positions, sizing);
-    if (!group || !bounds) return;
-
-    const serializer = new XMLSerializer();
-    const inner = Array.from(group.childNodes)
-      .map(node => serializer.serializeToString(node))
-      .join('');
-
     const caption = {
       title: 'Kafka data model',
       coverage: describeModel(model),
       notes: exportNotes(model, entities.length - graphEntities.length,
         relations.length - visibleRelations.length),
     };
+
+    const save = (blob: Blob, extension: string) => {
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `data-model.${extension}`;
+      link.click();
+      URL.revokeObjectURL(url);
+    };
+
+    if (format === 'mermaid') {
+      // La seule forme qui se relit et se différencie : un PNG dans une revue ne dit pas ce
+      // qui a changé depuis la version d'avant. Elle réémet depuis la réponse, donc elle ne
+      // dépend ni du DOM ni du calibre — et elle a toujours porté *toutes* les colonnes.
+      // Le SVG sérialise le DOM, donc il est déjà filtré ; Mermaid reçoit les relations
+      // filtrées, deux exports du même écran qui ne disent pas la même chose seraient pires.
+      save(new Blob([toMermaidEr({ ...model, relations: visibleRelations }, caption)],
+        { type: 'text/plain;charset=utf-8' }), 'mmd');
+      return;
+    }
+
+    /*
+     * Le calibre d'écran est choisi pour *un viewport* : sur un grand modèle il replie les
+     * colonnes en « +N more » pour que le diagramme tienne. Un fichier exporté n'a pas de
+     * viewport — un SVG se zoome sans fin, un PNG est rendu à 2× — donc rien n'y justifie ce
+     * repli, et l'export figeait pourtant « +14 more columns » pour toujours. Le diagramme est
+     * donc sérialisé au calibre le plus large, le temps de deux rendus synchrones : la règle
+     * « un seul moteur de rendu » tient toujours, c'est le DOM vivant qui part, simplement pas
+     * à la taille de l'écran.
+     */
+    const exportPositions = computeLayout(graphEntities, relations, COMFORTABLE_NODE_SIZING);
+    const bounds = graphBounds(graphEntities, exportPositions, COMFORTABLE_NODE_SIZING);
+    if (!bounds) return;
+
+    let inner: string;
+    flushSync(() => setExportSizing(COMFORTABLE_NODE_SIZING));
+    try {
+      const group = graphGroupRef.current;
+      if (!group) return;
+      const serializer = new XMLSerializer();
+      inner = Array.from(group.childNodes)
+        .map(node => serializer.serializeToString(node))
+        .join('');
+    } finally {
+      // Rendu avant que le navigateur ne peigne : les deux commits tiennent dans la même tâche,
+      // donc l'écran ne clignote pas — et `finally` garantit qu'une sérialisation qui échoue ne
+      // laisse pas la page bloquée sur le calibre d'export.
+      flushSync(() => setExportSizing(null));
+    }
 
     const svg = buildExportSvg(
       inner,
@@ -794,27 +880,8 @@ const DataModel: React.FC = () => {
       domainLegend.map(([domain, tint]) => ({ color: tint.accent, label: domain })),
     );
 
-    const save = (blob: Blob, extension: string) => {
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `data-model.${extension}`;
-      link.click();
-      URL.revokeObjectURL(url);
-    };
-
     if (format === 'svg') {
       save(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }), 'svg');
-      return;
-    }
-
-    if (format === 'mermaid') {
-      // La seule forme qui se relit et se différencie : un PNG dans une revue ne dit pas ce
-      // qui a changé depuis la version d'avant.
-      // Le SVG sérialise le DOM, donc il est déjà filtré ; Mermaid réémet depuis la réponse, et
-      // deux exports du même écran qui ne disent pas la même chose seraient pires que le filtre.
-      save(new Blob([toMermaidEr({ ...model, relations: visibleRelations }, caption)],
-        { type: 'text/plain;charset=utf-8' }), 'mmd');
       return;
     }
 
@@ -855,7 +922,7 @@ const DataModel: React.FC = () => {
     } finally {
       setExporting(false);
     }
-  }, [model, selectedId, graphEntities, positions, sizing, entities.length, relations.length,
+  }, [model, selectedId, graphEntities, relations, entities.length,
       visibleRelations, shownConfidences, domainLegend]);
 
   const onGraphKeyDown = useCallback((e: React.KeyboardEvent<SVGSVGElement>) => {

@@ -311,6 +311,30 @@ describe('chooseNodeSizing', () => {
     expect(chooseNodeSizing(entities, relations, viewport)).toBe(COMPACT_NODE_SIZING);
   });
 
+  /*
+   * Le bandeau (couverture + avertissements) se dessine par-dessus le canevas sans le
+   * rétrécir, donc le cadrage lui réserve sa hauteur mesurée — jusqu'à ~150 px avec deux
+   * avertissements. Le choix du calibre, lui, l'évaluait toujours à 40 : il pouvait élire un
+   * calibre pour une lisibilité que le cadrage réel ne lui laissait pas. Ce n'est pas
+   * théorique — sur ce modèle-là les deux réponses sont les deux extrêmes.
+   */
+  it('honours the band the banner reserves, since that is the room the fit will have', () => {
+    const { entities, relations } = star(9, 10);
+    expect(chooseNodeSizing(entities, relations, viewport, { topPadding: 40 }))
+      .toBe(COMFORTABLE_NODE_SIZING);
+    expect(chooseNodeSizing(entities, relations, viewport, { topPadding: 200 }))
+      .toBe(COMPACT_NODE_SIZING);
+  });
+
+  it('never answers with a wider box when there is less room, whatever the model', () => {
+    for (const [spokes, columns] of [[1, 4], [5, 8], [9, 10], [29, 15], [80, 25]] as const) {
+      const { entities, relations } = star(spokes, columns);
+      const roomy = chooseNodeSizing(entities, relations, viewport, { topPadding: 40 });
+      const cramped = chooseNodeSizing(entities, relations, viewport, { topPadding: 240 });
+      expect(cramped.width).toBeLessThanOrEqual(roomy.width);
+    }
+  });
+
   it('nothing measurable yields the default rather than an absurd choice', () => {
     const { entities, relations } = star(3, 4);
     expect(chooseNodeSizing(entities, relations, { width: 0, height: 0 }))
