@@ -51,7 +51,7 @@ no `title`, no scrollable ancestor, not `sr-only`:
 | page | phone (390) | tablet (768) | desktop (1440) |
 |---|---|---|---|
 | dashboard | 0 clipped, 0 unreachable | 0 / 0 | 0 / 0 |
-| sql-editor | 15 clipped, 4 unreachable | 8 / 1 | 9 / 3 |
+| sql-editor | 17 clipped, 4 unreachable | 10 / 1 | 11 / 3 |
 | topic-explorer | 23 clipped, 0 unreachable | 21 / 19 | 18 / 18 |
 | stream-flow | 15 clipped, 2 unreachable | 12 / 2 | 22 / 2 |
 | data-model | 0 clipped, 0 unreachable | 0 / 0 | 1 / 0 |
@@ -133,7 +133,7 @@ Interactive elements below the 24 × 24 CSS px of WCAG 2.5.8 (Target Size, Minim
 
 | page | ratio | page | ratio |
 |---|---|---|---|
-| sql-editor | 69 / 103 | audit | 24 / 54 |
+| sql-editor | 67 / 113 | audit | 24 / 54 |
 | dashboard | 32 / 60 | stream-flow | 20 / 56 |
 | topic-explorer | 11 / 64 | metrics | 8 / 53 |
 | cluster | 1 / 20 | data-model | 5 / 76 |

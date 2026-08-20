@@ -17,6 +17,22 @@ export interface SavedQuery { id: string; name: string; sql: string; savedAt: nu
  */
 export type SchemaInfo = QueryInitResponse;
 
+/**
+ * Un bouton-icône de la colonne, réellement 24 x 24.
+ *
+ * `layout-probe.mjs` compte les cibles sous les 24 x 24 CSS px de la WCAG 2.5.8, et ce fichier en
+ * ajoutait une par table Flink : le gabarit d'une icône `text-sm` fait environ 18 px. Élargir la
+ * seule zone de clic en gardant l'icône serait la version tentante, et c'est la remarque que porte
+ * déjà `Checkbox` — ici ce sont de vrais `<button>`, donc `min-w`/`min-h` plus un centrage flex
+ * agrandissent la boîte pour de bon, sans grossir le dessin.
+ *
+ * Les deux boutons de la ligne le portent, pas seulement le nouveau : ils forment une paire, et
+ * n'en corriger qu'un laisserait deux cibles voisines de tailles différentes.
+ */
+const ICON_BUTTON = 'opacity-0 group-hover/tbl:opacity-100 focus-visible:opacity-100 '
+  + 'text-outline transition-all shrink-0 ml-1 min-w-6 min-h-6 inline-flex items-center '
+  + 'justify-center rounded';
+
 export interface SchemaBrowserProps {
   schema: SchemaInfo | null;
   schemaLoading: boolean;
@@ -156,14 +172,18 @@ export const SchemaBrowser = React.forwardRef<HTMLElement, SchemaBrowserProps>(f
                     aria-expanded={!!expandedTables[table]}
                     className="flex-1 flex items-center gap-1 min-w-0 text-left rounded">
                     <span className={`material-symbols-outlined text-xs text-on-surface-variant transition-transform duration-200 shrink-0 ${expandedTables[table] ? 'rotate-90' : ''}`}>chevron_right</span>
-                    <span className="text-xs text-on-surface truncate font-mono">{table}</span>
+                    {/* `truncate` sans `title`, c'est du texte que rien ne permet de lire — le
+                        défaut que W7 a trouvé sur les cartes de métriques. Les deux boutons
+                        d'action à droite rendent la troncature plus fréquente, donc la ligne
+                        porte le nom complet. */}
+                    <span className="text-xs text-on-surface truncate font-mono" title={table}>{table}</span>
                   </button>
                   <button type="button" onClick={() => onSelectFrom(table)}
-                    className="opacity-0 group-hover/tbl:opacity-100 focus-visible:opacity-100 text-outline hover:text-primary transition-all shrink-0 ml-1" title={actionLabelFor('this table')} aria-label={actionLabelFor(table)}>
+                    className={cn(ICON_BUTTON, 'hover:text-primary')} title={actionLabelFor('this table')} aria-label={actionLabelFor(table)}>
                     <span className="material-symbols-outlined text-sm">play_arrow</span>
                   </button>
                   <button type="button" onClick={() => onDropTable(table)}
-                    className="opacity-0 group-hover/tbl:opacity-100 focus-visible:opacity-100 text-outline hover:text-error transition-all shrink-0 ml-1"
+                    className={cn(ICON_BUTTON, 'hover:text-error')}
                     title="Drop this table" aria-label={`Drop table ${table}`}>
                     <span className="material-symbols-outlined text-sm">delete</span>
                   </button>

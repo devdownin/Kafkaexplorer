@@ -747,10 +747,31 @@ public class FlinkSqlService {
         } catch (Exception e) {
             // Reported, not thrown: the store still has to be cleaned up below, and "Flink does
             // not have this table" is a normal answer here rather than a failure.
-            log.info("DROP TABLE `{}` did not run: {}", table, SqlErrorClassifier.explain(e));
+            log.info("DROP TABLE `{}` did not run: {}", oneLine(table), SqlErrorClassifier.explain(e));
         }
         boolean forgotten = flinkTableStore.forget(table);
         return dropped || forgotten;
+    }
+
+    /**
+     * Text that came from a request, fit for one line of a log.
+     *
+     * <p><b>This strips nothing at runtime here</b>, and that is worth stating rather than hiding:
+     * {@link #dropTable} refuses anything that is not {@code [A-Za-z_][A-Za-z0-9_$]*} before
+     * reaching its log line, so the value cannot hold a line break by the time it arrives. It is
+     * applied anyway for two reasons. A log sink should not depend on a guard fifteen lines above
+     * it staying correct through every later edit — the whole point of a forged log line is that it
+     * lands in the file that is meant to be the record of what happened, where nobody thinks to
+     * doubt it. And the guard is a predicate on another class, so neither a reader arriving at this
+     * line nor static analysis can see it from here; CodeQL reported exactly that and was right to,
+     * even though the value was already safe.
+     *
+     * <p>Deliberately not applied to the flattened exception beside it. A Flink error can quote the
+     * statement it failed on, so that is a wider question about every {@code explain()} call in the
+     * codebase rather than something to settle in one method.
+     */
+    private static String oneLine(String value) {
+        return value == null ? "" : value.replaceAll("[\\r\\n]", "");
     }
 
     /**
