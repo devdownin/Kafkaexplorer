@@ -517,6 +517,35 @@ export function fitTransform(
 }
 
 /**
+ * Sous ce seuil, un changement de taille n'est pas un changement de cadrage : une barre de
+ * défilement qui apparaît, un arrondi de sous-pixel. Recadrer là-dessus ferait sautiller le
+ * graphe sans rien améliorer.
+ */
+export const RESIZE_EPSILON_PX = 8;
+
+export interface ViewportSize { width: number; height: number }
+
+/**
+ * Ce changement de taille mérite-t-il un recadrage ?
+ *
+ * Le cadrage est calculé pour un rectangle donné, et il n'était recalculé qu'après une
+ * génération, au franchissement du seuil desktop, et sur le bouton de recadrage. Tout le reste
+ * le laissait décrire un viewport qui n'existait plus : redimensionner la fenêtre, et surtout
+ * **ouvrir l'inspecteur**, qui prend 320 px au canevas sur desktop — le graphe se retrouvait
+ * décalé, une partie passant sous le panneau qui venait de s'ouvrir.
+ *
+ * Une première mesure ne déclenche rien (`before` nul) : le cadrage initial vient d'ailleurs.
+ * Une taille nulle non plus — un onglet caché ou un panneau replié mesurent zéro, et cadrer sur
+ * zéro donne une transformation absurde qui resterait à l'écran au retour.
+ */
+export function isSignificantResize(before: ViewportSize | null, after: ViewportSize): boolean {
+  if (after.width < 1 || after.height < 1) return false;
+  if (!before) return false;
+  return Math.abs(after.width - before.width) >= RESIZE_EPSILON_PX
+      || Math.abs(after.height - before.height) >= RESIZE_EPSILON_PX;
+}
+
+/**
  * Centre le viewport sur une entité précise, sans passer par un cadrage de tout le graphe :
  * un modèle de trente tables se parcourt mal à la souris, et retrouver une entité par son nom
  * est la question qu'on se pose devant lui. L'échelle courante est conservée si elle est déjà

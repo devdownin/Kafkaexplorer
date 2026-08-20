@@ -24,7 +24,7 @@ import {
   filterRelations, describeRelationFilter, orphanKeyColumns, describeOrphanKey,
   shortenColumnName, readSelectionDraft, saveSelectionDraft, maxTopicsFromQuery,
   minimapLayout, visibleGraphRect, graphFullyVisible, centerOnGraphPoint,
-  describeBuildProgress, describeStaleGraphDuringBuild, clampMaxTopics,
+  describeBuildProgress, describeStaleGraphDuringBuild, clampMaxTopics, isSignificantResize,
   requestTimeoutMs, describeBuildBudget,
   readSavedModels, saveModel, deleteSavedModel, buildMultiJoinSql,
   CONFIDENCE_STYLE, describeModel,
@@ -246,6 +246,15 @@ const DataModel: React.FC = () => {
   const selfWrittenSearch = useRef<string | null>(null);
   /** Vrai entre une génération réussie et le cadrage du graphe fraîchement monté. */
   const pendingFit = useRef(false);
+  /**
+   * L'opérateur a-t-il cadré lui-même depuis le dernier recadrage automatique ? Un panoramique,
+   * un zoom, un centrage sur une entité : autant de choix délibérés, qu'un redimensionnement de
+   * fenêtre n'a pas à défaire. Tant que c'est faux, le cadrage appartient encore à la page, qui
+   * le recalcule quand la place disponible change.
+   */
+  const viewAdjusted = useRef(false);
+  /** La taille sur laquelle le cadrage courant a été calculé. */
+  const fittedSize = useRef<{ width: number; height: number } | null>(null);
 
   /**
    * Ajoute la saisie à la sélection. Elle peut valoir plusieurs topics — une liste collée depuis
@@ -458,6 +467,7 @@ const DataModel: React.FC = () => {
     const rect = svgRef.current?.getBoundingClientRect();
     if (!entity || !pos || !rect) return;
     setSelectedId(id);
+    viewAdjusted.current = true;
     setTransform(t => centerOnEntity(entity, pos, rect.width, rect.height, t.scale));
     setJumpQuery('');
   }, [entityById, positions]);
@@ -574,6 +584,7 @@ const DataModel: React.FC = () => {
   // ── Zoom / pan / clavier (mêmes gestes que Lineage et Stream Flow) ──────────
 
   const zoomAround = useCallback((factor: number, px: number, py: number) => {
+    viewAdjusted.current = true;
     setTransform(t => {
       const scale = Math.max(0.1, Math.min(3, t.scale * factor));
       const k = scale / t.scale;
@@ -609,6 +620,7 @@ const DataModel: React.FC = () => {
     const dx = e.clientX - lastPos.current.x;
     const dy = e.clientY - lastPos.current.y;
     lastPos.current = { x: e.clientX, y: e.clientY };
+    viewAdjusted.current = true;
     setTransform(t => ({ ...t, x: t.x + dx, y: t.y + dy }));
     setEdgeTip(null);
   }, []);
@@ -634,7 +646,27 @@ const DataModel: React.FC = () => {
     const bannerRect = bannerRef.current?.getBoundingClientRect();
     const topPadding = bannerRect ? Math.max(40, bannerRect.bottom - rect.top + 16) : 40;
     setTransform(fitTransform(bounds, rect.width, rect.height, 40, topPadding));
+    viewAdjusted.current = false;
+    fittedSize.current = { width: rect.width, height: rect.height };
   }, [graphEntities, positions]);
+
+  /**
+   * La place disponible a changé : le canevas rétrécit quand l'inspecteur s'ouvre (320 px sur
+   * desktop) et suit la fenêtre. Le cadrage d'avant décrit alors un rectangle qui n'existe plus
+   * — c'est le raisonnement déjà appliqué au franchissement du seuil, qui n'en couvrait qu'un
+   * cas sur trois. On ne recadre que si personne n'a cadré à la main : recentrer sous les doigts
+   * de quelqu'un qui vient de zoomer sur une table serait pire que le décentrage.
+   */
+  useEffect(() => {
+    if (!model || graphEntities.length === 0) return;
+    if (!isSignificantResize(fittedSize.current, viewportSize)) return;
+    if (viewAdjusted.current) {
+      // Son cadrage est gardé, mais il décrit désormais cette taille-ci.
+      fittedSize.current = viewportSize;
+      return;
+    }
+    fitToViewport();
+  }, [viewportSize, model, graphEntities.length, fitToViewport]);
 
   // Après une génération, le SVG du nouveau modèle est monté à ce moment-là seulement.
   useEffect(() => {
@@ -762,6 +794,8 @@ const DataModel: React.FC = () => {
 
   const onGraphKeyDown = useCallback((e: React.KeyboardEvent<SVGSVGElement>) => {
     const step = e.shiftKey ? 160 : 48;
+    // Les quatre flèches cadrent à la main ; `0` fait l'inverse et remet le cadrage à la page.
+    if (e.key.startsWith('Arrow')) viewAdjusted.current = true;
     switch (e.key) {
       case 'ArrowLeft':  setTransform(t => ({ ...t, x: t.x + step })); break;
       case 'ArrowRight': setTransform(t => ({ ...t, x: t.x - step })); break;
@@ -1385,6 +1419,7 @@ const DataModel: React.FC = () => {
                   x: (e.clientX - box.left - layout.offsetX) / layout.scale,
                   y: (e.clientY - box.top - layout.offsetY) / layout.scale,
                 };
+                viewAdjusted.current = true;
                 setTransform(t => centerOnGraphPoint(
                   point, viewportSize.width, viewportSize.height, t.scale));
               }}

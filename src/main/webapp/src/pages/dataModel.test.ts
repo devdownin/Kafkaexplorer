@@ -15,6 +15,7 @@ import {
   filterRelations, describeRelationFilter, orphanKeyColumns, describeOrphanKey,
   shortenColumnName, readSelectionDraft, saveSelectionDraft, clampMaxTopics,
   maxTopicsFromQuery, requestTimeoutMs, describeBuildBudget, MIN_REQUEST_TIMEOUT_MS,
+  isSignificantResize, RESIZE_EPSILON_PX,
   minimapLayout, visibleGraphRect, graphFullyVisible, centerOnGraphPoint,
   readSavedModels, saveModel, deleteSavedModel, clearSavedModels, MAX_SAVED_MODELS,
   SAVED_MODELS_KEY, joinAliasesFor, buildMultiJoinSql,
@@ -473,6 +474,41 @@ describe('requestTimeoutMs', () => {
     expect(describeBuildBudget(4, limits)).toBeNull();
     expect(describeBuildBudget(100, null)).toBeNull();
     expect(describeBuildBudget(100, limits)).toBe('Up to 9 min if every topic is slow to answer.');
+  });
+});
+
+describe('isSignificantResize', () => {
+  const size = { width: 900, height: 600 };
+
+  // L'inspecteur prend 320 px au canevas sur desktop : c'est le cas qui laissait le graphe
+  // décalé, une partie passant sous le panneau qui venait de s'ouvrir.
+  it('the inspector opening is a resize worth reframing for', () => {
+    expect(isSignificantResize(size, { width: 580, height: 600 })).toBe(true);
+  });
+
+  it('a window resize in either axis counts', () => {
+    expect(isSignificantResize(size, { width: 900, height: 400 })).toBe(true);
+    expect(isSignificantResize(size, { width: 1400, height: 600 })).toBe(true);
+  });
+
+  // Une barre de défilement qui apparaît, un arrondi de sous-pixel : recadrer là-dessus ferait
+  // sautiller le graphe sans rien améliorer.
+  it('a sub-pixel or scrollbar-sized jitter does not', () => {
+    expect(isSignificantResize(size, { width: 900.4, height: 600 })).toBe(false);
+    expect(isSignificantResize(size, { width: 900 + RESIZE_EPSILON_PX - 1, height: 600 })).toBe(false);
+    expect(isSignificantResize(size, { width: 900 + RESIZE_EPSILON_PX, height: 600 })).toBe(true);
+  });
+
+  // Le cadrage initial vient d'ailleurs (la génération) ; une première mesure ne le refait pas.
+  it('a first measurement reframes nothing', () => {
+    expect(isSignificantResize(null, size)).toBe(false);
+  });
+
+  // Un onglet caché ou un panneau replié mesurent zéro, et cadrer sur zéro donne une
+  // transformation absurde qui resterait à l'écran au retour.
+  it('a zero-sized viewport is never reframed for', () => {
+    expect(isSignificantResize(size, { width: 0, height: 0 })).toBe(false);
+    expect(isSignificantResize(size, { width: 900, height: 0 })).toBe(false);
   });
 });
 
