@@ -3,10 +3,13 @@
 package com.compagnonsdudev.kafkasqlexplorer.service;
 
 import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.Properties;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 /**
  * The consumer groups this application creates for itself, named in one place and — above all —
@@ -31,8 +34,35 @@ import java.util.UUID;
  */
 public final class ExplorerConsumerGroups {
 
-    /** Everything this application creates for its own reads. */
-    public static final String PREFIX = "kafka-explorer-";
+    private static final Logger log = LoggerFactory.getLogger(ExplorerConsumerGroups.class);
+
+    /**
+     * What every internal reader is named with when nothing says otherwise.
+     *
+     * <p>It is also permanently recognised as ours, whatever {@code explorer.consumer-group-prefix}
+     * is set to: a deployment that adopts a custom prefix does not thereby disown the groups it
+     * left on the cluster yesterday, and failing to recognise them is not a cosmetic slip — it is
+     * how this application starts reporting critical audit findings about its own leftovers.
+     */
+    public static final String DEFAULT_PREFIX = "kafka-explorer-";
+
+    /**
+     * Characters a group id may carry. Kafka itself is permissive here, which is the problem: a
+     * prefix with a space or a slash produces ids that are legal, unreadable, and awkward in every
+     * tool that later has to name them (JMX, metrics labels, {@code kafka-consumer-groups.sh}).
+     */
+    private static final Pattern VALID_PREFIX = Pattern.compile("[A-Za-z0-9._:-]+");
+
+    /** Separators a prefix may already end with — anything else gets a {@code -} appended. */
+    private static final String SEPARATORS = "-_.:";
+
+    /**
+     * The prefix in force. Written once at startup from {@link
+     * com.compagnonsdudev.kafkasqlexplorer.config.ExplorerConfig}, read by every naming call
+     * afterwards; {@code volatile} because those calls happen on the request and poll threads
+     * rather than on the one that wrote it.
+     */
+    private static volatile String prefix = DEFAULT_PREFIX;
 
     /**
      * Group-id shapes used before the prefix existed, kept so that groups already lingering on a
@@ -72,14 +102,62 @@ public final class ExplorerConsumerGroups {
     private ExplorerConsumerGroups() {
     }
 
-    /** A one-shot reader: {@code kafka-explorer-<purpose>-<uuid>}. */
+    /**
+     * The prefix a configured value actually yields.
+     *
+     * <p>Absent, blank or whitespace-only falls back to {@link #DEFAULT_PREFIX} — an empty prefix
+     * is not a shorter name, it is internal readers that no longer look like ours, which the
+     * audit then reports as third-party consumers stalled on a backlog.
+     *
+     * <p>A value that is not a plausible group id falls back too, with a WARN naming the property:
+     * the alternative is every internal read carrying an id nothing downstream can handle, failing
+     * far from the mistake.
+     *
+     * <p>A trailing separator is added when the value has none, because {@code myapp} would
+     * otherwise produce {@code myappmetadata-<uuid>} — a prefix is meant to be legible where it is
+     * joined, and asking every operator to remember the dash is asking to be forgotten.
+     */
+    public static String resolvePrefix(String configured) {
+        if (configured == null || configured.isBlank()) return DEFAULT_PREFIX;
+        String trimmed = configured.trim();
+        if (!VALID_PREFIX.matcher(trimmed).matches()) {
+            log.warn("explorer.consumer-group-prefix '{}' is not a usable group-id prefix "
+                + "(letters, digits, dot, underscore, colon and dash only); "
+                + "falling back to '{}'.", trimmed, DEFAULT_PREFIX);
+            return DEFAULT_PREFIX;
+        }
+        return SEPARATORS.indexOf(trimmed.charAt(trimmed.length() - 1)) >= 0 ? trimmed : trimmed + "-";
+    }
+
+    /**
+     * Applies the configured prefix, once, at startup. Called from {@code ExplorerConfig} rather
+     * than from a listener of its own: the two readers that restore state at boot
+     * ({@code MetricService}, {@code FieldMappingStore}) inject that bean, so it is constructed
+     * before them and no consumer can be named while this is still unset.
+     */
+    public static void usePrefix(String configured) {
+        String resolved = resolvePrefix(configured);
+        prefix = resolved;
+        if (!DEFAULT_PREFIX.equals(resolved)) {
+            log.info("Internal consumer groups are named '{}<purpose>-<id>'. "
+                + "Groups left under '{}' are still recognised as this application's.",
+                resolved, DEFAULT_PREFIX);
+        }
+    }
+
+    /** The prefix in force — what an internal reader is currently named with. */
+    public static String prefix() {
+        return prefix;
+    }
+
+    /** A one-shot reader: {@code <prefix><purpose>-<uuid>}. */
     public static String transientGroup(String purpose) {
-        return PREFIX + purpose + "-" + UUID.randomUUID();
+        return prefix + purpose + "-" + UUID.randomUUID();
     }
 
     /** A reader tied to something the user started, so the id is traceable back to it. */
     public static String forSession(String purpose, String sessionId) {
-        return PREFIX + purpose + "-" + sessionId;
+        return prefix + purpose + "-" + sessionId;
     }
 
     /**
@@ -129,7 +207,12 @@ public final class ExplorerConsumerGroups {
      */
     public static boolean isOwnReaderGroup(String groupId) {
         if (groupId == null) return false;
-        if (groupId.startsWith(PREFIX)) return true;
+        if (groupId.startsWith(prefix)) return true;
+        // The shipped default is recognised whatever the configured prefix is. Adopting a custom
+        // one must not orphan the groups the previous configuration left on the cluster — an
+        // unrecognised leftover of ours is exactly what the audit grades STALLED and reports as
+        // critical, which is the defect this class exists to keep fixed.
+        if (groupId.startsWith(DEFAULT_PREFIX)) return true;
         return LEGACY_PREFIXES.stream().anyMatch(groupId::startsWith);
     }
 }

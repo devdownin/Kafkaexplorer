@@ -75,7 +75,7 @@ NOT_A_PATH = {
     'target/', 'target/surefire-reports/', 'dist/', 'data/', 'logs/', 'node_modules/',
     'src/main/resources/static/', 'src/main/webapp/node_modules',
     # Shipped inside the Kafka image, not in this repository.
-    'kafka-broker-api-versions.sh',
+    'kafka-broker-api-versions.sh', 'kafka-consumer-groups.sh',
     # Deliberately named as *deleted*, with the commit that removed them. The prose exists to
     # tell a reader the document is gone and where its reasoning lives; removing the names
     # would remove the only pointer back to it.

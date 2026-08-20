@@ -3,6 +3,7 @@
 package com.compagnonsdudev.kafkasqlexplorer.service;
 
 import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.Properties;
@@ -22,6 +23,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * critical finding about the explorer's own leftovers.
  */
 class ExplorerConsumerGroupsTest {
+
+    /*
+     * Le préfixe est un état statique, écrit une fois au démarrage. Sans remise à zéro, un test qui
+     * en pose un le laisse au suivant et l'ordre d'exécution devient une dépendance cachée — le
+     * même piège que le `localStorage` des tests du front.
+     */
+    @AfterEach
+    void restoreDefaultPrefix() {
+        ExplorerConsumerGroups.usePrefix(null);
+    }
 
     @Test
     void configureNamesTheGroupAndStopsItCommitting() {
@@ -108,6 +119,113 @@ class ExplorerConsumerGroupsTest {
         }
         assertFalse(ExplorerConsumerGroups.isOwnReaderGroup("orders-service"));
         assertFalse(ExplorerConsumerGroups.isOwnReaderGroup(null));
+    }
+
+    /*
+     * Le préfixe des groupes internes est configurable : ces ids sont visibles sur le cluster, et
+     * une organisation peut avoir une convention de nommage. Ce qu'il renomme est **uniquement**
+     * ce que l'application crée pour ses propres lectures.
+     */
+    @Test
+    void anAbsentOrEmptyPrefixFallsBackToTheDefault() {
+        for (String nothing : new String[] { null, "", "   ", "\t" }) {
+            assertEquals(ExplorerConsumerGroups.DEFAULT_PREFIX,
+                         ExplorerConsumerGroups.resolvePrefix(nothing),
+                         String.valueOf(nothing));
+        }
+    }
+
+    @Test
+    void aConfiguredPrefixNamesEveryInternalReader() {
+        ExplorerConsumerGroups.usePrefix("acme.kse.");
+
+        Properties props = new Properties();
+        ExplorerConsumerGroups.configure(props, "metadata");
+        assertTrue(props.getProperty(ConsumerConfig.GROUP_ID_CONFIG).startsWith("acme.kse.metadata-"),
+                   props.getProperty(ConsumerConfig.GROUP_ID_CONFIG));
+        // Et le réglage qui l'accompagne ne se perd pas en route.
+        assertEquals("false", props.getProperty(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG));
+
+        assertEquals("acme.kse.live-session-42", ExplorerConsumerGroups.forSession("live", "session-42"));
+        assertTrue(ExplorerConsumerGroups.transientGroup("search").startsWith("acme.kse.search-"));
+    }
+
+    /*
+     * `myapp` donnerait `myappmetadata-<uuid>` : un préfixe doit rester lisible là où il se colle,
+     * et demander à chaque opérateur de penser au tiret, c'est demander qu'il l'oublie.
+     */
+    @Test
+    void aPrefixWithoutASeparatorGetsOne() {
+        assertEquals("myapp-", ExplorerConsumerGroups.resolvePrefix("myapp"));
+        assertEquals("myapp-", ExplorerConsumerGroups.resolvePrefix("  myapp  "));
+    }
+
+    @Test
+    void aPrefixThatAlreadyEndsWithASeparatorIsLeftAlone() {
+        for (String ready : new String[] { "acme-", "acme_", "acme.", "acme:" }) {
+            assertEquals(ready, ExplorerConsumerGroups.resolvePrefix(ready));
+        }
+    }
+
+    /*
+     * Un préfixe impossible doit échouer ici, avec un journal qui le nomme — pas plus tard, sur
+     * chaque lecture interne, par une erreur Kafka qui ne dit rien de la cause.
+     */
+    @Test
+    void anUnusablePrefixFallsBackRatherThanNamingEveryReaderWithIt() {
+        for (String bad : new String[] { "acme kse", "acme/kse", "acme#kse", "acme\nkse" }) {
+            assertEquals(ExplorerConsumerGroups.DEFAULT_PREFIX,
+                         ExplorerConsumerGroups.resolvePrefix(bad), bad);
+        }
+    }
+
+    @Test
+    void aConfiguredPrefixIsRecognisedAsOurs() {
+        ExplorerConsumerGroups.usePrefix("acme.kse.");
+
+        assertTrue(ExplorerConsumerGroups.isExplorerGroup("acme.kse.metadata-abc"));
+        assertTrue(ExplorerConsumerGroups.isOwnReaderGroup("acme.kse.metadata-abc"));
+        // Et le reste du cluster n'est toujours pas à nous.
+        assertFalse(ExplorerConsumerGroups.isExplorerGroup("orders-service"));
+    }
+
+    /*
+     * Le cas qui compte vraiment : adopter un préfixe ne renie pas les groupes que la
+     * configuration précédente a laissés sur le cluster. Un fantôme non reconnu est précisément ce
+     * que l'audit note STALLED puis rapporte comme critique — l'application inventant une alerte
+     * sur ses propres restes, soit le défaut que cette classe existe pour tenir corrigé.
+     */
+    @Test
+    void adoptingAPrefixDoesNotOrphanTheGroupsTheOldOneLeftBehind() {
+        ExplorerConsumerGroups.usePrefix("acme.kse.");
+
+        assertTrue(ExplorerConsumerGroups.isExplorerGroup("kafka-explorer-metadata-abc"));
+        assertTrue(ExplorerConsumerGroups.isOwnReaderGroup("kafka-explorer-metadata-abc"));
+        // Les schémas plus anciens encore restent reconnus eux aussi.
+        assertTrue(ExplorerConsumerGroups.isExplorerGroup("kafka-sql-explorer-timestamps-9"));
+        assertTrue(ExplorerConsumerGroups.isOwnReaderGroup("snapshot-reader-1"));
+    }
+
+    /*
+     * Le préfixe ne concerne que les groupes internes. Celui que le DDL généré porte est copié
+     * dans des jobs Flink que l'application ne lance pas : le renommer changerait le nom d'un
+     * groupe chez l'utilisateur, ce que cette propriété ne doit jamais faire.
+     */
+    @Test
+    void theGeneratedFlinkTableGroupIsNotRenamedByThePrefix() {
+        ExplorerConsumerGroups.usePrefix("acme.kse.");
+
+        assertTrue(ExplorerConsumerGroups.isExplorerGroup("flink_table_demo_orders_1_received"));
+        assertFalse(ExplorerConsumerGroups.isOwnReaderGroup("flink_table_demo_orders_1_received"));
+    }
+
+    @Test
+    void anEmptyConfiguredPrefixLeavesTheDefaultInForce() {
+        ExplorerConsumerGroups.usePrefix("");
+
+        assertEquals(ExplorerConsumerGroups.DEFAULT_PREFIX, ExplorerConsumerGroups.prefix());
+        assertTrue(ExplorerConsumerGroups.transientGroup("metadata")
+                       .startsWith("kafka-explorer-metadata-"));
     }
 
     @Test

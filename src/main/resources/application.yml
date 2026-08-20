@@ -88,6 +88,12 @@ explorer:
   # Consumer lag (GET /api/topic/{name}/consumers, and the audit's consumer-lag check). Each group
   # costs a coordinator lookup, so the read is capped and the response says when the cap bit.
   consumer-group-max-groups: 200
+  # Prefix for the consumer groups the explorer creates for ITS OWN reads — metadata, samples,
+  # searches, traces, live sessions. It never renames a group belonging to your pipelines, and it
+  # is not written into generated Flink DDL. Empty or unset falls back to 'kafka-explorer-', which
+  # stays recognised as ours whatever this is set to, so changing it does not orphan the groups the
+  # previous value left on the cluster. A separator is appended when the value has none.
+  consumer-group-prefix: kafka-explorer-
   # Ceiling on how many topics one POST /api/data-model may analyse. The request carries its own,
   # lower, per-run budget (30 by default, a field on the page, read back from
   # GET /api/data-model/limits); this is what bounds it, so a mistyped number cannot tie the
