@@ -52,7 +52,8 @@ class FlinkSqlServiceTablelessSelectTest {
                 tableEnv, coordinator, config,
                 new SqlQueryValidator(config, tableEnv, coordinator),
                 mock(KafkaAdminService.class), mock(SchemaInferenceService.class),
-                mock(DdlGeneratorService.class), new FlinkJobStore(config));
+                mock(DdlGeneratorService.class), new FlinkJobStore(config),
+                mock(FlinkTableStore.class));
     }
 
     @Test

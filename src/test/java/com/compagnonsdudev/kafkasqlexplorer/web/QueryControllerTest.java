@@ -22,6 +22,7 @@ import java.util.Map;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -211,5 +212,67 @@ class QueryControllerTest {
             .andExpect(jsonPath("$.topics.length()").value(1))
             .andExpect(jsonPath("$.kafkaError").doesNotExist())
             .andExpect(jsonPath("$.flinkError").doesNotExist());
+    }
+
+    /**
+     * {@code /table/{name}} belongs to the SPA, and nothing on the server may answer it.
+     *
+     * <p>A {@code @Controller} used to map exactly that, returning the view name
+     * {@code "table-detail"} — the trap this codebase documents for {@code /stream-flow},
+     * {@code /config} and {@code /audit}, and the fourth instance of it. Its mapping was the more
+     * specific of the two, so it won over {@link SpaController}'s catch-all and took the URL away
+     * from the SPA; there is no template engine and no such template, and no route, link or test
+     * ever pointed at it. It also ran {@code "SELECT * FROM " + name} — the path variable
+     * concatenated into a statement, submitted to the query engine on an unauthenticated GET — and
+     * then threw the rows away into a model nothing rendered.
+     *
+     * <p>Registering only {@link QueryController} is what makes the 404 mean something: the live
+     * endpoint for a table is {@code /api/query/table/{name}}, under {@code /api} like every other
+     * domain endpoint here.
+     */
+    @Test
+    void thereIsNoServerSideTablePage() throws Exception {
+        mockMvc.perform(get("/table/orders")).andExpect(status().isNotFound());
+
+        when(flinkSqlService.dropTable("orders")).thenReturn(FlinkSqlService.DropOutcome.DROPPED);
+        mockMvc.perform(delete("/api/query/table/orders"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.dropped").value(true));
+    }
+
+    /**
+     * Three outcomes, three sentences.
+     *
+     * <p>The endpoint answered with a boolean, so "there was no such table" was what it said
+     * whenever the engine had refused to drop one that plainly exists — a claim about something
+     * nobody had checked, on a table still sitting in the schema browser.
+     */
+    @Test
+    void theAnswerDistinguishesNothingToDropFromARefusal() throws Exception {
+        when(flinkSqlService.dropTable("absent")).thenReturn(FlinkSqlService.DropOutcome.NOT_FOUND);
+        mockMvc.perform(delete("/api/query/table/absent"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.dropped").value(false))
+            .andExpect(jsonPath("$.outcome").value("NOT_FOUND"))
+            .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("was registered or stored")));
+
+        when(flinkSqlService.dropTable("stubborn")).thenReturn(FlinkSqlService.DropOutcome.REFUSED);
+        mockMvc.perform(delete("/api/query/table/stubborn"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.dropped").value(false))
+            .andExpect(jsonPath("$.outcome").value("REFUSED"))
+            .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("could not be dropped")));
+    }
+
+    /** A name that cannot go into a statement is refused, and is not echoed back. */
+    @Test
+    void aTableNameThatIsNotAnIdentifierIsRefused() throws Exception {
+        when(flinkSqlService.dropTable(org.mockito.ArgumentMatchers.anyString()))
+            .thenThrow(new IllegalArgumentException("That is not a table name this application "
+                + "will put into a statement: only letters, digits, '_' and '$' are accepted, and "
+                + "it must not start with a digit."));
+
+        mockMvc.perform(delete("/api/query/table/{name}", "orders'"))
+            .andExpect(status().isBadRequest());
     }
 }

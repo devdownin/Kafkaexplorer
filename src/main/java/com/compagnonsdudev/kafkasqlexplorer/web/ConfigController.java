@@ -9,6 +9,7 @@ import com.compagnonsdudev.kafkasqlexplorer.service.FlinkSqlService;
 import com.compagnonsdudev.kafkasqlexplorer.service.KafkaAdminService;
 import com.compagnonsdudev.kafkasqlexplorer.service.LlmClient;
 import com.compagnonsdudev.kafkasqlexplorer.service.LlmClientProvider;
+import com.compagnonsdudev.kafkasqlexplorer.service.SettingsStore;
 import com.compagnonsdudev.kafkasqlexplorer.service.SseEmitterManager;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -17,8 +18,11 @@ import org.springframework.web.bind.annotation.*;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -40,6 +44,7 @@ public class ConfigController {
     private final FlinkSqlService flinkSqlService;
     private final SseEmitterManager sseEmitterManager;
     private final LlmClientProvider llmClientProvider;
+    private final SettingsStore settingsStore;
 
     public ConfigController(KafkaConfig kafkaConfig,
                             KafkaAdminService kafkaAdminService,
@@ -47,7 +52,8 @@ public class ConfigController {
                             AuditService auditService,
                             FlinkSqlService flinkSqlService,
                             SseEmitterManager sseEmitterManager,
-                            LlmClientProvider llmClientProvider) {
+                            LlmClientProvider llmClientProvider,
+                            SettingsStore settingsStore) {
         this.kafkaConfig = kafkaConfig;
         this.kafkaAdminService = kafkaAdminService;
         this.claudeConfig = claudeConfig;
@@ -55,6 +61,7 @@ public class ConfigController {
         this.flinkSqlService = flinkSqlService;
         this.sseEmitterManager = sseEmitterManager;
         this.llmClientProvider = llmClientProvider;
+        this.settingsStore = settingsStore;
     }
 
     @GetMapping("/api/config")
@@ -64,8 +71,58 @@ public class ConfigController {
         result.put("mode", kafkaConfig.getMode());
         result.put("clusters", kafkaConfig.getClusters());
         result.put("isConnected", kafkaAdminService.ping());
+        appendConnectionDetail(result);
         appendLlmConfig(result);
+        appendPersistence(result);
         return result;
+    }
+
+    /**
+     * The rest of what the connection is actually made with — <b>paths and the account name, never
+     * the passwords</b>.
+     *
+     * <p>These were absent, so the SSL and Confluent Cloud sections of the Settings page opened
+     * empty whatever the application was running on: the fields could be written and never read
+     * back. That was survivable while nothing was kept between restarts, and stops being so now
+     * that it is — an operator who restarts and finds the keystore path blank has every reason to
+     * conclude their input was lost, when it is in force.
+     *
+     * <p>The credentials stay out, on the rule {@code llmApiKeyConfigured} already follows: the
+     * page needs to know whether one is set, not what it is.
+     */
+    private void appendConnectionDetail(Map<String, Object> result) {
+        result.put("truststorePath", kafkaConfig.getTruststorePath());
+        result.put("keystorePath", kafkaConfig.getKeystorePath());
+        result.put("confluentKey", kafkaConfig.getConfluentKey());
+        result.put("truststorePasswordConfigured", isSet(kafkaConfig.getTruststorePassword()));
+        result.put("keystorePasswordConfigured", isSet(kafkaConfig.getKeystorePassword()));
+        result.put("keyPasswordConfigured", isSet(kafkaConfig.getKeyPassword()));
+        result.put("confluentSecretConfigured", isSet(kafkaConfig.getConfluentSecret()));
+    }
+
+    private boolean isSet(String value) {
+        return value != null && !value.isBlank();
+    }
+
+    /**
+     * Whether what is typed on this page will still be here after a restart.
+     *
+     * <p>The page has to be able to say so, because the two answers call for different behaviour
+     * from whoever is filling it in: on a deployment with persistence off, or with a store that
+     * cannot be written, the settings are a session's worth of work and the real fix belongs in the
+     * deployment's own configuration. Silence would let it read as the reassuring case.
+     *
+     * <p>Never the values themselves — {@code storesSecrets} is a boolean for the same reason
+     * {@code llmApiKeyConfigured} is one.
+     */
+    private void appendPersistence(Map<String, Object> result) {
+        result.put("settingsPersisted", settingsStore.isEnabled());
+        result.put("settingsStoreSecrets", settingsStore.storesSecrets());
+        java.nio.file.Path path = settingsStore.storePath();
+        result.put("settingsStorePath", path == null ? null : path.toString());
+        SettingsStore.StoredSettings stored = settingsStore.current();
+        result.put("settingsSavedAt", stored.savedAt());
+        result.put("settingsStoredFields", stored.values().size());
     }
 
     /**
@@ -182,6 +239,7 @@ public class ConfigController {
 
     private Map<String, Object> applyConfig(Map<String, Object> body) {
         ClaudeConfig.Provider previousProvider = claudeConfig.getProvider();
+        Set<String> touched = touchedFields(body, settingsSnapshot());
 
         if (body.containsKey("bootstrapServers") && body.get("bootstrapServers") != null) {
             kafkaConfig.setBootstrapServers(asString(body.get("bootstrapServers")));
@@ -208,6 +266,11 @@ public class ConfigController {
         } else if (previousProvider != claudeConfig.getProvider()
             && isBlank(claudeConfig.getBaseUrl())) {
             claudeConfig.setBaseUrl(ClaudeConfig.defaultBaseUrl(claudeConfig.getProvider()));
+            // A derived value is still one the operator will be looking at, so it has to be stored
+            // like an entered one. Without this, switching to Anthropic stored the provider alone
+            // and the next boot took the base URL from application.yml — which ships Ollama's —
+            // pointing the new provider at the old one's endpoint, silently.
+            touched.add("llmBaseUrl");
         }
         if (body.containsKey("llmModel")) {
             claudeConfig.setModel(asString(body.get("llmModel")));
@@ -239,12 +302,91 @@ public class ConfigController {
         }
 
         kafkaAdminService.init();
+
+        // After the singletons, not instead of them: the store keeps what was applied, so a
+        // derived value (a blank base URL filled in by a provider change, just above) is stored as
+        // the operator will see it rather than as the request happened to leave it blank.
+        SettingsStore.SaveOutcome saved = settingsStore.save(touched, settingsSnapshot());
+
         Map<String, Object> result = new HashMap<>();
         result.put("bootstrapServers", kafkaConfig.getBootstrapServers());
         result.put("mode", kafkaConfig.getMode());
         result.put("isConnected", kafkaAdminService.ping());
+        // The same shape a GET answers with, so the page's picture of the connection after a save
+        // is the one it would get by reloading. Without it a password the save just cleared went
+        // on reporting itself as set, and the field's hint offered to clear it again.
+        appendConnectionDetail(result);
         appendLlmConfig(result);
+        appendPersistence(result);
+        // What the save achieved, stated rather than implied by the 200. A store that could not be
+        // written leaves settings that work now and are gone on the next restart, and that is
+        // precisely the surprise this whole mechanism exists to remove — so it is reported here,
+        // where the page can show it, not only in a log nobody is reading at that moment.
+        result.put("settingsPersistedNow", saved.persisted());
+        result.put("settingsPersistenceError", saved.error());
+        result.put("settingsNotStored", saved.notStored());
         return result;
+    }
+
+    /**
+     * The settings fields this request actually <em>changes</em>.
+     *
+     * <p>Restricted to {@link SettingsStore#FIELDS}, and it is what stops the store from freezing
+     * this release's defaults: only a field an operator has entered is taken over from
+     * {@code application.yml}, so a default that changes in a later version still reaches a
+     * deployment that never touched it.
+     *
+     * <p><b>Changed</b>, not merely present, and that distinction is the whole rule rather than a
+     * refinement of it. The Settings page posts its entire form — it has to, since Test connection
+     * applies before it probes — so "the fields this request carries" is every field there is, and
+     * the first click on Test connection would have taken over the lot. Comparing against what is
+     * in force before anything is applied puts the rule where no client can miss it: a value equal
+     * to the one already running is not something anybody entered.
+     *
+     * @param before the effective values as they stand, read <em>before</em> {@code applyConfig}
+     *               writes anything
+     */
+    private Set<String> touchedFields(Map<String, Object> body, Map<String, String> before) {
+        Set<String> touched = new LinkedHashSet<>();
+        for (SettingsStore.Field field : SettingsStore.FIELDS) {
+            if (!body.containsKey(field.apiField())) continue;
+            Object submitted = body.get(field.apiField());
+            if (submitted == null) continue;
+            if (!asString(submitted).equals(before.get(field.apiField()))) {
+                touched.add(field.apiField());
+            }
+        }
+        return touched;
+    }
+
+    /** The effective value of every settings field, read back from the live configuration. */
+    private Map<String, String> settingsSnapshot() {
+        Map<String, String> snapshot = new LinkedHashMap<>();
+        snapshot.put("bootstrapServers", kafkaConfig.getBootstrapServers());
+        snapshot.put("mode", kafkaConfig.getMode());
+        snapshot.put("truststorePath", kafkaConfig.getTruststorePath());
+        snapshot.put("truststorePassword", kafkaConfig.getTruststorePassword());
+        snapshot.put("keystorePath", kafkaConfig.getKeystorePath());
+        snapshot.put("keystorePassword", kafkaConfig.getKeystorePassword());
+        snapshot.put("keyPassword", kafkaConfig.getKeyPassword());
+        snapshot.put("confluentKey", kafkaConfig.getConfluentKey());
+        snapshot.put("confluentSecret", kafkaConfig.getConfluentSecret());
+        snapshot.put("llmProvider", claudeConfig.getProvider().name());
+        snapshot.put("llmApiKey", claudeConfig.getApiKey());
+        // getBaseUrl(), not getResolvedBaseUrl(): blank means "this provider's default", and
+        // storing the resolved value would pin today's default into the file, so a later release
+        // that moves it would never reach a deployment that had simply left the field empty.
+        snapshot.put("llmBaseUrl", claudeConfig.getBaseUrl());
+        snapshot.put("llmModel", claudeConfig.getModel());
+        snapshot.put("llmUseRag", String.valueOf(claudeConfig.isUseRag()));
+        snapshot.put("llmCollection", claudeConfig.getCollection());
+        snapshot.put("llmStructuredOutput", claudeConfig.getStructuredOutput().name());
+        snapshot.put("llmRequestTimeoutSeconds", String.valueOf(claudeConfig.getRequestTimeoutSeconds()));
+        snapshot.put("llmMaxTokens", String.valueOf(claudeConfig.getMaxTokens()));
+        snapshot.put("llmSnapshotWindowSize", String.valueOf(claudeConfig.getSnapshotWindowSize()));
+        snapshot.put("llmSnapshotWindowTimeoutSeconds",
+            String.valueOf(claudeConfig.getSnapshotWindowTimeoutSeconds()));
+        return snapshot;
     }
 
     @PostMapping("/api/config/test-llm")

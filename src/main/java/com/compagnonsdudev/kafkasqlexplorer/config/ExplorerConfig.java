@@ -227,6 +227,58 @@ public class ExplorerConfig {
     private String flinkJobStorePath = "data/flink-jobs.json";
     private long flinkJobRetentionHours = 24;
 
+    /** Default for {@link #settingsStorePath}, also read by the boot-time replay. */
+    public static final String DEFAULT_SETTINGS_STORE_PATH = "data/settings.json";
+
+    /**
+     * Keep what the Settings page is used to change, so that stopping the application does not
+     * discard it.
+     *
+     * <p>{@code POST /api/config} used to mutate two singletons and write nothing: the one screen
+     * whose entire purpose is data entry was the only one whose input did not survive a restart.
+     * On by default — an operator who repoints a cluster expects it to still be repointed
+     * tomorrow — and the write is best-effort, so a read-only volume costs a warning and a saved
+     * setting that lives for this process, never a refused save. See
+     * {@link com.compagnonsdudev.kafkasqlexplorer.service.SettingsStore}.
+     */
+    private boolean settingsPersistence = true;
+
+    /**
+     * Where those settings are kept. Beside the Flink job store, under {@code data/}, which is a
+     * named volume in every bundled stack.
+     *
+     * <p>A file rather than an {@code internal.*} Kafka topic, unlike every other store here, and
+     * that is not a matter of taste: these settings <em>contain the bootstrap address</em>, so a
+     * topic could neither receive a save that repoints the cluster nor be found at boot.
+     */
+    private String settingsStorePath = DEFAULT_SETTINGS_STORE_PATH;
+
+    /**
+     * Whether credentials entered on the Settings page — the SSL passwords, the Confluent secret,
+     * the LLM API key — are written to that file.
+     *
+     * <p>True, because the alternative keeps half the promise: the operator would find the mode and
+     * the keystore path restored and the connection failing, for a password nothing said had been
+     * dropped. The file is created readable by its owner alone and the values never travel back out
+     * of the API. Set it false for a deployment that will not have them on disk — the fields that
+     * were left out are then named, in the save's answer and in the boot log, so what is missing is
+     * at least stated.
+     */
+    private boolean settingsStoreSecrets = true;
+
+    /**
+     * Where the {@code CREATE TABLE} statements written in the SQL editor are kept, to be replayed
+     * into Flink's in-memory catalogue at startup.
+     *
+     * <p>Governed by {@link #settingsPersistence} as well, since it answers the same question. A
+     * table auto-registered from a Kafka topic is not stored here — it is re-derived on demand,
+     * which is the point of auto-registration; what needed keeping is the definition somebody
+     * typed, because losing it did not produce an error but a <em>substitution</em>, the generated
+     * schema quietly taking the hand-written one's name. See
+     * {@link com.compagnonsdudev.kafkasqlexplorer.service.FlinkTableStore}.
+     */
+    private String flinkTableStorePath = "data/flink-tables.json";
+
     public String getClusterName() {
         return clusterName;
     }
@@ -513,5 +565,37 @@ public class ExplorerConfig {
 
     public void setStartupRestoreTimeoutMs(long startupRestoreTimeoutMs) {
         this.startupRestoreTimeoutMs = startupRestoreTimeoutMs;
+    }
+
+    public boolean isSettingsPersistence() {
+        return settingsPersistence;
+    }
+
+    public void setSettingsPersistence(boolean settingsPersistence) {
+        this.settingsPersistence = settingsPersistence;
+    }
+
+    public String getSettingsStorePath() {
+        return settingsStorePath;
+    }
+
+    public void setSettingsStorePath(String settingsStorePath) {
+        this.settingsStorePath = settingsStorePath;
+    }
+
+    public boolean isSettingsStoreSecrets() {
+        return settingsStoreSecrets;
+    }
+
+    public void setSettingsStoreSecrets(boolean settingsStoreSecrets) {
+        this.settingsStoreSecrets = settingsStoreSecrets;
+    }
+
+    public String getFlinkTableStorePath() {
+        return flinkTableStorePath;
+    }
+
+    public void setFlinkTableStorePath(String flinkTableStorePath) {
+        this.flinkTableStorePath = flinkTableStorePath;
     }
 }

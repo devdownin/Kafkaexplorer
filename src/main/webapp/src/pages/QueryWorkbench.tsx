@@ -967,6 +967,42 @@ const QueryWorkbench: React.FC = () => {
   };
 
   /**
+   * Supprime une table du catalogue Flink, et cesse de la conserver.
+   *
+   * Les `CREATE TABLE` écrits ici sont rejoués au démarrage : redémarrer n'est donc plus le moyen
+   * de vider le catalogue, et il faut rendre cette issue autrement. On demande confirmation — la
+   * définition n'existe nulle part ailleurs après ça — et on dit ce que le serveur répond plutôt
+   * que d'annoncer une suppression sur la foi d'un 200 : « il n'y avait rien de ce nom » est une
+   * réponse possible à une requête parfaitement formée.
+   */
+  const dropTable = async (tableName: string) => {
+    const ok = await confirm({
+      title: `Drop ${tableName}?`,
+      description:
+        'The table is removed from Flink and will not be restored at startup. A table that was '
+        + 'auto-registered from a Kafka topic comes back on the next query that names it; a '
+        + 'definition written here does not — the statement exists nowhere else.',
+      confirmLabel: 'Drop table',
+      tone: 'danger',
+      icon: 'warning',
+    });
+    if (!ok) return;
+    try {
+      const res = await axios.delete<{ dropped: boolean; message: string }>(
+        `/api/query/table/${encodeURIComponent(tableName)}`);
+      toast(res.data.message, res.data.dropped ? 'success' : 'info');
+      setTableSchemas(prev => {
+        const next = { ...prev };
+        delete next[tableName];
+        return next;
+      });
+      void fetchSchema();
+    } catch (err) {
+      toast(describeApiError(err).title, 'error');
+    }
+  };
+
+  /**
    * Ce qu'un geste d'exécution va envoyer, décidé par `planRun`.
    *
    * La sélection n'est consultée que pour la portée `cursor` : « Run all » dit « toutes les
@@ -1571,6 +1607,7 @@ const QueryWorkbench: React.FC = () => {
         tableSchemas={tableSchemas}
         onToggleTable={toggleTable}
         onSelectFrom={openSelectFor}
+        onDropTable={table => void dropTable(table)}
         onPreviewDdl={fetchDdlPreview}
         savedQueries={savedQueries}
         onLoadSaved={loadSavedQuery}

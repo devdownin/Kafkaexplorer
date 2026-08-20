@@ -9,6 +9,10 @@ import {
 } from '../components/ui';
 import { clearDraft, readDraft, useDraftConflict, writeDraft } from '../draftStore';
 import { draftableOnly, mergeDraft } from './configDraft';
+import {
+  describePersistence, describeSaveOutcome, splitPersistence,
+  type SettingsPersistence,
+} from './settingsPersistence';
 import type { LlmTestResponse } from '../api/types';
 
 interface ClusterConfig {
@@ -21,6 +25,16 @@ interface ClusterConfig {
   keyPassword?: string;
   confluentKey?: string;
   confluentSecret?: string;
+  /*
+   * Un mot de passe n'est jamais renvoyé — le serveur dit seulement s'il y en a un, comme pour
+   * `llmApiKeyConfigured`. Sans ça, un champ vide ne distingue pas « aucun mot de passe » de
+   * « mot de passe en vigueur, simplement pas affiché », et depuis que les réglages survivent à
+   * un redémarrage c'est la seconde qui est la situation courante.
+   */
+  truststorePasswordConfigured?: boolean;
+  keystorePasswordConfigured?: boolean;
+  keyPasswordConfigured?: boolean;
+  confluentSecretConfigured?: boolean;
   isConnected?: boolean;
   llmProvider: 'ANTHROPIC' | 'OPENAI_COMPATIBLE' | 'OLLAMA' | 'SPECTRA';
   llmProviderLabel?: string;
@@ -82,6 +96,27 @@ const LLM_PROVIDERS = [
   { value: 'SPECTRA', label: 'SpectraLLM', description: 'Local SpectraLLM instance (RAG + fine-tuned models)' },
 ] as const;
 
+/**
+ * Ce qu'on peut dire d'un mot de passe qu'on ne montre pas.
+ *
+ * Un champ vide ne distingue pas « aucun mot de passe » de « mot de passe en vigueur, simplement
+ * jamais renvoyé » — et depuis que les réglages survivent à un redémarrage, la seconde est la
+ * situation courante : on revient sur la page et tout paraît vide. Le serveur envoie le booléen,
+ * jamais la valeur, comme pour `llmApiKeyConfigured`.
+ *
+ * Rien n'est dit dès qu'on tape : ce qui est à l'écran est alors ce qui partira, et une phrase
+ * décrivant l'état précédent ne ferait que semer le doute.
+ */
+const secretHint = (configured?: boolean, typed?: string): string | undefined => {
+  if (!configured) return undefined;
+  // Jamais touché : le champ n'est pas envoyé du tout, donc le mot de passe en vigueur reste.
+  if (typed === undefined) return 'One is set. It is not shown — leave this field alone to keep it.';
+  // Tapé puis effacé : la chaîne vide part et efface le mot de passe. Dire « laissez vide pour le
+  // conserver » ici décrirait exactement l'inverse de ce que ferait l'enregistrement.
+  if (typed === '') return 'Saving now clears the password that is set.';
+  return undefined;
+};
+
 /** Clé du brouillon (voir `configDraft.ts` — les secrets n'y entrent pas). */
 const DRAFT_KEY = 'config';
 const DRAFT_KEYS = [DRAFT_KEY];
@@ -111,6 +146,14 @@ const Config: React.FC = () => {
   const savedRef = useRef<string>('');
   const [dirty, setDirty] = useState(false);
   const draftConflict = useDraftConflict(DRAFT_KEYS);
+  /*
+   * Ce que le serveur dit de la conservation des réglages — tenu à part de `config` : ce ne sont
+   * pas des champs du formulaire, et les y laisser entrer les ferait compter dans la comparaison
+   * « modifié » et dans le brouillon écrit en `localStorage`.
+   */
+  const [persistence, setPersistence] = useState<SettingsPersistence>({});
+  const [saveNote, setSaveNote] = useState<string | null>(null);
+  const persistenceNotice = useMemo(() => describePersistence(persistence), [persistence]);
 
   /*
    * Le serveur donne la base — c'est lui qui dit ce qui est réellement en vigueur, et lui seul
@@ -122,8 +165,10 @@ const Config: React.FC = () => {
     const fetchConfig = async () => {
       let saved: ClusterConfig | null = null;
       try {
-        const res = await axios.get<ClusterConfig>('/api/config');
-        saved = res.data;
+        const res = await axios.get<ClusterConfig & SettingsPersistence>('/api/config');
+        const split = splitPersistence(res.data);
+        saved = split.settings;
+        setPersistence(split.persistence);
       } catch {
         // Backend may not expose REST config yet - use defaults
       }
@@ -181,12 +226,19 @@ const Config: React.FC = () => {
    * d'afficher « Failed to save configuration » sur un refus parfaitement délibéré.
    */
   const applyConfig = async (force: boolean) => {
-    const res = await axios.post<ClusterConfig>('/api/config', force ? { ...config, force } : config);
+    const res = await axios.post<ClusterConfig & SettingsPersistence>(
+      '/api/config', force ? { ...config, force } : config);
+    const { settings, persistence: kept } = splitPersistence(res.data);
     setConfig(prev => {
-      const next = { ...prev, ...res.data };
+      const next = { ...prev, ...settings };
       savedRef.current = JSON.stringify(next);
       return next;
     });
+    setPersistence(kept);
+    // Ce que l'enregistrement a réellement obtenu quand ce n'est pas ce qui était promis : un
+    // magasin qu'on n'a pas pu écrire laisse des réglages qui marchent maintenant et disparaissent
+    // au redémarrage. Ça ne peut pas rester sous un simple « Saved! ».
+    setSaveNote(describeSaveOutcome(kept));
     setSaveSuccess(true);
     setTimeout(() => setSaveSuccess(false), 3000);
   };
@@ -195,6 +247,7 @@ const Config: React.FC = () => {
     if (!checkBeforeSubmit()) return;
     setSaving(true);
     setError(null);
+    setSaveNote(null);
     setSaveSuccess(false);
     try {
       await applyConfig(false);
@@ -228,9 +281,11 @@ const Config: React.FC = () => {
     setTesting(true);
     setTestResult(null);
     try {
-      const res = await axios.post<ClusterConfig>('/api/config', config);
-      setConfig(prev => ({ ...prev, ...res.data }));
-      setTestResult(res.data.isConnected ?? false);
+      const res = await axios.post<ClusterConfig & SettingsPersistence>('/api/config', config);
+      const { settings, persistence: kept } = splitPersistence(res.data);
+      setConfig(prev => ({ ...prev, ...settings }));
+      setPersistence(kept);
+      setTestResult(settings.isConnected ?? false);
     } catch {
       setTestResult(false);
     } finally {
@@ -415,6 +470,33 @@ const Config: React.FC = () => {
         )}
       </div>
 
+      {/*
+        Ce que cette page peut promettre. Elle applique des réglages à un processus ; savoir s'ils
+        lui survivent change ce qu'on vient y faire — sur un déploiement qui n'en garde rien, le
+        vrai correctif est dans sa configuration, pas dans ce formulaire. Le silence ferait lire le
+        cas rassurant, qui a été le mauvais pendant longtemps.
+      */}
+      <div
+        className={`rounded-lg border p-3 flex items-start gap-2 text-[13px] ${
+          persistenceNotice.tone === 'not-kept'
+            ? 'border-warning/25 bg-warning/10 text-warning'
+            : persistenceNotice.tone === 'partial'
+              ? 'border-outline-variant bg-surface-container text-on-surface-variant'
+              : 'border-outline-variant/60 bg-surface-container/60 text-on-surface-variant'
+        }`}
+      >
+        <span className="material-symbols-outlined text-[18px] shrink-0">
+          {persistenceNotice.tone === 'not-kept' ? 'warning'
+            : persistenceNotice.tone === 'unknown' ? 'hourglass_empty' : 'save'}
+        </span>
+        <div>
+          <p className="font-medium">{persistenceNotice.text}</p>
+          {persistenceNotice.detail && (
+            <p className="text-on-surface-variant/80 mt-0.5">{persistenceNotice.detail}</p>
+          )}
+        </div>
+      </div>
+
       {/* Cluster Connection */}
       <div className="rounded-xl bg-surface-container ring-1 ring-white/[0.045] overflow-hidden">
         <div className="p-4 border-b border-outline-variant/60 flex items-center gap-3">
@@ -483,7 +565,8 @@ const Config: React.FC = () => {
                   placeholder="/path/to/truststore.jks" autoComplete="off" spellCheck={false} />
               )}
             </Field>
-            <Field label="Truststore Password">
+            <Field label="Truststore Password"
+              description={secretHint(config.truststorePasswordConfigured, config.truststorePassword)}>
               {p => (
                 <PasswordInput {...p} value={config.truststorePassword ?? ''}
                   onChange={e => set('truststorePassword', e.target.value)} />
@@ -496,13 +579,15 @@ const Config: React.FC = () => {
                   placeholder="/path/to/keystore.jks" autoComplete="off" spellCheck={false} />
               )}
             </Field>
-            <Field label="Keystore Password">
+            <Field label="Keystore Password"
+              description={secretHint(config.keystorePasswordConfigured, config.keystorePassword)}>
               {p => (
                 <PasswordInput {...p} value={config.keystorePassword ?? ''}
                   onChange={e => set('keystorePassword', e.target.value)} />
               )}
             </Field>
-            <Field label="Key Password">
+            <Field label="Key Password"
+              description={secretHint(config.keyPasswordConfigured, config.keyPassword)}>
               {p => (
                 <PasswordInput {...p} value={config.keyPassword ?? ''}
                   onChange={e => set('keyPassword', e.target.value)} />
@@ -527,7 +612,8 @@ const Config: React.FC = () => {
                   placeholder="YOUR_API_KEY" autoComplete="off" spellCheck={false} />
               )}
             </Field>
-            <Field label="API Secret" required id={fieldIds.confluentSecret} error={errors.confluentSecret}>
+            <Field label="API Secret" required id={fieldIds.confluentSecret} error={errors.confluentSecret}
+              description={secretHint(config.confluentSecretConfigured, config.confluentSecret)}>
               {p => (
                 <PasswordInput {...p} value={config.confluentSecret ?? ''}
                   onChange={e => set('confluentSecret', e.target.value)}
@@ -741,6 +827,17 @@ const Config: React.FC = () => {
         <div className="rounded-lg border border-error/25 bg-error/10 p-3 flex items-center gap-2 text-error text-[13px]" role="alert">
           <span className="material-symbols-outlined text-[18px]">error</span>
           {errorCount === 1 ? '1 field needs attention.' : `${errorCount} fields need attention.`}
+        </div>
+      )}
+
+      {/*
+        Reste à l'écran, contrairement au « Saved! » de trois secondes sur le bouton : ce qui est
+        dit ici, c'est que l'enregistrement n'a pas obtenu ce qu'il promettait.
+      */}
+      {saveNote && (
+        <div className="rounded-lg border border-warning/25 bg-warning/10 p-3 flex items-start gap-2 text-warning text-[13px]" role="status">
+          <span className="material-symbols-outlined text-[18px] shrink-0">info</span>
+          <span>{saveNote}</span>
         </div>
       )}
 

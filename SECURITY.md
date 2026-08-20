@@ -93,6 +93,18 @@ plainly because it decides how the app must be deployed:
 - Kafka SQL Explorer ships with **no authentication and no authorization**.
 - `POST /api/config` can **repoint the application at another Kafka cluster at runtime**,
   and it accepts credentials for that cluster.
+- Those settings are **kept across restarts**, in `data/settings.json`, and that includes the
+  credentials: the SSL keystore and truststore passwords, the Confluent Cloud secret and the
+  LLM API key. The file is created readable by its owner alone (mode `0600`) and the values
+  are never returned by the API — `GET /api/config` reports whether a key is configured, not
+  what it is. Set `explorer.settings-store-secrets=false` to keep them out of the file
+  entirely, at the cost of re-entering them after each restart; the fields left out are then
+  named in the save's answer and in the startup log rather than silently dropped. Set
+  `explorer.settings-persistence=false` to store nothing at all.
+- A hand-written `CREATE TABLE` is kept the same way, in `data/flink-tables.json`, and Flink
+  DDL embeds Kafka client properties — so that file can hold credentials too, and is written
+  with the same permissions. This is the store's own copy: everything that leaves through the
+  API still passes through `DdlGeneratorService.maskSensitiveProperties()`.
 - Every bundled compose stack therefore publishes its ports on `${BIND_ADDR:-127.0.0.1}`,
   the loopback interface, rather than Docker's usual `0.0.0.0`.
 

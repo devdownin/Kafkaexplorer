@@ -133,6 +133,44 @@ public class QueryController {
     }
 
     /**
+     * Drops a table from Flink's catalogue and stops keeping its definition.
+     *
+     * <p>It exists because keeping hand-written {@code CREATE TABLE} statements across restarts
+     * takes an escape hatch away: restarting used to be the only way to clear the in-memory
+     * catalogue. A store that could only grow — replaying a definition nobody could get rid of on
+     * every boot — would be a worse defect than the one it fixes.
+     *
+     * <p>400 on a name that could not go into a statement, rather than quoting it and hoping: a
+     * backtick in a path variable is SQL injection into an engine that runs whatever DDL it is
+     * given, and the refused text is not echoed back. Otherwise 200 with the outcome named — the
+     * same rule as {@code cancel}, where "nothing to do" is the result of a well-formed request
+     * rather than a client error, and the caller has to be able to tell the cases apart.
+     * {@link FlinkSqlService.DropOutcome} has three of them because a boolean had only two and so
+     * reported "no such table" whenever the engine had refused to drop one that plainly exists.
+     */
+    @DeleteMapping(value = "/table/{tableName}", produces = "application/json")
+    public Map<String, Object> dropTable(@PathVariable("tableName") String tableName) {
+        FlinkSqlService.DropOutcome outcome;
+        try {
+            outcome = flinkSqlService.dropTable(tableName);
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
+        }
+        Map<String, Object> result = new HashMap<>();
+        result.put("table", tableName);
+        result.put("dropped", outcome == FlinkSqlService.DropOutcome.DROPPED);
+        result.put("outcome", outcome.name());
+        // Three outcomes, three sentences. The boolean alone reported "there was no such table"
+        // whenever the engine had refused to drop one that plainly exists.
+        result.put("message", switch (outcome) {
+            case DROPPED -> "Table " + tableName + " was dropped and will not be restored at startup.";
+            case NOT_FOUND -> "No table named " + tableName + " was registered or stored.";
+            case REFUSED -> "Table " + tableName + " could not be dropped — see the server log.";
+        });
+        return result;
+    }
+
+    /**
      * Cancels a running query, and <em>says what that achieved</em>.
      *
      * <p>Both endpoints used to return {@code void} and answer 200 whatever happened, so the caller

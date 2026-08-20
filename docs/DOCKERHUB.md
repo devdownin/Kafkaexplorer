@@ -207,6 +207,15 @@ can be overridden by an environment variable: uppercase it and turn `.` and `-` 
 All of it is also settable live from the **Settings** page — which is precisely why the app
 must not be exposed to an untrusted network (see below).
 
+What is entered there is **kept across restarts**, in `/app/data/settings.json` (mount that
+volume, or it goes with the container). A variable set here still wins over what was saved:
+that ordering is what stops a file written weeks ago from silently overriding the
+`KAFKA_BOOTSTRAP_SERVERS` you just changed, and it is the way back out of a saved address
+pointing at a cluster that no longer answers. The boot log names any setting that happened to.
+Credentials are written to that file too, readable by the container's user alone — set
+`EXPLORER_SETTINGS_STORE_SECRETS=false` to keep them out of it, and they will have to be
+re-entered after each restart.
+
 ### LLM (Process Mining — entirely optional)
 
 | Variable | Default | Meaning |
@@ -243,6 +252,10 @@ allocates; a cluster audit over thousands of topics is the workload that wants m
 | `EXPLORER_CLEANUP_OWN_GROUPS` | `false` | Delete, at startup, the consumer groups older builds of this app left on the cluster. The only write it ever makes: restricted to its own group names that the broker reports EMPTY or DEAD. |
 | `EXPLORER_LAG_METRICS_TOPICS` | `[]` | Topics whose consumer lag is exported to Prometheus, named rather than discovered — a series per group × topic is how a metrics backend gets killed. Empty starts no polling at all. |
 | `EXPLORER_LAG_METRICS_TIME` | `false` | Also export that backlog **in time** (`kafka_consumer_group_lag_seconds`). Opt-in because it is the only lag gauge that reads a record rather than metadata. |
+| `EXPLORER_SETTINGS_PERSISTENCE` | `true` | Keep what the **Settings** page is used to change, and the `CREATE TABLE` statements written in the SQL editor, so a restart does not discard them. Both live under `/app/data` — mount it. |
+| `EXPLORER_SETTINGS_STORE_SECRETS` | `true` | Whether the credentials entered on that page (SSL passwords, the Confluent secret, the LLM API key) are written to that file, which is created readable by the container's user alone. `false` keeps them off disk — the fields left out are then named in the save's answer and in the boot log, rather than silently dropped. |
+| `EXPLORER_SETTINGS_STORE_PATH` | `data/settings.json` | Where those settings are kept. A file rather than a Kafka topic, unlike the app's other stores: these settings *contain the bootstrap address*, so a topic could neither receive a save that repoints the cluster nor be found at boot. |
+| `EXPLORER_FLINK_TABLE_STORE_PATH` | `data/flink-tables.json` | Where hand-written `CREATE TABLE` statements are kept, to be replayed into Flink at startup. Tables auto-registered from a Kafka topic are not stored — they are re-derived on demand. |
 
 ### Ports, volumes, probes
 

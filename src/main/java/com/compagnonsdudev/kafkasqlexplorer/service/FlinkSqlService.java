@@ -52,6 +52,7 @@ public class FlinkSqlService {
     private final SchemaInferenceService schemaInferenceService;
     private final DdlGeneratorService ddlGeneratorService;
     private final FlinkJobStore flinkJobStore;
+    private final FlinkTableStore flinkTableStore;
 
     /**
      * Dedicated executor for fetching results from Flink to avoid blocking Spring's main threads
@@ -186,7 +187,8 @@ public class FlinkSqlService {
     public FlinkSqlService(TableEnvironment tableEnv, FlinkRuntimeCoordinator runtimeCoordinator,
                            ExplorerConfig explorerConfig, SqlQueryValidator sqlQueryValidator,
                            KafkaAdminService kafkaAdminService, SchemaInferenceService schemaInferenceService,
-                           DdlGeneratorService ddlGeneratorService, FlinkJobStore flinkJobStore) {
+                           DdlGeneratorService ddlGeneratorService, FlinkJobStore flinkJobStore,
+                           FlinkTableStore flinkTableStore) {
         this.tableEnv = tableEnv;
         this.runtimeCoordinator = runtimeCoordinator;
         this.explorerConfig = explorerConfig;
@@ -195,6 +197,7 @@ public class FlinkSqlService {
         this.schemaInferenceService = schemaInferenceService;
         this.ddlGeneratorService = ddlGeneratorService;
         this.flinkJobStore = flinkJobStore;
+        this.flinkTableStore = flinkTableStore;
         // Register our custom XML extraction function globally in the Flink environment.
         runtimeCoordinator.runMutation("register-xml-extract-udf", () ->
             this.tableEnv.createTemporarySystemFunction("XmlExtract", XmlExtractUDF.class)
@@ -667,13 +670,132 @@ public class FlinkSqlService {
             }
 
             // CREATE TABLE / EXPLAIN go through the Flink planner directly.
-            return executeViaFlinkPlanner(queryId, sqlToExecute, extractStatementType(sqlToExecute), limit, timeout, startTime);
+            String statementType = extractStatementType(sqlToExecute);
+            QueryResult result = executeViaFlinkPlanner(queryId, sqlToExecute, statementType, limit, timeout, startTime);
+            if ("CREATE_TABLE".equals(statementType) && result.error() == null) {
+                // Kept only once it has actually worked, and only for a statement that came
+                // through the API: auto-registration writes its DDL through executeMutationSql and
+                // never lands here, which is the distinction the store rests on. A table derived
+                // from a topic is re-derived on demand; one somebody typed is not.
+                rememberTableDefinition(sqlToExecute);
+            }
+            return result;
         } catch (Exception e) {
             log.error("Flink SQL execution error — query='{}' error='{}'", request.sql(), e.getMessage(), e);
             long duration = System.currentTimeMillis() - startTime;
             return new QueryResult(Collections.emptyList(), Collections.emptyList(), duration,
                 SqlErrorClassifier.explain(e));
         }
+    }
+
+    /**
+     * Keeps a hand-written table definition, without ever letting that cost the query.
+     *
+     * <p>The table is registered in Flink for the life of this process whatever happens here; what
+     * a failure loses is only its return after a restart, and failing a query the operator was
+     * running in order to report that would be the wrong trade.
+     */
+    private void rememberTableDefinition(String sql) {
+        try {
+            String name = flinkTableStore.remember(sql);
+            if (name != null) {
+                log.info("Table definition '{}' will be restored at startup", name);
+            }
+        } catch (Exception e) {
+            log.warn("A table definition was not kept: {}", SqlErrorClassifier.explain(e));
+        }
+    }
+
+    /**
+     * Drops a table from Flink and stops keeping its definition.
+     *
+     * <p>This exists because {@link FlinkTableStore} takes an escape hatch away: restarting used to
+     * be the only way to clear a table from the in-memory catalogue, and a store that could only
+     * grow would be a worse defect than the substitution it fixes.
+     *
+     * <p>The name goes back into a statement, so it is checked against
+     * {@link FlinkTableStore#isSafeIdentifier} rather than quoted and hoped for — a backtick in a
+     * path variable is SQL injection into an engine that will happily run whatever DDL it is
+     * handed. Both halves are attempted even when the first fails: a table Flink does not know
+     * (created by an older build, or already dropped) must still be removable from the store, or
+     * the boot would go on replaying a definition nobody can get rid of.
+     *
+     * @return whether anything was actually dropped or forgotten
+     */
+    /**
+     * What dropping a table achieved — the shape {@link CancelOutcome} already uses here, and for
+     * the same reason.
+     *
+     * <p>A boolean could not tell "there was no such table" from "there was, and the engine refused
+     * it", so the answer asserted the first whenever the second happened. That is the class of
+     * claim this codebase removes everywhere else: a message that states something nobody checked.
+     */
+    public enum DropOutcome {
+        /** Removed from Flink's catalogue, from the store of kept definitions, or from both. */
+        DROPPED,
+        /** Neither Flink nor the store had a table of that name, so there was nothing to do. */
+        NOT_FOUND,
+        /** It existed and could not be dropped; the reason is on the server log. */
+        REFUSED
+    }
+
+    public DropOutcome dropTable(String name) {
+        if (!FlinkTableStore.isSafeIdentifier(name)) {
+            // The offending text is not echoed. It is a path variable, so it goes into the answer
+            // and could go into a log; a name refused for containing something that does not
+            // belong in an identifier is the last thing to repeat back verbatim.
+            throw new IllegalArgumentException(
+                "That is not a table name this application will put into a statement: only letters, "
+                    + "digits, '_' and '$' are accepted, and it must not start with a digit.");
+        }
+        // Resolved against what exists, never interpolated. What reaches the statement, the log and
+        // the store is this application's own string — Flink's catalogue entry or the store's key —
+        // and the request only ever selects between them. That is a stronger guarantee than
+        // matching the request against a pattern and trusting the match downstream, and it is the
+        // one a reader can check without leaving this method.
+        String table = knownTableNamed(name);
+        if (table == null) {
+            // Nothing of that name in either place, so there is nothing to drop and no statement
+            // worth submitting. The caller is told plainly rather than being shown the failure of
+            // a DROP that was never going to work.
+            return DropOutcome.NOT_FOUND;
+        }
+        boolean dropped = false;
+        try {
+            executeMutationSql("drop-table", "DROP TABLE `" + table + "`");
+            dropped = true;
+        } catch (Exception e) {
+            // Reported, not thrown: the store still has to be cleaned up below, and a table the
+            // store knows while Flink does not — one an older build wrote, or one already dropped
+            // — is a normal answer here rather than a failure.
+            log.info("DROP TABLE `{}` did not run: {}", table, SqlErrorClassifier.explain(e));
+        }
+        boolean forgotten = flinkTableStore.forget(table);
+        // Known but neither dropped nor forgotten: it is in Flink's catalogue and the engine would
+        // not remove it. Saying "no such table" there would be the answer to a question nobody
+        // asked, about a table that is plainly still present in the schema browser.
+        return dropped || forgotten ? DropOutcome.DROPPED : DropOutcome.REFUSED;
+    }
+
+    /**
+     * This application's own spelling of a table the request named, or {@code null}.
+     *
+     * <p>Flink's catalogue first, then the definitions kept for replay: a table can legitimately be
+     * in the store and not in Flink — written by an older build, or already dropped — and it still
+     * has to be removable, or the boot would go on replaying a definition nobody can get rid of.
+     *
+     * <p>The comparison is exact. {@code FlinkTableStore.forget} matches case-insensitively as a
+     * courtesy to a name read off a screen, but that is about forgetting an entry, whereas this
+     * name is going into a statement, and Flink identifiers are case-sensitive.
+     */
+    private String knownTableNamed(String requested) {
+        for (String table : listTables()) {
+            if (table.equals(requested)) return table;
+        }
+        for (FlinkTableStore.StoredTable stored : flinkTableStore.all()) {
+            if (stored.name().equals(requested)) return stored.name();
+        }
+        return null;
     }
 
     /**
