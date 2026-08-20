@@ -11,10 +11,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
-import java.nio.file.attribute.PosixFilePermission;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -221,11 +218,9 @@ public class SettingsStore {
      * look at it; the next save replaces it.
      */
     public static StoredSettings read(Path path) {
-        if (path == null || !Files.isRegularFile(path)) return StoredSettings.EMPTY;
+        JsonNode root = JsonStoreFile.read(MAPPER, path, "the settings saved from the Settings page");
+        if (root == null) return StoredSettings.EMPTY;
         try {
-            byte[] bytes = Files.readAllBytes(path);
-            if (bytes.length == 0) return StoredSettings.EMPTY;
-            JsonNode root = MAPPER.readTree(bytes);
             int version = root.path("version").asInt(-1);
             if (version != FORMAT_VERSION) {
                 log.warn("Ignoring {}: it declares format version {}, and this build writes {}. "
@@ -245,8 +240,8 @@ public class SettingsStore {
             return new StoredSettings(Collections.unmodifiableMap(values),
                 List.copyOf(omitted), savedAt);
         } catch (Exception e) {
-            log.warn("Ignoring {}: it could not be read ({}). Settings from the Settings page are "
-                + "not restored for this boot; saving from that page rewrites the file.",
+            log.warn("Ignoring {}: its contents are not settings this build understands ({}). "
+                + "Saving from the Settings page rewrites the file.",
                 path, SqlErrorClassifier.explain(e));
             return StoredSettings.EMPTY;
         }
@@ -316,17 +311,8 @@ public class SettingsStore {
         }
     }
 
-    /**
-     * Replaces the file in one step.
-     *
-     * <p>Through a temporary file in the same directory, because the alternative is a window in
-     * which the store is half-written — and the one moment a settings file is read is a boot, which
-     * is exactly when a crash during the previous write would surface.
-     */
+    /** Replaces the file in one step — see {@link JsonStoreFile#replace}. */
     private void write(Map<String, String> values, List<String> omitted) throws IOException {
-        Path parent = path.getParent();
-        if (parent != null) Files.createDirectories(parent);
-
         ObjectNode root = MAPPER.createObjectNode();
         root.put("version", FORMAT_VERSION);
         root.put("savedAt", Instant.now().toString());
@@ -338,40 +324,6 @@ public class SettingsStore {
             root.putArray("secretsOmitted").addAll(
                 omitted.stream().map(MAPPER.getNodeFactory()::textNode).toList());
         }
-
-        Path temp = Files.createTempFile(parent != null ? parent : path,
-            ".settings-", ".json.tmp");
-        try {
-            restrictToOwner(temp);
-            Files.write(temp, MAPPER.writerWithDefaultPrettyPrinter().writeValueAsBytes(root));
-            try {
-                Files.move(temp, path, StandardCopyOption.REPLACE_EXISTING,
-                    StandardCopyOption.ATOMIC_MOVE);
-            } catch (java.nio.file.AtomicMoveNotSupportedException e) {
-                // Some bind-mounted and network filesystems cannot do it. A replace is still much
-                // better than writing in place, and this is not worth failing a save over.
-                Files.move(temp, path, StandardCopyOption.REPLACE_EXISTING);
-            }
-            restrictToOwner(path);
-        } finally {
-            Files.deleteIfExists(temp);
-        }
-    }
-
-    /**
-     * Owner-only permissions, best-effort.
-     *
-     * <p>The file holds an SSL keystore password and an LLM API key when secrets are stored, and
-     * {@code data/} is a volume shared with whatever else the operator mounts there. Silent on a
-     * filesystem without POSIX permissions — refusing to persist on Windows would be trading the
-     * whole feature for a guarantee that platform cannot give in these terms anyway.
-     */
-    private void restrictToOwner(Path target) {
-        try {
-            Files.setPosixFilePermissions(target,
-                Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE));
-        } catch (UnsupportedOperationException | IOException ignored) {
-            // Not a POSIX filesystem, or the permissions cannot be set — see above.
-        }
+        JsonStoreFile.replace(MAPPER, path, root);
     }
 }

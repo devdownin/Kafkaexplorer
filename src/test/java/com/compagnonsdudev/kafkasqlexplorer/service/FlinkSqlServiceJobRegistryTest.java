@@ -70,7 +70,8 @@ class FlinkSqlServiceJobRegistryTest {
             mock(KafkaAdminService.class),
             mock(SchemaInferenceService.class),
             mock(DdlGeneratorService.class),
-            flinkJobStore
+            flinkJobStore,
+            mock(FlinkTableStore.class)
         );
 
         Field field = FlinkSqlService.class.getDeclaredField("activeJobs");

@@ -30,6 +30,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -227,6 +228,43 @@ class ConfigControllerTest {
         assertEquals(Map.of("claude.model", "qwen3:8b"), stored);
     }
 
+    /**
+     * The Settings page posts its <b>entire form</b> — Test connection applies before it probes —
+     * so "the fields this request carries" is every field there is. Only what actually differs
+     * from what is running counts as entered, or the first click on Test connection would freeze
+     * this release's whole configuration into the file.
+     */
+    @Test
+    void submittingTheWholeFormUnchangedTakesOverNothing() throws Exception {
+        String wholeForm = "{"
+            + "\"bootstrapServers\":\"old:9092\","
+            + "\"mode\":\"PLAIN\","
+            + "\"llmProvider\":\"OLLAMA\","
+            + "\"llmModel\":\"qwen3:4b\","
+            + "\"llmMaxTokens\":\"4096\"}";
+
+        mockMvc.perform(post("/api/config").contentType(MediaType.APPLICATION_JSON)
+            .content(wholeForm)).andExpect(status().isOk());
+
+        assertTrue(SettingsStore.read(storePath).isEmpty(),
+            "nothing was changed, so nothing was taken over from application.yml");
+    }
+
+    @Test
+    void submittingTheWholeFormWithOneChangeTakesOverOnlyThatOne() throws Exception {
+        String wholeForm = "{"
+            + "\"bootstrapServers\":\"old:9092\","
+            + "\"mode\":\"PLAIN\","
+            + "\"llmProvider\":\"OLLAMA\","
+            + "\"llmModel\":\"qwen3:8b\"}";
+
+        mockMvc.perform(post("/api/config").contentType(MediaType.APPLICATION_JSON)
+            .content(wholeForm)).andExpect(status().isOk());
+
+        assertEquals(Map.of("claude.model", "qwen3:8b"),
+            SettingsStore.read(storePath).values());
+    }
+
     /** A second save keeps what the first one took over, and adds to it. */
     @Test
     void aLaterSaveKeepsTheFieldsAnEarlierOneTookOver() throws Exception {
@@ -319,6 +357,43 @@ class ConfigControllerTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.settingsPersisted").value(true))
             .andExpect(jsonPath("$.settingsStorePath").isNotEmpty());
+    }
+
+    /**
+     * The connection settings that are not credentials come back, so the page can show what the
+     * application is actually running on.
+     *
+     * <p>They did not, which was survivable while nothing was kept between restarts: the SSL and
+     * Confluent sections opened empty whatever was in force, and an operator restarting now would
+     * read that as their input having been lost.
+     */
+    @Test
+    void theConfigResponseCarriesThePathsAndTheAccountName() throws Exception {
+        kafkaConfig.setTruststorePath("/certs/t.jks");
+        kafkaConfig.setKeystorePath("/certs/k.jks");
+        kafkaConfig.setConfluentKey("AK123");
+
+        mockMvc.perform(get("/api/config"))
+            .andExpect(jsonPath("$.truststorePath").value("/certs/t.jks"))
+            .andExpect(jsonPath("$.keystorePath").value("/certs/k.jks"))
+            .andExpect(jsonPath("$.confluentKey").value("AK123"));
+    }
+
+    /**
+     * A password is answered as a boolean, never as itself — the rule
+     * {@code llmApiKeyConfigured} already follows. An empty field otherwise cannot distinguish
+     * "no password" from "one is set and simply never returned".
+     */
+    @Test
+    void aPasswordIsReportedAsSetWithoutBeingReturned() throws Exception {
+        kafkaConfig.setKeystorePassword("hunter2");
+
+        mockMvc.perform(get("/api/config"))
+            .andExpect(jsonPath("$.keystorePasswordConfigured").value(true))
+            .andExpect(jsonPath("$.truststorePasswordConfigured").value(false))
+            .andExpect(jsonPath("$.keystorePassword").doesNotExist())
+            .andExpect(content().string(org.hamcrest.Matchers.not(
+                org.hamcrest.Matchers.containsString("hunter2"))));
     }
 
     /** Nothing is written when the request is refused — the store must not diverge from the beans. */

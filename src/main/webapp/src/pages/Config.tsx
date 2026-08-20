@@ -25,6 +25,16 @@ interface ClusterConfig {
   keyPassword?: string;
   confluentKey?: string;
   confluentSecret?: string;
+  /*
+   * Un mot de passe n'est jamais renvoyé — le serveur dit seulement s'il y en a un, comme pour
+   * `llmApiKeyConfigured`. Sans ça, un champ vide ne distingue pas « aucun mot de passe » de
+   * « mot de passe en vigueur, simplement pas affiché », et depuis que les réglages survivent à
+   * un redémarrage c'est la seconde qui est la situation courante.
+   */
+  truststorePasswordConfigured?: boolean;
+  keystorePasswordConfigured?: boolean;
+  keyPasswordConfigured?: boolean;
+  confluentSecretConfigured?: boolean;
   isConnected?: boolean;
   llmProvider: 'ANTHROPIC' | 'OPENAI_COMPATIBLE' | 'OLLAMA' | 'SPECTRA';
   llmProviderLabel?: string;
@@ -85,6 +95,27 @@ const LLM_PROVIDERS = [
   { value: 'OLLAMA', label: 'Ollama', description: 'Lightweight local open-source models' },
   { value: 'SPECTRA', label: 'SpectraLLM', description: 'Local SpectraLLM instance (RAG + fine-tuned models)' },
 ] as const;
+
+/**
+ * Ce qu'on peut dire d'un mot de passe qu'on ne montre pas.
+ *
+ * Un champ vide ne distingue pas « aucun mot de passe » de « mot de passe en vigueur, simplement
+ * jamais renvoyé » — et depuis que les réglages survivent à un redémarrage, la seconde est la
+ * situation courante : on revient sur la page et tout paraît vide. Le serveur envoie le booléen,
+ * jamais la valeur, comme pour `llmApiKeyConfigured`.
+ *
+ * Rien n'est dit dès qu'on tape : ce qui est à l'écran est alors ce qui partira, et une phrase
+ * décrivant l'état précédent ne ferait que semer le doute.
+ */
+const secretHint = (configured?: boolean, typed?: string): string | undefined => {
+  if (!configured) return undefined;
+  // Jamais touché : le champ n'est pas envoyé du tout, donc le mot de passe en vigueur reste.
+  if (typed === undefined) return 'One is set. It is not shown — leave this field alone to keep it.';
+  // Tapé puis effacé : la chaîne vide part et efface le mot de passe. Dire « laissez vide pour le
+  // conserver » ici décrirait exactement l'inverse de ce que ferait l'enregistrement.
+  if (typed === '') return 'Saving now clears the password that is set.';
+  return undefined;
+};
 
 /** Clé du brouillon (voir `configDraft.ts` — les secrets n'y entrent pas). */
 const DRAFT_KEY = 'config';
@@ -534,7 +565,8 @@ const Config: React.FC = () => {
                   placeholder="/path/to/truststore.jks" autoComplete="off" spellCheck={false} />
               )}
             </Field>
-            <Field label="Truststore Password">
+            <Field label="Truststore Password"
+              description={secretHint(config.truststorePasswordConfigured, config.truststorePassword)}>
               {p => (
                 <PasswordInput {...p} value={config.truststorePassword ?? ''}
                   onChange={e => set('truststorePassword', e.target.value)} />
@@ -547,13 +579,15 @@ const Config: React.FC = () => {
                   placeholder="/path/to/keystore.jks" autoComplete="off" spellCheck={false} />
               )}
             </Field>
-            <Field label="Keystore Password">
+            <Field label="Keystore Password"
+              description={secretHint(config.keystorePasswordConfigured, config.keystorePassword)}>
               {p => (
                 <PasswordInput {...p} value={config.keystorePassword ?? ''}
                   onChange={e => set('keystorePassword', e.target.value)} />
               )}
             </Field>
-            <Field label="Key Password">
+            <Field label="Key Password"
+              description={secretHint(config.keyPasswordConfigured, config.keyPassword)}>
               {p => (
                 <PasswordInput {...p} value={config.keyPassword ?? ''}
                   onChange={e => set('keyPassword', e.target.value)} />
@@ -578,7 +612,8 @@ const Config: React.FC = () => {
                   placeholder="YOUR_API_KEY" autoComplete="off" spellCheck={false} />
               )}
             </Field>
-            <Field label="API Secret" required id={fieldIds.confluentSecret} error={errors.confluentSecret}>
+            <Field label="API Secret" required id={fieldIds.confluentSecret} error={errors.confluentSecret}
+              description={secretHint(config.confluentSecretConfigured, config.confluentSecret)}>
               {p => (
                 <PasswordInput {...p} value={config.confluentSecret ?? ''}
                   onChange={e => set('confluentSecret', e.target.value)}

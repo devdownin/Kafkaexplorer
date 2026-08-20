@@ -13,6 +13,42 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **What the Settings page is used to enter now survives a restart.** `POST /api/config` applied
+  its values to two in-memory singletons and wrote nothing anywhere: the one screen whose entire
+  purpose is data entry was the only one whose input did not outlive the process. The bootstrap
+  address, the connection mode, the SSL paths and passwords, the Confluent Cloud credentials and
+  the whole LLM configuration all reverted to `application.yml` on the next boot — and did so
+  *silently*, the page then showing the YAML values as if they were the operator's own. They are
+  kept in `data/settings.json` (a file rather than a Kafka topic, because these settings *contain*
+  the broker address, so a topic could neither receive a save that repoints the cluster nor be
+  found at boot).
+  - **The environment still wins.** Precedence is environment variable / `-D` / command line, then
+    the saved file, then `application.yml`, and the startup log names any setting the environment
+    overrode. That ordering is what stops a file written weeks ago from overruling a
+    `KAFKA_BOOTSTRAP_SERVERS` just changed in a compose file, and it is the way back out of a saved
+    address pointing at a cluster that no longer answers.
+  - **Only the fields actually changed are taken over**, so a default that moves in a later version
+    still reaches a deployment that never touched it.
+  - **Credentials are written too**, readable by the owner alone and never returned by the API —
+    keeping everything except the passwords would restore the mode and the keystore path and leave
+    the connection failing for a credential nothing said had been dropped.
+    `EXPLORER_SETTINGS_STORE_SECRETS=false` keeps them off disk and *names* what it left out;
+    `EXPLORER_SETTINGS_PERSISTENCE=false` stores nothing at all.
+  - The page says which of those it is, and a save that was applied but could not be written says
+    so on screen rather than under a three-second "Saved!".
+- **A hand-written `CREATE TABLE` is replayed into Flink at startup.** Losing it produced no error
+  but a *substitution*: the definition died with the process, the next query on that name
+  auto-registered a **generated** table under it, and the query still returned rows — minus a
+  watermark, a chosen subset of columns or a connector option, with nothing saying the definition
+  had changed. Tables auto-registered from a topic are not stored, since they are re-derived on
+  demand; what needed keeping is what somebody typed. A table can now be dropped from the schema
+  browser (`DELETE /api/query/table/{name}`), because restarting used to be the only way to clear
+  the catalogue and a store that could only grow would be worse than the defect it fixes.
+- **`GET /api/config` returns the connection settings that are not credentials** — the truststore
+  and keystore paths, the Confluent key — plus a boolean per password. Those sections of the
+  Settings page could be written and never read back, so they opened empty whatever the application
+  was running on.
+
 - **A Data Model page (`/data-model`, `POST /api/data-model`) — a set of topics read as an
   entity-relation diagram.** Each topic becomes a table card carrying its inferred columns, and the
   relations between them are deduced from key-column names. Kafka has no foreign keys, so every

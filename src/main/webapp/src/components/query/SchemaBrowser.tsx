@@ -37,6 +37,14 @@ export interface SchemaBrowserProps {
    * d'écran. La page décide, ce composant rend.
    */
   actionLabelFor: (target: string) => string;
+  /**
+   * Supprime une table du catalogue Flink et cesse de la conserver.
+   *
+   * Redémarrer était le seul moyen de vider le catalogue en mémoire ; comme les `CREATE TABLE`
+   * écrits ici sont maintenant rejoués au démarrage, cette issue disparaîtrait sans ce geste — et
+   * un magasin qui ne saurait que grossir serait un défaut pire que celui qu'il corrige.
+   */
+  onDropTable: (table: string) => void;
   onPreviewDdl: (topic: string) => void;
   savedQueries: SavedQuery[];
   onLoadSaved: (q: SavedQuery) => void;
@@ -59,7 +67,7 @@ export interface SchemaBrowserProps {
  */
 export const SchemaBrowser = React.forwardRef<HTMLElement, SchemaBrowserProps>(function SchemaBrowser({
   schema, schemaLoading, onRefresh, width, onResizeStart, onResizeKey, widthMin, widthMax,
-  expandedTables, tableSchemas, onToggleTable, onSelectFrom, onPreviewDdl, actionLabelFor,
+  expandedTables, tableSchemas, onToggleTable, onSelectFrom, onDropTable, onPreviewDdl, actionLabelFor,
   savedQueries, onLoadSaved, onDeleteSaved,
   saveInputVisible, saveInputName, onSaveInputChange, onSaveOpen, onSaveCancel, onSaveConfirm,
   activeTabName,
@@ -153,6 +161,11 @@ export const SchemaBrowser = React.forwardRef<HTMLElement, SchemaBrowserProps>(f
                   <button type="button" onClick={() => onSelectFrom(table)}
                     className="opacity-0 group-hover/tbl:opacity-100 focus-visible:opacity-100 text-outline hover:text-primary transition-all shrink-0 ml-1" title={actionLabelFor('this table')} aria-label={actionLabelFor(table)}>
                     <span className="material-symbols-outlined text-sm">play_arrow</span>
+                  </button>
+                  <button type="button" onClick={() => onDropTable(table)}
+                    className="opacity-0 group-hover/tbl:opacity-100 focus-visible:opacity-100 text-outline hover:text-error transition-all shrink-0 ml-1"
+                    title="Drop this table" aria-label={`Drop table ${table}`}>
+                    <span className="material-symbols-outlined text-sm">delete</span>
                   </button>
                 </div>
                 {expandedTables[table] && tableSchemas[table] && (

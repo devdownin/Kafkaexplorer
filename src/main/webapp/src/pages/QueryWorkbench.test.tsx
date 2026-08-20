@@ -136,10 +136,12 @@ vi.mock('@monaco-editor/react', () => {
 // ── axios stub ───────────────────────────────────────────────────────────────
 const get = vi.fn();
 const post = vi.fn();
+const del = vi.fn();
 vi.mock('axios', () => ({
   default: {
     get: (...a: unknown[]) => get(...a),
     post: (...a: unknown[]) => post(...a),
+    delete: (...a: unknown[]) => del(...a),
     isCancel: () => false,
   },
 }));
@@ -174,6 +176,8 @@ beforeEach(() => {
   currentValue = '';
   get.mockReset();
   post.mockReset();
+  del.mockReset();
+  del.mockResolvedValue({ data: { dropped: true, message: 'Table orders was dropped.' } });
   get.mockImplementation((url: string) => {
     if (url === '/api/query/init') return Promise.resolve({ data: CATALOGUE });
     return Promise.resolve({ data: {} });
@@ -204,6 +208,70 @@ describe('QueryWorkbench — the catalogue', () => {
     const starter = await screen.findByText('SELECT * FROM demo_orders_1_received LIMIT 50');
     expect(starter).toBeInTheDocument();
     expect(screen.queryByText(/internal_audit_history/)).not.toBeInTheDocument();
+  });
+});
+
+/*
+ * Les `CREATE TABLE` écrits ici sont rejoués au démarrage, donc redémarrer n'est plus le moyen de
+ * vider le catalogue Flink. Ce geste rend cette issue — sans lui, le magasin ne saurait que
+ * grossir, ce qui serait un défaut pire que celui qu'il corrige.
+ */
+describe('QueryWorkbench — dropping a table', () => {
+  const withTable = (url: string) => (url === '/api/query/init'
+    ? Promise.resolve({ data: { ...CATALOGUE, tables: ['orders'] } })
+    : Promise.resolve({ data: {} }));
+
+  it('asks first, since the definition exists nowhere else afterwards', async () => {
+    get.mockImplementation(withTable);
+    renderPage();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Drop table orders' }));
+
+    expect(await screen.findByText('Drop orders?')).toBeInTheDocument();
+    expect(del).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when the confirmation is declined', async () => {
+    get.mockImplementation(withTable);
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'Drop table orders' }));
+    await screen.findByText('Drop orders?');
+
+    await userEvent.click(screen.getByRole('button', { name: /cancel/i }));
+
+    await waitFor(() => expect(screen.queryByText('Drop orders?')).not.toBeInTheDocument());
+    expect(del).not.toHaveBeenCalled();
+  });
+
+  it('drops it and reloads the catalogue', async () => {
+    get.mockImplementation(withTable);
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'Drop table orders' }));
+    await screen.findByText('Drop orders?');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Drop table' }));
+
+    await waitFor(() => expect(del).toHaveBeenCalledWith('/api/query/table/orders'));
+    // Le catalogue est relu : la liste de gauche doit décrire ce que Flink a maintenant.
+    await waitFor(() => expect(get.mock.calls.filter(c => c[0] === '/api/query/init').length)
+      .toBeGreaterThan(1));
+  });
+
+  /*
+   * « Il n'y avait rien de ce nom » est une réponse possible à une requête bien formée : l'annoncer
+   * comme une suppression promettrait plus qu'il ne s'est produit — le piège pour lequel le bouton
+   * Stop de cet éditeur avait déjà dû être corrigé.
+   */
+  it('says what the server actually did rather than assuming a 200 means dropped', async () => {
+    get.mockImplementation(withTable);
+    del.mockResolvedValue({ data: { dropped: false, message: 'No table named orders was registered or stored.' } });
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'Drop table orders' }));
+    await screen.findByText('Drop orders?');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Drop table' }));
+
+    expect(await screen.findByText('No table named orders was registered or stored.')).toBeInTheDocument();
   });
 });
 

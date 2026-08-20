@@ -71,9 +71,37 @@ public class ConfigController {
         result.put("mode", kafkaConfig.getMode());
         result.put("clusters", kafkaConfig.getClusters());
         result.put("isConnected", kafkaAdminService.ping());
+        appendConnectionDetail(result);
         appendLlmConfig(result);
         appendPersistence(result);
         return result;
+    }
+
+    /**
+     * The rest of what the connection is actually made with — <b>paths and the account name, never
+     * the passwords</b>.
+     *
+     * <p>These were absent, so the SSL and Confluent Cloud sections of the Settings page opened
+     * empty whatever the application was running on: the fields could be written and never read
+     * back. That was survivable while nothing was kept between restarts, and stops being so now
+     * that it is — an operator who restarts and finds the keystore path blank has every reason to
+     * conclude their input was lost, when it is in force.
+     *
+     * <p>The credentials stay out, on the rule {@code llmApiKeyConfigured} already follows: the
+     * page needs to know whether one is set, not what it is.
+     */
+    private void appendConnectionDetail(Map<String, Object> result) {
+        result.put("truststorePath", kafkaConfig.getTruststorePath());
+        result.put("keystorePath", kafkaConfig.getKeystorePath());
+        result.put("confluentKey", kafkaConfig.getConfluentKey());
+        result.put("truststorePasswordConfigured", isSet(kafkaConfig.getTruststorePassword()));
+        result.put("keystorePasswordConfigured", isSet(kafkaConfig.getKeystorePassword()));
+        result.put("keyPasswordConfigured", isSet(kafkaConfig.getKeyPassword()));
+        result.put("confluentSecretConfigured", isSet(kafkaConfig.getConfluentSecret()));
+    }
+
+    private boolean isSet(String value) {
+        return value != null && !value.isBlank();
     }
 
     /**
@@ -211,7 +239,7 @@ public class ConfigController {
 
     private Map<String, Object> applyConfig(Map<String, Object> body) {
         ClaudeConfig.Provider previousProvider = claudeConfig.getProvider();
-        Set<String> touched = touchedFields(body);
+        Set<String> touched = touchedFields(body, settingsSnapshot());
 
         if (body.containsKey("bootstrapServers") && body.get("bootstrapServers") != null) {
             kafkaConfig.setBootstrapServers(asString(body.get("bootstrapServers")));
@@ -284,6 +312,10 @@ public class ConfigController {
         result.put("bootstrapServers", kafkaConfig.getBootstrapServers());
         result.put("mode", kafkaConfig.getMode());
         result.put("isConnected", kafkaAdminService.ping());
+        // The same shape a GET answers with, so the page's picture of the connection after a save
+        // is the one it would get by reloading. Without it a password the save just cleared went
+        // on reporting itself as set, and the field's hint offered to clear it again.
+        appendConnectionDetail(result);
         appendLlmConfig(result);
         appendPersistence(result);
         // What the save achieved, stated rather than implied by the 200. A store that could not be
@@ -297,17 +329,32 @@ public class ConfigController {
     }
 
     /**
-     * The settings fields this request actually carries.
+     * The settings fields this request actually <em>changes</em>.
      *
      * <p>Restricted to {@link SettingsStore#FIELDS}, and it is what stops the store from freezing
      * this release's defaults: only a field an operator has entered is taken over from
      * {@code application.yml}, so a default that changes in a later version still reaches a
      * deployment that never touched it.
+     *
+     * <p><b>Changed</b>, not merely present, and that distinction is the whole rule rather than a
+     * refinement of it. The Settings page posts its entire form — it has to, since Test connection
+     * applies before it probes — so "the fields this request carries" is every field there is, and
+     * the first click on Test connection would have taken over the lot. Comparing against what is
+     * in force before anything is applied puts the rule where no client can miss it: a value equal
+     * to the one already running is not something anybody entered.
+     *
+     * @param before the effective values as they stand, read <em>before</em> {@code applyConfig}
+     *               writes anything
      */
-    private Set<String> touchedFields(Map<String, Object> body) {
+    private Set<String> touchedFields(Map<String, Object> body, Map<String, String> before) {
         Set<String> touched = new LinkedHashSet<>();
         for (SettingsStore.Field field : SettingsStore.FIELDS) {
-            if (body.containsKey(field.apiField())) touched.add(field.apiField());
+            if (!body.containsKey(field.apiField())) continue;
+            Object submitted = body.get(field.apiField());
+            if (submitted == null) continue;
+            if (!asString(submitted).equals(before.get(field.apiField()))) {
+                touched.add(field.apiField());
+            }
         }
         return touched;
     }

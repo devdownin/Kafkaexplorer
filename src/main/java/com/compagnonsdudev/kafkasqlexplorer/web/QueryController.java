@@ -133,6 +133,37 @@ public class QueryController {
     }
 
     /**
+     * Drops a table from Flink's catalogue and stops keeping its definition.
+     *
+     * <p>It exists because keeping hand-written {@code CREATE TABLE} statements across restarts
+     * takes an escape hatch away: restarting used to be the only way to clear the in-memory
+     * catalogue. A store that could only grow — replaying a definition nobody could get rid of on
+     * every boot — would be a worse defect than the one it fixes.
+     *
+     * <p>400 on a name that could not go into a statement, rather than quoting it and hoping: a
+     * backtick in a path variable is SQL injection into an engine that runs whatever DDL it is
+     * given. 200 with {@code dropped: false} when there was simply nothing of that name — the same
+     * rule as {@code cancel}, where "nothing to do" is an outcome of a well-formed request and not
+     * a client error, and the caller has to be able to tell the two apart.
+     */
+    @DeleteMapping(value = "/table/{tableName}", produces = "application/json")
+    public Map<String, Object> dropTable(@PathVariable("tableName") String tableName) {
+        boolean dropped;
+        try {
+            dropped = flinkSqlService.dropTable(tableName);
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
+        }
+        Map<String, Object> result = new HashMap<>();
+        result.put("table", tableName);
+        result.put("dropped", dropped);
+        result.put("message", dropped
+            ? "Table " + tableName + " was dropped and will not be restored at startup."
+            : "No table named " + tableName + " was registered or stored.");
+        return result;
+    }
+
+    /**
      * Cancels a running query, and <em>says what that achieved</em>.
      *
      * <p>Both endpoints used to return {@code void} and answer 200 whatever happened, so the caller

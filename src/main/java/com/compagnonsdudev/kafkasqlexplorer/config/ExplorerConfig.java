@@ -266,6 +266,19 @@ public class ExplorerConfig {
      */
     private boolean settingsStoreSecrets = true;
 
+    /**
+     * Where the {@code CREATE TABLE} statements written in the SQL editor are kept, to be replayed
+     * into Flink's in-memory catalogue at startup.
+     *
+     * <p>Governed by {@link #settingsPersistence} as well, since it answers the same question. A
+     * table auto-registered from a Kafka topic is not stored here — it is re-derived on demand,
+     * which is the point of auto-registration; what needed keeping is the definition somebody
+     * typed, because losing it did not produce an error but a <em>substitution</em>, the generated
+     * schema quietly taking the hand-written one's name. See
+     * {@link com.compagnonsdudev.kafkasqlexplorer.service.FlinkTableStore}.
+     */
+    private String flinkTableStorePath = "data/flink-tables.json";
+
     public String getClusterName() {
         return clusterName;
     }
@@ -576,5 +589,13 @@ public class ExplorerConfig {
 
     public void setSettingsStoreSecrets(boolean settingsStoreSecrets) {
         this.settingsStoreSecrets = settingsStoreSecrets;
+    }
+
+    public String getFlinkTableStorePath() {
+        return flinkTableStorePath;
+    }
+
+    public void setFlinkTableStorePath(String flinkTableStorePath) {
+        this.flinkTableStorePath = flinkTableStorePath;
     }
 }

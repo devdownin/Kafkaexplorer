@@ -148,6 +148,18 @@ explorer:
   # alone and the values never travel back out of the API. Set false for a deployment that will not
   # have them on disk — the omitted fields are then named in the save's answer and in the boot log.
   settings-store-secrets: true
+  # Where the CREATE TABLE statements written in the SQL editor are kept, to be replayed into
+  # Flink's in-memory catalogue at startup (governed by settings-persistence above as well — it is
+  # the same question about the same deployment). A table auto-registered from a Kafka topic is NOT
+  # stored: it is re-derived on demand, which is the point of auto-registration. What needed keeping
+  # is the definition somebody typed, because losing it produced no error but a substitution — the
+  # generated schema quietly took the hand-written one's name, and the query still returned rows,
+  # minus a watermark or a chosen subset of columns.
+  #
+  # Dropping a table (the bin icon in the schema browser, DELETE /api/query/table/{name}) removes it
+  # from Flink and stops it being restored. That gesture exists because restarting used to be the
+  # only way to clear the catalogue.
+  flink-table-store-path: data/flink-tables.json
   # SELECT execution: true = try the real Flink planner first and fall back to the in-process
   # direct Kafka reader on failure; false = always use the direct reader. A circuit breaker
   # disables the planner path after repeated failures (e.g. if the FlinkRelMetadataQuery NPE
