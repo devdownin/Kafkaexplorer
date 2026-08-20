@@ -163,6 +163,19 @@ const Config: React.FC = () => {
   });
 
   /**
+   * Le message du serveur quand il refuse, ou `null` quand il n'en a pas donné.
+   *
+   * Un 400 nomme le champ et dit pourquoi — `kafka.mode` qui se connecterait en clair, des
+   * identifiants Confluent Cloud absents, un provider LLM mal tapé. Le remplacer par « Failed to
+   * save configuration » jette la seule partie utile, exactement ce que le 409 avait déjà été
+   * corrigé pour ne plus faire.
+   */
+  const refusal = (err: unknown, status: number): string | null =>
+    axios.isAxiosError(err) && err.response?.status === status
+      ? ((err.response.data as { message?: string } | undefined)?.message ?? null)
+      : null;
+
+  /**
    * Le serveur refuse de repointer le cluster tant qu'un audit, un job Flink ou une session
    * Process Mining tourne encore dessus (409) : il dit lequel, et on propose de forcer plutôt que
    * d'afficher « Failed to save configuration » sur un refus parfaitement délibéré.
@@ -186,10 +199,11 @@ const Config: React.FC = () => {
     try {
       await applyConfig(false);
     } catch (err) {
-      const conflict = axios.isAxiosError(err) && err.response?.status === 409
-        ? (err.response.data as { message?: string } | undefined)?.message
-        : null;
-      if (!conflict) {
+      const conflict = refusal(err, 409);
+      const rejected = refusal(err, 400);
+      if (rejected) {
+        setError(rejected);
+      } else if (!conflict) {
         setError('Failed to save configuration.');
       } else if (await confirm({
         title: 'Work is still running on this cluster',
@@ -200,8 +214,8 @@ const Config: React.FC = () => {
       })) {
         try {
           await applyConfig(true);
-        } catch {
-          setError('Failed to save configuration.');
+        } catch (forced) {
+          setError(refusal(forced, 400) ?? 'Failed to save configuration.');
         }
       }
     } finally {

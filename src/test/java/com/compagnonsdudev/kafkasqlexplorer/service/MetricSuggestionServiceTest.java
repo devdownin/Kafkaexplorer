@@ -59,7 +59,10 @@ class MetricSuggestionServiceTest {
         kafkaAdminService = mock(KafkaAdminService.class);
         lineageService = mock(LineageService.class);
         // The store persists to Kafka; the seam keeps this suite broker-free.
-        fieldMappingStore = new FieldMappingStore(new com.compagnonsdudev.kafkasqlexplorer.config.KafkaConfig(), new ExplorerConfig()) {
+        ExplorerConfig mappingStoreConfig = new ExplorerConfig();
+        fieldMappingStore = new FieldMappingStore(
+            new com.compagnonsdudev.kafkasqlexplorer.config.KafkaConfig(), mappingStoreConfig,
+            new StartupRestore(mappingStoreConfig)) {
             @Override
             org.apache.kafka.clients.producer.Producer<String, String> createProducer() {
                 return new org.apache.kafka.clients.producer.MockProducer<>(true, null,

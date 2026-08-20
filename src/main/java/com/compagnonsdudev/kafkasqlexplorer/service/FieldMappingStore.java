@@ -81,6 +81,7 @@ public class FieldMappingStore {
 
     private final KafkaConfig kafkaConfig;
     private final ExplorerConfig explorerConfig;
+    private final StartupRestore startupRestore;
     private final ObjectMapper objectMapper = new ObjectMapper()
         // A mapping written by a later version must still load here: an unknown property is a
         // field this build does not use, not a reason to lose every mapping on the topic.
@@ -96,9 +97,11 @@ public class FieldMappingStore {
             }
         });
 
-    public FieldMappingStore(KafkaConfig kafkaConfig, ExplorerConfig explorerConfig) {
+    public FieldMappingStore(KafkaConfig kafkaConfig, ExplorerConfig explorerConfig,
+                             StartupRestore startupRestore) {
         this.kafkaConfig = kafkaConfig;
         this.explorerConfig = explorerConfig;
+        this.startupRestore = startupRestore;
     }
 
     @PostConstruct
@@ -174,18 +177,51 @@ public class FieldMappingStore {
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         ExplorerConsumerGroups.configure(props, "field-mapping-restorer");
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
-        // Fail fast when the broker is unreachable — this runs during application startup.
-        props.put(ConsumerConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, "5000");
-        props.put(ConsumerConfig.REQUEST_TIMEOUT_MS_CONFIG, "4000");
+        // Fail fast when the broker is unreachable — this runs during application startup, and the
+        // client default of 5 s was measured at half of a boot with nothing listening. The budget
+        // is shared with the other startup restore and configurable; see StartupRestore.
+        props.put(ConsumerConfig.DEFAULT_API_TIMEOUT_MS_CONFIG,
+            String.valueOf(startupRestore.discoveryTimeoutMs()));
+        props.put(ConsumerConfig.REQUEST_TIMEOUT_MS_CONFIG,
+            String.valueOf(startupRestore.requestTimeoutMs()));
         return new KafkaConsumer<>(props);
     }
 
-    void restoreFromKafka() {
+    /**
+     * Reads the mapping topic to its end offsets, and <b>says which of the three answers it got</b>.
+     *
+     * <p>It used to end in {@code log.debug("Field mappings could not be restored: …")}: on a
+     * default install that is no line at all, so an unreachable broker at boot produced a Process
+     * Mining pipeline that had silently forgotten every mapping an operator had corrected by hand,
+     * with nothing in the log to connect the two. "Nothing was ever validated", "the broker did not
+     * answer" and "the budget ran out halfway" are three different answers and the first is the
+     * only one that is not a problem.
+     *
+     * <p>The partial case is the one that was invisible even at DEBUG: the loop exits on the
+     * deadline <em>or</em> on the end offsets, and nothing checked which, so a read cut in half by
+     * a slow broker reported its fraction as the whole. Whatever is on the topic past that point
+     * is a mapping this process will answer {@code Optional.empty()} for, which every caller is
+     * required to treat as "never validated".
+     *
+     * @return {@code true} when the topic was read to its end — which includes a topic that does
+     *         not exist yet, since that is a complete answer about an empty store
+     */
+    boolean restoreFromKafka() {
+        String topic = explorerConfig.getFieldMappingTopic();
+        String earlier = startupRestore.brokerUnreachableReason();
+        if (earlier != null) {
+            log.warn("Process Mining field mappings were not restored from {}: the broker had "
+                + "already failed to answer an earlier startup read ({}). Mappings kept on the "
+                + "cluster are not available to this process; re-validating one in Process Mining "
+                + "rewrites it.", topic, earlier);
+            return false;
+        }
+
+        long startedAt = System.currentTimeMillis();
         try (Consumer<String, String> consumer = createConsumer()) {
-            String topic = explorerConfig.getFieldMappingTopic();
             List<PartitionInfo> partitionInfos = consumer.partitionsFor(topic);
             if (partitionInfos == null || partitionInfos.isEmpty()) {
-                return;   // the topic does not exist yet — nothing was ever validated
+                return true;  // the topic does not exist yet — nothing was ever validated
             }
             List<TopicPartition> partitions = partitionInfos.stream()
                 .map(pi -> new TopicPartition(pi.topic(), pi.partition()))
@@ -197,20 +233,38 @@ public class FieldMappingStore {
             // Driven by the end offsets, never by an empty poll: the first poll after an assignment
             // is very often empty while the fetch is in flight, and treating that as "exhausted"
             // is how a restore silently returns a fraction of what is stored.
-            long deadline = System.currentTimeMillis() + RESTORE_BUDGET_MS;
+            long deadline = startedAt + RESTORE_BUDGET_MS;
             while (System.currentTimeMillis() < deadline && !reachedEnd(consumer, endOffsets)) {
                 ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(300));
                 for (ConsumerRecord<String, String> record : records) {
                     restoreOne(record);
                 }
             }
-            if (!mappings.isEmpty()) {
-                log.info("Restored {} Process Mining field mapping(s) from {}", mappings.size(), topic);
+            boolean complete = reachedEnd(consumer, endOffsets);
+            long ms = System.currentTimeMillis() - startedAt;
+            if (!complete) {
+                log.warn("Only part of {} was read: the {} ms restore budget ran out after {} ms "
+                    + "with {} field mapping(s) restored, and any beyond that point will read as "
+                    + "never validated. The topic is meant to be compacted — check that it is.",
+                    topic, RESTORE_BUDGET_MS, ms, mappings.size());
+            } else if (!mappings.isEmpty()) {
+                log.info("Restored {} Process Mining field mapping(s) from {} in {} ms",
+                    mappings.size(), topic, ms);
             }
+            return complete;
         } catch (Exception e) {
             // Never fatal: an unreachable broker at startup must not keep the app down, and the
-            // pipeline can always re-validate a mapping.
-            log.debug("Field mappings could not be restored: {}", e.toString());
+            // pipeline can always re-validate a mapping. But it is reported — at WARN, with the
+            // cause flattened out of the exception chain, because e.getMessage() is null for an
+            // NPE and this was the one line that would have explained an empty pipeline.
+            long ms = System.currentTimeMillis() - startedAt;
+            String reason = SqlErrorClassifier.explain(e);
+            if (ms >= startupRestore.discoveryTimeoutMs()) {
+                startupRestore.brokerDidNotAnswer("Process Mining field mappings", reason);
+            }
+            log.warn("Process Mining field mappings could not be restored from {} after {} ms: {}",
+                topic, ms, reason);
+            return false;
         }
     }
 

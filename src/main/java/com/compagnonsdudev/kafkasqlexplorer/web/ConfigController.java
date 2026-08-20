@@ -15,9 +15,11 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * Settings, under {@code /api} only.
@@ -94,11 +96,75 @@ public class ConfigController {
     }
 
     /**
+     * What the settings in {@code body} would produce, checked before anything is written.
+     *
+     * <p>Two different failures used to reach the operator as a 500 with no body. A mode this
+     * application does not know was accepted outright and silently connected in plaintext (see
+     * {@link KafkaConfig#problemsWith}); a mistyped provider or a non-numeric timeout threw out of
+     * {@code valueOf} / {@code parseInt} halfway through {@code applyConfig}, which mutates the
+     * shared singletons field by field — so the save "failed" with half of it applied. Everything
+     * is checked first, and the answer names the field.
+     */
+    private List<String> settingsProblems(Map<String, Object> body) {
+        List<String> problems = new ArrayList<>(KafkaConfig.problemsWith(
+            effective(body, "bootstrapServers", kafkaConfig.getBootstrapServers()),
+            effective(body, "mode", kafkaConfig.getMode()),
+            effective(body, "confluentKey", kafkaConfig.getConfluentKey()),
+            effective(body, "confluentSecret", kafkaConfig.getConfluentSecret()),
+            effective(body, "truststorePath", kafkaConfig.getTruststorePath()),
+            effective(body, "keystorePath", kafkaConfig.getKeystorePath())));
+
+        checkEnum(body, "llmProvider", ClaudeConfig.Provider.class, problems);
+        checkEnum(body, "llmStructuredOutput", ClaudeConfig.StructuredOutput.class, problems);
+        for (String field : List.of("llmRequestTimeoutSeconds", "llmMaxTokens",
+                                    "llmSnapshotWindowSize", "llmSnapshotWindowTimeoutSeconds")) {
+            checkPositiveInt(body, field, problems);
+        }
+        return problems;
+    }
+
+    /** The value this save would leave in place: what it carries, or what is already stored. */
+    private String effective(Map<String, Object> body, String key, String current) {
+        return body.containsKey(key) && body.get(key) != null ? asString(body.get(key)) : current;
+    }
+
+    private <E extends Enum<E>> void checkEnum(Map<String, Object> body, String field,
+                                               Class<E> type, List<String> problems) {
+        if (!body.containsKey(field) || body.get(field) == null) return;
+        String value = asString(body.get(field));
+        for (E candidate : type.getEnumConstants()) {
+            if (candidate.name().equals(value)) return;
+        }
+        problems.add(field + " is '" + value + "', which is not one of "
+            + Arrays.stream(type.getEnumConstants()).map(Enum::name).collect(Collectors.joining(", ")) + ".");
+    }
+
+    private void checkPositiveInt(Map<String, Object> body, String field, List<String> problems) {
+        if (!body.containsKey(field) || body.get(field) == null) return;
+        String value = asString(body.get(field));
+        try {
+            if (Integer.parseInt(value) <= 0) {
+                problems.add(field + " is " + value + "; it has to be greater than zero.");
+            }
+        } catch (NumberFormatException e) {
+            problems.add(field + " is '" + value + "', which is not a whole number.");
+        }
+    }
+
+    /**
      * @param body {@code force: true} proceeds anyway — the operator who knows what is running is
      *             not blocked, they are told
      */
     @PostMapping(value = "/api/config", consumes = "application/json")
     public ResponseEntity<Map<String, Object>> updateConfig(@RequestBody Map<String, Object> body) {
+        List<String> problems = settingsProblems(body);
+        if (!problems.isEmpty()) {
+            Map<String, Object> rejected = new HashMap<>();
+            rejected.put("message", "Not applied: " + String.join(" ", problems));
+            rejected.put("problems", problems);
+            return ResponseEntity.badRequest().body(rejected);
+        }
+
         boolean repointsCluster = body.containsKey("bootstrapServers") || body.containsKey("mode");
         if (repointsCluster && !Boolean.parseBoolean(asString(body.get("force")))) {
             List<String> running = workInFlight();

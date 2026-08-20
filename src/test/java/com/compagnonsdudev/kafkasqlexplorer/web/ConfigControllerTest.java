@@ -68,6 +68,57 @@ class ConfigControllerTest {
             .andExpect(status().isNotFound());
     }
 
+    /**
+     * {@code POST /api/config} repoints the cluster through the very same
+     * {@code KafkaConfig.getKafkaProperties()}, so it is the second entry point into the
+     * silent-plaintext defect: it accepted any string as a mode and answered 200.
+     */
+    @Test
+    void aModeThatWouldSilentlyBecomePlaintextIsRefused() throws Exception {
+        mockMvc.perform(post("/api/config").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"mode\":\"SASL_SSL\"}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("kafka.mode")));
+
+        assertEquals("PLAIN", kafkaConfig.getMode());
+        verify(kafkaAdminService, never()).init();
+    }
+
+    /**
+     * Nothing is applied when anything is refused. {@code applyConfig} mutates shared singletons
+     * field by field, so a {@code valueOf} throwing halfway through used to answer 500 with the
+     * fields before it already written — a save that "failed" and half happened.
+     */
+    @Test
+    void aMistypedProviderIsRefusedAndLeavesEverythingUntouched() throws Exception {
+        mockMvc.perform(post("/api/config").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"bootstrapServers\":\"new:9092\",\"llmProvider\":\"OLAMA\"}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.problems").isArray());
+
+        assertEquals("old:9092", kafkaConfig.getBootstrapServers());
+        verify(kafkaAdminService, never()).init();
+    }
+
+    @Test
+    void aTimeoutThatIsNotANumberIsRefusedRatherThanThrown() throws Exception {
+        mockMvc.perform(post("/api/config").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"llmRequestTimeoutSeconds\":\"soon\"}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.message")
+                .value(org.hamcrest.Matchers.containsString("llmRequestTimeoutSeconds")));
+    }
+
+    /** Confluent Cloud without credentials would carry the literal text `null` as the username. */
+    @Test
+    void repointingToConfluentCloudWithoutCredentialsIsRefused() throws Exception {
+        mockMvc.perform(post("/api/config").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"mode\":\"CONFLUENT_CLOUD\"}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.message")
+                .value(org.hamcrest.Matchers.containsString("kafka.confluent-key")));
+    }
+
     @Test
     void anIdleClusterAcceptsTheChange() throws Exception {
         mockMvc.perform(post("/api/config").contentType(MediaType.APPLICATION_JSON)

@@ -11,6 +11,8 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.PartitionTimeLag;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryResult;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicTimeLag;
 import io.micrometer.core.instrument.MeterRegistry;
+import org.apache.kafka.clients.consumer.Consumer;
+import org.apache.kafka.clients.consumer.MockConsumer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -47,14 +49,33 @@ class MetricServiceTest {
         // listTables() must return non-empty so seedDefaultMetrics() actually seeds metrics
         Mockito.when(flinkSqlService.listTables()).thenReturn(List.of("demo_orders_in"));
 
-        service = new MetricService(
+        service = newService();
+    }
+
+    /**
+     * A service whose restore <em>completes</em> on an absent topic.
+     *
+     * <p>This used to be a plain {@code new MetricService(…)} and the restore reached a real
+     * {@code KafkaConsumer} with no bootstrap address, i.e. it threw — which the seeding then read
+     * as "no metric is configured". That is precisely the conflation {@code init()} was fixed for,
+     * so the seam is what lets the test say which of the two it means. An empty {@code MockConsumer}
+     * answers {@code partitionsFor} with nothing, which is a complete answer about an empty store.
+     */
+    private MetricService newService() {
+        return new MetricService(
             flinkSqlService,
             meterRegistry,
             kafkaConfig,
             explorerConfig,
             kafkaAdminService,
-            messageFieldExtractorService
-        );
+            messageFieldExtractorService,
+            new StartupRestore(new ExplorerConfig())
+        ) {
+            @Override
+            Consumer<String, String> createConsumer() {
+                return new MockConsumer<>("earliest");
+            }
+        };
     }
 
     @Test
@@ -619,5 +640,44 @@ class MetricServiceTest {
             new LinkedHashMap<>(Map.of("topic", "demo.orders", "group", "orders-api")),
             null, null, List.of());
         assertTrue(service.previewMetric(asCounter).error().contains("GAUGE"));
+    }
+
+    /**
+     * "No metric is configured" and "the metric configurations could not be read" are two
+     * different answers, and only the first one may seed.
+     *
+     * <p>Seeding mints four metrics with fresh ids and writes them back to
+     * {@code internal.metrics.config}. Doing that because the broker did not answer means adding
+     * examples beside an operator's own metrics, on a topic this process failed to read — every
+     * restart that catches the broker down leaving another four. The guard used to be
+     * {@code metrics.isEmpty()} alone, which cannot tell the two apart; it was harmless only
+     * because Flink holds no table at boot, and an accident is not a guard.
+     */
+    @Test
+    void aRestoreThatFailedSeedsNothing() {
+        MetricService failing = new MetricService(
+            flinkSqlService, meterRegistry, kafkaConfig, explorerConfig,
+            kafkaAdminService, messageFieldExtractorService, new StartupRestore(new ExplorerConfig())
+        ) {
+            @Override
+            Consumer<String, String> createConsumer() {
+                throw new IllegalStateException("no broker");
+            }
+        };
+
+        failing.init();   // must not throw: an unreachable broker never keeps the app down
+
+        assertTrue(failing.getAllMetrics().isEmpty(),
+            "an unread configuration must not be mistaken for an empty one");
+    }
+
+    /** The same store, read successfully and genuinely empty, is the first-run case that seeds. */
+    @Test
+    void aRestoreThatCompletedOnAnEmptyTopicSeedsTheExamples() {
+        MetricService fresh = newService();
+
+        fresh.init();
+
+        assertEquals(4, fresh.getAllMetrics().size());
     }
 }
