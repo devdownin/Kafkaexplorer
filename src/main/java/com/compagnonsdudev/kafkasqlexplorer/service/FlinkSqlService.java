@@ -723,20 +723,33 @@ public class FlinkSqlService {
      * @return whether anything was actually dropped or forgotten
      */
     public boolean dropTable(String name) {
-        if (!FlinkTableStore.isSafeIdentifier(name)) {
+        // Matched here rather than merely tested, so that what flows on to the statement, the log
+        // and the store is the whitelist's own match instead of the caller's string. The two are
+        // equal by construction; taking the match is what makes that visible at every use below,
+        // to a reader and to static analysis alike.
+        Matcher identifier = FlinkTableStore.SAFE_IDENTIFIER.matcher(name == null ? "" : name);
+        // The keyword exclusion travels with the pattern, or this would quietly loosen the guard
+        // it is meant to be tightening — see FlinkTableStore.isSafeIdentifier, which both this and
+        // the store apply, and which the store's own test pins.
+        if (!identifier.matches() || !FlinkTableStore.isSafeIdentifier(name)) {
+            // The offending text is not echoed. It is a path variable, so it goes into the answer
+            // and could go into a log; a name refused for containing something that does not
+            // belong in an identifier is the last thing to repeat back verbatim.
             throw new IllegalArgumentException(
-                "'" + name + "' is not a table name this application will put into a statement.");
+                "That is not a table name this application will put into a statement: only letters, "
+                    + "digits, '_' and '$' are accepted, and it must not start with a digit.");
         }
+        String table = identifier.group();
         boolean dropped = false;
         try {
-            executeMutationSql("drop-table", "DROP TABLE `" + name + "`");
+            executeMutationSql("drop-table", "DROP TABLE `" + table + "`");
             dropped = true;
         } catch (Exception e) {
             // Reported, not thrown: the store still has to be cleaned up below, and "Flink does
             // not have this table" is a normal answer here rather than a failure.
-            log.info("DROP TABLE `{}` did not run: {}", name, SqlErrorClassifier.explain(e));
+            log.info("DROP TABLE `{}` did not run: {}", table, SqlErrorClassifier.explain(e));
         }
-        boolean forgotten = flinkTableStore.forget(name);
+        boolean forgotten = flinkTableStore.forget(table);
         return dropped || forgotten;
     }
 

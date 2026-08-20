@@ -129,6 +129,52 @@ class FlinkTableStoreTest {
         assertTrue(store.all().isEmpty());
     }
 
+    /**
+     * A name that cannot safely be a log line, a JSON key and the body of a {@code DROP TABLE} is
+     * not kept at all.
+     *
+     * <p>A backtick-quoted Flink identifier may contain very nearly anything, a newline included,
+     * and this name goes on to be all three of those. Logging it verbatim is log injection: the
+     * forged line lands in the file that is meant to be the record of what happened. Refused where
+     * it enters, not cleaned up at each place it is later used.
+     */
+    @Test
+    void aNameThatCouldForgeALogLineIsNotStored() {
+        Path path = tempDir.resolve("tables.json");
+        FlinkTableStore store = storeAt(path);
+
+        assertNull(store.remember("CREATE TABLE `orders\nINFO  legitimate-looking forged line` "
+            + "(id STRING) WITH ('connector' = 'kafka')"));
+        assertNull(store.remember("CREATE TABLE `orders\r\nWARN  another one` (id STRING)"));
+        assertTrue(store.all().isEmpty());
+    }
+
+    /**
+     * A quoted name is read whole, spaces included.
+     *
+     * <p>The pattern used to stop at the first whitespace, so {@code CREATE TABLE `weird name`} was
+     * filed under the key {@code weird}: a different table from the one that had just been created.
+     * Nothing would have replaced it on a rewrite, and {@code forget("weird name")} could not have
+     * removed it. It is refused now — but it had to be *seen* whole before it could be refused.
+     */
+    @Test
+    void aQuotedNameIsReadWholeRatherThanUpToTheFirstSpace() {
+        FlinkTableStore store = storeAt(tempDir.resolve("tables.json"));
+
+        assertNull(store.remember("CREATE TABLE `weird name` (id STRING)"));
+        assertTrue(store.all().isEmpty(), "and nothing was filed under a truncated key");
+    }
+
+    /** The table still works for this process — what is declined is remembering it. */
+    @Test
+    void refusingToStoreANameIsNotRefusingTheStatement() {
+        Path path = tempDir.resolve("tables.json");
+        FlinkTableStore store = storeAt(path);
+
+        assertNull(store.remember("CREATE TABLE `weird name` (id STRING)"));
+        assertEquals("orders", store.remember(ORDERS_DDL), "and the store still works afterwards");
+    }
+
     // ── Removal ───────────────────────────────────────────────────────────────
 
     /**

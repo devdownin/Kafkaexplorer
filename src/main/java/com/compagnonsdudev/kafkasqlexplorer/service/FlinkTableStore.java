@@ -73,7 +73,8 @@ public class FlinkTableStore {
      * enforced.)
      */
     private static final Pattern CREATE_TABLE = Pattern.compile(
-        "^\\s*CREATE\\s+(TEMPORARY\\s+)?TABLE\\s+(IF\\s+NOT\\s+EXISTS\\s+)?([^\\s(]+)",
+        "^\\s*CREATE\\s+(TEMPORARY\\s+)?TABLE\\s+(IF\\s+NOT\\s+EXISTS\\s+)?"
+            + "((?:`[^`]*`|[^\\s(.`]+)(?:\\.(?:`[^`]*`|[^\\s(.`]+))*)",
         Pattern.CASE_INSENSITIVE);
 
     /** What a name has to look like to be put back into SQL — see {@code FlinkSqlService.dropTable}. */
@@ -127,6 +128,19 @@ public class FlinkTableStore {
         if (matcher.group(1) != null) return null;   // TEMPORARY — the author scoped it themselves
         String name = unquote(matcher.group(3));
         if (name == null || name.isBlank()) return null;
+        // Refused, not sanitised, and this is the guard the rest of the feature rests on: the name
+        // comes out of SQL somebody typed, and a backtick-quoted Flink identifier may contain very
+        // nearly anything — a newline included. It goes on to be a log line, a key in this file and
+        // the body of a `DROP TABLE`, so a name that cannot safely be all three is not kept at all.
+        // The table is still registered in Flink for this process; what is declined is remembering
+        // it. Same rule as the Process Mining session id: a malformed one is refused where it
+        // enters, rather than cleaned up at each place it is later used.
+        if (!isSafeIdentifier(name)) {
+            log.warn("A table was created under a name this application will not store, so it will "
+                + "not come back after a restart: only letters, digits, '_' and '$' are kept, and "
+                + "the name must not start with a digit.");
+            return null;
+        }
 
         // Storing the same definition again changes nothing, and saying so matters at boot: the
         // replay goes back through executeSql, so without this every restart rewrote the file once

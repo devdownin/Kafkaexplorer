@@ -105,6 +105,29 @@ public class StoredSettingsInitializer implements ApplicationContextInitializer<
     }
 
     /**
+     * The names in {@code fromFile} that this build recognises, as <em>its own</em> constants.
+     *
+     * <p>The list is read verbatim out of a JSON file, and a log line assembled from unvalidated
+     * file content is a log-injection sink — a newline in it forges whatever entry the writer
+     * likes, in the file that is meant to be the record of what happened. It is the same rule the
+     * Process Mining session id follows, and the answer is the same shape: nothing from the file
+     * reaches the log. Each name is matched against {@link SettingsStore#FIELDS} and it is the
+     * matching {@code Field}'s own string that gets logged, so what is printed is a compile-time
+     * constant of this application whatever the file happens to contain.
+     *
+     * <p>A name this build does not know is dropped rather than printed. It is either a field a
+     * later version added — in which case this process cannot say anything useful about it — or
+     * something that has no business being in there.
+     */
+    private List<String> knownPropertyNames(List<String> fromFile) {
+        List<String> known = new ArrayList<>();
+        for (SettingsStore.Field field : SettingsStore.FIELDS) {
+            if (fromFile.contains(field.property())) known.add(field.property());
+        }
+        return known;
+    }
+
+    /**
      * Whether this boot's environment already names the property.
      *
      * <p>Only the three sources that carry a deliberate act by whoever started the process are
@@ -151,13 +174,14 @@ public class StoredSettingsInitializer implements ApplicationContextInitializer<
                 overriddenByEnvironment.size() == 1 ? "1 of those settings" : "some of those settings",
                 String.join(", ", overriddenByEnvironment));
         }
-        if (!stored.secretsOmitted().isEmpty()) {
+        List<String> omitted = knownPropertyNames(stored.secretsOmitted());
+        if (!omitted.isEmpty()) {
             // WARN, and this one is: a connection whose password was deliberately not stored will
             // fail, and the operator has to be able to connect that failure to this choice.
             log.warn("{} credential(s) were entered on the Settings page but not stored, because "
                     + "explorer.settings-store-secrets is false: {}. Whatever the environment "
                     + "provides is used instead, and they have to be re-entered to change them.",
-                stored.secretsOmitted().size(), String.join(", ", stored.secretsOmitted()));
+                omitted.size(), String.join(", ", omitted));
         }
     }
 }
