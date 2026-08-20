@@ -11,6 +11,16 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Removed
+
+- **A dead `TableController`.** Its only mapping, `GET /table/{name}`, returned the view name
+  `"table-detail"` — a template that exists nowhere, in an application with no template engine.
+  Nothing linked to it, no client-side route matched it and no test named it, yet it took
+  `/table/*` away from the SPA's catch-all, and it built `"SELECT * FROM " + name` from the path
+  variable and submitted it to the query engine on an unauthenticated GET, discarding the rows
+  into a model nothing rendered. A table's live endpoint is `/api/query/table/{name}`, under
+  `/api` like every other domain endpoint.
+
 ### Added
 
 - **What the Settings page is used to enter now survives a restart.** `POST /api/config` applied
@@ -48,7 +58,6 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and keystore paths, the Confluent key — plus a boolean per password. Those sections of the
   Settings page could be written and never read back, so they opened empty whatever the application
   was running on.
-
 - **A Data Model page (`/data-model`, `POST /api/data-model`) — a set of topics read as an
   entity-relation diagram.** Each topic becomes a table card carrying its inferred columns, and the
   relations between them are deduced from key-column names. Kafka has no foreign keys, so every
