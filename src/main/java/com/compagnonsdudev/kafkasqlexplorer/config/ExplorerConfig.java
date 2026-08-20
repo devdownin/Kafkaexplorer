@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.compagnonsdudev.kafkasqlexplorer.config;
 
+import com.compagnonsdudev.kafkasqlexplorer.service.ExplorerConsumerGroups;
+import jakarta.annotation.PostConstruct;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 
@@ -11,6 +13,19 @@ import java.util.List;
 @Configuration
 @ConfigurationProperties(prefix = "explorer")
 public class ExplorerConfig {
+
+    /**
+     * Hands the configured prefix to the one class that names internal consumers.
+     *
+     * <p>Here rather than in a listener of its own, and that is the whole point of the placement:
+     * {@code MetricService} and {@code FieldMappingStore} both open a consumer while restoring
+     * state at boot, and both inject this bean — so this runs before either of them exists. A
+     * {@code @PostConstruct} on some other component would be racing them for no reason.
+     */
+    @PostConstruct
+    void applyConsumerGroupPrefix() {
+        ExplorerConsumerGroups.usePrefix(consumerGroupPrefix);
+    }
 
     /**
      * Display label for the connected cluster, shown in the header's connection pill.
@@ -135,6 +150,25 @@ public class ExplorerConfig {
      * says so rather than pretending the list is complete.
      */
     private int consumerGroupMaxGroups = 200;
+    /**
+     * Prefix for the consumer groups <strong>this application creates for itself</strong> — and
+     * for nothing else. It renames the explorer's own readers (metadata, samples, searches,
+     * traces, live sessions); it never touches a group belonging to the user's pipelines, and it
+     * is not written into the generated Flink DDL, whose {@code flink_table_*} id is copied into
+     * jobs this application does not run.
+     *
+     * <p>It exists because those ids are visible on the cluster — in {@code kafka-consumer-groups
+     * .sh}, in a colleague's monitoring, in whatever convention an organisation applies to group
+     * names. A deployment that must name them {@code acme.kse.} can, without the application
+     * losing track of which groups are its own.
+     *
+     * <p>Absent, empty or unusable falls back to {@link
+     * com.compagnonsdudev.kafkasqlexplorer.service.ExplorerConsumerGroups#DEFAULT_PREFIX} — see
+     * {@code resolvePrefix}, which also appends a separator when the value has none. The default
+     * stays recognised whatever this is set to, so changing it does not orphan the groups the
+     * previous setting left behind.
+     */
+    private String consumerGroupPrefix = ExplorerConsumerGroups.DEFAULT_PREFIX;
     /**
      * Delete the consumer groups this application left on the cluster, at startup.
      *
@@ -380,6 +414,14 @@ public class ExplorerConfig {
 
     public void setConsumerGroupMaxGroups(int consumerGroupMaxGroups) {
         this.consumerGroupMaxGroups = consumerGroupMaxGroups;
+    }
+
+    public String getConsumerGroupPrefix() {
+        return consumerGroupPrefix;
+    }
+
+    public void setConsumerGroupPrefix(String consumerGroupPrefix) {
+        this.consumerGroupPrefix = consumerGroupPrefix;
     }
 
     public boolean isCleanupOwnGroups() {
