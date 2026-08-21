@@ -192,7 +192,7 @@ export const SchemaBrowser = React.forwardRef<HTMLElement, SchemaBrowserProps>(f
                   <div className="ml-6 pl-3 border-l border-primary/20 py-1 space-y-1">
                     {Object.entries(tableSchemas[table]).map(([col, type]) => (
                       <div key={col} className="flex justify-between items-center text-[10px] py-0.5">
-                        <span className="text-on-surface-variant truncate pr-2 font-mono">{col}</span>
+                        <span className="text-on-surface-variant truncate pr-2 font-mono" title={col}>{col}</span>
                         <span className="text-primary/60 font-mono uppercase shrink-0">{type}</span>
                       </div>
                     ))}
@@ -228,7 +228,15 @@ export const SchemaBrowser = React.forwardRef<HTMLElement, SchemaBrowserProps>(f
                 {schema?.topics.map(topic => (
                   <div key={topic} className="flex items-center py-1 px-2 rounded hover:bg-primary/5 transition-colors group/topic">
                     <button type="button" onClick={() => onSelectFrom(toTableName(topic))}
-                      className="flex-1 min-w-0 text-left rounded" aria-label={actionLabelFor(topic)}>
+                      className="flex-1 min-w-0 text-left rounded" title={topic} aria-label={actionLabelFor(topic)}>
+                      {/* Même règle que la liste des tables juste au-dessus, qui l'appliquait
+                          déjà : un nom `truncate` sans `title` est du texte que rien ne permet
+                          de lire. Un nom de topic est plus long qu'un nom de table (il garde ses
+                          points là où `toTableName` les remplace) et la barre latérale est
+                          étroite, donc c'est ici que la troncature mord le plus. Le `title` va
+                          sur le bouton, pas sur le `span` : c'est lui qui occupe la ligne, donc
+                          la zone que l'on survole. Le nom accessible porte déjà le topic entier
+                          (`SELECT from <topic>`), donc ce qui manquait n'était que la souris. */}
                       <span className="text-xs text-on-surface-variant hover:text-primary font-mono truncate block">{topic}</span>
                     </button>
                     <button type="button" onClick={e => { e.stopPropagation(); onPreviewDdl(topic); }}
