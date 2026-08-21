@@ -9,11 +9,19 @@ each possible answer. The one decision it needs is not a technical one, and it i
 [The product question](#the-product-question) — everything downstream of it changes size depending
 on the answer.
 
-> **Status.** It implemented nothing when it was written. **W0, W2 and W7 have since shipped**
-> (Option C plus the two items that are right under every answer); the tables below have been
+> **Status.** It implemented nothing when it was written. **W0, W2, W6 and W7 have since shipped**
+> (Option C plus the items that are right under every answer); the tables below have been
 > re-measured against that state, and re-measuring is what turned up the correction in
-> [What the first measurement got wrong](#what-the-first-measurement-got-wrong). W1, W3–W6 remain
-> open, and the product question remains unanswered.
+> [What the first measurement got wrong](#what-the-first-measurement-got-wrong).
+>
+> **The product question is answered: the application is not intended for phones.** That is the
+> *Nobody opens this application on a phone at all* branch of
+> [What would change the recommendation](#what-would-change-the-recommendation), so **W1, W3, W4
+> and W8 are closed** and **W5 is the only item still open** — it was never a mobile item, merely
+> one that mobile exposed. The measurements, the options and the reasoning are kept below rather
+> than deleted, because that is the whole point of recording the answer: the next person to open
+> a 390 px window on `/query` will find what was measured and what was decided, instead of
+> re-deriving all of it.
 
 ## How this was measured
 
@@ -192,6 +200,18 @@ what does work on this one. *≈ half a day.*
 silently broken screen into an honest one; A remains open afterwards, and B is only worth its
 price against a user nobody has yet identified.
 
+> **Answered (2026-08-21): the application is not intended for phones.** C shipped, and A and B are
+> both closed — A because there is nobody to serve on the narrow surface it would build, B because
+> it was already conditioned on a user who has now been ruled out rather than merely not found.
+>
+> What that does **not** close is the narrow *desktop window*: `lg` is 1024 px, so a browser docked
+> to half a 1440p screen falls under it without being a phone. That case is covered by what already
+> shipped — W2 took the tablet from 5 px of editor to 192 at 768 and 324 at 900, W0 states plainly
+> that the screen wants a wider window and names the screens that work on this one, and W6 gates
+> both against regression in CI. **W1 is the item to reopen if 900 px turns out to be painful in
+> practice**, which is why its note below is kept intact rather than struck out: it is closed for
+> want of a user, not because the work was found wrong.
+
 ## Work items
 
 Sized in ideal days, each independently shippable and useful on its own.
@@ -199,14 +219,14 @@ Sized in ideal days, each independently shippable and useful on its own.
 | id | item | size | depends on | state |
 |---|---|---|---|---|
 | W0 | "Needs a wider window" notice on `/query` under `lg`, naming the screens that do work | 0.5 | — | **done** |
-| W1 | Chrome that yields: schema browser as an overlay drawer under `lg`; window assistant folded by default under `lg` | 1 | — | open |
+| W1 | Chrome that yields: schema browser as an overlay drawer under `lg`; window assistant folded by default under `lg` | 1 | — | **closed** — no phone user; reopen if a narrow *desktop* window proves painful |
 | W2 | The `md` regression: keep the nav a drawer until `lg`, or let `/query` opt out of the in-flow rail | 0.5 | shell change — check the other six pages | **done** |
-| W3 | Stack instead of split under `lg`: Editor / Results as two panes you switch between | 2 | W1 | open |
-| W4 | Monaco under a real thumb: measure on a device, write down the answer | 1 | — | open |
-| W5 | Tap targets to 24 × 24, app-wide, with triage | 2 | — | **the big one done** — `components/ui/Checkbox` at 24 × 24 across six screens; the varied remainder is open |
+| W3 | Stack instead of split under `lg`: Editor / Results as two panes you switch between | 2 | W1 | **closed** — Option A, and there is nobody to serve on that surface |
+| W4 | Monaco under a real thumb: measure on a device, write down the answer | 1 | — | **closed** — a thumb is exactly what this application is not for |
+| W5 | Tap targets to 24 × 24, app-wide, with triage | 2 | — | **the big one done, and the only item still open** — `components/ui/Checkbox` at 24 × 24 across six screens; the varied remainder stands, and it survives the decision because WCAG 2.5.8 is not a phone rule |
 | W6 | Thresholds in `layout-probe.mjs` + a CI job, so this cannot silently regress | 0.5 | — | **done** — `--check` gates overflow and target budgets in `ci.yml` |
 | W7 | Identify the clipped containers; confirm none hides unreachable content | 0.5 | — | **done — and the answer was no** |
-| W8 | The unreachable containers W7 left: the SQL editor's toolbar strip under `lg`, and whatever `--detail` still names once the pages are given time to settle | 1 | W1, W6 | open |
+| W8 | The unreachable containers W7 left: the SQL editor's toolbar strip under `lg`, and whatever `--detail` still names once the pages are given time to settle | 1 | W1, W6 | **closed** — depended on W1; the probe keeps measuring it, so a real case would resurface |
 
 **What shipped, and what it cost.** W2 is four files of `md:` → `lg:` in the shell plus the
 `matchMedia` query, and the sweep above is its whole justification. W0 is a dismissible notice on
@@ -219,7 +239,8 @@ the product question, which is why they were the right first cut under any answe
 
 Notes that will cost time if discovered late:
 
-- **W1 has a pattern to copy.** The schema browser is already a resizable `<aside>` with a
+- **W1 has a pattern to copy** — kept here although W1 is closed, since this is the note that
+  would be re-derived first if it were reopened. The schema browser is already a resizable `<aside>` with a
   persisted width, and `Layout` / `Sidebar` already implement the overlay-drawer pattern with a
   backdrop and a `matchMedia` listener. This is re-use, not invention.
 - **W3 has to place two things that have no obvious home when stacked**: the batch strip added in
