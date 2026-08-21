@@ -12,10 +12,11 @@
  * « aucun trafic ».
  */
 
+import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { createMemoryRouter, RouterProvider } from 'react-router-dom';
+import { createMemoryRouter, RouterProvider, useLocation } from 'react-router-dom';
 import axios from 'axios';
 import Dashboard from './Dashboard';
 import { ToastProvider } from '../components/Toast';
@@ -86,11 +87,20 @@ function stubApi(activity: TopicActivityResponse | Error = activityFor(topics.sl
   mockedAxios.isCancel = ((e: unknown) => e instanceof Error && e.name === 'CanceledError') as never;
 }
 
+/** Où le clic a mené, rendu en clair : l'assertion porte sur l'URL, pas sur un espion de routeur. */
+const Landing: React.FC = () => {
+  const location = useLocation();
+  return <p>landed on {location.pathname}{location.search}</p>;
+};
+
 function renderPage() {
   return render(
     <ToastProvider>
       <ConfirmProvider>
-        <RouterProvider router={createMemoryRouter([{ path: '/', element: <Dashboard /> }], { initialEntries: ['/'] })} />
+        <RouterProvider router={createMemoryRouter([
+          { path: '/', element: <Dashboard /> },
+          { path: '/topic/:name', element: <Landing /> },
+        ], { initialEntries: ['/'] })} />
       </ConfirmProvider>
     </ToastProvider>,
   );
@@ -119,10 +129,53 @@ describe('Dashboard activity column', () => {
     stubApi();
     renderPage();
 
-    const curve = await screen.findByRole('img', { name: /produced in demo\.topic\.01/ });
+    // Un bouton, pas une image : le clic mène aux messages du bucket, donc l'affordance doit
+    // exister au clavier aussi. Le SVG lui-même est `aria-hidden`.
+    const curve = await screen.findByRole('button', { name: /produced in demo\.topic\.01/ });
     expect(curve.getAttribute('aria-label')).toMatch(/Peak/);
     // Et la ligne de portée dit la résolution plutôt que de laisser la courbe la suggérer.
     expect(screen.getByText(/One point per 1 h over the last 24 h/)).toBeInTheDocument();
+  });
+
+  it('writes the peak beside the curve, the scale being per row', async () => {
+    stubApi();
+    renderPage();
+
+    // demo.topic.01 : counts [0, 2, 4, 2] sur des buckets d'une heure — le pic vaut 4.
+    await screen.findByRole('button', { name: /produced in demo\.topic\.01/ });
+    expect(screen.getAllByText('4/h').length).toBeGreaterThan(0);
+  });
+
+  it('opens the peak bucket in the topic explorer, primed at that hour', async () => {
+    const user = userEvent.setup();
+    stubApi();
+    renderPage();
+
+    const curve = await screen.findByRole('button', { name: /produced in demo\.topic\.01/ });
+    // Le nom accessible dit ce que la touche Entrée va faire, avant qu'on la presse.
+    expect(curve.getAttribute('aria-label')).toMatch(/Opens demo\.topic\.01 with the search primed at/);
+    await user.click(curve);
+
+    // Le pic de la série est le bucket 2, soit deux heures après le début de la fenêtre.
+    const at = new Date(WINDOW_START + 2 * HOUR);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const local = `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}T${pad(at.getHours())}:${pad(at.getMinutes())}`;
+    const landed = await screen.findByText(/^landed on/);
+    expect(landed.textContent).toBe(
+      `landed on /topic/demo.topic.01?start=TIMESTAMP&at=${encodeURIComponent(local)}`);
+  });
+
+  it('says a topic went silent, which no shape at this size shows', async () => {
+    const response = activityFor(topics.slice(0, 25));
+    // Un régime, puis plus rien sur le dernier quart de la fenêtre.
+    const counts = [...Array(18).fill(12), ...Array(6).fill(0)];
+    response.topics[topics[0]] = series(topics[0], counts);
+    stubApi(response);
+    renderPage();
+
+    expect(await screen.findByText('silent 6 h+')).toBeInTheDocument();
+    const curve = screen.getByRole('button', { name: new RegExp(`produced in ${topics[0].replace(/\./g, '\\.')}`) });
+    expect(curve.getAttribute('aria-label')).toMatch(/Nothing produced for at least 6 h/);
   });
 
   it('states a topic it could not measure instead of drawing it flat', async () => {

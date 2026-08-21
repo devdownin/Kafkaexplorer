@@ -12,6 +12,9 @@
  */
 
 import type { TopicActivity } from '../api/types';
+// Le format d'instant du formulaire de recherche appartient à ce module-là : en réécrire un ici
+// donnerait deux façons d'écrire la même valeur, dont une qui dérive.
+import { toDateTimeLocal } from '../components/topic/topicSearch';
 
 /** Une fenêtre proposée dans le sélecteur, avec le découpage qui la rend lisible. */
 export interface ActivityWindow {
@@ -195,7 +198,12 @@ export function describeActivity(activity: TopicActivity | null | undefined, top
   const shape = sparkline(activity.counts, 100, 20);
   const peak = `Peak ${shape.peak.toLocaleString()} at ${bucketLabel(activity, shape.peakIndex)}.`;
   const head = `${activity.total.toLocaleString()} message${activity.total === 1 ? '' : 's'} produced in ${topic} over the last ${span}.`;
-  return activity.note ? `${head} ${peak} ${activity.note}` : `${head} ${peak}`;
+  const silence = detectSilence(activity);
+  // Le silence passe avant la note du serveur : c'est ce qui a le plus de chances de faire agir.
+  const quiet = silence
+    ? ` Nothing produced for at least ${formatWindow(silence.atLeastMs)}, after producing earlier in the window.`
+    : '';
+  return `${head} ${peak}${quiet}${activity.note ? ` ${activity.note}` : ''}`;
 }
 
 /**
@@ -209,4 +217,98 @@ export function describeActivityScope(
   const base = `One point per ${per} over the last ${formatWindow(window.windowMs)}, counted from offsets.`;
   if (measured >= requested) return base;
   return `${base} ${requested - measured} of the ${requested} topics on this page could not be measured.`;
+}
+
+// ── Ce que la série dit d'elle-même ──────────────────────────────────────────
+
+/** Le pic rapporté à la largeur d'un bucket : « 620/h », « 43/5 min ». */
+export function describeRate(count: number, bucketMs: number): string {
+  return `${compact(count)}/${unitOf(bucketMs)}`;
+}
+
+/** `1.2K` — la valeur exacte reste dans l'énoncé accessible, qui n'a pas de contrainte de place. */
+export function compact(count: number): string {
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
+  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}K`;
+  return String(count);
+}
+
+function unitOf(bucketMs: number): string {
+  if (bucketMs % HOUR === 0) {
+    const hours = bucketMs / HOUR;
+    return hours === 1 ? 'h' : `${hours} h`;
+  }
+  if (bucketMs % MINUTE === 0) {
+    const minutes = bucketMs / MINUTE;
+    return minutes === 1 ? 'min' : `${minutes} min`;
+  }
+  return `${Math.max(1, Math.round(bucketMs / 1000))} s`;
+}
+
+/** Un topic qui produisait et qui s'est tu. */
+export interface Silence {
+  /** Buckets vides à la fin de la fenêtre. */
+  buckets: number;
+  /** Durée du silence — un **plancher** : le dernier message est quelque part dans son bucket. */
+  atLeastMs: number;
+}
+
+/**
+ * Le topic produisait, et ne produit plus.
+ *
+ * C'est le signal le plus actionnable d'une série, et le seul que sa *forme* ne donne pas : une
+ * courbe qui retombe à zéro et une courbe basse se ressemblent à cette taille. La colonne « Last
+ * Message » en dit la moitié — elle donne l'instant du dernier message, pas le fait qu'il y avait
+ * un régime avant.
+ *
+ * Trois garde-fous, parce qu'un badge qui se trompe est un badge qu'on apprend à ignorer : il faut
+ * un régime préalable (au moins deux buckets non vides avant le silence), un silence qui ne soit
+ * pas un simple creux (au moins deux buckets, et au moins 15 % de la fenêtre) et une fenêtre qui
+ * ne soit pas entièrement vide — ce dernier cas n'est pas un topic qui s'est tu, c'est un topic
+ * qu'on n'a pas vu produire. Ce qui est affirmé reste un fait daté, jamais un verdict : « silent
+ * 4 h+ » est vrai d'un topic qui dort la nuit, et c'est à l'opérateur de savoir si ça l'inquiète.
+ */
+export function detectSilence(activity: TopicActivity | null | undefined): Silence | null {
+  if (!activity || !activity.available || activity.total <= 0) return null;
+  const counts = activity.counts;
+  if (counts.length === 0) return null;
+
+  let trailing = 0;
+  while (trailing < counts.length && counts[counts.length - 1 - trailing] === 0) trailing++;
+  if (trailing === 0 || trailing === counts.length) return null;
+  if (trailing < Math.max(2, Math.ceil(counts.length * 0.15))) return null;
+
+  const active = counts.slice(0, counts.length - trailing).filter(c => c > 0).length;
+  if (active < 2) return null;
+
+  return { buckets: trailing, atLeastMs: trailing * activity.bucketMs };
+}
+
+/** « silent 4 h+ » — le `+` porte le plancher, qui est ce que les buckets permettent d'affirmer. */
+export function describeSilence(silence: Silence): string {
+  return `silent ${formatWindow(silence.atLeastMs)}+`;
+}
+
+// ── Du pic aux messages ──────────────────────────────────────────────────────
+
+/**
+ * Le lien qui mène du pic aux messages : l'explorateur de ce topic, recherche **amorcée** au début
+ * du bucket.
+ *
+ * Amorcée et pas lancée, et c'est le contrat de l'autre page plutôt qu'un demi-effort : la
+ * recherche de topic n'a pas de critère « tout » — `EXISTS` en mode KEY a précisément été retiré
+ * de l'interface parce qu'il ramenait tout ce qui était scanné. Le lien porte donc ce qu'il sait
+ * (l'instant) et laisse l'opérateur dire ce qu'il cherche ; `seedFromQuery` pose le formulaire à
+ * l'arrivée. Passer par l'URL plutôt que par le brouillon `localStorage` de l'explorateur est
+ * délibéré : c'est la convention de toute l'application, et ça rend le lien partageable au lieu
+ * d'écraser en silence un critère non lancé sur un autre topic.
+ */
+export function bucketLink(topic: string, activity: TopicActivity, index: number): string {
+  const at = toDateTimeLocal(activity.windowStartMs + index * activity.bucketMs);
+  return `/topic/${encodeURIComponent(topic)}?start=TIMESTAMP&at=${encodeURIComponent(at)}`;
+}
+
+/** Ce que le clic va faire, dit avant qu'il ait lieu. */
+export function describeBucketLink(activity: TopicActivity, index: number): string {
+  return `Opens ${activity.topic} with the search primed at ${bucketLabel(activity, index)}.`;
 }

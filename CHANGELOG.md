@@ -23,6 +23,25 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The dashboard's activity curve leads somewhere, and says what it is worth.** Three follow-ups
+  to the sparkline column, all of them things the curve could not say on its own:
+  - **Clicking a bucket opens that period's messages.** Seeing a spike and reading what was in it
+    are the same question asked twice, and the second half was being done by hand. The curve is now
+    a button: a click opens the topic's explorer with the search primed at that hour, `Enter` opens
+    the peak — the bucket the accessible name already names. The instant travels in the URL
+    (`?start=TIMESTAMP&at=…`), so the link is shareable, and the Topic Explorer gained
+    `seedFromQuery` to pose a form from a URL that carries a start but nothing to run.
+  - **The peak is written beside the curve**, not only in the tooltip. The scale is per row, so two
+    curves of equal height can be 40/h and 40 000/h — and a figure reachable only by hovering is
+    reachable only with a mouse, which is the defect `title=""` was replaced for elsewhere.
+    Hovering a bucket replaces that number with the bucket's own value instead of opening another
+    tooltip.
+  - **A topic that produced and stopped is badged** `silent 6 h+`. It is the one thing a curve of
+    this size does not show — a series fallen to zero and a low series look alike — and
+    "Last Message" gives the instant without the fact that there was a regime before it. Guarded
+    against noise (a prior regime, a silence covering at least 15 % of the window) and worded as a
+    dated fact rather than a verdict; the duration is a floor, which the `+` carries.
+
 - **An activity curve per topic in the dashboard's table.** The table said how many messages a
   topic holds and when the last one arrived — a level and an instant, neither of which says
   whether the topic is *working*: "1 200 messages, 3 min ago" reads the same on a topic doing

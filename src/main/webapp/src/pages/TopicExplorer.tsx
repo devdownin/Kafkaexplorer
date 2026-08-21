@@ -27,6 +27,7 @@ import {
   coverageOf,
   criteriaFromQuery,
   readCriteriaDraft,
+  seedFromQuery,
   saveCriteriaDraft,
   describeHitInsight,
   effectiveScanBudget,
@@ -1014,10 +1015,17 @@ const TopicExplorer: React.FC = () => {
     if (lastAppliedSearch.current === location.search) return;
     lastAppliedSearch.current = location.search;
     const preset = criteriaFromQuery(location.search);
-    if (!preset) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- recherche portée par l'URL
-    setCriteria(preset);
-    void runSearch({}, preset);
+    /*
+     * Une URL peut amorcer sans lancer : la sparkline du tableau de bord ouvre ce topic réglé sur
+     * l'heure du bucket cliqué, sans dire quoi y chercher. Poser le formulaire est alors le seul
+     * moyen de ne pas perdre le renseignement que le lien portait — lancer serait impossible, il
+     * n'y a pas de critère.
+     */
+    const carried = preset ?? seedFromQuery(location.search);
+    if (!carried) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- critère porté par l'URL
+    setCriteria(carried);
+    if (preset) void runSearch({}, preset);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- réagit au seul critère porté par l'URL
   }, [location.search]);
 

@@ -14,10 +14,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { TopicActivity } from '../api/types';
 import {
-  ACTIVITY_OFF, ACTIVITY_WINDOWS, DEFAULT_ACTIVITY_CHOICE, bucketLabel, describeActivity,
-  describeActivityScope, isFloor, readActivityChoice, sparkline, unmeasuredLeadingBuckets,
-  windowById, writeActivityChoice,
+  ACTIVITY_OFF, ACTIVITY_WINDOWS, DEFAULT_ACTIVITY_CHOICE, bucketLabel, bucketLink, compact,
+  describeActivity, describeActivityScope, describeRate, describeSilence, detectSilence, isFloor,
+  readActivityChoice, sparkline, unmeasuredLeadingBuckets, windowById, writeActivityChoice,
 } from './topicActivity';
+import { criteriaFromQuery, seedFromQuery, startTimestamp } from '../components/topic/topicSearch';
 
 const HOUR = 3_600_000;
 
@@ -155,5 +156,74 @@ describe('bucketLabel', () => {
     const a = activity();
     expect(bucketLabel(a, 0)).not.toBe(bucketLabel(a, 1));
     expect(bucketLabel(a, 0).length).toBeGreaterThan(0);
+  });
+});
+
+describe('the peak, written rather than hovered', () => {
+  it('rates the peak against the bucket it was counted in', () => {
+    expect(describeRate(620, 3_600_000)).toBe('620/h');
+    expect(describeRate(43, 5 * 60_000)).toBe('43/5 min');
+    expect(describeRate(1_240, 6 * 3_600_000)).toBe('1.2K/6 h');
+  });
+
+  it('compacts a large count and leaves a small one alone', () => {
+    expect(compact(940)).toBe('940');
+    expect(compact(1_240)).toBe('1.2K');
+    expect(compact(3_400_000)).toBe('3.4M');
+  });
+});
+
+describe('detectSilence', () => {
+  /** 24 buckets d'une heure : un régime, puis plus rien. */
+  const withCounts = (counts: number[]) => activity({ counts, windowEndMs: counts.length * HOUR });
+
+  it('reports a topic that produced and then stopped', () => {
+    const silence = detectSilence(withCounts([...Array(18).fill(10), ...Array(6).fill(0)]));
+    expect(silence).toEqual({ buckets: 6, atLeastMs: 6 * HOUR });
+    expect(describeSilence(silence!)).toBe('silent 6 h+');
+  });
+
+  it('says nothing about a dip, which is not a stop', () => {
+    // Deux heures creuses sur vingt-quatre : c'est une nuit calme, pas un topic qui s'est tu.
+    expect(detectSilence(withCounts([...Array(22).fill(10), 0, 0]))).toBeNull();
+  });
+
+  it('says nothing when there was no regime to lose', () => {
+    // Un seul bucket non vide, puis rien : il n'y a pas de régime dont s'écarter.
+    expect(detectSilence(withCounts([5, ...Array(23).fill(0)]))).toBeNull();
+    // Et une fenêtre entièrement vide n'est pas un topic qui s'est tu : c'est un topic qu'on n'a
+    // pas vu produire, ce que la courbe plate dit déjà.
+    expect(detectSilence(withCounts(Array(24).fill(0)))).toBeNull();
+  });
+
+  it('claims nothing about a series that is not available', () => {
+    expect(detectSilence(activity({ available: false, counts: [], total: 0 }))).toBeNull();
+    expect(detectSilence(undefined)).toBeNull();
+  });
+
+  it('travels into the accessible name, where it is worth more than the peak', () => {
+    const text = describeActivity(withCounts([...Array(18).fill(10), ...Array(6).fill(0)]), 'orders');
+    expect(text).toMatch(/Nothing produced for at least 6 h/);
+  });
+});
+
+describe('from the peak to the messages', () => {
+  it('links to the topic with the search primed at the bucket start', () => {
+    const a = activity({ windowStartMs: new Date(2026, 5, 15, 10, 0, 0).getTime() });
+    const link = bucketLink('demo.orders.1.received', a, 2);
+
+    expect(link.startsWith('/topic/demo.orders.1.received?')).toBe(true);
+    const search = link.slice(link.indexOf('?'));
+    // L'autre page doit lire ce lien comme une amorce — pas comme une recherche, il n'y a pas de
+    // critère à exécuter, et pas comme du bruit, sinon l'instant serait perdu à l'arrivée.
+    expect(criteriaFromQuery(search)).toBeNull();
+    const seeded = seedFromQuery(search);
+    expect(seeded).not.toBeNull();
+    expect(seeded!.startMode).toBe('TIMESTAMP');
+    expect(startTimestamp(seeded!)).toBe(a.windowStartMs + 2 * HOUR);
+  });
+
+  it('escapes a topic name that needs it', () => {
+    expect(bucketLink('demo/orders', activity(), 0)).toContain('/topic/demo%2Forders?');
   });
 });

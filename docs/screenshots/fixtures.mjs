@@ -108,14 +108,24 @@ export function topicActivity(url) {
   for (const topic of requested) {
     let seed = seedOf(topic);
     const next = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
-    const base = topic === 'demo.iot.sensors' ? 300
-      : topic.startsWith('internal.') ? 0.2
-      : topic.startsWith('demo.orders.') ? 60 : 25;
+    /*
+     * `demo.errors.poison` a reçu sa salve puis s'est tu : c'est le cas que la pastille « silent »
+     * existe pour montrer, et le seul qu'une courbe de cette taille ne dit pas d'elle-même. Ses
+     * dix-huit enregistrements tiennent donc dans le premier quart de la fenêtre.
+     */
+    const burstUntil = topic === 'demo.errors.poison' ? Math.round(buckets / 4) : null;
+    // Ailleurs, le débit est dérivé de la taille du topic dans la même fixture : un lecteur
+    // compare la courbe à la colonne « Messages » de la même ligne, et 600/jour en face de 18
+    // messages se verrait. Le facteur 1,4 compense le creux nocturne de la forme ci-dessous.
+    const base = burstUntil
+      ? (topicSizes[topic] ?? 0) / burstUntil
+      : (topicSizes[topic] ?? 200) * 1.4 / buckets;
     const counts = Array.from({ length: buckets }, (_, i) => {
       // Une forme de journée : creux la nuit, pic en milieu d'après-midi.
       const hour = ((start + i * bucketMs) / 3_600_000) % 24;
       const shape = 0.35 + 0.65 * Math.max(0, Math.sin((hour / 24) * Math.PI * 2 - 1.2));
-      return Math.round(base * shape * (0.7 + 0.6 * next()));
+      const stopped = burstUntil !== null && i >= burstUntil;
+      return stopped ? 0 : Math.round(base * shape * (0.7 + 0.6 * next()));
     });
     topics[topic] = {
       topic, windowStartMs: start, windowEndMs: end, bucketMs, counts,

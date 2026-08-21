@@ -427,9 +427,41 @@ export function snapScope(minutes: number): number {
  * vers un topic ne doit rien déclencher.
  */
 export function criteriaFromQuery(search: string): TopicSearchCriteria | null {
+  const criteria = parseQuery(search);
+  // Mêmes conditions que le bouton « Search » du panneau : une cible sans valeur, ou une
+  // recherche texte sans texte, n'aurait rien à exécuter.
+  return criteria && canRun(criteria) ? criteria : null;
+}
+
+/**
+ * Le critère qu'une URL **amorce** sans le lancer.
+ *
+ * Un lien peut légitimement décrire un point de départ sans décrire quoi chercher — c'est ce que
+ * fait la sparkline du tableau de bord : cliquer un pic de 14 h ouvre ce topic avec la recherche
+ * réglée sur 14 h, à l'opérateur de dire ce qu'il y cherche. `criteriaFromQuery` répond `null`
+ * dans ce cas, et c'est juste : rien n'est exécutable. Mais répondre `null` et ne rien poser
+ * ferait atterrir sur un formulaire vide, ce qui perd le seul renseignement que le lien portait.
+ *
+ * Rend donc le critère quand l'URL dit quelque chose (`isEmptyCriteria` est faux) sans être
+ * exécutable — et `null` sinon, y compris pour une recherche complète, que l'autre fonction
+ * traite.
+ */
+export function seedFromQuery(search: string): TopicSearchCriteria | null {
+  const criteria = parseQuery(search);
+  if (!criteria || canRun(criteria) || isEmptyCriteria(criteria)) return null;
+  return criteria;
+}
+
+function parseQuery(search: string): TopicSearchCriteria | null {
   const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
-  const mode = (params.get('mode') ?? '').toUpperCase() as SearchMode;
-  if (!SEARCH_MODES.includes(mode)) return null;
+  const rawMode = (params.get('mode') ?? '').toUpperCase();
+  /*
+   * Un mode *absent* est une URL qui ne prétend pas décrire une recherche — un lien qui ne fait
+   * qu'amorcer le formulaire. Un mode présent mais inconnu est une URL cassée, et la lire comme
+   * une recherche texte la réinterpréterait : elle reste refusée.
+   */
+  if (rawMode && !SEARCH_MODES.includes(rawMode as SearchMode)) return null;
+  const mode = (rawMode || emptyCriteria.mode) as SearchMode;
 
   const operator = params.get('op') ?? '';
   const direction = (params.get('dir') ?? '').toUpperCase();
@@ -458,9 +490,7 @@ export function criteriaFromQuery(search: string): TopicSearchCriteria | null {
     fromTime: (params.get('at') ?? '').trim(),
     fromOffset: (params.get('off') ?? '').trim(),
   };
-  // Mêmes conditions que le bouton « Search » du panneau : une cible sans valeur, ou une
-  // recherche texte sans texte, n'aurait rien à exécuter.
-  return canRun(criteria) ? criteria : null;
+  return criteria;
 }
 
 /**
