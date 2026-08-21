@@ -170,6 +170,23 @@ public class ExplorerConfig {
      */
     private int consumerGroupMaxGroups = 200;
     /**
+     * Topics one {@code GET /api/dashboard/activity} may measure. The dashboard asks for the rows
+     * it is displaying, so the natural ceiling is its largest page; a request past this is cut and
+     * the response names what it left out.
+     */
+    private int activityMaxTopics = 100;
+    /**
+     * Ceiling on partitions x bucket boundaries for one activity read — the real unit of work,
+     * since a topic with sixty partitions costs sixty times one with a single partition. Each
+     * lookup is a broker-side index seek, no record is read, and the boundaries are issued in
+     * parallel; 20 000 is roughly a page of twenty-five topics with a dozen partitions each.
+     */
+    private int activityMaxLookups = 20000;
+    /** Window of the dashboard sparkline when the request names none. */
+    private long activityDefaultWindowMs = 86400000L;
+    /** Points in that series when the request names none — 24 buckets of one hour by default. */
+    private int activityBuckets = 24;
+    /**
      * Prefix for the consumer groups <strong>this application creates for itself</strong> — and
      * for nothing else. It renames the explorer's own readers (metadata, samples, searches,
      * traces, live sessions); it never touches a group belonging to the user's pipelines, and it
@@ -485,6 +502,38 @@ public class ExplorerConfig {
 
     public void setConsumerGroupMaxGroups(int consumerGroupMaxGroups) {
         this.consumerGroupMaxGroups = consumerGroupMaxGroups;
+    }
+
+    public int getActivityMaxTopics() {
+        return activityMaxTopics;
+    }
+
+    public void setActivityMaxTopics(int activityMaxTopics) {
+        this.activityMaxTopics = activityMaxTopics;
+    }
+
+    public int getActivityMaxLookups() {
+        return activityMaxLookups;
+    }
+
+    public void setActivityMaxLookups(int activityMaxLookups) {
+        this.activityMaxLookups = activityMaxLookups;
+    }
+
+    public long getActivityDefaultWindowMs() {
+        return activityDefaultWindowMs;
+    }
+
+    public void setActivityDefaultWindowMs(long activityDefaultWindowMs) {
+        this.activityDefaultWindowMs = activityDefaultWindowMs;
+    }
+
+    public int getActivityBuckets() {
+        return activityBuckets;
+    }
+
+    public void setActivityBuckets(int activityBuckets) {
+        this.activityBuckets = activityBuckets;
     }
 
     public String getConsumerGroupPrefix() {

@@ -83,6 +83,50 @@ export const dashboard = {
   topicLastMessages,
 };
 
+/**
+ * `GET /api/dashboard/activity` — la colonne de sparklines du tableau des topics.
+ *
+ * Dérivée de la requête, comme le vrai endpoint : la page ne demande que les lignes affichées, et
+ * une fixture qui répondrait pour tous les topics rendrait la capture muette sur ce point. La
+ * série est pseudo-aléatoire mais **déterministe** (graine tirée du nom du topic), sur la règle de
+ * ce harnais : une image qui change à chaque build est un diff que personne ne relit.
+ *
+ * Deux topics sortent du lot volontairement, parce que ce sont les deux cas que la colonne existe
+ * pour distinguer : `demo.iot.sensors` produit en continu, et `internal.metrics.config` ne produit
+ * presque rien — une ligne plate qui est une mesure, pas une absence de mesure.
+ */
+export function topicActivity(url) {
+  const requested = (url.searchParams.get('topics') ?? '').split(',').filter(Boolean);
+  const buckets = Number(url.searchParams.get('buckets') ?? 24);
+  const windowMs = Number(url.searchParams.get('windowMs') ?? 24 * 3_600_000);
+  const bucketMs = Math.round(windowMs / buckets);
+  const end = Math.floor(NOW / bucketMs) * bucketMs;
+  const start = end - bucketMs * buckets;
+
+  const seedOf = (name) => [...name].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 100_000, 7);
+  const topics = {};
+  for (const topic of requested) {
+    let seed = seedOf(topic);
+    const next = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+    const base = topic === 'demo.iot.sensors' ? 300
+      : topic.startsWith('internal.') ? 0.2
+      : topic.startsWith('demo.orders.') ? 60 : 25;
+    const counts = Array.from({ length: buckets }, (_, i) => {
+      // Une forme de journée : creux la nuit, pic en milieu d'après-midi.
+      const hour = ((start + i * bucketMs) / 3_600_000) % 24;
+      const shape = 0.35 + 0.65 * Math.max(0, Math.sin((hour / 24) * Math.PI * 2 - 1.2));
+      return Math.round(base * shape * (0.7 + 0.6 * next()));
+    });
+    topics[topic] = {
+      topic, windowStartMs: start, windowEndMs: end, bucketMs, counts,
+      total: counts.reduce((a, b) => a + b, 0),
+      coveredFromMs: null, partitionsMeasured: 3, partitionsTotal: 3,
+      available: true, note: null,
+    };
+  }
+  return { topics, windowStartMs: start, windowEndMs: end, bucketMs, buckets, available: true, warnings: [] };
+}
+
 // ── Topic Explorer ───────────────────────────────────────────────────────────────────
 const orderPayload = (id, status, cents, customer) => JSON.stringify({
   order_id: id,

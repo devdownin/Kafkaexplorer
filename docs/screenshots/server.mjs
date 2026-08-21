@@ -31,6 +31,9 @@ const MIME = {
 /** Routes are matched in order; the first predicate that answers wins. */
 const API = [
   [m => m === '/api/dashboard', () => F.dashboard],
+  // Reçoit l'URL : la colonne d'activité ne mesure que les topics affichés, donc la réponse
+  // dépend de la requête — les autres routes ignorent simplement l'argument.
+  [m => m === '/api/dashboard/activity', url => F.topicActivity(url)],
   [m => m === '/api/config', () => F.config],
   [m => m === '/api/cluster', () => F.cluster],
   [m => m === '/api/cluster/configs', () => ({ configs: {} })],
@@ -80,7 +83,7 @@ const server = http.createServer((req, res) => {
       console.warn(`  ! unstubbed API route: ${req.method} ${pathname}`);
       return send(res, 404, JSON.stringify({ message: `no stub for ${pathname}` }), MIME['.json']);
     }
-    return send(res, 200, JSON.stringify(route[1]()), MIME['.json']);
+    return send(res, 200, JSON.stringify(route[1](url)), MIME['.json']);
   }
 
   // Static asset, else the SPA shell — SpaController does the same thing in production,

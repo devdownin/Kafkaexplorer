@@ -94,6 +94,16 @@ explorer:
   # stays recognised as ours whatever this is set to, so changing it does not orphan the groups the
   # previous value left on the cluster. A separator is appended when the value has none.
   consumer-group-prefix: kafka-explorer-
+  # The dashboard's activity sparkline (GET /api/dashboard/activity). It is measured from offsets
+  # alone — one listOffsets per bucket boundary, no record read and no consumer group — so what it
+  # counts is offsets produced, not records currently in the topic. Bounded twice: the number of
+  # topics one call may measure, and partitions x boundaries, which is the real unit of work. What
+  # a budget cuts is named in the response's warnings, never silently absent.
+  activity-max-topics: 100
+  activity-max-lookups: 20000
+  # Window and number of points when the request names neither: 24 buckets of one hour.
+  activity-default-window-ms: 86400000
+  activity-buckets: 24
   # Ceiling on how many topics one POST /api/data-model may analyse. The request carries its own,
   # lower, per-run budget (30 by default, a field on the page, read back from
   # GET /api/data-model/limits); this is what bounds it, so a mistyped number cannot tie the

@@ -23,6 +23,34 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **An activity curve per topic in the dashboard's table.** The table said how many messages a
+  topic holds and when the last one arrived — a level and an instant, neither of which says
+  whether the topic is *working*: "1 200 messages, 3 min ago" reads the same on a topic doing
+  forty a minute and on one that took a burst yesterday and stopped. Each row now carries a
+  sparkline of what it produced over the last hour, day or week, with the window (and `Off`) a
+  control in the toolbar.
+  - **Measured from offsets, not from records.** `GET /api/dashboard/activity` resolves each
+    bucket boundary to an offset per partition (`listOffsets(forTimestamp)`, every boundary issued
+    before any is awaited) and subtracts. No record is read, no consumer group is created, and the
+    wall clock is one round trip's latency rather than one per bucket — which is what makes a
+    curve per row affordable on a page that refreshes on a timer. What a bucket counts is
+    therefore offsets produced, which on a compacted topic is deliberately not the same number as
+    the records it holds today.
+  - **It only measures the rows on screen**, on its own 30 s cadence rather than the dashboard's
+    5 s poll, and is bounded twice — `explorer.activity-max-topics` and
+    `explorer.activity-max-lookups` (partitions × boundaries, the real unit of work). Whatever a
+    budget cuts is named in the response: an absent curve otherwise reads as a topic that produced
+    nothing.
+  - **Nothing is drawn where nothing was measured.** The stretch of the window retention has
+    deleted is greyed rather than traced at zero, a series short of a partition is dashed and says
+    it is a floor, a topic that could not be read says `not measured`, and a failed read replaces
+    the column with its reason. A flat line is a claim that a topic is quiet, and this is the one
+    thing an unanswered question must not be able to produce.
+  - The window is aligned on the bucket width and ends at the last *completed* bucket, so the
+    curve does not wobble as the clock moves and the last point is not a half-filled bucket that
+    reads as a collapse in traffic.
+
+
 - **What the Settings page is used to enter now survives a restart.** `POST /api/config` applied
   its values to two in-memory singletons and wrote nothing anywhere: the one screen whose entire
   purpose is data entry was the only one whose input did not outlive the process. The bootstrap
