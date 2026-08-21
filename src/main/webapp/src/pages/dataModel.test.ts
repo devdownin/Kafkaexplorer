@@ -21,6 +21,7 @@ import {
   orphanColumns, maxNodesPerColumn, drawnEntities, describeSetAside,
   resolveNodeSizing, describeDensity, describeDensityCost, renderedTextPx,
   MIN_READABLE_TEXT_PX, filterEntities, describeSetAsideFilter,
+  groupSetAside, describeSetAsideGroup, SET_ASIDE_GROUP_MIN,
   readPanelOpen, writePanelOpen, PANEL_KEY,
   minimapLayout, visibleGraphRect, graphFullyVisible, centerOnGraphPoint,
   readSavedModels, saveModel, deleteSavedModel, clearSavedModels, MAX_SAVED_MODELS,
@@ -619,6 +620,86 @@ describe('set-aside filter', () => {
     expect(describeSetAsideFilter(3, 3)).toBeNull();
     expect(describeSetAsideFilter(1, 3)).toBe('1 of 3 shown');
     expect(describeSetAsideFilter(0, 3)).toContain('No set-aside entity matches');
+  });
+});
+
+describe('set-aside grouping', () => {
+  /** Les entités sans relation d'un modèle dont `topicDomains` nomme les familles. */
+  function lonely(...topics: string[]) {
+    const entities = topics.map(t => entity(t.replace(/\./g, '_'), 1, { topic: t }));
+    return { entities, domains: topicDomains(topics) };
+  }
+
+  it('groups by the family the header tints already use, biggest first', () => {
+    const { entities, domains } = lonely(
+      'demo.audit.log', 'demo.iot.sensor.0', 'demo.iot.sensor.1',
+      'demo.iot.sensor.2', 'demo.audit.trail',
+    );
+    const groups = groupSetAside(entities, domains)!;
+    expect(groups.map(g => [g.domain, g.entities.length]))
+      .toEqual([['iot', 3], ['audit', 2]]);
+    // Rien n'est perdu en route.
+    expect(groups.flatMap(g => g.entities)).toHaveLength(entities.length);
+  });
+
+  it('breaks a tie on the name, so two identical models look alike', () => {
+    const { entities, domains } = lonely(
+      'demo.zulu.a', 'demo.zulu.b', 'demo.alpha.a', 'demo.alpha.b', 'demo.mike.a',
+    );
+    expect(groupSetAside(entities, domains)!.map(g => g.domain))
+      .toEqual(['alpha', 'zulu', 'mike']);
+  });
+
+  it('refuses below the threshold — the list reads at a glance there', () => {
+    const { entities, domains } = lonely('demo.iot.a', 'demo.iot.b', 'demo.audit.c');
+    expect(entities.length).toBeLessThan(SET_ASIDE_GROUP_MIN);
+    expect(groupSetAside(entities, domains)).toBeNull();
+  });
+
+  it('refuses a single family — the header would repeat the section title', () => {
+    const { entities, domains } = lonely(
+      'demo.iot.a', 'demo.iot.b', 'demo.iot.c', 'demo.iot.d', 'demo.iot.e',
+    );
+    expect(groupSetAside(entities, domains)).toBeNull();
+  });
+
+  it('refuses when every family holds one entity — each header names its own row', () => {
+    const { entities, domains } = lonely(
+      'demo.a.x', 'demo.b.x', 'demo.c.x', 'demo.d.x', 'demo.e.x',
+    );
+    expect(groupSetAside(entities, domains)).toBeNull();
+  });
+
+  it('takes the families it is given rather than renaming them itself', () => {
+    // La carte est construite sur *tout* le modèle : `orders` en fait partie et retient le
+    // segment de tête `demo`, qui serait retiré si on la recalculait sur les seules mises de côté.
+    const domains = topicDomains([
+      'demo.orders.received', 'demo.iot.a', 'demo.iot.b', 'demo.iot.c',
+      'demo.audit.a', 'demo.audit.b',
+    ]);
+    const aside = ['demo.iot.a', 'demo.iot.b', 'demo.iot.c', 'demo.audit.a', 'demo.audit.b']
+      .map(t => entity(t.replace(/\./g, '_'), 1, { topic: t }));
+    expect(groupSetAside(aside, domains)!.map(g => g.domain)).toEqual(['iot', 'audit']);
+  });
+
+  it('a topic the map does not name is its own family', () => {
+    const { entities } = lonely(
+      'demo.iot.a', 'demo.iot.b', 'demo.iot.c', 'demo.iot.d', 'demo.audit.a',
+    );
+    const partial = new Map([['demo.iot.a', 'iot'], ['demo.iot.b', 'iot'],
+      ['demo.iot.c', 'iot'], ['demo.iot.d', 'iot']]);
+    expect(groupSetAside(entities, partial)!.map(g => g.domain))
+      .toEqual(['iot', 'demo.audit.a']);
+  });
+
+  it('names a group with what its count counts', () => {
+    const { entities, domains } = lonely(
+      'demo.iot.a', 'demo.iot.b', 'demo.iot.c', 'demo.audit.a', 'demo.audit.b',
+    );
+    const [first] = groupSetAside(entities, domains)!;
+    expect(describeSetAsideGroup(first)).toBe('iot — 3 entities with no deduced relation');
+    expect(describeSetAsideGroup({ domain: 'audit', entities: [entities[0]] }))
+      .toBe('audit — 1 entity with no deduced relation');
   });
 });
 
