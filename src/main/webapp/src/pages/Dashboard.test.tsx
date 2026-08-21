@@ -174,7 +174,12 @@ describe('Dashboard activity column', () => {
     renderPage();
 
     expect(await screen.findByText('silent 6 h+')).toBeInTheDocument();
-    const curve = screen.getByRole('button', { name: new RegExp(`produced in ${topics[0].replace(/\./g, '\\.')}`) });
+    // Un prédicat plutôt qu'une `RegExp` construite : échapper un nom de topic à la main revient à
+    // réécrire un échappement de regex, et le faire à moitié (les points, pas les antislashs) est
+    // exactement ce que CodeQL signale. Ici il n'y a rien à échapper.
+    const curve = screen.getByRole('button', {
+      name: (accessibleName: string) => accessibleName.includes(`produced in ${topics[0]}`),
+    });
     expect(curve.getAttribute('aria-label')).toMatch(/Nothing produced for at least 6 h/);
   });
 
