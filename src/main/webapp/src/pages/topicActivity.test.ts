@@ -15,8 +15,9 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import type { TopicActivity } from '../api/types';
 import {
   ACTIVITY_OFF, ACTIVITY_WINDOWS, DEFAULT_ACTIVITY_CHOICE, bucketLabel, bucketLink, compact,
-  describeActivity, describeActivityScope, describeRate, describeSilence, detectSilence, isFloor,
-  readActivityChoice, sparkline, unmeasuredLeadingBuckets, windowById, writeActivityChoice,
+  describeActivity, describeActivityScope, describeRate, describeScale, describeSilence,
+  detectSilence, isFloor, readActivityChoice, readActivityScale, sparkline,
+  unmeasuredLeadingBuckets, windowById, writeActivityChoice, writeActivityScale,
 } from './topicActivity';
 import { criteriaFromQuery, seedFromQuery, startTimestamp } from '../components/topic/topicSearch';
 
@@ -66,6 +67,39 @@ describe('sparkline', () => {
     const shape = sparkline([], 100, 20, 1);
     expect(shape.points).toHaveLength(1);
     expect(shape.line.startsWith('M')).toBe(true);
+  });
+});
+
+describe('the log scale', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('keeps the peak at the top and an empty bucket on the baseline', () => {
+    const shape = sparkline([0, 1, 100], 100, 20, 1, 'log');
+    expect(shape.points[0].y).toBe(19);   // vide : ligne de base, comme en linéaire
+    expect(shape.points[2].y).toBe(1);    // pic : haut de la boîte, comme en linéaire
+    // Et le pic reste la valeur *brute* : c'est lui qui est écrit à côté de la courbe.
+    expect(shape.peak).toBe(100);
+  });
+
+  it('lifts what a burst would otherwise flatten onto the baseline', () => {
+    // 1 face à un pic de 100 : en linéaire le point est à un centième de la hauteur, donc
+    // indiscernable d'un bucket vide — ce que l'échelle log existe pour corriger.
+    const linear = sparkline([0, 1, 100], 100, 20, 1);
+    const log = sparkline([0, 1, 100], 100, 20, 1, 'log');
+    expect(linear.points[1].y).toBeGreaterThan(18.5);
+    expect(log.points[1].y).toBeLessThan(17);
+  });
+
+  it('leaves a silent topic flat, whichever scale is asked for', () => {
+    expect(sparkline([0, 0, 0], 100, 20, 1, 'log').points.every(p => p.y === 19)).toBe(true);
+  });
+
+  it('round-trips the choice and says so only when it is not the assumed one', () => {
+    expect(readActivityScale()).toBe('linear');
+    expect(describeScale('linear')).toBe('');
+    writeActivityScale('log');
+    expect(readActivityScale()).toBe('log');
+    expect(describeScale('log')).toBe('log scale');
   });
 });
 
@@ -126,6 +160,16 @@ describe('the window selector', () => {
       expect(w.buckets).toBeLessThanOrEqual(60);
       expect(w.bucketMs).toBe(Math.round(w.windowMs / w.buckets));
     }
+  });
+
+  /**
+   * Sur une semaine, la question est « est-ce que la forme se répète ? », et une journée réduite à
+   * quatre points ne montre aucun cycle : la nuit et la matinée tombent dans le même.
+   */
+  it('resolves a multi-day window finely enough to show a daily cycle', () => {
+    const week = windowById('7d')!;
+    const pointsPerDay = (24 * 3_600_000) / week.bucketMs;
+    expect(pointsPerDay).toBeGreaterThanOrEqual(6);
   });
 
   it('round-trips a choice, off included', () => {

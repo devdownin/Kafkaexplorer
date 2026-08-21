@@ -41,6 +41,13 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     "Last Message" gives the instant without the fact that there was a regime before it. Guarded
     against noise (a prior regime, a silence covering at least 15 % of the window) and worded as a
     dated fact rather than a verdict; the duration is a floor, which the `+` carries.
+  - **The week is read at 3 h, not 6 h.** `Last 7 days` was 28 points; a day reduced to four of
+    them shows no daily cycle, which is the whole question a week-long window asks. It is 56 now,
+    which the server's cap of 60 buckets accommodates.
+  - **A log scale is offered beside the window.** A burst a hundred times the ordinary regime
+    crushes everything else onto the baseline, and the rest of the time is usually what one is
+    reading for. An option and not the default — it changes what the image asserts — and the
+    column header names it when it is on, an undeclared scale being what makes a chart mislead.
 
 - **An activity curve per topic in the dashboard's table.** The table said how many messages a
   topic holds and when the last one arrived — a level and an instant, neither of which says

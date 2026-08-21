@@ -7,6 +7,7 @@ import type { TopicActivity } from '../../api/types';
 import {
   bucketLabel, bucketLink, compact, describeActivity, describeBucketLink, describeRate,
   describeSilence, detectSilence, isFloor, sparkline, unmeasuredLeadingBuckets,
+  type ActivityScale,
 } from '../../pages/topicActivity';
 
 const WIDTH = 108;
@@ -19,6 +20,8 @@ interface SparklineProps {
   activity?: TopicActivity | null;
   /** Vrai tant que la passe est en vol — un squelette, jamais une courbe plate provisoire. */
   loading?: boolean;
+  /** L'échelle verticale. Le pic et l'énoncé accessible restent des valeurs brutes. */
+  scale?: ActivityScale;
 }
 
 /**
@@ -45,12 +48,12 @@ interface SparklineProps {
  *    plutôt que tracée à zéro, et une série qui est un plancher (une partition muette) est
  *    pointillée : une courbe pleine est une affirmation.
  */
-const Sparkline: React.FC<SparklineProps> = ({ topic, activity, loading }) => {
+const Sparkline: React.FC<SparklineProps> = ({ topic, activity, loading, scale = 'linear' }) => {
   const navigate = useNavigate();
   const [hovered, setHovered] = useState<number | null>(null);
   const shape = useMemo(
-    () => (activity?.available ? sparkline(activity.counts, WIDTH, HEIGHT, PADDING) : null),
-    [activity],
+    () => (activity?.available ? sparkline(activity.counts, WIDTH, HEIGHT, PADDING, scale) : null),
+    [activity, scale],
   );
   const silence = useMemo(() => detectSilence(activity), [activity]);
 

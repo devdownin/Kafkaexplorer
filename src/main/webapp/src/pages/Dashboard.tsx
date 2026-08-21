@@ -15,8 +15,9 @@ import Sparkline from '../components/dashboard/Sparkline';
 import type { TopicActivityResponse } from '../api/types';
 import { describeApiError } from './queryError';
 import {
-  ACTIVITY_WINDOWS, ACTIVITY_OFF, describeActivityScope, readActivityChoice, windowById,
-  writeActivityChoice, type ActivityChoice,
+  ACTIVITY_WINDOWS, ACTIVITY_OFF, describeActivityScope, describeScale, readActivityChoice,
+  readActivityScale, windowById, writeActivityChoice, writeActivityScale,
+  type ActivityChoice, type ActivityScale,
 } from './topicActivity';
 
 const PAGE_SIZES = [10, 25, 50, 100];
@@ -125,6 +126,12 @@ const Dashboard: React.FC = () => {
    * la colonne coûte des allers-retours au broker : sur un cluster où elle gêne, on l'éteint.
    */
   const [activityChoice, setActivityChoice] = useState<ActivityChoice>(() => readActivityChoice());
+  /**
+   * L'échelle verticale des courbes. Un choix de *lecture* : elle ne change ni ce qui est demandé
+   * au serveur ni ce que l'énoncé accessible affirme (des valeurs brutes), seulement la forme —
+   * et l'en-tête de colonne le dit, une échelle non déclarée étant ce qui rend un graphe trompeur.
+   */
+  const [activityScale, setActivityScale] = useState<ActivityScale>(() => readActivityScale());
   /**
    * La réponse *et* la question à laquelle elle répond. Sans la clé, changer de fenêtre ou de page
    * laissait les courbes précédentes sous le nouvel en-tête le temps d'un aller-retour — une série
@@ -505,6 +512,30 @@ const Dashboard: React.FC = () => {
               </Select>
             </div>
 
+            {/*
+              * L'échelle logarithmique existe pour une forme précise : une salve cent fois
+              * supérieure au régime ordinaire écrase tout le reste sur la ligne de base. Une
+              * option, jamais le défaut — elle change ce que l'image affirme.
+              */}
+            {activityWindow && (
+              <div className="flex items-center gap-1.5 text-[12px] text-on-surface-variant">
+                <label htmlFor="dashboard-activity-scale">Scale</label>
+                <Select
+                  id="dashboard-activity-scale"
+                  value={activityScale}
+                  onChange={e => {
+                    const scale = e.target.value as ActivityScale;
+                    setActivityScale(scale);
+                    writeActivityScale(scale);
+                  }}
+                  className="h-9 w-auto"
+                >
+                  <option value="linear">Linear</option>
+                  <option value="log">Log</option>
+                </Select>
+              </div>
+            )}
+
             <div className="flex items-center gap-1.5 text-[12px] text-on-surface-variant">
               <span>Show</span>
               <Select
@@ -536,7 +567,10 @@ const Dashboard: React.FC = () => {
                 <Th>
                   <span className="flex items-center gap-1.5">
                     Activity
-                    <span className="font-normal text-outline normal-case">{activityWindow.label.toLowerCase()}</span>
+                    <span className="font-normal text-outline normal-case">
+                      {activityWindow.label.toLowerCase()}
+                      {describeScale(activityScale) && ` · ${describeScale(activityScale)}`}
+                    </span>
                   </span>
                 </Th>
               )}
@@ -558,7 +592,12 @@ const Dashboard: React.FC = () => {
                 </Td>
                 {activityWindow && (
                   <Td className="py-1.5">
-                    <Sparkline topic={topic} activity={activity?.topics[topic]} loading={activityLoading} />
+                    <Sparkline
+                      topic={topic}
+                      activity={activity?.topics[topic]}
+                      loading={activityLoading}
+                      scale={activityScale}
+                    />
                   </Td>
                 )}
                 <Td className="text-right">

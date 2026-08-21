@@ -43,7 +43,15 @@ function windowOf(id: string, label: string, windowMs: number, buckets: number):
 export const ACTIVITY_WINDOWS: ActivityWindow[] = [
   windowOf('1h', 'Last hour', HOUR, 12),
   windowOf('24h', 'Last 24 h', 24 * HOUR, 24),
-  windowOf('7d', 'Last 7 days', 7 * 24 * HOUR, 28),
+  /*
+   * Sept jours en 56 points, soit un bucket de 3 h — et non 28 points de 6 h, qui était le
+   * découpage d'origine. Sur une semaine, la question posée est presque toujours « est-ce que la
+   * forme se répète ? », et une journée réduite à quatre points ne montre aucun cycle : la nuit et
+   * la matinée tombent dans le même. Huit points par jour en montrent un. Le serveur borne à 60,
+   * et le coût est le sien : 57 frontières par partition au lieu de 29, toutes émises en
+   * parallèle et comptées dans `explorer.activity-max-lookups`.
+   */
+  windowOf('7d', 'Last 7 days', 7 * 24 * HOUR, 56),
 ];
 
 /** « Off » est une valeur du même sélecteur : la colonne coûte des allers-retours au broker. */
@@ -81,6 +89,42 @@ export function writeActivityChoice(choice: ActivityChoice): void {
   }
 }
 
+/**
+ * L'échelle verticale de la courbe.
+ *
+ * `log` existe pour une forme précise et fréquente : une salve cent fois supérieure au régime
+ * ordinaire écrase tout le reste sur la ligne de base, et la courbe ne dit plus qu'une chose, le
+ * pic — alors que ce qui se passe le reste du temps est justement ce qu'on cherche à lire. Ça
+ * reste une **option** et pas le défaut, parce que changer l'échelle change ce que l'image
+ * affirme : en log, deux hauteurs ne sont plus dans le rapport de leurs valeurs. C'est aussi
+ * pourquoi l'en-tête de colonne le dit quand elle est active — une échelle non déclarée est
+ * précisément ce qui rend un graphique trompeur.
+ */
+export type ActivityScale = 'linear' | 'log';
+
+const SCALE_KEY = 'kse:dashboard-activity-scale';
+
+export function readActivityScale(): ActivityScale {
+  try {
+    return localStorage.getItem(SCALE_KEY) === 'log' ? 'log' : 'linear';
+  } catch {
+    return 'linear';
+  }
+}
+
+export function writeActivityScale(scale: ActivityScale): void {
+  try {
+    localStorage.setItem(SCALE_KEY, scale);
+  } catch {
+    /* l'écriture est un confort, jamais une condition */
+  }
+}
+
+/** Ce que l'en-tête ajoute quand l'échelle n'est pas celle qu'on suppose. */
+export function describeScale(scale: ActivityScale): string {
+  return scale === 'log' ? 'log scale' : '';
+}
+
 /** Géométrie d'une sparkline, en coordonnées du `viewBox`. */
 export interface SparklineShape {
   /** `d` de la courbe. */
@@ -105,7 +149,9 @@ const round = (n: number) => Math.round(n * 100) / 100;
  * Le prix, c'est que deux courbes ne se comparent pas en hauteur — d'où la pointe dans l'infobulle
  * et dans le nom accessible, où elle est chiffrée.
  */
-export function sparkline(counts: number[], width: number, height: number, padding = 1): SparklineShape {
+export function sparkline(
+  counts: number[], width: number, height: number, padding = 1, scale: ActivityScale = 'linear',
+): SparklineShape {
   const usableW = Math.max(1, width - padding * 2);
   const usableH = Math.max(1, height - padding * 2);
   const values = counts.length > 0 ? counts : [0];
@@ -120,11 +166,18 @@ export function sparkline(counts: number[], width: number, height: number, paddi
 
   const step = values.length > 1 ? usableW / (values.length - 1) : 0;
   const baseline = padding + usableH;
+  /*
+   * `log1p` plutôt que `log` : elle vaut 0 en 0, donc un bucket vide reste exactement sur la ligne
+   * de base au lieu de partir à l'infini ou de demander un décalage arbitraire — et le pic reste
+   * le haut de la boîte dans les deux échelles.
+   */
+  const project = scale === 'log' ? (v: number) => Math.log1p(v) : (v: number) => v;
+  const top = project(peak);
   const points = values.map((value, i) => ({
     x: round(padding + i * step),
     // Une série entièrement nulle se dessine sur la ligne de base : plate, et pas au milieu de la
     // boîte, où elle se lirait comme une valeur moyenne.
-    y: round(peak === 0 ? baseline : baseline - (value / peak) * usableH),
+    y: round(top === 0 ? baseline : baseline - (project(value) / top) * usableH),
   }));
 
   const line = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x} ${p.y}`).join(' ');

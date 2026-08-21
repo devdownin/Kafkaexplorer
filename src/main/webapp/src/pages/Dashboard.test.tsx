@@ -244,6 +244,21 @@ describe('Dashboard activity column', () => {
     expect(localStorage.getItem('kse:dashboard-activity')).toBe('off');
   });
 
+  it('changes the scale without asking the server again, and says the scale changed', async () => {
+    const user = userEvent.setup();
+    stubApi();
+    renderPage();
+
+    await waitFor(() => expect(activityRequests()).toHaveLength(1));
+    await user.selectOptions(screen.getByLabelText('Scale'), 'log');
+
+    // L'échelle est un choix de lecture : elle ne change rien de ce qui est demandé…
+    await waitFor(() => expect(screen.getByRole('columnheader', { name: /log scale/ })).toBeInTheDocument());
+    expect(activityRequests()).toHaveLength(1);
+    // …et une échelle non déclarée est ce qui rend un graphe trompeur, donc l'en-tête la nomme.
+    expect(localStorage.getItem('kse:dashboard-activity-scale')).toBe('log');
+  });
+
   it('re-reads on a window change rather than relabelling the previous series', async () => {
     const user = userEvent.setup();
     stubApi();
