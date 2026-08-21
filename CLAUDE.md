@@ -508,7 +508,10 @@ because a count is what hides that "genuinely varied" is usually one control rep
 switch hand-written four times at 36 × 20 (now `components/ui/Switch`), the SQL editor's Preview
 DDL button at 14 × 24 twenty-eight times over, the Dashboard's per-row Explore link at 19 × 19, and
 `HelpTip` at 15 × 15. Measured: `dashboard` 32 → 5, `sql-editor` 67 → 39, and `TARGET_BUDGET`
-lowered to match, so it cannot drift back. What is left is *text* in dense rows — sidebar topic
+lowered to match, so it cannot drift back — which it promptly proved by refusing the change that
+made the Topic Explorer's table the default view, whose sortable headers (five at 17 px, the
+partition one at 7 × 17) took that page 7 → 8. Fixed rather than budgeted, since a header is one
+row and not every record; the page now measures 3. What is left is *text* in dense rows — sidebar topic
 names, table links, sort headers — where 24 px means raising the row pitch of every dense view,
 which is an information-density decision rather than an accessibility fix; that is recorded as a
 decision, not as a claim of compliance. The measurements and the options are kept

@@ -76,7 +76,7 @@ const PAGES = [
 const TARGET_BUDGET = {
   'dashboard': 5,
   'sql-editor': 39,
-  'topic-explorer': 7,
+  'topic-explorer': 3,
   'stream-flow': 19,
   'data-model': 7,
   'audit': 23,
