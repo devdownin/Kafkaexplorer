@@ -644,12 +644,27 @@ describe('history', () => {
 describe('view mode', () => {
   beforeEach(() => localStorage.clear());
 
-  it('defaults to cards and remembers a choice', () => {
+  /*
+   * On arrive ici depuis le tableau de bord, donc sans avoir rien choisi, pour regarder ce qu'il
+   * y a dans un topic — question à laquelle un tableau répond d'un coup d'œil.
+   */
+  it('defaults to the table, and remembers either choice', () => {
+    expect(readViewMode()).toBe('table');
+    writeViewMode('cards');
     expect(readViewMode()).toBe('cards');
     writeViewMode('table');
     expect(readViewMode()).toBe('table');
+  });
+
+  /*
+   * Une valeur illisible retombe sur le défaut, pas sur l'autre vue : c'est la même règle que
+   * `readActivityChoice`, et elle est ce qui distingue « changer un défaut » de « ignorer un
+   * choix » — bâtie sur `=== 'table'`, la lecture aurait rendu le tableau à qui a choisi les
+   * cartes.
+   */
+  it('falls back to the default on an unreadable value', () => {
     localStorage.setItem(VIEW_KEY, 'nonsense');
-    expect(readViewMode()).toBe('cards');
+    expect(readViewMode()).toBe('table');
   });
 
   it('flattens a payload onto one line', () => {

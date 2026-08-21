@@ -7,8 +7,12 @@ import jakarta.annotation.PostConstruct;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 
 @Configuration
 @ConfigurationProperties(prefix = "explorer")
@@ -25,6 +29,81 @@ public class ExplorerConfig {
     @PostConstruct
     void applyConsumerGroupPrefix() {
         ExplorerConsumerGroups.usePrefix(consumerGroupPrefix);
+        resolvedInternalPrefix = resolveInternalTopicPrefix(internalTopicPrefix);
+    }
+
+    private static final Logger log = LoggerFactory.getLogger(ExplorerConfig.class);
+
+    /** Ce qu'un nom de topic Kafka accepte. Un prefixe hors de ca ne peut pas etre cree. */
+    private static final Pattern TOPIC_CHARS = Pattern.compile("[a-zA-Z0-9._-]+");
+
+    /**
+     * Prefix for the topics this application writes to the user's cluster for its own state —
+     * the audit history, the metric configurations and the validated field mappings.
+     *
+     * <p>Empty by default, and an empty value changes nothing: the topics keep the
+     * {@code internal.*} names they have always had. It exists for the deployment that shares a
+     * cluster with other tenants, or whose naming convention reserves a namespace per
+     * application — the same need {@code explorer.consumer-group-prefix} answers for the groups
+     * this application creates, and it follows the same three rules.
+     *
+     * <p>It renames <em>only</em> what this application writes for itself. It is not applied to a
+     * topic of the user's own pipelines, and it is not applied to the {@code flink_table_*} group
+     * id of generated DDL.
+     *
+     * <p>A value Kafka could not accept as part of a topic name is refused with a WARN naming the
+     * property, and the run continues unprefixed — a prefix that cannot be created is not a
+     * stricter policy, it is three stores that fail to write with nothing saying why. A value
+     * with no trailing separator gets one, since {@code acme} would otherwise yield
+     * {@code acmeinternal.audit.history}.
+     *
+     * <p>And it is <em>not</em> retroactive: changing it points the application at different
+     * topics, it does not move what the previous setting wrote. That is the one place it differs
+     * from the consumer-group prefix, which keeps recognising its default so a rename does not
+     * orphan what came before — a topic cannot be recognised, only read or not read. An operator
+     * who sets this on a live deployment starts a fresh audit history; the note is in
+     * {@code application.yml} beside the property.
+     */
+    private String internalTopicPrefix = "";
+
+    /** The prefix as it is actually applied: validated, separator-terminated, never null. */
+    private String resolvedInternalPrefix = "";
+
+    /**
+     * Validates the configured prefix and gives it a trailing separator. Package-private so
+     * {@code ExplorerConfigTest} can drive it without a context.
+     */
+    static String resolveInternalTopicPrefix(String configured) {
+        String trimmed = configured == null ? "" : configured.trim();
+        if (trimmed.isEmpty()) {
+            return "";
+        }
+        if (!TOPIC_CHARS.matcher(trimmed).matches()) {
+            log.warn("explorer.internal-topic-prefix=\"{}\" is not usable in a Kafka topic name "
+                + "(allowed: letters, digits, dot, dash, underscore) — the internal topics keep "
+                + "their unprefixed names.", trimmed);
+            return "";
+        }
+        char last = trimmed.charAt(trimmed.length() - 1);
+        return last == '.' || last == '-' || last == '_' ? trimmed : trimmed + ".";
+    }
+
+    /** The name this application actually reads and writes for one of its own stores. */
+    private String internalTopic(String name) {
+        return resolvedInternalPrefix.isEmpty() ? name : resolvedInternalPrefix + name;
+    }
+
+    /**
+     * Whether a topic name is one this application writes for itself.
+     *
+     * <p>The marker is {@code <prefix>internal.}, so with no prefix this is exactly the
+     * {@code startsWith("internal.")} test that was written literally at the one call site that
+     * needed it, and with a prefix it follows. It stays a prefix test rather than an exact match
+     * against the three configured names, because the demo stack's own marker topic
+     * ({@code internal.demo.seeded}) was covered by the literal and should stay covered.
+     */
+    public boolean isInternalTopic(String name) {
+        return name != null && name.startsWith(resolvedInternalPrefix + "internal.");
     }
 
     /**
@@ -304,8 +383,17 @@ public class ExplorerConfig {
         this.clusterName = clusterName;
     }
 
+    public String getInternalTopicPrefix() {
+        return internalTopicPrefix;
+    }
+
+    public void setInternalTopicPrefix(String internalTopicPrefix) {
+        this.internalTopicPrefix = internalTopicPrefix;
+        this.resolvedInternalPrefix = resolveInternalTopicPrefix(internalTopicPrefix);
+    }
+
     public String getAuditHistoryTopic() {
-        return auditHistoryTopic;
+        return internalTopic(auditHistoryTopic);
     }
 
     public void setAuditHistoryTopic(String auditHistoryTopic) {
@@ -321,7 +409,7 @@ public class ExplorerConfig {
     }
 
     public String getMetricsConfigTopic() {
-        return metricsConfigTopic;
+        return internalTopic(metricsConfigTopic);
     }
 
     public void setMetricsConfigTopic(String metricsConfigTopic) {
@@ -329,7 +417,7 @@ public class ExplorerConfig {
     }
 
     public String getFieldMappingTopic() {
-        return fieldMappingTopic;
+        return internalTopic(fieldMappingTopic);
     }
 
     public void setFieldMappingTopic(String fieldMappingTopic) {

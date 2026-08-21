@@ -1124,12 +1124,25 @@ export type MessageView = 'cards' | 'table';
  * Une recherche peut ramener cent hits, et « continuer » les empile : cent cartes rendant chacune
  * un arbre JSON récursif saturent le rendu, et surtout se parcourent mal. La vue tableau donne une
  * ligne par record — coordonnées et aperçu — et le détail à la sélection.
+ *
+ * **C'est elle le défaut**, et le défaut est ce qui compte ici : on arrive sur cette page depuis le
+ * tableau de bord, c'est-à-dire sans avoir rien choisi, pour regarder ce qu'il y a dans un topic.
+ * La question posée à ce moment-là est « qu'est-ce qui passe ici », à laquelle un tableau répond
+ * d'un coup d'œil — coordonnées, clé, aperçu, une ligne par record — là où les cartes déroulent un
+ * arbre JSON par message et n'en montrent que trois par écran. Les cartes restent le bon outil
+ * pour lire *un* payload en entier, ce qui est la question d'après, et la sélection d'une ligne y
+ * répond déjà.
+ *
+ * La préférence l'emporte toujours, dans les deux sens : `cards` stocké rend les cartes. C'est
+ * pourquoi la comparaison porte sur `'cards'` et non sur `'table'` — bâtie sur `=== 'table'`, elle
+ * aurait rendu le tableau à quiconque a explicitement choisi les cartes, ce qui n'est pas changer
+ * un défaut mais ignorer un choix.
  */
 export function readViewMode(): MessageView {
   try {
-    return localStorage.getItem(VIEW_KEY) === 'table' ? 'table' : 'cards';
+    return localStorage.getItem(VIEW_KEY) === 'cards' ? 'cards' : 'table';
   } catch {
-    return 'cards';
+    return 'table';
   }
 }
 

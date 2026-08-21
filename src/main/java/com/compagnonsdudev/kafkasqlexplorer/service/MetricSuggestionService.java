@@ -261,7 +261,9 @@ public class MetricSuggestionService {
 
         nullSafe(report.topicAudits()).stream()
             .filter(topic -> topic.messageCount() > 0)
-            .filter(topic -> !topic.name().startsWith("internal."))
+            // Les topics que l'application s'écrit à elle-même, quel que soit leur préfixe :
+            // le littéral « internal. » cessait d'être le marqueur dès qu'on en configurait un.
+            .filter(topic -> !explorerConfig.isInternalTopic(topic.name()))
             .sorted(Comparator.comparingLong(TopicAudit::messageCount).reversed())
             .limit(MAX_VOLUME_SUGGESTIONS)
             .forEach(topic -> volumeKpi(topic, run).ifPresent(suggestions::add));
