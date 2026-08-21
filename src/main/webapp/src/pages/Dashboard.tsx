@@ -10,6 +10,7 @@ import {
   PageHeader, Stat, Card, Badge, Button, EmptyState,
   Table, TableHead, TableBody, TableRow, Th, Td,
   Input, Select, useConfirm, StatGridSkeleton, TableSkeleton, type BadgeTone,
+  Switch,
 } from '../components/ui';
 import Sparkline from '../components/dashboard/Sparkline';
 import type { TopicActivityResponse } from '../api/types';
@@ -579,15 +580,11 @@ const Dashboard: React.FC = () => {
                   <span className="text-[11px] font-medium text-on-surface-variant group-hover:text-on-surface transition-colors whitespace-nowrap">
                     {sw.label}
                   </span>
-                  <button
-                    role="switch"
-                    aria-checked={sw.value}
+                  <Switch
+                    checked={sw.value}
                     aria-label={sw.label}
-                    onClick={() => { sw.set(!sw.value); setPage(0); }}
-                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${sw.value ? 'bg-primary' : 'bg-surface-container-highest'}`}
-                  >
-                    <span className={`inline-block h-3.5 w-3.5 transform rounded-full transition-transform ${sw.value ? 'translate-x-[18px] bg-on-primary' : 'translate-x-1 bg-on-surface-variant'}`} />
-                  </button>
+                    onChange={value => { sw.set(value); setPage(0); }}
+                  />
                 </label>
               ))}
             </div>
@@ -703,7 +700,10 @@ const Dashboard: React.FC = () => {
                   </Td>
                 )}
                 <Td className="text-right">
-                  <Link to={`/topic/${topic}`} className="inline-flex text-on-surface-variant hover:text-primary transition-colors" title="Explore topic" aria-label={`Explore ${topic}`}>
+                  {/* 24 x 24 : le lien ne porte qu'une icône, il se rendait à 19 x 19, et il y en a un par
+                      ligne — vingt-cinq sur une page par défaut, soit le plus gros groupe de cibles
+                      sous le plancher de WCAG 2.5.8 de cet écran. La cible grandit, pas le glyphe. */}
+                  <Link to={`/topic/${topic}`} className="inline-flex items-center justify-center min-w-6 min-h-6 rounded text-on-surface-variant hover:text-primary transition-colors" title="Explore topic" aria-label={`Explore ${topic}`}>
                     <span className="material-symbols-outlined text-[19px]">visibility</span>
                   </Link>
                 </Td>

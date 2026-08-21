@@ -1047,7 +1047,7 @@ const DataModel: React.FC = () => {
             {isDesktop ? (
               <button onClick={togglePanel} aria-expanded={true}
                 aria-label="Hide the topic selector" title="Hide the topic selector — the graph takes the room"
-                className="text-on-surface-variant hover:text-on-surface transition-colors">
+                className="min-w-6 min-h-6 inline-flex items-center justify-center rounded text-on-surface-variant hover:text-on-surface transition-colors">
                 <span aria-hidden="true" className="material-symbols-outlined text-lg">chevron_left</span>
               </button>
             ) : (

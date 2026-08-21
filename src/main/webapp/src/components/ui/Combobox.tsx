@@ -173,7 +173,7 @@ export const Combobox: FC<ComboboxProps> = ({
           aria-label={expanded ? 'Hide suggestions' : 'Show all suggestions'}
           title={expanded ? 'Hide suggestions' : 'Show all suggestions'}
           onClick={() => { if (expanded) { setOpen(false); setBrowseAll(false); } else openAll(); }}
-          className="absolute right-2 top-1/2 -translate-y-1/2 text-outline hover:text-on-surface"
+          className="absolute right-2 top-1/2 -translate-y-1/2 min-w-6 min-h-6 inline-flex items-center justify-center rounded text-outline hover:text-on-surface"
         >
           <span className="material-symbols-outlined text-[18px]">
             {expanded ? 'expand_less' : 'expand_more'}

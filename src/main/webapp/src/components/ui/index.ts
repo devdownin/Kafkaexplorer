@@ -27,6 +27,8 @@ export { Field, Input, Select, Textarea } from './Field';
 export type { FieldProps, InputProps, SelectProps, TextareaProps } from './Field';
 export { Checkbox } from './Checkbox';
 export type { CheckboxProps } from './Checkbox';
+export { Switch } from './Switch';
+export type { SwitchProps } from './Switch';
 export { Combobox } from './Combobox';
 export type { ComboboxProps } from './Combobox';
 export { TopicInput } from './TopicInput';

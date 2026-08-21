@@ -17,8 +17,9 @@ on the answer.
 > **The product question is answered: the application is not intended for phones.** That is the
 > *Nobody opens this application on a phone at all* branch of
 > [What would change the recommendation](#what-would-change-the-recommendation), so **W1, W3, W4
-> and W8 are closed** and **W5 is the only item still open** — it was never a mobile item, merely
-> one that mobile exposed. The measurements, the options and the reasoning are kept below rather
+> and W8 are closed**. **W5 shipped too** — it was never a mobile item, merely one that mobile
+> exposed, and WCAG 2.5.8 binds on a desktop-only product exactly as it did before. **Every item
+> is therefore settled.** The measurements, the options and the reasoning are kept below rather
 > than deleted, because that is the whole point of recording the answer: the next person to open
 > a 390 px window on `/query` will find what was measured and what was decided, instead of
 > re-deriving all of it.
@@ -141,10 +142,12 @@ Interactive elements below the 24 × 24 CSS px of WCAG 2.5.8 (Target Size, Minim
 
 | page | ratio | page | ratio |
 |---|---|---|---|
-| sql-editor | 67 / 113 | audit | 24 / 54 |
-| dashboard | 32 / 60 | stream-flow | 20 / 56 |
-| topic-explorer | 11 / 64 | metrics | 8 / 53 |
-| cluster | 1 / 20 | data-model | 5 / 76 |
+| sql-editor | 39 / 113 | audit | 23 / 55 |
+| stream-flow | 19 / 44 | metrics | 8 / 54 |
+| topic-explorer | 7 / 66 | dashboard | 5 / 89 |
+| data-model | 7 / 81 | cluster | 1 / 21 |
+
+(The worse of phone and desktop for each page, which is what `--check` gates on.)
 
 **These counts barely move between 390 and 1440** — the elements do not change size with the
 viewport, only their number does, as a narrow layout adds a drawer trigger or drops a control. So
@@ -161,12 +164,41 @@ control, and `components/ui/Checkbox` now renders a real 24 × 24 target across 
 that carry checkboxes. Measured effect, same probe: `data-model` **42 → 9** at 390, `audit`
 **30 → 24**, `topic-explorer` **14 → 11**. The table above is the post-fix reading.
 
-What is left is genuinely varied — icon-only controls, inline links, small SVG affordances — which
-is the triage W5 was always about, on a much smaller pile.
+**The second pass found the same shape again, and `--detail` is what made it visible.** The probe
+now prints the undersized targets *grouped by control*, because a count is exactly what hides this:
+"genuinely varied" turned out to be four shared controls and a long tail.
 
-The count includes inline links and icon-only controls; some are legitimately small by the
-standard's own exceptions (inline text links). Triage is part of W5, not a reason to discount the
-number.
+- **The toggle switch, hand-written four times** at 36 × 20, four pixels short: Dashboard, Stream
+  Flow, Compare, Lineage. The four copies had already drifted apart in their tokens — a different
+  thumb size and a different track colour in Lineage — which is the ordinary trajectory of copied
+  markup, and three of them omitted `type="button"`. `components/ui/Switch` is now the one
+  definition. Its padding lifts the target to 24 px while the track stays 20: a switch is an
+  ordinary `<button>`, so padding really does enlarge what the probe measures and the finger hits,
+  where `Checkbox` had to grow for real because a replaced control does not honour it.
+- **The SQL editor's "Preview DDL" button at 14 × 24, twenty-eight times on one screen** — sitting
+  beside a constant, `ICON_BUTTON`, whose own comment warns against leaving two neighbouring
+  targets at different sizes, and which it did not use because the Tailwind group name is baked
+  into the class. Split into a shared hit area with a per-group reveal.
+- **The Dashboard's "Explore" link at 19 × 19, once per row** — twenty-five on a default page, the
+  largest single group left anywhere, and undersized in both dimensions rather than only in height.
+- **`HelpTip` at 15 × 15**, shared by every screen that explains a control, and three
+  panel-collapse buttons at 18 × 24.
+
+Measured effect, same probe, worse of phone and desktop: `dashboard` **32 → 5**, `sql-editor`
+**67 → 39**, `topic-explorer` **11 → 7**, `stream-flow` **20 → 19**, `data-model` **9 → 7**,
+`audit` **24 → 23**. `TARGET_BUDGET` is lowered to the new readings, as its own comment prescribes.
+
+**What is deliberately left, and why.** Almost everything remaining is a *text* control whose width
+is ample and whose height is 16–20 px because it is a line of text in a dense list: the sidebar's
+topic and table names (28 + 5 on the SQL editor), the Audit table's topic links, the Topic
+Explorer's field-name buttons inside a rendered JSON document, the table sort headers, the
+`Link` / `Format` toolbar buttons. Raising those to 24 px means raising the row pitch of every
+dense data view in the application — a decision about information density, not an accessibility
+fix, and a regression for the operator scanning three hundred topics. WCAG 2.5.8's *inline*
+exception covers some of them honestly (a field name inside a rendered JSON document) and does not
+stretch to a table row, so this is recorded as a **decision and not as a claim of compliance**: the
+remaining count is real, it is bounded by `TARGET_BUDGET` so it cannot drift upward, and reopening
+it means settling row density first.
 
 ## The product question
 
@@ -223,7 +255,7 @@ Sized in ideal days, each independently shippable and useful on its own.
 | W2 | The `md` regression: keep the nav a drawer until `lg`, or let `/query` opt out of the in-flow rail | 0.5 | shell change — check the other six pages | **done** |
 | W3 | Stack instead of split under `lg`: Editor / Results as two panes you switch between | 2 | W1 | **closed** — Option A, and there is nobody to serve on that surface |
 | W4 | Monaco under a real thumb: measure on a device, write down the answer | 1 | — | **closed** — a thumb is exactly what this application is not for |
-| W5 | Tap targets to 24 × 24, app-wide, with triage | 2 | — | **the big one done, and the only item still open** — `components/ui/Checkbox` at 24 × 24 across six screens; the varied remainder stands, and it survives the decision because WCAG 2.5.8 is not a phone rule |
+| W5 | Tap targets to 24 × 24, app-wide, with triage | 2 | — | **done** — `Checkbox`, then `Switch` and the icon-only controls; what remains is text in dense rows, left by a recorded decision rather than by omission |
 | W6 | Thresholds in `layout-probe.mjs` + a CI job, so this cannot silently regress | 0.5 | — | **done** — `--check` gates overflow and target budgets in `ci.yml` |
 | W7 | Identify the clipped containers; confirm none hides unreachable content | 0.5 | — | **done — and the answer was no** |
 | W8 | The unreachable containers W7 left: the SQL editor's toolbar strip under `lg`, and whatever `--detail` still names once the pages are given time to settle | 1 | W1, W6 | **closed** — depended on W1; the probe keeps measuring it, so a real case would resurface |

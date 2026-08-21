@@ -500,8 +500,17 @@ layout — with measurements taken by `docs/screenshots/layout-probe.mjs`, the p
 work depends on, and sized work items for each answer. **The product question is answered — the
 application is not intended for phones** — which is the branch the document itself scoped: W0, W2,
 W6 and W7 shipped (Option C plus the items that are right under every answer), **W1, W3, W4 and W8
-are closed for want of a user, and W5 is the only item still open**, since tap targets under
-24 × 24 are a WCAG 2.5.8 item that mobile merely exposed. The measurements and the options are kept
+are closed for want of a user, and W5 shipped** — tap targets under 24 × 24 are a WCAG 2.5.8 item
+that mobile merely exposed, so it binds on a desktop-only product exactly as before. It went the
+way `Checkbox` did: `layout-probe.mjs --detail` now groups undersized targets **by control**,
+because a count is what hides that "genuinely varied" is usually one control repeated — a toggle
+switch hand-written four times at 36 × 20 (now `components/ui/Switch`), the SQL editor's Preview
+DDL button at 14 × 24 twenty-eight times over, the Dashboard's per-row Explore link at 19 × 19, and
+`HelpTip` at 15 × 15. Measured: `dashboard` 32 → 5, `sql-editor` 67 → 39, and `TARGET_BUDGET`
+lowered to match, so it cannot drift back. What is left is *text* in dense rows — sidebar topic
+names, table links, sort headers — where 24 px means raising the row pitch of every dense view,
+which is an information-density decision rather than an accessibility fix; that is recorded as a
+decision, not as a claim of compliance. The measurements and the options are kept
 in the document rather than deleted: the answer is recorded so the next person to open a 390 px
 window on `/query` finds what was decided instead of re-deriving it, and W1 is named there as the
 item to reopen if a narrow *desktop* window — `lg` is 1024 px, so half a 1440p screen falls under it

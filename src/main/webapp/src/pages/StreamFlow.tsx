@@ -7,6 +7,7 @@ import axios from 'axios';
 import {
   Badge, Button, EmptyState, Field, Input, NumberInput, Select, TopicInput, Tooltip,
   Table, TableBody, TableHead, TableRow, Td, Th,
+  Switch,
 } from '../components/ui';
 import { useToast } from '../components/Toast';
 import { useCatalog } from '../catalogStore';
@@ -45,14 +46,7 @@ const Toggle: React.FC<{
   onChange: (v: boolean) => void;
 }> = ({ label, hint, checked, disabled = false, onChange }) => {
   const control = (
-    <button
-      type="button"
-      role="switch" aria-checked={checked} aria-label={label} disabled={disabled}
-      onClick={() => onChange(!checked)}
-      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:cursor-not-allowed ${checked ? 'bg-primary' : 'bg-surface-container-highest'}`}
-    >
-      <span className={`inline-block h-3.5 w-3.5 transform rounded-full transition-transform ${checked ? 'translate-x-[18px] bg-on-primary' : 'translate-x-1 bg-on-surface-variant'}`} />
-    </button>
+    <Switch checked={checked} aria-label={label} disabled={disabled} onChange={onChange} />
   );
   return (
     <div className={`flex items-center justify-between gap-2 ${disabled ? 'opacity-50' : ''}`}>
@@ -707,7 +701,7 @@ const StreamFlow: React.FC = () => {
                 aria-expanded
                 aria-controls="sf-criteria"
                 aria-label="Hide the trace criteria"
-                className="text-on-surface-variant hover:text-on-surface"
+                className="min-w-6 min-h-6 inline-flex items-center justify-center rounded text-on-surface-variant hover:text-on-surface"
                 title="Hide the criteria and widen the graph"
               >
                 <span aria-hidden="true" className="material-symbols-outlined text-[18px]">chevron_left</span>

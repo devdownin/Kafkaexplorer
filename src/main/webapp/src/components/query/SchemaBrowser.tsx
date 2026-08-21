@@ -29,9 +29,19 @@ export type SchemaInfo = QueryInitResponse;
  * Les deux boutons de la ligne le portent, pas seulement le nouveau : ils forment une paire, et
  * n'en corriger qu'un laisserait deux cibles voisines de tailles différentes.
  */
-const ICON_BUTTON = 'opacity-0 group-hover/tbl:opacity-100 focus-visible:opacity-100 '
-  + 'text-outline transition-all shrink-0 ml-1 min-w-6 min-h-6 inline-flex items-center '
-  + 'justify-center rounded';
+const ICON_HIT = 'focus-visible:opacity-100 text-outline transition-all shrink-0 ml-1 '
+  + 'min-w-6 min-h-6 inline-flex items-center justify-center rounded';
+/** Les actions d'une ligne de table, révélées au survol de `group/tbl`. */
+const ICON_BUTTON = `opacity-0 group-hover/tbl:opacity-100 ${ICON_HIT}`;
+/*
+ * La même cible pour une ligne de topic. Le nom du groupe Tailwind fait partie de la classe, donc
+ * une seule constante ne pouvait pas servir les deux : le bouton « Preview DDL » avait sa propre
+ * chaîne écrite à la main, sans `min-w-6 min-h-6`, et se rendait à **14 x 24** — vingt-huit fois
+ * sur cet écran. C'est précisément ce que le commentaire ci-dessus annonçait comme à éviter, deux
+ * cibles voisines de tailles différentes, et il le disait au-dessus de la constante que le voisin
+ * n'utilisait pas.
+ */
+const TOPIC_ICON_BUTTON = `opacity-0 group-hover/topic:opacity-100 ${ICON_HIT}`;
 
 export interface SchemaBrowserProps {
   schema: SchemaInfo | null;
@@ -240,7 +250,8 @@ export const SchemaBrowser = React.forwardRef<HTMLElement, SchemaBrowserProps>(f
                       <span className="text-xs text-on-surface-variant hover:text-primary font-mono truncate block">{topic}</span>
                     </button>
                     <button type="button" onClick={e => { e.stopPropagation(); onPreviewDdl(topic); }}
-                      className="opacity-0 group-hover/topic:opacity-100 focus-visible:opacity-100 text-outline hover:text-primary transition-all shrink-0 ml-1" title="Preview DDL" aria-label={`Preview the generated DDL for ${topic}`}>
+                      className={cn(TOPIC_ICON_BUTTON, 'hover:text-primary')}
+                      title="Preview DDL" aria-label={`Preview the generated DDL for ${topic}`}>
                       <span className="material-symbols-outlined text-sm">code</span>
                     </button>
                   </div>
