@@ -10,18 +10,17 @@ import com.jayway.jsonpath.Option;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonToken;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicSearchRequest;
+import com.compagnonsdudev.kafkasqlexplorer.parser.SecureXml;
 
 import org.w3c.dom.Document;
 import org.w3c.dom.NodeList;
 
 import javax.xml.parsers.DocumentBuilder;
-import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.stream.XMLInputFactory;
 import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamReader;
 import javax.xml.xpath.XPathConstants;
 import javax.xml.xpath.XPathExpression;
-import javax.xml.xpath.XPathFactory;
 import java.io.ByteArrayInputStream;
 import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
@@ -93,7 +92,7 @@ public final class MessageMatcher {
     private final XPathExpression xpath;
     private final JsonPath jsonPath;
     private final JsonFactory jsonFactory = new JsonFactory();
-    private final XMLInputFactory xmlInputFactory = secureXmlInputFactory();
+    private final XMLInputFactory xmlInputFactory = SecureXml.inputFactory();
     private DocumentBuilder documentBuilder;
 
     private MessageMatcher(String mode, String operator, boolean caseSensitive, boolean searchKey,
@@ -374,15 +373,11 @@ public final class MessageMatcher {
     }
 
     private DocumentBuilder documentBuilder() throws Exception {
+        // Not SecureXml.documentBuilder(): a matcher is built once per scanning thread and owns
+        // its parser for that thread's lifetime, so the builder is cached here rather than fetched
+        // from a ThreadLocal on every record. The hardening is the shared one either way.
         if (documentBuilder == null) {
-            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
-            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
-            factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
-            factory.setXIncludeAware(false);
-            factory.setExpandEntityReferences(false);
-            documentBuilder = factory.newDocumentBuilder();
+            documentBuilder = SecureXml.documentBuilderFactory().newDocumentBuilder();
         } else {
             documentBuilder.reset();
         }
@@ -497,7 +492,7 @@ public final class MessageMatcher {
 
     private static XPathExpression compileXPath(String expression) {
         try {
-            return XPathFactory.newInstance().newXPath().compile(expression);
+            return SecureXml.xpath().compile(expression);
         } catch (Exception e) {
             throw new IllegalArgumentException("Invalid XPath \"" + expression + "\": " + e.getMessage());
         }
@@ -602,12 +597,4 @@ public final class MessageMatcher {
         }
     }
 
-    private static XMLInputFactory secureXmlInputFactory() {
-        XMLInputFactory factory = XMLInputFactory.newInstance();
-        factory.setProperty(XMLInputFactory.SUPPORT_DTD, Boolean.FALSE);
-        factory.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, Boolean.FALSE);
-        factory.setProperty(XMLInputFactory.IS_COALESCING, Boolean.TRUE);
-        factory.setProperty(XMLInputFactory.IS_NAMESPACE_AWARE, Boolean.FALSE);
-        return factory;
-    }
 }

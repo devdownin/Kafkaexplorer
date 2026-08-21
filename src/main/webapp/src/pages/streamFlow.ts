@@ -492,7 +492,22 @@ export function isTopicPattern(text: string): boolean {
  * même texte.
  */
 export function matchesTopicPattern(topic: string, pattern: string): boolean {
-  return patternToRegExp(pattern).test(topic);
+  return topicPatternMatcher(pattern)(topic);
+}
+
+/**
+ * Le même test, mais **compilé une fois** pour être appliqué à toute une liste.
+ *
+ * `matchesTopicPattern` compile le motif à chaque appel, ce qui est juste pour une question
+ * isolée et faux dans une boucle : le filtre de la liste à cocher du modèle de données tourne
+ * sur le catalogue entier à chaque frappe, donc un cluster de neuf cents topics compilait neuf
+ * cents fois la même `RegExp` par caractère tapé — un travail dont le nombre de topics est le
+ * seul facteur, pour un motif qui, lui, ne change pas d'un topic à l'autre. Rendre le prédicat
+ * plutôt que le booléen met la compilation là où elle a lieu une fois, et le dit à l'appelant.
+ */
+export function topicPatternMatcher(pattern: string): (topic: string) => boolean {
+  const compiled = patternToRegExp(pattern);
+  return topic => compiled.test(topic);
 }
 
 /** `orders.*` → toutes les correspondances du catalogue. `*` seul est le seul caractère spécial. */
@@ -520,7 +535,7 @@ export function expandTopicPatterns(
       topics.push(entry);
       continue;
     }
-    const matches = known.filter(topic => matchesTopicPattern(topic, entry));
+    const matches = known.filter(topicPatternMatcher(entry));
     if (matches.length === 0) {
       unmatched.push(entry);
     } else {
