@@ -111,6 +111,125 @@ beforeEach(() => {
   localStorage.clear();
 });
 
+/** Ce que la page a demandé pour le tableau lui-même. */
+function dashboardRequests() {
+  return mockedAxios.get.mock.calls.filter(call => call[0] === '/api/dashboard');
+}
+
+/*
+ * Le sondage tournait à 5 s en constante de module : ni réglable, ni extinguible, ni énoncé. Ce
+ * qui n'a de sens qu'ici, c'est que le réglage pilote vraiment la minuterie, que « off » ne laisse
+ * rien tourner, et que la page date ce qu'elle montre — sans quoi « off » afficherait des chiffres
+ * vieux d'une heure sans un mot.
+ */
+describe('Dashboard auto-refresh', () => {
+  it('states when it read and what it will do next', async () => {
+    stubApi();
+    renderPage();
+
+    expect(await screen.findByText(/Updated just now · refreshing every 5 s/)).toBeInTheDocument();
+  });
+
+  it('polls on the chosen cadence, and the choice sticks', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      stubApi();
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      renderPage();
+      await waitFor(() => expect(dashboardRequests()).toHaveLength(1));
+
+      await user.selectOptions(screen.getByLabelText('Auto-refresh'), '1m');
+      expect(localStorage.getItem('kse:dashboard-refresh')).toBe('1m');
+      // L'ancienne minuterie a pu tirer une fois entre le clic et le réarmement de l'effet :
+      // le compte de référence est celui d'après le réarmement, pas celui d'avant le clic.
+      await vi.advanceTimersByTimeAsync(0);
+      const armed = dashboardRequests().length;
+
+      // La cadence d'origine ne doit plus rien déclencher.
+      await vi.advanceTimersByTimeAsync(50_000);
+      expect(dashboardRequests()).toHaveLength(armed);
+
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(dashboardRequests()).toHaveLength(armed + 1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /*
+   * Le sondage et le chargement initial ne vivaient qu'ensemble dans un seul effet : dépendre du
+   * réglage aurait rejoué le chargement — bannière d'erreur comprise — à chaque changement.
+   */
+  it('changing the cadence rearms a timer, it does not ask anything more', async () => {
+    stubApi();
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => expect(dashboardRequests()).toHaveLength(1));
+    // La lecture initiale de la colonne doit avoir eu lieu avant qu'on compte, sinon c'est elle
+    // qu'on prendrait pour la lecture superflue.
+    await waitFor(() => expect(activityRequests().length).toBeGreaterThanOrEqual(1));
+    const activityBefore = activityRequests().length;
+
+    await user.selectOptions(screen.getByLabelText('Auto-refresh'), '30s');
+
+    expect(dashboardRequests()).toHaveLength(1);
+    expect(activityRequests()).toHaveLength(activityBefore);
+  });
+
+  it('off stops the polling — both the table and the activity column', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      stubApi();
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      renderPage();
+      await waitFor(() => expect(dashboardRequests()).toHaveLength(1));
+      await waitFor(() => expect(activityRequests().length).toBeGreaterThanOrEqual(1));
+
+      // Le compte est pris *avant* le clic : choisir « off » ne doit pas déclencher une
+      // dernière lecture juste après qu'on lui a dit d'arrêter — ce que ferait un effet qui
+      // relit à chaque exécution en dépendant du réglage.
+      const dashboardSoFar = dashboardRequests().length;
+      const activitySoFar = activityRequests().length;
+
+      await user.selectOptions(screen.getByLabelText('Auto-refresh'), 'off');
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+
+      expect(dashboardRequests()).toHaveLength(dashboardSoFar);
+      expect(activityRequests()).toHaveLength(activitySoFar);
+      expect(screen.getByText(/auto-refresh off/)).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /*
+   * Ce que « off » demande, c'est de ne pas interroger le broker en boucle derrière l'opérateur,
+   * pas de lui présenter les chiffres d'il y a une heure au moment où il revient les regarder.
+   */
+  it('still reads once when the tab comes back, even with the polling off', async () => {
+    stubApi();
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => expect(dashboardRequests()).toHaveLength(1));
+
+    await user.selectOptions(screen.getByLabelText('Auto-refresh'), 'off');
+    const before = dashboardRequests().length;
+
+    document.dispatchEvent(new Event('visibilitychange'));
+
+    await waitFor(() => expect(dashboardRequests().length).toBe(before + 1));
+  });
+
+  it('reopens on the stored choice rather than the default', async () => {
+    localStorage.setItem('kse:dashboard-refresh', 'off');
+    stubApi();
+    renderPage();
+
+    expect(await screen.findByText(/auto-refresh off/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Auto-refresh')).toHaveValue('off');
+  });
+});
+
 describe('Dashboard activity column', () => {
   it('measures the rows on screen, not the whole cluster', async () => {
     stubApi();
