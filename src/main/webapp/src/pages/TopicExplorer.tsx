@@ -11,6 +11,7 @@ import ErrorBanner from '../components/ErrorBanner';
 import { Button, Badge, Stat, EmptyState, ErrorPanel, StatGridSkeleton, TableSkeleton, Table, useVirtualRows } from '../components/ui';
 import { buildTraceLinkForKey } from './streamFlow';
 import TopicSearchPanel, { FIELD_IDS } from '../components/topic/TopicSearchPanel';
+import TopicActivityPanel from '../components/topic/TopicActivityPanel';
 import TopicConsumersPanel from '../components/topic/TopicConsumersPanel';
 import { describeApiError, type QueryErrorInfo } from './queryError';
 import { toCsv } from './resultExport';
@@ -29,6 +30,8 @@ import {
   readCriteriaDraft,
   seedFromQuery,
   saveCriteriaDraft,
+  switchStart,
+  toDateTimeLocal,
   describeHitInsight,
   effectiveScanBudget,
   emptyCriteria,
@@ -652,7 +655,8 @@ const TopicExplorer: React.FC = () => {
   const [data, setData] = useState<TopicDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [readMode, setReadMode] = useState('earliest-offset');
-  const [activeTab, setActiveTab] = useState<'samples' | 'ddl' | 'schema' | 'partitions' | 'consumers'>('samples');
+  const [activeTab, setActiveTab] = useState<
+    'samples' | 'activity' | 'ddl' | 'schema' | 'partitions' | 'consumers'>('samples');
   const [selectedFields, setSelectedFields] = useState<string[]>([]);
 
   // Server-side search state. `hits` accumulates across passes so "continue scanning"
@@ -1186,6 +1190,7 @@ const TopicExplorer: React.FC = () => {
       <div className="flex gap-1 border-b border-outline-variant/60 overflow-x-auto">
         {([
           { key: 'samples', label: `Messages (${searchActive ? hits.length : data.samples.length})`, icon: 'mail' },
+          { key: 'activity', label: 'Activity', icon: 'timeline' },
           { key: 'ddl', label: 'Flink DDL', icon: 'code' },
           { key: 'schema', label: `Schema (${Object.keys(data.schema).length} fields)`, icon: 'list_alt' },
           { key: 'partitions', label: `Partitions (${data.topic.partitions})`, icon: 'device_hub' },
@@ -1497,6 +1502,24 @@ const TopicExplorer: React.FC = () => {
               </tr>
             </tfoot>
         </Table>
+      )}
+
+      {/* Activity Tab — monté seulement quand il est ouvert, même règle que les consommateurs : la
+          mesure coûte des allers-retours au broker et personne n'arrive ici pour la payer sans
+          l'avoir demandée. Cliquer un bucket règle le départ de la recherche et ramène sur les
+          messages : c'est le geste que le panneau existe pour raccourcir. */}
+      {activeTab === 'activity' && (
+        <TopicActivityPanel
+          topic={name!}
+          onPickInstant={ms => {
+            setCriteria(current => ({
+              ...switchStart(current, 'TIMESTAMP'),
+              fromTime: toDateTimeLocal(ms),
+            }));
+            setActiveTab('samples');
+            toast(`Search primed at ${new Date(ms).toLocaleString()}`, 'info');
+          }}
+        />
       )}
 
       {/* Consumers Tab — monté seulement quand il est ouvert : la lecture des offsets committés

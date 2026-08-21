@@ -209,6 +209,11 @@ export function isFloor(activity: TopicActivity): boolean {
     && (activity.coveredFromMs !== null || activity.partitionsMeasured < activity.partitionsTotal);
 }
 
+/** « 24 h », « 3 h », « 5 min » — la même formulation que la ligne de portée du tableau de bord. */
+export function formatSpan(ms: number): string {
+  return formatWindow(ms);
+}
+
 function formatWindow(ms: number): string {
   if (ms >= 24 * HOUR) {
     const days = Math.round(ms / (24 * HOUR));
@@ -256,7 +261,10 @@ export function describeActivity(activity: TopicActivity | null | undefined, top
   const quiet = silence
     ? ` Nothing produced for at least ${formatWindow(silence.atLeastMs)}, after producing earlier in the window.`
     : '';
-  return `${head} ${peak}${quiet}${activity.note ? ` ${activity.note}` : ''}`;
+  // Le régime courant ne s'ajoute que s'il s'écarte : sinon il répète le pic sans rien apprendre.
+  const trend = silence ? null : detectTrend(activity);
+  const rate = trend ? ` ${explainTrend(trend, activity.bucketMs)}` : '';
+  return `${head} ${peak}${quiet}${rate}${activity.note ? ` ${activity.note}` : ''}`;
 }
 
 /**
@@ -364,4 +372,101 @@ export function bucketLink(topic: string, activity: TopicActivity, index: number
 /** Ce que le clic va faire, dit avant qu'il ait lieu. */
 export function describeBucketLink(activity: TopicActivity, index: number): string {
   return `Opens ${activity.topic} with the search primed at ${bucketLabel(activity, index)}.`;
+}
+
+// ── Le régime, plutôt que la forme ───────────────────────────────────────────
+
+/** L'écart du dernier bucket complet à la médiane de la fenêtre. */
+export interface Trend {
+  /** `dernier / médiane`. */
+  ratio: number;
+  direction: 'up' | 'down';
+  lastCount: number;
+  median: number;
+}
+
+/**
+ * Est-ce que ce topic tourne au-dessus ou au-dessous de son propre ordinaire, là, maintenant ?
+ *
+ * La forme d'une courbe répond mal à cette question à la taille d'une cellule, et le pic n'y
+ * répond pas du tout : il décrit le moment le plus chargé de la fenêtre, qui peut être vieux de
+ * vingt heures. La médiane de la fenêtre est la référence honnête ici — une moyenne serait tirée
+ * par la salve même qu'on cherche à situer — et le rapport se lit sans connaître le topic : 2,4×
+ * veut dire quelque chose que « 620/h » ne dit pas.
+ *
+ * Trois garde-fous, comme pour le silence. Il faut assez de matière pour qu'une médiane veuille
+ * dire quelque chose (six buckets, dont quatre non vides), une médiane non nulle (sinon le rapport
+ * est une division par zéro déguisée en information), et un écart franc — en deçà d'un facteur
+ * deux, c'est le bruit ordinaire d'un topic vivant, et un indicateur qui s'allume tout le temps
+ * est un indicateur qu'on cesse de lire. Un dernier bucket **vide** ne produit rien ici : c'est le
+ * cas de `detectSilence`, qui le dit mieux et qui a son propre seuil.
+ */
+export function detectTrend(activity: TopicActivity | null | undefined): Trend | null {
+  if (!activity || !activity.available) return null;
+  const counts = activity.counts;
+  if (counts.length < 6) return null;
+
+  const lastCount = counts[counts.length - 1];
+  if (lastCount === 0) return null;
+
+  const nonEmpty = counts.filter(c => c > 0);
+  if (nonEmpty.length < 4) return null;
+
+  const sorted = [...counts].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  const median = sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
+  if (median <= 0) return null;
+
+  const ratio = lastCount / median;
+  if (ratio < 2 && ratio > 0.5) return null;
+  return { ratio, direction: ratio >= 1 ? 'up' : 'down', lastCount, median };
+}
+
+/** « ▲ 2.4× » — la place d'une cellule de tableau. */
+export function describeTrend(trend: Trend): string {
+  const arrow = trend.direction === 'up' ? '▲' : '▼';
+  const ratio = trend.ratio >= 10 ? Math.round(trend.ratio) : Math.round(trend.ratio * 10) / 10;
+  return `${arrow} ${ratio}×`;
+}
+
+/** La même chose en une phrase, pour l'énoncé accessible et l'infobulle. */
+export function explainTrend(trend: Trend, bucketMs: number): string {
+  const sense = trend.direction === 'up' ? 'above' : 'below';
+  return `The last ${formatSpan(bucketMs)} carried ${trend.lastCount.toLocaleString()} messages,`
+    + ` ${describeTrend(trend).replace(/[▲▼]\s*/, '')} the window's median of ${trend.median.toLocaleString()}`
+    + ` — ${sense} this topic's own ordinary rate.`;
+}
+
+// ── Un axe, quand la place le permet ─────────────────────────────────────────
+
+export interface AxisTick {
+  /** Position horizontale, en pourcentage de la largeur du graphe. */
+  percent: number;
+  label: string;
+}
+
+/**
+ * `count` repères également espacés, du début à la fin de la fenêtre.
+ *
+ * Ils n'existent que là où il y a la place de les lire — la sparkline du tableau n'en a pas, le
+ * panneau d'un topic si. Le dernier repère porte la **fin** de la fenêtre et non le début du
+ * dernier bucket : c'est l'instant que le lecteur cherche (« jusqu'à quand ça va ? »).
+ */
+export function axisTicks(activity: TopicActivity, count = 3): AxisTick[] {
+  if (count < 2 || activity.windowEndMs <= activity.windowStartMs) return [];
+  const span = activity.windowEndMs - activity.windowStartMs;
+  return Array.from({ length: count }, (_, i) => {
+    const ratio = i / (count - 1);
+    return {
+      percent: Math.round(ratio * 1000) / 10,
+      label: tickLabel(activity.windowStartMs + ratio * span, span),
+    };
+  });
+}
+
+function tickLabel(ms: number, spanMs: number): string {
+  const d = new Date(ms);
+  const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  if (spanMs <= 24 * HOUR) return time;
+  return `${d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' })} ${time}`;
 }

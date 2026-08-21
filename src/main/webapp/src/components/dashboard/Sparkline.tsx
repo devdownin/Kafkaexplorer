@@ -6,8 +6,8 @@ import { useNavigate } from 'react-router-dom';
 import type { TopicActivity } from '../../api/types';
 import {
   bucketLabel, bucketLink, compact, describeActivity, describeBucketLink, describeRate,
-  describeSilence, detectSilence, isFloor, sparkline, unmeasuredLeadingBuckets,
-  type ActivityScale,
+  describeSilence, describeTrend, detectSilence, detectTrend, explainTrend, isFloor, sparkline,
+  unmeasuredLeadingBuckets, type ActivityScale,
 } from '../../pages/topicActivity';
 
 const WIDTH = 108;
@@ -56,6 +56,12 @@ const Sparkline: React.FC<SparklineProps> = ({ topic, activity, loading, scale =
     [activity, scale],
   );
   const silence = useMemo(() => detectSilence(activity), [activity]);
+  /*
+   * Le régime courant, et seulement quand il s'écarte du sien. Il répond à une question que ni la
+   * forme ni le pic ne posent — « est-ce que ça tourne au-dessus de son ordinaire, là ? » — et il
+   * s'efface devant le silence, qui décrit le même dernier bucket en plus actionnable.
+   */
+  const trend = useMemo(() => (detectSilence(activity) ? null : detectTrend(activity)), [activity]);
 
   if (loading && !activity) {
     return <div className="skeleton-shimmer h-[26px] w-[108px] rounded" aria-hidden="true" />;
@@ -151,7 +157,7 @@ const Sparkline: React.FC<SparklineProps> = ({ topic, activity, loading, scale =
         * Largeur fixe : le libellé change au survol, et une cellule qui se réajuste sous le
         * pointeur ferait bouger la colonne entière ligne par ligne.
         */}
-      <span className="w-[5.5rem] shrink-0 text-[11px] tabular-nums text-on-surface-variant" aria-hidden="true">
+      <span className="w-[7rem] shrink-0 text-[11px] tabular-nums text-on-surface-variant" aria-hidden="true">
         {hovered !== null ? (
           <span title={`${bucketLabel(activity, hovered)} — ${counts[hovered].toLocaleString()}`}>
             {compact(counts[hovered])}
@@ -162,7 +168,17 @@ const Sparkline: React.FC<SparklineProps> = ({ topic, activity, loading, scale =
         ) : shape.flat ? (
           <span className="text-outline">no traffic</span>
         ) : (
-          <span title={`Peak: ${shape.peak.toLocaleString()}`}>{describeRate(shape.peak, activity.bucketMs)}</span>
+          <>
+            <span title={`Peak: ${shape.peak.toLocaleString()}`}>{describeRate(shape.peak, activity.bucketMs)}</span>
+            {trend && (
+              <span
+                className={`ml-1.5 ${trend.direction === 'up' ? 'text-primary' : 'text-outline'}`}
+                title={explainTrend(trend, activity.bucketMs)}
+              >
+                {describeTrend(trend)}
+              </span>
+            )}
+          </>
         )}
       </span>
     </div>

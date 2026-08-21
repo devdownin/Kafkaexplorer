@@ -15,9 +15,10 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import type { TopicActivity } from '../api/types';
 import {
   ACTIVITY_OFF, ACTIVITY_WINDOWS, DEFAULT_ACTIVITY_CHOICE, bucketLabel, bucketLink, compact,
-  describeActivity, describeActivityScope, describeRate, describeScale, describeSilence,
-  detectSilence, isFloor, readActivityChoice, readActivityScale, sparkline,
-  unmeasuredLeadingBuckets, windowById, writeActivityChoice, writeActivityScale,
+  axisTicks, describeActivity, describeActivityScope, describeRate, describeScale, describeSilence,
+  describeTrend, detectSilence, detectTrend, explainTrend, isFloor, readActivityChoice,
+  readActivityScale, sparkline, unmeasuredLeadingBuckets, windowById, writeActivityChoice,
+  writeActivityScale,
 } from './topicActivity';
 import { criteriaFromQuery, seedFromQuery, startTimestamp } from '../components/topic/topicSearch';
 
@@ -269,5 +270,69 @@ describe('from the peak to the messages', () => {
 
   it('escapes a topic name that needs it', () => {
     expect(bucketLink('demo/orders', activity(), 0)).toContain('/topic/demo%2Forders?');
+  });
+});
+
+describe('detectTrend', () => {
+  const withCounts = (counts: number[]) => activity({ counts, windowEndMs: counts.length * HOUR });
+
+  it('reports a last bucket well above the window own median', () => {
+    const trend = detectTrend(withCounts([10, 10, 10, 12, 8, 10, 40]))!;
+    expect(trend.direction).toBe('up');
+    expect(trend.median).toBe(10);
+    expect(trend.ratio).toBe(4);
+    expect(describeTrend(trend)).toBe('▲ 4×');
+    expect(explainTrend(trend, HOUR)).toMatch(/The last 1 h carried 40 messages/);
+  });
+
+  it('reports a collapse too, as long as something still came through', () => {
+    const trend = detectTrend(withCounts([40, 40, 40, 38, 42, 40, 4]))!;
+    expect(trend.direction).toBe('down');
+    expect(describeTrend(trend)).toBe('▼ 0.1×');
+  });
+
+  /** Un indicateur qui s'allume tout le temps est un indicateur qu'on cesse de lire. */
+  it('stays quiet on the ordinary noise of a live topic', () => {
+    expect(detectTrend(withCounts([10, 11, 9, 12, 10, 11, 13]))).toBeNull();
+  });
+
+  it('says nothing when there is not enough to have a median', () => {
+    expect(detectTrend(withCounts([1, 50]))).toBeNull();                       // trop peu de points
+    expect(detectTrend(withCounts([0, 0, 0, 0, 0, 0, 50]))).toBeNull();        // médiane nulle
+    expect(detectTrend(withCounts([10, 10, 10, 10, 10, 10, 0]))).toBeNull();   // dernier vide
+    expect(detectTrend(activity({ available: false, counts: [], total: 0 }))).toBeNull();
+  });
+
+  /**
+   * Le dernier bucket vide appartient à `detectSilence`, qui le dit mieux et a son propre seuil :
+   * les deux ne doivent jamais parler du même bucket en même temps.
+   */
+  it('leaves the empty last bucket to the silence badge', () => {
+    const counts = [...Array(18).fill(10), ...Array(6).fill(0)];
+    expect(detectSilence(withCounts(counts))).not.toBeNull();
+    expect(detectTrend(withCounts(counts))).toBeNull();
+  });
+
+  it('travels into the accessible name, where the shape says nothing', () => {
+    const text = describeActivity(withCounts([10, 10, 10, 12, 8, 10, 40]), 'orders');
+    expect(text).toMatch(/window's median of 10/);
+  });
+});
+
+describe('axisTicks', () => {
+  it('spans the window from its start to its end', () => {
+    const a = activity({ counts: [1, 2, 3, 4] });
+    const ticks = axisTicks(a, 3);
+    expect(ticks).toHaveLength(3);
+    expect(ticks[0].percent).toBe(0);
+    expect(ticks[2].percent).toBe(100);
+    // Le dernier repère porte la fin de la fenêtre, pas le début du dernier bucket : c'est
+    // l'instant que le lecteur cherche.
+    expect(ticks[2].label).not.toBe(ticks[1].label);
+  });
+
+  it('refuses to invent an axis it cannot draw', () => {
+    expect(axisTicks(activity(), 1)).toEqual([]);
+    expect(axisTicks(activity({ windowStartMs: 10, windowEndMs: 10 }), 3)).toEqual([]);
   });
 });

@@ -48,6 +48,16 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     crushes everything else onto the baseline, and the rest of the time is usually what one is
     reading for. An option and not the default — it changes what the image asserts — and the
     column header names it when it is on, an undeclared scale being what makes a chart mislead.
+  - **The current regime is shown beside the peak** when it departs from the topic's own
+    (`▲ 2.4×` against the window's median). The peak describes the busiest moment of the window,
+    which may be twenty hours old; this answers "is it running above its ordinary rate *now*".
+    The median rather than the mean, which the very burst one is situating would pull — and it
+    stays quiet below a factor two, an indicator that lights up always being one that stops
+    being read.
+  - **The Topic Explorer gained an `Activity` tab**, the same measurement with the room a cell
+    does not have: a time axis, a hover that names the bucket in words, and a click that primes
+    the search at that instant — on this page it needs no navigation at all. Mounted only when
+    opened, like the consumers panel, since the measurement costs broker round trips.
 
 - **An activity curve per topic in the dashboard's table.** The table said how many messages a
   topic holds and when the last one arrived — a level and an instant, neither of which says
