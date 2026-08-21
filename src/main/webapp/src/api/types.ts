@@ -120,6 +120,12 @@ export interface DashboardResponse {
   /** L'adresse réellement utilisée, y compris après un repointage à chaud. */
   bootstrapServers: string;
   topicLastMessages: Record<string, number>;
+  /**
+   * Le préfixe résolu des topics que l'application s'écrit à elle-même — vide sur un déploiement
+   * qui n'en pose pas. Le navigateur pose la même question que le serveur (« est-ce un des
+   * nôtres ? ») et ne peut y répondre qu'avec cette forme-là.
+   */
+  internalTopicPrefix: string;
 }
 
 /**

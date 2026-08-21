@@ -17,6 +17,7 @@ import type {
 } from '../api/types';
 import { clearDraft, readDraft, writeDraft } from '../draftStore';
 import { isTopicPattern, matchesTopicPattern } from './streamFlow';
+import { isInternalTopic } from '../internalTopics';
 
 /**
  * Ce qu'une génération analyse par défaut — le même nombre que `DataModelService`.
@@ -89,12 +90,16 @@ export function toggleTopic(selection: string[], topic: string): string[] {
 /**
  * Coche tout ce que le filtre montre, sans dépasser le plafond de la génération : envoyer 200 topics
  * pour en voir 30 analysés serait exactement la troncature silencieuse que le serveur nomme.
- * Les topics `internal.*` — ceux que l'application s'écrit à elle-même — sont ignorés.
+ * Les topics internes — ceux que l'application s'écrit à elle-même — sont ignorés. Le préfixe vient
+ * du serveur (`explorer.internal-topic-prefix`) et vaut `''` sur un déploiement qui n'en pose pas,
+ * ce qui rend le prédicat identique au littéral qu'il remplace.
  */
-export function selectAll(selection: string[], visible: string[], cap: number): string[] {
+export function selectAll(
+  selection: string[], visible: string[], cap: number, internalPrefix = '',
+): string[] {
   const next = [...selection];
   for (const topic of visible) {
-    if (topic.startsWith('internal.')) continue;
+    if (isInternalTopic(topic, internalPrefix)) continue;
     if (next.length >= cap) break;
     if (!next.includes(topic)) next.push(topic);
   }

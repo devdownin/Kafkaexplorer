@@ -71,7 +71,8 @@ public class DashboardController {
                 health,
                 explorerConfig.getClusterName(),
                 kafkaConfig.getBootstrapServers(),
-                topicLastMessages
+                topicLastMessages,
+                explorerConfig.getResolvedInternalTopicPrefix()
         );
     }
 

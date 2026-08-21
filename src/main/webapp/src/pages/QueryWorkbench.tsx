@@ -40,6 +40,7 @@ import { NarrowWindowNotice } from '../components/query/NarrowWindowNotice';
 import { RowDetail } from '../components/query/RowDetail';
 import { randomId } from '../randomId';
 import { copyText } from '../clipboard';
+import { useCatalog } from '../catalogStore';
 import type {
   QueryResult,
   FlinkJobSummary,
@@ -229,6 +230,17 @@ const QueryWorkbench: React.FC = () => {
   const tableSchemasRef = useRef<Record<string, Record<string, string>>>({});
   useEffect(() => { schemaRef.current = schema; }, [schema]);
   useEffect(() => { tableSchemasRef.current = tableSchemas; }, [tableSchemas]);
+
+  /*
+   * Le préfixe des topics internes vient du catalogue partagé, que `Layout` alimente depuis son
+   * sondage de `/api/dashboard` — donc aucune requête de plus, et la même valeur que celle dont
+   * le modèle de données se sert. Le catalogue de cette page vient de `/api/query/init`, qui ne
+   * le porte pas : deux réponses porteraient deux copies d'un même réglage, ce qui finit par
+   * diverger. Un `ref` en plus, parce que `pickSinkTable` est appelé depuis un gestionnaire.
+   */
+  const { internalPrefix } = useCatalog();
+  const internalPrefixRef = useRef(internalPrefix);
+  useEffect(() => { internalPrefixRef.current = internalPrefix; }, [internalPrefix]);
 
   // ── Tabs ──────────────────────────────────────────────────────────────────────
   // Une seule restauration, au premier rendu : relire le stockage à chaque rendu
@@ -1483,7 +1495,8 @@ const QueryWorkbench: React.FC = () => {
       } catch { /* pas encore enregistrée côté Flink — le SQL généré le dit et reste utilisable */ }
     }
     // Une cible prise dans le catalogue résout, là où `<source>_out` ne peut qu'échouer.
-    const sink = executionMode === 'ASYNC_JOB' ? pickSinkTable(table, schemaRef.current?.tables) : null;
+    const sink = executionMode === 'ASYNC_JOB'
+      ? pickSinkTable(table, schemaRef.current?.tables, internalPrefixRef.current) : null;
     const sqlText = sidebarSqlFor(table, executionMode, maxRows, schema, sink);
     const where = openSql(sqlText, table);
     // La sélection ne peut être posée qu'une fois le nouveau texte rendu : l'effet ci-dessous s'en
@@ -1532,8 +1545,10 @@ const QueryWorkbench: React.FC = () => {
    * lui seul — est la moins évidente.
    */
   const starters = useMemo(
-    () => (executionMode === 'ASYNC_JOB' ? starterJobQueries(schema, tableSchemas) : starterQueries(schema)),
-    [schema, executionMode, tableSchemas],
+    () => (executionMode === 'ASYNC_JOB'
+      ? starterJobQueries(schema, tableSchemas, internalPrefix)
+      : starterQueries(schema, internalPrefix)),
+    [schema, executionMode, tableSchemas, internalPrefix],
   );
 
   /** Table visée par l'assistant : celle que la requête cite, sinon la première du catalogue. */
