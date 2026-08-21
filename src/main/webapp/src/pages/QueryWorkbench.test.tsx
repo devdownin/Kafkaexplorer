@@ -275,6 +275,41 @@ describe('QueryWorkbench — dropping a table', () => {
   });
 });
 
+describe('QueryWorkbench — the sidebar lets a truncated name be read', () => {
+  /*
+   * La barre latérale est étroite et les noms sont `truncate` : sans `title`, un nom de topic
+   * long est du texte que rien ne permet de lire. La liste des tables portait déjà la règle,
+   * celle des topics avait été oubliée.
+   */
+  it('carries the whole topic name on the row you hover', async () => {
+    renderPage();
+    const row = await screen.findByRole('button', { name: 'SELECT from demo.orders.1.received' });
+    expect(row).toHaveAttribute('title', 'demo.orders.1.received');
+    // Le nom accessible reste celui de l'action : le `title` ne le double pas.
+    expect(row).toHaveAccessibleName('SELECT from demo.orders.1.received');
+    // Et il porte bien le nom entier, pas la version tronquée qui est à l'écran.
+    expect(row).toHaveTextContent('demo.orders.1.received');
+  });
+
+  it('does the same for a Flink table and for the columns it unfolds', async () => {
+    get.mockImplementation((url: string) => {
+      if (url === '/api/query/init') return Promise.resolve({ data: { ...CATALOGUE, tables: ['orders'] } });
+      if (url === '/api/query/schema/orders') {
+        return Promise.resolve({ data: { shipping_address_city: 'STRING' } });
+      }
+      return Promise.resolve({ data: {} });
+    });
+    renderPage();
+    const tableName = await screen.findByTitle('orders');
+    expect(tableName).toHaveTextContent('orders');
+
+    await userEvent.click(tableName);
+
+    expect(await screen.findByTitle('shipping_address_city'))
+      .toHaveTextContent('shipping_address_city');
+  });
+});
+
 describe('QueryWorkbench — nothing silently replaces the tab you are writing in', () => {
   it('fills an empty tab when a topic is clicked', async () => {
     renderPage();
