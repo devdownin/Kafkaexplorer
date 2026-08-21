@@ -579,10 +579,19 @@ const MessageTable: React.FC<{
                 aria-sort={sortKey === column.key ? (sortDesc ? 'descending' : 'ascending') : 'none'}
                 className={`${column.align} font-medium px-3 py-2`}
               >
+                {/* 24 x 24 : ces en-têtes se rendaient à 17 px de haut, et celui de la
+                    partition à **7 x 17** — un libellé d'une lettre au-dessus d'une colonne
+                    étroite. Ils ont fait passer cette page de 7 à 8 cibles sous le plancher de
+                    WCAG 2.5.8 le jour où le tableau est devenu la vue par défaut, et la CI l'a
+                    refusé, ce pour quoi ce garde-fou existe.
+                    Corrigés plutôt que budgétés, parce que la raison qui fait laisser les
+                    contrôles de texte des listes denses ne vaut pas ici : ils sont dans
+                    l'en-tête, donc les grandir coûte sept pixels sur **une** ligne et non sur
+                    chaque record. `min-w-6` est ce qui rattrape le « P ». */}
                 <button
                   type="button"
                   onClick={() => onSort(column.key)}
-                  className="inline-flex items-center gap-0.5 hover:text-on-surface transition-colors uppercase tracking-widest"
+                  className="inline-flex items-center gap-0.5 min-w-6 min-h-6 hover:text-on-surface transition-colors uppercase tracking-widest"
                 >
                   {column.label}
                   {sortKey === column.key && (

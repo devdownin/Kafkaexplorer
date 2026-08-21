@@ -144,7 +144,7 @@ Interactive elements below the 24 × 24 CSS px of WCAG 2.5.8 (Target Size, Minim
 |---|---|---|---|
 | sql-editor | 39 / 113 | audit | 23 / 55 |
 | stream-flow | 19 / 44 | metrics | 8 / 54 |
-| topic-explorer | 7 / 66 | dashboard | 5 / 89 |
+| topic-explorer | 3 / 59 | dashboard | 5 / 89 |
 | data-model | 7 / 81 | cluster | 1 / 21 |
 
 (The worse of phone and desktop for each page, which is what `--check` gates on.)
@@ -183,6 +183,15 @@ now prints the undersized targets *grouped by control*, because a count is exact
   largest single group left anywhere, and undersized in both dimensions rather than only in height.
 - **`HelpTip` at 15 × 15**, shared by every screen that explains a control, and three
   panel-collapse buttons at 18 × 24.
+
+**A later change moved one of these numbers again, and the gate is what caught it.** Making the
+table the Topic Explorer's default view put its sortable column headers on screen where the card
+view had none — five buttons 17 px high, the partition one at **7 × 17**, a one-letter label over a
+narrow column. The page went 7 → 8 and CI refused the push, which is the whole reason `--check`
+exists. They were fixed rather than budgeted, because the reason that leaves the text controls of
+dense lists alone does not apply to them: they sit in the **header**, so raising them costs seven
+pixels on one row rather than on every record. The page now measures **3**, better than the 7 it
+scored before the default changed, and `TARGET_BUDGET` follows it down.
 
 Measured effect, same probe, worse of phone and desktop: `dashboard` **32 → 5**, `sql-editor`
 **67 → 39**, `topic-explorer` **11 → 7**, `stream-flow` **20 → 19**, `data-model` **9 → 7**,

@@ -54,6 +54,19 @@ explorer:
   # environment here (EXPLORER_CLUSTER_NAME) — "Staging", "Orders prod" — the effective bootstrap
   # address is shown beside it on hover, and that one is read from the running configuration.
   cluster-name: Kafka cluster
+  # Préfixe des topics que l'application s'écrit à elle-même — l'historique d'audit, les
+  # configurations de métriques et les mappings de champs validés. Vide par défaut, et vide ne
+  # change rien : les topics gardent leurs noms `internal.*`. À poser sur un déploiement qui
+  # partage un cluster avec d'autres locataires, ou dont la convention de nommage réserve un
+  # espace par application — le même besoin auquel `consumer-group-prefix` répond pour les
+  # groupes. Il ne renomme QUE ce que cette application écrit pour elle-même, jamais un topic des
+  # pipelines de l'utilisateur. Une valeur inutilisable dans un nom de topic Kafka est refusée
+  # avec un WARN nommant la propriété, et le run continue sans préfixe ; une valeur sans
+  # séparateur final en reçoit un (`acme` donne `acme.internal.audit.history`).
+  # ATTENTION : ce n'est pas rétroactif. Le changer pointe l'application vers d'autres topics, il
+  # ne déplace pas ce que le réglage précédent a écrit — un opérateur qui le pose sur un
+  # déploiement vivant repart sur un historique d'audit vierge.
+  internal-topic-prefix: ${EXPLORER_INTERNAL_TOPIC_PREFIX:}
   audit-history-topic: internal.audit.history
   # Where the field mappings validated in Process Mining are kept, keyed by mapping id (so the
   # topic is meant to be compacted). The mapping is the only human-corrected artefact this app
