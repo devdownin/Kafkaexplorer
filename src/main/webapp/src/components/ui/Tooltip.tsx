@@ -87,7 +87,10 @@ export const HelpTip: FC<HelpTipProps> = ({ content, label, placement = 'top' })
     <button
       type="button"
       aria-label={label}
-      className="inline-flex items-center justify-center text-outline hover:text-on-surface transition-colors rounded-full"
+      /* 24 x 24 : le « ⓘ » se rendait à 15 x 15, sous le plancher de WCAG 2.5.8, et il est
+         partagé par tous les écrans qui expliquent un contrôle. La cible grandit, pas le
+         glyphe — un `<button>` ordinaire applique bien son padding. */
+      className="inline-flex items-center justify-center min-w-6 min-h-6 text-outline hover:text-on-surface transition-colors rounded-full"
     >
       <span aria-hidden="true" className="material-symbols-outlined text-[15px]">info</span>
     </button>

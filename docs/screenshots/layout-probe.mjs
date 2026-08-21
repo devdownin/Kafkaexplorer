@@ -74,12 +74,12 @@ const PAGES = [
  * that the number cannot drift upward unnoticed.
  */
 const TARGET_BUDGET = {
-  'dashboard': 32,
-  'sql-editor': 67,
-  'topic-explorer': 11,
-  'stream-flow': 20,
-  'data-model': 9,
-  'audit': 24,
+  'dashboard': 5,
+  'sql-editor': 39,
+  'topic-explorer': 7,
+  'stream-flow': 19,
+  'data-model': 7,
+  'audit': 23,
   'metrics': 8,
   'cluster': 1,
 };
@@ -182,6 +182,8 @@ const MEASURE = () => {
     .map(el => {
       const r = el.getBoundingClientRect();
       return {
+        tag: el.tagName.toLowerCase(),
+        cls: String(el.className).slice(0, 70),
         label: (el.getAttribute('aria-label') || el.textContent || '').trim().slice(0, 30),
         w: Math.round(r.width),
         h: Math.round(r.height),
@@ -189,6 +191,22 @@ const MEASURE = () => {
     })
     .filter(t => t.w > 0 && t.h > 0);
   const tooSmall = targets.filter(t => t.w < 24 || t.h < 24);
+
+  /*
+   * Groupé par contrôle — tag, taille rendue et classes — parce que c'est ce que le compte cache.
+   * « 42 cibles trop petites » sur le modèle de données était **un seul contrôle** répété quarante
+   * fois, et c'est en le voyant que le correctif est devenu une modification de composant plutôt
+   * que quarante retouches. Un compte dit qu'il y a un problème ; un regroupement dit lequel.
+   */
+  const byControl = new Map();
+  for (const t of tooSmall) {
+    const key = `${t.tag}|${t.w}x${t.h}|${t.cls}`;
+    if (!byControl.has(key)) byControl.set(key, { ...t, n: 0, labels: [] });
+    const g = byControl.get(key);
+    g.n += 1;
+    if (t.label && g.labels.length < 2 && !g.labels.includes(t.label)) g.labels.push(t.label);
+  }
+  const tooSmallGroups = [...byControl.values()].sort((a, b) => b.n - a.n).slice(0, 8);
 
   return {
     winW: window.innerWidth,
@@ -202,7 +220,7 @@ const MEASURE = () => {
     unreachableCount: unreachable.length,
     targets: targets.length,
     tooSmall: tooSmall.length,
-    tooSmallSample: tooSmall.slice(0, 4).map(t => `${t.label} (${t.w}x${t.h})`),
+    tooSmallGroups,
   };
 };
 
@@ -284,6 +302,13 @@ if (mode === '--sweep') {
       }
       console.log(line);
       if (mode === '--detail' && m) {
+        // Which control is undersized, and how many of it there are. W5 is a triage, and a
+        // triage cannot be done against a count — see `tooSmallGroups` for why.
+        for (const g of (m.tooSmallGroups || [])) {
+          console.log(`      x${String(g.n).padEnd(3)} <${g.tag}> ${g.w}x${g.h} `
+            + `${g.labels.join(' / ').slice(0, 46)}`);
+          console.log(`           .${g.cls}`);
+        }
         // What is actually clipping, so W7 is a reading rather than another counting exercise.
         // The unreachable ones first — they are the only ones that are a defect.
         for (const c of m.clipped) {

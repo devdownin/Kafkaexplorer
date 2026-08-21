@@ -535,6 +535,11 @@ just made, not a history — which is stated in the tooltip rather than left to 
   description was wrong.
 - **The page has no mobile story.** Fixed-width sidebar, split panes, Monaco: it targets a desktop,
   and the fix for E5 makes the toolbar usable on a narrow window without pretending otherwise.
+  *Since resolved as a decision rather than as code:* `MOBILE-LAYOUT-SCOPE.md` measured the case,
+  put the product question, and the answer is that **the application is not intended for phones**.
+  The page therefore keeps no mobile story on purpose — it says so under `lg`
+  (`components/query/NarrowWindowNotice.tsx`) and names the screens that do work at that width.
+  What remains open there is W5, tap targets, which was never a mobile item.
 - **`detectStatementType` duplicates the backend's own detection** to gate the execution modes, and
   now also to label the statements of a batch. The two agree today. Sharing one definition would
   mean an endpoint that classifies a statement, which is a round trip to answer a question the

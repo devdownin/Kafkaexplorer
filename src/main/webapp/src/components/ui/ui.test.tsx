@@ -8,7 +8,7 @@ import userEvent from '@testing-library/user-event';
 import {
   Button, Badge, Field, Input, EmptyState, ErrorPanel, Stat,
   Table, TableHead, TableBody, TableRow, Th, Td, TableSkeleton,
-  Tooltip, HelpTip, Checkbox,
+  Tooltip, HelpTip, Checkbox, Switch,
 } from './index';
 
 describe('Button', () => {
@@ -230,6 +230,57 @@ describe('ErrorPanel', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Dismiss error' }));
     expect(onRetry).toHaveBeenCalledOnce();
     expect(onDismiss).toHaveBeenCalledOnce();
+  });
+});
+
+describe('Switch', () => {
+  it('is a switch, with the state the reader needs', () => {
+    render(<Switch checked onChange={() => {}} aria-label="Hide empty" />);
+    const sw = screen.getByRole('switch', { name: 'Hide empty' });
+    expect(sw).toBeInTheDocument();
+    expect(sw).toBeChecked();
+  });
+
+  it('reports the new value, not the event', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Switch checked={false} onChange={onChange} aria-label="Use regex" />);
+    await user.click(screen.getByRole('switch'));
+    expect(onChange).toHaveBeenCalledWith(true);
+  });
+
+  it('does not fire when disabled', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Switch checked={false} onChange={onChange} disabled aria-label="Use regex" />);
+    await user.click(screen.getByRole('switch'));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  /*
+   * Trois des quatre copies écrites à la main omettaient `type`, donc valaient `submit` : sans
+   * effet visible là où elles vivent, hors formulaire, et une bombe à retardement le jour où
+   * l'une d'elles entre dans un `<form>` — ce que le panneau de recherche du Topic Explorer a
+   * précisément fait de son côté.
+   */
+  it('is a button and not a submit', () => {
+    render(<Switch checked={false} onChange={() => {}} aria-label="Use regex" />);
+    expect(screen.getByRole('switch')).toHaveAttribute('type', 'button');
+  });
+
+  /*
+   * La taille est la raison d'être de ce composant : les quatre copies se rendaient à 36 x 20,
+   * quatre pixels sous le plancher de WCAG 2.5.8. jsdom n'a pas de mise en page, donc la taille
+   * rendue ne peut pas être vérifiée ici — les classes qui la posent le sont, et la vraie mesure
+   * vit dans `layout-probe.mjs`, dont `--check` garde le compte en CI. `box-content` est ce qui
+   * fait que le `padding` s'ajoute à la hauteur au lieu d'être repris dessus.
+   */
+  it('carries the padding that lifts a 20px track to a 24px target', () => {
+    render(<Switch checked={false} onChange={() => {}} aria-label="sized" />);
+    const sw = screen.getByRole('switch');
+    expect(sw.className).toContain('h-5');
+    expect(sw.className).toContain('py-0.5');
+    expect(sw.className).toContain('box-content');
   });
 });
 

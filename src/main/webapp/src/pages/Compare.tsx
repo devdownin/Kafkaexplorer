@@ -4,7 +4,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import axios from 'axios';
 import { useToast } from '../components/Toast';
-import { Button } from '../components/ui';
+import { Button, Switch } from '../components/ui';
 import { usePersistentState } from '../draftStore';
 import {
   tryParse, diffFields, pairSamples, visiblePairs, countDiffs, countCompared,
@@ -85,12 +85,7 @@ const MessageCard: React.FC<{
 const Toggle: React.FC<{ label: string; on: boolean; onClick: () => void }> = ({ label, on, onClick }) => (
   <label className="flex items-center gap-2 cursor-pointer select-none">
     <span className="text-[11px] text-on-surface-variant font-medium">{label}</span>
-    <button
-      role="switch" aria-checked={on} aria-label={label} onClick={onClick}
-      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${on ? 'bg-primary' : 'bg-surface-container-highest'}`}
-    >
-      <span className={`inline-block h-3.5 w-3.5 transform rounded-full transition-transform ${on ? 'translate-x-[18px] bg-on-primary' : 'translate-x-1 bg-on-surface-variant'}`} />
-    </button>
+    <Switch checked={on} aria-label={label} onChange={onClick} />
   </label>
 );
 

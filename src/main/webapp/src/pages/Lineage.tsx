@@ -4,7 +4,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import axios from 'axios';
 import { useToast } from '../components/Toast';
-import { Button, EmptyState } from '../components/ui';
+import { Button, EmptyState, Switch } from '../components/ui';
 
 interface LineageNode {
   id: string;
@@ -487,14 +487,11 @@ const Lineage: React.FC = () => {
             <span className="text-xs text-on-surface-variant group-hover:text-on-surface transition-colors leading-none">
               Connected only
             </span>
-            <button
-              role="switch"
-              aria-checked={connectedOnly}
-              onClick={() => setConnectedOnly(v => !v)}
-              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors shrink-0 ${connectedOnly ? 'bg-primary' : 'bg-surface-container-high'}`}
-            >
-              <span className={`inline-block h-3 w-3 transform rounded-full bg-on-primary transition-transform ${connectedOnly ? 'translate-x-5' : 'translate-x-1'}`} />
-            </button>
+            <Switch
+              checked={connectedOnly}
+              aria-label="Connected only"
+              onChange={setConnectedOnly}
+            />
           </label>
 
           <Button variant="ghost" size="sm" className="w-full justify-start"
