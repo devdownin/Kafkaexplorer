@@ -472,6 +472,71 @@ export function describeSetAside(count: number, drawn: boolean): string {
 }
 
 /**
+ * En dessous, grouper ne compresse rien : la liste tient à l'écran, et un en-tête par famille
+ * coûte plus de lignes que la répartition n'en fait gagner. Au-dessus, la liste défile, et la
+ * question qu'on lui pose cesse d'être « lesquelles » pour devenir « lesquelles ensemble ».
+ *
+ * Son propre seuil, plus bas que `SET_ASIDE_FILTER_MIN` : filtrer ne sert qu'une liste qu'on ne
+ * peut plus parcourir, alors que grouper apprend quelque chose dès qu'il y a deux familles.
+ */
+export const SET_ASIDE_GROUP_MIN = 5;
+
+export interface SetAsideGroup {
+  /** Le domaine, tel que `topicDomains` le nomme — la famille, pas le topic. */
+  domain: string;
+  entities: DataModelEntity[];
+}
+
+/**
+ * Regroupe par famille de topics les entités qu'aucune relation ne touche.
+ *
+ * Cinquante entités sans relation est un résultat ordinaire sur une grande sélection, et la liste
+ * les rendait en une suite plate d'identifiants monospace : ce qu'on y cherche n'est pas
+ * *lesquelles*, c'est *lesquelles ensemble* — « toute la famille `iot` est hors du modèle » est
+ * un fait, douze lignes n'en sont pas un.
+ *
+ * Le découpage est celui que la page applique **déjà** aux teintes d'en-tête (`topicDomains`), et
+ * la carte est passée plutôt que recalculée : elle se construit sur *tous* les topics du modèle,
+ * en retirant les segments de tête que tous partagent, donc la recalculer sur les seules mises de
+ * côté nommerait les mêmes familles autrement — deux réponses à « de quelle famille est ce
+ * topic ? » sur un même écran. Un topic que la carte ne nomme pas est sa propre famille, ce qui
+ * ne peut arriver qu'à un appelant qui passe une carte construite sur d'autres topics.
+ *
+ * Rend `null` quand grouper n'apprend rien, plutôt qu'un groupe unique que la page aurait à
+ * refuser elle-même : sous le seuil, avec une seule famille — l'en-tête répéterait le titre de la
+ * section — ou quand chaque famille tient en une entité, où chaque en-tête ne nomme que sa propre
+ * ligne. L'ordre met la plus grosse famille d'abord (c'est elle qui est le constat), puis le nom
+ * pour que deux modèles identiques se ressemblent.
+ */
+export function groupSetAside(
+  entities: DataModelEntity[],
+  domains: Map<string, string>,
+): SetAsideGroup[] | null {
+  if (entities.length < SET_ASIDE_GROUP_MIN) return null;
+  const byDomain = new Map<string, DataModelEntity[]>();
+  for (const e of entities) {
+    const domain = domains.get(e.topic) ?? e.topic;
+    const bucket = byDomain.get(domain);
+    if (bucket) bucket.push(e);
+    else byDomain.set(domain, [e]);
+  }
+  if (byDomain.size < 2) return null;
+  const groups = [...byDomain.entries()].map(([domain, list]) => ({ domain, entities: list }));
+  if (groups.every(g => g.entities.length === 1)) return null;
+  groups.sort((a, b) => b.entities.length - a.entities.length || a.domain.localeCompare(b.domain));
+  return groups;
+}
+
+/**
+ * Le nom accessible d'un groupe. L'en-tête visible porte le domaine et son compte côte à côte ;
+ * lu à voix haute, « demo.iot 12 » ne dit pas de quoi 12 est le compte.
+ */
+export function describeSetAsideGroup(group: SetAsideGroup): string {
+  const n = group.entities.length;
+  return `${group.domain} — ${n} ${n === 1 ? 'entity' : 'entities'} with no deduced relation`;
+}
+
+/**
  * Disposition en couches, celle du graphe de lignage : les entités que personne ne référence
  * ouvrent la première colonne, chaque relation pousse sa cible d'une colonne vers la droite.
  * Les hauteurs de nœuds sont réelles (elles varient avec le nombre de colonnes), et les

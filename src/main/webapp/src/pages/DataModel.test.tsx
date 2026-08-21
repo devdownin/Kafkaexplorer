@@ -593,6 +593,52 @@ describe('DataModel page', () => {
   });
 
   /*
+   * Cinquante entités sans relation est un résultat ordinaire, et une suite plate d'identifiants
+   * ne répond pas à la question qu'on lui pose — qui est « lesquelles ensemble ».
+   */
+  it('groups the set-aside list by topic family, and drops the groups when they teach nothing',
+    async () => {
+    const user = userEvent.setup();
+    const lonely: DataModelResponse['entities'] = [
+      ...Array.from({ length: 6 }, (_, i) => ({
+        id: `demo_iot_sensor_${i}`, topic: `demo.iot.sensor.${i}`, format: 'JSON' as const,
+        primaryKey: null, messageCount: 7200,
+        columns: [{ name: 'reading', type: 'DOUBLE', primaryKey: false, references: null, keyBase: null }],
+      })),
+      ...Array.from({ length: 2 }, (_, i) => ({
+        id: `demo_audit_log_${i}`, topic: `demo.audit.log.${i}`, format: 'JSON' as const,
+        primaryKey: null, messageCount: 12,
+        columns: [{ name: 'line', type: 'STRING', primaryKey: false, references: null, keyBase: null }],
+      })),
+    ];
+    stubApi({
+      ...model,
+      entities: [...model.entities, ...lonely],
+      topicsRequested: 10, topicsAnalyzed: 10,
+    });
+    await renderPage('/data-model?topics=demo.orders.1.received,demo.payments.authorized');
+
+    await screen.findByText('10 entities · 1 relation deduced');
+    await openTopics(user);
+    const list = () => screen.getByRole('listbox', { name: 'Entities with no deduced relation' });
+
+    // La plus grosse famille d'abord — c'est elle qui est le constat.
+    const groups = within(list()).getAllByRole('group');
+    expect(groups.map(g => g.getAttribute('aria-label'))).toEqual([
+      'iot — 6 entities with no deduced relation',
+      'audit — 2 entities with no deduced relation',
+    ]);
+    // Groupée ou plate, aucune entité ne quitte la liste.
+    expect(within(list()).getAllByRole('option')).toHaveLength(8);
+
+    // Réduite à une seule famille, la répartition n'apprend plus rien : la liste redevient plate.
+    const filter = screen.getByLabelText('Filter entities with no deduced relation');
+    await user.type(filter, 'demo.iot.*');
+    expect(within(list()).queryAllByRole('group')).toHaveLength(0);
+    expect(within(list()).getAllByRole('option')).toHaveLength(6);
+  });
+
+  /*
    * Le panneau coûte 256 px en permanence à la seule chose que cette page existe pour montrer.
    * Il se replie donc, et le repli suit l'opérateur d'une visite à l'autre.
    */

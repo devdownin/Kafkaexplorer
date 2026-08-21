@@ -25,6 +25,7 @@ import {
   filterRelations, describeRelationFilter, orphanKeyColumns, describeOrphanKey,
   COMFORTABLE_NODE_SIZING, resolveNodeSizing, describeDensity, describeDensityCost,
   renderedTextPx, filterEntities, describeSetAsideFilter, SET_ASIDE_FILTER_MIN,
+  groupSetAside, describeSetAsideGroup,
   shortenColumnName, readSelectionDraft, saveSelectionDraft, maxTopicsFromQuery,
   minimapLayout, visibleGraphRect, graphFullyVisible, centerOnGraphPoint,
   describeBuildProgress, describeStaleGraphDuringBuild, clampMaxTopics, isSignificantResize,
@@ -607,6 +608,15 @@ const DataModel: React.FC = () => {
   const domainLegend = useMemo(
     () => [...tints.entries()].filter(() => tints.size > 1),
     [tints]);
+
+  /**
+   * Les mises de côté groupées par famille de topics — `null` quand grouper n'apprend rien, et la
+   * liste reste plate. Le groupage porte sur ce qui est **affiché**, pas sur la liste entière :
+   * les comptes des en-têtes décrivent alors l'écran par construction, là où grouper le tout et
+   * rendre le filtré ferait annoncer « iot (12) » au-dessus de trois lignes.
+   */
+  const setAsideGroups = useMemo(
+    () => groupSetAside(visibleIsolated, domains), [visibleIsolated, domains]);
 
   /**
    * Le voisinage à mettre en avant. `null` quand la sélection n'est pas *dans* le graphe — une
@@ -1296,25 +1306,53 @@ const DataModel: React.FC = () => {
                       {describeSetAsideFilter(visibleIsolated.length, isolated.length)}
                     </p>
                   )}
+                  {/* Groupée par famille de topics dès que ça compresse — le découpage est celui
+                      des teintes d'en-tête, donc la liste et le graphe nomment les mêmes familles.
+                      Un seul gabarit de ligne : sans groupe, le `li` et le `ul` intérieurs sont
+                      présentationnels, donc les options restent bien enfants de la `listbox`. */}
                   <ul
                     id="dm-unrelated-list"
                     role="listbox"
                     aria-label="Entities with no deduced relation"
                     className="max-h-44 overflow-y-auto custom-scrollbar rounded-md border border-outline-variant/60 bg-surface-container-low divide-y divide-outline-variant/30"
                   >
-                    {visibleIsolated.map(entity => (
-                      <li key={entity.id} role="option" aria-selected={selectedId === entity.id}>
-                        <button
-                          onClick={() => setSelectedId(prev => (prev === entity.id ? null : entity.id))}
-                          className={`w-full text-left text-[11px] font-mono truncate px-2 py-1.5 transition-colors ${
-                            selectedId === entity.id
-                              ? 'bg-primary/15 text-on-surface'
-                              : 'text-on-surface-variant hover:bg-surface-container-high'
-                          }`}
-                          title={entity.topic}
-                        >
-                          {entity.id}
-                        </button>
+                    {(setAsideGroups ?? [{ domain: '', entities: visibleIsolated }]).map(group => (
+                      <li key={group.domain}
+                        role={setAsideGroups ? 'group' : 'none'}
+                        aria-label={setAsideGroups ? describeSetAsideGroup(group) : undefined}>
+                        {setAsideGroups && (
+                          /* Le nom accessible du groupe porte déjà le domaine et son compte ;
+                             laisser lire l'en-tête en plus les dirait deux fois. */
+                          <p aria-hidden="true"
+                            className="sticky top-0 z-[1] flex items-center gap-1.5 px-2 py-1 bg-surface-container-low/95 backdrop-blur-sm text-[10px] text-on-surface-variant">
+                            <span className="w-2 h-2 rounded-sm shrink-0 border"
+                              style={{
+                                backgroundColor: tintOf(group.entities[0].topic).header,
+                                borderColor: tintOf(group.entities[0].topic).accent,
+                              }} />
+                            <span className="font-mono truncate">{group.domain}</span>
+                            <span className="ml-auto shrink-0 text-outline tabular-nums">
+                              {group.entities.length}
+                            </span>
+                          </p>
+                        )}
+                        <ul role="none" className="divide-y divide-outline-variant/30">
+                          {group.entities.map(entity => (
+                            <li key={entity.id} role="option" aria-selected={selectedId === entity.id}>
+                              <button
+                                onClick={() => setSelectedId(prev => (prev === entity.id ? null : entity.id))}
+                                className={`w-full text-left text-[11px] font-mono truncate px-2 py-1.5 transition-colors ${
+                                  selectedId === entity.id
+                                    ? 'bg-primary/15 text-on-surface'
+                                    : 'text-on-surface-variant hover:bg-surface-container-high'
+                                }`}
+                                title={entity.topic}
+                              >
+                                {entity.id}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
                       </li>
                     ))}
                   </ul>
