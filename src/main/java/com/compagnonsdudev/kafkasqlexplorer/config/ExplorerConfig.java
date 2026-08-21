@@ -107,6 +107,18 @@ public class ExplorerConfig {
     }
 
     /**
+     * The prefix as it is actually applied — validated, separator-terminated, never null.
+     *
+     * <p>Distinct from {@link #getInternalTopicPrefix()}, which returns the raw configured value
+     * so Spring's binding round-trips what was written. This is the one the browser needs: it
+     * asks the same "is this one of ours?" question in the data model's select-all and the SQL
+     * editor's starter queries, and it can only answer it with the resolved form.
+     */
+    public String getResolvedInternalTopicPrefix() {
+        return resolvedInternalPrefix;
+    }
+
+    /**
      * Display label for the connected cluster, shown in the header's connection pill.
      *
      * <p>It is a <em>name</em>, not a fact about the broker: nothing here verifies it, and

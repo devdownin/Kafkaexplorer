@@ -171,7 +171,7 @@ const EntityNode: React.FC<{
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 const DataModel: React.FC = () => {
-  const { topics: catalogTopics } = useCatalog();
+  const { topics: catalogTopics, internalPrefix } = useCatalog();
   const { toast } = useToast();
   /**
    * Sous le seuil desktop, les deux panneaux latéraux deviennent des tiroirs superposés. Fixes,
@@ -1108,7 +1108,7 @@ const DataModel: React.FC = () => {
 
           <div className="flex gap-2">
             <Button variant="ghost" size="sm" className="flex-1"
-              onClick={() => setSelection(sel => selectAll(sel, visibleTopics, maxTopics))}
+              onClick={() => setSelection(sel => selectAll(sel, visibleTopics, maxTopics, internalPrefix))}
               disabled={visibleTopics.length === 0}>
               Select shown
             </Button>

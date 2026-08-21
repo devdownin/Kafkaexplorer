@@ -12,6 +12,7 @@
 import { toTableName } from './sqlScope';
 import type { QueryResult } from '../api/types';
 import type { QueryErrorInfo } from './queryError';
+import { isInternalTopic, isInternalTable } from '../internalTopics';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Formatage SQL
@@ -1076,16 +1077,20 @@ export interface CatalogLike { tables: string[]; topics: string[] }
  * d'audit, configuration des métriques) — une première impression bâtie dessus n'apprend rien du
  * cluster que l'on vient explorer.
  */
-export function starterTable(catalog: CatalogLike | null | undefined): string | null {
+export function starterTable(
+  catalog: CatalogLike | null | undefined, internalPrefix = '',
+): string | null {
   if (!catalog) return null;
-  const table = catalog.tables.find(t => !t.startsWith('internal'));
+  const table = catalog.tables.find(t => !isInternalTable(t, internalPrefix));
   if (table) return table;
-  const topic = catalog.topics.find(t => !t.startsWith('internal.'));
+  const topic = catalog.topics.find(t => !isInternalTopic(t, internalPrefix));
   return topic ? toTableName(topic) : null;
 }
 
-export function starterQueries(catalog: CatalogLike | null | undefined): StarterQuery[] {
-  const table = starterTable(catalog);
+export function starterQueries(
+  catalog: CatalogLike | null | undefined, internalPrefix = '',
+): StarterQuery[] {
+  const table = starterTable(catalog, internalPrefix);
   if (!table) return [];
   return [
     {
@@ -1117,10 +1122,11 @@ export function starterQueries(catalog: CatalogLike | null | undefined): Starter
 export function starterJobQueries(
   catalog: CatalogLike | null | undefined,
   schemas?: Record<string, Record<string, string>>,
+  internalPrefix = '',
 ): StarterQuery[] {
-  const source = starterTable(catalog);
+  const source = starterTable(catalog, internalPrefix);
   if (!source) return [];
-  const sink = pickSinkTable(source, catalog?.tables);
+  const sink = pickSinkTable(source, catalog?.tables, internalPrefix);
   // `maxRows` ne sert qu'à la branche lecture : un job continu n'a pas de plafond de lignes.
   const sql = sidebarSqlFor(source, 'ASYNC_JOB', 0, schemas?.[source], sink);
   return [{
@@ -1189,8 +1195,11 @@ export function insertableColumns(schema: Record<string, string> | null | undefi
  * catalogue — arbitraire, mais posée *sélectionnée* dans l'éditeur, donc remplaçable d'une frappe.
  * La source elle-même et les tables `internal*` (celles que l'application s'écrit) sont exclues.
  */
-export function pickSinkTable(source: string, tables: string[] | null | undefined): string | null {
-  const candidates = (tables ?? []).filter(t => t !== source && !t.toLowerCase().startsWith('internal'));
+export function pickSinkTable(
+  source: string, tables: string[] | null | undefined, internalPrefix = '',
+): string | null {
+  const candidates = (tables ?? [])
+    .filter(t => t !== source && !isInternalTable(t, internalPrefix));
   if (candidates.length === 0) return null;
   return candidates.find(t => t.startsWith(source)) ?? candidates[0];
 }

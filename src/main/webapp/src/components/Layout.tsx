@@ -66,7 +66,8 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
         setSearchTables(response.data.tables ?? []);
         // Partage la même liste avec les formulaires (autocomplétion des noms de topics),
         // sans requête supplémentaire.
-        setCatalog(response.data.topics ?? [], response.data.tables ?? []);
+        setCatalog(response.data.topics ?? [], response.data.tables ?? [],
+                   response.data.internalTopicPrefix ?? '');
         if (response.data.clusterName) setClusterName(response.data.clusterName);
         if (response.data.bootstrapServers) setBootstrapServers(response.data.bootstrapServers);
       } catch {

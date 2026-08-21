@@ -13,9 +13,20 @@ import { useSyncExternalStore } from 'react';
 export interface Catalog {
   topics: string[];
   tables: string[];
+  /**
+   * Le préfixe des topics que l'application s'écrit à elle-même
+   * (`explorer.internal-topic-prefix`), résolu par le serveur — vide sur un déploiement qui n'en
+   * pose pas.
+   *
+   * Il vit ici et non dans un module à lui parce que c'est la même réponse qui l'apporte : ce
+   * store est le catalogue que `Layout` alimente depuis son sondage de `/api/dashboard`, et
+   * « lesquels de ces topics sont les nôtres » est une propriété de ce catalogue-là. Une seconde
+   * source finirait par diverger de la première.
+   */
+  internalPrefix: string;
 }
 
-const EMPTY: Catalog = { topics: [], tables: [] };
+const EMPTY: Catalog = { topics: [], tables: [], internalPrefix: '' };
 
 let catalog: Catalog = EMPTY;
 const listeners = new Set<() => void>();
@@ -24,11 +35,12 @@ const sameList = (a: string[], b: string[]) =>
   a.length === b.length && a.every((value, i) => value === b[i]);
 
 /** Alimenté par `Layout` à chaque sondage. No-op quand rien n'a changé. */
-export function setCatalog(topics: string[], tables: string[]): void {
-  if (sameList(catalog.topics, topics) && sameList(catalog.tables, tables)) return;
+export function setCatalog(topics: string[], tables: string[], internalPrefix = ''): void {
+  if (sameList(catalog.topics, topics) && sameList(catalog.tables, tables)
+      && catalog.internalPrefix === internalPrefix) return;
   // Nouvelle référence à chaque changement réel : `useSyncExternalStore` compare par identité,
   // muter le tableau en place ne déclencherait aucun rendu.
-  catalog = { topics, tables };
+  catalog = { topics, tables, internalPrefix };
   listeners.forEach(listener => listener());
 }
 
