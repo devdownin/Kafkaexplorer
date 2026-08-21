@@ -12,6 +12,9 @@
  */
 
 import type { TopicActivity } from '../api/types';
+// Le format d'instant du formulaire de recherche appartient à ce module-là : en réécrire un ici
+// donnerait deux façons d'écrire la même valeur, dont une qui dérive.
+import { toDateTimeLocal } from '../components/topic/topicSearch';
 
 /** Une fenêtre proposée dans le sélecteur, avec le découpage qui la rend lisible. */
 export interface ActivityWindow {
@@ -40,7 +43,15 @@ function windowOf(id: string, label: string, windowMs: number, buckets: number):
 export const ACTIVITY_WINDOWS: ActivityWindow[] = [
   windowOf('1h', 'Last hour', HOUR, 12),
   windowOf('24h', 'Last 24 h', 24 * HOUR, 24),
-  windowOf('7d', 'Last 7 days', 7 * 24 * HOUR, 28),
+  /*
+   * Sept jours en 56 points, soit un bucket de 3 h — et non 28 points de 6 h, qui était le
+   * découpage d'origine. Sur une semaine, la question posée est presque toujours « est-ce que la
+   * forme se répète ? », et une journée réduite à quatre points ne montre aucun cycle : la nuit et
+   * la matinée tombent dans le même. Huit points par jour en montrent un. Le serveur borne à 60,
+   * et le coût est le sien : 57 frontières par partition au lieu de 29, toutes émises en
+   * parallèle et comptées dans `explorer.activity-max-lookups`.
+   */
+  windowOf('7d', 'Last 7 days', 7 * 24 * HOUR, 56),
 ];
 
 /** « Off » est une valeur du même sélecteur : la colonne coûte des allers-retours au broker. */
@@ -78,6 +89,42 @@ export function writeActivityChoice(choice: ActivityChoice): void {
   }
 }
 
+/**
+ * L'échelle verticale de la courbe.
+ *
+ * `log` existe pour une forme précise et fréquente : une salve cent fois supérieure au régime
+ * ordinaire écrase tout le reste sur la ligne de base, et la courbe ne dit plus qu'une chose, le
+ * pic — alors que ce qui se passe le reste du temps est justement ce qu'on cherche à lire. Ça
+ * reste une **option** et pas le défaut, parce que changer l'échelle change ce que l'image
+ * affirme : en log, deux hauteurs ne sont plus dans le rapport de leurs valeurs. C'est aussi
+ * pourquoi l'en-tête de colonne le dit quand elle est active — une échelle non déclarée est
+ * précisément ce qui rend un graphique trompeur.
+ */
+export type ActivityScale = 'linear' | 'log';
+
+const SCALE_KEY = 'kse:dashboard-activity-scale';
+
+export function readActivityScale(): ActivityScale {
+  try {
+    return localStorage.getItem(SCALE_KEY) === 'log' ? 'log' : 'linear';
+  } catch {
+    return 'linear';
+  }
+}
+
+export function writeActivityScale(scale: ActivityScale): void {
+  try {
+    localStorage.setItem(SCALE_KEY, scale);
+  } catch {
+    /* l'écriture est un confort, jamais une condition */
+  }
+}
+
+/** Ce que l'en-tête ajoute quand l'échelle n'est pas celle qu'on suppose. */
+export function describeScale(scale: ActivityScale): string {
+  return scale === 'log' ? 'log scale' : '';
+}
+
 /** Géométrie d'une sparkline, en coordonnées du `viewBox`. */
 export interface SparklineShape {
   /** `d` de la courbe. */
@@ -102,7 +149,9 @@ const round = (n: number) => Math.round(n * 100) / 100;
  * Le prix, c'est que deux courbes ne se comparent pas en hauteur — d'où la pointe dans l'infobulle
  * et dans le nom accessible, où elle est chiffrée.
  */
-export function sparkline(counts: number[], width: number, height: number, padding = 1): SparklineShape {
+export function sparkline(
+  counts: number[], width: number, height: number, padding = 1, scale: ActivityScale = 'linear',
+): SparklineShape {
   const usableW = Math.max(1, width - padding * 2);
   const usableH = Math.max(1, height - padding * 2);
   const values = counts.length > 0 ? counts : [0];
@@ -117,11 +166,18 @@ export function sparkline(counts: number[], width: number, height: number, paddi
 
   const step = values.length > 1 ? usableW / (values.length - 1) : 0;
   const baseline = padding + usableH;
+  /*
+   * `log1p` plutôt que `log` : elle vaut 0 en 0, donc un bucket vide reste exactement sur la ligne
+   * de base au lieu de partir à l'infini ou de demander un décalage arbitraire — et le pic reste
+   * le haut de la boîte dans les deux échelles.
+   */
+  const project = scale === 'log' ? (v: number) => Math.log1p(v) : (v: number) => v;
+  const top = project(peak);
   const points = values.map((value, i) => ({
     x: round(padding + i * step),
     // Une série entièrement nulle se dessine sur la ligne de base : plate, et pas au milieu de la
     // boîte, où elle se lirait comme une valeur moyenne.
-    y: round(peak === 0 ? baseline : baseline - (value / peak) * usableH),
+    y: round(top === 0 ? baseline : baseline - (project(value) / top) * usableH),
   }));
 
   const line = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x} ${p.y}`).join(' ');
@@ -151,6 +207,11 @@ export function unmeasuredLeadingBuckets(activity: TopicActivity): number {
 export function isFloor(activity: TopicActivity): boolean {
   return activity.available
     && (activity.coveredFromMs !== null || activity.partitionsMeasured < activity.partitionsTotal);
+}
+
+/** « 24 h », « 3 h », « 5 min » — la même formulation que la ligne de portée du tableau de bord. */
+export function formatSpan(ms: number): string {
+  return formatWindow(ms);
 }
 
 function formatWindow(ms: number): string {
@@ -195,7 +256,15 @@ export function describeActivity(activity: TopicActivity | null | undefined, top
   const shape = sparkline(activity.counts, 100, 20);
   const peak = `Peak ${shape.peak.toLocaleString()} at ${bucketLabel(activity, shape.peakIndex)}.`;
   const head = `${activity.total.toLocaleString()} message${activity.total === 1 ? '' : 's'} produced in ${topic} over the last ${span}.`;
-  return activity.note ? `${head} ${peak} ${activity.note}` : `${head} ${peak}`;
+  const silence = detectSilence(activity);
+  // Le silence passe avant la note du serveur : c'est ce qui a le plus de chances de faire agir.
+  const quiet = silence
+    ? ` Nothing produced for at least ${formatWindow(silence.atLeastMs)}, after producing earlier in the window.`
+    : '';
+  // Le régime courant ne s'ajoute que s'il s'écarte : sinon il répète le pic sans rien apprendre.
+  const trend = silence ? null : detectTrend(activity);
+  const rate = trend ? ` ${explainTrend(trend, activity.bucketMs)}` : '';
+  return `${head} ${peak}${quiet}${rate}${activity.note ? ` ${activity.note}` : ''}`;
 }
 
 /**
@@ -209,4 +278,195 @@ export function describeActivityScope(
   const base = `One point per ${per} over the last ${formatWindow(window.windowMs)}, counted from offsets.`;
   if (measured >= requested) return base;
   return `${base} ${requested - measured} of the ${requested} topics on this page could not be measured.`;
+}
+
+// ── Ce que la série dit d'elle-même ──────────────────────────────────────────
+
+/** Le pic rapporté à la largeur d'un bucket : « 620/h », « 43/5 min ». */
+export function describeRate(count: number, bucketMs: number): string {
+  return `${compact(count)}/${unitOf(bucketMs)}`;
+}
+
+/** `1.2K` — la valeur exacte reste dans l'énoncé accessible, qui n'a pas de contrainte de place. */
+export function compact(count: number): string {
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
+  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}K`;
+  return String(count);
+}
+
+function unitOf(bucketMs: number): string {
+  if (bucketMs % HOUR === 0) {
+    const hours = bucketMs / HOUR;
+    return hours === 1 ? 'h' : `${hours} h`;
+  }
+  if (bucketMs % MINUTE === 0) {
+    const minutes = bucketMs / MINUTE;
+    return minutes === 1 ? 'min' : `${minutes} min`;
+  }
+  return `${Math.max(1, Math.round(bucketMs / 1000))} s`;
+}
+
+/** Un topic qui produisait et qui s'est tu. */
+export interface Silence {
+  /** Buckets vides à la fin de la fenêtre. */
+  buckets: number;
+  /** Durée du silence — un **plancher** : le dernier message est quelque part dans son bucket. */
+  atLeastMs: number;
+}
+
+/**
+ * Le topic produisait, et ne produit plus.
+ *
+ * C'est le signal le plus actionnable d'une série, et le seul que sa *forme* ne donne pas : une
+ * courbe qui retombe à zéro et une courbe basse se ressemblent à cette taille. La colonne « Last
+ * Message » en dit la moitié — elle donne l'instant du dernier message, pas le fait qu'il y avait
+ * un régime avant.
+ *
+ * Trois garde-fous, parce qu'un badge qui se trompe est un badge qu'on apprend à ignorer : il faut
+ * un régime préalable (au moins deux buckets non vides avant le silence), un silence qui ne soit
+ * pas un simple creux (au moins deux buckets, et au moins 15 % de la fenêtre) et une fenêtre qui
+ * ne soit pas entièrement vide — ce dernier cas n'est pas un topic qui s'est tu, c'est un topic
+ * qu'on n'a pas vu produire. Ce qui est affirmé reste un fait daté, jamais un verdict : « silent
+ * 4 h+ » est vrai d'un topic qui dort la nuit, et c'est à l'opérateur de savoir si ça l'inquiète.
+ */
+export function detectSilence(activity: TopicActivity | null | undefined): Silence | null {
+  if (!activity || !activity.available || activity.total <= 0) return null;
+  const counts = activity.counts;
+  if (counts.length === 0) return null;
+
+  let trailing = 0;
+  while (trailing < counts.length && counts[counts.length - 1 - trailing] === 0) trailing++;
+  if (trailing === 0 || trailing === counts.length) return null;
+  if (trailing < Math.max(2, Math.ceil(counts.length * 0.15))) return null;
+
+  const active = counts.slice(0, counts.length - trailing).filter(c => c > 0).length;
+  if (active < 2) return null;
+
+  return { buckets: trailing, atLeastMs: trailing * activity.bucketMs };
+}
+
+/** « silent 4 h+ » — le `+` porte le plancher, qui est ce que les buckets permettent d'affirmer. */
+export function describeSilence(silence: Silence): string {
+  return `silent ${formatWindow(silence.atLeastMs)}+`;
+}
+
+// ── Du pic aux messages ──────────────────────────────────────────────────────
+
+/**
+ * Le lien qui mène du pic aux messages : l'explorateur de ce topic, recherche **amorcée** au début
+ * du bucket.
+ *
+ * Amorcée et pas lancée, et c'est le contrat de l'autre page plutôt qu'un demi-effort : la
+ * recherche de topic n'a pas de critère « tout » — `EXISTS` en mode KEY a précisément été retiré
+ * de l'interface parce qu'il ramenait tout ce qui était scanné. Le lien porte donc ce qu'il sait
+ * (l'instant) et laisse l'opérateur dire ce qu'il cherche ; `seedFromQuery` pose le formulaire à
+ * l'arrivée. Passer par l'URL plutôt que par le brouillon `localStorage` de l'explorateur est
+ * délibéré : c'est la convention de toute l'application, et ça rend le lien partageable au lieu
+ * d'écraser en silence un critère non lancé sur un autre topic.
+ */
+export function bucketLink(topic: string, activity: TopicActivity, index: number): string {
+  const at = toDateTimeLocal(activity.windowStartMs + index * activity.bucketMs);
+  return `/topic/${encodeURIComponent(topic)}?start=TIMESTAMP&at=${encodeURIComponent(at)}`;
+}
+
+/** Ce que le clic va faire, dit avant qu'il ait lieu. */
+export function describeBucketLink(activity: TopicActivity, index: number): string {
+  return `Opens ${activity.topic} with the search primed at ${bucketLabel(activity, index)}.`;
+}
+
+// ── Le régime, plutôt que la forme ───────────────────────────────────────────
+
+/** L'écart du dernier bucket complet à la médiane de la fenêtre. */
+export interface Trend {
+  /** `dernier / médiane`. */
+  ratio: number;
+  direction: 'up' | 'down';
+  lastCount: number;
+  median: number;
+}
+
+/**
+ * Est-ce que ce topic tourne au-dessus ou au-dessous de son propre ordinaire, là, maintenant ?
+ *
+ * La forme d'une courbe répond mal à cette question à la taille d'une cellule, et le pic n'y
+ * répond pas du tout : il décrit le moment le plus chargé de la fenêtre, qui peut être vieux de
+ * vingt heures. La médiane de la fenêtre est la référence honnête ici — une moyenne serait tirée
+ * par la salve même qu'on cherche à situer — et le rapport se lit sans connaître le topic : 2,4×
+ * veut dire quelque chose que « 620/h » ne dit pas.
+ *
+ * Trois garde-fous, comme pour le silence. Il faut assez de matière pour qu'une médiane veuille
+ * dire quelque chose (six buckets, dont quatre non vides), une médiane non nulle (sinon le rapport
+ * est une division par zéro déguisée en information), et un écart franc — en deçà d'un facteur
+ * deux, c'est le bruit ordinaire d'un topic vivant, et un indicateur qui s'allume tout le temps
+ * est un indicateur qu'on cesse de lire. Un dernier bucket **vide** ne produit rien ici : c'est le
+ * cas de `detectSilence`, qui le dit mieux et qui a son propre seuil.
+ */
+export function detectTrend(activity: TopicActivity | null | undefined): Trend | null {
+  if (!activity || !activity.available) return null;
+  const counts = activity.counts;
+  if (counts.length < 6) return null;
+
+  const lastCount = counts[counts.length - 1];
+  if (lastCount === 0) return null;
+
+  const nonEmpty = counts.filter(c => c > 0);
+  if (nonEmpty.length < 4) return null;
+
+  const sorted = [...counts].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  const median = sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
+  if (median <= 0) return null;
+
+  const ratio = lastCount / median;
+  if (ratio < 2 && ratio > 0.5) return null;
+  return { ratio, direction: ratio >= 1 ? 'up' : 'down', lastCount, median };
+}
+
+/** « ▲ 2.4× » — la place d'une cellule de tableau. */
+export function describeTrend(trend: Trend): string {
+  const arrow = trend.direction === 'up' ? '▲' : '▼';
+  const ratio = trend.ratio >= 10 ? Math.round(trend.ratio) : Math.round(trend.ratio * 10) / 10;
+  return `${arrow} ${ratio}×`;
+}
+
+/** La même chose en une phrase, pour l'énoncé accessible et l'infobulle. */
+export function explainTrend(trend: Trend, bucketMs: number): string {
+  const sense = trend.direction === 'up' ? 'above' : 'below';
+  return `The last ${formatSpan(bucketMs)} carried ${trend.lastCount.toLocaleString()} messages,`
+    + ` ${describeTrend(trend).replace(/[▲▼]\s*/, '')} the window's median of ${trend.median.toLocaleString()}`
+    + ` — ${sense} this topic's own ordinary rate.`;
+}
+
+// ── Un axe, quand la place le permet ─────────────────────────────────────────
+
+export interface AxisTick {
+  /** Position horizontale, en pourcentage de la largeur du graphe. */
+  percent: number;
+  label: string;
+}
+
+/**
+ * `count` repères également espacés, du début à la fin de la fenêtre.
+ *
+ * Ils n'existent que là où il y a la place de les lire — la sparkline du tableau n'en a pas, le
+ * panneau d'un topic si. Le dernier repère porte la **fin** de la fenêtre et non le début du
+ * dernier bucket : c'est l'instant que le lecteur cherche (« jusqu'à quand ça va ? »).
+ */
+export function axisTicks(activity: TopicActivity, count = 3): AxisTick[] {
+  if (count < 2 || activity.windowEndMs <= activity.windowStartMs) return [];
+  const span = activity.windowEndMs - activity.windowStartMs;
+  return Array.from({ length: count }, (_, i) => {
+    const ratio = i / (count - 1);
+    return {
+      percent: Math.round(ratio * 1000) / 10,
+      label: tickLabel(activity.windowStartMs + ratio * span, span),
+    };
+  });
+}
+
+function tickLabel(ms: number, spanMs: number): string {
+  const d = new Date(ms);
+  const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  if (spanMs <= 24 * HOUR) return time;
+  return `${d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' })} ${time}`;
 }

@@ -23,6 +23,42 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The dashboard's activity curve leads somewhere, and says what it is worth.** Three follow-ups
+  to the sparkline column, all of them things the curve could not say on its own:
+  - **Clicking a bucket opens that period's messages.** Seeing a spike and reading what was in it
+    are the same question asked twice, and the second half was being done by hand. The curve is now
+    a button: a click opens the topic's explorer with the search primed at that hour, `Enter` opens
+    the peak — the bucket the accessible name already names. The instant travels in the URL
+    (`?start=TIMESTAMP&at=…`), so the link is shareable, and the Topic Explorer gained
+    `seedFromQuery` to pose a form from a URL that carries a start but nothing to run.
+  - **The peak is written beside the curve**, not only in the tooltip. The scale is per row, so two
+    curves of equal height can be 40/h and 40 000/h — and a figure reachable only by hovering is
+    reachable only with a mouse, which is the defect `title=""` was replaced for elsewhere.
+    Hovering a bucket replaces that number with the bucket's own value instead of opening another
+    tooltip.
+  - **A topic that produced and stopped is badged** `silent 6 h+`. It is the one thing a curve of
+    this size does not show — a series fallen to zero and a low series look alike — and
+    "Last Message" gives the instant without the fact that there was a regime before it. Guarded
+    against noise (a prior regime, a silence covering at least 15 % of the window) and worded as a
+    dated fact rather than a verdict; the duration is a floor, which the `+` carries.
+  - **The week is read at 3 h, not 6 h.** `Last 7 days` was 28 points; a day reduced to four of
+    them shows no daily cycle, which is the whole question a week-long window asks. It is 56 now,
+    which the server's cap of 60 buckets accommodates.
+  - **A log scale is offered beside the window.** A burst a hundred times the ordinary regime
+    crushes everything else onto the baseline, and the rest of the time is usually what one is
+    reading for. An option and not the default — it changes what the image asserts — and the
+    column header names it when it is on, an undeclared scale being what makes a chart mislead.
+  - **The current regime is shown beside the peak** when it departs from the topic's own
+    (`▲ 2.4×` against the window's median). The peak describes the busiest moment of the window,
+    which may be twenty hours old; this answers "is it running above its ordinary rate *now*".
+    The median rather than the mean, which the very burst one is situating would pull — and it
+    stays quiet below a factor two, an indicator that lights up always being one that stops
+    being read.
+  - **The Topic Explorer gained an `Activity` tab**, the same measurement with the room a cell
+    does not have: a time axis, a hover that names the bucket in words, and a click that primes
+    the search at that instant — on this page it needs no navigation at all. Mounted only when
+    opened, like the consumers panel, since the measurement costs broker round trips.
+
 - **An activity curve per topic in the dashboard's table.** The table said how many messages a
   topic holds and when the last one arrived — a level and an instant, neither of which says
   whether the topic is *working*: "1 200 messages, 3 min ago" reads the same on a topic doing

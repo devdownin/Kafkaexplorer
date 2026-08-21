@@ -14,10 +14,13 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { TopicActivity } from '../api/types';
 import {
-  ACTIVITY_OFF, ACTIVITY_WINDOWS, DEFAULT_ACTIVITY_CHOICE, bucketLabel, describeActivity,
-  describeActivityScope, isFloor, readActivityChoice, sparkline, unmeasuredLeadingBuckets,
-  windowById, writeActivityChoice,
+  ACTIVITY_OFF, ACTIVITY_WINDOWS, DEFAULT_ACTIVITY_CHOICE, bucketLabel, bucketLink, compact,
+  axisTicks, describeActivity, describeActivityScope, describeRate, describeScale, describeSilence,
+  describeTrend, detectSilence, detectTrend, explainTrend, isFloor, readActivityChoice,
+  readActivityScale, sparkline, unmeasuredLeadingBuckets, windowById, writeActivityChoice,
+  writeActivityScale,
 } from './topicActivity';
+import { criteriaFromQuery, seedFromQuery, startTimestamp } from '../components/topic/topicSearch';
 
 const HOUR = 3_600_000;
 
@@ -65,6 +68,39 @@ describe('sparkline', () => {
     const shape = sparkline([], 100, 20, 1);
     expect(shape.points).toHaveLength(1);
     expect(shape.line.startsWith('M')).toBe(true);
+  });
+});
+
+describe('the log scale', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('keeps the peak at the top and an empty bucket on the baseline', () => {
+    const shape = sparkline([0, 1, 100], 100, 20, 1, 'log');
+    expect(shape.points[0].y).toBe(19);   // vide : ligne de base, comme en linéaire
+    expect(shape.points[2].y).toBe(1);    // pic : haut de la boîte, comme en linéaire
+    // Et le pic reste la valeur *brute* : c'est lui qui est écrit à côté de la courbe.
+    expect(shape.peak).toBe(100);
+  });
+
+  it('lifts what a burst would otherwise flatten onto the baseline', () => {
+    // 1 face à un pic de 100 : en linéaire le point est à un centième de la hauteur, donc
+    // indiscernable d'un bucket vide — ce que l'échelle log existe pour corriger.
+    const linear = sparkline([0, 1, 100], 100, 20, 1);
+    const log = sparkline([0, 1, 100], 100, 20, 1, 'log');
+    expect(linear.points[1].y).toBeGreaterThan(18.5);
+    expect(log.points[1].y).toBeLessThan(17);
+  });
+
+  it('leaves a silent topic flat, whichever scale is asked for', () => {
+    expect(sparkline([0, 0, 0], 100, 20, 1, 'log').points.every(p => p.y === 19)).toBe(true);
+  });
+
+  it('round-trips the choice and says so only when it is not the assumed one', () => {
+    expect(readActivityScale()).toBe('linear');
+    expect(describeScale('linear')).toBe('');
+    writeActivityScale('log');
+    expect(readActivityScale()).toBe('log');
+    expect(describeScale('log')).toBe('log scale');
   });
 });
 
@@ -127,6 +163,16 @@ describe('the window selector', () => {
     }
   });
 
+  /**
+   * Sur une semaine, la question est « est-ce que la forme se répète ? », et une journée réduite à
+   * quatre points ne montre aucun cycle : la nuit et la matinée tombent dans le même.
+   */
+  it('resolves a multi-day window finely enough to show a daily cycle', () => {
+    const week = windowById('7d')!;
+    const pointsPerDay = (24 * 3_600_000) / week.bucketMs;
+    expect(pointsPerDay).toBeGreaterThanOrEqual(6);
+  });
+
   it('round-trips a choice, off included', () => {
     writeActivityChoice(ACTIVITY_OFF);
     expect(readActivityChoice()).toBe(ACTIVITY_OFF);
@@ -155,5 +201,138 @@ describe('bucketLabel', () => {
     const a = activity();
     expect(bucketLabel(a, 0)).not.toBe(bucketLabel(a, 1));
     expect(bucketLabel(a, 0).length).toBeGreaterThan(0);
+  });
+});
+
+describe('the peak, written rather than hovered', () => {
+  it('rates the peak against the bucket it was counted in', () => {
+    expect(describeRate(620, 3_600_000)).toBe('620/h');
+    expect(describeRate(43, 5 * 60_000)).toBe('43/5 min');
+    expect(describeRate(1_240, 6 * 3_600_000)).toBe('1.2K/6 h');
+  });
+
+  it('compacts a large count and leaves a small one alone', () => {
+    expect(compact(940)).toBe('940');
+    expect(compact(1_240)).toBe('1.2K');
+    expect(compact(3_400_000)).toBe('3.4M');
+  });
+});
+
+describe('detectSilence', () => {
+  /** 24 buckets d'une heure : un régime, puis plus rien. */
+  const withCounts = (counts: number[]) => activity({ counts, windowEndMs: counts.length * HOUR });
+
+  it('reports a topic that produced and then stopped', () => {
+    const silence = detectSilence(withCounts([...Array(18).fill(10), ...Array(6).fill(0)]));
+    expect(silence).toEqual({ buckets: 6, atLeastMs: 6 * HOUR });
+    expect(describeSilence(silence!)).toBe('silent 6 h+');
+  });
+
+  it('says nothing about a dip, which is not a stop', () => {
+    // Deux heures creuses sur vingt-quatre : c'est une nuit calme, pas un topic qui s'est tu.
+    expect(detectSilence(withCounts([...Array(22).fill(10), 0, 0]))).toBeNull();
+  });
+
+  it('says nothing when there was no regime to lose', () => {
+    // Un seul bucket non vide, puis rien : il n'y a pas de régime dont s'écarter.
+    expect(detectSilence(withCounts([5, ...Array(23).fill(0)]))).toBeNull();
+    // Et une fenêtre entièrement vide n'est pas un topic qui s'est tu : c'est un topic qu'on n'a
+    // pas vu produire, ce que la courbe plate dit déjà.
+    expect(detectSilence(withCounts(Array(24).fill(0)))).toBeNull();
+  });
+
+  it('claims nothing about a series that is not available', () => {
+    expect(detectSilence(activity({ available: false, counts: [], total: 0 }))).toBeNull();
+    expect(detectSilence(undefined)).toBeNull();
+  });
+
+  it('travels into the accessible name, where it is worth more than the peak', () => {
+    const text = describeActivity(withCounts([...Array(18).fill(10), ...Array(6).fill(0)]), 'orders');
+    expect(text).toMatch(/Nothing produced for at least 6 h/);
+  });
+});
+
+describe('from the peak to the messages', () => {
+  it('links to the topic with the search primed at the bucket start', () => {
+    const a = activity({ windowStartMs: new Date(2026, 5, 15, 10, 0, 0).getTime() });
+    const link = bucketLink('demo.orders.1.received', a, 2);
+
+    expect(link.startsWith('/topic/demo.orders.1.received?')).toBe(true);
+    const search = link.slice(link.indexOf('?'));
+    // L'autre page doit lire ce lien comme une amorce — pas comme une recherche, il n'y a pas de
+    // critère à exécuter, et pas comme du bruit, sinon l'instant serait perdu à l'arrivée.
+    expect(criteriaFromQuery(search)).toBeNull();
+    const seeded = seedFromQuery(search);
+    expect(seeded).not.toBeNull();
+    expect(seeded!.startMode).toBe('TIMESTAMP');
+    expect(startTimestamp(seeded!)).toBe(a.windowStartMs + 2 * HOUR);
+  });
+
+  it('escapes a topic name that needs it', () => {
+    expect(bucketLink('demo/orders', activity(), 0)).toContain('/topic/demo%2Forders?');
+  });
+});
+
+describe('detectTrend', () => {
+  const withCounts = (counts: number[]) => activity({ counts, windowEndMs: counts.length * HOUR });
+
+  it('reports a last bucket well above the window own median', () => {
+    const trend = detectTrend(withCounts([10, 10, 10, 12, 8, 10, 40]))!;
+    expect(trend.direction).toBe('up');
+    expect(trend.median).toBe(10);
+    expect(trend.ratio).toBe(4);
+    expect(describeTrend(trend)).toBe('▲ 4×');
+    expect(explainTrend(trend, HOUR)).toMatch(/The last 1 h carried 40 messages/);
+  });
+
+  it('reports a collapse too, as long as something still came through', () => {
+    const trend = detectTrend(withCounts([40, 40, 40, 38, 42, 40, 4]))!;
+    expect(trend.direction).toBe('down');
+    expect(describeTrend(trend)).toBe('▼ 0.1×');
+  });
+
+  /** Un indicateur qui s'allume tout le temps est un indicateur qu'on cesse de lire. */
+  it('stays quiet on the ordinary noise of a live topic', () => {
+    expect(detectTrend(withCounts([10, 11, 9, 12, 10, 11, 13]))).toBeNull();
+  });
+
+  it('says nothing when there is not enough to have a median', () => {
+    expect(detectTrend(withCounts([1, 50]))).toBeNull();                       // trop peu de points
+    expect(detectTrend(withCounts([0, 0, 0, 0, 0, 0, 50]))).toBeNull();        // médiane nulle
+    expect(detectTrend(withCounts([10, 10, 10, 10, 10, 10, 0]))).toBeNull();   // dernier vide
+    expect(detectTrend(activity({ available: false, counts: [], total: 0 }))).toBeNull();
+  });
+
+  /**
+   * Le dernier bucket vide appartient à `detectSilence`, qui le dit mieux et a son propre seuil :
+   * les deux ne doivent jamais parler du même bucket en même temps.
+   */
+  it('leaves the empty last bucket to the silence badge', () => {
+    const counts = [...Array(18).fill(10), ...Array(6).fill(0)];
+    expect(detectSilence(withCounts(counts))).not.toBeNull();
+    expect(detectTrend(withCounts(counts))).toBeNull();
+  });
+
+  it('travels into the accessible name, where the shape says nothing', () => {
+    const text = describeActivity(withCounts([10, 10, 10, 12, 8, 10, 40]), 'orders');
+    expect(text).toMatch(/window's median of 10/);
+  });
+});
+
+describe('axisTicks', () => {
+  it('spans the window from its start to its end', () => {
+    const a = activity({ counts: [1, 2, 3, 4] });
+    const ticks = axisTicks(a, 3);
+    expect(ticks).toHaveLength(3);
+    expect(ticks[0].percent).toBe(0);
+    expect(ticks[2].percent).toBe(100);
+    // Le dernier repère porte la fin de la fenêtre, pas le début du dernier bucket : c'est
+    // l'instant que le lecteur cherche.
+    expect(ticks[2].label).not.toBe(ticks[1].label);
+  });
+
+  it('refuses to invent an axis it cannot draw', () => {
+    expect(axisTicks(activity(), 1)).toEqual([]);
+    expect(axisTicks(activity({ windowStartMs: 10, windowEndMs: 10 }), 3)).toEqual([]);
   });
 });

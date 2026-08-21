@@ -58,6 +58,8 @@ import {
   buildSearchQuery,
   coverageOf,
   criteriaFromQuery,
+  seedFromQuery,
+  startTimestamp,
   describeCoverage,
   emptyCriteria,
   highlightFor,
@@ -341,6 +343,37 @@ describe('nextScanAction', () => {
     const action = nextScanAction(
       covered({ exhausted: true, scanned: 12_000, scanBudget: 40_000 }), criteria());
     expect(action && action.kind === 'DEEPEN' && action.maxScan).toBe(80_000);
+  });
+});
+
+describe('seedFromQuery', () => {
+  /*
+   * Un lien peut décrire un point de départ sans dire quoi chercher : c'est ce que fait la
+   * sparkline du tableau de bord, qui ouvre un topic réglé sur l'heure du bucket cliqué.
+   * `criteriaFromQuery` a raison de répondre `null` — rien n'est exécutable — mais ne rien poser
+   * ferait atterrir sur un formulaire vide, ce qui perd le seul renseignement que le lien portait.
+   */
+  it('carries a start with nothing to run', () => {
+    const search = '?start=TIMESTAMP&at=2026-06-15T14:00';
+    expect(criteriaFromQuery(search)).toBeNull();
+
+    const seeded = seedFromQuery(search)!;
+    expect(seeded.startMode).toBe('TIMESTAMP');
+    expect(startTimestamp(seeded)).toBe(new Date(2026, 5, 15, 14, 0, 0).getTime());
+  });
+
+  it('leaves a runnable search to the other function, and says nothing about an empty URL', () => {
+    // Deux fonctions, deux réponses : celle qui lance et celle qui amorce ne doivent pas répondre
+    // ensemble, sans quoi une recherche portée par l'URL serait posée deux fois.
+    expect(seedFromQuery('?mode=KEY&value=ORD-42')).toBeNull();
+    expect(seedFromQuery('')).toBeNull();
+    expect(seedFromQuery('?readMode=latest-offset')).toBeNull();
+  });
+
+  /** Un mode inconnu reste une URL cassée : la lire comme une recherche texte la réinterpréterait. */
+  it('refuses a broken mode rather than falling back to text', () => {
+    expect(seedFromQuery('?mode=NONSENSE&start=TIMESTAMP&at=2026-06-15T14:00')).toBeNull();
+    expect(criteriaFromQuery('?mode=NONSENSE&q=x')).toBeNull();
   });
 });
 
