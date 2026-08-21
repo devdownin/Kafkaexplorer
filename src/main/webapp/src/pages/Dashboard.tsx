@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { useToast } from '../components/Toast';
@@ -19,15 +19,19 @@ import {
   readActivityScale, windowById, writeActivityChoice, writeActivityScale,
   type ActivityChoice, type ActivityScale,
 } from './topicActivity';
+import {
+  REFRESH_OPTIONS, REFRESH_OFF, readRefreshChoice, writeRefreshChoice,
+  refreshIntervalMs, activityIntervalMs, describeRefreshStatus,
+  type RefreshChoice,
+} from './dashboardRefresh';
 
 const PAGE_SIZES = [10, 25, 50, 100];
-const DASHBOARD_REFRESH_MS = 5000;
-/**
- * La colonne d'activité se rafraîchit sur la cadence de son cache serveur (30 s), pas sur celle du
- * tableau de bord : la redemander toutes les 5 s ne ferait que relire six fois la même entrée de
- * cache, et une fois celle-ci expirée, payer six fois les allers-retours au broker.
+/*
+ * Les deux cadences vivaient ici en constantes de module : `DASHBOARD_REFRESH_MS` (5 s) et
+ * `ACTIVITY_REFRESH_MS` (30 s, le cache serveur). Elles sont maintenant dérivées du réglage —
+ * voir `dashboardRefresh.ts`, qui garde l'arbitrage du plancher de 30 s pour la colonne
+ * d'activité : le choix la ralentit, ne l'accélère jamais.
  */
-const ACTIVITY_REFRESH_MS = 30000;
 /** axios n'a pas de délai par défaut : sans ça, un serveur muet laisse la colonne en squelette. */
 const ACTIVITY_TIMEOUT_MS = 20000;
 const TOPIC_COUNT_KEY = 'dashboard.lastTopicCount';
@@ -132,6 +136,29 @@ const Dashboard: React.FC = () => {
    * et l'en-tête de colonne le dit, une échelle non déclarée étant ce qui rend un graphe trompeur.
    */
   const [activityScale, setActivityScale] = useState<ActivityScale>(() => readActivityScale());
+
+  /**
+   * La cadence du sondage. Réglable et extinguible depuis l'écran : chaque tour appelle le broker
+   * à travers `/api/dashboard`, donc laisser cette page ouverte toute la journée n'a pas le même
+   * coût selon qu'on la regarde travailler ou qu'on la garde sur un second écran.
+   */
+  const [refreshChoice, setRefreshChoice] = useState<RefreshChoice>(() => readRefreshChoice());
+
+  /** La dernière question posée à `/api/dashboard/activity`, pour ne pas la reposer pour rien. */
+  const activityAskedFor = useRef<string | null>(null);
+
+  /**
+   * L'instant courant, pour que « il y a 3 min » vieillisse au lieu de rester figé sur la valeur
+   * qu'il avait au dernier chargement.
+   *
+   * Le pas est de 10 s et non de 1 s, et c'est suffisant par construction : sous une cadence
+   * rapide, c'est `fetchedAt` qui bouge et provoque le rendu, donc l'âge affiché reste de toute
+   * façon celui de la dernière lecture ; sous une cadence lente ou éteinte — le seul cas où cette
+   * horloge décide vraiment de ce qui est à l'écran — l'âge se lit en minutes, où 10 s ne se
+   * voient pas. Elle ne tourne pas quand l'onglet est caché : personne ne lit un texte qui n'est
+   * pas affiché, et le rendu serait pur gaspillage.
+   */
+  const [now, setNow] = useState(() => Date.now());
   /**
    * La réponse *et* la question à laquelle elle répond. Sans la clé, changer de fenêtre ou de page
    * laissait les courbes précédentes sous le nouvel en-tête le temps d'un aller-retour — une série
@@ -211,21 +238,49 @@ const Dashboard: React.FC = () => {
      */
     // eslint-disable-next-line react-hooks/set-state-in-effect -- chargement initial
     void loadDashboard(true);
+  }, []);
 
+  /*
+   * Le sondage est un effet **distinct** du chargement initial, et c'est ce qui rend la cadence
+   * réglable sans effet de bord : les deux ne vivaient qu'ensemble, donc dépendre du réglage
+   * aurait rejoué le chargement initial — bannière d'erreur comprise — à chaque changement dans
+   * le sélecteur. Ici, changer la cadence réarme une minuterie et ne demande rien de plus.
+   */
+  useEffect(() => {
     const refresh = () => {
       if (document.visibilityState === 'visible') {
         void loadDashboard(false);
       }
     };
 
-    const intervalId = window.setInterval(refresh, DASHBOARD_REFRESH_MS);
+    /*
+     * Revenir sur l'onglet relit, quelle que soit la cadence — et même quand le sondage est
+     * éteint : ce que « off » demande, c'est de ne pas interroger le broker en boucle derrière
+     * l'opérateur, pas de lui présenter les chiffres d'il y a une heure au moment précis où il
+     * revient les regarder. C'est aussi ce qui rend « off » utilisable plutôt que dangereux.
+     */
     window.addEventListener('focus', refresh);
     document.addEventListener('visibilitychange', refresh);
 
+    const period = refreshIntervalMs(refreshChoice);
+    const intervalId = period === null ? null : window.setInterval(refresh, period);
+
     return () => {
-      window.clearInterval(intervalId);
+      if (intervalId !== null) window.clearInterval(intervalId);
       window.removeEventListener('focus', refresh);
       document.removeEventListener('visibilitychange', refresh);
+    };
+  }, [refreshChoice]);
+
+  useEffect(() => {
+    const tick = () => {
+      if (document.visibilityState === 'visible') setNow(Date.now());
+    };
+    const intervalId = window.setInterval(tick, 10000);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', tick);
     };
   }, []);
 
@@ -315,17 +370,31 @@ const Dashboard: React.FC = () => {
       }
     };
 
-    void read();
-    const intervalId = window.setInterval(() => {
+    /*
+     * Relire à l'ouverture seulement si la *question* a changé — la fenêtre, ou les topics
+     * affichés. Un changement de cadence réarme la minuterie, il ne pose pas une question de plus
+     * au broker ; et « off » surtout ne doit pas déclencher une dernière lecture juste après
+     * qu'on lui a dit d'arrêter, ce qui est exactement ce que ferait un effet qui relit à chaque
+     * exécution en dépendant du réglage.
+     */
+    if (activityAskedFor.current !== key) {
+      activityAskedFor.current = key;
+      void read();
+    }
+    // Le réglage la ralentit mais ne l'accélère pas — son plancher est le cache serveur — et
+    // « off » l'éteint avec le reste : un seul interrupteur, sinon la page continuerait de
+    // sonder après qu'on lui a dit d'arrêter.
+    const period = activityIntervalMs(refreshChoice);
+    const intervalId = period === null ? null : window.setInterval(() => {
       if (document.visibilityState === 'visible') void read();
-    }, ACTIVITY_REFRESH_MS);
+    }, period);
 
     return () => {
       dropped = true;
       controller.abort();
-      window.clearInterval(intervalId);
+      if (intervalId !== null) window.clearInterval(intervalId);
     };
-  }, [activityTopics, activityWindow]);
+  }, [activityTopics, activityWindow, refreshChoice]);
 
   if (loading) return (
     <div className="p-4 md:p-6 space-y-6">
@@ -410,7 +479,40 @@ const Dashboard: React.FC = () => {
         title="Dashboard"
         description="Live overview of your Kafka cluster — topics, throughput and running Flink jobs."
         actions={
-          <Button variant="secondary" icon="refresh" onClick={() => void fetchData({ showSpinner: true })}>Refresh</Button>
+          <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
+            {/*
+              * La page dit quand elle a lu, et ce qu'elle fera ensuite. Tant que la cadence était
+              * de 5 s pour tout le monde, la question ne se posait pas ; dès qu'on peut la porter
+              * à cinq minutes ou l'éteindre, un chiffre que personne ne peut dater est un chiffre
+              * sur lequel personne ne devrait agir. Les deux moitiés ensemble : l'âge seul se lit
+              * comme une panne, la cadence seule ne dit pas où l'on en est dans l'intervalle.
+              */}
+            <span className="text-[11px] text-on-surface-variant tabular-nums">
+              {describeRefreshStatus(refreshChoice, fetchedAt, now)}
+            </span>
+            {/*
+              * « Off » est une valeur du sélecteur, comme pour la colonne d'activité : chaque tour
+              * interroge le broker, donc la cadence doit pouvoir se régler et s'éteindre depuis
+              * l'écran, pas seulement depuis un fichier de configuration.
+              */}
+            <div className="flex items-center gap-1.5 text-[12px] text-on-surface-variant">
+              <label htmlFor="dashboard-refresh">Auto-refresh</label>
+              <Select
+                id="dashboard-refresh"
+                value={refreshChoice}
+                onChange={e => {
+                  const choice = e.target.value as RefreshChoice;
+                  setRefreshChoice(choice);
+                  writeRefreshChoice(choice);
+                }}
+                className="h-9 w-auto"
+              >
+                {REFRESH_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+                <option value={REFRESH_OFF}>Off</option>
+              </Select>
+            </div>
+            <Button variant="secondary" icon="refresh" onClick={() => void fetchData({ showSpinner: true })}>Refresh</Button>
+          </div>
         }
       />
 
