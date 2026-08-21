@@ -61,7 +61,7 @@ public class WebConfig implements WebMvcConfigurer {
     public CacheManager cacheManager(ExplorerConfig explorerConfig) {
         CaffeineCacheManager cacheManager = new CaffeineCacheManager(
                 "kafkaTopics", "topicDescriptor", "topicSizes", "topicLastMessages", "clusterDetails",
-                "topicConsumers", "lineage", "auditHistory");
+                "topicConsumers", "topicActivity", "lineage", "auditHistory");
         cacheManager.setCaffeine(Caffeine.newBuilder()
                 .expireAfterWrite(explorerConfig.getCacheExpireSeconds(), TimeUnit.SECONDS)
                 // Two things at once, and the second is why it is here rather than being a matter

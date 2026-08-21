@@ -8,6 +8,8 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.KafkaMessage;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MessageFormat;
 import com.compagnonsdudev.kafkasqlexplorer.domain.PartitionLag;
 import com.compagnonsdudev.kafkasqlexplorer.domain.PartitionTimeLag;
+import com.compagnonsdudev.kafkasqlexplorer.domain.TopicActivity;
+import com.compagnonsdudev.kafkasqlexplorer.domain.TopicActivityResponse;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicConsumers;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicDescriptor;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicTimeLag;
@@ -1255,6 +1257,264 @@ public class KafkaAdminService {
             log.error("Failed to get topic last-message timestamps", e);
         }
         return timestamps;
+    }
+
+    /** Fewer than four points is not a curve; more than sixty is a sparkline nobody can read. */
+    public static final int ACTIVITY_MIN_BUCKETS = 4;
+    public static final int ACTIVITY_MAX_BUCKETS = 60;
+    /** A window under a minute buckets into instants; over a month, into buckets nothing fills. */
+    public static final long ACTIVITY_MIN_WINDOW_MS = 60_000L;
+    public static final long ACTIVITY_MAX_WINDOW_MS = 30L * 24 * 60 * 60 * 1000L;
+    /**
+     * Wall clock for one activity read. A constant rather than a property: every call it makes is
+     * a metadata round trip issued in parallel, so this bounds latency, not work — the work is
+     * bounded by {@code maxLookups}, which is where an operator has something to decide.
+     */
+    private static final long ACTIVITY_TIMEOUT_MS = 15_000L;
+
+    /**
+     * How much each of these topics produced, bucket by bucket, over the last {@code windowMs}.
+     *
+     * <p>This is the dashboard's sparkline column, and it is deliberately built out of
+     * {@code listOffsets} alone: one request per bucket boundary, each covering every partition of
+     * every topic asked for, all issued before any is awaited. Nothing opens a consumer, nothing
+     * reads a record, and nothing joins a group — a curve per row on a page of twenty-five topics
+     * costs the boundaries' round trips and no more, which is the only reason it can sit in a
+     * table that refreshes on a timer.
+     *
+     * <p>What a bucket counts is stated in {@link TopicActivity}: offsets produced, not records
+     * present. The distinction matters on a compacted topic, where the two answers legitimately
+     * differ, and it is why this method exists beside {@link #getTopicsSize} rather than deriving
+     * a curve from it.
+     *
+     * <p>The window is <b>aligned</b> on the bucket width and ends at the last <b>completed</b>
+     * bucket. Two consecutive polls inside one bucket therefore describe exactly the same
+     * boundaries — which keeps the curve from wobbling as the clock moves, makes this cacheable at
+     * all, and keeps the last point from being a half-filled bucket that reads as a collapse in
+     * traffic.
+     *
+     * <p>Cached (30 s TTL) like every other metadata read here, and <b>a failed read is not
+     * cached</b>: the dashboard's refresh is the gesture that exists to retry, and replaying a
+     * cached failure for half a minute would answer that gesture with the failure it was trying to
+     * clear.
+     *
+     * @param topicNames topics to measure, in the caller's own order — the lookup budget, when it
+     *                   bites, keeps the head of that list, so a page shows the rows it displays
+     * @param windowMs   how far back to look, clamped to [{@value #ACTIVITY_MIN_WINDOW_MS},
+     *                   {@value #ACTIVITY_MAX_WINDOW_MS}]
+     * @param buckets    points in the series, clamped to [{@value #ACTIVITY_MIN_BUCKETS},
+     *                   {@value #ACTIVITY_MAX_BUCKETS}]
+     * @param maxLookups ceiling on partitions × boundaries for the whole call; topics past it are
+     *                   left out and named in the response's warnings, never silently dropped
+     */
+    @Cacheable(value = "topicActivity",
+            key = "#topicNames + '@' + #windowMs + '/' + #buckets + '/' + #maxLookups",
+            unless = "!#result.available()")
+    public TopicActivityResponse getTopicActivity(List<String> topicNames, long windowMs, int buckets,
+                                                  int maxLookups) {
+        return getTopicActivity(topicNames, windowMs, buckets, maxLookups, System.currentTimeMillis());
+    }
+
+    /**
+     * The same read against a stated instant.
+     *
+     * <p>The window is derived from the clock, so nothing could assert which bucket a record falls
+     * into without saying when "now" is — and a test that computes the alignment a microsecond
+     * before the method does is a test that fails whenever the two land either side of a boundary.
+     * The instant is a parameter here and read from the clock above; nothing else differs.
+     */
+    TopicActivityResponse getTopicActivity(List<String> topicNames, long windowMs, int buckets,
+                                           int maxLookups, long nowMs) {
+        int bucketCount = Math.clamp(buckets, ACTIVITY_MIN_BUCKETS, ACTIVITY_MAX_BUCKETS);
+        long window = Math.clamp(windowMs, ACTIVITY_MIN_WINDOW_MS, ACTIVITY_MAX_WINDOW_MS);
+        long bucketMs = Math.max(1000L, window / bucketCount);
+        long end = (nowMs / bucketMs) * bucketMs;
+        long start = end - bucketMs * bucketCount;
+
+        if (topicNames == null || topicNames.isEmpty()) {
+            return new TopicActivityResponse(Map.of(), start, end, bucketMs, bucketCount, true, List.of());
+        }
+
+        List<String> warnings = new ArrayList<>();
+        Map<String, List<TopicPartition>> topicPartitions = new LinkedHashMap<>();
+        try {
+            // Per-topic futures rather than allTopicNames(): one topic the cluster does not know
+            // must cost that topic's row, not the whole column.
+            Map<String, KafkaFuture<TopicDescription>> described =
+                    adminClient.describeTopics(new ArrayList<>(new LinkedHashSet<>(topicNames))).topicNameValues();
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            for (String name : topicNames) {
+                KafkaFuture<TopicDescription> future = described.get(name);
+                if (future == null || topicPartitions.containsKey(name)) continue;
+                try {
+                    TopicDescription description = future.get(remainingMs(deadline), TimeUnit.MILLISECONDS);
+                    topicPartitions.put(name, description.partitions().stream()
+                            .map(p -> new TopicPartition(name, p.partition()))
+                            .toList());
+                } catch (Exception e) {
+                    warnings.add("Topic '" + name + "' could not be described: " + SqlErrorClassifier.explain(e));
+                }
+            }
+        } catch (Exception e) {
+            return TopicActivityResponse.unavailable(start, end, bucketMs, bucketCount,
+                    "Topic metadata could not be read: " + SqlErrorClassifier.explain(e));
+        }
+
+        // The budget is spent from the head of the caller's list, and what it cuts is named. A
+        // curve missing from a row reads as a topic that produced nothing, which is exactly the
+        // kind of silence a bounded read must not leave behind.
+        int perPartition = bucketCount + 1;
+        int spent = 0;
+        Map<String, List<TopicPartition>> inScope = new LinkedHashMap<>();
+        List<String> skipped = new ArrayList<>();
+        for (Map.Entry<String, List<TopicPartition>> entry : topicPartitions.entrySet()) {
+            int cost = entry.getValue().size() * perPartition;
+            if (!inScope.isEmpty() && spent + cost > maxLookups) {
+                skipped.add(entry.getKey());
+                continue;
+            }
+            inScope.put(entry.getKey(), entry.getValue());
+            spent += cost;
+        }
+        if (!skipped.isEmpty()) {
+            warnings.add(skipped.size() + " topic(s) were left out of this read: it would have taken more than "
+                    + maxLookups + " offset lookups (explorer.activity-max-lookups). Not measured: "
+                    + String.join(", ", skipped.subList(0, Math.min(5, skipped.size())))
+                    + (skipped.size() > 5 ? ", …" : ""));
+        }
+
+        List<TopicPartition> all = inScope.values().stream().flatMap(List::stream).toList();
+        if (all.isEmpty()) {
+            return new TopicActivityResponse(Map.of(), start, end, bucketMs, bucketCount,
+                    warnings.isEmpty(), warnings);
+        }
+
+        Map<String, TopicActivity> series = new LinkedHashMap<>();
+        try {
+            // Every request is issued before any is awaited: N+3 round trips overlap instead of
+            // queueing, so the wall clock is one round trip's latency rather than sixty.
+            ListOffsetsResult earliest = adminClient.listOffsets(specs(all, OffsetSpec.earliest()));
+            ListOffsetsResult latest = adminClient.listOffsets(specs(all, OffsetSpec.latest()));
+            List<ListOffsetsResult> boundaries = new ArrayList<>(perPartition);
+            for (int i = 0; i <= bucketCount; i++) {
+                boundaries.add(adminClient.listOffsets(specs(all, OffsetSpec.forTimestamp(start + i * bucketMs))));
+            }
+
+            long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(ACTIVITY_TIMEOUT_MS);
+            for (Map.Entry<String, List<TopicPartition>> entry : inScope.entrySet()) {
+                series.put(entry.getKey(), buildActivity(entry.getKey(), entry.getValue(), earliest, latest,
+                        boundaries, start, end, bucketMs, bucketCount, deadline));
+            }
+        } catch (Exception e) {
+            return TopicActivityResponse.unavailable(start, end, bucketMs, bucketCount,
+                    "Offsets could not be read: " + SqlErrorClassifier.explain(e));
+        }
+
+        boolean available = series.values().stream().anyMatch(TopicActivity::available);
+        return new TopicActivityResponse(series, start, end, bucketMs, bucketCount, available, warnings);
+    }
+
+    private static Map<TopicPartition, OffsetSpec> specs(List<TopicPartition> partitions, OffsetSpec spec) {
+        Map<TopicPartition, OffsetSpec> request = new LinkedHashMap<>();
+        partitions.forEach(tp -> request.put(tp, spec));
+        return request;
+    }
+
+    private static long remainingMs(long deadlineNanos) {
+        return Math.max(1L, TimeUnit.NANOSECONDS.toMillis(deadlineNanos - System.nanoTime()));
+    }
+
+    private static ListOffsetsResult.ListOffsetsResultInfo awaitOffset(
+            ListOffsetsResult result, TopicPartition tp, long deadlineNanos) throws Exception {
+        return result.partitionResult(tp).get(remainingMs(deadlineNanos), TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * One topic's series, summed over its partitions.
+     *
+     * <p>Each partition is awaited on its own future rather than through {@code .all()}: one
+     * partition that cannot be read costs its own contribution — reported through
+     * {@code partitionsMeasured}, which makes the series a floor — where {@code .all()} would cost
+     * the topic its whole curve.
+     */
+    private TopicActivity buildActivity(String topic, List<TopicPartition> partitions,
+                                        ListOffsetsResult earliest, ListOffsetsResult latest,
+                                        List<ListOffsetsResult> boundaries,
+                                        long start, long end, long bucketMs, int bucketCount,
+                                        long deadlineNanos) {
+        long[] counts = new long[bucketCount];
+        int measured = 0;
+        Long coveredFrom = null;
+        String firstFailure = null;
+
+        for (TopicPartition tp : partitions) {
+            try {
+                long endOffset = awaitOffset(latest, tp, deadlineNanos).offset();
+                long beginOffset = awaitOffset(earliest, tp, deadlineNanos).offset();
+                if (endOffset < 0 || beginOffset < 0) {
+                    throw new IllegalStateException("the broker reported no offset for this partition");
+                }
+
+                long[] positions = new long[bucketCount + 1];
+                long firstResolvedOffset = -1L;
+                long firstResolvedTimestamp = -1L;
+                for (int i = 0; i <= bucketCount; i++) {
+                    ListOffsetsResult.ListOffsetsResultInfo info = awaitOffset(boundaries.get(i), tp, deadlineNanos);
+                    long offset = info.offset();
+                    if (offset < 0) {
+                        // No record at or after this boundary: everything this partition holds was
+                        // produced before it, so the position is the end of the log.
+                        offset = endOffset;
+                    } else if (firstResolvedOffset < 0) {
+                        firstResolvedOffset = offset;
+                        firstResolvedTimestamp = info.timestamp();
+                    }
+                    positions[i] = Math.clamp(offset, beginOffset, endOffset);
+                }
+
+                for (int i = 0; i < bucketCount; i++) {
+                    counts[i] += Math.max(0L, positions[i + 1] - positions[i]);
+                }
+                measured++;
+
+                // The oldest surviving record starts after the window does, on a log that has been
+                // trimmed: what was produced before it is gone, and the buckets covering that
+                // stretch would otherwise read as a quiet night rather than as deleted history.
+                if (beginOffset > 0 && firstResolvedOffset == beginOffset
+                        && firstResolvedTimestamp > start && firstResolvedTimestamp < end) {
+                    coveredFrom = coveredFrom == null
+                            ? firstResolvedTimestamp : Math.max(coveredFrom, firstResolvedTimestamp);
+                }
+            } catch (Exception e) {
+                if (firstFailure == null) firstFailure = SqlErrorClassifier.explain(e);
+                log.debug("Activity: partition {} could not be read: {}", tp, e.toString());
+            }
+        }
+
+        if (measured == 0) {
+            return TopicActivity.unavailable(topic, start, end, bucketMs,
+                    "Offsets could not be read for any of the " + partitions.size() + " partition(s): "
+                            + (firstFailure == null ? "no reason reported" : firstFailure));
+        }
+
+        List<String> notes = new ArrayList<>();
+        if (measured < partitions.size()) {
+            notes.add((partitions.size() - measured) + " of " + partitions.size()
+                    + " partitions could not be read, so these counts are a floor: " + firstFailure);
+        }
+        if (coveredFrom != null) {
+            notes.add("Records produced before " + java.time.Instant.ofEpochMilli(coveredFrom)
+                    + " have been deleted by retention, so the earlier buckets are floors rather than quiet periods.");
+        }
+
+        List<Long> series = new ArrayList<>(bucketCount);
+        long total = 0;
+        for (long count : counts) {
+            series.add(count);
+            total += count;
+        }
+        return new TopicActivity(topic, start, end, bucketMs, series, total, coveredFrom,
+                measured, partitions.size(), true, notes.isEmpty() ? null : String.join(" ", notes));
     }
 
     public Optional<KafkaMessage> getLatestMessage(String topicName) {

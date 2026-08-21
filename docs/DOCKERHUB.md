@@ -245,6 +245,8 @@ allocates; a cluster audit over thousands of topics is the workload that wants m
 | `EXPLORER_DEFAULT_QUERY_TIMEOUT_MS` | `10000` | Per-query wall clock. |
 | `EXPLORER_AUDIT_MAX_DURATION_MS` | `1800000` | Budget for one full cluster audit; `0` disables it. |
 | `EXPLORER_SEARCH_MAX_SCAN` | `20000` | Records one topic-search pass may read. |
+| `EXPLORER_ACTIVITY_MAX_TOPICS` | `100` | Topics one activity read may measure — the sparkline column of the dashboard asks only for the rows it displays. |
+| `EXPLORER_ACTIVITY_MAX_LOOKUPS` | `20000` | Ceiling on partitions × bucket boundaries for that read, which is its real unit of work. No record is read: the series comes from offsets alone. Topics past the budget are named in the response rather than silently absent. |
 | `EXPLORER_STREAM_FLOW_MAX_TOPICS` | `250` | Topics a whole-cluster trace reads (the most recently active ones). |
 | `EXPLORER_DATA_MODEL_MAX_TOPICS` | `100` | Ceiling on the topics one data-model run may analyse. The page carries the per-run budget (30 by default) and reads this ceiling from the server, so raising it needs no rebuild — each topic costs a sample read plus schema inference. |
 | `EXPLORER_CONSUMER_GROUP_PREFIX` | `kafka-explorer-` | Prefix for the consumer groups the explorer creates for **its own** reads — metadata, samples, searches, traces, live sessions. It never renames a group belonging to your pipelines. Empty or unset keeps the default, which stays recognised as the app's whatever you set here, so changing it does not orphan the groups the previous value left behind. |

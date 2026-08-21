@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { useToast } from '../components/Toast';
@@ -11,9 +11,24 @@ import {
   Table, TableHead, TableBody, TableRow, Th, Td,
   Input, Select, useConfirm, StatGridSkeleton, TableSkeleton, type BadgeTone,
 } from '../components/ui';
+import Sparkline from '../components/dashboard/Sparkline';
+import type { TopicActivityResponse } from '../api/types';
+import { describeApiError } from './queryError';
+import {
+  ACTIVITY_WINDOWS, ACTIVITY_OFF, describeActivityScope, readActivityChoice, windowById,
+  writeActivityChoice, type ActivityChoice,
+} from './topicActivity';
 
 const PAGE_SIZES = [10, 25, 50, 100];
 const DASHBOARD_REFRESH_MS = 5000;
+/**
+ * La colonne d'activité se rafraîchit sur la cadence de son cache serveur (30 s), pas sur celle du
+ * tableau de bord : la redemander toutes les 5 s ne ferait que relire six fois la même entrée de
+ * cache, et une fois celle-ci expirée, payer six fois les allers-retours au broker.
+ */
+const ACTIVITY_REFRESH_MS = 30000;
+/** axios n'a pas de délai par défaut : sans ça, un serveur muet laisse la colonne en squelette. */
+const ACTIVITY_TIMEOUT_MS = 20000;
 const TOPIC_COUNT_KEY = 'dashboard.lastTopicCount';
 type SortKey = 'name' | 'size' | 'state' | 'lastMessage';
 type SortDir = 'asc' | 'desc';
@@ -105,6 +120,23 @@ const Dashboard: React.FC = () => {
   });
   /** Instant de la dernière réponse : c'est lui qui date les « il y a 5 min », pas le rendu. */
   const [fetchedAt, setFetchedAt] = useState(() => Date.now());
+  /**
+   * La fenêtre de la colonne d'activité, ou `off`. C'est un choix et pas une constante parce que
+   * la colonne coûte des allers-retours au broker : sur un cluster où elle gêne, on l'éteint.
+   */
+  const [activityChoice, setActivityChoice] = useState<ActivityChoice>(() => readActivityChoice());
+  /**
+   * La réponse *et* la question à laquelle elle répond. Sans la clé, changer de fenêtre ou de page
+   * laissait les courbes précédentes sous le nouvel en-tête le temps d'un aller-retour — une série
+   * de 24 h présentée comme la dernière heure. Ce qui ne correspond pas à la clé courante n'est pas
+   * affiché, ce qui évite du même coup d'avoir à effacer un état depuis un effet.
+   */
+  const [activityState, setActivityState] = useState<{
+    key: string;
+    data: TopicActivityResponse | null;
+    /** Une colonne qui n'a pas pu être mesurée le dit sous le tableau — pas des courbes plates. */
+    error: string | null;
+  } | null>(null);
 
   useEffect(() => {
     if (data) {
@@ -190,6 +222,104 @@ const Dashboard: React.FC = () => {
     };
   }, []);
 
+  /*
+   * Filtre, tri et pagination sont remontés au-dessus des retours anticipés — les hooks doivent
+   * précéder tout `return`, et la colonne d'activité a besoin de savoir quelles lignes sont à
+   * l'écran pour ne mesurer que celles-là. Les mémoriser au passage évite de retrier toute la
+   * liste des topics à chaque rendu, dont les vingt-cinq que le sondage de 5 s provoque par minute.
+   */
+  const getState = useCallback((topic: string) =>
+    !data || data.topicSizes[topic] === 0 ? 'empty'
+    : topic.toLowerCase().endsWith('.dlt') ? 'dlt'
+    : 'healthy', [data]);
+
+  const filteredTopics = useMemo(() => {
+    if (!data) return [] as string[];
+    return data.topics
+      .filter(t => t.toLowerCase().includes(searchTerm.toLowerCase()))
+      .filter(t => !hideEmpty || (data.topicSizes[t] ?? 0) > 0)
+      .filter(t => !hideDlt   || !t.toLowerCase().endsWith('.dlt'))
+      .sort((a, b) => {
+        let cmp = 0;
+        if (sortKey === 'name') cmp = a.localeCompare(b);
+        else if (sortKey === 'size') cmp = (data.topicSizes[a] ?? 0) - (data.topicSizes[b] ?? 0);
+        else if (sortKey === 'state') cmp = getState(a).localeCompare(getState(b));
+        else if (sortKey === 'lastMessage') {
+          const ta = data.topicLastMessages?.[a] ?? null;
+          const tb = data.topicLastMessages?.[b] ?? null;
+          // null values always go to the end regardless of direction
+          if (ta === null && tb === null) cmp = 0;
+          else if (ta === null) return 1;
+          else if (tb === null) return -1;
+          else cmp = ta - tb;
+        }
+        return sortDir === 'asc' ? cmp : -cmp;
+      });
+  }, [data, searchTerm, hideEmpty, hideDlt, sortKey, sortDir, getState]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredTopics.length / pageSize));
+  const pagedTopics = useMemo(
+    () => filteredTopics.slice(page * pageSize, (page + 1) * pageSize),
+    [filteredTopics, page, pageSize],
+  );
+
+  const activityWindow = windowById(activityChoice);
+  /*
+   * Ce qui déclenche une lecture, c'est la liste des topics *affichés* — pas celle du cluster. Une
+   * chaîne plutôt que le tableau : `pagedTopics` est un nouvel objet à chaque tri, et une
+   * dépendance par identité relancerait la lecture sans que la question ait changé.
+   */
+  const activityTopics = pagedTopics.join(',');
+  const activityKey = `${activityChoice}|${activityTopics}`;
+  const shownActivity = activityState?.key === activityKey ? activityState : null;
+  const activity = shownActivity?.data ?? null;
+  const activityError = shownActivity?.error ?? null;
+  /** Rien de connu pour *cette* question : un squelette, jamais une courbe plate en attendant. */
+  const activityLoading = Boolean(activityWindow) && activityTopics !== '' && !shownActivity;
+
+  useEffect(() => {
+    if (!activityWindow || !activityTopics) return;
+    const controller = new AbortController();
+    let dropped = false;
+    const key = `${activityWindow.id}|${activityTopics}`;
+
+    const read = async () => {
+      try {
+        const response = await axios.get<TopicActivityResponse>('/api/dashboard/activity', {
+          params: { topics: activityTopics, windowMs: activityWindow.windowMs, buckets: activityWindow.buckets },
+          signal: controller.signal,
+          timeout: ACTIVITY_TIMEOUT_MS,
+        });
+        if (dropped) return;
+        setActivityState({
+          key,
+          data: response.data,
+          // `available: false` veut dire qu'aucun topic n'a pu être mesuré, ce qui est la seule
+          // chose que des courbes ne peuvent pas exprimer : une ligne plate est une réponse.
+          error: response.data.available
+            ? null
+            : (response.data.warnings[0] ?? 'The broker did not answer.'),
+        });
+      } catch (e) {
+        if (dropped || axios.isCancel(e)) return;
+        // La raison prend la place des courbes : des lignes plates diraient « aucun trafic », qui
+        // est une réponse, sur une question à laquelle rien n'a répondu.
+        setActivityState({ key, data: null, error: describeApiError(e, 'Activity could not be read').title });
+      }
+    };
+
+    void read();
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void read();
+    }, ACTIVITY_REFRESH_MS);
+
+    return () => {
+      dropped = true;
+      controller.abort();
+      window.clearInterval(intervalId);
+    };
+  }, [activityTopics, activityWindow]);
+
   if (loading) return (
     <div className="p-4 md:p-6 space-y-6">
       <PageHeader title="Dashboard" description="Live overview of your Kafka cluster — topics, throughput and running Flink jobs." />
@@ -199,35 +329,6 @@ const Dashboard: React.FC = () => {
     </div>
   );
   if (error || !data) return <ErrorBanner message={error ?? 'Failed to load dashboard'} onRetry={() => void fetchData({ showSpinner: true })} />;
-
-  const getState = (topic: string) =>
-    data.topicSizes[topic] === 0 ? 'empty'
-    : topic.toLowerCase().endsWith('.dlt') ? 'dlt'
-    : 'healthy';
-
-  const filteredTopics = data.topics
-    .filter(t => t.toLowerCase().includes(searchTerm.toLowerCase()))
-    .filter(t => !hideEmpty || (data.topicSizes[t] ?? 0) > 0)
-    .filter(t => !hideDlt   || !t.toLowerCase().endsWith('.dlt'))
-    .sort((a, b) => {
-      let cmp = 0;
-      if (sortKey === 'name') cmp = a.localeCompare(b);
-      else if (sortKey === 'size') cmp = (data.topicSizes[a] ?? 0) - (data.topicSizes[b] ?? 0);
-      else if (sortKey === 'state') cmp = getState(a).localeCompare(getState(b));
-      else if (sortKey === 'lastMessage') {
-        const ta = data.topicLastMessages?.[a] ?? null;
-        const tb = data.topicLastMessages?.[b] ?? null;
-        // null values always go to the end regardless of direction
-        if (ta === null && tb === null) cmp = 0;
-        else if (ta === null) return 1;
-        else if (tb === null) return -1;
-        else cmp = ta - tb;
-      }
-      return sortDir === 'asc' ? cmp : -cmp;
-    });
-
-  const totalPages = Math.max(1, Math.ceil(filteredTopics.length / pageSize));
-  const pagedTopics = filteredTopics.slice(page * pageSize, (page + 1) * pageSize);
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -276,6 +377,11 @@ const Dashboard: React.FC = () => {
                    : 'No change since last visit';
 
   const activeJobCount = data.jobs.length;
+
+  /** Combien des lignes affichées portent une vraie mesure — le reste est dit, pas dessiné. */
+  const measuredActivityCount = activity
+    ? pagedTopics.filter(topic => activity.topics[topic]?.available).length
+    : 0;
 
   function formatCount(num: number) {
     if (num >= 1000000000) return (num / 1000000000).toFixed(1) + 'B';
@@ -377,6 +483,28 @@ const Dashboard: React.FC = () => {
               ))}
             </div>
 
+            {/*
+              * La fenêtre pilote la colonne, et « Off » en fait partie : la mesure coûte des
+              * allers-retours au broker pour chaque ligne affichée, donc elle doit pouvoir
+              * s'éteindre depuis l'écran, pas seulement depuis un fichier de configuration.
+              */}
+            <div className="flex items-center gap-1.5 text-[12px] text-on-surface-variant">
+              <label htmlFor="dashboard-activity-window">Activity</label>
+              <Select
+                id="dashboard-activity-window"
+                value={activityChoice}
+                onChange={e => {
+                  const choice = e.target.value as ActivityChoice;
+                  setActivityChoice(choice);
+                  writeActivityChoice(choice);
+                }}
+                className="h-9 w-auto"
+              >
+                {ACTIVITY_WINDOWS.map(w => <option key={w.id} value={w.id}>{w.label}</option>)}
+                <option value={ACTIVITY_OFF}>Off</option>
+              </Select>
+            </div>
+
             <div className="flex items-center gap-1.5 text-[12px] text-on-surface-variant">
               <span>Show</span>
               <Select
@@ -398,6 +526,20 @@ const Dashboard: React.FC = () => {
               <Th><SortButton k="size" sortKey={sortKey} sortDir={sortDir} onToggle={toggleSort}>Messages</SortButton></Th>
               <Th><SortButton k="state" sortKey={sortKey} sortDir={sortDir} onToggle={toggleSort}>State</SortButton></Th>
               <Th><SortButton k="lastMessage" sortKey={sortKey} sortDir={sortDir} onToggle={toggleSort}>Last Message</SortButton></Th>
+              {/*
+                * Pas de tri sur cette colonne, et c'est une contrainte, pas un oubli : elle n'est
+                * mesurée que pour les lignes affichées, donc trier le cluster dessus trierait sur
+                * ce qu'on n'a pas lu. Le libellé rappelle la fenêtre, faute de quoi une courbe ne
+                * dit pas sur quoi elle porte.
+                */}
+              {activityWindow && (
+                <Th>
+                  <span className="flex items-center gap-1.5">
+                    Activity
+                    <span className="font-normal text-outline normal-case">{activityWindow.label.toLowerCase()}</span>
+                  </span>
+                </Th>
+              )}
               <Th className="text-right">Actions</Th>
             </tr>
           </TableHead>
@@ -414,6 +556,11 @@ const Dashboard: React.FC = () => {
                 <Td className="text-on-surface-variant tabular-nums" title={data.topicLastMessages?.[topic] ? new Date(data.topicLastMessages[topic]!).toLocaleString() : undefined}>
                   {formatLastMessage(data.topicLastMessages?.[topic], fetchedAt)}
                 </Td>
+                {activityWindow && (
+                  <Td className="py-1.5">
+                    <Sparkline topic={topic} activity={activity?.topics[topic]} loading={activityLoading} />
+                  </Td>
+                )}
                 <Td className="text-right">
                   <Link to={`/topic/${topic}`} className="inline-flex text-on-surface-variant hover:text-primary transition-colors" title="Explore topic" aria-label={`Explore ${topic}`}>
                     <span className="material-symbols-outlined text-[19px]">visibility</span>
@@ -423,7 +570,7 @@ const Dashboard: React.FC = () => {
             ))}
             {pagedTopics.length === 0 && (
               <tr>
-                <td colSpan={5}>
+                <td colSpan={activityWindow ? 6 : 5}>
                   <EmptyState
                     icon="search_off"
                     title={searchTerm ? 'No matching topics' : 'No topics found'}
@@ -434,6 +581,28 @@ const Dashboard: React.FC = () => {
             )}
           </TableBody>
         </Table>
+
+        {activityWindow && (
+          /*
+             Ce que la colonne couvre, et ce qu'elle n'a pas couvert. Une sparkline est bornée par
+             construction — un budget de lecture, une rétention, une partition muette — et une
+             courbe qui ne dit pas sa portée se lit comme la vérité entière.
+          */
+          <div className="text-[11px] text-on-surface-variant space-y-0.5">
+            <p>
+              {activityError
+                ? `Activity could not be measured: ${activityError}`
+                : describeActivityScope(pagedTopics.length, measuredActivityCount, activityWindow)}
+            </p>
+            {(activity?.warnings ?? [])
+              // Celui qui sert déjà de message d'erreur ne se répète pas deux lignes plus bas.
+              .filter(warning => warning !== activityError)
+              .slice(0, 2)
+              .map(warning => (
+                <p key={warning} className="text-warning">{warning}</p>
+              ))}
+          </div>
+        )}
 
         {/* Pagination */}
         <div className="flex items-center justify-between gap-3 flex-wrap">

@@ -123,6 +123,60 @@ export interface DashboardResponse {
 }
 
 /**
+ * La série d'activité d'un topic — la sparkline de la colonne « Activity » du tableau de bord.
+ *
+ * Elle est mesurée à partir des **offsets**, pas des enregistrements : le serveur résout chaque
+ * frontière de bucket en offset (`listOffsets(forTimestamp)`) et soustrait. Un bucket compte donc
+ * des offsets produits, ce qui n'est pas la même chose que le nombre de messages présents dans le
+ * topic aujourd'hui — `topicSizes` répond à cette seconde question.
+ *
+ * Deux champs disent ce que la courbe ne mesure pas, et ils existent pour la même raison que
+ * partout ailleurs ici : une mesure impossible ne doit pas revenir en zéro. `coveredFromMs` est
+ * l'instant à partir duquel la série est complète (avant lui, la rétention a supprimé des
+ * enregistrements, donc les buckets sont des planchers), et `partitionsMeasured` en face de
+ * `partitionsTotal` dit si toutes les partitions ont répondu.
+ *
+ * @java TopicActivity
+ */
+export interface TopicActivity {
+  topic: string;
+  windowStartMs: number;
+  windowEndMs: number;
+  bucketMs: number;
+  /** Un compte par bucket, du plus ancien au plus récent. Vide quand `available` est faux. */
+  counts: number[];
+  total: number;
+  /** `null` quand toute la fenêtre est couverte ; sinon, ce qui précède est un plancher. */
+  coveredFromMs: number | null;
+  partitionsMeasured: number;
+  partitionsTotal: number;
+  /** Faux quand rien n'a pu être lu — distinct d'un topic sans trafic. */
+  available: boolean;
+  note: string | null;
+}
+
+/**
+ * `GET /api/dashboard/activity?topics=…` — une série par topic, sur une fenêtre commune.
+ *
+ * La fenêtre est déclarée ici et pas par topic : toutes les séries sont découpées sur les mêmes
+ * frontières, ce qui est la condition pour que vingt-cinq sparklines dans une colonne veuillent
+ * dire la même chose. Un topic demandé et absent de `topics` n'a pas été mesuré — le budget de
+ * lecture a mordu, ou le cluster ne le connaît pas — et `warnings` le nomme, sans quoi une courbe
+ * absente se lirait comme un topic sans trafic.
+ *
+ * @java TopicActivityResponse
+ */
+export interface TopicActivityResponse {
+  topics: Record<string, TopicActivity>;
+  windowStartMs: number;
+  windowEndMs: number;
+  bucketMs: number;
+  buckets: number;
+  available: boolean;
+  warnings: string[];
+}
+
+/**
  * Où en est un groupe de consommateurs sur une partition.
  *
  * `committedOffset` et `lag` sont nullables à dessein : un groupe qui n'a jamais commité sur une
