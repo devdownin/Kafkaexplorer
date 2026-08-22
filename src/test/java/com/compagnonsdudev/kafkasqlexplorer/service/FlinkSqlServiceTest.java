@@ -898,10 +898,17 @@ class FlinkSqlServiceTest {
         assertEquals("a_b", FlinkSqlService.sanitizeForLog("a\u0000b"));
         assertEquals("a_b", FlinkSqlService.sanitizeForLog("a\u007Fb"));
         assertEquals("__", FlinkSqlService.sanitizeForLog("\r\n"), "CRLF : deux caractères, deux remplacements");
-        // Ce qu'un nom de table porte réellement doit traverser intact.
+        // Ce qu'un nom de topic Kafka ou de table Flink porte réellement doit traverser intact :
+        // l'alphabet légal d'un nom de topic est exactement celui que la liste blanche autorise.
         assertEquals("demo_orders_1_received", FlinkSqlService.sanitizeForLog("demo_orders_1_received"));
         assertEquals("demo.orders-1", FlinkSqlService.sanitizeForLog("demo.orders-1"));
-        assertEquals("é àü", FlinkSqlService.sanitizeForLog("é àü"), "l'accentué n'est pas un caractère de contrôle");
+        // Liste blanche : tout le reste tombe, y compris ce qu'une liste noire de caractères de
+        // contrôle laissait passer. Ce n'est pas un dommage collatéral — un nom de topic ne peut
+        // pas contenir ces caractères, donc en voir un ici veut dire qu'on ne journalise pas ce
+        // qu'on croit, et l'échapper est la bonne réponse.
+        assertEquals("____", FlinkSqlService.sanitizeForLog("é àü"),
+            "hors de [a-zA-Z0-9._-], donc hors d'un nom de topic légal");
+        assertEquals("a_b", FlinkSqlService.sanitizeForLog("a b"), "l'espace non plus n'est pas légal");
         assertNull(FlinkSqlService.sanitizeForLog(null));
     }
 

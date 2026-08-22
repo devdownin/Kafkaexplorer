@@ -325,25 +325,34 @@ public class FlinkSqlService {
     }
 
     /**
-     * Neutralise les caractères de contrôle d'une valeur avant de la journaliser : un `%0A` dans
-     * une valeur influencée par l'appelant forge la ligne qu'il veut dans le fichier censé être
-     * le compte rendu de ce qui s'est passé.
+     * Neutralise ce qui n'a rien à faire dans un nom avant de le journaliser : un `%0A` dans une
+     * valeur influencée par l'appelant forge la ligne qu'il veut dans le fichier censé être le
+     * compte rendu de ce qui s'est passé.
      *
-     * <p>Sur ce chemin précis, aucune entrée ne peut y arriver : `flinkTableName` sort de
-     * {@link #extractPrimaryTable}, dont les deux captures sont {@code [\w.\-]+} et
-     * {@code \w[\w.]*} — ni CR ni LF n'en sortent, et {@code toTableName} ne fait ensuite que
-     * remplacer {@code .} et {@code -} par {@code _}. C'est donc une défense en profondeur, pas
-     * une correction : elle tient si un jour la regex d'extraction s'élargit, ce qui est
+     * <p>Sur ce chemin précis, rien ne peut y arriver. CodeQL fait remonter la source à
+     * {@code MetricController.preview} — le SQL que l'utilisateur poste — mais cette valeur ne
+     * parvient ici qu'à travers {@link #extractPrimaryTable}, dont les deux captures sont
+     * {@code [\w.\-]+} et {@code \w[\w.]*} : ni CR ni LF n'en sortent, et {@code toTableName}
+     * ne fait ensuite que remplacer {@code .} et {@code -} par {@code _}. C'est donc une défense
+     * en profondeur, pas une correction — elle tient le jour où cette regex s'élargit, ce qui est
      * exactement le genre de changement qu'on fait sans y penser.
      *
-     * <p>Le motif est hoisté parce qu'un {@code replaceAll} le recompile à chaque appel, et que
-     * la classe de caractères d'origine était redondante — {@code \r\n\t\f} sont tous dans
-     * {@code \x00-\x1F}.
+     * <p>Liste blanche, et non liste noire des caractères de contrôle, pour deux raisons qui vont
+     * dans le même sens. Elle est plus stricte : ce que ce paramètre reçoit est un nom de topic
+     * Kafka ou de table Flink, dont l'alphabet légal est précisément {@code [a-zA-Z0-9._-]}, donc
+     * tout le reste est déjà anormal et rien de légitime n'est remplacé. Et c'est la seule des
+     * deux formes que le modèle CodeQL reconnaît comme assainissement — mesuré : la liste noire
+     * laissait les trois constats {@code java/log-injection} de cette méthode en place, la liste
+     * blanche les supprime (27 → 24 sur l'arbre entier, sans en ajouter un seul).
+     *
+     * <p>{@code String.replaceAll} recompile le motif à chaque appel, là où un {@link Pattern}
+     * hoisté ne le ferait pas — mais ce même hoisting sort du modèle ({@code Matcher.replaceAll}
+     * n'est pas déclaré sur {@code String}), et la méthode ne tourne qu'une fois par
+     * enregistrement de table, juste à côté d'une soumission de job Flink. La reconnaissance vaut
+     * plus cher que la recompilation.
      */
-    private static final Pattern LOG_CONTROL_CHARS = Pattern.compile("[\\x00-\\x1F\\x7F]");
-
     static String sanitizeForLog(String value) {
-        return value == null ? null : LOG_CONTROL_CHARS.matcher(value).replaceAll("_");
+        return value == null ? null : value.replaceAll("[^\\w.\\-]", "_");
     }
 
     /**

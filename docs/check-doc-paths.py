@@ -75,9 +75,10 @@ NOT_A_PATH = {
     'target/', 'target/surefire-reports/', 'dist/', 'data/', 'logs/', 'node_modules/',
     # The log file itself, written at runtime under the `logs/` entry above.
     'logs/kafkaexplorer.log',
-    # A CodeQL query id — `language/query-name`, which looks exactly like a path. Only the one
+    # CodeQL query ids — `language/query-name`, which looks exactly like a path. Only the ones
     # CLAUDE.md still names in prose: this list expires its own unused entries.
     'java/sensitive-log',
+    'java/log-injection',
     'src/main/resources/static/', 'src/main/webapp/node_modules',
     # Shipped inside the Kafka image, not in this repository.
     'kafka-broker-api-versions.sh', 'kafka-consumer-groups.sh',
