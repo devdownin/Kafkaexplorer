@@ -325,6 +325,37 @@ public class FlinkSqlService {
     }
 
     /**
+     * Neutralise ce qui n'a rien à faire dans un nom avant de le journaliser : un `%0A` dans une
+     * valeur influencée par l'appelant forge la ligne qu'il veut dans le fichier censé être le
+     * compte rendu de ce qui s'est passé.
+     *
+     * <p>Sur ce chemin précis, rien ne peut y arriver. CodeQL fait remonter la source à
+     * {@code MetricController.preview} — le SQL que l'utilisateur poste — mais cette valeur ne
+     * parvient ici qu'à travers {@link #extractPrimaryTable}, dont les deux captures sont
+     * {@code [\w.\-]+} et {@code \w[\w.]*} : ni CR ni LF n'en sortent, et {@code toTableName}
+     * ne fait ensuite que remplacer {@code .} et {@code -} par {@code _}. C'est donc une défense
+     * en profondeur, pas une correction — elle tient le jour où cette regex s'élargit, ce qui est
+     * exactement le genre de changement qu'on fait sans y penser.
+     *
+     * <p>Liste blanche, et non liste noire des caractères de contrôle, pour deux raisons qui vont
+     * dans le même sens. Elle est plus stricte : ce que ce paramètre reçoit est un nom de topic
+     * Kafka ou de table Flink, dont l'alphabet légal est précisément {@code [a-zA-Z0-9._-]}, donc
+     * tout le reste est déjà anormal et rien de légitime n'est remplacé. Et c'est la seule des
+     * deux formes que le modèle CodeQL reconnaît comme assainissement — mesuré : la liste noire
+     * laissait les trois constats {@code java/log-injection} de cette méthode en place, la liste
+     * blanche les supprime (27 → 24 sur l'arbre entier, sans en ajouter un seul).
+     *
+     * <p>{@code String.replaceAll} recompile le motif à chaque appel, là où un {@link Pattern}
+     * hoisté ne le ferait pas — mais ce même hoisting sort du modèle ({@code Matcher.replaceAll}
+     * n'est pas déclaré sur {@code String}), et la méthode ne tourne qu'une fois par
+     * enregistrement de table, juste à côté d'une soumission de job Flink. La reconnaissance vaut
+     * plus cher que la recompilation.
+     */
+    static String sanitizeForLog(String value) {
+        return value == null ? null : value.replaceAll("[^\\w.\\-]", "_");
+    }
+
+    /**
      * Before executing a SELECT, checks if the referenced table is already registered in Flink.
      * If not, looks for a Kafka topic whose sanitized name (dots/hyphens → underscores) matches,
      * infers its schema, generates the DDL and registers it automatically.
@@ -370,12 +401,23 @@ public class FlinkSqlService {
             if (ddl == null || !ddl.startsWith("CREATE TABLE")) {
                 return AutoRegResult.fail("DDL Generator produced invalid SQL for topic " + matchingTopic);
             }
-            log.debug("Auto-registering table '{}' with DDL:\n{}", flinkTableName, ddl);
+            // Masqué, et c'est le DDL *brut* qui part à Flink juste en dessous : le connecteur a
+            // besoin des vrais identifiants, le fichier de log n'en a pas besoin. `generateDdl`
+            // recopie toutes les propriétés client Kafka dans le `WITH (…)`, mots de passe SSL et
+            // `sasl.jaas.config` compris, donc journaliser `ddl` tel quel écrivait le secret
+            // Confluent en clair dans `logs/kafkaexplorer.log` — un volume nommé dans toutes les
+            // stacks, et le premier fichier qu'on colle dans un rapport de bug. En DEBUG
+            // seulement, mais c'est précisément le niveau qu'un opérateur active pour comprendre
+            // pourquoi une requête échoue, c'est-à-dire quand cette ligne s'exécute.
+            log.debug("Auto-registering table '{}' with DDL:\n{}", sanitizeForLog(flinkTableName),
+                DdlGeneratorService.maskSensitiveProperties(ddl));
             executeMutationSql("auto-register-table", ddl);
-            log.info("Auto-registered table '{}' for Kafka topic '{}'", flinkTableName, matchingTopic);
+            log.info("Auto-registered table '{}' for Kafka topic '{}'",
+                sanitizeForLog(flinkTableName), sanitizeForLog(matchingTopic));
             return AutoRegResult.tableCreated();
         } catch (Exception e) {
-            log.error("Auto-registration failed for topic '{}' (table '{}'): {}", matchingTopic, flinkTableName, e.getMessage(), e);
+            log.error("Auto-registration failed for topic '{}' (table '{}'): {}",
+                sanitizeForLog(matchingTopic), sanitizeForLog(flinkTableName), e.getMessage(), e);
             return AutoRegResult.fail(String.format(
                 "Failed to auto-register Flink table '%s' from Kafka topic '%s': %s",
                 flinkTableName, matchingTopic, e.getMessage()));
