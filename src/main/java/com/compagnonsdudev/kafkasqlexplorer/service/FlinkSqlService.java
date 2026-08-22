@@ -324,6 +324,12 @@ public class FlinkSqlService {
         return from.find() ? from.group(1) : null;
     }
 
+    /** Prevent log forging by neutralizing line breaks and other control chars in user-influenced values. */
+    private static String sanitizeForLog(String value) {
+        if (value == null) return null;
+        return value.replaceAll("[\\r\\n\\t\\f\\x00-\\x1F\\x7F]", "_");
+    }
+
     /**
      * Before executing a SELECT, checks if the referenced table is already registered in Flink.
      * If not, looks for a Kafka topic whose sanitized name (dots/hyphens → underscores) matches,
@@ -378,7 +384,7 @@ public class FlinkSqlService {
             // stacks, et le premier fichier qu'on colle dans un rapport de bug. En DEBUG
             // seulement, mais c'est précisément le niveau qu'un opérateur active pour comprendre
             // pourquoi une requête échoue, c'est-à-dire quand cette ligne s'exécute.
-            log.debug("Auto-registering table '{}' with DDL:\n{}", flinkTableName,
+            log.debug("Auto-registering table '{}' with DDL:\n{}", sanitizeForLog(flinkTableName),
                 DdlGeneratorService.maskSensitiveProperties(ddl));
             executeMutationSql("auto-register-table", ddl);
             log.info("Auto-registered table '{}' for Kafka topic '{}'", flinkTableName, matchingTopic);
