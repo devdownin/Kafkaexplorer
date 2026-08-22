@@ -100,7 +100,7 @@ public class FlinkSqlService {
      * (step, max), so the bucket width is always the last one.
      */
     private static final Pattern WINDOW_CALL = Pattern.compile(
-        "(?i)\\b(TUMBLE|HOP|CUMULATE|SESSION)\\s*+\\(\\s*+TABLE\\s++(\\w[\\w.]*+)"
+        "(?i)\\b(TUMBLE|HOP|CUMULATE|SESSION)\\s*\\(\\s*TABLE\\s+(\\w[\\w.]*)"
             + "(?:\\s+PARTITION\\s+BY\\s+[^,]+)?\\s*,\\s*DESCRIPTOR\\s*\\(\\s*(\\w+)\\s*\\)"
             + "((?:\\s*,\\s*INTERVAL\\s+'\\d+'\\s+\\w+)+)\\s*\\)");
 
