@@ -89,6 +89,35 @@ further: `docker compose up -d` there also seeds **76 demo topics** — a 6-step
 pipeline to trace across partitions, header-only correlations, a real time series to
 window, plus duplicates and poison records for the audit to find.
 
+### With a private AI beside it, still in one command
+
+Process Mining can be answered by [SpectraLLM](https://hub.docker.com/r/compagnonsdudev/spectrallm)
+— a local RAG stack published under this same namespace — so the flowcharts and the anomaly
+hunt run on your machine, with no API key and nothing leaving your network.
+[`docker-compose-spectra-hub.yml`](https://github.com/devdownin/Kafkaexplorer/blob/main/docker-compose-spectra-hub.yml)
+wires the pair from published images only: no checkout of either project, no Maven, no npm.
+
+```bash
+curl -O https://raw.githubusercontent.com/devdownin/Kafkaexplorer/main/docker-compose-spectra-hub.yml
+docker compose -f docker-compose-spectra-hub.yml pull
+docker compose -f docker-compose-spectra-hub.yml up -d
+```
+
+Kafka Explorer on **http://localhost:8080**, the SpectraLLM UI on **http://localhost:8088**.
+The first boot downloads ~4.8 GB of model weights in the background — nothing waits for it,
+so both interfaces are up in seconds and Process Mining starts answering once the weights
+land. Plan for ~16 GB of RAM; a GPU turns minutes per analysis into seconds, through the
+[`.gpu.yml` overlay](https://github.com/devdownin/Kafkaexplorer/blob/main/docker-compose-spectra-hub.gpu.yml)
+next to it.
+
+One overlay goes further than sharing a model:
+[`.ingest.yml`](https://github.com/devdownin/Kafkaexplorer/blob/main/docker-compose-spectra-hub.ingest.yml)
+has SpectraLLM index the topics themselves, so the corpus answers questions about what is
+*in* your messages, with cited sources — and the Explorer's own audits can read it. Every
+variable is documented in
+[`.env.example`](https://github.com/devdownin/Kafkaexplorer/blob/main/.env.example),
+and the compose file explains each choice it makes.
+
 ## ✨ What you get
 
 - 🖱️ **Click-to-query** — click a JSON key or XML tag in a message preview and it lands in your `SELECT`/`WHERE`, with `JSON_VALUE`/XPath generated for you.
@@ -224,6 +253,8 @@ re-entered after each restart.
 | `CLAUDE_BASE_URL` | `http://localhost:11434/v1` | Endpoint of the local/compatible provider. |
 | `CLAUDE_MODEL` | `qwen3:4b` | Model name at that endpoint. |
 | `ANTHROPIC_API_KEY` | — | `ANTHROPIC` provider only. |
+| `CLAUDE_USE_RAG` | `false` | `SPECTRA` provider only: also retrieve from SpectraLLM's ingested corpus instead of reasoning solely on the messages inlined in the prompt. |
+| `CLAUDE_COLLECTION` | — | `SPECTRA` + `CLAUDE_USE_RAG` only: which ChromaDB collection to retrieve from. Blank uses SpectraLLM's default. |
 
 Leave it alone and every other feature works — Process Mining is the only page that calls
 a model.

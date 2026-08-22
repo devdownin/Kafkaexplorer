@@ -1,0 +1,48 @@
+# Overlay: run both llama.cpp servers on an NVIDIA GPU.
+#
+#   docker compose -f docker-compose-spectra-hub.yml -f docker-compose-spectra-hub.gpu.yml up -d
+#
+# This is the change that decides whether the stack is usable day to day: the same 7B model
+# answers a Process Mining prompt in seconds instead of minutes, which also means the 300 s
+# request timeouts in the base file stop being the load-bearing setting they are on CPU.
+#
+# Requires the NVIDIA Container Toolkit on the host (`docker run --rm --gpus all nvidia/cuda:12.6.0-base-ubuntu24.04 nvidia-smi`
+# is the one-line check). Without it the containers fail to start, loudly — this overlay is
+# not safe to leave on for a machine that has no GPU, which is exactly why it is an overlay.
+#
+# `--n-gpu-layers 99` means "offload every layer it can". A model too large for the card
+# falls back layer by layer rather than failing, so the number is a ceiling and not a promise;
+# lower it if llama-server reports an out-of-memory during the load.
+#
+# The CUDA image is pinned to the SAME llama.cpp build as the CPU one (`server-cuda-b9828`
+# against `server-b9828`) — a floating `server-cuda` would silently put a different revision of
+# the engine under a stack that pins everything else, which is the whole reason the base file
+# pins that tag at all. Bump the two together.
+services:
+  llm-chat:
+    image: ghcr.io/ggml-org/llama.cpp:${LLAMA_CPP_CUDA_IMAGE_TAG:-server-cuda-b9828}
+    environment:
+      - LLM_CHAT_EXTRA_ARGS=${LLM_CHAT_EXTRA_ARGS:---n-gpu-layers 99}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # The embedding model is small and its batches are short, so the GPU buys much less here than
+  # on the chat side. It is still worth offloading during an ingestion run, where every record
+  # costs an embedding — and leaving it on the CPU while the chat holds the GPU would make the
+  # two compete for the host's cores instead.
+  llm-embed:
+    image: ghcr.io/ggml-org/llama.cpp:${LLAMA_CPP_CUDA_IMAGE_TAG:-server-cuda-b9828}
+    environment:
+      - LLM_EMBED_EXTRA_ARGS=${LLM_EMBED_EXTRA_ARGS:---n-gpu-layers 99}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

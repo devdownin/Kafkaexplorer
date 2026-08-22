@@ -21,8 +21,47 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   into a model nothing rendered. A table's live endpoint is `/api/query/table/{name}`, under
   `/api` like every other domain endpoint.
 
+### Fixed
+
+- **`docker-compose-kafka4.yml` starts again.** The stack this project recommends had been
+  refusing to come up at all since two volume mounts were added to its explorer service without
+  the matching top-level declarations: `service "explorer" refers to undefined volume
+  explorer_logs: invalid compose project`, before a single container was created. Nothing caught
+  it because nothing parsed these files — a `compose-lint` job now resolves every stack and every
+  overlay combination on each build, and fails on a compose file that no combination names.
+
 ### Added
 
+- **The published-images stack is booted in CI** (on main and `workflow_dispatch`, since it pulls
+  ~2 GB to test a deployment file whose content does not move with the code). It runs without the
+  models, because the assertion worth making about a missing model is that the containers wait for
+  it; and it pins the wiring nothing else can — that `GET /api/config` really reports the SPECTRA
+  provider and the right base URL, and that the Spectra UI reaches its API through the nginx proxy
+  whose upstream is baked into the published image.
+- **Kafka Explorer and SpectraLLM as one stack, from Docker Hub** —
+  `docker-compose-spectra-hub.yml`. The existing `docker-compose-spectra.yml` needs a SpectraLLM
+  checkout beside the repository and builds the explorer from source; both projects publish their
+  images under `compagnonsdudev`, so a machine with only Docker can now run the pair: broker with
+  the demo topics, the explorer pointed at Spectra's `POST /api/query`, and the full Spectra stack
+  (ChromaDB, the two llama.cpp servers, the API, the UI). Nothing waits on the ~4.8 GB of model
+  weights the first boot downloads — the API installs the chat model itself, a one-shot fetches the
+  embedding GGUF it does not install, and the llama.cpp containers wait for their file instead of
+  crash-looping, so both interfaces are up in seconds. The two prompt budgets are sized against
+  each other (8 192 tokens per slot against a prompt budget lowered to 16 000 characters: 30k
+  tokens do not fit in that window, and what a model cannot see it does not report as missing),
+  and `SPECTRA_API_KEY` must stay empty — Spectra's filter reads `X-API-Key` while the explorer
+  sends `Authorization: Bearer`, so a key there would leave the stack looking healthy while every
+  Process Mining call answered 401.
+- **Three overlays beside it.** `…gpu.yml` moves both llama.cpp servers onto CUDA, pinned to the
+  same build as the CPU image — the change that turns minutes per analysis into seconds.
+  `…limits.yml` bounds all nine services (the shared limits overlay names two, and a service named
+  in an overlay but absent from its base file fails the whole `up`), with no `cpus` on the
+  inference servers, whose throughput *is* the core count. `…ingest.yml` has SpectraLLM index the
+  topics themselves, so the corpus answers questions about what is in the messages with cited
+  sources, and the explorer's audits can read it. That last one is an overlay rather than a flag
+  because the flag alone gets two ordering problems wrong: a consumer subscribing to a topic that
+  does not exist yet creates it with one partition instead of three, and a record that cannot be
+  embedded yet goes to `<topic>.DLT` while the model is still downloading.
 - **The dashboard's activity curve leads somewhere, and says what it is worth.** Three follow-ups
   to the sparkline column, all of them things the curve could not say on its own:
   - **Clicking a bucket opens that period's messages.** Seeing a spike and reading what was in it

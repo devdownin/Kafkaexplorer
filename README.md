@@ -78,6 +78,7 @@ Then open **http://localhost:8080** and start clicking. That's it.
 
 - **With Confluent Schema Registry** (Avro topics): `docker compose -f docker-compose-kafka4.yml up -d`
 - **With a local LLM pre-wired** (Ollama): `docker compose -f docker-compose-llm.yml up -d`
+- **With a private AI stack beside it** (SpectraLLM, images only — no checkout, no build): `docker compose -f docker-compose-spectra-hub.yml up -d` — Explorer on 8080, SpectraLLM UI on 8088. The first boot downloads ~4.8 GB of model weights in the background and nothing waits for it. Overlays next to it add a GPU (`.gpu.yml`), memory limits (`.limits.yml`), or have SpectraLLM index the topics themselves (`.ingest.yml`).
 - **From source** (JDK 25): start Kafka with `docker compose up -d kafka`, then `./mvnw spring-boot:run`
 - **Build with nothing installed but Docker** — no JDK, no Maven, no Node:
   ```bash

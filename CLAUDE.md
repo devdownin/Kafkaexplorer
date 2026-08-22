@@ -175,6 +175,39 @@ files wire the pair, and they are not variants of one another:
   looking healthy while every Process Mining call answers 401. Neither application authenticates:
   what protects the stack is `BIND_ADDR` on the loopback.
 
+  **Three overlays sit beside it**, and each exists because what it changes cannot be a default.
+  `docker-compose-spectra-hub.gpu.yml` swaps both llama.cpp servers for the CUDA image *pinned to
+  the same build number* (`server-cuda-b9828` against `server-b9828` — a floating `server-cuda`
+  would put a different engine revision under a stack that pins everything else) and requests the
+  devices; it is not safe to leave on where there is no GPU, which is precisely why it is an
+  overlay. `docker-compose-spectra-hub.limits.yml` is this stack's own limits file rather than a
+  few lines added to `docker-compose.limits.yml`: that one names `explorer` and `kafka`, and a
+  service named in an overlay but absent from the base file becomes a new imageless service and
+  fails the whole `up` — so a nine-service stack needs its own, and it covers all nine instead of
+  leaving the four heaviest unbounded. It deliberately sets **no `cpus` on the llama.cpp
+  servers**: on CPU inference throughput *is* the core count.
+
+  `docker-compose-spectra-hub.ingest.yml` is the one that makes the pair more than a shared
+  model — SpectraLLM consumes the topics and indexes what is *in* the messages, so the corpus
+  answers questions with cited sources and the Explorer's audits can read it (`EXPLORER_USE_RAG`,
+  whose collection defaults to the one the ingestion writes to, so one variable lines both halves
+  up; with use-rag false Spectra answers directly and never looks at a collection). It is an
+  overlay rather than a bare `SPECTRA_KAFKA_ENABLED=true` because the flag alone gets two things
+  wrong on a cold stack, and both are **ordering** problems, which is what a compose file can
+  express: a consumer subscribing to a topic that does not exist yet **creates** it
+  (`allow.auto.create.topics` defaults to true and the demo broker allows it) with one partition
+  instead of three, and `setup-demo.sh` then leaves the existing topic alone — the multi-partition
+  dataset the key-narrowing and window features are calibrated on silently becomes
+  single-partition; and indexing a record means embedding it, so on a first boot every record
+  fails three times a second apart and lands in `<topic>.DLT`, a new topic on the cluster under
+  exploration, while the embedding model is still downloading. The overlay waits for
+  `demo-setup` to complete and for `llm-embed` to be healthy. Its accepted cost is stated where
+  it is paid: the Spectra API, and therefore its UI, now waits for both — the Explorer does not,
+  it still depends on the broker alone. Topic lists are explicit, with no patterns (Spring
+  resolves a comma-separated list, and an **empty** list subscribes to a topic named `""` rather
+  than to nothing, which fails at startup), and `internal.*` is excluded: that is the Explorer's
+  own bookkeeping, not domain content.
+
 `setup-demo.sh` is the sandbox every stack seeds, and it is written to exercise the features that
 have no data otherwise. **Every business record carries a record key and Kafka headers**
 (`correlation-id`, W3C `traceparent`, `source-system`, `event-type`, `produced-at`) — without them,
@@ -222,6 +255,25 @@ KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `
 - `release.yml` publishes `linux/amd64,linux/arm64` (free here — a JRE base plus architecture-independent bytecode, and the extraction stage is pinned to `--platform=$BUILDPLATFORM` so it is not replayed under QEMU) and gates `latest` on the absence of a `-` in the tag, so a `v1.3.0-rc1` no longer becomes what `docker run …/kafkaexplorer` pulls.
 - **No `container_name`, and the app service is `explorer` in every stack.** `container_name` is daemon-global, so the shared `kafka` / `kafka-sql-explorer` names meant two stacks could never coexist and switching files without a `down` first collided; compose derives `<project>-<service>-<n>` instead, and `docker compose -p other … up` gives a second independent stack. The project name still defaults to the directory, so `kafka_data` keeps its name and already-seeded topics survive. Address services by service name (`docker compose logs kafka`). The `app` → `explorer` rename removes an inconsistency and is what lets an overlay target the service at all — a name present in an overlay but absent from the base file becomes a new, imageless service and fails the whole `up`.
 - **Resource limits are an opt-in overlay** (`docker-compose.limits.yml`, layered onto `docker-compose.yml` / `-kafka4` / `-llm` / `.release`). Not in the stacks themselves, because a limit set too low is worse than none — the JVM is OOM-killed instead of running a GC. But without *any* limit, `-XX:MaxRAMPercentage=75.0` reads the host's memory, so on a 32 GB workstation the JVM believes it may take 24 GB: `mem_limit` is what gives that flag a meaning. Use `mem_limit`/`cpus`, never a `deploy:` block — that is Swarm syntax, silently ignored by `docker compose up`.
+- **Every compose file is parsed by CI** (`compose-lint` in `ci.yml`), each overlay layered onto
+  its base rather than alone — an overlay on its own is a set of services with no image. Twelve
+  files shipped here and the build parsed none of them; the job found `docker-compose-kafka4.yml`,
+  the stack this file recommends, refusing to start at all since the day two volume mounts were
+  added without their top-level declarations (`service "explorer" refers to undefined volume
+  explorer_logs: invalid compose project`). It takes seconds, needs no daemon and pulls nothing,
+  and it **fails on a compose file that no combination names**, so a new stack cannot be added
+  without being checked. `docker-compose-spectra.yml`'s `include:` is resolved against a
+  three-line stub: what is under test is that file's own syntax, not the availability of another
+  repository.
+- **The published-images stack is booted too** (`spectra-hub-stack`, on main and
+  `workflow_dispatch` only — it pulls ~2 GB to test a deployment file whose content does not move
+  with the code, the same trade-off as the arm64 boot). It runs with
+  `SPECTRA_AUTO_INSTALL_MODELS=false`, because the interesting assertion about a missing model is
+  that the containers **wait** for it rather than crash-looping — which is what the inline
+  entrypoints exist for. It also pins the wiring nothing else can: that `GET /api/config` really
+  reports `SPECTRA` and `http://spectra-api:8080` (so a renamed variable fails here, not in
+  production), and that the UI reaches the API through nginx's `/api/` proxy — whose upstream is
+  baked into the published image, which is what forces the service to keep the name `spectra-api`.
 - **CI runs the stack, it does not merely build it.** The `docker` job starts `docker-compose.yml` over the image it just built (`docker-compose.ci.yml` supplies it) and asserts the deployment contract: the container reaches `healthy`, both probes answer UP, `/api/dashboard` responds, the process runs as uid 10001, `/app/logs/kafkaexplorer.log` is non-empty, a second seeding run skips, and the app's exit code after `stop` is not 137 (SIGKILL). Each assertion corresponds to a bug that lived here for months precisely because nothing ever ran these files. A second job, `release-image`, builds `Dockerfile.release` from the `build` job's JAR and boots it with no broker — that file used to be exercised for the first time by the release itself. **That job is also where the startup audit's findings are guarded**, because it is the one place in CI that runs the app with *no broker* — the `docker` job's stack has a healthy one, so the failure mode measured there cannot occur in it. After liveness it holds the container for a fixed 30 s window and asserts three things: the log stays under **5 000 lines** (the flood was ~2 300 lines a second from a single class, so a return of it is ~70 000 in that window — the ceiling sits more than tenfold from both, deliberately, because a gate that flakes is a gate people learn to ignore); the startup summary names the broker that did not answer; and each of the two state restores reports itself, naming its topic, since both used to fail at DEBUG and therefore silently.
 
 ### Typical local dev workflow

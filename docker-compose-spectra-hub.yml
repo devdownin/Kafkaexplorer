@@ -163,10 +163,12 @@ services:
       - CLAUDE_PROVIDER=SPECTRA
       - CLAUDE_BASE_URL=http://spectra-api:8080
       # Retrieval off: the audit prompt already carries every message it reasons about inline.
-      # Turn it on to let Spectra enrich the audit from its ingested corpus — and name the
-      # collection it should read, or it queries the default one.
+      # Turn it on — together with SPECTRA_INGEST_KAFKA below — to let the audits read what
+      # Spectra has indexed from the topics themselves. The collection defaults to the one the
+      # ingestion writes to, so the two halves line up from a single variable; with use-rag
+      # false, Spectra answers directly and never looks at the collection at all.
       - CLAUDE_USE_RAG=${EXPLORER_USE_RAG:-false}
-      - CLAUDE_COLLECTION=${EXPLORER_RAG_COLLECTION:-}
+      - CLAUDE_COLLECTION=${EXPLORER_RAG_COLLECTION:-${SPECTRA_STREAM_COLLECTION:-spectra_stream}}
       # 60s is the shipped default and it is sized for a hosted API. A 7B model quantised to
       # Q4 and running on CPU takes minutes on a Process Mining prompt, and a request timeout
       # is TERMINAL here (retrying replays the whole prompt on a model that has already shown
@@ -262,6 +264,48 @@ services:
       # the Model Hub, so it lands registered rather than merely present. Set to false on a
       # metered link and install it from the UI when you are ready.
       - SPECTRA_STARTUP_AUTO_INSTALL_MODELS=${SPECTRA_AUTO_INSTALL_MODELS:-true}
+      # ── Indexing the broker's own topics into Spectra's corpus ──────────────────────────
+      # Until this is on, the two applications only share a model: the Explorer explores the
+      # cluster while Spectra knows nothing about it. On, Spectra consumes the topics named
+      # below and indexes what is IN the messages, so the corpus can be questioned in plain
+      # language with cited sources — and the Explorer's own audits can read it (EXPLORER_USE_RAG).
+      #
+      # OFF by default, for three reasons that each bite if ignored. It is a WRITE into
+      # somebody's corpus, and which topics belong there is theirs to decide. It costs one
+      # embedding per record, on CPU, at the very moment the chat model is still downloading.
+      # And it needs the EMBEDDING model to be there: a record that cannot be vectorised is
+      # retried three times a second apart and then published to `<topic>.DLT` — a new topic,
+      # on the cluster you were exploring.
+      #
+      # TURN IT ON WITH THE OVERLAY, not with this variable: `docker-compose-spectra-hub.ingest.yml`
+      # sets the same flag *and* adds the two dependencies that make it safe on a cold stack —
+      # wait for the seeding (a consumer subscribing to a topic that does not exist yet creates
+      # it, with one partition instead of three) and wait for llm-embed to serve (or the whole
+      # demo history goes to `.DLT` while the model is still downloading). The variable is the
+      # escape hatch for a stack whose broker is already seeded and whose model is already
+      # loaded; the overlay is the answer that does not depend on knowing that.
+      #
+      # The topic list is explicit and there are no patterns: Spring resolves it as a
+      # comma-separated list, and an EMPTY list subscribes the listener to a topic named ""
+      # rather than to nothing, which fails at startup. It excludes `internal.*` on purpose —
+      # those are the Explorer's own bookkeeping (audit history, metric configs, field
+      # mappings), not domain content. Ingesting reads from the EARLIEST offset, so turning it
+      # on indexes the demo history rather than only what arrives next, and it joins the
+      # cluster as an ordinary consumer group (visible on the Cluster page, and counted by the
+      # audit as the third-party consumer it genuinely is).
+      - SPECTRA_KAFKA_ENABLED=${SPECTRA_INGEST_KAFKA:-false}
+      - SPECTRA_KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - SPECTRA_KAFKA_TOPICS=${SPECTRA_INGEST_TOPICS:-demo.orders.1.received,demo.orders.2.validated,demo.orders.3.enriched,demo.customers}
+      - SPECTRA_KAFKA_COLLECTION=${SPECTRA_STREAM_COLLECTION:-spectra_stream}
+      - SPECTRA_KAFKA_GROUP_ID=${SPECTRA_INGEST_GROUP_ID:-spectra-ingestion}
+      - SPECTRA_KAFKA_FORMAT=json
+      # Empty content-field indexes the WHOLE payload, which is the right answer for these
+      # records: a demo order is a flat document whose value is the record itself (id, state,
+      # amount, customer), not one prose field — extracting a single field would index four
+      # words per document. Name a field when the payload carries a real text body.
+      - SPECTRA_KAFKA_CONTENT_FIELD=${SPECTRA_INGEST_CONTENT_FIELD:-}
+      # Copied onto every chunk, so an answer can say which order it came from.
+      - SPECTRA_KAFKA_METADATA_FIELDS=${SPECTRA_INGEST_METADATA_FIELDS:-id,state,customer_id}
     volumes:
       - spectra_data:/app/data
     healthcheck:
