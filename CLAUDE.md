@@ -128,6 +128,53 @@ docker compose up -d
 ./setup-demo-avro.sh localhost:9092 http://localhost:8081
 ```
 
+#### The two SpectraLLM stacks
+
+Process Mining can be answered by a **local SpectraLLM** instance rather than Ollama or Anthropic
+(`CLAUDE_PROVIDER=SPECTRA`, whose client posts to Spectra's single-turn `POST /api/query`). Two
+files wire the pair, and they are not variants of one another:
+
+- **`docker-compose-spectra.yml`** `include:`s SpectraLLM's own compose from a sibling checkout
+  (`SPECTRALLM_DIR`, default `../SpectraLLM`) and **builds** the explorer from source. It is the
+  developer stack: it follows whatever is in that checkout, profiles included.
+- **`docker-compose-spectra-hub.yml`** builds nothing. Both projects publish their images under
+  `compagnonsdudev` on Docker Hub (`kafkaexplorer`, `spectrallm`, `spectrallm-frontend`), so a
+  machine with only Docker runs the pair — no SpectraLLM checkout, no Maven, no npm:
+
+  ```bash
+  docker compose -f docker-compose-spectra-hub.yml pull
+  docker compose -f docker-compose-spectra-hub.yml up -d
+  ```
+
+  Four things in it are load-bearing. **The models live in a named volume** (`spectra_data`), not
+  in `./data` as upstream: there is no SpectraLLM checkout here to hold that directory, and a
+  bind mount created by Docker is root-owned while the API image runs as `spectra` — so a
+  `spectra-data-init` one-shot settles ownership before anything else mounts it, the same idiom
+  as `kafka-data-init` and for the same reason (`llm-chat` / `llm-embed` run a llama.cpp image
+  that carries no `/app/data`, so one of them initialising that volume would leave it empty and
+  root-owned). **`llm-chat` reads the registry pointer once, at start**, rather than watching it:
+  upstream's supervisor lives in `scripts/llm-chat-entrypoint.sh`, which is not in this
+  repository, and inlining a copy of it here would be a copy that drifts — so activating another
+  model in the Spectra UI needs a `restart llm-chat`, which the file says. **Nothing waits on the
+  first-boot model download** (~4.8 GB): `spectra-api` installs the chat model itself
+  (`spectra.startup.auto-install-models`), a `spectra-embed-model` one-shot fetches the embedding
+  GGUF that the API does *not* install, and the two llama.cpp containers poll until the file they
+  serve appears — so the Explorer, the broker and the Spectra UI are up in seconds, and
+  `up --wait` is the one thing not to use. **And the two prompt budgets are sized against each
+  other**: `LLM_CONTEXT` (16384, split across 2 slots = 8192 tokens per request) against the
+  Explorer's `PROCESS_MINING_PROMPT_CHAR_BUDGET`, lowered to 16 000 from the shipped 120 000 —
+  ~30k tokens does not fit in that window, and what a model cannot see it does not say it missed.
+  The request timeouts follow (`CLAUDE_REQUEST_TIMEOUT_SECONDS` / Spectra's generation timeout,
+  300 s each): a 7B Q4 model on CPU takes minutes, and a request timeout is *terminal* on that
+  path. Every image is pinned and overridable (`SPECTRA_IMAGE_TAG`, `EXPLORER_IMAGE_TAG`,
+  `LLAMA_CPP_IMAGE_TAG`, `CHROMADB_IMAGE_TAG`), and only three ports are published — chromadb's
+  is read *and write* access to the ingested corpus and llama-server has no authentication.
+
+  **Do not set `SPECTRA_API_KEY` in that stack.** Spectra's `ApiKeyFilter` reads `X-API-Key`
+  while `SpectraLlmClient` sends `Authorization: Bearer`, so a key there leaves the whole stack
+  looking healthy while every Process Mining call answers 401. Neither application authenticates:
+  what protects the stack is `BIND_ADDR` on the loopback.
+
 `setup-demo.sh` is the sandbox every stack seeds, and it is written to exercise the features that
 have no data otherwise. **Every business record carries a record key and Kafka headers**
 (`correlation-id`, W3C `traceparent`, `source-system`, `event-type`, `produced-at`) — without them,
