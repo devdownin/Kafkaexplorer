@@ -232,7 +232,7 @@ const DataModel: React.FC = () => {
   // politique gardée ici. Les bornes sont propres à cette page : un modèle de cent entités
   // descend plus bas que les deux autres graphes, et ne monte pas aussi haut.
   const {
-    transform, setTransform, svgRef, viewAdjusted, markFitted, markAdjusted, panBy,
+    transform, setTransform, svgRef, canvas, viewAdjusted, markFitted, markAdjusted, panBy,
     zoomFromCenter, isPanning,
     onPointerDown, onPointerMove, onPointerUp,
   } = useGraphViewport({
@@ -568,13 +568,13 @@ const DataModel: React.FC = () => {
   const jumpToEntity = useCallback((id: string) => {
     const entity = entityById.get(id);
     const pos = positions[id];
-    const rect = svgRef.current?.getBoundingClientRect();
+    const rect = canvas?.getBoundingClientRect();
     if (!entity || !pos || !rect) return;
     setSelectedId(id);
     markAdjusted();
     setTransform(t => centerOnEntity(entity, pos, rect.width, rect.height, t.scale, 0.8, sizing));
     setJumpQuery('');
-  }, [entityById, positions, sizing, setTransform, svgRef, markAdjusted]);
+  }, [entityById, positions, sizing, setTransform, canvas, markAdjusted]);
 
   /**
    * La minicarte : bornes du graphe, disposition dans sa boîte, et rectangle de ce qui est
@@ -690,14 +690,14 @@ const DataModel: React.FC = () => {
    * répondre la même chose — c'est leur désaccord qui est corrigé ici.
    */
   const measureTopPadding = useCallback(() => {
-    const rect = svgRef.current?.getBoundingClientRect();
+    const rect = canvas?.getBoundingClientRect();
     const bannerRect = bannerRef.current?.getBoundingClientRect();
     if (!rect || !bannerRect) return GRAPH_PADDING;
     return Math.max(GRAPH_PADDING, bannerRect.bottom - rect.top + BANNER_GAP);
-  }, [svgRef]);
+  }, [canvas]);
 
   useEffect(() => {
-    const element = svgRef.current;
+    const element = canvas;
     if (!element) return;
     const measure = () => {
       const rect = element.getBoundingClientRect();
@@ -711,7 +711,7 @@ const DataModel: React.FC = () => {
     // Le bandeau aussi : sa hauteur change avec les avertissements, pas avec celle du canevas.
     if (bannerRef.current) observer.observe(bannerRef.current);
     return () => observer.disconnect();
-  }, [model, graphEntities.length, measureTopPadding, svgRef]);
+  }, [model, graphEntities.length, measureTopPadding, canvas]);
 
   // ── Zoom / pan / clavier (mêmes gestes que Lineage et Stream Flow) ──────────
 
@@ -728,7 +728,7 @@ const DataModel: React.FC = () => {
    * longueur (un texte qui passe sur deux lignes), et la présence du bouton de tiroir mobile.
    */
   const fitToViewport = useCallback(() => {
-    const rect = svgRef.current?.getBoundingClientRect();
+    const rect = canvas?.getBoundingClientRect();
     const bounds = graphBounds(graphEntities, positions, sizing);
     if (!rect || !bounds || rect.width === 0) return;
     // Mesurée ici plutôt que lue dans l'état : l'état retarde d'un rendu, et le cadrage
@@ -743,7 +743,7 @@ const DataModel: React.FC = () => {
       bounds, rect.width, rect.height, GRAPH_PADDING, reserved, MAX_FIT_SCALE));
     markFitted();
     fittedSize.current = { width: rect.width, height: rect.height };
-  }, [graphEntities, positions, sizing, measureTopPadding, setTransform, svgRef, markFitted]);
+  }, [graphEntities, positions, sizing, measureTopPadding, setTransform, canvas, markFitted]);
 
   /**
    * La place disponible a changé : le canevas rétrécit quand l'inspecteur s'ouvre (320 px sur
@@ -760,6 +760,11 @@ const DataModel: React.FC = () => {
       fittedSize.current = viewportSize;
       return;
     }
+    // Recadrage : mesure la géométrie rendue (le rect du canevas, la hauteur du bandeau) puis
+    // pose le transform qui en découle. Rien de cela n'est connu avant le rendu, donc il n'y a
+    // pas de valeur à calculer plus haut. La règle ne le voyait pas tant que le canevas était
+    // une ref ; il est désormais un état, ce qui est précisément ce qui répare le zoom molette.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- dépend de la géométrie rendue
     fitToViewport();
   }, [viewportSize, model, graphEntities.length, fitToViewport, viewAdjusted]);
 

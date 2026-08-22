@@ -48,7 +48,20 @@ export interface GraphViewportOptions {
 export interface GraphViewport {
   transform: Transform;
   setTransform: Dispatch<SetStateAction<Transform>>;
-  svgRef: RefObject<SVGSVGElement | null>;
+  /**
+   * À poser sur `ref={}` du SVG. C'est une **ref de rappel**, et non un objet, pour une raison
+   * qui a coûté le zoom molette de deux graphes sur trois : Stream Flow et Data Model ne rendent
+   * leur canevas qu'une fois le résultat arrivé, donc l'effet qui attache l'écouteur `wheel`
+   * tournait une première fois avec `ref.current` encore nul et ne re-tournait jamais — ses
+   * dépendances, elles, n'avaient pas bougé. Le code d'avant l'extraction du hook contournait ça
+   * page par page (`[hasResult, nodes.length]`, `[zoomAround, model]`), avec un commentaire qui
+   * disait « re-attach after the SVG mounts » ; en mutualisant, cette dépendance a disparu et le
+   * défaut est revenu. Une ref de rappel rend le montage observable, donc la question ne se pose
+   * plus à l'appelant.
+   */
+  svgRef: (element: SVGSVGElement | null) => void;
+  /** Le canevas monté, pour qui a besoin de le mesurer. Null tant qu'il n'est pas rendu. */
+  canvas: SVGSVGElement | null;
   /**
    * Vrai dès que l'opérateur a cadré la vue lui-même. Une page qui recadre automatiquement
    * (à l'arrivée du modèle, à un changement de largeur) doit le consulter : re-centrer sous
@@ -112,7 +125,8 @@ export function useGraphViewport(options: GraphViewportOptions = {}): GraphViewp
   } = options;
 
   const [transform, setTransform] = useState<Transform>(initial);
-  const svgRef = useRef<SVGSVGElement>(null);
+  // Un état et non une ref : c'est ce qui fait re-tourner l'effet `wheel` au montage du SVG.
+  const [canvas, setCanvas] = useState<SVGSVGElement | null>(null);
   const isPanning = useRef(false);
   const lastPos = useRef({ x: 0, y: 0 });
   const dragged = useRef(false);
@@ -122,9 +136,9 @@ export function useGraphViewport(options: GraphViewportOptions = {}): GraphViewp
   const markAdjusted = useCallback(() => { viewAdjusted.current = true; }, []);
 
   const viewport = useCallback((): Viewport | null => {
-    const box = svgRef.current?.getBoundingClientRect();
+    const box = canvas?.getBoundingClientRect();
     return box ? { width: box.width, height: box.height } : null;
-  }, []);
+  }, [canvas]);
 
   const panBy = useCallback((dx: number, dy: number) => {
     viewAdjusted.current = true;
@@ -168,19 +182,19 @@ export function useGraphViewport(options: GraphViewportOptions = {}): GraphViewp
   // `passive: false` est la raison de l'écouteur manuel : React attache `onWheel` en passif, où
   // `preventDefault()` est ignoré — la page défilerait sous le zoom.
   useEffect(() => {
-    const el = svgRef.current;
-    if (!el) return;
+    if (!canvas) return;
     const handler = (e: WheelEvent) => {
       e.preventDefault();
-      const box = el.getBoundingClientRect();
+      const box = canvas.getBoundingClientRect();
       zoomAround(e.deltaY > 0 ? 0.9 : 1.1, e.clientX - box.left, e.clientY - box.top);
     };
-    el.addEventListener('wheel', handler, { passive: false });
-    return () => el.removeEventListener('wheel', handler);
-  }, [zoomAround]);
+    canvas.addEventListener('wheel', handler, { passive: false });
+    return () => canvas.removeEventListener('wheel', handler);
+  }, [canvas, zoomAround]);
 
   return {
-    transform, setTransform, svgRef, viewAdjusted, markFitted, markAdjusted, dragged, isPanning,
+    transform, setTransform, svgRef: setCanvas, canvas,
+    viewAdjusted, markFitted, markAdjusted, dragged, isPanning,
     viewport, panBy, zoomAround, zoomFromCenter,
     onPointerDown, onPointerMove, onPointerUp,
   };

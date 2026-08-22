@@ -220,7 +220,7 @@ const Lineage: React.FC = () => {
   // Pan / zoom / clavier : la mécanique est partagée avec Stream Flow et Data Model
   // (`useGraphViewport`), la politique — ce que `0` et `Échap` font — reste ici.
   const {
-    transform, setTransform, svgRef, panBy, zoomFromCenter, isPanning,
+    transform, setTransform, svgRef, canvas, panBy, zoomFromCenter, isPanning,
     onPointerDown, onPointerMove, onPointerUp,
   } = useGraphViewport({
     initial: RESET_VIEW,
@@ -320,14 +320,14 @@ const Lineage: React.FC = () => {
 
   const centerOnNode = useCallback((nodeId: string) => {
     const pos = positions[nodeId];
-    if (!pos || !svgRef.current) return;
-    const rect = svgRef.current.getBoundingClientRect();
+    if (!pos || !canvas) return;
+    const rect = canvas.getBoundingClientRect();
     setTransform((prev) => ({
       ...prev,
       x: rect.width  / 2 - (pos.x + NODE_W / 2) * prev.scale,
       y: rect.height / 2 - (pos.y + NODE_H / 2) * prev.scale,
     }));
-  }, [positions, setTransform, svgRef]);
+  }, [positions, setTransform, canvas]);
 
 
   const resetView = useCallback(() => setTransform(RESET_VIEW), [setTransform]);

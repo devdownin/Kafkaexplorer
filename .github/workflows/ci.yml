@@ -682,6 +682,24 @@ jobs:
           done
           NODE_PATH="$(npm root -g)" node docs/screenshots/layout-probe.mjs http://127.0.0.1:4174 --check
 
+      # Les gestes des trois graphes SVG. `useGraphViewport` n'a qu'un test unitaire, sur son
+      # arithmétique de zoom : le reste est de la plomberie d'événements pointeur au-dessus d'une
+      # géométrie que jsdom n'a pas, où un test unitaire affirmerait que des mocks ont été appelés
+      # plutôt qu'un graphe se déplace. Cette sonde a trouvé, dès sa première exécution, que le
+      # zoom molette ne s'attachait plus sur deux des trois pages — un défaut livré et invisible
+      # de toute autre façon. Même serveur, même SPA, même Chromium que les deux étapes ci-dessus.
+      - name: Check the graph gestures still work
+        run: |
+          set -euo pipefail
+          # Son propre port, même raison que l'étape précédente : dépendre du serveur qu'une
+          # autre étape a laissé tourner fait échouer pour un motif étranger au changement testé.
+          node docs/screenshots/server.mjs site 4175 &
+          for _ in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:4175/api/dashboard >/dev/null 2>&1 && break
+            sleep 1
+          done
+          NODE_PATH="$(npm root -g)" node docs/screenshots/graph-gestures.mjs http://127.0.0.1:4175
+
       - name: Upload the fresh captures
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:

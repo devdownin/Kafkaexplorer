@@ -350,8 +350,23 @@ floor), the initial transform, and whether a press on a `[data-node]` starts a p
 is the hook's, with `markFitted()` / `markAdjusted()` as the pair of verbs: `panBy` and
 `zoomAround` raise it themselves, and a page that sets its own transform — centring on an entity —
 says so, because Data Model's automatic refit on a resize must not undo a framing the operator
-chose. Only `zoomTransform` is unit-tested; the rest is pointer plumbing over geometry jsdom does
-not have, where a test would assert that mocks were called rather than that a graph pans.
+chose.
+
+**`svgRef` is a callback ref, not an object ref, and that is load-bearing.** Stream Flow and Data
+Model render their canvas only once a result has arrived, so an effect keyed on anything else runs
+once with `ref.current` still null and never runs again — which is exactly how the `wheel` listener
+stopped attaching on two of the three graphs when this hook was extracted. Each page used to work
+around it with its own dependency (`[hasResult, nodes.length]`, `[zoomAround, model]`) under a
+comment reading "re-attach after the SVG mounts"; sharing the code dropped the dependency and the
+defect came back. A callback ref makes the mount observable, so the question no longer reaches the
+caller — and pages read the element as `canvas` rather than `svgRef.current`.
+
+Only `zoomTransform` is unit-tested; the rest is pointer plumbing over geometry jsdom does not
+have, where a test would assert that mocks were called rather than that a graph pans. What covers
+it instead is **`docs/screenshots/graph-gestures.mjs`**, run by CI in the screenshot job: real
+pointer, wheel and keyboard events against the compiled SPA in Chromium, asserting that the pan
+follows the pointer, that the zoom stays anchored under the cursor, that the keyboard reaches the
+graph and that `touch-action` is neutralised. It is what found the wheel defect above.
 **`Checkbox` exists for a measured reason, and is deliberately 24 × 24.** `layout-probe.mjs` counts targets under the 24 × 24 CSS px of WCAG 2.5.8, and on the Data Model page — the worst ratio after the SQL editor — **40 of the 42 undersized targets were outside the graph**, almost all native `<input type="checkbox">` at the browser's default **13 × 13**, one per topic in the selector. It was never forty problems but one control, on the six screens that carry checkboxes; the measured effect is `data-model` 42 → 9 at 390 px, `audit` 30 → 24, `topic-explorer` 14 → 11. The visible box really is larger — keeping a 16 px box and widening only the hit area is the tempting version and does not work: `padding` is not reliably applied to a replaced control, and a `transform` shrinks the real target along with the drawing, fooling the probe exactly as much as the user. It stays a native input, so semantics, keyboard and form behaviour are the browser's, and its accent comes from the `primary` token — three call sites had hardcoded `#a3adff`, which *is* `primary`.
 **An explanation that only the mouse can reach is not an explanation.** `title=""` shows up on hover and nowhere else — never on keyboard focus, never on touch, with a delay and a rendering the browser owns and screen readers do not reliably announce. `Tooltip` opens on hover *and* focus, closes on `Escape`, and keeps its content mounted so `aria-describedby` always resolves; `HelpTip` is the small ⓘ trigger for controls that are not themselves inviting to hover, such as a `<select>` or a checkbox. Keep `title` for a bare affordance ("Copy"), and use the component wherever the text explains a *semantic* — what a mode compares, what an operator ignores, what a budget bounds, what an engine cannot do. The pass covered Topic Explorer, Stream Flow, Audit, the SQL editor and Metrics; what stays a `title` elsewhere only reveals a truncated or compacted value (the exact number behind `1.2K`, the absolute date behind a relative one), where a tooltip would add a tab stop per table cell and cost keyboard users more than it gives them. In `Metrics` the component is imported as `InfoTooltip`: Recharts exports a `Tooltip` of its own, and the file uses both.
 **A failure that needs acting on is not a toast.** `ErrorPanel` renders a `QueryErrorInfo` (from `describeApiError`) with the three levels the SQL editor already had to itself — readable title, actionable hint, raw server text one click away — and stays on screen. A toast lasts three seconds, which suits a confirmation and not a refusal: `catch { toast('Failed to save metric') }` threw away the only useful part, the reason. Reach for the toast on success and for the panel on failure.
