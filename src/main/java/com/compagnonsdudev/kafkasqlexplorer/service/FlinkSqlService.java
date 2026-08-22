@@ -324,10 +324,26 @@ public class FlinkSqlService {
         return from.find() ? from.group(1) : null;
     }
 
-    /** Prevent log forging by neutralizing line breaks and other control chars in user-influenced values. */
-    private static String sanitizeForLog(String value) {
-        if (value == null) return null;
-        return value.replaceAll("[\\r\\n\\t\\f\\x00-\\x1F\\x7F]", "_");
+    /**
+     * Neutralise les caractères de contrôle d'une valeur avant de la journaliser : un `%0A` dans
+     * une valeur influencée par l'appelant forge la ligne qu'il veut dans le fichier censé être
+     * le compte rendu de ce qui s'est passé.
+     *
+     * <p>Sur ce chemin précis, aucune entrée ne peut y arriver : `flinkTableName` sort de
+     * {@link #extractPrimaryTable}, dont les deux captures sont {@code [\w.\-]+} et
+     * {@code \w[\w.]*} — ni CR ni LF n'en sortent, et {@code toTableName} ne fait ensuite que
+     * remplacer {@code .} et {@code -} par {@code _}. C'est donc une défense en profondeur, pas
+     * une correction : elle tient si un jour la regex d'extraction s'élargit, ce qui est
+     * exactement le genre de changement qu'on fait sans y penser.
+     *
+     * <p>Le motif est hoisté parce qu'un {@code replaceAll} le recompile à chaque appel, et que
+     * la classe de caractères d'origine était redondante — {@code \r\n\t\f} sont tous dans
+     * {@code \x00-\x1F}.
+     */
+    private static final Pattern LOG_CONTROL_CHARS = Pattern.compile("[\\x00-\\x1F\\x7F]");
+
+    static String sanitizeForLog(String value) {
+        return value == null ? null : LOG_CONTROL_CHARS.matcher(value).replaceAll("_");
     }
 
     /**
@@ -387,10 +403,12 @@ public class FlinkSqlService {
             log.debug("Auto-registering table '{}' with DDL:\n{}", sanitizeForLog(flinkTableName),
                 DdlGeneratorService.maskSensitiveProperties(ddl));
             executeMutationSql("auto-register-table", ddl);
-            log.info("Auto-registered table '{}' for Kafka topic '{}'", flinkTableName, matchingTopic);
+            log.info("Auto-registered table '{}' for Kafka topic '{}'",
+                sanitizeForLog(flinkTableName), sanitizeForLog(matchingTopic));
             return AutoRegResult.tableCreated();
         } catch (Exception e) {
-            log.error("Auto-registration failed for topic '{}' (table '{}'): {}", matchingTopic, flinkTableName, e.getMessage(), e);
+            log.error("Auto-registration failed for topic '{}' (table '{}'): {}",
+                sanitizeForLog(matchingTopic), sanitizeForLog(flinkTableName), e.getMessage(), e);
             return AutoRegResult.fail(String.format(
                 "Failed to auto-register Flink table '%s' from Kafka topic '%s': %s",
                 flinkTableName, matchingTopic, e.getMessage()));

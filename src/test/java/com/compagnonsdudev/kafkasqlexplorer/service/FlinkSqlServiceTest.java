@@ -880,4 +880,29 @@ class FlinkSqlServiceTest {
         }
     }
 
+
+    /**
+     * L'assainissement de journalisation, ajouté par un autofix CodeQL sur cette PR et étendu aux
+     * trois lignes qui journalisent le même nom — l'autofix n'avait traité que celle qui tombait
+     * dans le diff, laissant les deux visibles au niveau par défaut.
+     *
+     * <p>Sur ce chemin, rien ne peut le déclencher : le nom sort d'une capture restreinte à
+     * {@code [\w.\-]}. C'est donc une défense en profondeur, et ce test dit ce qu'elle promet
+     * plutôt que de la laisser non spécifiée.
+     */
+    @Test
+    void sanitizeForLogNeutralisesControlCharacters() {
+        assertEquals("a_b", FlinkSqlService.sanitizeForLog("a\nb"), "un saut de ligne forge une ligne de log");
+        assertEquals("a_b", FlinkSqlService.sanitizeForLog("a\rb"));
+        assertEquals("a_b", FlinkSqlService.sanitizeForLog("a\tb"));
+        assertEquals("a_b", FlinkSqlService.sanitizeForLog("a\u0000b"));
+        assertEquals("a_b", FlinkSqlService.sanitizeForLog("a\u007Fb"));
+        assertEquals("__", FlinkSqlService.sanitizeForLog("\r\n"), "CRLF : deux caractères, deux remplacements");
+        // Ce qu'un nom de table porte réellement doit traverser intact.
+        assertEquals("demo_orders_1_received", FlinkSqlService.sanitizeForLog("demo_orders_1_received"));
+        assertEquals("demo.orders-1", FlinkSqlService.sanitizeForLog("demo.orders-1"));
+        assertEquals("é àü", FlinkSqlService.sanitizeForLog("é àü"), "l'accentué n'est pas un caractère de contrôle");
+        assertNull(FlinkSqlService.sanitizeForLog(null));
+    }
+
 }
