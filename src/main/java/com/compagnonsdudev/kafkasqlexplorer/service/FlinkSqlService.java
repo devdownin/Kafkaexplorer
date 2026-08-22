@@ -370,7 +370,16 @@ public class FlinkSqlService {
             if (ddl == null || !ddl.startsWith("CREATE TABLE")) {
                 return AutoRegResult.fail("DDL Generator produced invalid SQL for topic " + matchingTopic);
             }
-            log.debug("Auto-registering table '{}' with DDL:\n{}", flinkTableName, ddl);
+            // Masqué, et c'est le DDL *brut* qui part à Flink juste en dessous : le connecteur a
+            // besoin des vrais identifiants, le fichier de log n'en a pas besoin. `generateDdl`
+            // recopie toutes les propriétés client Kafka dans le `WITH (…)`, mots de passe SSL et
+            // `sasl.jaas.config` compris, donc journaliser `ddl` tel quel écrivait le secret
+            // Confluent en clair dans `logs/kafkaexplorer.log` — un volume nommé dans toutes les
+            // stacks, et le premier fichier qu'on colle dans un rapport de bug. En DEBUG
+            // seulement, mais c'est précisément le niveau qu'un opérateur active pour comprendre
+            // pourquoi une requête échoue, c'est-à-dire quand cette ligne s'exécute.
+            log.debug("Auto-registering table '{}' with DDL:\n{}", flinkTableName,
+                DdlGeneratorService.maskSensitiveProperties(ddl));
             executeMutationSql("auto-register-table", ddl);
             log.info("Auto-registered table '{}' for Kafka topic '{}'", flinkTableName, matchingTopic);
             return AutoRegResult.tableCreated();

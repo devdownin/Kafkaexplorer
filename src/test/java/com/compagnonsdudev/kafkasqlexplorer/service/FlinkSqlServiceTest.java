@@ -831,4 +831,53 @@ class FlinkSqlServiceTest {
         assertTrue(service.unsupportedWhereFragments("SELECT * FROM o WHERE a = 'x'").isEmpty());
     }
 
+
+    /**
+     * Le DDL généré porte les identifiants du cluster — `DdlGeneratorService` recopie toutes les
+     * propriétés client Kafka dans le `WITH (…)`, mots de passe SSL et `sasl.jaas.config`
+     * compris, parce que le connecteur Flink en a besoin. Le fichier de log, non.
+     *
+     * Ce test lit la sortie réelle du logger plutôt que de vérifier qu'une fonction a été
+     * appelée : ce qui doit être vrai, c'est qu'aucun secret n'atteint l'appender, quel que soit
+     * le chemin par lequel la ligne est construite.
+     */
+    @Test
+    void theLoggedDdlCarriesNoCredentials() throws Exception {
+        var logger = (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(FlinkSqlService.class);
+        var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        var previousLevel = logger.getLevel();
+        logger.addAppender(appender);
+        // DEBUG explicitement : la ligne visée n'existe qu'à ce niveau, et c'est celui qu'un
+        // opérateur active pour diagnostiquer — donc le seul où le test a un sens.
+        logger.setLevel(ch.qos.logback.classic.Level.DEBUG);
+        try {
+            doReturn(List.of("secret.topic")).when(kafkaAdminService).listTopics();
+            doReturn(MessageFormat.JSON).when(schemaInferenceService).detectFormat("secret.topic");
+            doReturn(Map.of("id", "STRING")).when(schemaInferenceService).inferSchema(anyString(), any());
+            doReturn("CREATE TABLE secret_topic (id STRING) WITH ("
+                    + "'connector'='datagen','number-of-rows'='1',"
+                    + "'properties.ssl.truststore.password'='HUNTER2-TRUSTSTORE',"
+                    + "'properties.ssl.keystore.password'='HUNTER2-KEYSTORE',"
+                    + "'properties.sasl.jaas.config'='org.apache...required username=\"k\" password=\"HUNTER2-SASL\";')")
+                    .when(ddlGeneratorService).generateDdl(anyString(), any(), any());
+
+            execute("SELECT id FROM secret_topic");
+
+            String logged = appender.list.stream()
+                .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                .collect(java.util.stream.Collectors.joining("\n"));
+            assertFalse(logged.contains("HUNTER2"),
+                "un identifiant du DDL a atteint le log :\n" + logged);
+            assertTrue(logged.contains("Auto-registering table"),
+                "la ligne visée n'a pas été journalisée — le test ne prouverait rien :\n" + logged);
+            assertTrue(logged.contains("******"),
+                "le DDL journalisé devrait porter les valeurs masquées :\n" + logged);
+        } finally {
+            logger.detachAppender(appender);
+            logger.setLevel(previousLevel);
+        }
+    }
+
 }
