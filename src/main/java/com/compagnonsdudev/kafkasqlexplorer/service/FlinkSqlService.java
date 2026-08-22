@@ -100,7 +100,7 @@ public class FlinkSqlService {
      * (step, max), so the bucket width is always the last one.
      */
     private static final Pattern WINDOW_CALL = Pattern.compile(
-        "(?i)\\b(TUMBLE|HOP|CUMULATE|SESSION)\\s*\\(\\s*TABLE\\s+(\\w[\\w.]*)"
+        "(?i)\\b(TUMBLE|HOP|CUMULATE|SESSION)\\s*+\\(\\s*+TABLE\\s++(\\w[\\w.]*+)"
             + "(?:\\s+PARTITION\\s+BY\\s+[^,]+)?\\s*,\\s*DESCRIPTOR\\s*\\(\\s*(\\w+)\\s*\\)"
             + "((?:\\s*,\\s*INTERVAL\\s+'\\d+'\\s+\\w+)+)\\s*\\)");
 
@@ -125,11 +125,21 @@ public class FlinkSqlService {
      * would notice. The compile-per-call was the smaller half of it.
      */
     private static final Pattern SELECT_PROJECTION =
-        Pattern.compile("(?i)^\\s*SELECT\\s+(.+?)\\s+FROM\\b", Pattern.DOTALL);
+        Pattern.compile("(?i)^\\s*+SELECT\\s++(.+?)\\s++FROM\\b", Pattern.DOTALL);
 
-    /** One aggregate call in a projection: {@code [func, DISTINCT?, column, alias?]}. */
+    /**
+     * One aggregate call in a projection: {@code [func, DISTINCT?, column, alias?]}.
+     *
+     * <p>Every quantifier is possessive and the column is {@code [^)]++} rather than
+     * {@code [^)]+?\\s*}, because {@code [^)]} and {@code \\s} both match a space: the two
+     * competed for the same characters, and CodeQL's java/polynomial-redos was right about it —
+     * measured at 857 ms on {@code "sum(a"} followed by 20 000 spaces, and past eight seconds on
+     * {@code "sum("} followed by the same. It is 1 ms now. The capture therefore keeps any
+     * trailing whitespace, which changes nothing: both call sites already {@code trim()} it, and
+     * the equivalence was checked match-by-match over a corpus of real and degenerate SQL.
+     */
     private static final Pattern AGGREGATE_CALL = Pattern.compile(
-        "(?i)(COUNT|SUM|AVG|MAX|MIN)\\s*\\(\\s*(DISTINCT\\s+)?([^)]+?)\\s*\\)(?:\\s+AS\\s+[`\"]?([\\w]+)[`\"]?)?");
+        "(?i)(COUNT|SUM|AVG|MAX|MIN)\\s*+\\(\\s*+(DISTINCT\\s++)?([^)]++)\\)(?:\\s++AS\\s++[`\"]?+([\\w]++)[`\"]?+)?");
 
     /** Does this projection call an aggregate at all? Cheaper than parsing the calls out. */
     private static final Pattern AGGREGATE_PRESENT =
@@ -377,13 +387,44 @@ public class FlinkSqlService {
      * Used before keyword checks so that leading comments don't cause false rejections.
      * Note: does not handle comments inside string literals (rare in practice).
      */
-    private String stripSqlComments(String sql) {
+    /** Package-private: driven directly by {@code FlinkSqlServiceTest}, like {@link #unsupportedWhereFragments}. */
+    String stripSqlComments(String sql) {
         if (sql == null) return null;
-        // Remove block comments /* ... */
-        sql = sql.replaceAll("/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/", " ");
-        // Remove line comments -- ... to end of line
+        sql = stripBlockComments(sql);
+        // Line comments stay a regex: `--[^\n]*` has no ambiguity, so it is linear.
         sql = sql.replaceAll("--[^\n]*", "");
         return sql.trim();
+    }
+
+    /**
+     * Removes SQL block comments in a single left-to-right pass.
+     *
+     * <p>This was a regex, and not a slow one — a <em>crashing</em> one. The unrolled-loop form
+     * it used recursed once per repetition in Java's backtracking engine, so a statement built
+     * from a few thousand unterminated comment openers raised {@link StackOverflowError} — an
+     * {@code Error}, so nothing on the request path caught it. Rewriting it as a lazy scan
+     * removed the crash and left it quadratic: with no closing delimiter anywhere, every opener
+     * in the input rescans the whole remainder.
+     *
+     * <p>A hand-written scan is linear, allocates one builder, and is the shorter code. The
+     * semantics are the regex's: a block runs to the <em>first</em> closing delimiter after it,
+     * an unterminated block is not a comment and is left as written (so it cannot swallow the
+     * statement), and each removed block becomes one space — a comment between two tokens must
+     * not weld them together.
+     */
+    private static String stripBlockComments(String sql) {
+        int open = sql.indexOf("/*");
+        if (open < 0) return sql;
+        StringBuilder out = new StringBuilder(sql.length());
+        int from = 0;
+        while (open >= 0) {
+            int close = sql.indexOf("*/", open + 2);
+            if (close < 0) break;              // unterminated: keep the rest verbatim
+            out.append(sql, from, open).append(' ');
+            from = close + 2;
+            open = sql.indexOf("/*", from);
+        }
+        return out.append(sql, from, sql.length()).toString();
     }
 
     private String extractStatementType(String sql) {
@@ -1202,7 +1243,7 @@ public class FlinkSqlService {
                 Map<String, Object> projected = new LinkedHashMap<>();
                 for (String colExpr : requestedCols) {
                     // Handle "source_col AS alias" — fetch by source name, output under alias
-                    String[] aliasParts = colExpr.split("(?i)\\s+AS\\s+", 2);
+                    String[] aliasParts = colExpr.split("(?i)\\s++AS\\s++", 2);
                     String sourceCol = aliasParts[0].trim();
                     String outputCol = aliasParts.length > 1 ? aliasParts[1].trim() : sourceCol;
                     projected.put(outputCol, toSerializable(getNestedValue(row, sourceCol)));
@@ -1224,7 +1265,7 @@ public class FlinkSqlService {
         List<String> columns = requestedCols.isEmpty()
             ? new ArrayList<>(colSet)
             : requestedCols.stream().map(c -> {
-                String[] p = c.split("(?i)\\s+AS\\s+", 2);
+                String[] p = c.split("(?i)\\s++AS\\s++", 2);
                 return p.length > 1 ? p[1].trim() : p[0].trim();
             }).collect(Collectors.toList());
         log.debug("[KafkaDirect] topic='{}' rows={} readMode={}", topic, rows.size(), readMode);
@@ -1552,7 +1593,8 @@ public class FlinkSqlService {
         return null;
     }
 
-    private List<String> extractSelectedColumns(String sql) {
+    /** Package-private: driven directly by {@code FlinkSqlServiceTest}. */
+    List<String> extractSelectedColumns(String sql) {
         Matcher m = SELECT_PROJECTION.matcher(sql.trim());
         if (!m.find()) return Collections.emptyList();
         String cols = m.group(1).trim();
@@ -1568,7 +1610,8 @@ public class FlinkSqlService {
         "(?i)\\bWHERE\\s+(.+?)(?:\\bGROUP\\s+BY\\b|\\bORDER\\s+BY\\b|\\bHAVING\\b|\\bLIMIT\\b|;|$)",
         Pattern.DOTALL);
 
-    private Map<String, String> extractSimpleWhere(String sql) {
+    /** Package-private: driven directly by {@code FlinkSqlServiceTest}. */
+    Map<String, String> extractSimpleWhere(String sql) {
         Map<String, String> conditions = new LinkedHashMap<>();
         Pattern whereBlock = Pattern.compile("(?i)\\bWHERE\\s+(.+?)(?:\\bLIMIT\\b|;|$)", Pattern.DOTALL);
         Matcher wm = whereBlock.matcher(sql);
@@ -1577,7 +1620,7 @@ public class FlinkSqlService {
         // Keep the original case of the column name: message fields are case-sensitive
         // (e.g. "orderId") and lowercasing the key would make every lookup miss.
         // Dots are allowed so nested JSON / flattened XML paths can be filtered.
-        Pattern condPattern = Pattern.compile("(?i)`?([\\w.]+)`?\\s*=\\s*'([^']*)'");
+        Pattern condPattern = Pattern.compile("(?i)`?+([\\w.]++)`?+\\s*+=\\s*+'([^']*+)'");
         Matcher cm = condPattern.matcher(whereClause);
         while (cm.find()) {
             conditions.put(cm.group(1), cm.group(2));
@@ -1598,7 +1641,7 @@ public class FlinkSqlService {
             return List.of();
         }
         String remainder = wm.group(1)
-            .replaceAll("(?i)`?[\\w.]+`?\\s*=\\s*'[^']*'", " ")   // supported conditions
+            .replaceAll("(?i)`?+[\\w.]++`?+\\s*+=\\s*+'[^']*+'", " ")   // supported conditions
             .replaceAll("(?i)\\bAND\\b", " ")                     // supported combinator
             .replaceAll("[()]", " ")
             .replaceAll("\\s+", " ")

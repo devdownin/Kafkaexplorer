@@ -735,4 +735,100 @@ class FlinkSqlServiceTest {
         assertNotNull(result.error(), "Expected an error but query succeeded with rows: " + result.rows());
         assertFalse(result.error().isBlank(), "Error message must not be blank");
     }
+
+    // ────────────────────────────────────────────────────────────────────────────
+    // ReDoS: the SQL-parsing regexes run on a statement the caller supplies, on the
+    // request thread, before the query timeout bounds anything. Several carried the
+    // classic ambiguity — two quantifiers competing for the same characters — and
+    // CodeQL's java/polynomial-redos flagged them. Measured before the fix, on the
+    // inputs CodeQL names: SELECT_PROJECTION and AGGREGATE_CALL took ~1.5 s at 1 000
+    // padding characters and over ten seconds at 2 000; the block-comment stripper
+    // did not merely run slow but threw StackOverflowError.
+    //
+    // The fix is possessive quantifiers (and a lazy scan for the comment stripper),
+    // chosen because each was verified to leave every match and every captured group
+    // identical over a corpus of real and degenerate SQL. Three sibling patterns —
+    // GROUP BY and the two WHERE blocks — were deliberately NOT converted: possessive
+    // there changes what they match on all-whitespace input, and they measure linear
+    // anyway. DdlGeneratorService.SENSITIVE_PROP was left alone too, and that one
+    // matters: making its key scan possessive stops 'password' from ever matching, so
+    // the credential masking silently passes secrets through.
+    //
+    // Both halves are pinned below, because either alone would be a false comfort: a
+    // fast regex that no longer parses SQL is not a fix, and unchanged parsing that
+    // still hangs is not either.
+
+    /** The padding that makes the old patterns blow up. Enormous margin: the fixed ones are ~0 ms. */
+    private static String pad(String prefix, int n) {
+        return prefix + " ".repeat(n);
+    }
+
+    @Test
+    void redosSelectProjectionIsBounded() {
+        assertTimeoutPreemptively(java.time.Duration.ofSeconds(5),
+            () -> service.extractSelectedColumns(pad("select ", 20_000)),
+            "SELECT projection regex did not terminate — the possessive quantifiers were lost");
+    }
+
+    @Test
+    void redosAggregateAndWindowScanAreBounded() {
+        // Both go through the direct engine's aggregate detection.
+        assertTimeoutPreemptively(java.time.Duration.ofSeconds(5), () -> {
+            service.extractSelectedColumns(pad("select sum(", 20_000));
+            service.extractSelectedColumns(pad("select count(distinct ", 20_000));
+        });
+    }
+
+    // Deliberately no timing test for the WHERE condition scan. Making it possessive is a
+    // constant-factor win (measured 1 063 ms -> 279 ms on 8 000 characters) and it clears the
+    // CodeQL alert, but it is NOT a complexity fix: the scan is unanchored, so a long run that
+    // cannot start a condition still costs O(n^2) overall. There is no input size at which the
+    // old form fails this and the new one passes, and a timing test that cannot separate them
+    // would assert nothing while looking like it did.
+
+    @Test
+    void redosBlockCommentStripperDoesNotOverflowTheStack() {
+        // This one threw StackOverflowError rather than running slow: the nested quantifier
+        // of the unrolled-loop form recursed once per repetition. An Error, not an Exception,
+        // so nothing on the request path would have caught it.
+        // 20 000 repetitions with no closing delimiter anywhere: the old regex overflowed the
+        // stack, and a lazy-scan rewrite of it was still quadratic here. The scanner is linear.
+        String bomb = "/**" + ")/**".repeat(20_000);
+        assertTimeoutPreemptively(java.time.Duration.ofSeconds(5),
+            () -> assertNotNull(service.stripSqlComments(bomb)));
+    }
+
+    @Test
+    void strippingCommentsStillBehaves() {
+        assertEquals("SELECT 1", service.stripSqlComments("/* lead */ SELECT 1"));
+        assertEquals("SELECT   a FROM t", service.stripSqlComments("SELECT /* mid */ a FROM t"));
+        assertEquals("SELECT 1", service.stripSqlComments("/* a */ /* b */ SELECT 1").trim());
+        assertEquals("SELECT 1", service.stripSqlComments("/* multi\nline */ SELECT 1"));
+        assertEquals("SELECT 1", service.stripSqlComments("SELECT 1 -- trailing"). trim());
+        // An unterminated block comment is not a comment: it must not swallow the statement.
+        assertTrue(service.stripSqlComments("/* never closed SELECT 1").contains("SELECT 1"));
+    }
+
+    @Test
+    void projectionAndWhereParsingAreUnchanged() {
+        assertEquals(List.of("id", "name"), service.extractSelectedColumns("SELECT id, name FROM t"));
+        assertEquals(List.of("id", "name"), service.extractSelectedColumns("SELECT  id ,  name   FROM   t"));
+        assertEquals(List.of(), service.extractSelectedColumns("SELECT * FROM t"));
+        assertEquals(List.of("a"), service.extractSelectedColumns("select\na\nfrom t"));
+        // A column named like the keyword must not end the projection early.
+        assertEquals(List.of("from_id"), service.extractSelectedColumns("SELECT from_id FROM t"));
+
+        assertEquals(Map.of("status", "SHIPPED"),
+            service.extractSimpleWhere("SELECT * FROM o WHERE status = 'SHIPPED'"));
+        assertEquals(Map.of("a", "x", "b", "y"),
+            service.extractSimpleWhere("SELECT * FROM o WHERE a='x' AND b = 'y' LIMIT 10"));
+        assertEquals(Map.of("customer.city", "Lyon"),
+            service.extractSimpleWhere("SELECT * FROM o WHERE `customer.city` = 'Lyon'"));
+        assertTrue(service.extractSimpleWhere("SELECT * FROM o").isEmpty());
+
+        // And the warning about what the direct engine dropped still fires.
+        assertFalse(service.unsupportedWhereFragments("SELECT * FROM o WHERE a > 5").isEmpty());
+        assertTrue(service.unsupportedWhereFragments("SELECT * FROM o WHERE a = 'x'").isEmpty());
+    }
+
 }
