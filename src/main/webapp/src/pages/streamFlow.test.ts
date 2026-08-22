@@ -11,7 +11,8 @@ import {
   writeEvidencePct, EVIDENCE_KEY, MIN_EVIDENCE_PCT, MAX_EVIDENCE_PCT, DEFAULT_EVIDENCE_PCT,
   formatLatency, formatRelativeTime, hitsToRows, HISTORY_KEY, HIT_EXPORT_COLUMNS, PANEL_KEY,
   parseFlowResponse, parseTraceParams, pushTraceHistory, readPanelOpen, readTraceHistory,
-  sameCriterion, searchScopeOf, suggestWidenings, traceToJson, validateSearchPath, writePanelOpen,
+  sameCriterion, searchScopeOf, suggestWidenings, topicPatternMatcher, traceToJson,
+  validateSearchPath, writePanelOpen,
   zoomAt, DEFAULT_TRACE_PARAMS, isBlankTraceParams, readTraceParamsDraft, saveTraceParamsDraft,
   type FlowHit, type FlowStats, type TraceParams,
 } from './streamFlow';
@@ -593,6 +594,32 @@ describe('buildTopicSearchQuery', () => {
     expect(query.get('case')).toBe('1');
     expect(query.get('since')).toBe('30');
     expect(parse(base).get('since')).toBeNull();
+  });
+});
+
+describe('topicPatternMatcher', () => {
+  const known = ['demo.orders.1.received', 'demo.orders.2.validated', 'demo.payments.captured'];
+
+  it('anchors both ends, like the selection rule it shares', () => {
+    const matches = topicPatternMatcher('demo.orders.*');
+    expect(known.filter(matches)).toEqual(['demo.orders.1.received', 'demo.orders.2.validated']);
+    // Ancré : un motif ne retient pas ce qui *contient* les mots.
+    expect(topicPatternMatcher('orders.*')('demo.orders.1.received')).toBe(false);
+    expect(topicPatternMatcher('*orders*')('demo.orders.1.received')).toBe(true);
+  });
+
+  it('is case-insensitive and treats the dot as a literal', () => {
+    expect(topicPatternMatcher('DEMO.ORDERS.*')('demo.orders.1.received')).toBe(true);
+    expect(topicPatternMatcher('demo.orders.*')('demoXorders.1.received')).toBe(false);
+  });
+
+  it('compiles the pattern once, whatever the list length', () => {
+    // Ce que le prédicat rend doit être indépendant du nombre d'appels : une `RegExp` globale
+    // réutilisée porterait un `lastIndex`, et le deuxième topic ne correspondrait plus.
+    const matches = topicPatternMatcher('demo.orders.*');
+    expect(matches('demo.orders.1.received')).toBe(true);
+    expect(matches('demo.orders.1.received')).toBe(true);
+    expect(matches('demo.orders.2.validated')).toBe(true);
   });
 });
 

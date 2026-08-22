@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.compagnonsdudev.kafkasqlexplorer.service;
 
+import com.compagnonsdudev.kafkasqlexplorer.parser.SecureXml;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
@@ -10,9 +11,6 @@ import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.xml.sax.InputSource;
 
-import javax.xml.parsers.DocumentBuilder;
-import javax.xml.parsers.DocumentBuilderFactory;
-import javax.xml.parsers.ParserConfigurationException;
 import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -116,35 +114,10 @@ public class MessageFieldExtractorService {
         }
     }
 
-    /**
-     * One secure {@link DocumentBuilder} per thread. Building a {@code DocumentBuilderFactory} per
-     * message is expensive (feature negotiation + parser discovery) and this extractor is called
-     * once per record on bulk paths — the cluster audit walks up to 10 000 records per topic to
-     * count duplicate keys. {@code DocumentBuilder} is not thread-safe, hence the ThreadLocal, and
-     * it is {@code reset()} before each parse so no state leaks between messages.
-     */
-    private static final ThreadLocal<DocumentBuilder> XML_BUILDERS = ThreadLocal.withInitial(() -> {
-        try {
-            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
-            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
-            factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
-            factory.setXIncludeAware(false);
-            factory.setExpandEntityReferences(false);
-            factory.setFeature(javax.xml.XMLConstants.FEATURE_SECURE_PROCESSING, true);
-            factory.setNamespaceAware(false);
-            return factory.newDocumentBuilder();
-        } catch (ParserConfigurationException e) {
-            throw new IllegalStateException("Cannot create a secure XML document builder", e);
-        }
-    });
-
     private Map<String, String> extractXmlFields(String xml) {
         try {
-            DocumentBuilder builder = XML_BUILDERS.get();
-            builder.reset();
-            Document document = builder.parse(new InputSource(new StringReader(xml)));
+            Document document = SecureXml.documentBuilder()
+                .parse(new InputSource(new StringReader(xml)));
             Element root = document.getDocumentElement();
             if (root == null) {
                 return Map.of();

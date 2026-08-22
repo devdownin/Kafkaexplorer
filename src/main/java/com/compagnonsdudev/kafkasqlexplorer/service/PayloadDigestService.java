@@ -10,6 +10,7 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.FieldMapping;
 import com.compagnonsdudev.kafkasqlexplorer.domain.KafkaMessage;
 import com.compagnonsdudev.kafkasqlexplorer.domain.PayloadDigest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.PayloadShape;
+import com.compagnonsdudev.kafkasqlexplorer.parser.SecureXml;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -60,7 +61,7 @@ public class PayloadDigestService {
 
     private final ProcessMiningConfig config;
     private final JsonFactory jsonFactory = new JsonFactory();
-    private final XMLInputFactory xmlInputFactory = secureXmlInputFactory();
+    private final XMLInputFactory xmlInputFactory = SecureXml.inputFactory();
 
     /** shape id → shape, LRU-bounded: shapes seen in earlier windows stay resolvable for the prompt. */
     private final Map<String, PayloadShape> shapeRegistry;
@@ -316,17 +317,6 @@ public class PayloadDigestService {
                 depth--;
             }
         }
-    }
-
-    private static XMLInputFactory secureXmlInputFactory() {
-        XMLInputFactory factory = XMLInputFactory.newInstance();
-        factory.setProperty(XMLInputFactory.SUPPORT_DTD, Boolean.FALSE);
-        factory.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, Boolean.FALSE);
-        factory.setProperty(XMLInputFactory.IS_COALESCING, Boolean.TRUE);
-        // Namespace-unaware: getLocalName() then mirrors the element name as written, matching
-        // the dot-notation paths the rest of the app uses.
-        factory.setProperty(XMLInputFactory.IS_NAMESPACE_AWARE, Boolean.FALSE);
-        return factory;
     }
 
     // ---------------------------------------------------------------- digest assembly

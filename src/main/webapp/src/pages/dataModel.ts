@@ -16,7 +16,7 @@ import type {
   RelationConfidence,
 } from '../api/types';
 import { clearDraft, readDraft, writeDraft } from '../draftStore';
-import { isTopicPattern, matchesTopicPattern } from './streamFlow';
+import { isTopicPattern, topicPatternMatcher } from './streamFlow';
 import { isInternalTopic } from '../internalTopics';
 
 /**
@@ -68,14 +68,14 @@ export function capTopics(topics: string[], cap: number): { kept: string[]; over
  * « aucun topic », pas comme « cette syntaxe n'est pas la mienne ».
  *
  * Un texte sans `*` reste une sous-chaîne, ce qu'on attend d'un filtre. Dès qu'il y a un `*`,
- * c'est `matchesTopicPattern` qui décide — la règle exacte de la sélection, donc ancrée : ce que
+ * c'est `topicPatternMatcher` qui décide — la règle exacte de la sélection, donc ancrée : ce que
  * le filtre montre est ce que la saisie ajouterait.
  */
 export function filterTopics(topics: string[], filter: string): string[] {
   const needle = filter.trim();
   if (!needle) return topics;
   if (isTopicPattern(needle)) {
-    return topics.filter(topic => matchesTopicPattern(topic, needle));
+    return topics.filter(topicPatternMatcher(needle));
   }
   const lower = needle.toLowerCase();
   return topics.filter(t => t.toLowerCase().includes(lower));
@@ -451,8 +451,8 @@ export function filterEntities(
   const needle = filter.trim();
   if (!needle) return entities;
   if (isTopicPattern(needle)) {
-    return entities.filter(e => matchesTopicPattern(e.topic, needle)
-      || matchesTopicPattern(e.id, needle));
+    const matches = topicPatternMatcher(needle);
+    return entities.filter(e => matches(e.topic) || matches(e.id));
   }
   const lower = needle.toLowerCase();
   return entities.filter(e => e.id.toLowerCase().includes(lower)

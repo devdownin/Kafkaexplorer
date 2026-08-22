@@ -8,6 +8,7 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.MessageFormat;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryRequest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryResult;
 import com.compagnonsdudev.kafkasqlexplorer.config.ExplorerConfig;
+import com.compagnonsdudev.kafkasqlexplorer.parser.SecureXml;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.api.common.JobStatus;
@@ -25,8 +26,6 @@ import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
-import javax.xml.parsers.DocumentBuilder;
-import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -116,6 +115,33 @@ public class FlinkSqlService {
     private static final Pattern UNKNOWN_OBJECT = Pattern.compile(
         "(?:object|table)\\s+['\"][^'\"]*['\"]\\s+not found|does not exist", Pattern.CASE_INSENSITIVE);
 
+    /**
+     * The projection list of a SELECT — everything between SELECT and the first FROM.
+     *
+     * <p>Hoisted because it was compiled inline at three separate call sites with byte-identical
+     * source (the aggregate parser, the windowed aggregate parser, and the column extractor).
+     * Three copies of one grammar rule is how the three come to disagree: whichever site is edited
+     * next takes the other two out of step silently, and none of them is covered by a test that
+     * would notice. The compile-per-call was the smaller half of it.
+     */
+    private static final Pattern SELECT_PROJECTION =
+        Pattern.compile("(?i)^\\s*SELECT\\s+(.+?)\\s+FROM\\b", Pattern.DOTALL);
+
+    /** One aggregate call in a projection: {@code [func, DISTINCT?, column, alias?]}. */
+    private static final Pattern AGGREGATE_CALL = Pattern.compile(
+        "(?i)(COUNT|SUM|AVG|MAX|MIN)\\s*\\(\\s*(DISTINCT\\s+)?([^)]+?)\\s*\\)(?:\\s+AS\\s+[`\"]?([\\w]+)[`\"]?)?");
+
+    /** Does this projection call an aggregate at all? Cheaper than parsing the calls out. */
+    private static final Pattern AGGREGATE_PRESENT =
+        Pattern.compile("(?i)\\b(COUNT|SUM|AVG|MAX|MIN)\\s*\\(");
+
+    /** A windowed read: {@code TABLE(TUMBLE(...))} and its siblings. */
+    private static final Pattern WINDOW_TABLE_CALL =
+        Pattern.compile("(?i)\\bTABLE\\s*\\(\\s*(TUMBLE|HOP|SESSION)\\s*\\(");
+
+    /** The row cap written in the statement itself. */
+    private static final Pattern LIMIT_CLAUSE = Pattern.compile("(?i)\\bLIMIT\\s+(\\d+)");
+
     private final java.util.concurrent.atomic.AtomicInteger flinkSelectFailures = new java.util.concurrent.atomic.AtomicInteger(0);
     private volatile boolean flinkSelectDisabled = false;
 
@@ -159,29 +185,6 @@ public class FlinkSqlService {
     }
 
     private final ObjectMapper objectMapper = new ObjectMapper();
-
-    /**
-     * Secure XML parser, one per thread: building a DocumentBuilderFactory per message is
-     * far too expensive when an aggregate query parses up to 100 000 XML payloads.
-     * (DocumentBuilder and its factory are not thread-safe; reset() before each parse.)
-     */
-    private static final ThreadLocal<DocumentBuilder> XML_BUILDERS =
-        ThreadLocal.withInitial(FlinkSqlService::createSecureDocumentBuilder);
-
-    private static DocumentBuilder createSecureDocumentBuilder() {
-        try {
-            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
-            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
-            factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
-            factory.setXIncludeAware(false);
-            factory.setExpandEntityReferences(false);
-            return factory.newDocumentBuilder();
-        } catch (Exception e) {
-            throw new IllegalStateException("Cannot create secure XML parser", e);
-        }
-    }
 
     @Autowired
     public FlinkSqlService(TableEnvironment tableEnv, FlinkRuntimeCoordinator runtimeCoordinator,
@@ -1035,9 +1038,8 @@ public class FlinkSqlService {
         // ── XML ─────────────────────────────────────────────────────────────
         if (trimmed.startsWith("<")) {
             try {
-                DocumentBuilder builder = XML_BUILDERS.get();
-                builder.reset();
-                Document doc = builder.parse(new ByteArrayInputStream(trimmed.getBytes(StandardCharsets.UTF_8)));
+                Document doc = SecureXml.documentBuilder()
+                    .parse(new ByteArrayInputStream(trimmed.getBytes(StandardCharsets.UTF_8)));
                 Map<String, Object> row = new LinkedHashMap<>();
                 flattenXmlElement(doc.getDocumentElement(), "", row);
                 if (!row.isEmpty()) return row;
@@ -1128,18 +1130,16 @@ public class FlinkSqlService {
         String flinkTableName = DdlGeneratorService.toTableName(rawTableRef);
 
         // Detect TUMBLE / HOP / SESSION window functions — route to dedicated handler
-        if (Pattern.compile("(?i)\\bTABLE\\s*\\(\\s*(TUMBLE|HOP|SESSION)\\s*\\(").matcher(sql).find()) {
+        if (WINDOW_TABLE_CALL.matcher(sql).find()) {
             return kafkaWindowSelect(sql, readMode, limit, startTime);
         }
 
         // Detect aggregate functions in the SELECT portion only (before FROM)
-        boolean isAggregate = Pattern.compile("(?i)\\b(COUNT|SUM|AVG|MAX|MIN)\\s*\\(")
-            .matcher(sql.substring(0, fromMatcher.start())).find();
+        boolean isAggregate = AGGREGATE_PRESENT.matcher(sql.substring(0, fromMatcher.start())).find();
 
         // Respect LIMIT from SQL if smaller than configured limit (skip for aggregates)
         if (!isAggregate) {
-            Pattern limitPattern = Pattern.compile("(?i)\\bLIMIT\\s+(\\d+)");
-            Matcher limitMatcher = limitPattern.matcher(sql);
+            Matcher limitMatcher = LIMIT_CLAUSE.matcher(sql);
             if (limitMatcher.find()) {
                 limit = Math.min(limit, Integer.parseInt(limitMatcher.group(1)));
             }
@@ -1239,7 +1239,7 @@ public class FlinkSqlService {
      */
     private QueryResult kafkaAggregateSelect(String sql, List<Map<String, Object>> inputRows, long startTime) {
         // Parse SELECT portion (everything between SELECT and FROM)
-        Matcher selMatcher = Pattern.compile("(?i)^\\s*SELECT\\s+(.+?)\\s+FROM\\b", Pattern.DOTALL).matcher(sql);
+        Matcher selMatcher = SELECT_PROJECTION.matcher(sql);
         if (!selMatcher.find()) {
             return new QueryResult(Collections.emptyList(), Collections.emptyList(),
                 System.currentTimeMillis() - startTime, "Cannot parse SELECT clause for aggregate query");
@@ -1248,9 +1248,7 @@ public class FlinkSqlService {
 
         // Each aggregate entry: [func, col, alias, distinct("true"/"false")]
         List<String[]> aggs = new ArrayList<>();
-        Matcher am = Pattern.compile(
-            "(?i)(COUNT|SUM|AVG|MAX|MIN)\\s*\\(\\s*(DISTINCT\\s+)?([^)]+?)\\s*\\)(?:\\s+AS\\s+[`\"]?([\\w]+)[`\"]?)?")
-            .matcher(selectPart);
+        Matcher am = AGGREGATE_CALL.matcher(selectPart);
         while (am.find()) {
             String func  = am.group(1).toUpperCase();
             String dist  = am.group(2) != null ? "true" : "false";
@@ -1412,15 +1410,13 @@ public class FlinkSqlService {
                 : kafkaAdminService.getRecentRecords(topic, 100_000);
 
         // Parse aggregate expressions from SELECT
-        Matcher selMatcher = Pattern.compile("(?i)^\\s*SELECT\\s+(.+?)\\s+FROM\\b", Pattern.DOTALL).matcher(sql);
+        Matcher selMatcher = SELECT_PROJECTION.matcher(sql);
         if (!selMatcher.find()) {
             return new QueryResult(Collections.emptyList(), Collections.emptyList(),
                 System.currentTimeMillis() - startTime, "Cannot parse SELECT clause");
         }
         List<String[]> aggs = new ArrayList<>(); // [func, col, alias, distinct]
-        Matcher am = Pattern.compile(
-            "(?i)(COUNT|SUM|AVG|MAX|MIN)\\s*\\(\\s*(DISTINCT\\s+)?([^)]+?)\\s*\\)(?:\\s+AS\\s+[`\"]?([\\w]+)[`\"]?)?")
-            .matcher(selMatcher.group(1));
+        Matcher am = AGGREGATE_CALL.matcher(selMatcher.group(1));
         while (am.find()) {
             String func  = am.group(1).toUpperCase();
             String dist  = am.group(2) != null ? "true" : "false";
@@ -1557,8 +1553,7 @@ public class FlinkSqlService {
     }
 
     private List<String> extractSelectedColumns(String sql) {
-        Pattern p = Pattern.compile("(?i)^\\s*SELECT\\s+(.+?)\\s+FROM\\b", Pattern.DOTALL);
-        Matcher m = p.matcher(sql.trim());
+        Matcher m = SELECT_PROJECTION.matcher(sql.trim());
         if (!m.find()) return Collections.emptyList();
         String cols = m.group(1).trim();
         if (cols.equals("*")) return Collections.emptyList();
