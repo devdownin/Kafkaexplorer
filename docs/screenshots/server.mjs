@@ -56,6 +56,7 @@ const API = [
   [m => m === '/api/metrics/metadata', () => ({ demo_orders_1_received: ['id', 'status', 'amount_cents'] })],
   [m => m === '/api/metrics/suggestions', () => F.metricSuggestions],
   [m => m === '/api/data-model', () => F.dataModel],
+  [m => m === '/api/lineage', () => F.lineage],
 ];
 
 const send = (res, status, body, type) => {

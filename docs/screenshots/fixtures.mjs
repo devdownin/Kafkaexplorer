@@ -803,3 +803,44 @@ export const dataModel = {
   topicsAnalyzed: 4,
   truncated: false,
 };
+
+/**
+ * `GET /api/lineage` — le graphe de dépendances.
+ *
+ * Cette page n'avait aucune fixture : ni la capture ni la sonde de layout ne l'ouvrent, donc
+ * elle n'était exercée par rien ici. C'est pourtant l'un des trois consommateurs de
+ * `useGraphViewport`, et celui dont la politique diffère (`0` revient à une origine fixe là où
+ * les deux autres recadrent), donc le laisser dehors aurait laissé le tiers du hook partagé
+ * hors couverture — exactement le trou que la sonde de gestes existe pour fermer.
+ *
+ * La forme suit ce que `LineageService` produit : les topics de la démo en sources, les tables
+ * Flink qu'une auto-registration crée à partir d'eux, et un `INSERT INTO` qui relie les deux.
+ * Assez de nœuds pour que le graphe s'étende au-delà du viewport, ce dont le pan a besoin pour
+ * être observable.
+ */
+export const lineage = {
+  nodes: [
+    { id: 'demo.orders.1.received', label: 'demo.orders.1.received', type: 'topic', messageCount: 1284 },
+    { id: 'demo.payments.authorized', label: 'demo.payments.authorized', type: 'topic', messageCount: 863 },
+    { id: 'demo.customers', label: 'demo.customers', type: 'topic', messageCount: 214 },
+    { id: 'demo_orders_1_received', label: 'demo_orders_1_received', type: 'table' },
+    { id: 'demo_payments_authorized', label: 'demo_payments_authorized', type: 'table' },
+    { id: 'demo_customers', label: 'demo_customers', type: 'table' },
+    { id: 'orders_enriched', label: 'orders_enriched', type: 'view' },
+    { id: 'demo_orders_3_enriched', label: 'demo_orders_3_enriched', type: 'table' },
+    { id: 'demo.orders.3.enriched', label: 'demo.orders.3.enriched', type: 'topic', messageCount: 1190 },
+    { id: 'job-7f2a', label: "INSERT INTO demo_orders_3_enriched", type: 'query' },
+  ],
+  edges: [
+    { from: 'demo.orders.1.received', to: 'demo_orders_1_received', label: 'connector' },
+    { from: 'demo.payments.authorized', to: 'demo_payments_authorized', label: 'connector' },
+    { from: 'demo.customers', to: 'demo_customers', label: 'connector' },
+    { from: 'demo_orders_1_received', to: 'orders_enriched' },
+    { from: 'demo_payments_authorized', to: 'orders_enriched' },
+    { from: 'demo_customers', to: 'orders_enriched' },
+    { from: 'orders_enriched', to: 'job-7f2a' },
+    { from: 'job-7f2a', to: 'demo_orders_3_enriched' },
+    { from: 'demo_orders_3_enriched', to: 'demo.orders.3.enriched', label: 'connector' },
+  ],
+  warnings: [],
+};

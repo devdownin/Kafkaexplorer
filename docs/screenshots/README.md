@@ -66,6 +66,36 @@ screenshot shows that something is wrong; a measurement says how wrong, and at w
 stops being wrong. Re-run it before trusting that document — a single CSS change can move every
 number in it.
 
+## Vérifier les gestes, pas seulement la mise en page
+
+`graph-gestures.mjs` est la troisième chose qui tourne sur ce serveur, et la seule qui *affirme*
+un comportement plutôt que d'en rendre compte. Elle pilote de vrais événements pointeur, molette
+et clavier sur les trois graphes SVG — Lineage, Stream Flow, Data Model — et vérifie ce que le
+hook qu'ils partagent est censé faire.
+
+```bash
+node graph-gestures.mjs http://127.0.0.1:4173            # 18 vérifications, sortie non nulle si une échoue
+node graph-gestures.mjs http://127.0.0.1:4173 --detail   # dit le transform lu à l'entrée et à la sortie
+```
+
+Elle existe parce que `useGraphViewport` n'a qu'un test unitaire, sur son arithmétique de zoom,
+et que le commentaire de ce test dit pourquoi : le reste est de la plomberie d'événements
+au-dessus d'une géométrie que jsdom n'a pas, où un test unitaire affirmerait que des mocks ont
+été appelés plutôt qu'un graphe se déplace. **Sa première exécution a trouvé un défaut livré** :
+l'écouteur `wheel` ne s'attachait plus sur Stream Flow ni Data Model, parce que ces deux pages ne
+rendent leur canevas qu'une fois le résultat arrivé et que l'effet qui l'attache ne re-tournait
+jamais. Le zoom molette y était mort, et rien d'autre ne pouvait le voir.
+
+Deux pièges de sélection valent d'être connus avant d'y toucher. Le canevas est `role="application"`
+et **non** `svg[tabindex="0"]` : la minicarte de Data Model est elle aussi un `<svg>` focalisable,
+elle la précède dans le DOM, et elle n'apparaît que lorsque le graphe déborde — donc elle surgit
+au milieu du glissé qu'on mesure. Et le point d'appui est choisi en écartant `[data-node]`, parce
+qu'un glissé qui démarre sur une table doit la sélectionner et non déplacer la vue.
+
+Ce que la sonde ne couvre pas : le vrai doigt. Le glissé est piloté en pointeur souris, qui
+emprunte le même gestionnaire React ; ce qui est vérifié du côté tactile est que `touch-action`
+vaut `none`, la propriété sans laquelle la page défilerait sous le geste.
+
 ## What is real and what is not
 
 **The UI is real.** Every pixel is the compiled `src/main/webapp` — the same components,
