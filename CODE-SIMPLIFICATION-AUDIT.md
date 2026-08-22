@@ -183,6 +183,48 @@ being correct about it is not, since the direct engine's rows are inferred per m
 records of one topic need not carry the same keys. The measurement to take first is whether this
 path is reached at all on a realistic miss, which wants a profile rather than a guess.
 
+### N6 — 82 CodeQL findings predate this audit, and 16 of them are ReDoS on the SQL regexes
+
+Not found by reading, found because the PR's CodeQL check went red and the alert had to be
+explained rather than assumed. The explanation is worth keeping, and so is what it uncovered.
+
+**The check failure itself is line attribution, not a regression.** Building a CodeQL database on
+`main` and on this branch and diffing the two SARIF files gives **82 findings on each side, zero
+genuinely new, zero resolved** — every finding on this branch exists identically on `main`, same
+rule, same file, same message. What moved is the line number: hoisting the regexes shifted
+`FlinkSqlService` by a few dozen lines, and GitHub attributes an alert as *new in this pull
+request* when its line falls inside a changed hunk. Exactly five high-severity alerts land in the
+added lines, which is exactly the count the check reports.
+
+Reproduction, since this will recur on any diff that moves code in that file:
+
+```sh
+codeql database create db --language=java --command=./build.sh   # per branch
+codeql database analyze db --format=sarif-latest --output=x.sarif \
+  --download codeql/java-queries:codeql-suites/java-security-and-quality.qls
+# then compare rule+file+message across the two SARIFs, ignoring startLine
+```
+
+**What it uncovered is the part that matters.** The five are all `java/polynomial-redos`, and they
+are not noise: the SQL-parsing regexes are applied to a statement the caller supplies, and several
+carry the classic ambiguity — `\s+(.+?)\s+` in `SELECT_PROJECTION`, and the four chained
+`replaceAll` passes in `unsupportedWhereFragments`, each rescanning the previous one's output.
+Sixteen such findings exist across the file, plus fourteen `java/sensitive-log` and twenty-seven
+`java/log-injection`.
+
+Deliberately **not** treated here. Fixing a regex's backtracking changes what it matches at the
+edges, which is a behaviour change to SQL parsing — and this branch's whole claim is that it does
+not change behaviour, verified against a baseline test run. Folding a ReDoS-hardening pass into a
+consolidation would forfeit that claim for both. It is also worth doing properly rather than
+quickly: the input is SQL typed by an operator into their own editor on an unauthenticated
+internal tool, so the realistic impact is a self-inflicted stall rather than a remote DoS, which
+is presumably why the findings have sat on `main` — but "the caller is trusted" is an argument the
+rest of this codebase declines to make, and a query timeout is not a bound on a regex engine.
+
+They want their own change, with the matching test cases, and a decision on whether the
+`sensitive-log` and `log-injection` families are accepted or fixed — that last one being a
+judgement about what this application is for, not a refactor.
+
 ---
 
 ## Verification
