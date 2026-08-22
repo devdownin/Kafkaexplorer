@@ -328,6 +328,30 @@ The router is a **data router** (`createBrowserRouter` + `RouterProvider`, a `Sh
 **Command palette** — `CommandPalette` (⌘K / Ctrl+K, wired in `Layout`) is the single global search over quick actions, pages, Kafka topics and Flink tables, fully keyboard-driven. What an operator types there is very often an identifier rather than a page name, so any text that is not a known topic offers **`Trace "<text>" across topics`** first (`buildTraceLinkForKey`, exact-key mode): an investigation starts from anywhere, instead of navigating to an empty form and retyping the key into it.
 
 **Design-system library** — `components/ui/` (`import { … } from '../components/ui'`), built on the `tailwind.config.js` + `index.css` tokens; prefer it for any new surface: `Button`, `Card`/`CardHeader`, `Badge`, `EmptyState`, `ErrorPanel`, `Tooltip`/`HelpTip`, `PageHeader`, `Stat`, `Field`/`Input`/`Select`/`Textarea`, `Combobox`/`TopicInput`/`NumberInput`/`PasswordInput`, `Checkbox`, `Table` (+ `Th`/`Td`/…), the `Skeleton` family, `Spinner`/`ProgressBar`, `ConfirmProvider`/`useConfirm` (async confirm dialogs), `useUnsavedGuard` (confirm before leaving an unsaved screen — `useBlocker` for internal navigation *and* `beforeunload` for reload/close, two different exits, asked through the same `useConfirm` dialog), `useVirtualRows` (row virtualization), and `cn()` (clsx + tailwind-merge). Other shared components: `Toast`/`ToastProvider`, `ErrorBanner`, `LoadingSpinner`.
+
+**The three SVG graphs share one viewport** — `components/graph/useGraphViewport.ts`, used by
+`Lineage`, `StreamFlow` and `DataModel`. They carried the same implementation copied three times:
+the same `isPanning` / `lastPos` refs, the same three pointer handlers line-for-line, the same
+non-passive `wheel` listener, the same keyboard step. That is exactly the shape that lets a fix
+land on one page and not the other two, and it had already happened here — the move to *pointer*
+events, without which a tablet cannot pan a graph at all, had to be made three times.
+
+The split is **mechanics in the hook, policy in the pages**. The hook owns the transform state,
+the gestures, the wheel zoom and the viewport measurement, and exposes `panBy` / `zoomAround` /
+`zoomFromCenter` so a page's keyboard handler is a few lines. What stays in each page is what
+genuinely differs: what `0` recadres (a fit for Stream Flow and Data Model, a fixed origin for
+Lineage), what `Escape` deselects, and which node a table selection brings into view. Absorbing
+those through three more callbacks would have made the hook harder to read than the forty lines
+it replaces.
+
+Three things are parameters rather than constants because the pages really disagree: the scale
+bounds (Data Model goes to 0.1–3, the other two 0.15–4 — a hundred entities need the lower
+floor), the initial transform, and whether a press on a `[data-node]` starts a pan. `viewAdjusted`
+is the hook's, with `markFitted()` / `markAdjusted()` as the pair of verbs: `panBy` and
+`zoomAround` raise it themselves, and a page that sets its own transform — centring on an entity —
+says so, because Data Model's automatic refit on a resize must not undo a framing the operator
+chose. Only `zoomTransform` is unit-tested; the rest is pointer plumbing over geometry jsdom does
+not have, where a test would assert that mocks were called rather than that a graph pans.
 **`Checkbox` exists for a measured reason, and is deliberately 24 × 24.** `layout-probe.mjs` counts targets under the 24 × 24 CSS px of WCAG 2.5.8, and on the Data Model page — the worst ratio after the SQL editor — **40 of the 42 undersized targets were outside the graph**, almost all native `<input type="checkbox">` at the browser's default **13 × 13**, one per topic in the selector. It was never forty problems but one control, on the six screens that carry checkboxes; the measured effect is `data-model` 42 → 9 at 390 px, `audit` 30 → 24, `topic-explorer` 14 → 11. The visible box really is larger — keeping a 16 px box and widening only the hit area is the tempting version and does not work: `padding` is not reliably applied to a replaced control, and a `transform` shrinks the real target along with the drawing, fooling the probe exactly as much as the user. It stays a native input, so semantics, keyboard and form behaviour are the browser's, and its accent comes from the `primary` token — three call sites had hardcoded `#a3adff`, which *is* `primary`.
 **An explanation that only the mouse can reach is not an explanation.** `title=""` shows up on hover and nowhere else — never on keyboard focus, never on touch, with a delay and a rendering the browser owns and screen readers do not reliably announce. `Tooltip` opens on hover *and* focus, closes on `Escape`, and keeps its content mounted so `aria-describedby` always resolves; `HelpTip` is the small ⓘ trigger for controls that are not themselves inviting to hover, such as a `<select>` or a checkbox. Keep `title` for a bare affordance ("Copy"), and use the component wherever the text explains a *semantic* — what a mode compares, what an operator ignores, what a budget bounds, what an engine cannot do. The pass covered Topic Explorer, Stream Flow, Audit, the SQL editor and Metrics; what stays a `title` elsewhere only reveals a truncated or compacted value (the exact number behind `1.2K`, the absolute date behind a relative one), where a tooltip would add a tab stop per table cell and cost keyboard users more than it gives them. In `Metrics` the component is imported as `InfoTooltip`: Recharts exports a `Tooltip` of its own, and the file uses both.
 **A failure that needs acting on is not a toast.** `ErrorPanel` renders a `QueryErrorInfo` (from `describeApiError`) with the three levels the SQL editor already had to itself — readable title, actionable hint, raw server text one click away — and stays on screen. A toast lasts three seconds, which suits a confirmation and not a refusal: `catch { toast('Failed to save metric') }` threw away the only useful part, the reason. Reach for the toast on success and for the panel on failure.

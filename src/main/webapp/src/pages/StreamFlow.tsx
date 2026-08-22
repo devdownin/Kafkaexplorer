@@ -4,6 +4,7 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import axios from 'axios';
+import { useGraphViewport } from '../components/graph/useGraphViewport';
 import {
   Badge, Button, EmptyState, Field, Input, NumberInput, Select, TopicInput, Tooltip,
   Table, TableBody, TableHead, TableRow, Td, Th,
@@ -15,7 +16,7 @@ import { describeApiError, type QueryErrorInfo } from './queryError';
 import { toCsv } from './resultExport';
 import {
   analyzeChain, buildContinuation, buildLayout, buildTopicSearchQuery, buildTraceQuery, centerOn,
-  clampScale, compareFlows, describeChainInsight, describeComparison, describeContinuation,
+  MIN_SCALE, MAX_SCALE, compareFlows, describeChainInsight, describeComparison, describeContinuation,
   describeCoverage, describeProgress, describeSearchScope, expandTopicPatterns, filterHits,
   fitTransform, formatAbsoluteTime, formatDwell, formatLatency, formatRelativeTime, hitsToRows,
   HIT_EXPORT_COLUMNS, isNodeVisible, parseFlowResponse, parseSseBuffer, parseTopicList,
@@ -23,9 +24,9 @@ import {
   isBlankTraceParams, parseTraceParams, progressRatio, pushTraceHistory, readEvidencePct,
   readPanelOpen, readTraceParamsDraft, saveTraceParamsDraft,
   readTraceHistory, sameCriterion, slowestDivergence, sortHits, suggestWidenings, traceToJson,
-  validateSearchPath, writeEvidencePct, writePanelOpen, zoomAt,
+  validateSearchPath, writeEvidencePct, writePanelOpen,
   type FlowHit, type FormErrors, type HitSortKey, type ParsedFlow, type TraceContinuation,
-  type TraceHistoryEntry, type TraceParams, type TraceProgress, type Transform,
+  type TraceHistoryEntry, type TraceParams, type TraceProgress,
 } from './streamFlow';
 import { recordTracedChain } from './flowChains';
 import { copyText } from '../clipboard';
@@ -133,13 +134,17 @@ const StreamFlow: React.FC = () => {
   /** Numéro de la trace en cours : ce qui arrive d'une passe abandonnée est ignoré. */
   const runIdRef      = useRef(0);
 
-  // Pan & zoom
-  const [transform, setTransform] = useState<Transform>({ x: 48, y: 48, scale: 1 });
-  const svgRef                    = useRef<SVGSVGElement>(null);
-  const isPanning                 = useRef(false);
-  const lastPos                   = useRef({ x: 0, y: 0 });
-  /** Un glissé ne doit pas se terminer en clic sur le nœud relâché. */
-  const dragged                   = useRef(false);
+  // Pan / zoom / clavier : mécanique partagée avec Lineage et Data Model (`useGraphViewport`),
+  // politique — ce que `0` recadre, ce qu'`Échap` désélectionne — gardée ici.
+  // Les bornes d'échelle sont celles de `clampScale`, que `fitTransform` applique aussi.
+  const {
+    transform, setTransform, svgRef, dragged, viewport, panBy, zoomFromCenter,
+    onPointerDown, onPointerMove, onPointerUp,
+  } = useGraphViewport({
+    initial: { x: 48, y: 48, scale: 1 },
+    minScale: MIN_SCALE,
+    maxScale: MAX_SCALE,
+  });
 
   const { nodes, edges, hits, stats, warnings } = flow;
   const layout = useMemo(() => buildLayout(nodes, edges), [nodes, edges]);
@@ -149,11 +154,6 @@ const StreamFlow: React.FC = () => {
     return !open;
   }), []);
 
-  /** Taille de la zone de graphe, pour recadrer ou recentrer sans relire le DOM deux fois. */
-  const viewport = useCallback(() => {
-    const box = svgRef.current?.getBoundingClientRect();
-    return box ? { width: box.width, height: box.height } : null;
-  }, []);
 
   const currentParams = useCallback((): TraceParams => ({
     messageKey: messageKey.trim(),
@@ -177,54 +177,18 @@ const StreamFlow: React.FC = () => {
   const fitView = useCallback(() => {
     const box = viewport();
     if (box) setTransform(fitTransform(layout, box));
-  }, [layout, viewport]);
+  }, [layout, viewport, setTransform]);
 
   // Le graphe est cadré dès son arrivée : un « reset » à translate(40,40) scale(1) laissait
   // la moitié d'une chaîne de sept topics hors écran. Replier le panneau de critères élargit
   // la vue de 18 rem : sans recadrage, le graphe resterait collé à gauche.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- recadrage : dépend de la géométrie rendue
     if (nodes.length > 0) fitView();
   }, [nodes, panelOpen, fitView]);
 
-  useEffect(() => {
-    const el = svgRef.current;
-    if (!el) return;
-    const handler = (e: WheelEvent) => {
-      e.preventDefault();
-      const box = el.getBoundingClientRect();
-      const factor = e.deltaY > 0 ? 0.9 : 1.1;
-      setTransform(t => zoomAt(t, factor, e.clientX - box.left, e.clientY - box.top));
-    };
-    el.addEventListener('wheel', handler, { passive: false });
-    return () => el.removeEventListener('wheel', handler);
-  }, [hasResult, nodes.length]); // re-attach after the SVG mounts
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
-  // Événements *pointeur* et non souris : le même code fait glisser le graphe au doigt sur une
-  // tablette, où le pan était jusqu'ici impossible (et `touch-action: none` empêche la page de
-  // défiler sous le geste).
-  const onPointerDown = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
-    isPanning.current = true;
-    dragged.current = false;
-    lastPos.current = { x: e.clientX, y: e.clientY };
-    e.currentTarget.style.cursor = 'grabbing';
-  }, []);
-
-  const onPointerMove = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
-    if (!isPanning.current) return;
-    const dx = e.clientX - lastPos.current.x;
-    const dy = e.clientY - lastPos.current.y;
-    if (Math.abs(dx) + Math.abs(dy) > 2) dragged.current = true;
-    lastPos.current = { x: e.clientX, y: e.clientY };
-    setTransform(t => ({ ...t, x: t.x + dx, y: t.y + dy }));
-  }, []);
-
-  const onPointerUp = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
-    isPanning.current = false;
-    e.currentTarget.style.cursor = 'grab';
-  }, []);
 
   /**
    * Le graphe se pilote au clavier : flèches pour se déplacer, +/− pour zoomer, 0 pour recadrer,
@@ -234,18 +198,18 @@ const StreamFlow: React.FC = () => {
   const onGraphKeyDown = useCallback((e: React.KeyboardEvent<SVGSVGElement>) => {
     const step = e.shiftKey ? 160 : 48;
     switch (e.key) {
-      case 'ArrowLeft':  setTransform(t => ({ ...t, x: t.x + step })); break;
-      case 'ArrowRight': setTransform(t => ({ ...t, x: t.x - step })); break;
-      case 'ArrowUp':    setTransform(t => ({ ...t, y: t.y + step })); break;
-      case 'ArrowDown':  setTransform(t => ({ ...t, y: t.y - step })); break;
-      case '+': case '=': setTransform(t => ({ ...t, scale: clampScale(t.scale * 1.25) })); break;
-      case '-': case '_': setTransform(t => ({ ...t, scale: clampScale(t.scale * 0.8) })); break;
+      case 'ArrowLeft':  panBy(step, 0);  break;
+      case 'ArrowRight': panBy(-step, 0); break;
+      case 'ArrowUp':    panBy(0, step);  break;
+      case 'ArrowDown':  panBy(0, -step); break;
+      case '+': case '=': zoomFromCenter(1.25); break;
+      case '-': case '_': zoomFromCenter(0.8); break;
       case '0': fitView(); break;
       case 'Escape': setSelectedTopic(null); break;
       default: return;
     }
     e.preventDefault();
-  }, [fitView]);
+  }, [fitView, panBy, zoomFromCenter]);
 
   /** Sélection depuis le graphe : la ligne correspondante doit être visible dans le tableau. */
   const selectFromGraph = useCallback((topic: string) => {
@@ -263,7 +227,7 @@ const StreamFlow: React.FC = () => {
     if (!box || isNodeVisible(layout, box, transform, topic)) return;
     const next = centerOn(layout, box, topic, transform.scale);
     if (next) setTransform(next);
-  }, [layout, transform, viewport]);
+  }, [layout, transform, viewport, setTransform]);
 
   // La ligne sélectionnée depuis le graphe est amenée dans le tableau, qui défile de son côté.
   useEffect(() => {
@@ -1076,12 +1040,12 @@ const StreamFlow: React.FC = () => {
           {hasResult && nodes.length > 0 && (
             <div className="absolute bottom-6 left-4 z-10 flex flex-col bg-background-dark border border-outline-variant rounded-xl overflow-hidden shadow-xl">
               <button type="button" aria-label="Zoom in"
-                onClick={() => setTransform(t => ({ ...t, scale: clampScale(t.scale * 1.25) }))}
+                onClick={() => zoomFromCenter(1.25)}
                 className="p-2 hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface border-b border-outline-variant/60 transition-colors">
                 <span aria-hidden="true" className="material-symbols-outlined text-lg">add</span>
               </button>
               <button type="button" aria-label="Zoom out"
-                onClick={() => setTransform(t => ({ ...t, scale: clampScale(t.scale * 0.8) }))}
+                onClick={() => zoomFromCenter(0.8)}
                 className="p-2 hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface border-b border-outline-variant/60 transition-colors">
                 <span aria-hidden="true" className="material-symbols-outlined text-lg">remove</span>
               </button>
