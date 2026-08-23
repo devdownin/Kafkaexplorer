@@ -78,6 +78,14 @@ public class OpenRouterModelCatalog {
     private static final int MAX_SHORTLIST = 50;
 
     /**
+     * How much of the per-key model list to read in one page. Generous enough that an ordinary
+     * account's whole entitlement fits, so a slug's absence is usually conclusive; a list that
+     * fills the page is reported as inconclusive rather than paged through, since this runs on a
+     * failure branch where the answer is a hint and not a verdict.
+     */
+    private static final int PER_KEY_PAGE = 1000;
+
+    /**
      * What may address the catalogue path. Two or more segments, each beginning with a letter or a
      * digit — which is the part that matters, since it is what a `.` or `..` segment cannot satisfy.
      * Colons are allowed inside a segment: OpenRouter carries variants that way (`…:free`).
@@ -157,8 +165,13 @@ public class OpenRouterModelCatalog {
             String url = LlmHttpSupport.v1Url(config, "model/" + encode(author) + "/" + encode(name));
             HttpResponse<String> response = get(config, url);
             if (response.statusCode() / 100 != 2) {
-                return LlmModelCheck.unavailable("OpenRouter answered HTTP " + response.statusCode()
-                    + " for \"" + slug + "\".");
+                // The one case the per-key list disambiguates, and the only one it is asked in: an
+                // org key restricted to part of the catalogue is refused with the same status as a
+                // mistyped slug, and those two send an operator to different places.
+                return LlmModelCheck
+                    .unavailable("OpenRouter answered HTTP " + response.statusCode()
+                        + " for \"" + slug + "\".")
+                    .withAvailability(availableToKey(config, slug));
             }
             return parse(objectMapper.readTree(response.body()), slug);
         } catch (InterruptedException e) {
@@ -315,6 +328,47 @@ public class OpenRouterModelCatalog {
         return null;
     }
 
+    /**
+     * Whether the configured key can reach this model, as far as can be established.
+     *
+     * <p>{@code /models/user} lists what the key is entitled to. It takes no filters — only
+     * {@code limit} and {@code offset} — so this reads one generous page and nothing more: a slug
+     * missing from a <em>truncated</em> list is a slug that was not looked at, not one that is
+     * absent, and saying otherwise would manufacture exactly the false negative this codebase
+     * keeps removing. {@code null} therefore means "could not establish", and only an exhaustive
+     * list that does not contain the slug yields {@code false}.
+     */
+    private Boolean availableToKey(ClaudeConfig config, String slug) {
+        if (!config.isApiKeyConfigured()) {
+            return null;
+        }
+        try {
+            HttpResponse<String> response = get(config,
+                LlmHttpSupport.v1Url(config, "models/user?limit=" + PER_KEY_PAGE));
+            if (response.statusCode() / 100 != 2) {
+                return null;
+            }
+            JsonNode root = objectMapper.readTree(response.body());
+            JsonNode data = root.has("data") ? root.path("data") : root;
+            if (!data.isArray()) {
+                return null;
+            }
+            for (JsonNode model : data) {
+                if (slug.equalsIgnoreCase(text(model, "id", ""))) {
+                    return true;
+                }
+            }
+            // Absent — but only meaningful if we saw the whole list.
+            return data.size() < PER_KEY_PAGE ? false : null;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
+        } catch (Exception e) {
+            log.debug("Per-key model list unavailable", e);
+            return null;
+        }
+    }
+
     /** One GET against the catalogue, carrying the key when there is one. */
     private HttpResponse<String> get(ClaudeConfig config, String url)
             throws java.io.IOException, InterruptedException {
@@ -371,7 +425,7 @@ public class OpenRouterModelCatalog {
         Boolean fits = contextLength == null ? null : promptBudgetTokens <= contextLength;
 
         return new LlmModelCheck(id, name, contextLength, emitsText, schemaSupport,
-            reasoningMandatory, promptBudgetTokens, fits, null);
+            reasoningMandatory, promptBudgetTokens, fits, null, null);
     }
 
     /** See {@link SchemaSupport} — the third value is the whole reason this is not a boolean. */

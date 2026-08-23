@@ -249,3 +249,84 @@ describe('Config — provider defaults', () => {
     expect(await screen.findByDisplayValue('qwen3:4b')).toBeInTheDocument();
   });
 });
+
+describe('Config — when the configuration cannot be read', () => {
+  /*
+   * Le formulaire ne se dessine pas par-dessus une réponse qu'on n'a pas eue. C'était un `catch`
+   * vide : la page affichait une configuration complète sans en avoir reçu la moindre valeur —
+   * l'affirmation non vérifiée que ce dépôt retire partout ailleurs, sur l'écran dont le seul
+   * geste est la saisie.
+   */
+  it('shows the reason instead of a form it never received', async () => {
+    mockedAxios.get.mockRejectedValue(new Error('Network Error'));
+    renderPage();
+
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    expect(screen.queryByLabelText(/bootstrap servers/i)).not.toBeInTheDocument();
+  });
+
+  it('offers a retry that draws the form once the server answers', async () => {
+    const user = userEvent.setup();
+    mockedAxios.get.mockRejectedValueOnce(new Error('Network Error'));
+    renderPage();
+    await screen.findByRole('alert');
+
+    mockedAxios.get.mockImplementation((url: string) => {
+      if (url === '/api/config') return Promise.resolve({ data: serverConfig });
+      return Promise.reject(new Error(`unexpected GET ${url}`));
+    });
+    await user.click(screen.getByRole('button', { name: /retry|try again/i }));
+
+    expect(await screen.findByDisplayValue('openai/gpt-4o-mini')).toBeInTheDocument();
+  });
+});
+
+describe('Config — saving a model', () => {
+  /* La forme du slug, refusée à l'enregistrement plutôt qu'à la première fenêtre analysée. */
+  it('refuses a slug with no vendor before it reaches the server', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    const field = await screen.findByDisplayValue('openai/gpt-4o-mini');
+
+    await user.clear(field);
+    await user.type(field, 'qwen3:4b');
+    await user.click(screen.getByRole('button', { name: /save configuration/i }));
+
+    expect(await screen.findByText(/has no vendor/i)).toBeInTheDocument();
+    expect(mockedAxios.post.mock.calls.map(c => c[0])).not.toContain('/api/config');
+  });
+});
+
+describe('Config — a key that does not follow the endpoint', () => {
+  /*
+   * Le serveur efface la clé quand l'hôte change ; le champ du formulaire est vide dans les deux
+   * cas, donc sans phrase le prochain appel échoue sur un identifiant manquant sans que rien ne
+   * relie les deux.
+   */
+  it('says the stored key was not carried to the new host', async () => {
+    const user = userEvent.setup();
+    mockedAxios.post.mockResolvedValue({
+      data: { ...serverConfig, llmApiKeyConfigured: false, credentialsCleared: ['llmApiKey'] },
+    });
+    renderPage();
+    await screen.findByDisplayValue('openai/gpt-4o-mini');
+
+    await user.click(screen.getByRole('button', { name: /save configuration/i }));
+
+    expect(await screen.findByText(/was not carried over/i)).toBeInTheDocument();
+  });
+
+  it('says nothing about it on an ordinary save', async () => {
+    const user = userEvent.setup();
+    mockedAxios.post.mockResolvedValue({
+      data: { ...serverConfig, credentialsCleared: [] },
+    });
+    renderPage();
+    await screen.findByDisplayValue('openai/gpt-4o-mini');
+
+    await user.click(screen.getByRole('button', { name: /save configuration/i }));
+
+    await screen.findByRole('button', { name: /saved!/i });
+    expect(screen.queryByText(/was not carried over/i)).not.toBeInTheDocument();
+  });
+});

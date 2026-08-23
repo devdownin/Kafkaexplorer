@@ -177,3 +177,27 @@ Every Java, TypeScript and TSX source file starts with:
 
 By contributing to Kafka SQL Explorer, you agree that your contributions will be licensed under
 the GNU Affero General Public License, Version 3.0.
+
+## Verifying the OpenRouter contract against the live API
+
+`docs/check-*.py` are discovered and run by CI, need no network, and gate every pull request.
+`docs/verify-openrouter-contract.py` is deliberately **not** one of them: it needs the network and
+an API key, so CI cannot run it, and it is named differently so the discovery loop does not pick it
+up.
+
+Run it by hand when you touch anything the Explorer sends to OpenRouter's catalogue:
+
+```bash
+OPENROUTER_API_KEY=sk-or-v1-… python3 docs/verify-openrouter-contract.py
+```
+
+It exists because the filter and sort parameter names were taken from `@openrouter/sdk`'s published
+schemas rather than from an observed response — `openrouter.ai` is unreachable from some build
+environments. The parsing has unit tests; the *request* had nothing, and a parameter name the
+gateway does not recognise is ignored rather than refused, which means the model shortlist would
+quietly stop being a shortlist. The script's first assertion is precisely that the filters narrow
+the catalogue.
+
+It exits `0` when the contract holds, `1` on a real disagreement, `2` with no key, and `3` when the
+API could not be reached at all — a network failure is reported as a network failure, not as a
+contract violation.

@@ -262,6 +262,14 @@ public class ConfigController {
         if (body.containsKey("confluentKey")) kafkaConfig.setConfluentKey(asString(body.get("confluentKey")));
         if (body.containsKey("confluentSecret")) kafkaConfig.setConfluentSecret(asString(body.get("confluentSecret")));
 
+        // Where the model was being called before this request, kept so a credential cannot follow
+        // the endpoint somewhere the operator did not deliberately send it — the block after the
+        // LLM fields below acts on it. Read here rather than at the top: the provider is what
+        // decides a blank base URL's meaning, and it has not changed yet at this point.
+        String previousEndpoint = claudeConfig.getResolvedBaseUrl();
+        boolean keySupplied = body.containsKey("llmApiKey")
+            && !isBlank(asString(body.get("llmApiKey")));
+
         if (body.containsKey("llmProvider") && body.get("llmProvider") != null) {
             claudeConfig.setProvider(ClaudeConfig.Provider.valueOf(asString(body.get("llmProvider"))));
         }
@@ -318,6 +326,29 @@ public class ConfigController {
             );
         }
 
+        /*
+         * A credential does not follow the endpoint to a different host.
+         *
+         * `POST /api/config` accepts any base URL and guards the key with containsKey, so a body
+         * naming a new host and omitting `llmApiKey` used to repoint the deployment while leaving
+         * the stored key in place — and the very next `test-llm` sent that key to the new host,
+         * reflecting up to 300 bytes of its answer back to the caller. Two unauthenticated calls,
+         * no key needed to start with. This application has no authentication, and "an operator
+         * may repoint it" is a different statement from "anyone may have its credentials".
+         *
+         * The rule is deliberately about the *host* and not the whole URL: a changed port or path
+         * is the same endpoint, a changed hostname is not. And it is a save, so re-entering the
+         * key is a reasonable thing to ask — which is exactly why the same rule would be wrong on
+         * the probe, where nothing is committed and nothing is being decided.
+         */
+        List<String> credentialsCleared = new ArrayList<>();
+        if (!keySupplied && claudeConfig.isApiKeyConfigured()
+            && !ClaudeConfig.sameEndpointHost(previousEndpoint, claudeConfig.getResolvedBaseUrl())) {
+            claudeConfig.setApiKey("");
+            touched.add("llmApiKey");
+            credentialsCleared.add("llmApiKey");
+        }
+
         kafkaAdminService.init();
 
         // After the singletons, not instead of them: the store keeps what was applied, so a
@@ -342,6 +373,10 @@ public class ConfigController {
         result.put("settingsPersistedNow", saved.persisted());
         result.put("settingsPersistenceError", saved.error());
         result.put("settingsNotStored", saved.notStored());
+        // Said rather than done silently: the operator is looking at a form whose key field is
+        // blank either way, so without this the next call fails on a missing credential with
+        // nothing connecting the two.
+        result.put("credentialsCleared", credentialsCleared);
         return result;
     }
 

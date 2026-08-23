@@ -78,6 +78,42 @@ export const describeOption = (option: LlmModelOption): string[] => {
 export const optionSlugs = (shortlist: LlmModelShortlist | null): string[] =>
   shortlist?.available ? shortlist.models.map(option => option.id) : [];
 
+/**
+ * Ce qui cloche dans un slug, avant même de l'enregistrer — `null` quand rien ne cloche.
+ *
+ * Le bouton Test nomme déjà un slug sans `/`, et le chemin du catalogue refuse un slug qui
+ * traverserait. Enregistrer, lui, acceptait n'importe quoi : la faute n'était découverte qu'à la
+ * première fenêtre analysée, sous la forme d'une 404 que l'opérateur lit comme un refus de routage.
+ *
+ * Volontairement **syntaxique et seulement pour OpenRouter**. On ne vérifie pas qu'un modèle
+ * existe — ça, c'est le rôle du bouton Test, qui interroge le catalogue — mais qu'il a la forme
+ * d'une adresse que la passerelle peut résoudre. Ailleurs, un nom de modèle est ce que le point
+ * d'accès veut bien accepter, et cette application n'a pas d'avis à donner dessus.
+ */
+export const validateModelSlug = (
+  provider: string,
+  model: string | undefined,
+): string | null => {
+  if (provider !== 'OPENROUTER') return null;
+  const slug = (model ?? '').trim();
+  if (!slug) return null; // « un modèle est requis » est déjà dit ailleurs ; ne pas le dire deux fois.
+  if (!slug.includes('/')) {
+    return `OpenRouter names models vendor/model — "${slug}" has no vendor. `
+      + 'For example openai/gpt-4o-mini.';
+  }
+  /*
+   * Même règle que le serveur (`OpenRouterModelCatalog.SLUG`) : chaque segment commence par une
+   * lettre ou un chiffre, ce qui écarte un segment `.` ou `..` d'un chemin d'URL. Écrite ici aussi
+   * parce qu'un formulaire qui laisse passer ce que le serveur refusera n'aide personne — mais
+   * c'est le serveur qui décide, celle-ci ne fait qu'avancer le moment où on l'apprend.
+   */
+  if (!/^[A-Za-z0-9][\w.:-]*(\/[A-Za-z0-9][\w.:-]*)+$/.test(slug)) {
+    return `"${slug}" is not a usable OpenRouter slug — each part has to start with a letter or `
+      + 'a digit, as in meta-llama/llama-3.1-8b-instruct:free.';
+  }
+  return null;
+};
+
 export type ShortlistTone = 'ready' | 'empty' | 'unavailable' | 'idle';
 
 export interface ShortlistState {

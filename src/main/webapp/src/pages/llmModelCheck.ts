@@ -52,7 +52,21 @@ export const describeModelIdentity = (check: LlmModelCheck): string | null => {
 export const describeModelCheck = (check: LlmModelCheck | null | undefined): ModelNote[] => {
   if (!check) return [];
   if (check.error != null) {
-    return [{ tone: 'unknown', text: check.error }];
+    const notes: ModelNote[] = [{ tone: 'unknown', text: check.error }];
+    /*
+     * Le seul cas que la liste par clé départage, et la raison d'y avoir recours : une clé
+     * d'organisation restreinte à une partie du catalogue reçoit exactement la même 404 qu'un slug
+     * mal orthographié. `null` veut dire qu'on n'a pas pu trancher et ne produit donc rien — ce
+     * serait affirmer une restriction qu'on n'a pas constatée.
+     */
+    if (check.availableToKey === false) {
+      notes.push({
+        tone: 'warning',
+        text: 'This model is not in the list your API key can reach, so the refusal is an '
+          + 'entitlement rather than a wrong name. Check your OpenRouter account’s allowed models.',
+      });
+    }
+    return notes;
   }
 
   const notes: ModelNote[] = [];

@@ -80,4 +80,29 @@ class ClaudeConfigTest {
     void ollamaDefaultIsLocal() {
         assertTrue(at(ClaudeConfig.Provider.OLLAMA, "").isLocalDeployment());
     }
+
+    /**
+     * The test that decides whether a stored credential may follow a configuration change. The
+     * host and nothing else: a changed port or path is the same endpoint, a changed hostname is
+     * not — and a URL that will not parse is treated as different, since the safe answer to "may
+     * this key follow?" is no.
+     */
+    @Test
+    void sameEndpointHostComparesTheHostAndNothingElse() {
+        assertTrue(ClaudeConfig.sameEndpointHost(
+            "https://openrouter.ai/api/v1", "https://openrouter.ai:8443/other/v1"));
+        assertTrue(ClaudeConfig.sameEndpointHost(
+            "https://OpenRouter.AI/api/v1", "https://openrouter.ai/api/v1"));
+
+        assertFalse(ClaudeConfig.sameEndpointHost(
+            "https://openrouter.ai/api/v1", "https://attacker.example/v1"));
+        // A subdomain is a different host, which is the conservative reading and the right one
+        // here: nothing guarantees it is operated by the same people.
+        assertFalse(ClaudeConfig.sameEndpointHost(
+            "https://openrouter.ai/api/v1", "https://evil.openrouter.ai.attacker.example/v1"));
+
+        assertFalse(ClaudeConfig.sameEndpointHost("not a url", "not a url"));
+        assertFalse(ClaudeConfig.sameEndpointHost("", "https://openrouter.ai/api/v1"));
+        assertFalse(ClaudeConfig.sameEndpointHost(null, null));
+    }
 }

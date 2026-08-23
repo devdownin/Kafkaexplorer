@@ -5,7 +5,7 @@ import { describe, it, expect } from 'vitest';
 import type { LlmModelOption, LlmModelShortlist } from '../api/types';
 import {
   PROJECTION_NOTE, describeOption, describeShortlist, formatContext, formatPricePerMillion,
-  formatProjectedCost, optionSlugs,
+  formatProjectedCost, optionSlugs, validateModelSlug,
 } from './llmModelPicker';
 
 const option = (over: Partial<LlmModelOption> = {}): LlmModelOption => ({
@@ -157,5 +157,48 @@ describe('PROJECTION_NOTE', () => {
   it('says the figure is projected and that it can understate', () => {
     expect(PROJECTION_NOTE).toContain('Projected');
     expect(PROJECTION_NOTE).toContain('understate');
+  });
+});
+
+describe('validateModelSlug', () => {
+  /* Le cas ordinaire : une faute de frappe se voit à l'enregistrement, pas à la première fenêtre. */
+  it('refuses a model name with no vendor on OpenRouter', () => {
+    expect(validateModelSlug('OPENROUTER', 'qwen3:4b')).toContain('vendor/model');
+    expect(validateModelSlug('OPENROUTER', 'gpt-4o-mini')).toContain('no vendor');
+  });
+
+  it('refuses a slug whose segments could traverse a URL path', () => {
+    for (const hostile of ['../admin', 'openai/../x', './a/b', 'a//b']) {
+      expect(validateModelSlug('OPENROUTER', hostile)).not.toBeNull();
+    }
+  });
+
+  it('accepts the slug shapes OpenRouter really publishes', () => {
+    for (const slug of [
+      'openai/gpt-4o-mini',
+      'meta-llama/llama-3.1-8b-instruct:free',
+      'google/gemini-2.0-flash-001',
+      'qwen/qwen3-4b',
+    ]) {
+      expect(validateModelSlug('OPENROUTER', slug)).toBeNull();
+    }
+  });
+
+  /*
+   * Syntaxique et seulement pour OpenRouter : ailleurs, un nom de modèle est ce que le point
+   * d'accès veut bien accepter, et cette application n'a pas d'avis dessus.
+   */
+  it('says nothing about a model name on any other provider', () => {
+    for (const provider of ['OLLAMA', 'ANTHROPIC', 'OPENAI_COMPATIBLE', 'SPECTRA']) {
+      expect(validateModelSlug(provider, 'qwen3:4b')).toBeNull();
+      expect(validateModelSlug(provider, '../weird')).toBeNull();
+    }
+  });
+
+  /* « Un modèle est requis » est dit ailleurs ; le répéter ici donnerait deux erreurs pour une. */
+  it('leaves an empty field to the required-field check', () => {
+    expect(validateModelSlug('OPENROUTER', '')).toBeNull();
+    expect(validateModelSlug('OPENROUTER', undefined)).toBeNull();
+    expect(validateModelSlug('OPENROUTER', '   ')).toBeNull();
   });
 });
