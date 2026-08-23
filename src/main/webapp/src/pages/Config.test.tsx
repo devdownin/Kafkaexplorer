@@ -107,7 +107,7 @@ describe('Config — testing a model', () => {
     expect(posted).not.toContain('/api/config');
   });
 
-  it('sends the form’s own LLM fields, so an unsaved model is the one tested', async () => {
+  it('sends the form’s own model, so an unsaved one is what gets tested', async () => {
     const user = userEvent.setup();
     renderPage();
     const field = await screen.findByDisplayValue('openai/gpt-4o-mini');
@@ -118,7 +118,41 @@ describe('Config — testing a model', () => {
 
     await waitFor(() => expect(mockedAxios.post).toHaveBeenCalled());
     const call = mockedAxios.post.mock.calls.find(c => c[0] === '/api/config/test-llm');
-    expect(call?.[1]).toMatchObject({ llmModel: 'some/other-model', llmProvider: 'OPENROUTER' });
+    expect(call?.[1]).toEqual({ llmModel: 'some/other-model' });
+  });
+
+  /*
+   * La frontière de sécurité, vue du navigateur : ni le point d'accès ni la clé ne partent dans la
+   * sonde. Le serveur les ignorerait de toute façon, mais les envoyer mettrait la clé dans un corps
+   * de requête et dans les journaux d'un proxy pour rien.
+   */
+  it('never sends the endpoint or the API key in a probe', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByDisplayValue('openai/gpt-4o-mini');
+
+    await user.click(screen.getByRole('button', { name: /test llm/i }));
+
+    await waitFor(() => expect(mockedAxios.post).toHaveBeenCalled());
+    const call = mockedAxios.post.mock.calls.find(c => c[0] === '/api/config/test-llm');
+    const body = call?.[1] as Record<string, unknown>;
+    expect(Object.keys(body)).toEqual(['llmModel']);
+  });
+
+  /*
+   * La sonde n'essaie que le modèle. Il faut donc le dire quand le formulaire a pris de l'avance
+   * sur le fournisseur en vigueur, sinon « joignable » se lit comme un verdict sur celui qu'on
+   * vient de choisir.
+   */
+  it('says the probe uses the connection in force once the provider has been changed', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByDisplayValue('openai/gpt-4o-mini');
+
+    expect(screen.queryByText(/connection currently in force/i)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /ollama/i }));
+
+    expect(await screen.findByText(/connection currently in force/i)).toBeInTheDocument();
   });
 });
 

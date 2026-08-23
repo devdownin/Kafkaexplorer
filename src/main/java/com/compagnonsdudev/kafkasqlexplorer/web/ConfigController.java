@@ -24,7 +24,6 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -413,13 +412,19 @@ public class ConfigController {
     /**
      * Probes an LLM endpoint and reports what its model can do.
      *
-     * <p>The body is optional and every field in it is. With none, this tests the running
-     * configuration exactly as before. With one, it tests a <strong>candidate</strong> the operator
-     * has not committed to — and applies nothing: no bean is mutated, nothing reaches
+     * <p>The body is optional and carries one field, {@code llmModel}. With none, this tests the
+     * running configuration exactly as before. With one, it tests a <strong>candidate model</strong>
+     * the operator has not committed to — and applies nothing: no bean is mutated, nothing reaches
      * {@link SettingsStore}. The page used to have to save the whole form before it could probe, so
      * trying a model repointed the live deployment and, where persistence is on, wrote it to disk.
      * Exploring and committing were the same gesture, which is why comparing two models was never
      * worth the risk.
+     *
+     * <p><strong>The endpoint and the credential are never taken from the request</strong> — see
+     * {@link ClaudeConfig#probeCopy}. Accepting them turned this into an unauthenticated
+     * server-side request forgery whose response came back to the caller, and, since a blank key
+     * fell through to the stored one, into a one-call exfiltration of the operator's API key.
+     * Repointing this deployment is what {@code POST /api/config} is for.
      *
      * <p>That is why this one builds its own client instead of going through
      * {@link LlmClientProvider}, and the exception is deliberate rather than a lapse: the rule
@@ -429,15 +434,7 @@ public class ConfigController {
      */
     @PostMapping("/api/config/test-llm")
     public Map<String, Object> testLlm(@RequestBody(required = false) Map<String, Object> body) {
-        ClaudeConfig target;
-        try {
-            target = candidateFrom(body);
-        } catch (IllegalArgumentException e) {
-            Map<String, Object> rejected = new HashMap<>();
-            rejected.put("ok", false);
-            rejected.put("message", e.getMessage());
-            return rejected;
-        }
+        ClaudeConfig target = candidateFrom(body);
         boolean candidate = target != claudeConfig && target.differsFrom(claudeConfig);
 
         Map<String, Object> result = new HashMap<>();
@@ -487,63 +484,17 @@ public class ConfigController {
     /**
      * The models this application could be pointed at.
      *
-     * <p>Takes the same optional overrides as the probe, for the same reason: an operator changing
-     * provider in the form has not applied it, and the shortlist has to describe the endpoint they
-     * are looking at rather than the one still running.
+     * <p>Read against the endpoint <em>in force</em>, never one named by the caller: the same rule
+     * as the probe, and for the same reason — a URL taken from a request is a server-side request
+     * forgery whatever it is used for. The consequence is stated on the page: switching provider in
+     * the form has to be saved before the list describes the new endpoint.
      */
     @GetMapping("/api/config/llm-models")
     public LlmModelShortlist llmModels(
-            @RequestParam(name = "provider", required = false) String provider,
-            @RequestParam(name = "baseUrl", required = false) String baseUrl,
-            @RequestParam(name = "apiKey", required = false) String apiKey,
             @RequestParam(name = "includeUnconstrained", defaultValue = "false")
             boolean includeUnconstrained,
             @RequestParam(name = "limit", defaultValue = "20") int limit) {
-        ClaudeConfig target;
-        try {
-            target = candidateFrom(Map.of(
-                "llmProvider", provider == null ? "" : provider,
-                "llmBaseUrl", baseUrl == null ? "" : baseUrl,
-                "llmApiKey", apiKey == null ? "" : apiKey));
-        } catch (IllegalArgumentException e) {
-            return LlmModelShortlist.unavailable(e.getMessage());
-        }
-        return modelCatalog.shortlist(target, includeUnconstrained, limit);
-    }
-
-    /**
-     * The configuration a probe should target: the running one when the caller named nothing, a
-     * throw-away copy when it named something. Returns the bean itself in the first case, which is
-     * what lets the caller tell "test what is running" from "test this" by identity.
-     */
-    private ClaudeConfig candidateFrom(Map<String, Object> body) {
-        if (body == null || body.isEmpty()) {
-            return claudeConfig;
-        }
-        String provider = string(body.get("llmProvider"));
-        String baseUrl = string(body.get("llmBaseUrl"));
-        String apiKey = string(body.get("llmApiKey"));
-        String model = string(body.get("llmModel"));
-        if (provider == null && baseUrl == null && apiKey == null && model == null) {
-            return claudeConfig;
-        }
-        ClaudeConfig.Provider parsed = null;
-        if (provider != null) {
-            try {
-                parsed = ClaudeConfig.Provider.valueOf(provider.strip().toUpperCase(Locale.ROOT));
-            } catch (IllegalArgumentException e) {
-                throw new IllegalArgumentException("Unknown LLM provider \"" + provider + "\".");
-            }
-        }
-        return claudeConfig.probeCopy(parsed, baseUrl, apiKey, model);
-    }
-
-    /** Blank counts as absent: an empty form field means "keep what is configured", not "clear it". */
-    private static String string(Object value) {
-        if (!(value instanceof String text) || text.isBlank()) {
-            return null;
-        }
-        return text;
+        return modelCatalog.shortlist(claudeConfig, includeUnconstrained, limit);
     }
 
     private String summarize(String reply) {
@@ -552,6 +503,31 @@ public class ConfigController {
         }
         String trimmed = reply.strip();
         return trimmed.length() > 80 ? trimmed.substring(0, 80) + "…" : trimmed;
+    }
+
+    /**
+     * The configuration a probe should target: the running one when the caller named no model, a
+     * throw-away copy naming theirs otherwise. Returns the bean itself in the first case, which is
+     * what lets the caller tell "test what is running" from "test this model" by identity.
+     *
+     * <p>Only {@code llmModel} is read. Anything else in the body is ignored rather than honoured
+     * — see {@link ClaudeConfig#probeCopy} for why the endpoint and the credential are not the
+     * caller's to choose.
+     */
+    private ClaudeConfig candidateFrom(Map<String, Object> body) {
+        if (body == null) {
+            return claudeConfig;
+        }
+        String model = string(body.get("llmModel"));
+        return model == null ? claudeConfig : claudeConfig.probeCopy(model);
+    }
+
+    /** Blank counts as absent: an empty form field means "keep what is configured", not "clear it". */
+    private static String string(Object value) {
+        if (!(value instanceof String text) || text.isBlank()) {
+            return null;
+        }
+        return text;
     }
 
     private void appendLlmConfig(Map<String, Object> result) {

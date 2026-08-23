@@ -208,6 +208,40 @@ class OpenRouterModelCatalogTest {
     }
 
     /**
+     * The slug becomes a URL path and a probe may name it, so its shape is validated rather than
+     * merely split. Percent-encoding is not enough on its own: {@code URLEncoder} leaves a dot
+     * untouched, so a segment of {@code ..} would survive into a path something downstream may
+     * normalise.
+     */
+    @Test
+    void refusesASlugThatCouldTraverseTheCataloguePath() {
+        claudeConfig.setProvider(ClaudeConfig.Provider.OPENROUTER);
+
+        for (String hostile : new String[] {"../admin/keys", "openai/../../admin", "./x/y", "a//b"}) {
+            claudeConfig.setModel(hostile);
+            LlmModelCheck check = catalog.describeConfiguredModel();
+            assertNotNull(check.error(), "should have been refused: " + hostile);
+            assertTrue(check.error().contains("vendor/model"), check.error());
+        }
+    }
+
+    /** The shapes OpenRouter really publishes have to keep working, variants included. */
+    @Test
+    void acceptsTheSlugShapesOpenRouterActuallyUses() {
+        for (String slug : new String[] {
+                "openai/gpt-4o-mini", "meta-llama/llama-3.1-8b-instruct:free",
+                "qwen/qwen3-4b", "google/gemini-2.0-flash-001"}) {
+            claudeConfig.setProvider(ClaudeConfig.Provider.OPENROUTER);
+            claudeConfig.setModel(slug);
+            LlmModelCheck check = catalog.describeConfiguredModel();
+            // It cannot reach the network here, so what is asserted is that it got *past* the shape
+            // check — the refusal below is the one this test is about, and it must not fire.
+            assertFalse(check.error() != null && check.error().contains("vendor/model"),
+                "wrongly refused a real slug: " + slug + " — " + check.error());
+        }
+    }
+
+    /**
      * The lookup is a vendor-specific path, so it is only made against the vendor's own host —
      * the same rule as the attribution headers, and deliberately not the rule the routing policy
      * follows, which must survive a proxy because it carries a guarantee.

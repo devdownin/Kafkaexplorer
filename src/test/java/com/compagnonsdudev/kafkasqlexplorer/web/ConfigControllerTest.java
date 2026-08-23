@@ -104,21 +104,31 @@ class ConfigControllerTest {
     }
 
     /**
-     * The browser never receives the key — only {@code llmApiKeyConfigured} — so a candidate probe
-     * that carried none has to fall back to the stored one. Otherwise every attempt to try a model
-     * answers 401, on a deployment whose key is perfectly good.
+     * The security boundary of the whole feature, and the reason only the model is overridable.
+     *
+     * <p>A probe that accepted a base URL would be an unauthenticated server-side request forgery
+     * with the response handed back to the caller — and since a blank key falls through to the
+     * configured one, a single call would post the operator's API key to any host. The endpoint
+     * must therefore come from the running configuration whatever the body says.
      */
     @Test
-    void aCandidateWithNoKeyFallsBackToTheConfiguredOne() throws Exception {
-        claudeConfig.setProvider(ClaudeConfig.Provider.OPENROUTER);
-        claudeConfig.setApiKey("sk-or-configured");
+    void aProbeCannotRedirectTheRequestOrBorrowTheStoredKeyForIt() throws Exception {
+        claudeConfig.setProvider(ClaudeConfig.Provider.OLLAMA);
+        claudeConfig.setBaseUrl("http://localhost:11434/v1");
+        claudeConfig.setModel("qwen3:4b");
+        claudeConfig.setApiKey("sk-configured");
 
         mockMvc.perform(post("/api/config/test-llm").contentType(MediaType.APPLICATION_JSON)
-                .content("{\"llmModel\":\"some-vendor/candidate\"}"))
+                .content("{\"llmBaseUrl\":\"https://attacker.example/v1\","
+                    + "\"llmProvider\":\"OPENROUTER\",\"llmApiKey\":\"\"}"))
             .andExpect(status().isOk())
-            // Not the "an API key is required" refusal: the stored key was used.
-            .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.not(
-                org.hamcrest.Matchers.containsString("API key is required"))));
+            // Neither the endpoint nor the provider moved: the body's connection fields are
+            // ignored, not honoured, so nothing was sent anywhere the operator did not configure.
+            .andExpect(jsonPath("$.provider").value("Ollama"))
+            .andExpect(jsonPath("$.candidate").value(false));
+
+        assertEquals("http://localhost:11434/v1", claudeConfig.getBaseUrl());
+        assertEquals(ClaudeConfig.Provider.OLLAMA, claudeConfig.getProvider());
     }
 
     /** No body at all is the historical call, and it must behave exactly as it did. */
@@ -149,17 +159,8 @@ class ConfigControllerTest {
             .andExpect(jsonPath("$.candidate").value(false));
     }
 
-    @Test
-    void aMistypedProviderInAProbeIsNamedRatherThanAnsweredWithACrash() throws Exception {
-        mockMvc.perform(post("/api/config/test-llm").contentType(MediaType.APPLICATION_JSON)
-                .content("{\"llmProvider\":\"OPENROOTER\"}"))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.ok").value(false))
-            .andExpect(jsonPath("$.message").value(
-                org.hamcrest.Matchers.containsString("OPENROOTER")));
-    }
-
     /**
+     * The defaults the form used to restate.    /**
      * The defaults the form used to restate. Every provider is present, so the page cannot fall
      * back to a literal for the one that was forgotten.
      */
@@ -178,12 +179,17 @@ class ConfigControllerTest {
             .andExpect(jsonPath("$.llmProviderDefaults.SPECTRA.model").value(""));
     }
 
-    /** The shortlist has no catalogue to read on a provider that publishes none. */
+    /**
+     * The shortlist has no catalogue to read on a provider that publishes none — and it reads the
+     * provider in force, so no query parameter can send it somewhere else.
+     */
     @Test
-    void theModelShortlistIsUnavailableWithoutOpenRouter() throws Exception {
+    void theModelShortlistIsUnavailableWithoutOpenRouterWhateverTheCallerAsksFor() throws Exception {
         claudeConfig.setProvider(ClaudeConfig.Provider.OLLAMA);
 
-        mockMvc.perform(get("/api/config/llm-models"))
+        mockMvc.perform(get("/api/config/llm-models")
+                .param("provider", "OPENROUTER")
+                .param("baseUrl", "https://attacker.example/v1"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.available").value(false))
             .andExpect(jsonPath("$.error").isNotEmpty())

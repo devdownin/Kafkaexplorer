@@ -37,11 +37,19 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `settings.json` — exploring and committing were the same gesture, which is why comparing two
   models was never worth the risk. The probe now carries the form's provider, base URL, key and
   model in its body and the server builds a throw-away configuration from them: no bean mutated,
-  nothing reaching the settings store. A blank field means "keep what is configured", which is what
-  makes the key work — the browser never receives it, so a probe carrying none has to fall back to
-  the stored one instead of testing anonymously and reporting a 401 nobody can explain. The answer
-  carries `candidate`, so "reachable" does not claim to describe the deployment when it describes
-  something else.
+  nothing reaching the settings store. The answer carries `candidate`, so "reachable" does not
+  claim to describe the deployment when it describes something else.
+
+  **Only the model is overridable, and that is the security boundary rather than a simplification.**
+  A first draft let the body carry the provider, base URL and key as well. That is a server-side
+  request forgery on an application with no authentication — the client hands the response body
+  back to the caller in its error message — and, because a blank key falls through to the
+  configured one, a single call that changed no state and left nothing on disk would have posted
+  the operator's API key to any host. The endpoint and the credential now always come from the
+  saved configuration; repointing the deployment stays the job of `POST /api/config`, which is
+  deliberate, validated and persisted. The shortlist endpoint takes no connection parameters for
+  the same reason, and the accepted cost is stated beside the Test button: a provider changed in
+  the form has to be saved before the probe and the list describe the new endpoint.
 
 - **The Settings page reads the shipped defaults from the server instead of restating them.**
   `Config.tsx` carried `openai/gpt-4o-mini` twice and a table mirroring `defaultBaseUrl` beside it

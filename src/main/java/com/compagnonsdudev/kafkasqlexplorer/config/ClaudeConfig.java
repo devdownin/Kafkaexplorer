@@ -386,31 +386,39 @@ public class ClaudeConfig {
     }
 
     /**
-     * A throw-away copy of this configuration with the connection fields replaced, for probing a
-     * candidate the operator has not committed to.
+     * A throw-away copy of this configuration naming a different model, for probing a candidate
+     * the operator has not committed to.
      *
      * <p>{@code POST /api/config/test-llm} used to require the form to be <em>applied</em> first,
      * so trying a model repointed the running deployment and — with
-     * {@code explorer.settings-persistence} on — wrote it to {@code settings.json}. Exploring and
+     * {@code explorer.settings-persistence} on — wrote it into the settings store. Exploring and
      * committing were the same gesture, which is why nobody compared two models. A copy has no
      * such cost: nothing here is a Spring bean, nothing is published to another thread, and the
      * running configuration is untouched.
      *
-     * <p>A blank or null override keeps this configuration's value, which is what makes the API
-     * key work: the browser never receives it (only {@code llmApiKeyConfigured}), so a probe that
-     * did not carry one has to fall back to the stored one rather than testing anonymously and
-     * reporting a 401 the operator cannot explain.
+     * <p><strong>Only the model is overridable, and that restriction is the security boundary.</strong>
+     * An earlier draft let a probe carry its own provider, base URL and key. That turned an
+     * unauthenticated request into a server-side request forgery with the response reflected back
+     * to the caller — and worse, a blank key fell back to the <em>stored</em> one, so pointing a
+     * probe at any host exfiltrated the operator's API key in a single call that changed no state
+     * and left nothing in the settings file. Changing where this deployment sends its data is what
+     * {@code POST /api/config} is for; it is a deliberate, persisted act. Trying another model
+     * against the endpoint already configured is not, and it is the whole of what the Settings
+     * page needs.
+     *
+     * <p>A blank or null model keeps this configuration's, so a probe that names nothing tests
+     * exactly what is running.
      */
-    public ClaudeConfig probeCopy(Provider overrideProvider, String overrideBaseUrl,
-                                  String overrideApiKey, String overrideModel) {
+    public ClaudeConfig probeCopy(String overrideModel) {
         ClaudeConfig copy = new ClaudeConfig();
-        copy.provider = overrideProvider != null ? overrideProvider : provider;
-        copy.baseUrl = blankToNull(overrideBaseUrl) != null ? overrideBaseUrl.strip() : baseUrl;
-        copy.apiKey = blankToNull(overrideApiKey) != null ? overrideApiKey.strip() : apiKey;
         copy.model = blankToNull(overrideModel) != null ? overrideModel.strip() : model;
-        // Everything below is not part of the candidate: it describes how this deployment calls a
-        // model, not which one, and a probe that quietly used different budgets or a different
-        // routing policy would be testing something other than what an analysis will do.
+        // Everything else is this deployment's, deliberately — the endpoint, the credential, and
+        // the budgets and routing policy that describe how it calls a model rather than which one.
+        // A probe that quietly used different ones would be testing something other than what an
+        // analysis will do.
+        copy.provider = provider;
+        copy.baseUrl = baseUrl;
+        copy.apiKey = apiKey;
         copy.maxTokens = maxTokens;
         copy.snapshotWindowSize = snapshotWindowSize;
         copy.snapshotWindowTimeoutSeconds = snapshotWindowTimeoutSeconds;
@@ -425,14 +433,12 @@ public class ClaudeConfig {
     }
 
     /**
-     * Whether this copy names something other than what is running — the one thing the answer of a
+     * Whether this copy names a model other than the one running — the one thing the answer of a
      * probe must state, since "the endpoint is reachable" means a different thing about a
      * candidate than about the deployment.
      */
     public boolean differsFrom(ClaudeConfig other) {
-        return provider != other.provider
-            || !java.util.Objects.equals(getResolvedBaseUrl(), other.getResolvedBaseUrl())
-            || !java.util.Objects.equals(model, other.model);
+        return !java.util.Objects.equals(model, other.model);
     }
 
     private static String blankToNull(String value) {

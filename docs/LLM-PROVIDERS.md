@@ -123,12 +123,18 @@ Three things about that list are deliberate:
 - **It is only fetched when you open it.** Nothing is asked of the gateway to render the Settings
   page.
 
-**Test LLM applies nothing.** It probes whatever is in the form — including a model you have just
-typed and not saved — and says `Candidate reachable…` when what it tested is not what the
-deployment is running. Previously the page had to save the form before it could probe, so trying a
-model repointed the live deployment and, where settings are persisted, wrote it to disk. You can
-now try three models and keep none. Leave the API key field alone while doing it: an empty field
-means "use the configured key", not "test without one".
+**Test LLM applies nothing.** It probes the model in the form — including one you have just typed
+and not saved — and says `Candidate reachable…` when what it tested is not what the deployment is
+running. Previously the page had to save the form before it could probe, so trying a model
+repointed the live deployment and, where settings are persisted, wrote it to disk. You can now try
+three models and keep none.
+
+**Only the model is tried unsaved.** The endpoint and the key always come from the saved
+configuration, and that is deliberate: this application has no authentication, so a probe that let
+its caller choose the URL would let anyone use the server as an HTTP client — and, since a blank
+key falls back to the configured one, send your API key wherever they liked. Changing provider or
+base URL therefore still goes through **Save**, and the page says so beside the button when your
+form has moved ahead of what is running.
 
 ### What each analysis cost
 

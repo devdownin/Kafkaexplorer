@@ -226,6 +226,14 @@ const Config: React.FC = () => {
     () => describeModelCheck(llmTestResult?.modelCheck), [llmTestResult]);
   const modelIdentity = llmTestResult?.modelCheck
     ? describeModelIdentity(llmTestResult.modelCheck) : null;
+  /*
+   * La sonde et la liste n'essaient que le *modèle* : le point d'accès reste celui en vigueur, et
+   * délibérément — voir `probeBody`. Il faut donc le dire quand le formulaire a pris de l'avance
+   * dessus, sinon « joignable » se lit comme un verdict sur le fournisseur qu'on vient de choisir.
+   * Même source que la politique de confidentialité (`inForce`), pour la même raison : ce qui
+   * tourne n'est pas ce qui est saisi.
+   */
+  const connectionIsStale = inForce != null && inForce.llmProvider !== config.llmProvider;
   const modelSlugs = useMemo(() => optionSlugs(models), [models]);
   const shortlistState = useMemo(() => describeShortlist(models), [models]);
   /** Le formulaire pointe ailleurs que ce qui tourne : le bandeau décrit encore l'ancien. */
@@ -394,17 +402,14 @@ const Config: React.FC = () => {
   };
 
   /**
-   * Ce que la sonde envoie : les champs LLM du formulaire, tels qu'ils sont, sans rien appliquer.
+   * Ce que la sonde envoie : le modèle saisi, et rien d'autre.
    *
-   * La clé n'est envoyée que si elle a été saisie — le serveur ne la renvoie jamais, donc un champ
-   * vide veut dire « garde celle qui est configurée » et non « teste sans clé ».
+   * Ni le point d'accès ni la clé ne voyagent — le serveur les refuserait. Une URL prise dans une
+   * requête est une contrefaçon de requête côté serveur, et une clé qui retomberait sur celle du
+   * déploiement en ferait une exfiltration en un appel. Changer d'endpoint reste le rôle
+   * d'Enregistrer, qui est un geste délibéré et persisté.
    */
-  const probeBody = () => ({
-    llmProvider: config.llmProvider,
-    llmBaseUrl: config.llmBaseUrl ?? '',
-    llmApiKey: config.llmApiKey ?? '',
-    llmModel: config.llmModel ?? '',
-  });
+  const probeBody = () => ({ llmModel: config.llmModel ?? '' });
 
   /**
    * Teste ce qui est dans le formulaire — sans l'enregistrer.
@@ -436,19 +441,15 @@ const Config: React.FC = () => {
    *
    * Paresseux, et déclenché par un geste : la liste n'est utile qu'à qui choisit un modèle, et
    * rien dont le seul produit est un confort de formulaire ne doit peser sur le chargement de la
-   * page. Interrogée avec les valeurs du formulaire pour la même raison que la sonde — un
-   * fournisseur choisi mais non appliqué doit être celui qu'on décrit.
+   * page. Lue contre le point d'accès *en vigueur*, jamais contre un que la requête nommerait —
+   * même règle que la sonde. La conséquence est dite à l'écran : changer de fournisseur dans le
+   * formulaire demande de l'enregistrer avant que la liste décrive le nouveau point d'accès.
    */
   const loadModels = async (unconstrained: boolean) => {
     setModelsLoading(true);
     try {
       const res = await axios.get<LlmModelShortlist>('/api/config/llm-models', {
-        params: {
-          provider: config.llmProvider,
-          baseUrl: config.llmBaseUrl ?? '',
-          apiKey: config.llmApiKey ?? '',
-          includeUnconstrained: unconstrained,
-        },
+        params: { includeUnconstrained: unconstrained },
       });
       setModels(res.data);
     } catch (err: unknown) {
@@ -1064,6 +1065,13 @@ const Config: React.FC = () => {
                 </div>
               )}
             </div>
+          )}
+
+          {connectionIsStale && (
+            <p className="mt-2 text-[12px] text-on-surface-variant">
+              Test tries the model against the connection currently in force
+              ({inForce?.llmProvider}). Save to test a different provider or endpoint.
+            </p>
           )}
 
           {llmTestResult && (

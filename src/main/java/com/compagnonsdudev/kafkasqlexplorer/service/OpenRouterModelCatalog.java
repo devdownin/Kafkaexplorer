@@ -77,6 +77,14 @@ public class OpenRouterModelCatalog {
      */
     private static final int MAX_SHORTLIST = 50;
 
+    /**
+     * What may address the catalogue path. Two or more segments, each beginning with a letter or a
+     * digit — which is the part that matters, since it is what a `.` or `..` segment cannot satisfy.
+     * Colons are allowed inside a segment: OpenRouter carries variants that way (`…:free`).
+     */
+    private static final java.util.regex.Pattern SLUG =
+        java.util.regex.Pattern.compile("[A-Za-z0-9][\\w.:-]*(/[A-Za-z0-9][\\w.:-]*)+");
+
     private final ClaudeConfig claudeConfig;
     private final ProcessMiningConfig processMiningConfig;
     private final HttpClient httpClient;
@@ -130,12 +138,17 @@ public class OpenRouterModelCatalog {
         // separately. A slug with no slash cannot address it — that is the shape of an Ollama model
         // name left behind by a provider switch, and saying so beats a 404 the operator would read
         // as a routing refusal.
-        int slash = slug.indexOf('/');
-        if (slash <= 0 || slash == slug.length() - 1) {
+        //
+        // The shape is *validated*, not merely split, because this string becomes a URL path and a
+        // probe may name it: every segment has to start alphanumeric, which is what rules out `.`
+        // and `..` reaching the path a client or a proxy might then normalise. Percent-encoding
+        // alone does not — `URLEncoder` leaves a dot untouched.
+        if (!SLUG.matcher(slug).matches()) {
             return LlmModelCheck.unavailable(
                 "\"" + slug + "\" is not an OpenRouter slug — they are named vendor/model, "
                     + "for example openai/gpt-4o-mini.");
         }
+        int slash = slug.indexOf('/');
         String author = slug.substring(0, slash);
         // Everything after the first slash: a slug may carry a variant suffix of its own.
         String name = slug.substring(slash + 1);
@@ -152,7 +165,7 @@ public class OpenRouterModelCatalog {
             Thread.currentThread().interrupt();
             return LlmModelCheck.unavailable("Interrupted while reading the model catalogue.");
         } catch (Exception e) {
-            log.debug("Model catalogue lookup failed for {}", slug, e);
+            log.debug("Model catalogue lookup failed for {}", FlinkSqlService.sanitizeForLog(slug), e);
             return LlmModelCheck.unavailable("Could not read the model catalogue: "
                 + SqlErrorClassifier.explain(e));
         }
