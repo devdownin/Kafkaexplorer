@@ -9,7 +9,7 @@ import org.springframework.context.annotation.Configuration;
 @ConfigurationProperties(prefix = "claude")
 public class ClaudeConfig {
 
-    public enum Provider { ANTHROPIC, OPENAI_COMPATIBLE, OLLAMA, SPECTRA }
+    public enum Provider { ANTHROPIC, OPENAI_COMPATIBLE, OLLAMA, OPENROUTER, SPECTRA }
 
     /**
      * Whether to constrain the model's answer to a JSON Schema rather than merely asking for JSON
@@ -19,9 +19,18 @@ public class ClaudeConfig {
      * endpoint we know nothing about — llama.cpp, vLLM, LM Studio, a corporate gateway — and an
      * unrecognised {@code response_format} is answered with a 400 by some of them. Turning a
      * working deployment into a failing one to gain a guarantee it may not need is the wrong
-     * default, so AUTO enables it where support is known ({@code ANTHROPIC}, {@code OLLAMA}) and
-     * {@link #ON} is there for an operator who knows their gateway supports it. Either way the
-     * client degrades on its own if the endpoint refuses the field.
+     * default, so AUTO enables it where support is known ({@code ANTHROPIC}, {@code OLLAMA},
+     * {@code OPENROUTER}) and {@link #ON} is there for an operator who knows their gateway supports
+     * it. Either way the client degrades on its own if the endpoint refuses the field.
+     *
+     * <p>{@code OPENROUTER} is in the AUTO set for a reason worth stating, because it is the one
+     * provider here whose answer to "do you support schemas" is <em>per model</em> rather than per
+     * endpoint: OpenRouter routes to hundreds of models behind one base URL and one key, and only
+     * some of them (and only some of the upstream providers serving them) implement
+     * {@code response_format}. That is safe only because
+     * {@link com.compagnonsdudev.kafkasqlexplorer.service.OpenAiCompatibleLlmClient} remembers a
+     * refusal <em>against the model that refused</em>: a schema-less model costs one extra request,
+     * once, and does not disable constrained decoding for the next model chosen in Settings.
      */
     public enum StructuredOutput { AUTO, ON, OFF }
 
@@ -152,12 +161,20 @@ public class ClaudeConfig {
         return switch (structuredOutput) {
             case ON -> true;
             case OFF -> false;
-            case AUTO -> provider == Provider.ANTHROPIC || provider == Provider.OLLAMA;
+            case AUTO -> provider == Provider.ANTHROPIC
+                || provider == Provider.OLLAMA
+                || provider == Provider.OPENROUTER;
         };
     }
 
+    /**
+     * Whether a call can be made at all without a key. OpenRouter is a hosted gateway that answers
+     * 401 to an anonymous request, so an empty key there is not "optional credentials" as it is on
+     * a local Ollama — it is a deployment that cannot analyse anything, and the Process Mining page
+     * says so up front rather than after the first failed window.
+     */
     public boolean isApiKeyRequired() {
-        return provider == Provider.ANTHROPIC;
+        return provider == Provider.ANTHROPIC || provider == Provider.OPENROUTER;
     }
 
     public boolean isApiKeyConfigured() {
@@ -184,6 +201,7 @@ public class ClaudeConfig {
             case ANTHROPIC -> "Anthropic";
             case OPENAI_COMPATIBLE -> "OpenAI-compatible";
             case OLLAMA -> "Ollama";
+            case OPENROUTER -> "OpenRouter";
             case SPECTRA -> "SpectraLLM";
         };
     }
@@ -193,6 +211,7 @@ public class ClaudeConfig {
             case ANTHROPIC -> "https://api.anthropic.com";
             case OPENAI_COMPATIBLE -> "";
             case OLLAMA -> "http://localhost:11434/v1";
+            case OPENROUTER -> "https://openrouter.ai/api/v1";
             case SPECTRA -> "http://localhost:8080";
         };
     }

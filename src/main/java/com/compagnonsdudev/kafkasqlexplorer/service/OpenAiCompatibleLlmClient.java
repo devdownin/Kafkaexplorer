@@ -17,6 +17,8 @@ import java.net.http.HttpResponse;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class OpenAiCompatibleLlmClient implements LlmClient {
     private static final Logger log = LoggerFactory.getLogger(OpenAiCompatibleLlmClient.class);
@@ -25,12 +27,28 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /**
-     * Set once an endpoint has refused a schema-constrained request, so the next call does not
-     * repeat the mistake. Instance state rather than config: the client is rebuilt whenever the
+     * The models this endpoint has refused a schema-constrained request for, so the next call does
+     * not repeat the mistake. Instance state rather than config: the client is rebuilt whenever the
      * provider, base URL or key changes, which is exactly the lifetime this observation is valid
      * for.
+     *
+     * <p>Keyed by <em>model</em> rather than being one flag for the client, because on a gateway
+     * that routes — OpenRouter above all — schema support is a property of the model and of the
+     * upstream provider serving it, not of the endpoint. One flag meant a model that cannot be
+     * constrained disabled constrained decoding for every model chosen afterwards, silently and for
+     * the client's whole lifetime: {@link LlmClientProvider} fingerprints provider, base URL and
+     * key, and the model is in none of them, so changing the model in Settings reuses this very
+     * client. A bounded map, since the set of models one deployment tries is small and this lives
+     * on a long-lived bean.
      */
-    private volatile boolean structuredOutputUnsupported;
+    private final Set<String> modelsRefusingSchema = ConcurrentHashMap.newKeySet();
+
+    /** Upper bound on {@link #modelsRefusingSchema} — a guard against an unbounded field, not a policy. */
+    private static final int MAX_REMEMBERED_MODELS = 64;
+
+    /** Sent only to OpenRouter — see the header block in {@link #call}. */
+    private static final String OPENROUTER_APP_URL = "https://github.com/devdownin/Kafkaexplorer";
+    private static final String OPENROUTER_APP_TITLE = "Kafka SQL Explorer";
 
     public OpenAiCompatibleLlmClient(ClaudeConfig config) {
         this.config = config;
@@ -50,9 +68,10 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
     @Override
     public LlmResponse generateWithMeta(String systemPrompt, String userPrompt,
                                         LlmOutputSchema schema) {
+        String model = modelKey();
         boolean constrain = schema != null
             && config.isStructuredOutputEnabled()
-            && !structuredOutputUnsupported;
+            && !modelsRefusingSchema.contains(model);
 
         try {
             return call(systemPrompt, userPrompt, constrain ? schema : null);
@@ -64,13 +83,29 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
             // Retrying unconstrained is worth one attempt: the alternative is telling an operator
             // their gateway is broken when it merely does not implement response_format. If the
             // second call fails too, that error is the honest one to report.
-            log.warn("{} refused a schema-constrained request (status {}); retrying without the "
-                    + "constraint and not sending one again for this endpoint. Set "
+            log.warn("{} refused a schema-constrained request for model '{}' (status {}); retrying "
+                    + "without the constraint and not sending one again for that model. Set "
                     + "claude.structured-output=OFF to skip this probe.",
-                config.getProviderLabel(), e.status());
-            structuredOutputUnsupported = true;
+                config.getProviderLabel(), model, e.status());
+            rememberSchemaRefusal(model);
             return call(systemPrompt, userPrompt, null);
         }
+    }
+
+    /** The configured model, normalised so a null or blank one still keys the map. */
+    private String modelKey() {
+        String model = config.getModel();
+        return model == null || model.isBlank() ? "" : model.strip();
+    }
+
+    private void rememberSchemaRefusal(String model) {
+        if (modelsRefusingSchema.size() >= MAX_REMEMBERED_MODELS) {
+            // Nothing here is worth an eviction policy: forget the lot and re-probe. Sixty-four
+            // models on one client means the operator has been switching all afternoon, and one
+            // extra request per model is cheaper than a field that grows without bound.
+            modelsRefusingSchema.clear();
+        }
+        modelsRefusingSchema.add(model);
     }
 
     /**
@@ -122,6 +157,14 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
 
             if (config.isApiKeyConfigured()) {
                 requestBuilder.header("Authorization", "Bearer " + config.getApiKey());
+            }
+            if (config.getProvider() == ClaudeConfig.Provider.OPENROUTER) {
+                // OpenRouter's two optional attribution headers, which is how a request is credited
+                // to an application on its public leaderboard. They carry this project's identity
+                // and nothing about the deployment or the messages — no host name, no topic, no
+                // payload — so they say who wrote the client, not who is running it.
+                requestBuilder.header("HTTP-Referer", OPENROUTER_APP_URL);
+                requestBuilder.header("X-Title", OPENROUTER_APP_TITLE);
             }
 
             HttpResponse<String> response =

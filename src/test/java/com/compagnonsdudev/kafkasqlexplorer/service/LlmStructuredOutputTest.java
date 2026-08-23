@@ -34,6 +34,7 @@ class LlmStructuredOutputTest {
 
     private HttpServer server;
     private final List<String> requestBodies = new ArrayList<>();
+    private final List<Map<String, List<String>>> requestHeaders = new ArrayList<>();
 
     @AfterEach
     void tearDown() {
@@ -47,6 +48,7 @@ class LlmStructuredOutputTest {
         AtomicInteger call = new AtomicInteger();
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/v1/chat/completions", exchange -> {
+            requestHeaders.add(Map.copyOf(exchange.getRequestHeaders()));
             requestBodies.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             StubResponse stub = script.get(Math.min(call.getAndIncrement(), script.size() - 1));
             byte[] body = stub.body().getBytes(StandardCharsets.UTF_8);
@@ -229,6 +231,80 @@ class LlmStructuredOutputTest {
 
         config.setStructuredOutput(ClaudeConfig.StructuredOutput.ON);
         assertTrue(config.isStructuredOutputEnabled(), "ON is how an operator opts a known gateway in");
+    }
+
+    /**
+     * OpenRouter is in the AUTO set, and it is the one provider whose schema support is a property
+     * of the <em>model</em> — one base URL and one key route to hundreds of them, only some of
+     * which implement {@code response_format}.
+     */
+    @Test
+    void autoConstrainsOnOpenRouter() throws Exception {
+        ClaudeConfig config = startServer(List.of(new StubResponse(200, okBody())));
+        config.setProvider(ClaudeConfig.Provider.OPENROUTER);
+        config.setModel("openai/gpt-4o-mini");
+
+        assertTrue(config.isStructuredOutputEnabled());
+        new OpenAiCompatibleLlmClient(config).generateWithMeta("SYS", "USR", schema());
+
+        assertTrue(requestBodies.get(0).contains("response_format"));
+    }
+
+    /**
+     * The precondition for the line above: a model that cannot be constrained must cost one extra
+     * request for <em>itself</em>, not disable constrained decoding for every model chosen
+     * afterwards. The latch used to be one flag per client, and a client outlives a model change —
+     * {@link LlmClientProvider} fingerprints provider, base URL and key, and the model is in none
+     * of them, so on a routing gateway one schema-less model silently degraded all the others.
+     */
+    @Test
+    void aModelThatRefusesTheSchemaDoesNotDisableItForTheNextOne() throws Exception {
+        ClaudeConfig config = startServer(List.of(
+            new StubResponse(400, "{\"error\":{\"message\":\"response_format is not supported\"}}"),
+            new StubResponse(200, okBody())));
+        config.setProvider(ClaudeConfig.Provider.OPENROUTER);
+        config.setModel("some-vendor/no-schemas-here");
+
+        OpenAiCompatibleLlmClient client = new OpenAiCompatibleLlmClient(config);
+        client.generateWithMeta("SYS", "USR", schema());
+        assertEquals(2, requestBodies.size());
+        assertFalse(requestBodies.get(1).contains("response_format"), "the retry drops the field");
+
+        // Same model again: remembered, so no second probe.
+        client.generateWithMeta("SYS", "USR", schema());
+        assertFalse(requestBodies.get(2).contains("response_format"));
+
+        // A different model on the same gateway, through the same client: constrained again.
+        config.setModel("openai/gpt-4o-mini");
+        client.generateWithMeta("SYS", "USR", schema());
+        assertTrue(requestBodies.get(3).contains("response_format"),
+            "one model's refusal says nothing about another model's capabilities");
+    }
+
+    /**
+     * OpenRouter's attribution headers name this project and nothing about the deployment. They go
+     * only to OpenRouter: sending an unsolicited {@code X-Title} to somebody's corporate gateway is
+     * not this application's business.
+     */
+    @Test
+    void sendsAttributionHeadersToOpenRouterOnly() throws Exception {
+        ClaudeConfig config = startServer(List.of(new StubResponse(200, okBody())));
+        config.setProvider(ClaudeConfig.Provider.OPENROUTER);
+        config.setApiKey("sk-or-v1-test");
+
+        new OpenAiCompatibleLlmClient(config).generateWithMeta("SYS", "USR", null);
+
+        Map<String, List<String>> sent = requestHeaders.get(0);
+        assertEquals(List.of("Kafka SQL Explorer"), sent.get("X-title"),
+            "header names come back capitalised by com.sun.net.httpserver");
+        assertEquals(List.of("https://github.com/devdownin/Kafkaexplorer"), sent.get("Http-referer"));
+        assertEquals(List.of("Bearer sk-or-v1-test"), sent.get("Authorization"));
+
+        config.setProvider(ClaudeConfig.Provider.OPENAI_COMPATIBLE);
+        new OpenAiCompatibleLlmClient(config).generateWithMeta("SYS", "USR", null);
+
+        assertNull(requestHeaders.get(1).get("X-title"));
+        assertNull(requestHeaders.get(1).get("Http-referer"));
     }
 
     @Test

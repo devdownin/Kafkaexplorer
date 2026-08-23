@@ -254,7 +254,11 @@ management:
       application: kafka-sql-explorer
 
 claude:
-  provider: OLLAMA # ANTHROPIC | OPENAI_COMPATIBLE | OLLAMA | SPECTRA
+  provider: OLLAMA # ANTHROPIC | OPENAI_COMPATIBLE | OLLAMA | OPENROUTER | SPECTRA
+  # OPENROUTER: one hosted gateway in front of many vendors' models. Set provider: OPENROUTER,
+  # api-key to an OpenRouter key (sk-or-v1-…, and it is required — an anonymous request is a 401),
+  # and model to a slug of the form vendor/model, e.g. openai/gpt-4o-mini. base-url defaults to
+  # https://openrouter.ai/api/v1; it speaks the same /chat/completions API as the entry above.
   api-key: ${ANTHROPIC_API_KEY:}
   base-url: http://localhost:11434/v1
   model: qwen3:4b
@@ -277,11 +281,13 @@ claude:
   # Whether the answer is constrained to a JSON Schema rather than merely requested as JSON in
   # the prompt. Constraining removes the "model wrapped its JSON in prose" failure instead of
   # reporting it, which matters most for the small local model this ships with by default.
-  # AUTO (default) enables it where support is known — ANTHROPIC and OLLAMA — and leaves an
-  # arbitrary OPENAI_COMPATIBLE gateway alone, because an unrecognised response_format is a 400
-  # on some of them and breaking a working deployment is the wrong default. ON forces it for a
-  # gateway you know supports it; OFF disables it everywhere. Whatever the setting, a client that
-  # gets its schema refused retries once without it and stops sending one to that endpoint.
+  # AUTO (default) enables it where support is known — ANTHROPIC, OLLAMA and OPENROUTER — and
+  # leaves an arbitrary OPENAI_COMPATIBLE gateway alone, because an unrecognised response_format is
+  # a 400 on some of them and breaking a working deployment is the wrong default. ON forces it for
+  # a gateway you know supports it; OFF disables it everywhere. Whatever the setting, a client that
+  # gets its schema refused retries once without it and stops sending one for that model — per
+  # model, not per endpoint, which is what makes AUTO safe on OpenRouter, where support depends on
+  # the model and the upstream provider serving it rather than on the gateway.
   structured-output: AUTO
 
 logging:

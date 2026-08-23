@@ -29,6 +29,16 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **A model that refuses a JSON Schema no longer disables constrained decoding for the next
+  one.** The "this endpoint does not implement `response_format`" latch was one flag per client,
+  and a client outlives a model change — `LlmClientProvider` fingerprints provider, base URL and
+  key, and the model is in none of them. That was survivable while every provider was one
+  endpoint serving one model, and is exactly wrong on a routing gateway: OpenRouter puts hundreds
+  of models behind one base URL and one key, only some of which (served by only some upstream
+  providers) support schemas, so the first schema-less model tried would have run the whole
+  deployment unconstrained from then on, silently. The refusal is now remembered against the
+  model that provoked it, which is what lets `OPENROUTER` join `ANTHROPIC` and `OLLAMA` in the
+  `structured-output: AUTO` set at all.
 - **The published-images stack is now smoke-tested on the pull requests that touch it.** It ran
   on `main` only, because it pulls ~2 GB to exercise a deployment file whose content does not
   move with the code — right for every pull request, wrong for the handful that edit those
@@ -65,6 +75,16 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **OpenRouter as an LLM provider for Process Mining** (`CLAUDE_PROVIDER=OPENROUTER`, or the
+  fifth card on the Settings page). One key in front of most hosted vendors, which is the
+  cheapest way to try several models against your own topics without an account per vendor. It
+  speaks the OpenAI `/chat/completions` API verbatim, so it deliberately has **no client class of
+  its own** — what is specific to it lives in the configuration: a default base URL of
+  `https://openrouter.ai/api/v1`, and a key that `isApiKeyRequired()` treats as mandatory, since
+  an anonymous request there is a 401 and a blank key is a deployment that cannot analyse
+  anything rather than "optional credentials" as on a local Ollama. Requests carry OpenRouter's
+  two attribution headers (`HTTP-Referer`, `X-Title`) naming this project, sent to OpenRouter
+  alone and saying nothing about the deployment, the cluster or the messages.
 - **`docs/check-compose.py` — the compose files, against `.env.example` and against
   themselves.** `.env.example` exists so that changing where a stack is published does not mean
   editing six compose files, which only holds if it lists them all: five variables had a default

@@ -252,10 +252,10 @@ re-entered after each restart.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `CLAUDE_PROVIDER` | `OLLAMA` | `ANTHROPIC`, `OPENAI_COMPATIBLE`, `OLLAMA` or `SPECTRA`. |
-| `CLAUDE_BASE_URL` | `http://localhost:11434/v1` | Endpoint of the local/compatible provider. |
-| `CLAUDE_MODEL` | `qwen3:4b` | Model name at that endpoint. |
-| `ANTHROPIC_API_KEY` | — | `ANTHROPIC` provider only. |
+| `CLAUDE_PROVIDER` | `OLLAMA` | `ANTHROPIC`, `OPENAI_COMPATIBLE`, `OLLAMA`, `OPENROUTER` or `SPECTRA`. |
+| `CLAUDE_BASE_URL` | `http://localhost:11434/v1` | Endpoint of the local/compatible provider. Blank falls back to the provider's own default — `https://openrouter.ai/api/v1` for `OPENROUTER`. |
+| `CLAUDE_MODEL` | `qwen3:4b` | Model name at that endpoint. `OPENROUTER` names models `vendor/model`, e.g. `openai/gpt-4o-mini`. |
+| `ANTHROPIC_API_KEY` | — | The LLM API key, whatever the provider — the name is historical. Required for `ANTHROPIC` and for `OPENROUTER` (an anonymous OpenRouter request is a 401); ignored by a local Ollama. |
 | `CLAUDE_USE_RAG` | `false` | `SPECTRA` provider only: also retrieve from SpectraLLM's ingested corpus instead of reasoning solely on the messages inlined in the prompt. |
 | `CLAUDE_COLLECTION` | — | `SPECTRA` + `CLAUDE_USE_RAG` only: which ChromaDB collection to retrieve from. Blank uses SpectraLLM's default. |
 | `PROCESS_MINING_PROMPT_CHAR_BUDGET` | `120000` | Characters of Kafka messages one analysis prompt may carry — about 30 000 tokens. **Lower it, or widen the model's window, when you point this at a small local model.** |

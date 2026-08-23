@@ -8,7 +8,48 @@ Set your API key as an environment variable:
 export ANTHROPIC_API_KEY='your-api-key'
 ```
 
-## Option B: Open Source / Local (Ollama, vLLM, LM Studio)
+## Option B: OpenRouter (one key, many hosted models)
+
+[OpenRouter](https://openrouter.ai) is a gateway in front of most hosted vendors, which makes it
+the cheapest way to *try* several models against your own topics without opening an account with
+each of them.
+
+```yaml
+claude:
+  provider: OPENROUTER
+  api-key: ${ANTHROPIC_API_KEY:}   # an OpenRouter key, sk-or-v1-… — the variable name is historical
+  base-url: https://openrouter.ai/api/v1   # the default; you can leave it blank
+  model: openai/gpt-4o-mini        # OpenRouter names models vendor/model
+```
+
+Or entirely from the environment, which is what a container wants:
+
+```bash
+CLAUDE_PROVIDER=OPENROUTER
+ANTHROPIC_API_KEY=sk-or-v1-…
+CLAUDE_MODEL=openai/gpt-4o-mini
+```
+
+Three things worth knowing before you point it at a production cluster:
+
+- **The key is required.** An anonymous request is a 401, so the Config page marks the field
+  mandatory for this provider and Process Mining refuses up front instead of failing on the first
+  analysed window.
+- **Your messages go to whichever vendor serves the model.** This is a hosted gateway with a second
+  hop behind it: the digests Process Mining builds leave your network, and the connection banner on
+  the Config page says "remote inference" accordingly. If that is not acceptable, Option C or D.
+- **Structured output depends on the model, not on OpenRouter.** Only some models — and only some
+  of the upstream providers serving them — implement `response_format`. The app sends the schema
+  anyway, and a model that refuses it gets one unconstrained retry and is remembered as such, *for
+  that model alone*, so trying another one is not penalised by the first. `claude.structured-output:
+  OFF` skips the probe entirely; the JSON is then recovered from the answer the way it is for
+  SpectraLLM.
+
+Requests carry OpenRouter's two attribution headers (`HTTP-Referer`, `X-Title`) naming this
+project. They are sent to OpenRouter only, and they say nothing about your deployment, your
+cluster or your messages.
+
+## Option C: Open Source / Local (Ollama, vLLM, LM Studio)
 1. Run your model (e.g., `ollama run qwen2.5-coder:7b`).
 2. Update `src/main/resources/application.yml`:
 ```yaml
@@ -44,7 +85,7 @@ Raising one without the other buys nothing, or truncates again. A wider window c
 roughly 2 GB for a 7B model at 16k. The same arithmetic applies to vLLM (`--max-model-len`) and
 to LM Studio's context slider.
 
-## Option C: SpectraLLM (local, private, domain-tuned)
+## Option D: SpectraLLM (local, private, domain-tuned)
 Audit Kafka exchanges with a self-hosted [SpectraLLM](https://github.com/devdownin/SpectraLLM)
 instance — a fully local RAG + fine-tuning platform. Kafka Explorer calls SpectraLLM's
 `POST /api/query` endpoint; no API key leaves your network.

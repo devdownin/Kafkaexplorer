@@ -117,7 +117,7 @@ Chaque fonctionnalité en détail : **[docs/FEATURES.md](docs/FEATURES.md)** · 
 
 ## 🤖 Apportez votre IA
 
-Le Process Mining fonctionne avec le LLM que vous avez déjà — **Claude (Anthropic)**, tout ce qui parle l'API OpenAI (**Ollama**, vLLM, LM Studio…), ou un **SpectraLLM** entièrement privé avec RAG, où aucun octet ne quitte votre réseau. Fournisseur, modèle et test de connectivité se configurent en direct depuis l'interface.
+Le Process Mining fonctionne avec le LLM que vous avez déjà — **Claude (Anthropic)**, **OpenRouter** (une seule clé devant la plupart des fournisseurs hébergés), tout ce qui parle l'API OpenAI (**Ollama**, vLLM, LM Studio…), ou un **SpectraLLM** entièrement privé avec RAG, où aucun octet ne quitte votre réseau. Fournisseur, modèle et test de connectivité se configurent en direct depuis l'interface.
 
 → **[Guide des fournisseurs LLM](docs/LLM-PROVIDERS.md)** *(en anglais)*
 

@@ -36,7 +36,7 @@ interface ClusterConfig {
   keyPasswordConfigured?: boolean;
   confluentSecretConfigured?: boolean;
   isConnected?: boolean;
-  llmProvider: 'ANTHROPIC' | 'OPENAI_COMPATIBLE' | 'OLLAMA' | 'SPECTRA';
+  llmProvider: 'ANTHROPIC' | 'OPENAI_COMPATIBLE' | 'OLLAMA' | 'OPENROUTER' | 'SPECTRA';
   llmProviderLabel?: string;
   llmApiKey?: string;
   llmApiKeyConfigured?: boolean;
@@ -91,10 +91,33 @@ const FIELD_ORDER: ValidatedField[] = [
 
 const LLM_PROVIDERS = [
   { value: 'ANTHROPIC', label: 'Anthropic', description: 'Hosted Claude models' },
+  { value: 'OPENROUTER', label: 'OpenRouter', description: 'One key, many hosted models (vendor/model)' },
   { value: 'OPENAI_COMPATIBLE', label: 'OpenAI-compatible', description: 'vLLM, LM Studio or compatible gateways' },
   { value: 'OLLAMA', label: 'Ollama', description: 'Lightweight local open-source models' },
   { value: 'SPECTRA', label: 'SpectraLLM', description: 'Local SpectraLLM instance (RAG + fine-tuned models)' },
 ] as const;
+
+/**
+ * Les fournisseurs pour lesquels une clé est indispensable, et non simplement acceptée.
+ *
+ * Miroir de `ClaudeConfig.isApiKeyRequired()`. Le serveur envoie bien `llmApiKeyRequired`, mais il
+ * décrit le fournisseur *en vigueur*, pas celui qu'on est en train de choisir dans le formulaire :
+ * la question posée ici porte sur la valeur non encore enregistrée.
+ */
+const API_KEY_REQUIRED: ReadonlySet<ClusterConfig['llmProvider']> = new Set(['ANTHROPIC', 'OPENROUTER']);
+
+/** Base URL par défaut de chaque fournisseur — miroir de `ClaudeConfig.defaultBaseUrl`. */
+const PROVIDER_BASE_URLS: Record<ClusterConfig['llmProvider'], string> = {
+  ANTHROPIC: 'https://api.anthropic.com',
+  OPENROUTER: 'https://openrouter.ai/api/v1',
+  OPENAI_COMPATIBLE: '',
+  OLLAMA: 'http://localhost:11434/v1',
+  SPECTRA: 'http://localhost:8080',
+};
+
+/** Une base URL qu'aucun opérateur n'a choisie : c'est le défaut d'un autre fournisseur. */
+const isProviderDefaultUrl = (url?: string): boolean =>
+  !url || Object.values(PROVIDER_BASE_URLS).some(known => known !== '' && known === url);
 
 /**
  * Ce qu'on peut dire d'un mot de passe qu'on ne montre pas.
@@ -343,12 +366,13 @@ const Config: React.FC = () => {
       errors.llmModel = 'A model is required for process mining.';
     }
     if (config.llmProvider !== 'OLLAMA' && !config.llmBaseUrl?.trim()) {
-      errors.llmBaseUrl = 'A base URL is required for hosted, OpenAI-compatible or SpectraLLM providers.';
+      errors.llmBaseUrl = 'A base URL is required for every provider but Ollama, which defaults to the local one.';
     }
-    if (config.llmProvider === 'ANTHROPIC'
+    if (API_KEY_REQUIRED.has(config.llmProvider)
       && !config.llmApiKeyConfigured
       && !config.llmApiKey?.trim()) {
-      errors.llmApiKey = 'An API key is required when the provider is Anthropic.';
+      const label = LLM_PROVIDERS.find(p => p.value === config.llmProvider)?.label ?? config.llmProvider;
+      errors.llmApiKey = `An API key is required when the provider is ${label}.`;
     }
     if (!Number.isFinite(config.llmMaxTokens) || config.llmMaxTokens < 256) {
       errors.llmMaxTokens = 'Must be at least 256.';
@@ -393,29 +417,29 @@ const Config: React.FC = () => {
   const applyLlmProvider = (provider: ClusterConfig['llmProvider']) => {
     setConfig(prev => {
       const next: ClusterConfig = { ...prev, llmProvider: provider };
-      if (provider === 'ANTHROPIC') {
-        if (!prev.llmBaseUrl || prev.llmBaseUrl === 'http://localhost:11434/v1') {
-          next.llmBaseUrl = 'https://api.anthropic.com';
-        }
-        if (!prev.llmModel) {
-          next.llmModel = 'claude-3-5-sonnet-20241022';
-        }
+      // Une base URL saisie à la main est conservée ; celle d'un autre fournisseur ne l'est pas —
+      // c'est un défaut, pas un choix, et la laisser en place pointe le nouveau fournisseur vers
+      // l'ancien endpoint. La règle était écrite fournisseur par fournisseur, chacun énumérant les
+      // défauts des autres : le cinquième aurait demandé de retoucher les quatre.
+      const fallback = PROVIDER_BASE_URLS[provider];
+      if (fallback && isProviderDefaultUrl(prev.llmBaseUrl)) {
+        next.llmBaseUrl = fallback;
+      }
+      if (provider === 'ANTHROPIC' && !prev.llmModel) {
+        next.llmModel = 'claude-3-5-sonnet-20241022';
+      }
+      if (provider === 'OPENROUTER' && (!prev.llmModel || !prev.llmModel.includes('/'))) {
+        // Les modèles OpenRouter s'appellent `vendor/model` : un `qwen3:4b` hérité d'Ollama n'y
+        // résout rien, et l'erreur arriverait à la première fenêtre analysée plutôt qu'ici.
+        next.llmModel = 'openai/gpt-4o-mini';
       }
       if (provider === 'OLLAMA') {
-        if (!prev.llmBaseUrl || prev.llmBaseUrl === 'https://api.anthropic.com') {
-          next.llmBaseUrl = 'http://localhost:11434/v1';
-        }
-        if (!prev.llmModel || prev.llmModel.startsWith('claude-')) {
+        if (!prev.llmModel || prev.llmModel.startsWith('claude-') || prev.llmModel.includes('/')) {
           next.llmModel = 'qwen3:4b';
         }
         next.llmApiKey = '';
       }
       if (provider === 'SPECTRA') {
-        if (!prev.llmBaseUrl
-          || prev.llmBaseUrl === 'https://api.anthropic.com'
-          || prev.llmBaseUrl === 'http://localhost:11434/v1') {
-          next.llmBaseUrl = 'http://localhost:8080';
-        }
         // SpectraLLM serves its own configured model; no per-request model to send.
         next.llmApiKey = '';
       }
@@ -637,7 +661,7 @@ const Config: React.FC = () => {
         <div className="p-5 space-y-5">
           <fieldset>
             <legend className="block text-[12px] font-medium text-on-surface-variant mb-1.5">Provider</legend>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               {LLM_PROVIDERS.map(provider => (
                 <button
                   key={provider.value}
@@ -673,7 +697,10 @@ const Config: React.FC = () => {
               required={config.llmProvider !== 'SPECTRA'}
               id={fieldIds.llmModel}
               error={errors.llmModel}
-              description={config.llmProvider === 'SPECTRA' ? 'Served by SpectraLLM — not sent per request.' : undefined}
+              description={
+                config.llmProvider === 'SPECTRA' ? 'Served by SpectraLLM — not sent per request.'
+                : config.llmProvider === 'OPENROUTER' ? 'OpenRouter model slug, in the form vendor/model.'
+                : undefined}
             >
               {p => (
                 <Input
@@ -683,6 +710,7 @@ const Config: React.FC = () => {
                   onChange={e => set('llmModel', e.target.value)}
                   placeholder={
                     config.llmProvider === 'OLLAMA' ? 'qwen3:4b'
+                    : config.llmProvider === 'OPENROUTER' ? 'openai/gpt-4o-mini'
                     : config.llmProvider === 'SPECTRA' ? 'Served by SpectraLLM (ignored)'
                     : 'model name'}
                   disabled={config.llmProvider === 'SPECTRA'}
@@ -706,6 +734,7 @@ const Config: React.FC = () => {
                   placeholder={
                     config.llmProvider === 'OLLAMA' ? 'http://localhost:11434/v1'
                     : config.llmProvider === 'SPECTRA' ? 'http://localhost:8080'
+                    : config.llmProvider === 'OPENROUTER' ? 'https://openrouter.ai/api/v1'
                     : 'https://...'}
                   autoComplete="off"
                   spellCheck={false}
@@ -714,7 +743,7 @@ const Config: React.FC = () => {
             </Field>
             <Field
               label="API Key"
-              required={config.llmProvider === 'ANTHROPIC' && !config.llmApiKeyConfigured}
+              required={API_KEY_REQUIRED.has(config.llmProvider) && !config.llmApiKeyConfigured}
               id={fieldIds.llmApiKey}
               error={errors.llmApiKey}
               description={config.llmApiKeyConfigured
@@ -728,7 +757,8 @@ const Config: React.FC = () => {
                   onChange={e => set('llmApiKey', e.target.value)}
                   placeholder={
                     config.llmProvider === 'OLLAMA' || config.llmProvider === 'SPECTRA'
-                      ? 'Optional for local deployments' : 'sk-…'}
+                      ? 'Optional for local deployments'
+                      : config.llmProvider === 'OPENROUTER' ? 'sk-or-v1-…' : 'sk-…'}
                 />
               )}
             </Field>
