@@ -115,9 +115,12 @@ The full list of combinations lives in the `compose-lint` job of `.github/workfl
 which also **fails on a compose file that no combination names** — add a stack, add its line.
 
 `check-image-pins.py` needs tags (`git fetch --tags`) and fails rather than skipping without
-them: it compares the Explorer image the published-images stack pulls against the newest
-release. That one fails on a *release* rather than on a change, which is the point — it is the
-reminder that the pin has gone stale.
+them. Run this way it checks that nothing floats, that the llama.cpp CPU and CUDA images name
+the same build, and that the Explorer pin does not name a release nobody has published yet.
+Whether that pin has gone *stale* is a question for the registry, not for the git tags — a tag
+exists the moment it is pushed and the image only when the release workflow finishes — so it is
+`--published`, which asks Docker Hub and runs in the `spectra-hub-stack` job, where the network
+is already a dependency.
 
 ### When `packages.confluent.io` is unreachable
 

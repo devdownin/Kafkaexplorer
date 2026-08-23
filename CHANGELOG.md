@@ -23,6 +23,30 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The image-pin check asked the git tags what the registry serves.** It demanded a bump to
+  `kafkaexplorer:1.8.9` while `1.8.9` was still being built and pushed — taking it would have
+  pointed the stack at a manifest that did not exist — and a release whose publication *failed*
+  (which has happened here) would have left a tag with no image behind it, blocking every pull
+  request on a bump that could never be made. The offline run now only refuses a pin that is
+  *ahead* of the newest tag; whether it has gone stale is `--published`, which asks Docker Hub
+  and runs in the stack job, where the network is already a dependency and an unreachable
+  registry is reported rather than failing the build. The pin itself is now `1.8.9`, which the
+  registry does serve.
+- **The model fetcher of the published-images stack ran a `curl` that image does not have.** The
+  Spectra image installs curl and wget to run the llmfit installer, then ends that same layer
+  with `apt-get purge -y curl` — which is why its own healthcheck is a wget. So
+  `spectra-models` exited with `/bin/sh: curl: not found` on every boot and the embedding model
+  was never fetched, on a stack that otherwise came up healthy. It now uses wget, and
+  deliberately does **not** resume a partial transfer: `wget -c` with `-O` appends blindly when
+  the server ignores a Range request, which yields a file of the right size and the wrong bytes
+  — a failed transfer restarts from zero, which is the argument for pinning
+  `SPECTRA_*_MODEL_SHA256` on a large model. Verification is skipped rather than faked if the
+  image has no `sha256sum`, but a digest that was *asked* for and cannot be computed is a
+  refusal. Found by the CI boot added the day before, the only way such a thing is ever found:
+  by running it. The end-to-end step that caught it no longer waits on the llama.cpp image's
+  healthcheck either — it waits on the entrypoint's own line and then retries the real call,
+  since depending on a tool being present in somebody else's image is exactly what put the curl
+  there.
 - **Process Mining was reasoning on a truncated prompt against a local model, and said nothing.**
   The prompt budget is 120 000 characters — about 30 000 tokens — while Ollama gives a model
   4 096 tokens unless the machine has the VRAM for more, and the OpenAI-compatible request

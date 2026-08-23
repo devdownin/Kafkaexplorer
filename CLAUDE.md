@@ -180,9 +180,14 @@ files wire the pair, and they are not variants of one another:
   model in the Spectra UI needs a `restart llm-chat`, which the file says. **Nothing waits on the
   first-boot model download** (~4.8 GB): `spectra-api` installs the chat model itself
   (`spectra.startup.auto-install-models`), a `spectra-models` one-shot fetches the embedding
-  GGUF that the API does *not* install — verifying a `SPECTRA_*_MODEL_SHA256` when one is pinned,
-  and deleting the file rather than serving it when the digest does not match — and the two
-  llama.cpp containers poll until the file they serve appears — so the Explorer, the broker and the Spectra UI are up in seconds, and
+  GGUF that the API does *not* install — with **`wget`, never `curl`**: the Spectra image
+  installs both to run the llmfit installer and purges curl at the end of that same layer, so a
+  curl there finds nothing at runtime, which is what the CI boot caught (`curl: not found`, and
+  no model fetched, on a stack that otherwise looked healthy). It verifies a
+  `SPECTRA_*_MODEL_SHA256` when one is pinned and deletes the file rather than serving it when
+  the digest does not match, and it does **not** resume a partial transfer: `wget -c` with `-O`
+  appends blindly when the server ignores a Range request, which yields the right size and the
+  wrong bytes. The two llama.cpp containers poll until the file they serve appears — so the Explorer, the broker and the Spectra UI are up in seconds, and
   `up --wait` is the one thing not to use. **And the two prompt budgets are sized against each
   other**: `LLM_CONTEXT` (16384, split across 2 slots = 8192 tokens per request) against the
   Explorer's `PROCESS_MINING_PROMPT_CHAR_BUDGET`, lowered to 16 000 from the shipped 120 000 —
@@ -301,11 +306,18 @@ KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `
   `docs-links` job): nothing floats (`curlimages/curl:latest` sat two services below the comment
   claiming Ollama was "the only floating tag left in the tree"), the llama.cpp CPU and CUDA tags
   name the **same build** (the GPU overlay must change the hardware, not the engine's revision),
-  and the Explorer image the hub stack pulls is the **current release** — that default is
-  hand-written and Dependabot cannot read a `${VAR:-1.8.8}` form, so nothing else would ever
-  move it. That last one fails on a *release* rather than on a change, which is the point: the
-  reminder arrives when the pin goes stale. It needs tags, hence `fetch-tags` on that job's
-  checkout, and it fails rather than skipping when they are absent.
+  and the Explorer pin does not name a release **nobody has published yet**. That default is
+  hand-written and Dependabot cannot read a `${VAR:-1.8.9}` form, so nothing else would ever
+  move it — but whether it has gone *stale* is a question for the **registry**, not for the git
+  tags, and that half is `--published`, run in the `spectra-hub-stack` job. A tag exists the
+  moment it is pushed and the image only when the release workflow finishes: asking the tags
+  made this check demand a bump to an image that was still building, and a release whose
+  publication *failed* — which has happened here — would leave a tag with no image behind it,
+  blocking every pull request on a bump that could never be made. So the offline half gates
+  every PR, the registry half runs where the network is already a dependency, and a registry
+  that cannot be reached is reported rather than failing the build: "we asked and it is stale"
+  and "we could not ask" are different answers. It needs tags, hence `fetch-tags` on both jobs'
+  checkouts, and it fails rather than skipping when they are absent.
 - **The published-images stack is booted too** (`spectra-hub-stack`, on main and
   `workflow_dispatch` only — it pulls ~2 GB to test a deployment file whose content does not move
   with the code, the same trade-off as the arm64 boot). It runs with
