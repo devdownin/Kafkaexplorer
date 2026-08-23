@@ -735,4 +735,181 @@ class FlinkSqlServiceTest {
         assertNotNull(result.error(), "Expected an error but query succeeded with rows: " + result.rows());
         assertFalse(result.error().isBlank(), "Error message must not be blank");
     }
+
+    // ────────────────────────────────────────────────────────────────────────────
+    // ReDoS: the SQL-parsing regexes run on a statement the caller supplies, on the
+    // request thread, before the query timeout bounds anything. Several carried the
+    // classic ambiguity — two quantifiers competing for the same characters — and
+    // CodeQL's java/polynomial-redos flagged them. Measured before the fix, on the
+    // inputs CodeQL names: SELECT_PROJECTION and AGGREGATE_CALL took ~1.5 s at 1 000
+    // padding characters and over ten seconds at 2 000; the block-comment stripper
+    // did not merely run slow but threw StackOverflowError.
+    //
+    // The fix is possessive quantifiers (and a lazy scan for the comment stripper),
+    // chosen because each was verified to leave every match and every captured group
+    // identical over a corpus of real and degenerate SQL. Three sibling patterns —
+    // GROUP BY and the two WHERE blocks — were deliberately NOT converted: possessive
+    // there changes what they match on all-whitespace input, and they measure linear
+    // anyway. DdlGeneratorService.SENSITIVE_PROP was left alone too, and that one
+    // matters: making its key scan possessive stops 'password' from ever matching, so
+    // the credential masking silently passes secrets through.
+    //
+    // Both halves are pinned below, because either alone would be a false comfort: a
+    // fast regex that no longer parses SQL is not a fix, and unchanged parsing that
+    // still hangs is not either.
+
+    /** The padding that makes the old patterns blow up. Enormous margin: the fixed ones are ~0 ms. */
+    private static String pad(String prefix, int n) {
+        return prefix + " ".repeat(n);
+    }
+
+    @Test
+    void redosSelectProjectionIsBounded() {
+        assertTimeoutPreemptively(java.time.Duration.ofSeconds(5),
+            () -> service.extractSelectedColumns(pad("select ", 20_000)),
+            "SELECT projection regex did not terminate — the possessive quantifiers were lost");
+    }
+
+    @Test
+    void redosAggregateAndWindowScanAreBounded() {
+        // Both go through the direct engine's aggregate detection.
+        assertTimeoutPreemptively(java.time.Duration.ofSeconds(5), () -> {
+            service.extractSelectedColumns(pad("select sum(", 20_000));
+            service.extractSelectedColumns(pad("select count(distinct ", 20_000));
+        });
+    }
+
+    // Deliberately no timing test for the WHERE condition scan. Making it possessive is a
+    // constant-factor win (measured 1 063 ms -> 279 ms on 8 000 characters) and it clears the
+    // CodeQL alert, but it is NOT a complexity fix: the scan is unanchored, so a long run that
+    // cannot start a condition still costs O(n^2) overall. There is no input size at which the
+    // old form fails this and the new one passes, and a timing test that cannot separate them
+    // would assert nothing while looking like it did.
+
+    @Test
+    void redosBlockCommentStripperDoesNotOverflowTheStack() {
+        // This one threw StackOverflowError rather than running slow: the nested quantifier
+        // of the unrolled-loop form recursed once per repetition. An Error, not an Exception,
+        // so nothing on the request path would have caught it.
+        // 20 000 repetitions with no closing delimiter anywhere: the old regex overflowed the
+        // stack, and a lazy-scan rewrite of it was still quadratic here. The scanner is linear.
+        String bomb = "/**" + ")/**".repeat(20_000);
+        assertTimeoutPreemptively(java.time.Duration.ofSeconds(5),
+            () -> assertNotNull(service.stripSqlComments(bomb)));
+    }
+
+    @Test
+    void strippingCommentsStillBehaves() {
+        assertEquals("SELECT 1", service.stripSqlComments("/* lead */ SELECT 1"));
+        assertEquals("SELECT   a FROM t", service.stripSqlComments("SELECT /* mid */ a FROM t"));
+        assertEquals("SELECT 1", service.stripSqlComments("/* a */ /* b */ SELECT 1").trim());
+        assertEquals("SELECT 1", service.stripSqlComments("/* multi\nline */ SELECT 1"));
+        assertEquals("SELECT 1", service.stripSqlComments("SELECT 1 -- trailing"). trim());
+        // An unterminated block comment is not a comment: it must not swallow the statement.
+        assertTrue(service.stripSqlComments("/* never closed SELECT 1").contains("SELECT 1"));
+    }
+
+    @Test
+    void projectionAndWhereParsingAreUnchanged() {
+        assertEquals(List.of("id", "name"), service.extractSelectedColumns("SELECT id, name FROM t"));
+        assertEquals(List.of("id", "name"), service.extractSelectedColumns("SELECT  id ,  name   FROM   t"));
+        assertEquals(List.of(), service.extractSelectedColumns("SELECT * FROM t"));
+        assertEquals(List.of("a"), service.extractSelectedColumns("select\na\nfrom t"));
+        // A column named like the keyword must not end the projection early.
+        assertEquals(List.of("from_id"), service.extractSelectedColumns("SELECT from_id FROM t"));
+
+        assertEquals(Map.of("status", "SHIPPED"),
+            service.extractSimpleWhere("SELECT * FROM o WHERE status = 'SHIPPED'"));
+        assertEquals(Map.of("a", "x", "b", "y"),
+            service.extractSimpleWhere("SELECT * FROM o WHERE a='x' AND b = 'y' LIMIT 10"));
+        assertEquals(Map.of("customer.city", "Lyon"),
+            service.extractSimpleWhere("SELECT * FROM o WHERE `customer.city` = 'Lyon'"));
+        assertTrue(service.extractSimpleWhere("SELECT * FROM o").isEmpty());
+
+        // And the warning about what the direct engine dropped still fires.
+        assertFalse(service.unsupportedWhereFragments("SELECT * FROM o WHERE a > 5").isEmpty());
+        assertTrue(service.unsupportedWhereFragments("SELECT * FROM o WHERE a = 'x'").isEmpty());
+    }
+
+
+    /**
+     * Le DDL généré porte les identifiants du cluster — `DdlGeneratorService` recopie toutes les
+     * propriétés client Kafka dans le `WITH (…)`, mots de passe SSL et `sasl.jaas.config`
+     * compris, parce que le connecteur Flink en a besoin. Le fichier de log, non.
+     *
+     * Ce test lit la sortie réelle du logger plutôt que de vérifier qu'une fonction a été
+     * appelée : ce qui doit être vrai, c'est qu'aucun secret n'atteint l'appender, quel que soit
+     * le chemin par lequel la ligne est construite.
+     */
+    @Test
+    void theLoggedDdlCarriesNoCredentials() throws Exception {
+        var logger = (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(FlinkSqlService.class);
+        var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        var previousLevel = logger.getLevel();
+        logger.addAppender(appender);
+        // DEBUG explicitement : la ligne visée n'existe qu'à ce niveau, et c'est celui qu'un
+        // opérateur active pour diagnostiquer — donc le seul où le test a un sens.
+        logger.setLevel(ch.qos.logback.classic.Level.DEBUG);
+        try {
+            doReturn(List.of("secret.topic")).when(kafkaAdminService).listTopics();
+            doReturn(MessageFormat.JSON).when(schemaInferenceService).detectFormat("secret.topic");
+            doReturn(Map.of("id", "STRING")).when(schemaInferenceService).inferSchema(anyString(), any());
+            doReturn("CREATE TABLE secret_topic (id STRING) WITH ("
+                    + "'connector'='datagen','number-of-rows'='1',"
+                    + "'properties.ssl.truststore.password'='HUNTER2-TRUSTSTORE',"
+                    + "'properties.ssl.keystore.password'='HUNTER2-KEYSTORE',"
+                    + "'properties.sasl.jaas.config'='org.apache...required username=\"k\" password=\"HUNTER2-SASL\";')")
+                    .when(ddlGeneratorService).generateDdl(anyString(), any(), any());
+
+            execute("SELECT id FROM secret_topic");
+
+            String logged = appender.list.stream()
+                .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                .collect(java.util.stream.Collectors.joining("\n"));
+            assertFalse(logged.contains("HUNTER2"),
+                "un identifiant du DDL a atteint le log :\n" + logged);
+            assertTrue(logged.contains("Auto-registering table"),
+                "la ligne visée n'a pas été journalisée — le test ne prouverait rien :\n" + logged);
+            assertTrue(logged.contains("******"),
+                "le DDL journalisé devrait porter les valeurs masquées :\n" + logged);
+        } finally {
+            logger.detachAppender(appender);
+            logger.setLevel(previousLevel);
+        }
+    }
+
+
+    /**
+     * L'assainissement de journalisation, ajouté par un autofix CodeQL sur cette PR et étendu aux
+     * trois lignes qui journalisent le même nom — l'autofix n'avait traité que celle qui tombait
+     * dans le diff, laissant les deux visibles au niveau par défaut.
+     *
+     * <p>Sur ce chemin, rien ne peut le déclencher : le nom sort d'une capture restreinte à
+     * {@code [\w.\-]}. C'est donc une défense en profondeur, et ce test dit ce qu'elle promet
+     * plutôt que de la laisser non spécifiée.
+     */
+    @Test
+    void sanitizeForLogNeutralisesControlCharacters() {
+        assertEquals("a_b", FlinkSqlService.sanitizeForLog("a\nb"), "un saut de ligne forge une ligne de log");
+        assertEquals("a_b", FlinkSqlService.sanitizeForLog("a\rb"));
+        assertEquals("a_b", FlinkSqlService.sanitizeForLog("a\tb"));
+        assertEquals("a_b", FlinkSqlService.sanitizeForLog("a\u0000b"));
+        assertEquals("a_b", FlinkSqlService.sanitizeForLog("a\u007Fb"));
+        assertEquals("__", FlinkSqlService.sanitizeForLog("\r\n"), "CRLF : deux caractères, deux remplacements");
+        // Ce qu'un nom de topic Kafka ou de table Flink porte réellement doit traverser intact :
+        // l'alphabet légal d'un nom de topic est exactement celui que la liste blanche autorise.
+        assertEquals("demo_orders_1_received", FlinkSqlService.sanitizeForLog("demo_orders_1_received"));
+        assertEquals("demo.orders-1", FlinkSqlService.sanitizeForLog("demo.orders-1"));
+        // Liste blanche : tout le reste tombe, y compris ce qu'une liste noire de caractères de
+        // contrôle laissait passer. Ce n'est pas un dommage collatéral — un nom de topic ne peut
+        // pas contenir ces caractères, donc en voir un ici veut dire qu'on ne journalise pas ce
+        // qu'on croit, et l'échapper est la bonne réponse.
+        assertEquals("____", FlinkSqlService.sanitizeForLog("é àü"),
+            "hors de [a-zA-Z0-9._-], donc hors d'un nom de topic légal");
+        assertEquals("a_b", FlinkSqlService.sanitizeForLog("a b"), "l'espace non plus n'est pas légal");
+        assertNull(FlinkSqlService.sanitizeForLog(null));
+    }
+
 }

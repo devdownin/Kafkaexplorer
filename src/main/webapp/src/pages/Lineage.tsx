@@ -3,6 +3,7 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import axios from 'axios';
+import { useGraphViewport } from '../components/graph/useGraphViewport';
 import { useToast } from '../components/Toast';
 import { Button, EmptyState, Switch } from '../components/ui';
 
@@ -36,6 +37,9 @@ const nodeConfig: Record<string, { shape: 'circle' | 'rect' | 'diamond' | 'hex';
   view:   { shape: 'diamond', color: '#c9a9f7', bg: '#3b2762' },
   query:  { shape: 'hex',     color: '#f5c264', bg: '#4a3a12' },
 };
+
+/** Le cadrage de départ, et ce que le bouton « recentrer » et la touche `0` visent. */
+const RESET_VIEW = { x: 40, y: 20, scale: 1 };
 
 const NODE_W = 140;
 const NODE_H = 48;
@@ -213,11 +217,16 @@ const Lineage: React.FC = () => {
   const [loadingDdl, setLoadingDdl]       = useState(false);
   const [searchTerm, setSearchTerm]       = useState('');
   const [tooltip, setTooltip]             = useState<{ node: LineageNode; x: number; y: number } | null>(null);
-  const [transform, setTransform]         = useState({ x: 40, y: 20, scale: 1 });
-
-  const svgRef    = useRef<SVGSVGElement>(null);
-  const isPanning = useRef(false);
-  const lastPos   = useRef({ x: 0, y: 0 });
+  // Pan / zoom / clavier : la mécanique est partagée avec Stream Flow et Data Model
+  // (`useGraphViewport`), la politique — ce que `0` et `Échap` font — reste ici.
+  const {
+    transform, setTransform, svgRef, canvas, panBy, zoomFromCenter, isPanning,
+    onPointerDown, onPointerMove, onPointerUp,
+  } = useGraphViewport({
+    initial: RESET_VIEW,
+    ignoreDragOn: '[data-node]',
+    onPanMove: () => setTooltip(null),
+  });
 
   // ── Data fetching ───────────────────────────────────────────────────────────
 
@@ -260,34 +269,7 @@ const Lineage: React.FC = () => {
     return () => abortRef.current?.abort();
   }, [fetchLineage]);
 
-  // ── Wheel zoom ──────────────────────────────────────────────────────────────
 
-  /** Scales around a fixed point in viewport coordinates, so that point stays put. */
-  const zoomAround = useCallback((factor: number, px: number, py: number) => {
-    setTransform(t => {
-      const scale = Math.max(0.15, Math.min(4, t.scale * factor));
-      const k = scale / t.scale;
-      return { scale, x: px - (px - t.x) * k, y: py - (py - t.y) * k };
-    });
-  }, []);
-
-  /** Zoom buttons keep the centre of the canvas anchored. */
-  const zoomFromCenter = useCallback((factor: number) => {
-    const rect = svgRef.current?.getBoundingClientRect();
-    zoomAround(factor, (rect?.width ?? 0) / 2, (rect?.height ?? 0) / 2);
-  }, [zoomAround]);
-
-  useEffect(() => {
-    const el = svgRef.current;
-    if (!el) return;
-    const handler = (e: WheelEvent) => {
-      e.preventDefault();
-      const rect = el.getBoundingClientRect();
-      zoomAround(e.deltaY > 0 ? 0.9 : 1.1, e.clientX - rect.left, e.clientY - rect.top);
-    };
-    el.addEventListener('wheel', handler, { passive: false });
-    return () => el.removeEventListener('wheel', handler);
-  }, [zoomAround]);
 
   // ── Derived state ───────────────────────────────────────────────────────────
 
@@ -338,42 +320,17 @@ const Lineage: React.FC = () => {
 
   const centerOnNode = useCallback((nodeId: string) => {
     const pos = positions[nodeId];
-    if (!pos || !svgRef.current) return;
-    const rect = svgRef.current.getBoundingClientRect();
-    setTransform(prev => ({
+    if (!pos || !canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    setTransform((prev) => ({
       ...prev,
       x: rect.width  / 2 - (pos.x + NODE_W / 2) * prev.scale,
       y: rect.height / 2 - (pos.y + NODE_H / 2) * prev.scale,
     }));
-  }, [positions]);
+  }, [positions, setTransform, canvas]);
 
-  // ── Pan handlers ────────────────────────────────────────────────────────────
 
-  // Événements *pointeur* et non souris : le même code fait glisser le graphe au doigt sur une
-  // tablette, où le déplacement était jusqu'ici impossible (`touch-action: none` empêche la page
-  // de défiler sous le geste). Même traitement que le graphe de Stream Flow.
-  const onPointerDown = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
-    if ((e.target as Element).closest('[data-node]')) return;
-    isPanning.current = true;
-    lastPos.current = { x: e.clientX, y: e.clientY };
-    e.currentTarget.style.cursor = 'grabbing';
-  }, []);
-
-  const onPointerMove = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
-    if (!isPanning.current) return;
-    const dx = e.clientX - lastPos.current.x;
-    const dy = e.clientY - lastPos.current.y;
-    lastPos.current = { x: e.clientX, y: e.clientY };
-    setTransform(t => ({ ...t, x: t.x + dx, y: t.y + dy }));
-    setTooltip(null);
-  }, []);
-
-  const onPointerUp = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
-    isPanning.current = false;
-    e.currentTarget.style.cursor = 'grab';
-  }, []);
-
-  const resetView = useCallback(() => setTransform({ x: 40, y: 20, scale: 1 }), []);
+  const resetView = useCallback(() => setTransform(RESET_VIEW), [setTransform]);
 
   /**
    * Le graphe se pilote au clavier : flèches pour se déplacer, +/− pour zoomer, 0 pour recadrer,
@@ -382,10 +339,10 @@ const Lineage: React.FC = () => {
   const onGraphKeyDown = useCallback((e: React.KeyboardEvent<SVGSVGElement>) => {
     const step = e.shiftKey ? 160 : 48;
     switch (e.key) {
-      case 'ArrowLeft':  setTransform(t => ({ ...t, x: t.x + step })); break;
-      case 'ArrowRight': setTransform(t => ({ ...t, x: t.x - step })); break;
-      case 'ArrowUp':    setTransform(t => ({ ...t, y: t.y + step })); break;
-      case 'ArrowDown':  setTransform(t => ({ ...t, y: t.y - step })); break;
+      case 'ArrowLeft':  panBy(step, 0);  break;
+      case 'ArrowRight': panBy(-step, 0); break;
+      case 'ArrowUp':    panBy(0, step);  break;
+      case 'ArrowDown':  panBy(0, -step); break;
       case '+': case '=': zoomFromCenter(1.25); break;
       case '-': case '_': zoomFromCenter(0.8); break;
       case '0': resetView(); break;
@@ -393,7 +350,7 @@ const Lineage: React.FC = () => {
       default: return;
     }
     e.preventDefault();
-  }, [resetView, zoomFromCenter]);
+  }, [resetView, zoomFromCenter, panBy]);
   const isEmpty   = !loading && data.nodes.length === 0;
 
   // ── Render ──────────────────────────────────────────────────────────────────

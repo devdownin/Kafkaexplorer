@@ -219,7 +219,15 @@ process-mining:
   # Prompt budgeting
   max-shape-paths-in-prompt: 80
   max-messages-per-topic-in-prompt: 60
-  prompt-char-budget: 120000            # ~30k tokens for the message section
+  # ~30k tokens for the message section. THE MODEL'S CONTEXT WINDOW HAS TO BE LARGER, and
+  # nothing here can check that: the window belongs to the endpoint, not to this application.
+  # It matters most where a small local model is served, which is the default deployment —
+  # Ollama's window is 4 096 tokens unless the machine has the VRAM for more, and the
+  # OpenAI-compatible request carries no `num_ctx` to change it, so a prompt this size is
+  # silently truncated to the newest messages that fit (Ollama logs that at DEBUG, i.e. nowhere
+  # on a default install). Raise the window (`OLLAMA_CONTEXT_LENGTH`, llama.cpp's `-c`) or lower
+  # this budget so the two agree — the bundled stacks set both together and say so.
+  prompt-char-budget: 120000
 
 management:
   endpoints:

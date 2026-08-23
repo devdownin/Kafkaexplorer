@@ -4,6 +4,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import axios from 'axios';
+import { useGraphViewport } from '../components/graph/useGraphViewport';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useCatalog } from '../catalogStore';
 import { useIsDesktop } from '../breakpoints';
@@ -227,7 +228,19 @@ const DataModel: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<QueryErrorInfo | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
+  // Pan / zoom / clavier : mécanique partagée avec Lineage et Stream Flow (`useGraphViewport`),
+  // politique gardée ici. Les bornes sont propres à cette page : un modèle de cent entités
+  // descend plus bas que les deux autres graphes, et ne monte pas aussi haut.
+  const {
+    transform, setTransform, svgRef, canvas, viewAdjusted, markFitted, markAdjusted, panBy,
+    zoomFromCenter, isPanning,
+    onPointerDown, onPointerMove, onPointerUp,
+  } = useGraphViewport({
+    minScale: 0.1,
+    maxScale: 3,
+    ignoreDragOn: '[data-node]',
+    onPanMove: () => setEdgeTip(null),
+  });
   /** Recherche d'un champ à travers les entités — « qui d'autre transporte cette clé ? ». */
   const [columnQuery, setColumnQuery] = useState('');
   /**
@@ -287,13 +300,10 @@ const DataModel: React.FC = () => {
   const [compareError, setCompareError] = useState<QueryErrorInfo | null>(null);
   const compareAbortRef = useRef<AbortController | null>(null);
 
-  const svgRef = useRef<SVGSVGElement>(null);
   /** Le groupe qui porte le pan/zoom : l'export sérialise ses enfants, pas sa transformation. */
   const graphGroupRef = useRef<SVGGElement>(null);
   /** Le bandeau (couverture + avertissements) : mesuré pour que le cadrage lui réserve la place. */
   const bannerRef = useRef<HTMLDivElement>(null);
-  const isPanning = useRef(false);
-  const lastPos = useRef({ x: 0, y: 0 });
   const requestSeq = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
   /** L'URL que la page vient d'écrire elle-même — la relire ne doit pas relancer le modèle. */
@@ -306,7 +316,6 @@ const DataModel: React.FC = () => {
    * fenêtre n'a pas à défaire. Tant que c'est faux, le cadrage appartient encore à la page, qui
    * le recalcule quand la place disponible change.
    */
-  const viewAdjusted = useRef(false);
   /** La taille sur laquelle le cadrage courant a été calculé. */
   const fittedSize = useRef<{ width: number; height: number } | null>(null);
 
@@ -323,12 +332,12 @@ const DataModel: React.FC = () => {
    * resterait vide.
    */
   const togglePanel = useCallback(() => {
-    viewAdjusted.current = false;
+    markFitted();
     setPanelOpen(open => {
       writePanelOpen(!open);
       return !open;
     });
-  }, []);
+  }, [markFitted]);
 
   const addTopics = useCallback(() => {
     const entry = addTopicEntries(selection, topicDraft, catalogTopics, maxTopics);
@@ -559,13 +568,13 @@ const DataModel: React.FC = () => {
   const jumpToEntity = useCallback((id: string) => {
     const entity = entityById.get(id);
     const pos = positions[id];
-    const rect = svgRef.current?.getBoundingClientRect();
+    const rect = canvas?.getBoundingClientRect();
     if (!entity || !pos || !rect) return;
     setSelectedId(id);
-    viewAdjusted.current = true;
+    markAdjusted();
     setTransform(t => centerOnEntity(entity, pos, rect.width, rect.height, t.scale, 0.8, sizing));
     setJumpQuery('');
-  }, [entityById, positions, sizing]);
+  }, [entityById, positions, sizing, setTransform, canvas, markAdjusted]);
 
   /**
    * La minicarte : bornes du graphe, disposition dans sa boîte, et rectangle de ce qui est
@@ -681,14 +690,14 @@ const DataModel: React.FC = () => {
    * répondre la même chose — c'est leur désaccord qui est corrigé ici.
    */
   const measureTopPadding = useCallback(() => {
-    const rect = svgRef.current?.getBoundingClientRect();
+    const rect = canvas?.getBoundingClientRect();
     const bannerRect = bannerRef.current?.getBoundingClientRect();
     if (!rect || !bannerRect) return GRAPH_PADDING;
     return Math.max(GRAPH_PADDING, bannerRect.bottom - rect.top + BANNER_GAP);
-  }, []);
+  }, [canvas]);
 
   useEffect(() => {
-    const element = svgRef.current;
+    const element = canvas;
     if (!element) return;
     const measure = () => {
       const rect = element.getBoundingClientRect();
@@ -702,55 +711,11 @@ const DataModel: React.FC = () => {
     // Le bandeau aussi : sa hauteur change avec les avertissements, pas avec celle du canevas.
     if (bannerRef.current) observer.observe(bannerRef.current);
     return () => observer.disconnect();
-  }, [model, graphEntities.length, measureTopPadding]);
+  }, [model, graphEntities.length, measureTopPadding, canvas]);
 
   // ── Zoom / pan / clavier (mêmes gestes que Lineage et Stream Flow) ──────────
 
-  const zoomAround = useCallback((factor: number, px: number, py: number) => {
-    viewAdjusted.current = true;
-    setTransform(t => {
-      const scale = Math.max(0.1, Math.min(3, t.scale * factor));
-      const k = scale / t.scale;
-      return { scale, x: px - (px - t.x) * k, y: py - (py - t.y) * k };
-    });
-  }, []);
 
-  const zoomFromCenter = useCallback((factor: number) => {
-    const rect = svgRef.current?.getBoundingClientRect();
-    zoomAround(factor, (rect?.width ?? 0) / 2, (rect?.height ?? 0) / 2);
-  }, [zoomAround]);
-
-  useEffect(() => {
-    const el = svgRef.current;
-    if (!el) return;
-    const handler = (e: WheelEvent) => {
-      e.preventDefault();
-      const rect = el.getBoundingClientRect();
-      zoomAround(e.deltaY > 0 ? 0.9 : 1.1, e.clientX - rect.left, e.clientY - rect.top);
-    };
-    el.addEventListener('wheel', handler, { passive: false });
-    return () => el.removeEventListener('wheel', handler);
-  }, [zoomAround, model]);
-
-  const onPointerDown = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
-    if ((e.target as Element).closest('[data-node]')) return;
-    isPanning.current = true;
-    lastPos.current = { x: e.clientX, y: e.clientY };
-    e.currentTarget.style.cursor = 'grabbing';
-  }, []);
-  const onPointerMove = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
-    if (!isPanning.current) return;
-    const dx = e.clientX - lastPos.current.x;
-    const dy = e.clientY - lastPos.current.y;
-    lastPos.current = { x: e.clientX, y: e.clientY };
-    viewAdjusted.current = true;
-    setTransform(t => ({ ...t, x: t.x + dx, y: t.y + dy }));
-    setEdgeTip(null);
-  }, []);
-  const onPointerUp = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
-    isPanning.current = false;
-    e.currentTarget.style.cursor = 'grab';
-  }, []);
 
   /**
    * Cadre le graphe entier dans le viewport — le geste de reset, et celui d'après-génération.
@@ -763,7 +728,7 @@ const DataModel: React.FC = () => {
    * longueur (un texte qui passe sur deux lignes), et la présence du bouton de tiroir mobile.
    */
   const fitToViewport = useCallback(() => {
-    const rect = svgRef.current?.getBoundingClientRect();
+    const rect = canvas?.getBoundingClientRect();
     const bounds = graphBounds(graphEntities, positions, sizing);
     if (!rect || !bounds || rect.width === 0) return;
     // Mesurée ici plutôt que lue dans l'état : l'état retarde d'un rendu, et le cadrage
@@ -776,9 +741,9 @@ const DataModel: React.FC = () => {
     // canevas vides parce que le cadrage refusait d'agrandir au-delà de la taille naturelle.
     setTransform(fitTransform(
       bounds, rect.width, rect.height, GRAPH_PADDING, reserved, MAX_FIT_SCALE));
-    viewAdjusted.current = false;
+    markFitted();
     fittedSize.current = { width: rect.width, height: rect.height };
-  }, [graphEntities, positions, sizing, measureTopPadding]);
+  }, [graphEntities, positions, sizing, measureTopPadding, setTransform, canvas, markFitted]);
 
   /**
    * La place disponible a changé : le canevas rétrécit quand l'inspecteur s'ouvre (320 px sur
@@ -795,8 +760,13 @@ const DataModel: React.FC = () => {
       fittedSize.current = viewportSize;
       return;
     }
+    // Recadrage : mesure la géométrie rendue (le rect du canevas, la hauteur du bandeau) puis
+    // pose le transform qui en découle. Rien de cela n'est connu avant le rendu, donc il n'y a
+    // pas de valeur à calculer plus haut. La règle ne le voyait pas tant que le canevas était
+    // une ref ; il est désormais un état, ce qui est précisément ce qui répare le zoom molette.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- dépend de la géométrie rendue
     fitToViewport();
-  }, [viewportSize, model, graphEntities.length, fitToViewport]);
+  }, [viewportSize, model, graphEntities.length, fitToViewport, viewAdjusted]);
 
   /**
    * Un changement de calibre déplace **tous** les nœuds : le cadrage d'avant décrit une
@@ -959,12 +929,12 @@ const DataModel: React.FC = () => {
   const onGraphKeyDown = useCallback((e: React.KeyboardEvent<SVGSVGElement>) => {
     const step = e.shiftKey ? 160 : 48;
     // Les quatre flèches cadrent à la main ; `0` fait l'inverse et remet le cadrage à la page.
-    if (e.key.startsWith('Arrow')) viewAdjusted.current = true;
     switch (e.key) {
-      case 'ArrowLeft':  setTransform(t => ({ ...t, x: t.x + step })); break;
-      case 'ArrowRight': setTransform(t => ({ ...t, x: t.x - step })); break;
-      case 'ArrowUp':    setTransform(t => ({ ...t, y: t.y + step })); break;
-      case 'ArrowDown':  setTransform(t => ({ ...t, y: t.y - step })); break;
+      // `panBy` lève `viewAdjusted` de lui-même : cadrer à la main est ce qu'il signale.
+      case 'ArrowLeft':  panBy(step, 0);  break;
+      case 'ArrowRight': panBy(-step, 0); break;
+      case 'ArrowUp':    panBy(0, step);  break;
+      case 'ArrowDown':  panBy(0, -step); break;
       case '+': case '=': zoomFromCenter(1.25); break;
       case '-': case '_': zoomFromCenter(0.8); break;
       case '0': fitToViewport(); break;
@@ -972,7 +942,7 @@ const DataModel: React.FC = () => {
       default: return;
     }
     e.preventDefault();
-  }, [fitToViewport, zoomFromCenter]);
+  }, [fitToViewport, zoomFromCenter, panBy]);
 
   // ── Rendu ───────────────────────────────────────────────────────────────────
 
@@ -1723,7 +1693,7 @@ const DataModel: React.FC = () => {
                   x: (e.clientX - box.left - layout.offsetX) / layout.scale,
                   y: (e.clientY - box.top - layout.offsetY) / layout.scale,
                 };
-                viewAdjusted.current = true;
+                markAdjusted();
                 setTransform(t => centerOnGraphPoint(
                   point, viewportSize.width, viewportSize.height, t.scale));
               }}

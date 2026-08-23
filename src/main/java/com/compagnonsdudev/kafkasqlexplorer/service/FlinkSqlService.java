@@ -125,11 +125,21 @@ public class FlinkSqlService {
      * would notice. The compile-per-call was the smaller half of it.
      */
     private static final Pattern SELECT_PROJECTION =
-        Pattern.compile("(?i)^\\s*SELECT\\s+(.+?)\\s+FROM\\b", Pattern.DOTALL);
+        Pattern.compile("(?i)^\\s*+SELECT\\s++(.+?)\\s++FROM\\b", Pattern.DOTALL);
 
-    /** One aggregate call in a projection: {@code [func, DISTINCT?, column, alias?]}. */
+    /**
+     * One aggregate call in a projection: {@code [func, DISTINCT?, column, alias?]}.
+     *
+     * <p>Every quantifier is possessive and the column is {@code [^)]++} rather than
+     * {@code [^)]+?\\s*}, because {@code [^)]} and {@code \\s} both match a space: the two
+     * competed for the same characters, and CodeQL's java/polynomial-redos was right about it —
+     * measured at 857 ms on {@code "sum(a"} followed by 20 000 spaces, and past eight seconds on
+     * {@code "sum("} followed by the same. It is 1 ms now. The capture therefore keeps any
+     * trailing whitespace, which changes nothing: both call sites already {@code trim()} it, and
+     * the equivalence was checked match-by-match over a corpus of real and degenerate SQL.
+     */
     private static final Pattern AGGREGATE_CALL = Pattern.compile(
-        "(?i)(COUNT|SUM|AVG|MAX|MIN)\\s*\\(\\s*(DISTINCT\\s+)?([^)]+?)\\s*\\)(?:\\s+AS\\s+[`\"]?([\\w]+)[`\"]?)?");
+        "(?i)(COUNT|SUM|AVG|MAX|MIN)\\s*+\\(\\s*+(DISTINCT\\s++)?([^)]++)\\)(?:\\s++AS\\s++[`\"]?+([\\w]++)[`\"]?+)?");
 
     /** Does this projection call an aggregate at all? Cheaper than parsing the calls out. */
     private static final Pattern AGGREGATE_PRESENT =
@@ -315,6 +325,37 @@ public class FlinkSqlService {
     }
 
     /**
+     * Neutralise ce qui n'a rien à faire dans un nom avant de le journaliser : un `%0A` dans une
+     * valeur influencée par l'appelant forge la ligne qu'il veut dans le fichier censé être le
+     * compte rendu de ce qui s'est passé.
+     *
+     * <p>Sur ce chemin précis, rien ne peut y arriver. CodeQL fait remonter la source à
+     * {@code MetricController.preview} — le SQL que l'utilisateur poste — mais cette valeur ne
+     * parvient ici qu'à travers {@link #extractPrimaryTable}, dont les deux captures sont
+     * {@code [\w.\-]+} et {@code \w[\w.]*} : ni CR ni LF n'en sortent, et {@code toTableName}
+     * ne fait ensuite que remplacer {@code .} et {@code -} par {@code _}. C'est donc une défense
+     * en profondeur, pas une correction — elle tient le jour où cette regex s'élargit, ce qui est
+     * exactement le genre de changement qu'on fait sans y penser.
+     *
+     * <p>Liste blanche, et non liste noire des caractères de contrôle, pour deux raisons qui vont
+     * dans le même sens. Elle est plus stricte : ce que ce paramètre reçoit est un nom de topic
+     * Kafka ou de table Flink, dont l'alphabet légal est précisément {@code [a-zA-Z0-9._-]}, donc
+     * tout le reste est déjà anormal et rien de légitime n'est remplacé. Et c'est la seule des
+     * deux formes que le modèle CodeQL reconnaît comme assainissement — mesuré : la liste noire
+     * laissait les trois constats {@code java/log-injection} de cette méthode en place, la liste
+     * blanche les supprime (27 → 24 sur l'arbre entier, sans en ajouter un seul).
+     *
+     * <p>{@code String.replaceAll} recompile le motif à chaque appel, là où un {@link Pattern}
+     * hoisté ne le ferait pas — mais ce même hoisting sort du modèle ({@code Matcher.replaceAll}
+     * n'est pas déclaré sur {@code String}), et la méthode ne tourne qu'une fois par
+     * enregistrement de table, juste à côté d'une soumission de job Flink. La reconnaissance vaut
+     * plus cher que la recompilation.
+     */
+    static String sanitizeForLog(String value) {
+        return value == null ? null : value.replaceAll("[^\\w.\\-]", "_");
+    }
+
+    /**
      * Before executing a SELECT, checks if the referenced table is already registered in Flink.
      * If not, looks for a Kafka topic whose sanitized name (dots/hyphens → underscores) matches,
      * infers its schema, generates the DDL and registers it automatically.
@@ -360,12 +401,23 @@ public class FlinkSqlService {
             if (ddl == null || !ddl.startsWith("CREATE TABLE")) {
                 return AutoRegResult.fail("DDL Generator produced invalid SQL for topic " + matchingTopic);
             }
-            log.debug("Auto-registering table '{}' with DDL:\n{}", flinkTableName, ddl);
+            // Masqué, et c'est le DDL *brut* qui part à Flink juste en dessous : le connecteur a
+            // besoin des vrais identifiants, le fichier de log n'en a pas besoin. `generateDdl`
+            // recopie toutes les propriétés client Kafka dans le `WITH (…)`, mots de passe SSL et
+            // `sasl.jaas.config` compris, donc journaliser `ddl` tel quel écrivait le secret
+            // Confluent en clair dans `logs/kafkaexplorer.log` — un volume nommé dans toutes les
+            // stacks, et le premier fichier qu'on colle dans un rapport de bug. En DEBUG
+            // seulement, mais c'est précisément le niveau qu'un opérateur active pour comprendre
+            // pourquoi une requête échoue, c'est-à-dire quand cette ligne s'exécute.
+            log.debug("Auto-registering table '{}' with DDL:\n{}", sanitizeForLog(flinkTableName),
+                DdlGeneratorService.maskSensitiveProperties(ddl));
             executeMutationSql("auto-register-table", ddl);
-            log.info("Auto-registered table '{}' for Kafka topic '{}'", flinkTableName, matchingTopic);
+            log.info("Auto-registered table '{}' for Kafka topic '{}'",
+                sanitizeForLog(flinkTableName), sanitizeForLog(matchingTopic));
             return AutoRegResult.tableCreated();
         } catch (Exception e) {
-            log.error("Auto-registration failed for topic '{}' (table '{}'): {}", matchingTopic, flinkTableName, e.getMessage(), e);
+            log.error("Auto-registration failed for topic '{}' (table '{}'): {}",
+                sanitizeForLog(matchingTopic), sanitizeForLog(flinkTableName), e.getMessage(), e);
             return AutoRegResult.fail(String.format(
                 "Failed to auto-register Flink table '%s' from Kafka topic '%s': %s",
                 flinkTableName, matchingTopic, e.getMessage()));
@@ -377,13 +429,44 @@ public class FlinkSqlService {
      * Used before keyword checks so that leading comments don't cause false rejections.
      * Note: does not handle comments inside string literals (rare in practice).
      */
-    private String stripSqlComments(String sql) {
+    /** Package-private: driven directly by {@code FlinkSqlServiceTest}, like {@link #unsupportedWhereFragments}. */
+    String stripSqlComments(String sql) {
         if (sql == null) return null;
-        // Remove block comments /* ... */
-        sql = sql.replaceAll("/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/", " ");
-        // Remove line comments -- ... to end of line
+        sql = stripBlockComments(sql);
+        // Line comments stay a regex: `--[^\n]*` has no ambiguity, so it is linear.
         sql = sql.replaceAll("--[^\n]*", "");
         return sql.trim();
+    }
+
+    /**
+     * Removes SQL block comments in a single left-to-right pass.
+     *
+     * <p>This was a regex, and not a slow one — a <em>crashing</em> one. The unrolled-loop form
+     * it used recursed once per repetition in Java's backtracking engine, so a statement built
+     * from a few thousand unterminated comment openers raised {@link StackOverflowError} — an
+     * {@code Error}, so nothing on the request path caught it. Rewriting it as a lazy scan
+     * removed the crash and left it quadratic: with no closing delimiter anywhere, every opener
+     * in the input rescans the whole remainder.
+     *
+     * <p>A hand-written scan is linear, allocates one builder, and is the shorter code. The
+     * semantics are the regex's: a block runs to the <em>first</em> closing delimiter after it,
+     * an unterminated block is not a comment and is left as written (so it cannot swallow the
+     * statement), and each removed block becomes one space — a comment between two tokens must
+     * not weld them together.
+     */
+    private static String stripBlockComments(String sql) {
+        int open = sql.indexOf("/*");
+        if (open < 0) return sql;
+        StringBuilder out = new StringBuilder(sql.length());
+        int from = 0;
+        while (open >= 0) {
+            int close = sql.indexOf("*/", open + 2);
+            if (close < 0) break;              // unterminated: keep the rest verbatim
+            out.append(sql, from, open).append(' ');
+            from = close + 2;
+            open = sql.indexOf("/*", from);
+        }
+        return out.append(sql, from, sql.length()).toString();
     }
 
     private String extractStatementType(String sql) {
@@ -1202,7 +1285,7 @@ public class FlinkSqlService {
                 Map<String, Object> projected = new LinkedHashMap<>();
                 for (String colExpr : requestedCols) {
                     // Handle "source_col AS alias" — fetch by source name, output under alias
-                    String[] aliasParts = colExpr.split("(?i)\\s+AS\\s+", 2);
+                    String[] aliasParts = colExpr.split("(?i)\\s++AS\\s++", 2);
                     String sourceCol = aliasParts[0].trim();
                     String outputCol = aliasParts.length > 1 ? aliasParts[1].trim() : sourceCol;
                     projected.put(outputCol, toSerializable(getNestedValue(row, sourceCol)));
@@ -1224,7 +1307,7 @@ public class FlinkSqlService {
         List<String> columns = requestedCols.isEmpty()
             ? new ArrayList<>(colSet)
             : requestedCols.stream().map(c -> {
-                String[] p = c.split("(?i)\\s+AS\\s+", 2);
+                String[] p = c.split("(?i)\\s++AS\\s++", 2);
                 return p.length > 1 ? p[1].trim() : p[0].trim();
             }).collect(Collectors.toList());
         log.debug("[KafkaDirect] topic='{}' rows={} readMode={}", topic, rows.size(), readMode);
@@ -1552,7 +1635,8 @@ public class FlinkSqlService {
         return null;
     }
 
-    private List<String> extractSelectedColumns(String sql) {
+    /** Package-private: driven directly by {@code FlinkSqlServiceTest}. */
+    List<String> extractSelectedColumns(String sql) {
         Matcher m = SELECT_PROJECTION.matcher(sql.trim());
         if (!m.find()) return Collections.emptyList();
         String cols = m.group(1).trim();
@@ -1568,7 +1652,8 @@ public class FlinkSqlService {
         "(?i)\\bWHERE\\s+(.+?)(?:\\bGROUP\\s+BY\\b|\\bORDER\\s+BY\\b|\\bHAVING\\b|\\bLIMIT\\b|;|$)",
         Pattern.DOTALL);
 
-    private Map<String, String> extractSimpleWhere(String sql) {
+    /** Package-private: driven directly by {@code FlinkSqlServiceTest}. */
+    Map<String, String> extractSimpleWhere(String sql) {
         Map<String, String> conditions = new LinkedHashMap<>();
         Pattern whereBlock = Pattern.compile("(?i)\\bWHERE\\s+(.+?)(?:\\bLIMIT\\b|;|$)", Pattern.DOTALL);
         Matcher wm = whereBlock.matcher(sql);
@@ -1577,7 +1662,7 @@ public class FlinkSqlService {
         // Keep the original case of the column name: message fields are case-sensitive
         // (e.g. "orderId") and lowercasing the key would make every lookup miss.
         // Dots are allowed so nested JSON / flattened XML paths can be filtered.
-        Pattern condPattern = Pattern.compile("(?i)`?([\\w.]+)`?\\s*=\\s*'([^']*)'");
+        Pattern condPattern = Pattern.compile("(?i)`?+([\\w.]++)`?+\\s*+=\\s*+'([^']*+)'");
         Matcher cm = condPattern.matcher(whereClause);
         while (cm.find()) {
             conditions.put(cm.group(1), cm.group(2));
@@ -1598,7 +1683,7 @@ public class FlinkSqlService {
             return List.of();
         }
         String remainder = wm.group(1)
-            .replaceAll("(?i)`?[\\w.]+`?\\s*=\\s*'[^']*'", " ")   // supported conditions
+            .replaceAll("(?i)`?+[\\w.]++`?+\\s*+=\\s*+'[^']*+'", " ")   // supported conditions
             .replaceAll("(?i)\\bAND\\b", " ")                     // supported combinator
             .replaceAll("[()]", " ")
             .replaceAll("\\s+", " ")

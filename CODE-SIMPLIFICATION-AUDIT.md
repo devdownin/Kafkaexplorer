@@ -225,6 +225,11 @@ They want their own change, with the matching test cases, and a decision on whet
 `sensitive-log` and `log-injection` families are accepted or fixed — that last one being a
 judgement about what this application is for, not a refactor.
 
+**Update — the `polynomial-redos` half is now that change**, on the branch that follows this one:
+16 findings down to 6, high-severity 33 down to 23, verified by rebuilding the CodeQL database
+locally rather than by waiting for the gate. The six that remain are deliberate and are named
+there. The `sensitive-log` and `log-injection` families are still undecided.
+
 ---
 
 ## Verification

@@ -73,9 +73,18 @@ NOT_A_PATH = {
     'actions/attest-build-provenance', 'actions/upload-artifact', 'actions/download-artifact',
     # Generated, gitignored, or created at runtime — correctly absent from a clean checkout.
     'target/', 'target/surefire-reports/', 'dist/', 'data/', 'logs/', 'node_modules/',
+    # The log file itself, written at runtime under the `logs/` entry above.
+    'logs/kafkaexplorer.log',
+    # CodeQL query ids — `language/query-name`, which looks exactly like a path. Only the ones
+    # CLAUDE.md still names in prose: this list expires its own unused entries.
+    'java/sensitive-log',
+    'java/log-injection',
     'src/main/resources/static/', 'src/main/webapp/node_modules',
     # Shipped inside the Kafka image, not in this repository.
     'kafka-broker-api-versions.sh', 'kafka-consumer-groups.sh',
+    # A file of the *SpectraLLM* repository, named because its absence here is the reason
+    # docker-compose-spectra-hub.yml starts llama-server from arguments instead of mounting it.
+    'scripts/llm-chat-entrypoint.sh',
     # A path *inside* a built Spring Boot jar, which is the whole point of naming it: it is
     # where the dependencies sit once packaged, and therefore where the system class loader
     # does not look. Nothing in a checkout can resolve it.

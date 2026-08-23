@@ -1,0 +1,57 @@
+# Overlay: resource limits for the whole pair.
+#
+#   docker compose -f docker-compose-spectra-hub.yml -f docker-compose-spectra-hub.limits.yml up -d
+#
+# WHY A SECOND LIMITS FILE, AND NOT docker-compose.limits.yml
+# That one names `explorer` and `kafka` — the only two services the stacks it was written for
+# have. A service named in an overlay but ABSENT from the base file does not merge: compose
+# treats it as a new service, with no image, and fails the whole `up`. So the overlay for a
+# stack of nine services has to be its own file, and this one covers all of them rather than
+# leaving the four heaviest — which are the ones that can take the host down — unbounded.
+# The variable names are shared with `.env.example`, so a limit is still set in one place.
+#
+# WHY THIS IS OPT-IN, like its sibling: a limit set too low is worse than none. The JVM is
+# OOM-killed where it would have run a GC, and llama-server is killed mid-load rather than
+# telling you the model does not fit. But without ANY limit, `-XX:MaxRAMPercentage=75` in the
+# Explorer's image reads the HOST's memory — on a 32 GB workstation the JVM believes it may
+# take 24 GB. `mem_limit` is what gives that flag a meaning.
+#
+# `mem_limit` / `cpus`, never a `deploy:` block for these two: that is Swarm syntax for
+# limits. (The GPU overlay's `deploy.resources.reservations.devices` is a different field, and
+# is the documented way to request a device under compose.)
+#
+# A container killed with exit code 137 under load has hit its limit: raise the value rather
+# than dropping the overlay.
+services:
+  explorer:
+    mem_limit: ${EXPLORER_MEM_LIMIT:-2g}
+    cpus: ${EXPLORER_CPUS:-2.0}
+
+  kafka:
+    mem_limit: ${KAFKA_MEM_LIMIT:-1500m}
+    cpus: ${KAFKA_CPUS:-1.5}
+
+  # The weights of the GGUF (~4.7 GB for the default model) plus the KV cache, which grows with
+  # LLM_CONTEXT. Raise it for a larger model or a wider context — and note there is deliberately
+  # no `cpus` here: on CPU inference llama-server's throughput IS the core count, so capping it
+  # would be capping the answer time this stack is already slow at.
+  llm-chat:
+    mem_limit: ${LLM_CHAT_MEM_LIMIT:-8g}
+
+  llm-embed:
+    mem_limit: ${LLM_EMBED_MEM_LIMIT:-2g}
+
+  # Grows with the indexed corpus: the one service here whose consumption is decided by the
+  # data rather than by the configuration.
+  chromadb:
+    mem_limit: ${CHROMADB_MEM_LIMIT:-4g}
+
+  # Must exceed -Xmx (1024m by default): the heap is only part of a JVM's footprint —
+  # metaspace, thread stacks, direct buffers, and the NATIVE allocations of ONNX Runtime when
+  # the in-JVM reranker is loaded, none of which the heap setting bounds.
+  spectra-api:
+    mem_limit: ${SPECTRA_API_MEM_LIMIT:-4g}
+
+  # nginx serving static files.
+  frontend:
+    mem_limit: ${FRONTEND_MEM_LIMIT:-256m}

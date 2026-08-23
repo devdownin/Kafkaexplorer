@@ -128,6 +128,118 @@ docker compose up -d
 ./setup-demo-avro.sh localhost:9092 http://localhost:8081
 ```
 
+#### The prompt has to fit the model's window
+
+`process-mining.prompt-char-budget` is 120 000 characters — ~30k tokens — and **the window
+belongs to the endpoint, so nothing in this application can check that it fits**. That is
+survivable against a hosted API and wrong on the default deployment: Ollama gives a model
+**4 096 tokens** unless the machine has the VRAM for more, `OpenAiCompatibleLlmClient` sends
+`model` / `messages` / `max_tokens` / `temperature` / `stream` and **never `num_ctx`** (which
+that endpoint would not read from the body anyway), and Ollama does not refuse the excess — it
+drops the oldest messages until the prompt fits and logs it at DEBUG, i.e. nowhere on a default
+install. Every Process Mining analysis on `docker-compose-llm.yml` was therefore reasoning on a
+fraction of what it had been handed, with nothing on screen or in the log naming the fraction.
+The bundled stacks now set both halves together (`OLLAMA_CONTEXT_LENGTH` / `LLM_CONTEXT` against
+`PROCESS_MINING_PROMPT_CHAR_BUDGET`) and say so where they set them; the default in
+`application.yml` is unchanged, since a hosted model can afford it, and carries the rule beside
+it. Raising one without the other buys nothing or truncates again — and the KV cache is what a
+wider window costs (~2 GB for a 7B at 16k).
+
+#### The two SpectraLLM stacks
+
+Process Mining can be answered by a **local SpectraLLM** instance rather than Ollama or Anthropic
+(`CLAUDE_PROVIDER=SPECTRA`, whose client posts to Spectra's single-turn `POST /api/query`). Two
+files wire the pair, and they are not variants of one another:
+
+- **`docker-compose-spectra.yml`** `include:`s SpectraLLM's own compose from a sibling checkout
+  (`SPECTRALLM_DIR`, default `../SpectraLLM`) and **builds** the explorer from source. It is the
+  developer stack: it follows whatever is in that checkout, profiles included. It used to hold
+  the explorer behind `spectra-api: service_healthy` — the rule the other stacks are written
+  against, since this application needs no model to boot, only when somebody opens Process
+  Mining — and it carried neither the prompt budget nor the timeout the local model needs; both
+  are aligned with the hub stack now, one pairing described in two files being the way they
+  drift.
+- **`docker-compose-spectra-hub.yml`** builds nothing. Both projects publish their images under
+  `compagnonsdudev` on Docker Hub (`kafkaexplorer`, `spectrallm`, `spectrallm-frontend`), so a
+  machine with only Docker runs the pair — no SpectraLLM checkout, no Maven, no npm:
+
+  ```bash
+  docker compose -f docker-compose-spectra-hub.yml pull
+  docker compose -f docker-compose-spectra-hub.yml up -d
+  ```
+
+  Four things in it are load-bearing. **The models live in a named volume** (`spectra_data`), not
+  in `./data` as upstream: there is no SpectraLLM checkout here to hold that directory, and a
+  bind mount created by Docker is root-owned while the API image runs as `spectra` — so a
+  `spectra-data-init` one-shot settles ownership before anything else mounts it, the same idiom
+  as `kafka-data-init` and for the same reason (`llm-chat` / `llm-embed` run a llama.cpp image
+  that carries no `/app/data`, so one of them initialising that volume would leave it empty and
+  root-owned). **`llm-chat` reads the registry pointer once, at start**, rather than watching it:
+  upstream's supervisor lives in `scripts/llm-chat-entrypoint.sh`, which is not in this
+  repository, and inlining a copy of it here would be a copy that drifts — so activating another
+  model in the Spectra UI needs a `restart llm-chat`, which the file says. **Nothing waits on the
+  first-boot model download** (~4.8 GB): `spectra-api` installs the chat model itself
+  (`spectra.startup.auto-install-models`), a `spectra-models` one-shot fetches the embedding
+  GGUF that the API does *not* install — verifying a `SPECTRA_*_MODEL_SHA256` when one is pinned,
+  and deleting the file rather than serving it when the digest does not match — and the two
+  llama.cpp containers poll until the file they serve appears — so the Explorer, the broker and the Spectra UI are up in seconds, and
+  `up --wait` is the one thing not to use. **And the two prompt budgets are sized against each
+  other**: `LLM_CONTEXT` (16384, split across 2 slots = 8192 tokens per request) against the
+  Explorer's `PROCESS_MINING_PROMPT_CHAR_BUDGET`, lowered to 16 000 from the shipped 120 000 —
+  ~30k tokens does not fit in that window, and what a model cannot see it does not say it missed.
+  The request timeouts follow (`CLAUDE_REQUEST_TIMEOUT_SECONDS` / Spectra's generation timeout,
+  300 s each): a 7B Q4 model on CPU takes minutes, and a request timeout is *terminal* on that
+  path. Every image is pinned and overridable (`SPECTRA_IMAGE_TAG`, `EXPLORER_IMAGE_TAG`,
+  `LLAMA_CPP_IMAGE_TAG`, `CHROMADB_IMAGE_TAG`), and only three ports are published — chromadb's
+  is read *and write* access to the ingested corpus and llama-server has no authentication.
+
+  **Do not set `SPECTRA_API_KEY` in that stack.** Spectra's `ApiKeyFilter` reads `X-API-Key`
+  while `SpectraLlmClient` sends `Authorization: Bearer`, so a key there leaves the whole stack
+  looking healthy while every Process Mining call answers 401. Neither application authenticates:
+  what protects the stack is `BIND_ADDR` on the loopback.
+
+  **Three overlays sit beside it**, and each exists because what it changes cannot be a default.
+  `docker-compose-spectra-hub.gpu.yml` swaps both llama.cpp servers for the CUDA image *pinned to
+  the same build number* (`server-cuda-b9828` against `server-b9828` — a floating `server-cuda`
+  would put a different engine revision under a stack that pins everything else) and requests the
+  devices; it is not safe to leave on where there is no GPU, which is precisely why it is an
+  overlay. `docker-compose-spectra-hub.limits.yml` is this stack's own limits file rather than a
+  few lines added to `docker-compose.limits.yml`: that one names `explorer` and `kafka`, and a
+  service named in an overlay but absent from the base file becomes a new imageless service and
+  fails the whole `up` — so a nine-service stack needs its own, and it covers all nine instead of
+  leaving the four heaviest unbounded. It deliberately sets **no `cpus` on the llama.cpp
+  servers**: on CPU inference throughput *is* the core count.
+
+  `docker-compose-spectra-hub.small.yml` is the fourth, and the one an ordinary laptop wants:
+  a 3B chat model instead of the default 7B — ~2 GB of weights instead of 4.7, half the memory,
+  and an answer in a fraction of the time, which is what makes the 300 s timeouts stop being
+  load-bearing. It is also the reason `spectra-models` fetches *two* models: `spectra-api`
+  installs the default chat model itself and **only** that one, so serving another means naming
+  its URL (`SPECTRA_CHAT_MODEL_URL`) and turning the auto-install off, which the overlay does
+  together with the file name and the alias — the three have to agree, and are set in one place
+  for that reason.
+
+  `docker-compose-spectra-hub.ingest.yml` is the one that makes the pair more than a shared
+  model — SpectraLLM consumes the topics and indexes what is *in* the messages, so the corpus
+  answers questions with cited sources and the Explorer's audits can read it (`EXPLORER_USE_RAG`,
+  whose collection defaults to the one the ingestion writes to, so one variable lines both halves
+  up; with use-rag false Spectra answers directly and never looks at a collection). It is an
+  overlay rather than a bare `SPECTRA_KAFKA_ENABLED=true` because the flag alone gets two things
+  wrong on a cold stack, and both are **ordering** problems, which is what a compose file can
+  express: a consumer subscribing to a topic that does not exist yet **creates** it
+  (`allow.auto.create.topics` defaults to true and the demo broker allows it) with one partition
+  instead of three, and `setup-demo.sh` then leaves the existing topic alone — the multi-partition
+  dataset the key-narrowing and window features are calibrated on silently becomes
+  single-partition; and indexing a record means embedding it, so on a first boot every record
+  fails three times a second apart and lands in `<topic>.DLT`, a new topic on the cluster under
+  exploration, while the embedding model is still downloading. The overlay waits for
+  `demo-setup` to complete and for `llm-embed` to be healthy. Its accepted cost is stated where
+  it is paid: the Spectra API, and therefore its UI, now waits for both — the Explorer does not,
+  it still depends on the broker alone. Topic lists are explicit, with no patterns (Spring
+  resolves a comma-separated list, and an **empty** list subscribes to a topic named `""` rather
+  than to nothing, which fails at startup), and `internal.*` is excluded: that is the Explorer's
+  own bookkeeping, not domain content.
+
 `setup-demo.sh` is the sandbox every stack seeds, and it is written to exercise the features that
 have no data otherwise. **Every business record carries a record key and Kafka headers**
 (`correlation-id`, W3C `traceparent`, `source-system`, `event-type`, `produced-at`) — without them,
@@ -175,6 +287,40 @@ KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `
 - `release.yml` publishes `linux/amd64,linux/arm64` (free here — a JRE base plus architecture-independent bytecode, and the extraction stage is pinned to `--platform=$BUILDPLATFORM` so it is not replayed under QEMU) and gates `latest` on the absence of a `-` in the tag, so a `v1.3.0-rc1` no longer becomes what `docker run …/kafkaexplorer` pulls.
 - **No `container_name`, and the app service is `explorer` in every stack.** `container_name` is daemon-global, so the shared `kafka` / `kafka-sql-explorer` names meant two stacks could never coexist and switching files without a `down` first collided; compose derives `<project>-<service>-<n>` instead, and `docker compose -p other … up` gives a second independent stack. The project name still defaults to the directory, so `kafka_data` keeps its name and already-seeded topics survive. Address services by service name (`docker compose logs kafka`). The `app` → `explorer` rename removes an inconsistency and is what lets an overlay target the service at all — a name present in an overlay but absent from the base file becomes a new, imageless service and fails the whole `up`.
 - **Resource limits are an opt-in overlay** (`docker-compose.limits.yml`, layered onto `docker-compose.yml` / `-kafka4` / `-llm` / `.release`). Not in the stacks themselves, because a limit set too low is worse than none — the JVM is OOM-killed instead of running a GC. But without *any* limit, `-XX:MaxRAMPercentage=75.0` reads the host's memory, so on a 32 GB workstation the JVM believes it may take 24 GB: `mem_limit` is what gives that flag a meaning. Use `mem_limit`/`cpus`, never a `deploy:` block — that is Swarm syntax, silently ignored by `docker compose up`.
+- **Every compose file is parsed by CI** (`compose-lint` in `ci.yml`), each overlay layered onto
+  its base rather than alone — an overlay on its own is a set of services with no image. Twelve
+  files shipped here and the build parsed none of them; the job found `docker-compose-kafka4.yml`,
+  the stack this file recommends, refusing to start at all since the day two volume mounts were
+  added without their top-level declarations (`service "explorer" refers to undefined volume
+  explorer_logs: invalid compose project`). It takes seconds, needs no daemon and pulls nothing,
+  and it **fails on a compose file that no combination names**, so a new stack cannot be added
+  without being checked. `docker-compose-spectra.yml`'s `include:` is resolved against a
+  three-line stub: what is under test is that file's own syntax, not the availability of another
+  repository.
+- **The images the stacks pull are checked too** (`docs/check-image-pins.py`, in the
+  `docs-links` job): nothing floats (`curlimages/curl:latest` sat two services below the comment
+  claiming Ollama was "the only floating tag left in the tree"), the llama.cpp CPU and CUDA tags
+  name the **same build** (the GPU overlay must change the hardware, not the engine's revision),
+  and the Explorer image the hub stack pulls is the **current release** — that default is
+  hand-written and Dependabot cannot read a `${VAR:-1.8.8}` form, so nothing else would ever
+  move it. That last one fails on a *release* rather than on a change, which is the point: the
+  reminder arrives when the pin goes stale. It needs tags, hence `fetch-tags` on that job's
+  checkout, and it fails rather than skipping when they are absent.
+- **The published-images stack is booted too** (`spectra-hub-stack`, on main and
+  `workflow_dispatch` only — it pulls ~2 GB to test a deployment file whose content does not move
+  with the code, the same trade-off as the arm64 boot). It runs with
+  `SPECTRA_AUTO_INSTALL_MODELS=false`, because the interesting assertion about a missing model is
+  that the containers **wait** for it rather than crash-looping — which is what the inline
+  entrypoints exist for. It also pins the wiring nothing else can: that `GET /api/config` really
+  reports `SPECTRA` and `http://spectra-api:8080` (so a renamed variable fails here, not in
+  production), and that the UI reaches the API through nginx's `/api/` proxy — whose upstream is
+  baked into the published image, which is what forces the service to keep the name `spectra-api`.
+  It then drops a **0.5B model** into the volume — through the stack's own `spectra-models`
+  one-shot, so the fetcher is exercised rather than bypassed — and asserts that
+  `POST /api/config/test-llm` answers `ok`. That is the assertion the job existed without: a
+  Process Mining call really travelling explorer → spectra-api → llm-chat and coming back, which
+  is what would have caught the `X-API-Key` / `Bearer` mismatch this stack documents instead of
+  leaving it a paragraph nobody executes.
 - **CI runs the stack, it does not merely build it.** The `docker` job starts `docker-compose.yml` over the image it just built (`docker-compose.ci.yml` supplies it) and asserts the deployment contract: the container reaches `healthy`, both probes answer UP, `/api/dashboard` responds, the process runs as uid 10001, `/app/logs/kafkaexplorer.log` is non-empty, a second seeding run skips, and the app's exit code after `stop` is not 137 (SIGKILL). Each assertion corresponds to a bug that lived here for months precisely because nothing ever ran these files. A second job, `release-image`, builds `Dockerfile.release` from the `build` job's JAR and boots it with no broker — that file used to be exercised for the first time by the release itself. **That job is also where the startup audit's findings are guarded**, because it is the one place in CI that runs the app with *no broker* — the `docker` job's stack has a healthy one, so the failure mode measured there cannot occur in it. After liveness it holds the container for a fixed 30 s window and asserts three things: the log stays under **5 000 lines** (the flood was ~2 300 lines a second from a single class, so a return of it is ~70 000 in that window — the ceiling sits more than tenfold from both, deliberately, because a gate that flakes is a gate people learn to ignore); the startup summary names the broker that did not answer; and each of the two state restores reports itself, naming its topic, since both used to fail at DEBUG and therefore silently.
 
 ### Typical local dev workflow
@@ -252,7 +398,7 @@ Heavy metadata calls are Caffeine-cached (30s TTL): `listTopics` (`kafkaTopics`)
 - `TopicSearchService` — bounded server-side scan behind `POST /api/topic/{name}/search`. Assigns the partitions directly (fresh group, no commits — a search never moves anyone's offsets), seeks per `from` (EARLIEST / LATEST / LAST_N — the most recent records, spread over the partitions and clamped to the beginning offset — / TIMESTAMP / OFFSET) or per resume cursor. **A time window raises LAST_N's floor rather than replacing it**: seeking to the start of the window and reading forward (what TIMESTAMP does) spent the record budget on the window's *oldest* records, so a match from a minute ago was missed while the scan worked through messages from an hour before. It and reads until one of three budgets is spent (`explorer.search-max-hits` / `search-max-scan` / `search-timeout-ms`). The response carries `scanned`, `matched`, `stopReason`, `exhausted` and a `nextCursor` per partition, so the UI states what was covered and can continue — a search is never silently partial. `addPathWarnings()` turns the matcher's outcomes into warnings ("none of the 50 records scanned is JSON"), so zero hits on a path search says which kind of zero it is, and `looksBinary()` reports the records that are not text at all (a protobuf blob read as UTF-8 is replacement characters — no text search can ever match it). **`keyPartitioning`** narrows an exact KEY search to the one partition the default partitioner would have chosen (`murmur2(key) % partitions`): a twentieth of the work on a twenty-partition topic, unsound under a custom partitioner or a changed partition count, hence opt-in, restricted to KEY/EQ, ignored-with-a-reason elsewhere, and always stated in the warnings — a narrowed scan that found nothing is not the same answer as a full one that found nothing. `createConsumer()` is the test seam (`TopicSearchServiceTest` drives a `MockConsumer`).
 - `MessageMatcher` — the predicate behind **every** search (topic search and stream-flow trace alike), built once per scanning thread. CONTAINS / REGEX work on the raw value (no parsing); FIELD walks the payload with a streaming parser, pruning any subtree whose path can no longer reach the target, and compares with EQ / NEQ / CONTAINS / REGEX / GT / GTE / LT / LTE / EXISTS. Paths use dot notation with `[]` for "any array element" (JSONPath is accepted and normalized via `PayloadDigestService.normalizePath`). XPATH and JSONPATH hand the payload to a full expression engine (DOM / Jayway) for what the dot walker cannot express — predicates, axes, recursive descent — so a simple path never pays for the general engine. KEY mode compares the record key itself: a text search finds it as a substring anywhere, which is not what "find record X" means and is not enough to justify reading a single partition. **Kafka headers are searchable**: HEADER mode compares one named header (matched exactly, then case-insensitively) with the usual operators, and `searchHeaders` widens a text/regex search to every header value — correlation ids very often travel there (`correlation-id`, W3C `traceparent`) and a search that never looks reports a confident "not found". Default off for a topic search (turning it on silently would change what an existing search returns), default on for a trace. `evaluate()` returns a `MatchOutcome` (MATCH / NO_MATCH / FORMAT_MISMATCH / PARSE_ERROR) so a caller can say *why* a path search found nothing — a payload it could not be applied to is not the same answer as a miss; `matches()` is the boolean shorthand. **Not thread-safe** (XML factory, DocumentBuilder, XPathExpression). A malformed payload simply doesn't match — one bad record must not fail a scan.
 - `SchemaInferenceService` — samples messages and delegates to `JsonSchemaInferrer` / `XmlSchemaInferrer` / `AvroSchemaInferrer` (inferred column order is deterministic — `LinkedHashMap`)
-- `DdlGeneratorService` — auto-generates Flink `CREATE TABLE` DDL from inferred schemas. `maskSensitiveProperties()` (static) redacts credentials (`*password*`, `*secret*`, `sasl.jaas.config`) and MUST be applied to any DDL returned to the UI (`/api/topic/{name}`, `/api/topic/{name}/ddl`, `/api/query/ddl-preview`, lineage `SHOW CREATE TABLE`); internal table registration uses the unmasked DDL.
+- `DdlGeneratorService` — auto-generates Flink `CREATE TABLE` DDL from inferred schemas. `maskSensitiveProperties()` (static) redacts credentials (`*password*`, `*secret*`, `sasl.jaas.config`) and MUST be applied to any DDL returned to the UI (`/api/topic/{name}`, `/api/topic/{name}/ddl`, `/api/query/ddl-preview`, lineage `SHOW CREATE TABLE`) **or written to a log**; internal table registration uses the unmasked DDL. The log half was missing and is the one that had actually leaked: `FlinkSqlService`'s auto-registration wrote the raw DDL — every Kafka client property, so the SSL passwords and the Confluent `sasl.jaas.config` secret — into `logs/kafkaexplorer.log`, a named volume in every stack and the first file anyone pastes into a bug report. At DEBUG only, which is exactly the level an operator turns on to find out why a query failed, i.e. when that line runs. `theLoggedDdlCarriesNoCredentials` pins it by reading the appender rather than by checking that a function was called. Note that **CodeQL does not recognise the masking as a sanitizer** — `SensitiveLoggingQuery.qll` admits only a `substring` of 7 chars or fewer, an encryption/digest call and a couple of type sanitizers as barriers, so no redaction function can ever clear it. Its 14 `java/sensitive-log` findings are therefore unchanged by the fix (measured: 72 findings before, 72 after), and the four on the auto-registration lines are false positives to be dismissed rather than coded around. The exception path beside them was checked rather than assumed: a DDL that fails to register comes back as Calcite's own "Unknown identifier 'X'" with a line and column, so neither `e.getMessage()` nor the `AutoRegResult.fail` message it feeds carries a credential. What *is* fixable there is `java/log-injection`, and only in one form: `sanitizeForLog` uses an allow-list `String.replaceAll("[^\\w.\\-]", "_")` because the model recognises an `[^…]` target on a method declared on `String` and nothing else — a deny-list of control characters, or the same pattern hoisted into a `Pattern`/`Matcher`, both fall outside it and leave the findings standing (measured: 27 → 24, none added).
 - `AuditService` — cluster health checks run on a dedicated single-thread executor (`startAudit` submits explicitly — do NOT reintroduce `@Async`, the self-invocation bypasses the Spring proxy and blocks the HTTP thread); per-topic audits fan out on a bounded 4-thread pool. Exact counts go through the direct SELECT engine (`COUNT(*) AS metric_value`, first numeric value of the row); duplicate detection and flow latency are computed **in-process** over fetched messages (key extraction via `MessageFieldExtractorService`) because the direct engine supports neither subqueries nor JOINs. Reports persist to `internal.audit.history` via a shared lazy producer. Retention is bounded (`MAX_RETAINED_RUNS` = 20) — the runs map used to grow forever. Cluster-level findings go into `globalStats`: `getLaggingFeatures()` (KafkaAdminService, `describeFeatures`) compares finalized vs supported feature versions, and a lagging `metadata.version` adds a `metadataVersionWarning` (incomplete KRaft rolling upgrade — surfaced as a banner on the Audit page).
   - **One sample per topic**: format detection, schema inference and the poison check share a single `getSampleMessages()` call, fed to the `detectFormat(topic, samples)` / `inferSchema(topic, format, samples)` overloads. Each used to open its own KafkaConsumer for the same ten messages — keep the sample threaded through when touching `auditTopic`.
   - **No check degrades to a silent zero.** Poison detection *parses* (a truncated `{"id":` is poison, first-character checks are not enough) and falls back to the sample's dominant format when schema inference is off; duplicate detection falls back to the Kafka record key when the schema has no id-like field; an exact count that errors reports the reason as a topic issue instead of quietly returning the offset estimate. `globalStats.scopeNotes` states the bounds of each scan (10 000 messages for duplicates, 10 for poison, 1 000 for latency).
@@ -328,6 +474,45 @@ The router is a **data router** (`createBrowserRouter` + `RouterProvider`, a `Sh
 **Command palette** — `CommandPalette` (⌘K / Ctrl+K, wired in `Layout`) is the single global search over quick actions, pages, Kafka topics and Flink tables, fully keyboard-driven. What an operator types there is very often an identifier rather than a page name, so any text that is not a known topic offers **`Trace "<text>" across topics`** first (`buildTraceLinkForKey`, exact-key mode): an investigation starts from anywhere, instead of navigating to an empty form and retyping the key into it.
 
 **Design-system library** — `components/ui/` (`import { … } from '../components/ui'`), built on the `tailwind.config.js` + `index.css` tokens; prefer it for any new surface: `Button`, `Card`/`CardHeader`, `Badge`, `EmptyState`, `ErrorPanel`, `Tooltip`/`HelpTip`, `PageHeader`, `Stat`, `Field`/`Input`/`Select`/`Textarea`, `Combobox`/`TopicInput`/`NumberInput`/`PasswordInput`, `Checkbox`, `Table` (+ `Th`/`Td`/…), the `Skeleton` family, `Spinner`/`ProgressBar`, `ConfirmProvider`/`useConfirm` (async confirm dialogs), `useUnsavedGuard` (confirm before leaving an unsaved screen — `useBlocker` for internal navigation *and* `beforeunload` for reload/close, two different exits, asked through the same `useConfirm` dialog), `useVirtualRows` (row virtualization), and `cn()` (clsx + tailwind-merge). Other shared components: `Toast`/`ToastProvider`, `ErrorBanner`, `LoadingSpinner`.
+
+**The three SVG graphs share one viewport** — `components/graph/useGraphViewport.ts`, used by
+`Lineage`, `StreamFlow` and `DataModel`. They carried the same implementation copied three times:
+the same `isPanning` / `lastPos` refs, the same three pointer handlers line-for-line, the same
+non-passive `wheel` listener, the same keyboard step. That is exactly the shape that lets a fix
+land on one page and not the other two, and it had already happened here — the move to *pointer*
+events, without which a tablet cannot pan a graph at all, had to be made three times.
+
+The split is **mechanics in the hook, policy in the pages**. The hook owns the transform state,
+the gestures, the wheel zoom and the viewport measurement, and exposes `panBy` / `zoomAround` /
+`zoomFromCenter` so a page's keyboard handler is a few lines. What stays in each page is what
+genuinely differs: what `0` recadres (a fit for Stream Flow and Data Model, a fixed origin for
+Lineage), what `Escape` deselects, and which node a table selection brings into view. Absorbing
+those through three more callbacks would have made the hook harder to read than the forty lines
+it replaces.
+
+Three things are parameters rather than constants because the pages really disagree: the scale
+bounds (Data Model goes to 0.1–3, the other two 0.15–4 — a hundred entities need the lower
+floor), the initial transform, and whether a press on a `[data-node]` starts a pan. `viewAdjusted`
+is the hook's, with `markFitted()` / `markAdjusted()` as the pair of verbs: `panBy` and
+`zoomAround` raise it themselves, and a page that sets its own transform — centring on an entity —
+says so, because Data Model's automatic refit on a resize must not undo a framing the operator
+chose.
+
+**`svgRef` is a callback ref, not an object ref, and that is load-bearing.** Stream Flow and Data
+Model render their canvas only once a result has arrived, so an effect keyed on anything else runs
+once with `ref.current` still null and never runs again — which is exactly how the `wheel` listener
+stopped attaching on two of the three graphs when this hook was extracted. Each page used to work
+around it with its own dependency (`[hasResult, nodes.length]`, `[zoomAround, model]`) under a
+comment reading "re-attach after the SVG mounts"; sharing the code dropped the dependency and the
+defect came back. A callback ref makes the mount observable, so the question no longer reaches the
+caller — and pages read the element as `canvas` rather than `svgRef.current`.
+
+Only `zoomTransform` is unit-tested; the rest is pointer plumbing over geometry jsdom does not
+have, where a test would assert that mocks were called rather than that a graph pans. What covers
+it instead is **`docs/screenshots/graph-gestures.mjs`**, run by CI in the screenshot job: real
+pointer, wheel and keyboard events against the compiled SPA in Chromium, asserting that the pan
+follows the pointer, that the zoom stays anchored under the cursor, that the keyboard reaches the
+graph and that `touch-action` is neutralised. It is what found the wheel defect above.
 **`Checkbox` exists for a measured reason, and is deliberately 24 × 24.** `layout-probe.mjs` counts targets under the 24 × 24 CSS px of WCAG 2.5.8, and on the Data Model page — the worst ratio after the SQL editor — **40 of the 42 undersized targets were outside the graph**, almost all native `<input type="checkbox">` at the browser's default **13 × 13**, one per topic in the selector. It was never forty problems but one control, on the six screens that carry checkboxes; the measured effect is `data-model` 42 → 9 at 390 px, `audit` 30 → 24, `topic-explorer` 14 → 11. The visible box really is larger — keeping a 16 px box and widening only the hit area is the tempting version and does not work: `padding` is not reliably applied to a replaced control, and a `transform` shrinks the real target along with the drawing, fooling the probe exactly as much as the user. It stays a native input, so semantics, keyboard and form behaviour are the browser's, and its accent comes from the `primary` token — three call sites had hardcoded `#a3adff`, which *is* `primary`.
 **An explanation that only the mouse can reach is not an explanation.** `title=""` shows up on hover and nowhere else — never on keyboard focus, never on touch, with a delay and a rendering the browser owns and screen readers do not reliably announce. `Tooltip` opens on hover *and* focus, closes on `Escape`, and keeps its content mounted so `aria-describedby` always resolves; `HelpTip` is the small ⓘ trigger for controls that are not themselves inviting to hover, such as a `<select>` or a checkbox. Keep `title` for a bare affordance ("Copy"), and use the component wherever the text explains a *semantic* — what a mode compares, what an operator ignores, what a budget bounds, what an engine cannot do. The pass covered Topic Explorer, Stream Flow, Audit, the SQL editor and Metrics; what stays a `title` elsewhere only reveals a truncated or compacted value (the exact number behind `1.2K`, the absolute date behind a relative one), where a tooltip would add a tab stop per table cell and cost keyboard users more than it gives them. In `Metrics` the component is imported as `InfoTooltip`: Recharts exports a `Tooltip` of its own, and the file uses both.
 **A failure that needs acting on is not a toast.** `ErrorPanel` renders a `QueryErrorInfo` (from `describeApiError`) with the three levels the SQL editor already had to itself — readable title, actionable hint, raw server text one click away — and stays on screen. A toast lasts three seconds, which suits a confirmation and not a refusal: `catch { toast('Failed to save metric') }` threw away the only useful part, the reason. Reach for the toast on success and for the panel on failure.

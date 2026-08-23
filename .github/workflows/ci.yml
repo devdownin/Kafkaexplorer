@@ -553,6 +553,226 @@ jobs:
           echo "::error::the arm64 release image never answered liveness"
           exit 1
 
+  # Twelve compose files ship here and the build parsed none of them. That is the exact shape
+  # of rot this repository has been bitten by twice — a stack nobody runs, a Dockerfile nobody
+  # builds — and `config` is the cheapest possible guard: a few seconds, no daemon, no network,
+  # no images pulled. It resolves interpolation, merges the overlays and rejects an unknown
+  # field, so a typo in a file that only runs on somebody's laptop fails here instead of there.
+  #
+  # The OVERLAYS are validated layered onto their base, never alone: on its own an overlay is
+  # a set of services with no image, which is invalid — and that is not a quirk of the check
+  # but the reason overlays and base files must be listed as pairs everywhere.
+  #
+  # No `needs`, like the documentation checks, and for the same reason: it reports before the
+  # build does and it can never go red for somebody else's outage.
+  compose-lint:
+    name: Validate the compose files
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Resolve every stack and overlay combination
+        run: |
+          set -euo pipefail
+          # docker-compose-spectra.yml `include:`s SpectraLLM's own compose from a sibling
+          # checkout, which is not here. A stub carrying the one service our file names in a
+          # `depends_on` is enough to resolve it — what is under test is OUR file's syntax and
+          # wiring, not upstream's shape, and cloning another repository to parse a YAML file
+          # would make this check depend on somebody else's availability.
+          mkdir -p /tmp/spectrallm-stub/deploy/docker
+          printf 'services:\n  spectra-api:\n    image: busybox\n' \
+            > /tmp/spectrallm-stub/deploy/docker/docker-compose.yml
+          export SPECTRALLM_DIR=/tmp/spectrallm-stub
+
+          combos=(
+            "-f docker-compose.yml"
+            "-f docker-compose.yml -f docker-compose.ci.yml"
+            "-f docker-compose.yml -f docker-compose.limits.yml"
+            "-f docker-compose-kafka4.yml"
+            "-f docker-compose-kafka4.yml -f docker-compose.limits.yml"
+            "-f docker-compose-llm.yml"
+            "-f docker-compose-llm.yml -f docker-compose.limits.yml"
+            "-f docker-compose.release.yml"
+            "-f docker-compose.release.yml -f docker-compose.limits.yml"
+            "-f docker-compose-build.yml"
+            "-f docker-compose-dev.yml"
+            "-f docker-compose-spectra.yml"
+            "-f docker-compose-spectra-hub.yml"
+            "-f docker-compose-spectra-hub.yml -f docker-compose-spectra-hub.ingest.yml"
+            "-f docker-compose-spectra-hub.yml -f docker-compose-spectra-hub.gpu.yml"
+            "-f docker-compose-spectra-hub.yml -f docker-compose-spectra-hub.limits.yml"
+            "-f docker-compose-spectra-hub.yml -f docker-compose-spectra-hub.small.yml"
+            "-f docker-compose-spectra-hub.yml -f docker-compose-spectra-hub.ingest.yml -f docker-compose-spectra-hub.gpu.yml -f docker-compose-spectra-hub.limits.yml -f docker-compose-spectra-hub.small.yml"
+          )
+          for combo in "${combos[@]}"; do
+            echo "· $combo"
+            # shellcheck disable=SC2086 - the combination is a deliberate word list.
+            docker compose $combo config -q
+          done
+
+          # Every compose file in the tree is named above, base or overlay. A new one added
+          # without a line here would be checked by nothing, which is the situation this job
+          # exists to end — so the omission fails rather than passing quietly.
+          for f in docker-compose*.yml; do
+            case " ${combos[*]} " in
+              *" -f $f"*) ;;
+              *) echo "::error file=$f::$f is in no combination above — add it to compose-lint"; exit 1 ;;
+            esac
+          done
+
+  # docker-compose-spectra-hub.yml is the one stack made entirely of published images, so what
+  # it can break is not the code but the WIRING: a service renamed out from under nginx's
+  # hardcoded upstream, an ownership fix that stops covering the volume, an entrypoint that
+  # crash-loops instead of waiting for its model. None of that is visible in `config`, and all
+  # of it is visible thirty seconds into a boot.
+  #
+  # It runs WITHOUT the models (SPECTRA_AUTO_INSTALL_MODELS=false): the ~4.7 GB chat model is
+  # the one part of this stack CI has no business downloading, and the interesting assertion
+  # about it is precisely that its absence leaves the containers waiting rather than dead.
+  #
+  # Not on pull requests. It pulls roughly two gigabytes of images to test a deployment file
+  # whose contents do not change with the code — the same trade-off as the arm64 boot in
+  # release-image, and `workflow_dispatch` covers a branch that touches these files.
+  spectra-hub-stack:
+    name: Smoke-test the SpectraLLM stack
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      COMPOSE_FILE: docker-compose-spectra-hub.yml
+      # Not the 4.7 GB default: see above. The stack is booted with no chat model at all, so
+      # that the "it waits rather than crash-looping" assertion is about a real absence — and a
+      # tiny one is then dropped in, which is what lets the last step prove the chain answers.
+      SPECTRA_AUTO_INSTALL_MODELS: "false"
+      LLM_CHAT_MODEL_FILE: Qwen2.5-0.5B-Instruct-Q4_K_M.gguf
+      LLM_CHAT_MODEL_NAME: qwen2.5-0.5b-instruct
+      # ~400 MB, and the smallest model that still answers a one-word health check coherently.
+      # A wrong URL fails this job loudly at the fetch step; it is a one-line fix here.
+      CI_CHAT_MODEL_URL: https://huggingface.co/bartowski/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Pull the published images
+        run: docker compose pull --quiet
+
+      - name: Start the stack
+        run: docker compose up -d
+
+      - name: Wait for the Explorer to report healthy
+        run: |
+          set -euo pipefail
+          explorer=$(docker compose ps -q explorer)
+          [ -n "$explorer" ] || { echo "::error::no explorer container"; exit 1; }
+          for _ in $(seq 1 72); do
+            status=$(docker inspect -f '{{.State.Health.Status}}' "$explorer" 2>/dev/null || echo missing)
+            case "$status" in
+              healthy)   echo "healthy"; exit 0 ;;
+              unhealthy) echo "::error::the Explorer reported unhealthy"; exit 1 ;;
+            esac
+            sleep 5
+          done
+          echo "::error::the Explorer never became healthy"
+          exit 1
+
+      - name: Assert the Explorer is wired to SpectraLLM
+        # The entire point of the file. `GET /api/config` reports the running configuration,
+        # so this fails if the environment stopped binding — a renamed variable, a provider
+        # that no longer parses — rather than if a YAML key merely looks right.
+        run: |
+          set -euo pipefail
+          body=$(curl -fsS http://127.0.0.1:8080/api/config)
+          echo "$body" | grep -q '"llmProvider":"SPECTRA"' \
+            || { echo "::error::the Explorer is not on the SPECTRA provider: $body"; exit 1; }
+          echo "$body" | grep -q '"llmBaseUrl":"http://spectra-api:8080"' \
+            || { echo "::error::the Explorer does not point at spectra-api: $body"; exit 1; }
+
+      - name: Assert the Spectra API answers, and answers through the UI's proxy
+        # Two different claims: the API is ready on its published port, and nginx still
+        # resolves the upstream baked into its image — which is why the service has to keep
+        # the name `spectra-api`, a constraint nothing else in this repository can enforce.
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8081/actuator/health/readiness | grep -q '"status":"UP"'; then
+              ready=1; break
+            fi
+            sleep 5
+          done
+          [ "${ready:-0}" = 1 ] || { echo "::error::the Spectra API never reported ready"; exit 1; }
+          curl -fsS -o /dev/null http://127.0.0.1:8088/ \
+            || { echo "::error::the Spectra UI does not serve"; exit 1; }
+          curl -fsS -o /dev/null http://127.0.0.1:8088/api/status \
+            || { echo "::error::the UI does not reach spectra-api through its /api/ proxy"; exit 1; }
+
+      - name: Assert a missing model leaves llama-server waiting, not crash-looping
+        # The behaviour the inline entrypoints exist for. Without them llama-server would exit
+        # on a model it cannot open and the restart policy would turn that into a loop — which
+        # looks, in `ps`, exactly like a stack that is starting up.
+        run: |
+          set -euo pipefail
+          for svc in llm-chat llm-embed; do
+            cid=$(docker compose ps -q "$svc")
+            [ -n "$cid" ] || { echo "::error::no $svc container"; exit 1; }
+            state=$(docker inspect -f '{{.State.Status}}' "$cid")
+            restarts=$(docker inspect -f '{{.RestartCount}}' "$cid")
+            [ "$state" = running ] || { echo "::error::$svc is $state"; exit 1; }
+            [ "$restarts" = 0 ] || { echo "::error::$svc restarted $restarts times"; exit 1; }
+          done
+          # The chat model is the one nothing downloads in this job, so this line is
+          # deterministic where llm-embed's would be a race with an 81 MB transfer.
+          docker compose logs --no-color llm-chat | grep -q 'waiting for' \
+            || { echo "::error::llm-chat did not report waiting for its model"; exit 1; }
+
+      - name: Serve a tiny model, and prove the whole chain answers
+        # The assertion this job existed without: that a Process Mining call really travels
+        # explorer → spectra-api → llm-chat and comes back. It is what would have caught the
+        # header mismatch this stack documents (Spectra reads `X-API-Key`, the Explorer sends
+        # `Authorization: Bearer`) instead of leaving it a paragraph nobody executes.
+        #
+        # The model is fetched through the stack's OWN one-shot rather than by a curl written
+        # here, so the fetcher — resume, checksum, ownership — is exercised too. `--no-deps`
+        # because its dependency is a one-shot that has already completed.
+        run: |
+          set -euo pipefail
+          docker compose run --rm --no-deps -T \
+            -e SPECTRA_CHAT_MODEL_URL="$CI_CHAT_MODEL_URL" spectra-models
+
+          # No restart: llama-server's entrypoint polls for the file and starts on its own,
+          # which is the behaviour the previous step just asserted from the other side.
+          chat=$(docker compose ps -q llm-chat)
+          for _ in $(seq 1 60); do
+            status=$(docker inspect -f '{{.State.Health.Status}}' "$chat" 2>/dev/null || echo missing)
+            [ "$status" = healthy ] && break
+            sleep 5
+          done
+          [ "${status:-}" = healthy ] || { echo "::error::llm-chat never served the model"; exit 1; }
+
+          answer=$(curl -fsS -X POST http://127.0.0.1:8080/api/config/test-llm)
+          echo "$answer"
+          echo "$answer" | grep -q '"ok":true' \
+            || { echo "::error::the Explorer could not reach the model through SpectraLLM"; exit 1; }
+
+      - name: Assert the demo seeding ran to completion
+        run: |
+          set -euo pipefail
+          cid=$(docker compose ps -aq demo-setup)
+          [ -n "$cid" ] || { echo "::error::no demo-setup container"; exit 1; }
+          for _ in $(seq 1 60); do
+            state=$(docker inspect -f '{{.State.Status}}' "$cid")
+            [ "$state" = exited ] && break
+            sleep 5
+          done
+          code=$(docker inspect -f '{{.State.ExitCode}}' "$cid")
+          [ "$code" = 0 ] || { echo "::error::demo-setup exited $code"; exit 1; }
+
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail 200 || true
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v || true
+
   # docs/DOCKERHUB.md is rendered by Docker Hub, outside the repository: every link in it is
   # absolute, none can be verified by reading the page, and one that rots stays invisible
   # until a visitor clicks it and lands on a 404 — on the page meant to sell the image. Its
@@ -566,6 +786,11 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # check-image-pins.py compares the Explorer image the hub stack pulls against the
+          # newest release tag, and the default checkout carries no tags at all — the check
+          # would fail on their absence rather than on a drift.
+          fetch-tags: true
       - run: python3 docs/check-links.py
 
       # The configuration tables on that same page have the same exposure as its links and
@@ -591,6 +816,15 @@ jobs:
       # pointed at documents and a directory that had been deleted, one of them for months.
       # A reader following the file explaining the repository was sent to nothing.
       - run: python3 docs/check-doc-paths.py
+
+      # And the same rot in the deployment files: an image reference is written by hand, and
+      # Dependabot cannot read a `${VAR:-1.8.8}` form, so nothing would ever move the Explorer
+      # pin — the hub stack would go on serving an old image to everyone who does not pin, for
+      # as long as nobody noticed. It also refuses a floating tag (the comment claiming Ollama
+      # was "the only floating tag left in the tree" had `curlimages/curl:latest` two services
+      # below it) and requires the llama.cpp CPU and CUDA images to name the same build, since
+      # the GPU overlay must change the hardware and not the engine's revision.
+      - run: python3 docs/check-image-pins.py
 
   # docs/img/*.png is what the Docker Hub overview, the READMEs and the Pages site show, and
   # it is generated by docs/screenshots/ rather than photographed. Nothing ran that pipeline,
@@ -681,6 +915,24 @@ jobs:
             sleep 1
           done
           NODE_PATH="$(npm root -g)" node docs/screenshots/layout-probe.mjs http://127.0.0.1:4174 --check
+
+      # Les gestes des trois graphes SVG. `useGraphViewport` n'a qu'un test unitaire, sur son
+      # arithmétique de zoom : le reste est de la plomberie d'événements pointeur au-dessus d'une
+      # géométrie que jsdom n'a pas, où un test unitaire affirmerait que des mocks ont été appelés
+      # plutôt qu'un graphe se déplace. Cette sonde a trouvé, dès sa première exécution, que le
+      # zoom molette ne s'attachait plus sur deux des trois pages — un défaut livré et invisible
+      # de toute autre façon. Même serveur, même SPA, même Chromium que les deux étapes ci-dessus.
+      - name: Check the graph gestures still work
+        run: |
+          set -euo pipefail
+          # Son propre port, même raison que l'étape précédente : dépendre du serveur qu'une
+          # autre étape a laissé tourner fait échouer pour un motif étranger au changement testé.
+          node docs/screenshots/server.mjs site 4175 &
+          for _ in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:4175/api/dashboard >/dev/null 2>&1 && break
+            sleep 1
+          done
+          NODE_PATH="$(npm root -g)" node docs/screenshots/graph-gestures.mjs http://127.0.0.1:4175
 
       - name: Upload the fresh captures
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
