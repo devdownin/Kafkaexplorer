@@ -190,7 +190,7 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
     private LlmResponse call(String systemPrompt, String userPrompt, LlmOutputSchema schema) {
         long startedAt = System.currentTimeMillis();
         try {
-            String url = resolveChatCompletionsUrl();
+            String url = LlmHttpSupport.v1Url(config, "chat/completions");
 
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("model", config.getModel());
@@ -294,17 +294,6 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
     private static Double doubleOrNull(JsonNode parent, String field) {
         JsonNode value = parent.path(field);
         return value.isNumber() ? value.asDouble() : null;
-    }
-
-    private String resolveChatCompletionsUrl() {
-        String baseUrl = config.getResolvedBaseUrl();
-        if (baseUrl.endsWith("/v1")) {
-            return baseUrl + "/chat/completions";
-        }
-        if (baseUrl.endsWith("/v1/")) {
-            return baseUrl + "chat/completions";
-        }
-        return baseUrl + "/v1/chat/completions";
     }
 
     /**

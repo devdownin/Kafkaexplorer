@@ -13,6 +13,36 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The Test LLM button says what the configured model can do, not only that it answered.**
+  Everywhere else in this application a model's capabilities are found out by provoking a failure:
+  the schema latch learns a model refuses `response_format` from the 400 it returns, and a slug
+  that cannot emit text is discovered on the first analysed window — reported as the same 404
+  OpenRouter uses for a mistyped name, which sends an operator to check a model name that was
+  correct. OpenRouter publishes all of it per model, so one small `GET /v1/model/{author}/{slug}`
+  on that provider turns four guesses into facts: the model emits text, its schema support, its
+  context window against the prompt budget, and whether reasoning can be turned off.
+  The one worth the most is invisible to the running code — `response_format` and
+  `structured_outputs` are listed **separately**, and a model with the first and not the second
+  *accepts* the schema and ignores it, raising no error, so nothing latches and the deployment
+  believes decoding is constrained when it is not. Hence four grades rather than a boolean, and
+  hence nothing acting on any of it: the operator is told and picks, the same restraint
+  `structured-output: AUTO` already applies to an endpoint it does not know. Read only when the
+  button is pressed, only against OpenRouter's own host, with no retry and a short deadline; a
+  lookup that fails names why and never changes the reachability verdict beside it. Wire field
+  names come from the published SDK schema, `openrouter.ai` being unreachable from the build
+  environment.
+
+- **The prompt budget is checked against the model's context window, on the one provider that
+  publishes it.** `CLAUDE.md` states that the window belongs to the endpoint and nothing here can
+  check that the 120 000-character budget fits — true of every provider but OpenRouter, whose
+  catalogue reports `context_length`. The comparison includes `claude.max-tokens`, since the
+  answer is generated into the same window, and is stated as a **floor**: the four-characters-per-token
+  ratio is the deliberately optimistic one `docs/check-compose.py` already uses, so a budget it
+  passes may still not fit while one it rejects certainly does not. The word is in the sentence
+  the page renders, because without it the phrase would promise what only the model's tokeniser
+  can decide. An over-long prompt is usually truncated in silence rather than refused, which is
+  why this is worth saying before a call instead of diagnosing after one.
+
 - **`reasoningTokens` on `LlmUsage`** (`completion_tokens_details.reasoning_tokens`), the
   symmetric breakdown to the cached-prompt figure. It is a breakdown of the output tokens, not an
   addition to them, so what it buys is the *explanation* of a cost: two analyses with identical

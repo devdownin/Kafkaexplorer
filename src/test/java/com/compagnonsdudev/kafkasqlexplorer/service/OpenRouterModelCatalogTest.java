@@ -1,0 +1,227 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Kafka Explorer Contributors
+package com.compagnonsdudev.kafkasqlexplorer.service;
+
+import com.compagnonsdudev.kafkasqlexplorer.config.ClaudeConfig;
+import com.compagnonsdudev.kafkasqlexplorer.config.ProcessMiningConfig;
+import com.compagnonsdudev.kafkasqlexplorer.domain.LlmModelCheck;
+import com.compagnonsdudev.kafkasqlexplorer.domain.SchemaSupport;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * The catalogue read cannot be exercised end to end here — it reaches openrouter.ai — so what these
+ * tests pin is the half that would go quietly wrong: the parse. Every field this record carries can
+ * be absent from a real answer, and the failure mode throughout is the same one this codebase keeps
+ * removing: an absent fact rendered as a negative one.
+ */
+class OpenRouterModelCatalogTest {
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    private final ClaudeConfig claudeConfig = new ClaudeConfig();
+    private final ProcessMiningConfig processMiningConfig = new ProcessMiningConfig();
+    private final OpenRouterModelCatalog catalog =
+        new OpenRouterModelCatalog(claudeConfig, processMiningConfig);
+
+    private JsonNode json(String body) {
+        try {
+            return MAPPER.readTree(body);
+        } catch (Exception e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    @Test
+    void readsTheCapabilitiesOfAFullyDescribedModel() {
+        LlmModelCheck check = catalog.parse(json("""
+            {"data": {
+               "id": "openai/gpt-4o-mini",
+               "name": "GPT-4o mini",
+               "context_length": 128000,
+               "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]},
+               "supported_parameters": ["max_tokens", "response_format", "structured_outputs"]
+            }}
+            """), "openai/gpt-4o-mini");
+
+        assertNull(check.error());
+        assertEquals("openai/gpt-4o-mini", check.id());
+        assertEquals("GPT-4o mini", check.name());
+        assertEquals(128000L, check.contextLength());
+        assertEquals(Boolean.TRUE, check.emitsText());
+        assertEquals(SchemaSupport.CONSTRAINED, check.schemaSupport());
+    }
+
+    /** The envelope is not part of the contract worth depending on; the object inside is. */
+    @Test
+    void readsAnEntryThatArrivesWithoutTheDataEnvelope() {
+        LlmModelCheck check = catalog.parse(json("""
+            {"id": "openai/gpt-4o-mini", "context_length": 128000}
+            """), "openai/gpt-4o-mini");
+
+        assertEquals(128000L, check.contextLength());
+    }
+
+    /**
+     * The whole reason {@link SchemaSupport} is not a boolean. A model listing
+     * {@code response_format} without {@code structured_outputs} accepts the field and ignores the
+     * schema — no 4xx, so the client's per-model latch never fires and the deployment believes
+     * decoding is constrained when it is not.
+     */
+    @Test
+    void tellsAnAcceptedButUnconstrainedSchemaFromASupportedOne() {
+        LlmModelCheck accepted = catalog.parse(json("""
+            {"id": "x/y", "supported_parameters": ["response_format", "temperature"]}
+            """), "x/y");
+        assertEquals(SchemaSupport.ACCEPTED_UNCONSTRAINED, accepted.schemaSupport());
+
+        LlmModelCheck unsupported = catalog.parse(json("""
+            {"id": "x/y", "supported_parameters": ["temperature"]}
+            """), "x/y");
+        assertEquals(SchemaSupport.UNSUPPORTED, unsupported.schemaSupport());
+    }
+
+    /** An unreported parameter list is not a model that supports nothing. */
+    @Test
+    void anAbsentParameterListIsUnknownRatherThanUnsupported() {
+        assertEquals(SchemaSupport.UNKNOWN,
+            catalog.parse(json("{\"id\": \"x/y\"}"), "x/y").schemaSupport());
+        assertEquals(SchemaSupport.UNKNOWN,
+            catalog.parse(json("{\"id\": \"x/y\", \"supported_parameters\": []}"), "x/y")
+                .schemaSupport());
+    }
+
+    /**
+     * The finding that makes this worth asking before a call: a slug pointing at an embeddings,
+     * rerank or speech model cannot answer a Process Mining prompt, and the gateway reports that
+     * with a status that sends the operator to check the model name instead.
+     */
+    @Test
+    void reportsAModelThatDoesNotEmitText() {
+        LlmModelCheck check = catalog.parse(json("""
+            {"id": "openai/text-embedding-3-small",
+             "architecture": {"output_modalities": ["embeddings"]}}
+            """), "openai/text-embedding-3-small");
+
+        assertEquals(Boolean.FALSE, check.emitsText());
+    }
+
+    /** Absent modalities must not read as "this model emits nothing", which is a refusal. */
+    @Test
+    void unreportedModalitiesAreNullRatherThanFalse() {
+        assertNull(catalog.parse(json("{\"id\": \"x/y\"}"), "x/y").emitsText());
+        assertNull(catalog.parse(
+            json("{\"id\": \"x/y\", \"architecture\": {\"output_modalities\": []}}"), "x/y")
+            .emitsText());
+    }
+
+    /**
+     * Mandatory reasoning eats {@code claude.max-tokens} on every call by construction. A model
+     * that publishes no reasoning block is the ordinary case and is not the same statement.
+     */
+    @Test
+    void tellsMandatoryReasoningFromAModelThatDoesNotReason() {
+        assertEquals(Boolean.TRUE, catalog.parse(json("""
+            {"id": "x/y", "reasoning": {"mandatory": true}}
+            """), "x/y").reasoningMandatory());
+        assertEquals(Boolean.FALSE, catalog.parse(json("""
+            {"id": "x/y", "reasoning": {"mandatory": false}}
+            """), "x/y").reasoningMandatory());
+        assertNull(catalog.parse(json("{\"id\": \"x/y\"}"), "x/y").reasoningMandatory());
+    }
+
+    /**
+     * The comparison the whole third suggestion is about — and the half that is easy to forget is
+     * that the answer is generated into the same window, so {@code max-tokens} counts too.
+     */
+    @Test
+    void comparesThePromptBudgetAgainstTheWindowIncludingTheAnswer() {
+        processMiningConfig.setPromptCharBudget(120_000);
+        claudeConfig.setMaxTokens(4096);
+        // 120 000 / 4 = 30 000 prompt tokens, plus 4 096 for the answer.
+        assertEquals(34_096L, catalog.estimatedPromptTokens());
+
+        LlmModelCheck roomy = catalog.parse(json("""
+            {"id": "x/y", "context_length": 128000}
+            """), "x/y");
+        assertEquals(Boolean.TRUE, roomy.promptBudgetFits());
+        assertEquals(34_096L, roomy.promptBudgetTokens());
+
+        LlmModelCheck cramped = catalog.parse(json("""
+            {"id": "x/y", "context_length": 8192}
+            """), "x/y");
+        assertEquals(Boolean.FALSE, cramped.promptBudgetFits());
+    }
+
+    /** An unknown window yields no verdict — a floor cannot be computed against nothing. */
+    @Test
+    void anUnknownWindowGivesNoBudgetVerdict() {
+        LlmModelCheck check = catalog.parse(json("{\"id\": \"x/y\"}"), "x/y");
+        assertNull(check.contextLength());
+        assertNull(check.promptBudgetFits());
+        assertNotNull(check.promptBudgetTokens(),
+            "what we claim is known even when what it is compared against is not");
+    }
+
+    /** {@code context_length: null} is in the published schema, and 0 is not a window. */
+    @Test
+    void aNullOrZeroWindowIsAnAbsentOne() {
+        assertNull(catalog.parse(json("{\"id\": \"x/y\", \"context_length\": null}"), "x/y")
+            .contextLength());
+        assertNull(catalog.parse(json("{\"id\": \"x/y\", \"context_length\": 0}"), "x/y")
+            .contextLength());
+    }
+
+    /** A body that is not a model entry is an unavailable answer, never an empty verdict. */
+    @Test
+    void aBodyThatIsNotAModelEntryIsReportedAsUnavailable() {
+        LlmModelCheck check = catalog.parse(json("{\"data\": null}"), "x/y");
+        assertNotNull(check.error());
+        assertEquals(SchemaSupport.UNKNOWN, check.schemaSupport());
+    }
+
+    /**
+     * A slug with no slash is the shape an Ollama model name leaves behind after a provider
+     * switch. It cannot address the catalogue path, and the gateway answers it with the same 404
+     * it uses for a routing refusal — so it is named here instead.
+     */
+    @Test
+    void refusesASlugThatIsNotVendorSlashModel() {
+        claudeConfig.setProvider(ClaudeConfig.Provider.OPENROUTER);
+        claudeConfig.setModel("qwen3:4b");
+
+        LlmModelCheck check = catalog.describeConfiguredModel();
+        assertNotNull(check.error());
+        assertTrue(check.error().contains("vendor/model"),
+            "the message has to name the shape that would work: " + check.error());
+    }
+
+    /**
+     * The lookup is a vendor-specific path, so it is only made against the vendor's own host —
+     * the same rule as the attribution headers, and deliberately not the rule the routing policy
+     * follows, which must survive a proxy because it carries a guarantee.
+     */
+    @Test
+    void isNotAttemptedAgainstAnEndpointThatIsMerelyNamedOpenRouter() {
+        claudeConfig.setProvider(ClaudeConfig.Provider.OPENROUTER);
+        claudeConfig.setBaseUrl("https://egress.internal.example.com/openrouter/v1");
+        assertFalse(catalog.isSupported());
+
+        LlmModelCheck check = catalog.describeConfiguredModel();
+        assertNotNull(check.error());
+        assertNull(check.emitsText(), "an unasked question has no answer");
+    }
+
+    @Test
+    void isNotAttemptedForAnyOtherProvider() {
+        claudeConfig.setProvider(ClaudeConfig.Provider.OLLAMA);
+        assertFalse(catalog.isSupported());
+    }
+}

@@ -9,6 +9,7 @@ import com.compagnonsdudev.kafkasqlexplorer.service.FlinkSqlService;
 import com.compagnonsdudev.kafkasqlexplorer.service.KafkaAdminService;
 import com.compagnonsdudev.kafkasqlexplorer.service.LlmClient;
 import com.compagnonsdudev.kafkasqlexplorer.service.LlmClientProvider;
+import com.compagnonsdudev.kafkasqlexplorer.service.OpenRouterModelCatalog;
 import com.compagnonsdudev.kafkasqlexplorer.service.SettingsStore;
 import com.compagnonsdudev.kafkasqlexplorer.service.SseEmitterManager;
 import org.springframework.http.HttpStatus;
@@ -45,6 +46,7 @@ public class ConfigController {
     private final SseEmitterManager sseEmitterManager;
     private final LlmClientProvider llmClientProvider;
     private final SettingsStore settingsStore;
+    private final OpenRouterModelCatalog modelCatalog;
 
     public ConfigController(KafkaConfig kafkaConfig,
                             KafkaAdminService kafkaAdminService,
@@ -53,7 +55,8 @@ public class ConfigController {
                             FlinkSqlService flinkSqlService,
                             SseEmitterManager sseEmitterManager,
                             LlmClientProvider llmClientProvider,
-                            SettingsStore settingsStore) {
+                            SettingsStore settingsStore,
+                            OpenRouterModelCatalog modelCatalog) {
         this.kafkaConfig = kafkaConfig;
         this.kafkaAdminService = kafkaAdminService;
         this.claudeConfig = claudeConfig;
@@ -62,6 +65,7 @@ public class ConfigController {
         this.sseEmitterManager = sseEmitterManager;
         this.llmClientProvider = llmClientProvider;
         this.settingsStore = settingsStore;
+        this.modelCatalog = modelCatalog;
     }
 
     @GetMapping("/api/config")
@@ -430,6 +434,17 @@ public class ConfigController {
         } catch (Exception e) {
             result.put("ok", false);
             result.put("message", e.getMessage() != null ? e.getMessage() : e.toString());
+        }
+
+        // Deliberately after both branches, and reported on both. "Something answered" is not the
+        // question an operator has when Process Mining misbehaves, and on a failure it is the
+        // capability report that most often explains it: OpenRouter answers an unroutable model
+        // with the same 404 it uses for a mistyped slug, so "this model emits embeddings only"
+        // turns an unactionable status into a diagnosis. Never allowed to change the verdict
+        // above — this is a side read, and a catalogue that cannot be reached is a catalogue that
+        // cannot be reached, not an endpoint that is down.
+        if (modelCatalog.isSupported()) {
+            result.put("modelCheck", modelCatalog.describeConfiguredModel());
         }
         return result;
     }

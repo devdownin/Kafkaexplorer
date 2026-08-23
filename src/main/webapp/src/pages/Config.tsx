@@ -15,6 +15,7 @@ import {
 } from './settingsPersistence';
 import { describeDataPolicy, type LlmPolicyFacts } from './llmPolicy';
 import type { LlmTestResponse } from '../api/types';
+import { describeModelCheck, describeModelIdentity, hasModelWarning } from './llmModelCheck';
 
 interface ClusterConfig {
   bootstrapServers: string;
@@ -176,7 +177,7 @@ const Config: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [llmTesting, setLlmTesting] = useState(false);
-  const [llmTestResult, setLlmTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [llmTestResult, setLlmTestResult] = useState<LlmTestResponse | null>(null);
   /** Dernier état persisté, pour savoir si le formulaire a été modifié. */
   const savedRef = useRef<string>('');
   const [dirty, setDirty] = useState(false);
@@ -198,6 +199,15 @@ const Config: React.FC = () => {
   const [saveNote, setSaveNote] = useState<string | null>(null);
   const persistenceNotice = useMemo(() => describePersistence(persistence), [persistence]);
   const policy = useMemo(() => describeDataPolicy(inForce), [inForce]);
+  /*
+   * Ce que la passerelle a dit du modèle au dernier test. Dérivé du résultat et non d'un état à
+   * part : il décrit ce qui a été testé, donc il doit disparaître avec lui plutôt que rester sous
+   * un formulaire qu'on a modifié depuis.
+   */
+  const modelNotes = useMemo(
+    () => describeModelCheck(llmTestResult?.modelCheck), [llmTestResult]);
+  const modelIdentity = llmTestResult?.modelCheck
+    ? describeModelIdentity(llmTestResult.modelCheck) : null;
   /** Le formulaire pointe ailleurs que ce qui tourne : le bandeau décrit encore l'ancien. */
   const policyIsStale = inForce != null && inForce.llmProvider !== config.llmProvider;
 
@@ -893,6 +903,39 @@ const Config: React.FC = () => {
                 {llmTestResult.ok ? 'check_circle' : 'error'}
               </span>
               <span className="break-words">{llmTestResult.message}</span>
+            </div>
+          )}
+
+          {/*
+            * Ce que la passerelle dit du modèle, sous le verdict de joignabilité et distinct de
+            * lui : « quelque chose répond » et « ce modèle sait faire ce travail » sont deux
+            * questions, et c'est la seconde qu'on se pose quand Process Mining se comporte mal.
+            * Affiché aussi quand l'appel a échoué — une 404 sur un modèle qui n'émet que des
+            * embeddings s'explique ici et nulle part ailleurs.
+            */}
+          {modelNotes.length > 0 && (
+            <div className={`mt-2 rounded-lg border px-4 py-3 text-[12px] ${
+              hasModelWarning(modelNotes)
+                ? 'border-warning/30 bg-warning/10'
+                : 'border-outline-variant bg-surface-container-low'
+            }`} data-testid="llm-model-check">
+              {modelIdentity && (
+                <div className="font-medium text-on-surface mb-1.5">{modelIdentity}</div>
+              )}
+              <ul className="space-y-1.5">
+                {modelNotes.map((note, index) => (
+                  <li key={index} className="flex items-start gap-2">
+                    <span className={`material-symbols-outlined text-[16px] mt-px ${
+                      note.tone === 'warning' ? 'text-warning'
+                        : note.tone === 'ok' ? 'text-success' : 'text-on-surface-variant'
+                    }`}>
+                      {note.tone === 'warning' ? 'warning'
+                        : note.tone === 'ok' ? 'check_circle' : 'help'}
+                    </span>
+                    <span className="break-words text-on-surface-variant">{note.text}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
         </div>

@@ -457,10 +457,17 @@ export interface QueryCancelResponse {
   outcome: string;
 }
 
-/** `POST /api/config/test-llm` — test de connectivité du fournisseur LLM. */
+/**
+ * `POST /api/config/test-llm` — test de connectivité du fournisseur LLM.
+ *
+ * `modelCheck` n'est présent que chez OpenRouter, seul fournisseur ici à publier ce que sait faire
+ * un modèle donné. Son absence ne veut donc rien dire du modèle : elle veut dire qu'on n'a pas
+ * demandé.
+ */
 export interface LlmTestResponse {
   ok: boolean;
   message: string;
+  modelCheck?: LlmModelCheck;
 }
 
 /** `POST /api/process-mining/profiling/validate` — identifiant du mapping retenu. */
@@ -649,6 +656,58 @@ export interface LlmUsage {
   durationMs: number;
   provider: string;
   model: string;
+}
+
+/**
+ * Ce que la passerelle dit du modèle configuré — voir {@link LlmModelCheck}.
+ *
+ * Quatre valeurs plutôt qu'un booléen à cause de la troisième : OpenRouter liste
+ * `response_format` et `structured_outputs` séparément, et un modèle qui a le premier sans le
+ * second *accepte* le champ puis ignore le schéma. Aucune 4xx, donc le verrou par modèle du client
+ * ne se déclenche jamais et le déploiement croit décoder sous contrainte alors que non.
+ *
+ * @java SchemaSupport
+ */
+export type SchemaSupport = 'CONSTRAINED' | 'ACCEPTED_UNCONSTRAINED' | 'UNSUPPORTED' | 'UNKNOWN';
+
+/**
+ * Ce que la passerelle dit du modèle que ce déploiement appelle.
+ *
+ * Tout est nullable et `null` veut dire « le catalogue ne l'a pas dit » — même règle que
+ * `LlmUsage`, et pour la même raison : ce dossier existe pour remplacer des suppositions, donc un
+ * fait qu'il n'a pas pu établir ne doit pas revenir avec l'allure d'un fait établi négativement.
+ * Les *jugements* (`schemaSupport`, `promptBudgetFits`) sont calculés côté serveur ; la page n'en
+ * fait que des phrases. Une règle de notation dupliquée des deux côtés est une règle qui dérive.
+ *
+ * @java LlmModelCheck
+ */
+export interface LlmModelCheck {
+  id: string | null;
+  name: string | null;
+  contextLength: number | null;
+  /**
+   * `false` est un vrai constat — un modèle d'embeddings, de rerank ou de synthèse vocale ne peut
+   * pas répondre à un prompt Process Mining — et `null` veut dire que les modalités n'ont pas été
+   * rapportées, ce qui ne doit surtout pas s'afficher comme un refus.
+   */
+  emitsText: boolean | null;
+  schemaSupport: SchemaSupport;
+  /**
+   * `true` : le modèle refuse qu'on désactive le raisonnement, donc une part de `claude.max-tokens`
+   * part en délibération à chaque appel, par construction. `null` pour un modèle qui ne publie pas
+   * de bloc de raisonnement — le cas ordinaire, pas une dénégation.
+   */
+  reasoningMandatory: boolean | null;
+  /** L'estimation plancher de ce qu'un prompt réclame, en tokens, réponse comprise. */
+  promptBudgetTokens: number | null;
+  /**
+   * Un **plancher, pas un étalonnage** : le ratio de quatre caractères par token est délibérément
+   * optimiste, donc un budget qui passe ici peut malgré tout ne pas tenir, tandis qu'un budget
+   * refusé ne tient certainement pas. `null` quand la fenêtre est inconnue.
+   */
+  promptBudgetFits: boolean | null;
+  /** Pourquoi la consultation n'a rien donné, ou `null` quand elle a donné quelque chose. */
+  error: string | null;
 }
 
 /**

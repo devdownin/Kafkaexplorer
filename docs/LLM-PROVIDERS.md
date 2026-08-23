@@ -118,6 +118,36 @@ reasoning model: it is the number that shows `claude.max-tokens` being eaten by 
 reports after the fact. Both are shown only when non-zero, and a provider that reports neither
 shows neither — an absent figure is never rendered as a zero.
 
+### What the Test button can tell you here
+
+On every other provider, **Test LLM** proves that something answered — which is worth knowing, and
+is not the question you have when Process Mining misbehaves. That one is whether the slug you typed
+can do this job, and OpenRouter is the only provider here that publishes the answer, so on it the
+button says four more things about the model actually configured:
+
+- **Whether it emits text at all.** An embeddings, rerank or speech model cannot answer a Process
+  Mining prompt, and the gateway reports that with the same 404 it uses for a mistyped slug — so
+  without this you would spend the afternoon checking a model name that was right.
+- **What its schema support really is**, in three grades rather than two. `response_format` and
+  `structured_outputs` are listed separately, and the interesting case is a model that has the
+  first and not the second: it *accepts* the schema field and then ignores it. Nothing fails, so
+  the per-model fallback described above never fires, and the JSON comes back as prose to be
+  recovered. That is a guarantee that silently is not one, which is why it is named on screen
+  rather than left to be discovered.
+- **Whether the prompt budget fits its context window.** `process-mining.prompt-char-budget` is
+  compared against the published `context_length`, plus `claude.max-tokens` — the answer is
+  generated into the same window. Read it as a **floor**: the estimate is deliberately optimistic,
+  so a budget it passes may still not fit, while one it rejects certainly does not.
+- **Whether reasoning can be turned off.** On a model where it cannot, part of every answer's token
+  budget goes to deliberation by construction — the cause of a truncated answer, visible here
+  before a run fails rather than after.
+
+Two things it deliberately does not do. It is asked **only when you press the button**, never on an
+analysis, and only against OpenRouter's own host — pointing the provider at a corporate proxy
+withholds the lookup rather than posting a vendor-specific path at it. And a lookup that fails says
+so: "we asked and the answer is no" and "we could not ask" are different answers, and only the
+first should change what you do next.
+
 ## Option B: Anthropic Claude
 Set the provider and your API key:
 ```bash

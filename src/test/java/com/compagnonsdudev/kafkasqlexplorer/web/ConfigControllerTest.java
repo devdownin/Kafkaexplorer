@@ -5,10 +5,12 @@ package com.compagnonsdudev.kafkasqlexplorer.web;
 import com.compagnonsdudev.kafkasqlexplorer.config.ClaudeConfig;
 import com.compagnonsdudev.kafkasqlexplorer.config.ExplorerConfig;
 import com.compagnonsdudev.kafkasqlexplorer.config.KafkaConfig;
+import com.compagnonsdudev.kafkasqlexplorer.config.ProcessMiningConfig;
 import com.compagnonsdudev.kafkasqlexplorer.service.AuditService;
 import com.compagnonsdudev.kafkasqlexplorer.service.FlinkSqlService;
 import com.compagnonsdudev.kafkasqlexplorer.service.KafkaAdminService;
 import com.compagnonsdudev.kafkasqlexplorer.service.LlmClientProvider;
+import com.compagnonsdudev.kafkasqlexplorer.service.OpenRouterModelCatalog;
 import com.compagnonsdudev.kafkasqlexplorer.service.SettingsStore;
 import com.compagnonsdudev.kafkasqlexplorer.service.SseEmitterManager;
 import org.junit.jupiter.api.BeforeEach;
@@ -74,8 +76,17 @@ class ConfigControllerTest {
         mockMvc = MockMvcBuilders
             .standaloneSetup(new ConfigController(kafkaConfig, kafkaAdminService, claudeConfig,
                 auditService, flinkSqlService, sseEmitterManager, new LlmClientProvider(claudeConfig),
-                settingsStore))
+                settingsStore, modelCatalog()))
             .build();
+    }
+
+    /**
+     * The catalogue is a side read on {@code test-llm} against OpenRouter's own host, and these
+     * tests are about the settings form. A real one built over the running config is enough: with
+     * no key and no network reached, {@code isSupported()} decides whether it is consulted at all.
+     */
+    private OpenRouterModelCatalog modelCatalog() {
+        return new OpenRouterModelCatalog(claudeConfig, new ProcessMiningConfig());
     }
 
     private static ExplorerConfig explorerConfigStoringAt(String path, boolean secrets) {
@@ -314,7 +325,7 @@ class ConfigControllerTest {
         SettingsStore store = new SettingsStore(explorerConfigStoringAt(path.toString(), false));
         MockMvc mvc = MockMvcBuilders.standaloneSetup(new ConfigController(kafkaConfig,
             kafkaAdminService, claudeConfig, auditService, flinkSqlService, sseEmitterManager,
-            new LlmClientProvider(claudeConfig), store)).build();
+            new LlmClientProvider(claudeConfig), store, modelCatalog())).build();
 
         mvc.perform(post("/api/config").contentType(MediaType.APPLICATION_JSON)
                 .content("{\"keystorePassword\":\"hunter2\",\"keystorePath\":\"/tmp\"}"))
@@ -343,7 +354,7 @@ class ConfigControllerTest {
             explorerConfigStoringAt(blocker.resolve("settings.json").toString(), true));
         MockMvc mvc = MockMvcBuilders.standaloneSetup(new ConfigController(kafkaConfig,
             kafkaAdminService, claudeConfig, auditService, flinkSqlService, sseEmitterManager,
-            new LlmClientProvider(claudeConfig), store)).build();
+            new LlmClientProvider(claudeConfig), store, modelCatalog())).build();
 
         mvc.perform(post("/api/config").contentType(MediaType.APPLICATION_JSON)
                 .content("{\"bootstrapServers\":\"new:9092\"}"))
