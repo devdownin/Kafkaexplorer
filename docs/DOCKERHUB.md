@@ -255,9 +255,21 @@ re-entered after each restart.
 | `ANTHROPIC_API_KEY` | — | `ANTHROPIC` provider only. |
 | `CLAUDE_USE_RAG` | `false` | `SPECTRA` provider only: also retrieve from SpectraLLM's ingested corpus instead of reasoning solely on the messages inlined in the prompt. |
 | `CLAUDE_COLLECTION` | — | `SPECTRA` + `CLAUDE_USE_RAG` only: which ChromaDB collection to retrieve from. Blank uses SpectraLLM's default. |
+| `PROCESS_MINING_PROMPT_CHAR_BUDGET` | `120000` | Characters of Kafka messages one analysis prompt may carry — about 30 000 tokens. **Lower it, or widen the model's window, when you point this at a small local model.** |
 
 Leave it alone and every other feature works — Process Mining is the only page that calls
 a model.
+
+**The prompt has to fit the model's window, and nothing here can check that** — the window
+belongs to the endpoint. It bites hardest on the most ordinary local setup: Ollama gives a
+model 4 096 tokens unless the machine has the VRAM for more, this image's request carries no
+`num_ctx` (the OpenAI-compatible endpoint would not read one from the body), and the default
+budget above is roughly 30 000 tokens. Ollama does not refuse the excess — it drops the oldest
+messages until the prompt fits, and logs that at debug level. The analysis then reasons on a
+fraction of what it was given, with nothing saying which fraction. Raise the window
+(`OLLAMA_CONTEXT_LENGTH` on the Ollama server, `-c` on llama.cpp) or lower the budget so the
+two agree; the [bundled stacks](https://github.com/devdownin/Kafkaexplorer/blob/main/docker-compose-llm.yml)
+set both together.
 
 ### Runtime
 

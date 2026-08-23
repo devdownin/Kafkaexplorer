@@ -48,7 +48,7 @@
 #     volume yourself, or install it from the Spectra UI's Model Hub.
 #   * THE FIRST BOOT DOWNLOADS ~4.8 GB OF MODEL WEIGHTS and the chat is silent until it lands.
 #     spectra-api installs the default chat model itself (spectra.startup.auto-install-models),
-#     `spectra-embed-model` fetches the embedding GGUF (~81 MB) beside it, and the two
+#     `spectra-models` fetches the embedding GGUF (~81 MB) beside it, and the two
 #     llama-server containers poll until the file they serve appears. Nothing waits on any of
 #     it: Kafka, the Explorer and the Spectra UI are up in seconds. Do NOT add `--wait` — it
 #     would block on llm-chat's healthcheck for the length of that download.
@@ -406,7 +406,7 @@ services:
         set -u
         MODEL="/app/data/models/$${LLM_EMBED_MODEL_FILE}"
         while [ ! -f "$${MODEL}" ]; do
-          echo "[llm-embed] waiting for $${MODEL} — the spectra-embed-model one-shot fetches it (~81 MB)"
+          echo "[llm-embed] waiting for $${MODEL} — the spectra-models one-shot fetches it (~81 MB)"
           sleep 5
         done
         SERVER=""
@@ -426,14 +426,22 @@ services:
       start_interval: 3s
     restart: unless-stopped
 
-  # The embedding GGUF is the one model spectra-api does NOT install by itself (llmfit handles
-  # generation models only) — upstream's answer is "run ./setup.sh", which is a script this
-  # repository does not have. 81 MB, fetched once into the shared volume, and skipped when the
-  # file is already there. It runs as the image's own `spectra` user, so what it writes is
-  # owned by the process that will read it. Nothing depends on it: without the embedding model
-  # the Explorer's audits still work (they carry their context inline, useRag=false) — what
-  # stops working is ingesting documents into Spectra.
-  spectra-embed-model:
+  # The GGUF fetcher. Two models, two different reasons for being here.
+  #
+  # The EMBEDDING model is the one spectra-api does not install by itself — llmfit handles
+  # generation models only — and upstream's answer is "run ./setup.sh", a script this repository
+  # does not have. 81 MB, fetched once, skipped when the file is already there.
+  #
+  # The CHAT model is fetched only when SPECTRA_CHAT_MODEL_URL is set, because for the DEFAULT
+  # model spectra-api installs it itself, through the Model Hub, which lands it *registered*
+  # rather than merely present. Naming a URL is how a smaller model gets served instead — see
+  # docker-compose-spectra-hub.small.yml, which is that path made into one flag.
+  #
+  # It runs as the image's own `spectra` user, so what it writes is owned by the process that
+  # will read it. Nothing depends on it: without the embedding model the Explorer's audits still
+  # work (they carry their context inline, useRag=false) — what stops working is ingesting
+  # documents into Spectra.
+  spectra-models:
     image: ${SPECTRA_IMAGE_NAMESPACE:-compagnonsdudev}/spectrallm:${SPECTRA_IMAGE_TAG:-0.9.0}
     depends_on:
       spectra-data-init:
@@ -443,27 +451,56 @@ services:
     environment:
       - LLM_EMBED_MODEL_FILE=${LLM_EMBED_MODEL_FILE:-embed.gguf}
       - SPECTRA_EMBED_MODEL_URL=${SPECTRA_EMBED_MODEL_URL:-https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q4_K_M.gguf}
+      - SPECTRA_EMBED_MODEL_SHA256=${SPECTRA_EMBED_MODEL_SHA256:-}
+      - LLM_CHAT_MODEL_FILE=${LLM_CHAT_MODEL_FILE:-Qwen2.5-7B-Instruct-Q4_K_M.gguf}
+      # Empty: the default chat model is spectra-api's to install. Set it to serve another one.
+      - SPECTRA_CHAT_MODEL_URL=${SPECTRA_CHAT_MODEL_URL:-}
+      - SPECTRA_CHAT_MODEL_SHA256=${SPECTRA_CHAT_MODEL_SHA256:-}
     entrypoint:
       - /bin/sh
       - -c
       - |
         set -u
-        DEST="/app/data/models/$${LLM_EMBED_MODEL_FILE}"
-        if [ -s "$${DEST}" ]; then
-          echo "[embed-model] $${DEST} already present — nothing to download"
-          exit 0
-        fi
-        echo "[embed-model] downloading $${SPECTRA_EMBED_MODEL_URL}"
-        # -C - resumes a partial transfer, so a run interrupted mid-download costs nothing on
-        # the next `up`. The .part name is what keeps a truncated file from ever being served:
-        # llm-embed waits on the final name, and only a completed transfer takes it.
-        if curl -fSL --retry 5 --retry-delay 5 -C - -o "$${DEST}.part" "$${SPECTRA_EMBED_MODEL_URL}"; then
-          mv "$${DEST}.part" "$${DEST}"
-          echo "[embed-model] ready: $${DEST}"
-        else
-          echo "[embed-model] download FAILED — the partial transfer is kept, re-run this stack to resume. Ingestion stays unavailable until it lands; the audits do not need it."
-          exit 1
-        fi
+        fetch() {
+          url="$$1"; dest="$$2"; want="$$3"; label="$$4"
+          if [ -z "$${url}" ]; then
+            echo "[models] no URL given for the $${label} — skipped (it is installed elsewhere, or not wanted)"
+            return 0
+          fi
+          if [ -s "$${dest}" ]; then
+            echo "[models] $${label} already present: $${dest}"
+            return 0
+          fi
+          echo "[models] downloading the $${label} from $${url}"
+          # -C - resumes a partial transfer, so a run interrupted mid-download costs nothing on
+          # the next `up`. The .part name is what keeps a truncated file from ever being served:
+          # the llama-server containers wait on the final name, and only a completed — and, when
+          # a digest is pinned, verified — transfer takes it.
+          if ! curl -fSL --no-progress-meter --retry 5 --retry-delay 5 -C - -o "$${dest}.part" "$${url}"; then
+            echo "[models] the $${label} download FAILED — the partial transfer is kept, re-run this stack to resume"
+            return 1
+          fi
+          got=$$(sha256sum "$${dest}.part" | cut -d" " -f1)
+          if [ -n "$${want}" ] && [ "$${got}" != "$${want}" ]; then
+            # Deleted, not kept: a resumed transfer would otherwise resume onto the bad bytes
+            # for ever, and a file that failed its digest is not a file to serve a model from.
+            rm -f "$${dest}.part"
+            echo "[models] the $${label} FAILED its checksum (expected $${want}, got $${got}) — the file was deleted"
+            return 1
+          fi
+          mv "$${dest}.part" "$${dest}"
+          if [ -z "$${want}" ]; then
+            echo "[models] $${label} ready: $${dest} (sha256 $${got} — copy it into SPECTRA_*_MODEL_SHA256 to pin it)"
+          else
+            echo "[models] $${label} ready and verified: $${dest}"
+          fi
+        }
+        rc=0
+        fetch "$${SPECTRA_EMBED_MODEL_URL}" "/app/data/models/$${LLM_EMBED_MODEL_FILE}" \
+          "$${SPECTRA_EMBED_MODEL_SHA256}" "embedding model" || rc=1
+        fetch "$${SPECTRA_CHAT_MODEL_URL}" "/app/data/models/$${LLM_CHAT_MODEL_FILE}" \
+          "$${SPECTRA_CHAT_MODEL_SHA256}" "chat model" || rc=1
+        exit $${rc}
 
   # nginx serving the React UI, and proxying /api/ to spectra-api:8080 — that upstream is
   # baked into the image's nginx.conf, which is why the API service MUST keep the name

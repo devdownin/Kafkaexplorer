@@ -128,6 +128,23 @@ docker compose up -d
 ./setup-demo-avro.sh localhost:9092 http://localhost:8081
 ```
 
+#### The prompt has to fit the model's window
+
+`process-mining.prompt-char-budget` is 120 000 characters — ~30k tokens — and **the window
+belongs to the endpoint, so nothing in this application can check that it fits**. That is
+survivable against a hosted API and wrong on the default deployment: Ollama gives a model
+**4 096 tokens** unless the machine has the VRAM for more, `OpenAiCompatibleLlmClient` sends
+`model` / `messages` / `max_tokens` / `temperature` / `stream` and **never `num_ctx`** (which
+that endpoint would not read from the body anyway), and Ollama does not refuse the excess — it
+drops the oldest messages until the prompt fits and logs it at DEBUG, i.e. nowhere on a default
+install. Every Process Mining analysis on `docker-compose-llm.yml` was therefore reasoning on a
+fraction of what it had been handed, with nothing on screen or in the log naming the fraction.
+The bundled stacks now set both halves together (`OLLAMA_CONTEXT_LENGTH` / `LLM_CONTEXT` against
+`PROCESS_MINING_PROMPT_CHAR_BUDGET`) and say so where they set them; the default in
+`application.yml` is unchanged, since a hosted model can afford it, and carries the rule beside
+it. Raising one without the other buys nothing or truncates again — and the KV cache is what a
+wider window costs (~2 GB for a 7B at 16k).
+
 #### The two SpectraLLM stacks
 
 Process Mining can be answered by a **local SpectraLLM** instance rather than Ollama or Anthropic
@@ -136,7 +153,12 @@ files wire the pair, and they are not variants of one another:
 
 - **`docker-compose-spectra.yml`** `include:`s SpectraLLM's own compose from a sibling checkout
   (`SPECTRALLM_DIR`, default `../SpectraLLM`) and **builds** the explorer from source. It is the
-  developer stack: it follows whatever is in that checkout, profiles included.
+  developer stack: it follows whatever is in that checkout, profiles included. It used to hold
+  the explorer behind `spectra-api: service_healthy` — the rule the other stacks are written
+  against, since this application needs no model to boot, only when somebody opens Process
+  Mining — and it carried neither the prompt budget nor the timeout the local model needs; both
+  are aligned with the hub stack now, one pairing described in two files being the way they
+  drift.
 - **`docker-compose-spectra-hub.yml`** builds nothing. Both projects publish their images under
   `compagnonsdudev` on Docker Hub (`kafkaexplorer`, `spectrallm`, `spectrallm-frontend`), so a
   machine with only Docker runs the pair — no SpectraLLM checkout, no Maven, no npm:
@@ -157,9 +179,10 @@ files wire the pair, and they are not variants of one another:
   repository, and inlining a copy of it here would be a copy that drifts — so activating another
   model in the Spectra UI needs a `restart llm-chat`, which the file says. **Nothing waits on the
   first-boot model download** (~4.8 GB): `spectra-api` installs the chat model itself
-  (`spectra.startup.auto-install-models`), a `spectra-embed-model` one-shot fetches the embedding
-  GGUF that the API does *not* install, and the two llama.cpp containers poll until the file they
-  serve appears — so the Explorer, the broker and the Spectra UI are up in seconds, and
+  (`spectra.startup.auto-install-models`), a `spectra-models` one-shot fetches the embedding
+  GGUF that the API does *not* install — verifying a `SPECTRA_*_MODEL_SHA256` when one is pinned,
+  and deleting the file rather than serving it when the digest does not match — and the two
+  llama.cpp containers poll until the file they serve appears — so the Explorer, the broker and the Spectra UI are up in seconds, and
   `up --wait` is the one thing not to use. **And the two prompt budgets are sized against each
   other**: `LLM_CONTEXT` (16384, split across 2 slots = 8192 tokens per request) against the
   Explorer's `PROCESS_MINING_PROMPT_CHAR_BUDGET`, lowered to 16 000 from the shipped 120 000 —
@@ -186,6 +209,15 @@ files wire the pair, and they are not variants of one another:
   fails the whole `up` — so a nine-service stack needs its own, and it covers all nine instead of
   leaving the four heaviest unbounded. It deliberately sets **no `cpus` on the llama.cpp
   servers**: on CPU inference throughput *is* the core count.
+
+  `docker-compose-spectra-hub.small.yml` is the fourth, and the one an ordinary laptop wants:
+  a 3B chat model instead of the default 7B — ~2 GB of weights instead of 4.7, half the memory,
+  and an answer in a fraction of the time, which is what makes the 300 s timeouts stop being
+  load-bearing. It is also the reason `spectra-models` fetches *two* models: `spectra-api`
+  installs the default chat model itself and **only** that one, so serving another means naming
+  its URL (`SPECTRA_CHAT_MODEL_URL`) and turning the auto-install off, which the overlay does
+  together with the file name and the alias — the three have to agree, and are set in one place
+  for that reason.
 
   `docker-compose-spectra-hub.ingest.yml` is the one that makes the pair more than a shared
   model — SpectraLLM consumes the topics and indexes what is *in* the messages, so the corpus
@@ -265,6 +297,15 @@ KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `
   without being checked. `docker-compose-spectra.yml`'s `include:` is resolved against a
   three-line stub: what is under test is that file's own syntax, not the availability of another
   repository.
+- **The images the stacks pull are checked too** (`docs/check-image-pins.py`, in the
+  `docs-links` job): nothing floats (`curlimages/curl:latest` sat two services below the comment
+  claiming Ollama was "the only floating tag left in the tree"), the llama.cpp CPU and CUDA tags
+  name the **same build** (the GPU overlay must change the hardware, not the engine's revision),
+  and the Explorer image the hub stack pulls is the **current release** — that default is
+  hand-written and Dependabot cannot read a `${VAR:-1.8.8}` form, so nothing else would ever
+  move it. That last one fails on a *release* rather than on a change, which is the point: the
+  reminder arrives when the pin goes stale. It needs tags, hence `fetch-tags` on that job's
+  checkout, and it fails rather than skipping when they are absent.
 - **The published-images stack is booted too** (`spectra-hub-stack`, on main and
   `workflow_dispatch` only — it pulls ~2 GB to test a deployment file whose content does not move
   with the code, the same trade-off as the arm64 boot). It runs with
@@ -274,6 +315,12 @@ KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `
   reports `SPECTRA` and `http://spectra-api:8080` (so a renamed variable fails here, not in
   production), and that the UI reaches the API through nginx's `/api/` proxy — whose upstream is
   baked into the published image, which is what forces the service to keep the name `spectra-api`.
+  It then drops a **0.5B model** into the volume — through the stack's own `spectra-models`
+  one-shot, so the fetcher is exercised rather than bypassed — and asserts that
+  `POST /api/config/test-llm` answers `ok`. That is the assertion the job existed without: a
+  Process Mining call really travelling explorer → spectra-api → llm-chat and coming back, which
+  is what would have caught the `X-API-Key` / `Bearer` mismatch this stack documents instead of
+  leaving it a paragraph nobody executes.
 - **CI runs the stack, it does not merely build it.** The `docker` job starts `docker-compose.yml` over the image it just built (`docker-compose.ci.yml` supplies it) and asserts the deployment contract: the container reaches `healthy`, both probes answer UP, `/api/dashboard` responds, the process runs as uid 10001, `/app/logs/kafkaexplorer.log` is non-empty, a second seeding run skips, and the app's exit code after `stop` is not 137 (SIGKILL). Each assertion corresponds to a bug that lived here for months precisely because nothing ever ran these files. A second job, `release-image`, builds `Dockerfile.release` from the `build` job's JAR and boots it with no broker — that file used to be exercised for the first time by the release itself. **That job is also where the startup audit's findings are guarded**, because it is the one place in CI that runs the app with *no broker* — the `docker` job's stack has a healthy one, so the failure mode measured there cannot occur in it. After liveness it holds the container for a fixed 30 s window and asserts three things: the log stays under **5 000 lines** (the flood was ~2 300 lines a second from a single class, so a return of it is ~70 000 in that window — the ceiling sits more than tenfold from both, deliberately, because a gate that flakes is a gate people learn to ignore); the startup summary names the broker that did not answer; and each of the two state restores reports itself, naming its topic, since both used to fail at DEBUG and therefore silently.
 
 ### Typical local dev workflow

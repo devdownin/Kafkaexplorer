@@ -23,6 +23,18 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Process Mining was reasoning on a truncated prompt against a local model, and said nothing.**
+  The prompt budget is 120 000 characters — about 30 000 tokens — while Ollama gives a model
+  4 096 tokens unless the machine has the VRAM for more, and the OpenAI-compatible request
+  carries no `num_ctx` (that endpoint would not read one from the body). Ollama does not refuse
+  the excess: it drops the oldest messages until the prompt fits, and logs that at debug level,
+  i.e. nowhere on a default install. So every analysis on `docker-compose-llm.yml` — and on any
+  Ollama an operator points the app at — was answering from a fraction of what it had been
+  given, with nothing naming the fraction. The bundled stacks now set the window and the budget
+  together and say so; the application default is unchanged, since a hosted model can afford it,
+  and now carries the rule beside it. The same file's `ollama-pull-model` was pinned while it
+  was open: it ran `curlimages/curl:latest`, two services below the comment claiming that Ollama
+  image was "the only floating tag left in the tree".
 - **`docker-compose-kafka4.yml` starts again.** The stack this project recommends had been
   refusing to come up at all since two volume mounts were added to its explorer service without
   the matching top-level declarations: `service "explorer" refers to undefined volume
@@ -52,6 +64,25 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and `SPECTRA_API_KEY` must stay empty — Spectra's filter reads `X-API-Key` while the explorer
   sends `Authorization: Bearer`, so a key there would leave the stack looking healthy while every
   Process Mining call answered 401.
+- **A fourth overlay, and a fetcher that verifies.** `…small.yml` serves a 3B chat model instead
+  of the default 7B — ~2 GB instead of 4.7, half the memory, an answer in a fraction of the time,
+  which is what makes the 300 s timeouts stop being load-bearing. It is also why the model
+  one-shot (now `spectra-models`) fetches two models rather than one: `spectra-api` installs the
+  default chat model itself and only that one, so serving another means naming its URL. Both
+  downloads take an optional `SPECTRA_*_MODEL_SHA256`, and a file that fails its digest is
+  deleted rather than served — a resumed transfer would otherwise resume onto the bad bytes for
+  ever. With no digest pinned the one-shot prints the one it obtained, ready to copy.
+- **The images the stacks pull are checked** (`docs/check-image-pins.py`): nothing floats, the
+  llama.cpp CPU and CUDA tags name the same build — the GPU overlay must change the hardware,
+  not the engine's revision — and the Explorer image the hub stack pulls is the current release.
+  That default is hand-written and Dependabot cannot read a `${VAR:-1.8.8}` form, so nothing
+  else would ever move it; the check fails on a *release* rather than on a change, which is when
+  the reminder is due.
+- **The end-to-end call is asserted in CI.** The stack smoke test now drops a 0.5B model into the
+  volume — through the stack's own fetcher, so that code is exercised rather than bypassed — and
+  requires `POST /api/config/test-llm` to answer `ok`. A Process Mining call really travelling
+  explorer → spectra-api → llm-chat and coming back is what would have caught the `X-API-Key` /
+  `Bearer` mismatch this pairing documents, instead of leaving it a paragraph nobody executes.
 - **Three overlays beside it.** `…gpu.yml` moves both llama.cpp servers onto CUDA, pinned to the
   same build as the CPU image — the change that turns minutes per analysis into seconds.
   `…limits.yml` bounds all nine services (the shared limits overlay names two, and a service named
@@ -62,6 +93,12 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   because the flag alone gets two ordering problems wrong: a consumer subscribing to a topic that
   does not exist yet creates it with one partition instead of three, and a record that cannot be
   embedded yet goes to `<topic>.DLT` while the model is still downloading.
+- **The developer SpectraLLM stack no longer holds the Explorer behind the model.**
+  `docker-compose-spectra.yml` made the app wait for `spectra-api: service_healthy` — the rule
+  every other stack here is written against, since this application needs no model to boot, only
+  when somebody opens Process Mining — and carried neither the prompt budget nor the timeout a
+  local model needs. Both are aligned with the published-images stack now: one pairing described
+  in two files is how the two come to behave differently.
 - **The dashboard's activity curve leads somewhere, and says what it is worth.** Three follow-ups
   to the sparkline column, all of them things the curve could not say on its own:
   - **Clicking a bucket opens that period's messages.** Seeing a spike and reading what was in it

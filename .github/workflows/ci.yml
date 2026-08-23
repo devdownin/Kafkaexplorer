@@ -601,7 +601,8 @@ jobs:
             "-f docker-compose-spectra-hub.yml -f docker-compose-spectra-hub.ingest.yml"
             "-f docker-compose-spectra-hub.yml -f docker-compose-spectra-hub.gpu.yml"
             "-f docker-compose-spectra-hub.yml -f docker-compose-spectra-hub.limits.yml"
-            "-f docker-compose-spectra-hub.yml -f docker-compose-spectra-hub.ingest.yml -f docker-compose-spectra-hub.gpu.yml -f docker-compose-spectra-hub.limits.yml"
+            "-f docker-compose-spectra-hub.yml -f docker-compose-spectra-hub.small.yml"
+            "-f docker-compose-spectra-hub.yml -f docker-compose-spectra-hub.ingest.yml -f docker-compose-spectra-hub.gpu.yml -f docker-compose-spectra-hub.limits.yml -f docker-compose-spectra-hub.small.yml"
           )
           for combo in "${combos[@]}"; do
             echo "· $combo"
@@ -636,13 +637,18 @@ jobs:
     name: Smoke-test the SpectraLLM stack
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     env:
       COMPOSE_FILE: docker-compose-spectra-hub.yml
-      # No chat model: see above. The embedding one-shot is left alone deliberately — it is
-      # 81 MB and it exercises the download path — but nothing below asserts on it, so a
-      # HuggingFace outage cannot fail this build.
+      # Not the 4.7 GB default: see above. The stack is booted with no chat model at all, so
+      # that the "it waits rather than crash-looping" assertion is about a real absence — and a
+      # tiny one is then dropped in, which is what lets the last step prove the chain answers.
       SPECTRA_AUTO_INSTALL_MODELS: "false"
+      LLM_CHAT_MODEL_FILE: Qwen2.5-0.5B-Instruct-Q4_K_M.gguf
+      LLM_CHAT_MODEL_NAME: qwen2.5-0.5b-instruct
+      # ~400 MB, and the smallest model that still answers a one-word health check coherently.
+      # A wrong URL fails this job loudly at the fetch step; it is a one-line fix here.
+      CI_CHAT_MODEL_URL: https://huggingface.co/bartowski/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -717,6 +723,35 @@ jobs:
           docker compose logs --no-color llm-chat | grep -q 'waiting for' \
             || { echo "::error::llm-chat did not report waiting for its model"; exit 1; }
 
+      - name: Serve a tiny model, and prove the whole chain answers
+        # The assertion this job existed without: that a Process Mining call really travels
+        # explorer → spectra-api → llm-chat and comes back. It is what would have caught the
+        # header mismatch this stack documents (Spectra reads `X-API-Key`, the Explorer sends
+        # `Authorization: Bearer`) instead of leaving it a paragraph nobody executes.
+        #
+        # The model is fetched through the stack's OWN one-shot rather than by a curl written
+        # here, so the fetcher — resume, checksum, ownership — is exercised too. `--no-deps`
+        # because its dependency is a one-shot that has already completed.
+        run: |
+          set -euo pipefail
+          docker compose run --rm --no-deps -T \
+            -e SPECTRA_CHAT_MODEL_URL="$CI_CHAT_MODEL_URL" spectra-models
+
+          # No restart: llama-server's entrypoint polls for the file and starts on its own,
+          # which is the behaviour the previous step just asserted from the other side.
+          chat=$(docker compose ps -q llm-chat)
+          for _ in $(seq 1 60); do
+            status=$(docker inspect -f '{{.State.Health.Status}}' "$chat" 2>/dev/null || echo missing)
+            [ "$status" = healthy ] && break
+            sleep 5
+          done
+          [ "${status:-}" = healthy ] || { echo "::error::llm-chat never served the model"; exit 1; }
+
+          answer=$(curl -fsS -X POST http://127.0.0.1:8080/api/config/test-llm)
+          echo "$answer"
+          echo "$answer" | grep -q '"ok":true' \
+            || { echo "::error::the Explorer could not reach the model through SpectraLLM"; exit 1; }
+
       - name: Assert the demo seeding ran to completion
         run: |
           set -euo pipefail
@@ -751,6 +786,11 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # check-image-pins.py compares the Explorer image the hub stack pulls against the
+          # newest release tag, and the default checkout carries no tags at all — the check
+          # would fail on their absence rather than on a drift.
+          fetch-tags: true
       - run: python3 docs/check-links.py
 
       # The configuration tables on that same page have the same exposure as its links and
@@ -776,6 +816,15 @@ jobs:
       # pointed at documents and a directory that had been deleted, one of them for months.
       # A reader following the file explaining the repository was sent to nothing.
       - run: python3 docs/check-doc-paths.py
+
+      # And the same rot in the deployment files: an image reference is written by hand, and
+      # Dependabot cannot read a `${VAR:-1.8.8}` form, so nothing would ever move the Explorer
+      # pin — the hub stack would go on serving an old image to everyone who does not pin, for
+      # as long as nobody noticed. It also refuses a floating tag (the comment claiming Ollama
+      # was "the only floating tag left in the tree" had `curlimages/curl:latest` two services
+      # below it) and requires the llama.cpp CPU and CUDA images to name the same build, since
+      # the GPU overlay must change the hardware and not the engine's revision.
+      - run: python3 docs/check-image-pins.py
 
   # docs/img/*.png is what the Docker Hub overview, the READMEs and the Pages site show, and
   # it is generated by docs/screenshots/ rather than photographed. Nothing ran that pipeline,
