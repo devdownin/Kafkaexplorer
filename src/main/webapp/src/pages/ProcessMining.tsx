@@ -14,7 +14,7 @@ import AnomalyFeed, { LiveAnomaly } from '../components/processmining/AnomalyFee
 import { PageHeader, Button, Field, Textarea } from '../components/ui';
 import { clearDraft, readDraft, useDraftConflict, usePersistentState, writeDraft } from '../draftStore';
 import { describeResume, resumableStep } from './processMiningDraft';
-import { describeUsage, totalTokens } from './llmUsage';
+import { describeUsage, formatCostUsd, totalCostUsd, totalTokens } from './llmUsage';
 import type { AnalysisMode, Step } from './processMiningDraft';
 import type {
   AnomalyReport,
@@ -306,6 +306,7 @@ const ProcessMining: React.FC = () => {
   }, [profileResult]);
 
   const sessionTokens = useMemo(() => totalTokens(liveUsageHistory), [liveUsageHistory]);
+  const sessionCost = useMemo(() => totalCostUsd(liveUsageHistory), [liveUsageHistory]);
 
   const missingRolesFor = (t: AuditTemplate): string[] =>
     (t.requiredRoles ?? []).filter(r => !availableRoles.has(r));
@@ -986,6 +987,7 @@ const ProcessMining: React.FC = () => {
                         {sessionTokens == null
                           ? 'tokens not reported'
                           : `${sessionTokens.toLocaleString()} tokens total`}
+                        {sessionCost != null && ` · ${formatCostUsd(sessionCost)} total`}
                       </span>
                     </span>
                   )}

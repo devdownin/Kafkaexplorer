@@ -620,6 +620,15 @@ export interface ProcessMiningResult {
 export interface LlmUsage {
   inputTokens: number | null;
   outputTokens: number | null;
+  /**
+   * Ce que le fournisseur dit que l'appel a coûté, en USD — `null` quand il ne le dit pas.
+   *
+   * Rapporté, jamais calculé : aucune table de prix ne vit dans cette application, donc un montant
+   * affiché est un montant qu'un fournisseur a assumé. OpenRouter le renvoie sur chaque réponse ;
+   * l'API OpenAI, Ollama et SpectraLLM non, et il y reste `null`. Attention, `0` est une vraie
+   * mesure — un modèle gratuit — et non une mesure absente.
+   */
+  costUsd: number | null;
   durationMs: number;
   provider: string;
   model: string;

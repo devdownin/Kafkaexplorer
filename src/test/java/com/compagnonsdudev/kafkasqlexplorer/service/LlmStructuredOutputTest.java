@@ -74,6 +74,12 @@ class LlmStructuredOutputTest {
             + "\"usage\":{\"prompt_tokens\":1200,\"completion_tokens\":340}}";
     }
 
+    /** OpenRouter prices every response; this is the shape it answers with. */
+    private static String pricedBody() {
+        return "{\"choices\":[{\"message\":{\"content\":\"{}\"}}],"
+            + "\"usage\":{\"prompt_tokens\":1200,\"completion_tokens\":340,\"cost\":0.00042}}";
+    }
+
     private static LlmOutputSchema schema() {
         return new LlmOutputSchema("process_mining_result", LlmSchemas.processMiningResult());
     }
@@ -305,6 +311,120 @@ class LlmStructuredOutputTest {
 
         assertNull(requestHeaders.get(1).get("X-title"));
         assertNull(requestHeaders.get(1).get("Http-referer"));
+    }
+
+    /**
+     * The money is on the wire and used to be dropped. It is read, never derived — no price table
+     * lives in this application, so a figure shown is one the provider stood behind.
+     */
+    @Test
+    void readsBackWhatTheCallCostInMoney() throws Exception {
+        ClaudeConfig config = startServer(List.of(new StubResponse(200, pricedBody())));
+        config.setProvider(ClaudeConfig.Provider.OPENROUTER);
+
+        LlmUsage usage = new OpenAiCompatibleLlmClient(config)
+            .generateWithMeta("SYS", "USR", null).usage();
+
+        assertEquals(0.00042, usage.costUsd(), 1e-9);
+        assertTrue(usage.summary().contains("$0.000420"), usage.summary());
+    }
+
+    /**
+     * A gateway that does not price its answers — the OpenAI API, Ollama — leaves the cost unknown.
+     * Zero would say the call was free, on a page whose whole point is what a configuration costs.
+     */
+    @Test
+    void reportsAnUnknownCostRatherThanAFreeOne() throws Exception {
+        ClaudeConfig config = startServer(List.of(new StubResponse(200, okBody())));
+
+        LlmUsage usage = new OpenAiCompatibleLlmClient(config)
+            .generateWithMeta("SYS", "USR", null).usage();
+
+        assertNull(usage.costUsd(), "an unpriced call is not a free one");
+        assertFalse(usage.summary().contains("$"), usage.summary());
+    }
+
+    /**
+     * The privacy control: OpenRouter can enforce at the routing layer what the Settings banner can
+     * otherwise only warn about.
+     */
+    @Test
+    void asksOpenRouterToKeepMessagesAwayFromProvidersThatRetainThem() throws Exception {
+        ClaudeConfig config = startServer(List.of(new StubResponse(200, okBody())));
+        config.setProvider(ClaudeConfig.Provider.OPENROUTER);
+
+        new OpenAiCompatibleLlmClient(config).generateWithMeta("SYS", "USR", null);
+
+        JsonNode sent = new ObjectMapper().readTree(requestBodies.get(0));
+        assertEquals("deny", sent.path("provider").path("data_collection").asText());
+        assertTrue(sent.path("provider").path("require_parameters").isMissingNode(),
+            "require_parameters is opt-in: it makes a schema-less model unroutable rather than "
+                + "degrading, which the per-model latch cannot rescue");
+        assertTrue(config.isDataRetentionRefused());
+    }
+
+    @Test
+    void sendsNoRoutingPolicyToAGatewayThatIsNotOpenRouter() throws Exception {
+        ClaudeConfig config = startServer(List.of(new StubResponse(200, okBody())));
+        config.setProvider(ClaudeConfig.Provider.OPENAI_COMPATIBLE);
+
+        new OpenAiCompatibleLlmClient(config).generateWithMeta("SYS", "USR", null);
+
+        JsonNode sent = new ObjectMapper().readTree(requestBodies.get(0));
+        assertTrue(sent.path("provider").isMissingNode(),
+            "an arbitrary gateway has no notion of OpenRouter's routing object");
+        assertFalse(config.isDataRetentionRefused(),
+            "the claim is only true where it can be enforced");
+    }
+
+    @Test
+    void routingCanBeWidenedAndTightenedFromTheConfiguration() throws Exception {
+        ClaudeConfig config = startServer(List.of(new StubResponse(200, okBody())));
+        config.setProvider(ClaudeConfig.Provider.OPENROUTER);
+        config.setOpenrouterDataCollection(ClaudeConfig.DataCollection.ALLOW);
+        config.setOpenrouterRequireParameters(true);
+
+        new OpenAiCompatibleLlmClient(config).generateWithMeta("SYS", "USR", null);
+
+        JsonNode routing = new ObjectMapper().readTree(requestBodies.get(0)).path("provider");
+        assertTrue(routing.path("data_collection").isMissingNode());
+        assertTrue(routing.path("require_parameters").asBoolean());
+    }
+
+    /**
+     * A 402 is an account out of credit. Telling its owner to check their base URL, model and API
+     * key — which are all correct — is worse than saying nothing.
+     */
+    @Test
+    void namesTheRealRemedyOnAMeteredGatewaysErrors() throws Exception {
+        ClaudeConfig config = startServer(List.of(
+            new StubResponse(402, "{\"error\":{\"message\":\"Insufficient credits\"}}")));
+        config.setProvider(ClaudeConfig.Provider.OPENROUTER);
+
+        RuntimeException e = assertThrows(RuntimeException.class,
+            () -> new OpenAiCompatibleLlmClient(config).generateWithMeta("SYS", "USR", null));
+
+        assertTrue(e.getMessage().contains("out of credit"), e.getMessage());
+        assertTrue(e.getMessage().contains("Insufficient credits"),
+            "the provider's own words are the half that says which cap");
+        assertFalse(e.getMessage().contains("check base URL, model and API key"), e.getMessage());
+    }
+
+    /**
+     * Restricting routing makes "no provider satisfies your policy" arrive as the same 404 a
+     * mistyped slug does. Unqualified, an operator checks a model name that is already correct.
+     */
+    @Test
+    void aRoutingRefusalIsNotReportedAsAnUnknownModel() throws Exception {
+        ClaudeConfig config = startServer(List.of(
+            new StubResponse(404, "{\"error\":{\"message\":\"No endpoints found\"}}")));
+        config.setProvider(ClaudeConfig.Provider.OPENROUTER);
+
+        RuntimeException e = assertThrows(RuntimeException.class,
+            () -> new OpenAiCompatibleLlmClient(config).generateWithMeta("SYS", "USR", null));
+
+        assertTrue(e.getMessage().contains("routing is restricted"), e.getMessage());
+        assertTrue(e.getMessage().contains("claude.openrouter-data-collection"), e.getMessage());
     }
 
     @Test

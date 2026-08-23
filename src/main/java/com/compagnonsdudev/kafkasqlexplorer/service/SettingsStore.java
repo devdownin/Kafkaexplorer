@@ -138,6 +138,8 @@ public class SettingsStore {
         new Field("llmUseRag", "claude.use-rag"),
         new Field("llmCollection", "claude.collection"),
         new Field("llmStructuredOutput", "claude.structured-output"),
+        new Field("llmOpenrouterDataCollection", "claude.openrouter-data-collection"),
+        new Field("llmOpenrouterRequireParameters", "claude.openrouter-require-parameters"),
         new Field("llmRequestTimeoutSeconds", "claude.request-timeout-seconds"),
         new Field("llmMaxTokens", "claude.max-tokens"),
         new Field("llmSnapshotWindowSize", "claude.snapshot-window-size"),

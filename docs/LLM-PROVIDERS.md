@@ -12,10 +12,8 @@ remote.
 
 [OpenRouter](https://openrouter.ai) is a gateway in front of most hosted vendors, which makes it
 the cheapest way to *try* several models against your own topics without opening an account with
-each of them. It is what this application ships pointed at, so a key and, if you want something
-other than the default model, one slug are the whole setup.
-
-The whole setup is one variable, because everything else is already the default:
+each of them. It is also what this application ships pointed at, so the setup is one variable —
+everything else is already the default:
 
 ```bash
 export OPENROUTER_API_KEY='sk-or-v1-…'
@@ -62,6 +60,45 @@ Three things worth knowing before you point it at a production cluster:
 Requests carry OpenRouter's two attribution headers (`HTTP-Referer`, `X-Title`) naming this
 project. They are sent to OpenRouter only, and they say nothing about your deployment, your
 cluster or your messages.
+
+### Where your messages are allowed to go
+
+This is the one place in the application where "where does my data go" has an answer better than a
+warning. OpenRouter can constrain routing at its own layer, so the shipped configuration asks it to:
+
+```yaml
+claude:
+  openrouter-data-collection: DENY   # the default
+```
+
+`DENY` restricts routing to upstream providers that do **not** retain or train on what is sent, and
+the Settings banner then states that property instead of merely warning that inference is remote.
+The cost is stated where it is paid: a model served only by data-collecting providers stops being
+routable, and OpenRouter reports that with the same 404 it uses for a mistyped slug — so the error
+message names this setting, or an operator would spend the afternoon checking a model name that was
+correct all along. Set `ALLOW` to widen the choice of models back.
+
+Its sibling is deliberately **off**:
+
+```yaml
+claude:
+  openrouter-require-parameters: false   # the default
+```
+
+`true` routes only to providers implementing every parameter sent, which turns structured output
+from something discovered by a refusal into a routing guarantee. It is opt-in for the same reason
+`structured-output: AUTO` leaves an unknown gateway alone: a model whose providers lack schema
+support becomes *unroutable* rather than degrading, and that arrives as "no endpoints found" — not
+as the 400 or 422 the per-model fallback can act on. Turn it on when you know your model is served
+with schema support.
+
+### What each analysis cost
+
+OpenRouter prices every response, so Process Mining shows the real figure beside the token counts —
+the last window and the running session total — rather than an estimate. It is read from the
+provider's own accounting: this application keeps no price table, so a model that reports no cost
+(the OpenAI API, Ollama, SpectraLLM) shows none rather than a zero, and a session containing one
+unpriced call reports no total at all instead of one that understates the bill.
 
 ## Option B: Anthropic Claude
 Set the provider and your API key:

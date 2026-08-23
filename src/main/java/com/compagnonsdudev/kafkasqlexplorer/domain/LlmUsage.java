@@ -18,6 +18,14 @@ package com.compagnonsdudev.kafkasqlexplorer.domain;
  *
  * @param inputTokens  prompt tokens, or {@code null} when the provider does not report them
  * @param outputTokens generated tokens, or {@code null} when the provider does not report them
+ * @param costUsd      what the provider says the call actually cost, in USD, or {@code null} when
+ *                     it does not say. Same rule as the token counts, and it matters more here:
+ *                     the default provider bills per token, so a zero would read as a free call
+ *                     rather than as an unpriced one. It is <em>reported</em>, never derived — no
+ *                     price table is kept in this application, so a figure shown is one the
+ *                     provider stood behind. OpenRouter returns it on every response; the OpenAI
+ *                     API, Ollama and SpectraLLM do not, and there it stays null. Note that
+ *                     {@code 0.0} is a real measurement (a free model), not an absent one.
  * @param durationMs   wall-clock time of the call, always measured here
  * @param provider     the provider label the call went to
  * @param model        the model the call named
@@ -25,13 +33,14 @@ package com.compagnonsdudev.kafkasqlexplorer.domain;
 public record LlmUsage(
         Long inputTokens,
         Long outputTokens,
+        Double costUsd,
         long durationMs,
         String provider,
         String model
 ) {
     /** Usage for a provider that reports no token counts: the duration is still worth having. */
     public static LlmUsage untokenized(long durationMs, String provider, String model) {
-        return new LlmUsage(null, null, durationMs, provider, model);
+        return new LlmUsage(null, null, null, durationMs, provider, model);
     }
 
     /** Null when either half is unreported — a partial sum would be worse than no sum. */
@@ -47,6 +56,18 @@ public record LlmUsage(
         return provider + '/' + model
             + " · in=" + (inputTokens == null ? "?" : inputTokens)
             + " out=" + (outputTokens == null ? "?" : outputTokens)
+            + (costUsd == null ? "" : " · $" + formatCost(costUsd))
             + " · " + durationMs + "ms";
+    }
+
+    /**
+     * A per-call cost is usually a fraction of a cent, so a two-decimal rendering would print
+     * {@code $0.00} for every analysis and make the whole figure useless. Six decimals below a
+     * cent, two above, which keeps a session total readable and a single window honest.
+     */
+    private static String formatCost(double value) {
+        return value < 0.01
+            ? String.format(java.util.Locale.ROOT, "%.6f", value)
+            : String.format(java.util.Locale.ROOT, "%.2f", value);
     }
 }

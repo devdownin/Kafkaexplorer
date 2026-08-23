@@ -95,6 +95,9 @@ public class AnthropicLlmClient implements LlmClient {
             LlmUsage usage = new LlmUsage(
                 inputTokens.get(),
                 outputTokens.get() < 0 ? null : outputTokens.get(),
+                // The Anthropic API prices nothing in its response, and this application keeps no
+                // price table — a cost shown here is one a provider stood behind, or none.
+                null,
                 System.currentTimeMillis() - startedAt,
                 config.getProviderLabel(),
                 config.getModel());

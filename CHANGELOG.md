@@ -46,6 +46,32 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   stacks name their provider explicitly and are unaffected. One thing the move fixes in passing:
   the 120 000-character prompt budget and the shipped provider finally agree, where the budget was
   previously sized for a hosted API the default was not.
+- **What an analysis cost in money is shown, not just in tokens.** `LlmUsage` carried token counts
+  and a duration; OpenRouter prices every response and that figure was being dropped — on the
+  provider now shipped by default, which bills per token. It is **read, never derived**: no price
+  table lives in this application, so a figure on screen is one the provider stood behind, and a
+  provider that prices nothing (the OpenAI API, Ollama, SpectraLLM) shows nothing rather than a
+  zero. Process Mining renders it beside the tokens for the last window and as a running session
+  total, and a session containing one unpriced call reports **no** total instead of one that
+  understates the bill.
+- **`claude.openrouter-data-collection: DENY` — the routing layer answers "where does my data go".**
+  Until now the Settings banner could say a deployment was remote and no more: what an upstream
+  vendor does with a Kafka message digest is outside anything this application can observe.
+  OpenRouter enforces it at its own layer, so the shipped configuration restricts routing to
+  providers that do not retain or train on what is sent, and the banner states that property
+  instead of merely warning. The cost is stated where it is paid: a model served only by
+  data-collecting providers stops being routable, and since the gateway reports that with the same
+  404 it uses for a mistyped slug, the error names the setting — otherwise an operator checks a
+  model name that was correct all along. `ALLOW` widens the choice of models back.
+  `claude.openrouter-require-parameters` is the sibling knob and is deliberately **off**: it would
+  make structured output a routing guarantee, but a model whose providers lack it becomes
+  *unroutable* rather than degrading, and that arrives as "no endpoints found" — not as the 400 or
+  422 the per-model latch can act on.
+- **A 4xx from the model now names the thing to go and change.** Every client error read "check
+  base URL, model and API key", which on a metered gateway is three things that are all fine: a 402
+  is an account out of credit or past a spending cap, and a 403 a moderation or permission refusal.
+  Both now say so, with the provider's own words still following — that is the half that says which
+  cap or which guardrail. 401, 404 and 413 get the same treatment.
 - **`OPENROUTER_API_KEY` is read, so a key set under the name its own provider documents is not
   silently ignored.** `claude.api-key` is bound through a placeholder, so `StoredSettingsInitializer`
   has to be told which environment variables name it — and it knew exactly one,

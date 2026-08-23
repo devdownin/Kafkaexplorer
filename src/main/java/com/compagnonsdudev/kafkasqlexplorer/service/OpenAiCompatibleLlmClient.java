@@ -92,6 +92,62 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
         }
     }
 
+    /**
+     * OpenRouter's {@code provider} routing object, empty for every other provider.
+     *
+     * <p>A routing gateway is the one place where "where does my data go" has an answer better than
+     * a warning. {@code data_collection: "deny"} restricts routing to upstream providers that do
+     * not retain or train on what is sent — so the Settings page can state a property instead of a
+     * risk, which is the whole reason this application reads its privacy claims off the resolved
+     * address rather than off a provider's name. It defaults to deny: a model served only by
+     * data-collecting providers then fails to route, and an error naming the policy is the right
+     * outcome when the alternative is Kafka message digests silently becoming training data.
+     *
+     * <p>{@code require_parameters} is the other half and is deliberately <em>off</em> by default.
+     * It routes only to providers implementing every parameter sent, which would make structured
+     * output a routing guarantee rather than something discovered by a 400 — but a model whose
+     * providers do not support schemas then becomes unroutable instead of degrading, and the
+     * per-model latch cannot catch that: a refusal arrives as "no endpoints found", not as the
+     * 400/422 the latch keys on. Turning a working deployment into a failing one to gain a
+     * guarantee it may not need is the same trade {@code structured-output: AUTO} already refuses.
+     */
+    private Map<String, Object> routingPolicy() {
+        if (config.getProvider() != ClaudeConfig.Provider.OPENROUTER) {
+            return Map.of();
+        }
+        Map<String, Object> routing = new LinkedHashMap<>();
+        if (config.getOpenrouterDataCollection() == ClaudeConfig.DataCollection.DENY) {
+            routing.put("data_collection", "deny");
+        }
+        if (config.isOpenrouterRequireParameters()) {
+            routing.put("require_parameters", true);
+        }
+        return routing;
+    }
+
+    /**
+     * Names the routing policy when a "not found" is plausibly its doing.
+     *
+     * <p>Restricting routing turns "this model exists" into "this model exists <em>and</em> some
+     * provider serving it satisfies your policy", and the gateway answers the second question with
+     * the same 404 it uses for a mistyped slug. Left alone, an operator reads "model not found",
+     * checks the spelling — which is correct — and has no way to reach the real cause. The
+     * exception keeps its status, because {@link #looksLikeSchemaRefusal} reads it and a 404 must
+     * go on meaning "do not retry without the schema".
+     */
+    private LlmHttpSupport.ClientErrorException explainRoutingRefusal(
+            LlmHttpSupport.ClientErrorException e) {
+        Map<String, Object> routing = routingPolicy();
+        if (e.status() != 404 || routing.isEmpty()) {
+            return e;
+        }
+        return new LlmHttpSupport.ClientErrorException(e.status(), e.getMessage()
+            + " — note that provider routing is restricted (" + routing
+            + "), so a model whose providers do not satisfy it is reported exactly like an unknown "
+            + "one. Relax claude.openrouter-data-collection or claude.openrouter-require-parameters "
+            + "to tell the two apart.");
+    }
+
     /** The configured model, normalised so a null or blank one still keys the map. */
     private String modelKey() {
         String model = config.getModel();
@@ -146,6 +202,10 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
                         "strict", true,
                         "schema", schema.schema())));
             }
+            Map<String, Object> routing = routingPolicy();
+            if (!routing.isEmpty()) {
+                body.put("provider", routing);
+            }
 
             String requestBody = objectMapper.writeValueAsString(body);
 
@@ -176,6 +236,10 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
             log.debug("{} call complete — {}", config.getProviderLabel(), usage.summary());
             return new LlmResponse(text, List.of(), usage);
 
+        } catch (LlmHttpSupport.ClientErrorException e) {
+            LlmHttpSupport.ClientErrorException reported = explainRoutingRefusal(e);
+            log.error("Error calling OpenAI-compatible API: {}", reported.getMessage());
+            throw reported;
         } catch (RuntimeException e) {
             log.error("Error calling OpenAI-compatible API: {}", e.getMessage());
             throw e;
@@ -196,6 +260,11 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
         return new LlmUsage(
             longOrNull(usage, "prompt_tokens"),
             longOrNull(usage, "completion_tokens"),
+            // OpenRouter prices every response, so the money is already on the wire and used to be
+            // thrown away — on the provider this application now ships pointed at, which bills per
+            // token. Read, never computed: no price table lives here, so a figure on screen is one
+            // the provider stood behind. Absent on OpenAI and Ollama, and null there rather than 0.
+            doubleOrNull(usage, "cost"),
             durationMs,
             config.getProviderLabel(),
             config.getModel());
@@ -204,6 +273,11 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
     private static Long longOrNull(JsonNode parent, String field) {
         JsonNode value = parent.path(field);
         return value.isNumber() ? value.asLong() : null;
+    }
+
+    private static Double doubleOrNull(JsonNode parent, String field) {
+        JsonNode value = parent.path(field);
+        return value.isNumber() ? value.asDouble() : null;
     }
 
     private String resolveChatCompletionsUrl() {

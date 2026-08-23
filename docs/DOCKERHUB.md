@@ -259,6 +259,8 @@ re-entered after each restart.
 | `ANTHROPIC_API_KEY` | — | The same setting under its historical name, read when `OPENROUTER_API_KEY` is unset. Required for `ANTHROPIC`; ignored by a local Ollama. On a machine that exports several, `CLAUDE_API_KEY` outranks both and is the unambiguous form. |
 | `CLAUDE_USE_RAG` | `false` | `SPECTRA` provider only: also retrieve from SpectraLLM's ingested corpus instead of reasoning solely on the messages inlined in the prompt. |
 | `CLAUDE_COLLECTION` | — | `SPECTRA` + `CLAUDE_USE_RAG` only: which ChromaDB collection to retrieve from. Blank uses SpectraLLM's default. |
+| `CLAUDE_OPENROUTER_DATA_COLLECTION` | `DENY` | `OPENROUTER` only: `DENY` restricts routing to upstream providers that do not retain or train on what is sent. `ALLOW` widens the choice of models back — a model served only by data-collecting providers is otherwise unroutable, and the error says so. |
+| `CLAUDE_OPENROUTER_REQUIRE_PARAMETERS` | `false` | `OPENROUTER` only: route only to providers implementing every parameter sent, making structured output a routing guarantee. Off by default because a model whose providers lack it then becomes unroutable rather than degrading. |
 | `PROCESS_MINING_PROMPT_CHAR_BUDGET` | `120000` | Characters of Kafka messages one analysis prompt may carry — about 30 000 tokens. **Lower it, or widen the model's window, when you point this at a small local model.** |
 
 Leave it alone and every other feature works — Process Mining is the only page that calls

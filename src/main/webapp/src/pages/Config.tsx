@@ -50,6 +50,15 @@ interface ClusterConfig {
   llmSnapshotWindowSize: number;
   llmSnapshotWindowTimeoutSeconds: number;
   llmLocalDeployment?: boolean;
+  /**
+   * Réglages de routage OpenRouter, servis par le serveur et non éditables ici — comme
+   * `llmStructuredOutput`, ils se posent dans la configuration du déploiement. Le formulaire les
+   * renvoie tels quels, donc ils ne comptent jamais comme « saisis ».
+   */
+  llmOpenrouterDataCollection?: 'ALLOW' | 'DENY';
+  llmOpenrouterRequireParameters?: boolean;
+  /** Vrai quand le routage a été restreint aux fournisseurs qui ne conservent rien. */
+  llmDataRetentionRefused?: boolean;
 }
 
 const MODES = [
@@ -694,7 +703,9 @@ const Config: React.FC = () => {
                 rien ne parte, sans se lire comme le signalement d'une anomalie. */}
             {config.llmLocalDeployment
               ? 'Local inference detected. Lightweight open-source models can be used for snapshot and live process mining.'
-              : 'Remote inference: the message digests Process Mining builds are sent to this endpoint. Switch to Ollama or SpectraLLM to keep everything on your own network.'}
+              : config.llmDataRetentionRefused
+                ? 'Remote inference: the message digests Process Mining builds are sent to this endpoint, but routing is restricted to providers that do not retain or train on them (claude.openrouter-data-collection: DENY). Switch to Ollama or SpectraLLM to keep everything on your own network.'
+                : 'Remote inference: the message digests Process Mining builds are sent to this endpoint. Switch to Ollama or SpectraLLM to keep everything on your own network.'}
           </div>
 
           <div className="grid grid-cols-2 gap-4">

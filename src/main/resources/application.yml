@@ -303,6 +303,19 @@ claude:
   # model, not per endpoint, which is what makes AUTO safe on OpenRouter, where support depends on
   # the model and the upstream provider serving it rather than on the gateway.
   structured-output: AUTO
+  # OPENROUTER only — how the gateway is allowed to route, which is the one place where "where does
+  # my data go" has an answer better than a warning. DENY restricts routing to upstream providers
+  # that do not retain or train on what is sent, so the Settings banner states a property instead of
+  # a risk; the accepted cost is that a model served only by data-collecting providers stops being
+  # routable, and the error names this setting rather than reading as a mistyped model. ALLOW widens
+  # the choice of models back.
+  openrouter-data-collection: DENY
+  # OPENROUTER only: route only to providers implementing every parameter sent, which would make
+  # structured output a routing guarantee rather than something discovered by a refusal. Off by
+  # default for the same reason structured-output: AUTO leaves an unknown gateway alone — a model
+  # whose providers lack schema support becomes *unroutable* instead of degrading, and that arrives
+  # as "no endpoints found" rather than as the 400/422 the per-model latch can act on.
+  openrouter-require-parameters: false
 
 logging:
   file:

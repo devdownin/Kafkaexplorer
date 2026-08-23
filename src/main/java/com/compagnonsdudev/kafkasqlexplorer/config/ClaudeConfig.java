@@ -35,6 +35,22 @@ public class ClaudeConfig {
     public enum StructuredOutput { AUTO, ON, OFF }
 
     /**
+     * Whether OpenRouter may route to upstream providers that retain or train on what is sent.
+     *
+     * <p>This is the one setting here that turns a privacy warning into a privacy property. The
+     * Settings page can say a deployment is "remote" by reading the address, and no further: what
+     * the upstream vendor then does with a Kafka message digest is outside anything this
+     * application can observe. OpenRouter can enforce it at the routing layer, so {@link #DENY}
+     * asks for exactly that.
+     *
+     * <p>It is the default, and the failure mode is accepted on purpose: a model served only by
+     * data-collecting providers stops being routable, and an error naming the policy is the right
+     * outcome when the alternative is message content silently becoming training data. Set
+     * {@link #ALLOW} to widen the choice of models back.
+     */
+    public enum DataCollection { ALLOW, DENY }
+
+    /**
      * The provider a deployment that configures nothing gets.
      *
      * <p>{@code OPENROUTER}, and it used to be {@code OLLAMA} pointed at
@@ -79,6 +95,20 @@ public class ClaudeConfig {
      */
     private String collection = "";
     private StructuredOutput structuredOutput = StructuredOutput.AUTO;
+    /** OPENROUTER only — see {@link DataCollection}. Ignored by every other provider. */
+    private DataCollection openrouterDataCollection = DataCollection.DENY;
+    /**
+     * OPENROUTER only: route only to providers implementing every parameter sent, which makes
+     * structured output a routing guarantee instead of something discovered by a refusal.
+     *
+     * <p>Off by default, unlike its sibling above, and for the reason that governs
+     * {@link StructuredOutput#AUTO}: a model whose providers do not support schemas becomes
+     * <em>unroutable</em> rather than degrading, and the per-model latch cannot rescue it — the
+     * refusal arrives as "no endpoints found", not as the 400 or 422 that latch keys on. Turning a
+     * working deployment into a failing one to gain a guarantee it may not need is the wrong
+     * default; an operator who knows their model is served with schema support can say so here.
+     */
+    private boolean openrouterRequireParameters = false;
 
     public Provider getProvider() {
         return provider;
@@ -173,6 +203,32 @@ public class ClaudeConfig {
 
     public void setStructuredOutput(StructuredOutput structuredOutput) {
         this.structuredOutput = structuredOutput;
+    }
+
+    public DataCollection getOpenrouterDataCollection() {
+        return openrouterDataCollection;
+    }
+
+    public void setOpenrouterDataCollection(DataCollection openrouterDataCollection) {
+        this.openrouterDataCollection = openrouterDataCollection;
+    }
+
+    public boolean isOpenrouterRequireParameters() {
+        return openrouterRequireParameters;
+    }
+
+    public void setOpenrouterRequireParameters(boolean openrouterRequireParameters) {
+        this.openrouterRequireParameters = openrouterRequireParameters;
+    }
+
+    /**
+     * Whether this configuration asks the gateway to keep message content away from providers that
+     * would retain it. False for every provider but OpenRouter, where the question has no answer
+     * this application can enforce — the Settings banner uses it to qualify its "remote" sentence
+     * rather than to replace it.
+     */
+    public boolean isDataRetentionRefused() {
+        return provider == Provider.OPENROUTER && openrouterDataCollection == DataCollection.DENY;
     }
 
     /** Whether this configuration should send a schema with the request — see {@link StructuredOutput}. */
