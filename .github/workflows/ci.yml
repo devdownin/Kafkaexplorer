@@ -651,6 +651,18 @@ jobs:
       CI_CHAT_MODEL_URL: https://huggingface.co/bartowski/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # check-image-pins.py --published resolves the pin against the newest release too.
+          fetch-tags: true
+
+      # The staleness half of that check lives here rather than in docs-links, because it asks
+      # the REGISTRY and the registry is the only authority on what an `up` can pull. A git tag
+      # exists the moment it is pushed and the image only when the release workflow finishes —
+      # asking the tags made this very check demand a bump to an image that was still building.
+      # Here the network is already a dependency (the next step pulls those images), and a
+      # registry that cannot be reached is reported rather than failing the build.
+      - name: Is the Explorer pin still the current release?
+        run: python3 docs/check-image-pins.py --published
 
       - name: Pull the published images
         run: docker compose pull --quiet

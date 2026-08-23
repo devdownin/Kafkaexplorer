@@ -306,11 +306,18 @@ KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `
   `docs-links` job): nothing floats (`curlimages/curl:latest` sat two services below the comment
   claiming Ollama was "the only floating tag left in the tree"), the llama.cpp CPU and CUDA tags
   name the **same build** (the GPU overlay must change the hardware, not the engine's revision),
-  and the Explorer image the hub stack pulls is the **current release** — that default is
-  hand-written and Dependabot cannot read a `${VAR:-1.8.8}` form, so nothing else would ever
-  move it. That last one fails on a *release* rather than on a change, which is the point: the
-  reminder arrives when the pin goes stale. It needs tags, hence `fetch-tags` on that job's
-  checkout, and it fails rather than skipping when they are absent.
+  and the Explorer pin does not name a release **nobody has published yet**. That default is
+  hand-written and Dependabot cannot read a `${VAR:-1.8.9}` form, so nothing else would ever
+  move it — but whether it has gone *stale* is a question for the **registry**, not for the git
+  tags, and that half is `--published`, run in the `spectra-hub-stack` job. A tag exists the
+  moment it is pushed and the image only when the release workflow finishes: asking the tags
+  made this check demand a bump to an image that was still building, and a release whose
+  publication *failed* — which has happened here — would leave a tag with no image behind it,
+  blocking every pull request on a bump that could never be made. So the offline half gates
+  every PR, the registry half runs where the network is already a dependency, and a registry
+  that cannot be reached is reported rather than failing the build: "we asked and it is stale"
+  and "we could not ask" are different answers. It needs tags, hence `fetch-tags` on both jobs'
+  checkouts, and it fails rather than skipping when they are absent.
 - **The published-images stack is booted too** (`spectra-hub-stack`, on main and
   `workflow_dispatch` only — it pulls ~2 GB to test a deployment file whose content does not move
   with the code, the same trade-off as the arm64 boot). It runs with
