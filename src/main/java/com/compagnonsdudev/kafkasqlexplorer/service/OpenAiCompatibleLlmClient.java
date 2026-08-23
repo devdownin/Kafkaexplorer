@@ -277,6 +277,10 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
             // than 0 — "no cache hit" and "nobody counted" are different answers, and only the
             // first is evidence that a cache breakpoint is doing nothing.
             longOrNull(usage.path("prompt_tokens_details"), "cached_tokens"),
+            // The symmetric breakdown on the output side: what the model spent deliberating before
+            // answering. Already inside completion_tokens, so this explains a cost rather than
+            // adding to it — and on a reasoning model it is usually the whole explanation.
+            longOrNull(usage.path("completion_tokens_details"), "reasoning_tokens"),
             durationMs,
             config.getProviderLabel(),
             config.getModel());

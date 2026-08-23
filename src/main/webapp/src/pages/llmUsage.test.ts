@@ -10,6 +10,7 @@ const usage = (over: Partial<LlmUsage> = {}): LlmUsage => ({
   outputTokens: 340,
   costUsd: null,
   cachedInputTokens: null,
+  reasoningTokens: null,
   durationMs: 8400,
   provider: 'Ollama',
   model: 'qwen3:4b',
@@ -57,6 +58,27 @@ describe('describeUsage cache reporting', () => {
   it('stays quiet on a miss and on a provider that counts nothing', () => {
     expect(describeUsage(usage({ cachedInputTokens: 0 }))).not.toContain('cached');
     expect(describeUsage(usage({ cachedInputTokens: null }))).not.toContain('cached');
+  });
+});
+
+describe('describeUsage reasoning reporting', () => {
+  it('shows the deliberation when the model did some', () => {
+    expect(describeUsage(usage({ reasoningTokens: 2400 }))).toContain('2,400 reasoning');
+  });
+
+  /*
+   * L'inverse du cache : ici `0` est le cas courant — un modèle qui ne raisonne pas — donc
+   * l'afficher noierait le seul cas qui explique quelque chose. `null` reste « personne n'a
+   * compté », et ni l'un ni l'autre ne s'affiche.
+   */
+  it('stays quiet on a model that did not deliberate, and on one nobody counted', () => {
+    expect(describeUsage(usage({ reasoningTokens: 0 }))).not.toContain('reasoning');
+    expect(describeUsage(usage({ reasoningTokens: null }))).not.toContain('reasoning');
+  });
+
+  // Ventilation de outputTokens, pas un ajout : le total affiché ne bouge pas.
+  it('does not change the token counts it breaks down', () => {
+    expect(describeUsage(usage({ reasoningTokens: 2400 }))).toContain('340 out');
   });
 });
 

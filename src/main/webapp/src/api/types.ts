@@ -635,6 +635,17 @@ export interface LlmUsage {
    * n'affirme une économie, on rapporte ce que le fournisseur a compté.
    */
   cachedInputTokens: number | null;
+  /**
+   * Combien des jetons produits ont servi à délibérer avant de répondre — `null` quand le
+   * fournisseur ne le rapporte pas.
+   *
+   * Déjà compris dans `outputTokens` : c'en est une ventilation, pas un ajout. Ce que ça apporte
+   * est donc l'*explication* d'un coût et non le coût — deux analyses au rendu identique peuvent
+   * différer d'un facteur trois ici, et rien d'autre à l'écran ne le dirait. La nullité se lit à
+   * l'envers de `cachedInputTokens` : `0` est le cas ordinaire, une vraie mesure disant que le
+   * modèle n'a pas raisonné, et seul `null` veut dire que personne n'a compté.
+   */
+  reasoningTokens: number | null;
   durationMs: number;
   provider: string;
   model: string;

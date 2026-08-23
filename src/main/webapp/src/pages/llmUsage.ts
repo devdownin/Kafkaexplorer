@@ -24,7 +24,15 @@ export const describeUsage = (usage: LlmUsage): string => {
   const cached = usage.cachedInputTokens != null && usage.cachedInputTokens > 0
     ? ` · ${usage.cachedInputTokens.toLocaleString()} cached`
     : '';
-  return `${usage.model} · ${tokens}${cached}${cost} · ${describeDuration(usage.durationMs)}`;
+  /*
+   * Même règle que le cache, pour une raison inverse : ici `0` est le cas courant — un modèle qui
+   * ne raisonne pas — donc l'afficher partout noierait le seul cas intéressant. On ne le montre
+   * que lorsqu'il y a effectivement eu délibération, c'est-à-dire quand il explique quelque chose.
+   */
+  const reasoning = usage.reasoningTokens != null && usage.reasoningTokens > 0
+    ? ` · ${usage.reasoningTokens.toLocaleString()} reasoning`
+    : '';
+  return `${usage.model} · ${tokens}${reasoning}${cached}${cost} · ${describeDuration(usage.durationMs)}`;
 };
 
 /**

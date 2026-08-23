@@ -33,6 +33,20 @@ package com.compagnonsdudev.kafkasqlexplorer.domain;
  *                     rather than a promise: nothing here claims a saving, it reports what the
  *                     provider counted. {@code 0} means the prompt missed the cache, which is a
  *                     finding in itself.
+ * @param reasoningTokens how many of the generated tokens the model spent deliberating before
+ *                     answering, or {@code null} when the provider does not report it. Already
+ *                     counted inside {@code outputTokens} — this is a breakdown of it, not an
+ *                     addition — so what it buys is the <em>explanation</em> of a cost, not the
+ *                     cost itself: two analyses with identical answers can differ several-fold
+ *                     here, and nothing else on screen would say why. It also turns a diagnosis
+ *                     into a measurement: {@code LlmJsonSupport} already reports a model that
+ *                     spent its whole output budget thinking and never reached the JSON, but only
+ *                     once that run has failed; this figure shows the budget being eaten on a run
+ *                     that <em>succeeded</em>, in time to raise {@code claude.max-tokens} or pick
+ *                     another model. Note the nullability reads the other way round from
+ *                     {@link #cachedInputTokens}: {@code 0} is the ordinary case, a real
+ *                     measurement meaning the model did not deliberate, and {@code null} alone
+ *                     means nobody counted.
  * @param durationMs   wall-clock time of the call, always measured here
  * @param provider     the provider label the call went to
  * @param model        the model the call named
@@ -42,13 +56,14 @@ public record LlmUsage(
         Long outputTokens,
         Double costUsd,
         Long cachedInputTokens,
+        Long reasoningTokens,
         long durationMs,
         String provider,
         String model
 ) {
     /** Usage for a provider that reports no token counts: the duration is still worth having. */
     public static LlmUsage untokenized(long durationMs, String provider, String model) {
-        return new LlmUsage(null, null, null, null, durationMs, provider, model);
+        return new LlmUsage(null, null, null, null, null, durationMs, provider, model);
     }
 
     /** Null when either half is unreported — a partial sum would be worse than no sum. */
@@ -66,6 +81,7 @@ public record LlmUsage(
             + " out=" + (outputTokens == null ? "?" : outputTokens)
             + (costUsd == null ? "" : " · $" + formatCost(costUsd))
             + (cachedInputTokens == null ? "" : " · cached=" + cachedInputTokens)
+            + (reasoningTokens == null ? "" : " · reasoning=" + reasoningTokens)
             + " · " + durationMs + "ms";
     }
 

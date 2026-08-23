@@ -101,6 +101,9 @@ public class AnthropicLlmClient implements LlmClient {
                 // Cache accounting is not read on this path: nothing here sets a cache breakpoint,
                 // so a figure would only ever be zero, and a zero nobody can act on is noise.
                 null,
+                // Extended thinking is not requested here either, so there is no deliberation to
+                // account for. Null rather than 0: nobody counted, which is not the same as none.
+                null,
                 System.currentTimeMillis() - startedAt,
                 config.getProviderLabel(),
                 config.getModel());

@@ -109,6 +109,15 @@ provider's own accounting: this application keeps no price table, so a model tha
 (the OpenAI API, Ollama, SpectraLLM) shows none rather than a zero, and a session containing one
 unpriced call reports no total at all instead of one that understates the bill.
 
+Two breakdowns travel beside it, both measurements rather than promises. **Cached prompt tokens**
+say whether the provider served part of your prompt from its cache. **Reasoning tokens** say how
+much of the answer the model spent deliberating before writing anything — already counted inside
+the output tokens, so it explains a bill rather than adding to it. That one is worth watching on a
+reasoning model: it is the number that shows `claude.max-tokens` being eaten by deliberation
+*before* a run fails with a truncated answer, which is the failure this application otherwise only
+reports after the fact. Both are shown only when non-zero, and a provider that reports neither
+shows neither — an absent figure is never rendered as a zero.
+
 ## Option B: Anthropic Claude
 Set the provider and your API key:
 ```bash

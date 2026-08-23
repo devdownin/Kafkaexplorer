@@ -11,6 +11,21 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`reasoningTokens` on `LlmUsage`** (`completion_tokens_details.reasoning_tokens`), the
+  symmetric breakdown to the cached-prompt figure. It is a breakdown of the output tokens, not an
+  addition to them, so what it buys is the *explanation* of a cost: two analyses with identical
+  answers can differ several-fold and nothing else on screen would say why. It matters here
+  because reasoning models are routine on this path — `LlmJsonSupport` exists to strip their
+  traces — and because it turns a diagnosis into a measurement: the case where a model spends its
+  whole output budget thinking and never reaches the JSON is already reported, but only once the
+  run has failed; this shows the budget being eaten on a run that succeeded. Nullability reads the
+  other way round from the cache figure — `0` is the ordinary case, a real measurement meaning the
+  model did not deliberate — so the UI shows it only above zero. The field name was taken from
+  `@openrouter/sdk`'s own zod schema rather than assumed, `openrouter.ai` being unreachable from
+  the build environment.
+
 ### Fixed
 
 - **Four documents still described the LLM setup as it was before OpenRouter became the default.**
