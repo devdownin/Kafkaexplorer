@@ -363,6 +363,83 @@ public class ClaudeConfig {
     }
 
     /**
+     * The model a deployment gets when it picks this provider and names none.
+     *
+     * <p>Served to the Settings page rather than restated there. The browser carried
+     * {@code openai/gpt-4o-mini} twice — as initial form state and in the provider-switch
+     * fallback — beside a table mirroring {@link #defaultBaseUrl}, which is the mirror-drift
+     * pattern this codebase keeps removing: the day a shipped default moves, the form offers one
+     * model while the engine runs another.
+     *
+     * <p>Empty for {@link Provider#OPENAI_COMPATIBLE}, whose endpoint we know nothing about, and
+     * for {@link Provider#SPECTRA}, which serves whichever model it is configured to run and
+     * ignores the field entirely. Empty means "we have nothing to propose", not "no model".
+     */
+    public static String defaultModel(Provider provider) {
+        return switch (provider) {
+            case ANTHROPIC -> "claude-3-5-sonnet-20241022";
+            case OPENAI_COMPATIBLE -> "";
+            case OLLAMA -> "qwen3:4b";
+            case OPENROUTER -> "openai/gpt-4o-mini";
+            case SPECTRA -> "";
+        };
+    }
+
+    /**
+     * A throw-away copy of this configuration with the connection fields replaced, for probing a
+     * candidate the operator has not committed to.
+     *
+     * <p>{@code POST /api/config/test-llm} used to require the form to be <em>applied</em> first,
+     * so trying a model repointed the running deployment and — with
+     * {@code explorer.settings-persistence} on — wrote it to {@code settings.json}. Exploring and
+     * committing were the same gesture, which is why nobody compared two models. A copy has no
+     * such cost: nothing here is a Spring bean, nothing is published to another thread, and the
+     * running configuration is untouched.
+     *
+     * <p>A blank or null override keeps this configuration's value, which is what makes the API
+     * key work: the browser never receives it (only {@code llmApiKeyConfigured}), so a probe that
+     * did not carry one has to fall back to the stored one rather than testing anonymously and
+     * reporting a 401 the operator cannot explain.
+     */
+    public ClaudeConfig probeCopy(Provider overrideProvider, String overrideBaseUrl,
+                                  String overrideApiKey, String overrideModel) {
+        ClaudeConfig copy = new ClaudeConfig();
+        copy.provider = overrideProvider != null ? overrideProvider : provider;
+        copy.baseUrl = blankToNull(overrideBaseUrl) != null ? overrideBaseUrl.strip() : baseUrl;
+        copy.apiKey = blankToNull(overrideApiKey) != null ? overrideApiKey.strip() : apiKey;
+        copy.model = blankToNull(overrideModel) != null ? overrideModel.strip() : model;
+        // Everything below is not part of the candidate: it describes how this deployment calls a
+        // model, not which one, and a probe that quietly used different budgets or a different
+        // routing policy would be testing something other than what an analysis will do.
+        copy.maxTokens = maxTokens;
+        copy.snapshotWindowSize = snapshotWindowSize;
+        copy.snapshotWindowTimeoutSeconds = snapshotWindowTimeoutSeconds;
+        copy.requestTimeoutSeconds = requestTimeoutSeconds;
+        copy.useRag = useRag;
+        copy.collection = collection;
+        copy.structuredOutput = structuredOutput;
+        copy.openrouterDataCollection = openrouterDataCollection;
+        copy.openrouterRequireParameters = openrouterRequireParameters;
+        copy.sessionCostLimitUsd = sessionCostLimitUsd;
+        return copy;
+    }
+
+    /**
+     * Whether this copy names something other than what is running — the one thing the answer of a
+     * probe must state, since "the endpoint is reachable" means a different thing about a
+     * candidate than about the deployment.
+     */
+    public boolean differsFrom(ClaudeConfig other) {
+        return provider != other.provider
+            || !java.util.Objects.equals(getResolvedBaseUrl(), other.getResolvedBaseUrl())
+            || !java.util.Objects.equals(model, other.model);
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
+    }
+
+    /**
      * Whether a URL names this host. The <em>host</em> is compared, not the URL text: a substring
      * scan answered yes for {@code https://localhost.example.com/} and for any path or query that
      * happened to contain the word — on the one flag that tells an operator their data stays put.

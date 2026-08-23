@@ -81,6 +81,116 @@ class ConfigControllerTest {
     }
 
     /**
+     * The point of the candidate probe: trying a model must not repoint the deployment. Before
+     * this, the page had to apply the whole form before it could test anything, so exploring and
+     * committing were one gesture — and with persistence on, the candidate reached disk.
+     */
+    @Test
+    void probingACandidateChangesNeitherTheRunningConfigNorTheStore() throws Exception {
+        claudeConfig.setProvider(ClaudeConfig.Provider.OPENROUTER);
+        claudeConfig.setModel("openai/gpt-4o-mini");
+        claudeConfig.setApiKey("sk-or-configured");
+
+        mockMvc.perform(post("/api/config/test-llm").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"llmModel\":\"some-vendor/candidate\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.candidate").value(true))
+            .andExpect(jsonPath("$.model").value("some-vendor/candidate"));
+
+        assertEquals("openai/gpt-4o-mini", claudeConfig.getModel(),
+            "the running configuration must be exactly where it was");
+        assertFalse(java.nio.file.Files.exists(storePath),
+            "a probe is not a save; nothing may reach the settings store");
+    }
+
+    /**
+     * The browser never receives the key — only {@code llmApiKeyConfigured} — so a candidate probe
+     * that carried none has to fall back to the stored one. Otherwise every attempt to try a model
+     * answers 401, on a deployment whose key is perfectly good.
+     */
+    @Test
+    void aCandidateWithNoKeyFallsBackToTheConfiguredOne() throws Exception {
+        claudeConfig.setProvider(ClaudeConfig.Provider.OPENROUTER);
+        claudeConfig.setApiKey("sk-or-configured");
+
+        mockMvc.perform(post("/api/config/test-llm").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"llmModel\":\"some-vendor/candidate\"}"))
+            .andExpect(status().isOk())
+            // Not the "an API key is required" refusal: the stored key was used.
+            .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.not(
+                org.hamcrest.Matchers.containsString("API key is required"))));
+    }
+
+    /** No body at all is the historical call, and it must behave exactly as it did. */
+    @Test
+    void anEmptyProbeStillTestsWhatIsRunning() throws Exception {
+        claudeConfig.setProvider(ClaudeConfig.Provider.OLLAMA);
+        claudeConfig.setModel("qwen3:4b");
+
+        mockMvc.perform(post("/api/config/test-llm"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.candidate").value(false))
+            .andExpect(jsonPath("$.model").value("qwen3:4b"));
+    }
+
+    /**
+     * A body naming the same model as the running configuration is not a candidate. The flag drives
+     * what the answer claims to have tested, so it has to follow the difference and not the mere
+     * presence of a body.
+     */
+    @Test
+    void abodyThatChangesNothingIsNotReportedAsACandidate() throws Exception {
+        claudeConfig.setProvider(ClaudeConfig.Provider.OLLAMA);
+        claudeConfig.setModel("qwen3:4b");
+
+        mockMvc.perform(post("/api/config/test-llm").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"llmModel\":\"qwen3:4b\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.candidate").value(false));
+    }
+
+    @Test
+    void aMistypedProviderInAProbeIsNamedRatherThanAnsweredWithACrash() throws Exception {
+        mockMvc.perform(post("/api/config/test-llm").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"llmProvider\":\"OPENROOTER\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.ok").value(false))
+            .andExpect(jsonPath("$.message").value(
+                org.hamcrest.Matchers.containsString("OPENROOTER")));
+    }
+
+    /**
+     * The defaults the form used to restate. Every provider is present, so the page cannot fall
+     * back to a literal for the one that was forgotten.
+     */
+    @Test
+    void servesTheDefaultBaseUrlAndModelOfEveryProvider() throws Exception {
+        mockMvc.perform(get("/api/config"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.llmProviderDefaults.OPENROUTER.baseUrl")
+                .value("https://openrouter.ai/api/v1"))
+            .andExpect(jsonPath("$.llmProviderDefaults.OPENROUTER.model")
+                .value(ClaudeConfig.defaultModel(ClaudeConfig.Provider.OPENROUTER)))
+            .andExpect(jsonPath("$.llmProviderDefaults.OLLAMA.model").value("qwen3:4b"))
+            // Empty is a real answer here: we have nothing to propose for an endpoint we know
+            // nothing about, and for a provider that ignores the field entirely.
+            .andExpect(jsonPath("$.llmProviderDefaults.OPENAI_COMPATIBLE.model").value(""))
+            .andExpect(jsonPath("$.llmProviderDefaults.SPECTRA.model").value(""));
+    }
+
+    /** The shortlist has no catalogue to read on a provider that publishes none. */
+    @Test
+    void theModelShortlistIsUnavailableWithoutOpenRouter() throws Exception {
+        claudeConfig.setProvider(ClaudeConfig.Provider.OLLAMA);
+
+        mockMvc.perform(get("/api/config/llm-models"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.available").value(false))
+            .andExpect(jsonPath("$.error").isNotEmpty())
+            .andExpect(jsonPath("$.models").isEmpty());
+    }
+
+    /**
      * The catalogue is a side read on {@code test-llm} against OpenRouter's own host, and these
      * tests are about the settings form. A real one built over the running config is enough: with
      * no key and no network reached, {@code isSupported()} decides whether it is consulted at all.

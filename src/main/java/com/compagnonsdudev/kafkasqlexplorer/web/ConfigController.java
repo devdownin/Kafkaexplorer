@@ -4,10 +4,12 @@ package com.compagnonsdudev.kafkasqlexplorer.web;
 
 import com.compagnonsdudev.kafkasqlexplorer.config.ClaudeConfig;
 import com.compagnonsdudev.kafkasqlexplorer.config.KafkaConfig;
+import com.compagnonsdudev.kafkasqlexplorer.domain.LlmModelShortlist;
 import com.compagnonsdudev.kafkasqlexplorer.service.AuditService;
 import com.compagnonsdudev.kafkasqlexplorer.service.FlinkSqlService;
 import com.compagnonsdudev.kafkasqlexplorer.service.KafkaAdminService;
 import com.compagnonsdudev.kafkasqlexplorer.service.LlmClient;
+import com.compagnonsdudev.kafkasqlexplorer.service.LlmClientFactory;
 import com.compagnonsdudev.kafkasqlexplorer.service.LlmClientProvider;
 import com.compagnonsdudev.kafkasqlexplorer.service.OpenRouterModelCatalog;
 import com.compagnonsdudev.kafkasqlexplorer.service.SettingsStore;
@@ -22,6 +24,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -407,30 +410,62 @@ public class ConfigController {
         return snapshot;
     }
 
+    /**
+     * Probes an LLM endpoint and reports what its model can do.
+     *
+     * <p>The body is optional and every field in it is. With none, this tests the running
+     * configuration exactly as before. With one, it tests a <strong>candidate</strong> the operator
+     * has not committed to — and applies nothing: no bean is mutated, nothing reaches
+     * {@link SettingsStore}. The page used to have to save the whole form before it could probe, so
+     * trying a model repointed the live deployment and, where persistence is on, wrote it to disk.
+     * Exploring and committing were the same gesture, which is why comparing two models was never
+     * worth the risk.
+     *
+     * <p>That is why this one builds its own client instead of going through
+     * {@link LlmClientProvider}, and the exception is deliberate rather than a lapse: the rule
+     * exists because a probe must not claim to have tested what the engine uses when it has not.
+     * A candidate probe is testing something the engine explicitly is <em>not</em> using, so it
+     * says so in {@code candidate} and names the model it actually called.
+     */
     @PostMapping("/api/config/test-llm")
-    public Map<String, Object> testLlm() {
-        Map<String, Object> result = new HashMap<>();
-        result.put("provider", claudeConfig.getProviderLabel());
-        result.put("model", claudeConfig.getModel());
+    public Map<String, Object> testLlm(@RequestBody(required = false) Map<String, Object> body) {
+        ClaudeConfig target;
+        try {
+            target = candidateFrom(body);
+        } catch (IllegalArgumentException e) {
+            Map<String, Object> rejected = new HashMap<>();
+            rejected.put("ok", false);
+            rejected.put("message", e.getMessage());
+            return rejected;
+        }
+        boolean candidate = target != claudeConfig && target.differsFrom(claudeConfig);
 
-        if (claudeConfig.isApiKeyRequired() && !claudeConfig.isApiKeyConfigured()) {
+        Map<String, Object> result = new HashMap<>();
+        result.put("provider", target.getProviderLabel());
+        result.put("model", target.getModel());
+        result.put("candidate", candidate);
+
+        if (target.isApiKeyRequired() && !target.isApiKeyConfigured()) {
             result.put("ok", false);
-            result.put("message", "An API key is required for " + claudeConfig.getProviderLabel()
+            result.put("message", "An API key is required for " + target.getProviderLabel()
                 + " but none is configured.");
             return result;
         }
 
         try {
-            // The shared provider, not a private client: this endpoint exists to prove what the
-            // analyses will use, and building a separate client here is precisely how it came to
-            // report a provider reachable that Process Mining was not talking to.
-            LlmClient client = llmClientProvider.get();
+            // For the running configuration this is the shared provider, not a private client:
+            // that endpoint exists to prove what the analyses will use, and building a separate
+            // client here is precisely how it came to report a provider reachable that Process
+            // Mining was not talking to. A candidate has no shared client by definition.
+            LlmClient client = candidate
+                ? LlmClientFactory.create(target)
+                : llmClientProvider.get();
             String reply = client.generate(
                 "You are a connectivity health check. Answer in one short word.",
                 "Reply with the word OK.");
             result.put("ok", true);
-            result.put("message", "LLM reachable via " + claudeConfig.getResolvedBaseUrl()
-                + ". Sample reply: " + summarize(reply));
+            result.put("message", (candidate ? "Candidate reachable via " : "LLM reachable via ")
+                + target.getResolvedBaseUrl() + ". Sample reply: " + summarize(reply));
         } catch (Exception e) {
             result.put("ok", false);
             result.put("message", e.getMessage() != null ? e.getMessage() : e.toString());
@@ -443,10 +478,72 @@ public class ConfigController {
         // turns an unactionable status into a diagnosis. Never allowed to change the verdict
         // above — this is a side read, and a catalogue that cannot be reached is a catalogue that
         // cannot be reached, not an endpoint that is down.
-        if (modelCatalog.isSupported()) {
-            result.put("modelCheck", modelCatalog.describeConfiguredModel());
+        if (modelCatalog.isSupported(target)) {
+            result.put("modelCheck", modelCatalog.describeModel(target));
         }
         return result;
+    }
+
+    /**
+     * The models this application could be pointed at.
+     *
+     * <p>Takes the same optional overrides as the probe, for the same reason: an operator changing
+     * provider in the form has not applied it, and the shortlist has to describe the endpoint they
+     * are looking at rather than the one still running.
+     */
+    @GetMapping("/api/config/llm-models")
+    public LlmModelShortlist llmModels(
+            @RequestParam(name = "provider", required = false) String provider,
+            @RequestParam(name = "baseUrl", required = false) String baseUrl,
+            @RequestParam(name = "apiKey", required = false) String apiKey,
+            @RequestParam(name = "includeUnconstrained", defaultValue = "false")
+            boolean includeUnconstrained,
+            @RequestParam(name = "limit", defaultValue = "20") int limit) {
+        ClaudeConfig target;
+        try {
+            target = candidateFrom(Map.of(
+                "llmProvider", provider == null ? "" : provider,
+                "llmBaseUrl", baseUrl == null ? "" : baseUrl,
+                "llmApiKey", apiKey == null ? "" : apiKey));
+        } catch (IllegalArgumentException e) {
+            return LlmModelShortlist.unavailable(e.getMessage());
+        }
+        return modelCatalog.shortlist(target, includeUnconstrained, limit);
+    }
+
+    /**
+     * The configuration a probe should target: the running one when the caller named nothing, a
+     * throw-away copy when it named something. Returns the bean itself in the first case, which is
+     * what lets the caller tell "test what is running" from "test this" by identity.
+     */
+    private ClaudeConfig candidateFrom(Map<String, Object> body) {
+        if (body == null || body.isEmpty()) {
+            return claudeConfig;
+        }
+        String provider = string(body.get("llmProvider"));
+        String baseUrl = string(body.get("llmBaseUrl"));
+        String apiKey = string(body.get("llmApiKey"));
+        String model = string(body.get("llmModel"));
+        if (provider == null && baseUrl == null && apiKey == null && model == null) {
+            return claudeConfig;
+        }
+        ClaudeConfig.Provider parsed = null;
+        if (provider != null) {
+            try {
+                parsed = ClaudeConfig.Provider.valueOf(provider.strip().toUpperCase(Locale.ROOT));
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException("Unknown LLM provider \"" + provider + "\".");
+            }
+        }
+        return claudeConfig.probeCopy(parsed, baseUrl, apiKey, model);
+    }
+
+    /** Blank counts as absent: an empty form field means "keep what is configured", not "clear it". */
+    private static String string(Object value) {
+        if (!(value instanceof String text) || text.isBlank()) {
+            return null;
+        }
+        return text;
     }
 
     private String summarize(String reply) {
@@ -458,6 +555,20 @@ public class ConfigController {
     }
 
     private void appendLlmConfig(Map<String, Object> result) {
+        // What each provider gets when it is chosen and nothing is named. Served rather than
+        // restated in the browser: Config.tsx carried `openai/gpt-4o-mini` twice and a table
+        // mirroring defaultBaseUrl beside it, which is the mirror-drift pattern this codebase
+        // keeps removing — the day a shipped default moves, the form offers one model while the
+        // engine runs another.
+        Map<String, Object> defaults = new LinkedHashMap<>();
+        for (ClaudeConfig.Provider provider : ClaudeConfig.Provider.values()) {
+            Map<String, String> entry = new LinkedHashMap<>();
+            entry.put("baseUrl", ClaudeConfig.defaultBaseUrl(provider));
+            entry.put("model", ClaudeConfig.defaultModel(provider));
+            defaults.put(provider.name(), entry);
+        }
+        result.put("llmProviderDefaults", defaults);
+
         result.put("llmProvider", claudeConfig.getProvider().name());
         result.put("llmProviderLabel", claudeConfig.getProviderLabel());
         result.put("llmApiKeyConfigured", claudeConfig.isApiKeyConfigured());

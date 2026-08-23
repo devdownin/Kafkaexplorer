@@ -13,6 +13,45 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A model shortlist on the Settings page, cheapest first.** Choosing an OpenRouter model meant
+  recalling a slug and typing it into a bare text box. The gateway filters *and* sorts its own
+  catalogue, so "which models can do this job" is one request of about twenty rows rather than a
+  download of several hundred: text output, schema support, and a context window large enough for
+  this deployment's own prompt budget plus its answer — every filter a fact the application already
+  knows about itself. Lazy and behind a button, since nothing whose only product is a form
+  convenience belongs at page load. The criteria travel with the list, because a filtered view
+  presented as "the models" is the same lie as a silently truncated one, and "we could not read the
+  catalogue" is kept distinct from "nothing matches".
+
+- **What a window would cost, per row.** Published per-token prices times the prompt budget and
+  `claude.max-tokens`. It is labelled a **projection** wherever it appears, and that is not
+  pedantry: every other money figure here is *read* from the provider precisely because no price
+  table lives in this application, whereas this one is a multiplication over the same deliberately
+  optimistic token floor, so it can understate. Half a published price yields no figure rather than
+  a cheaper-looking model, and a free model shows `$0.00`, which is a real measurement.
+
+### Changed
+
+- **Test LLM no longer applies the form.** It began with `POST /api/config`, so *trying* a model
+  repointed the running deployment and, with `explorer.settings-persistence` on, wrote it to
+  `settings.json` — exploring and committing were the same gesture, which is why comparing two
+  models was never worth the risk. The probe now carries the form's provider, base URL, key and
+  model in its body and the server builds a throw-away configuration from them: no bean mutated,
+  nothing reaching the settings store. A blank field means "keep what is configured", which is what
+  makes the key work — the browser never receives it, so a probe carrying none has to fall back to
+  the stored one instead of testing anonymously and reporting a 401 nobody can explain. The answer
+  carries `candidate`, so "reachable" does not claim to describe the deployment when it describes
+  something else.
+
+- **The Settings page reads the shipped defaults from the server instead of restating them.**
+  `Config.tsx` carried `openai/gpt-4o-mini` twice and a table mirroring `defaultBaseUrl` beside it
+  — the mirror-drift pattern this codebase keeps removing, and one that bites the day a shipped
+  default moves: the form offers one model while the engine runs another. `GET /api/config` now
+  serves the base URL and model of every provider, and the form's initial base URL and model are
+  empty, which is the true value: the page sits behind a loading guard, so nothing is displayed
+  before the server has said what is actually in force.
+
+
 - **The Test LLM button says what the configured model can do, not only that it answered.**
   Everywhere else in this application a model's capabilities are found out by provoking a failure:
   the schema latch learns a model refuses `response_format` from the 400 it returns, and a slug

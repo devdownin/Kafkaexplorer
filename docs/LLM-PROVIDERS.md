@@ -101,6 +101,35 @@ support becomes *unroutable* rather than degrading, and that arrives as "no endp
 as the 400 or 422 the per-model fallback can act on. Turn it on when you know your model is served
 with schema support.
 
+### Picking a model without knowing its name
+
+Pick any slug from [openrouter.ai/models](https://openrouter.ai/models) — or don't, and let the
+Settings page list them. **Browse models** asks OpenRouter for the models that can actually do this
+job and shows them cheapest first: it filters on text output, on schema support, and on a context
+window large enough for this deployment's own prompt budget plus its answer. Each row carries the
+window, the published prices per million tokens, and a projected cost per analysed window.
+
+Three things about that list are deliberate:
+
+- **It states what it filtered by.** A filtered view presented as "the models" is the same lie as a
+  truncated list presented as complete, so the criteria are printed above the rows and a checkbox
+  widens the list to models without schema support. An empty list under stated criteria is a
+  different answer from a catalogue that could not be read, and the page says which one it is.
+- **The projected cost is a projection.** Everywhere else in this application a money figure is
+  *read* from the provider's own accounting, because no price table lives here. This one is
+  published prices multiplied by the same deliberately optimistic token estimate used elsewhere, so
+  it can understate — the note under the list says so, and what an analysis really cost is still
+  read back afterwards.
+- **It is only fetched when you open it.** Nothing is asked of the gateway to render the Settings
+  page.
+
+**Test LLM applies nothing.** It probes whatever is in the form — including a model you have just
+typed and not saved — and says `Candidate reachable…` when what it tested is not what the
+deployment is running. Previously the page had to save the form before it could probe, so trying a
+model repointed the live deployment and, where settings are persisted, wrote it to disk. You can
+now try three models and keep none. Leave the API key field alone while doing it: an empty field
+means "use the configured key", not "test without one".
+
 ### What each analysis cost
 
 OpenRouter prices every response, so Process Mining shows the real figure beside the token counts —
