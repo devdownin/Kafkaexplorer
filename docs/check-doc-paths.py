@@ -82,6 +82,9 @@ NOT_A_PATH = {
     'src/main/resources/static/', 'src/main/webapp/node_modules',
     # Shipped inside the Kafka image, not in this repository.
     'kafka-broker-api-versions.sh', 'kafka-consumer-groups.sh',
+    # A file of the *SpectraLLM* repository, named because its absence here is the reason
+    # docker-compose-spectra-hub.yml starts llama-server from arguments instead of mounting it.
+    'scripts/llm-chat-entrypoint.sh',
     # A path *inside* a built Spring Boot jar, which is the whole point of naming it: it is
     # where the dependencies sit once packaged, and therefore where the system class loader
     # does not look. Nothing in a checkout can resolve it.

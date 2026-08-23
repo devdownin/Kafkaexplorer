@@ -1,0 +1,48 @@
+# Overlay: let SpectraLLM index the broker's own topics.
+#
+#   docker compose -f docker-compose-spectra-hub.yml -f docker-compose-spectra-hub.ingest.yml up -d
+#
+# Without it the two applications share a model and nothing else: Kafka Explorer explores the
+# cluster, Spectra knows nothing about it. With it, Spectra consumes the topics named by
+# SPECTRA_INGEST_TOPICS and indexes what is *in* the messages — so the corpus answers questions
+# in plain language with cited sources, and the Explorer's audits can read it too:
+#
+#   EXPLORER_USE_RAG=true docker compose -f docker-compose-spectra-hub.yml \
+#     -f docker-compose-spectra-hub.ingest.yml up -d
+#
+# WHY THIS IS AN OVERLAY AND NOT JUST `SPECTRA_INGEST_KAFKA=true`
+# The flag alone is enough to turn the feature on, and it is enough to get two things wrong on
+# a cold stack. Both are fixed here, by the two dependencies below, because they are ordering
+# problems and ordering is what a compose file can express:
+#
+#   * The listener subscribes as soon as the API starts. `allow.auto.create.topics` defaults to
+#     true on a Kafka consumer and the demo broker allows auto-creation, so subscribing to
+#     `demo.orders.1.received` BEFORE the seeder has created it creates it — with one partition
+#     instead of three. `setup-demo.sh` then finds it existing and leaves it alone, and the
+#     multi-partition dataset the key-narrowing and window features are calibrated on is
+#     quietly a single-partition one. Hence: wait for the seeding to finish.
+#   * Indexing a record means embedding it, and embedding needs llm-embed to be serving. A
+#     record that cannot be vectorised is retried three times a second apart and then published
+#     to `<topic>.DLT` — a new topic, on the cluster under exploration. On a first boot the
+#     embedding model is still downloading, so ingestion would DLT the whole demo history
+#     before the model ever arrives. Hence: wait for llm-embed to report healthy.
+#
+# WHAT IT COSTS, so it is a choice and not a surprise: the Spectra API — and therefore its UI,
+# which depends on it — now waits for the demo seeding and for the embedding model to load.
+# On a first boot that is a couple of minutes; afterwards the seeding is skipped and the model
+# is already in the volume. Kafka Explorer is untouched and still comes up in seconds: it
+# depends on the broker alone, which is the whole point of that rule.
+#
+# Ingestion reads from the EARLIEST offset, so turning this on indexes the demo history rather
+# than only what arrives next, and it joins the cluster as an ordinary consumer group
+# (`spectra-ingestion`) — which the Explorer's Cluster page lists and its audit counts as the
+# third-party consumer it genuinely is. That is not noise; it is the demo working.
+services:
+  spectra-api:
+    environment:
+      - SPECTRA_KAFKA_ENABLED=true
+    depends_on:
+      demo-setup:
+        condition: service_completed_successfully
+      llm-embed:
+        condition: service_healthy

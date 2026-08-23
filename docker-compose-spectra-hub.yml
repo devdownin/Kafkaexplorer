@@ -1,0 +1,531 @@
+# Kafka Explorer + SpectraLLM — the whole stack from Docker Hub, nothing built locally.
+#
+#     docker compose -f docker-compose-spectra-hub.yml pull
+#     docker compose -f docker-compose-spectra-hub.yml up -d
+#
+# Endpoints (loopback only by default — see BIND_ADDR)
+#   Kafka Explorer .......... http://localhost:8080
+#   SpectraLLM UI ........... http://localhost:8088
+#   SpectraLLM API .......... http://localhost:8081   (POST /api/query, Swagger on /swagger-ui)
+#   Kafka (from the host) ... localhost:9092
+#
+# WHY THIS FILE EXISTS BESIDE docker-compose-spectra.yml
+# That one `include:`s SpectraLLM's own compose from a sibling checkout and `build: .`s the
+# explorer: it needs the SpectraLLM repository on disk, a Maven build and an npm build. Both
+# projects publish their images (compagnonsdudev on Docker Hub, one workflow per release), so
+# a machine with only Docker can run the pair — which is what this file does. Nothing is
+# compiled here, no checkout of SpectraLLM is required, and the two llama.cpp servers are
+# started from arguments rather than from the supervisor scripts that live in that checkout.
+#
+# WHAT IS DELIBERATELY DIFFERENT FROM UPSTREAM'S OWN STACK, AND WHAT IT COSTS
+#   * The models live in a NAMED VOLUME (`spectra_data`), not in `./data`. There is no
+#     SpectraLLM checkout here to hold that directory, and a bind mount created by Docker is
+#     root-owned while the image runs as `spectra` — the write would fail on first boot. A
+#     named volume inherits the image's ownership of /app/data instead, and `spectra-data-init`
+#     settles that ownership before any other service starts, so it cannot depend on which
+#     container happened to mount the fresh volume first.
+#     Back it up with `docker run --rm -v kafka-explorer-spectra-hub_spectra_data:/d -v "$PWD":/out
+#     alpine tar czf /out/spectra-data.tgz -C /d .`
+#   * `llm-chat` reads the registry pointer ONCE, at start, instead of watching it. Upstream
+#     mounts scripts/llm-chat-entrypoint.sh, which polls the pointer and reloads llama-server
+#     when the active model changes. That script is not in this repository and reimplementing it
+#     inline would be a copy that drifts. Consequence, stated rather than discovered: after
+#     activating another model in the Spectra UI, run `docker compose -f docker-compose-spectra-hub.yml
+#     restart llm-chat`. The sizing hints the API writes to active-chat-params are ignored the
+#     same way — LLM_CONTEXT / LLM_PARALLEL / LLM_CHAT_EXTRA_ARGS below are what applies.
+#   * Only the three ports anyone uses are published. chromadb (8000) and the two llama-server
+#     ports (8081/8082 in upstream) stay on the compose network: llama-server has no
+#     authentication and chromadb's port is read AND write access to the ingested corpus.
+#     Add `ports: ["127.0.0.1:8000:8000"]` to chromadb if you need to poke at it.
+#
+# PREREQUISITES
+#   * Docker Engine 25+ / Compose v2.20+ — the healthchecks use `start_interval`, which an
+#     older engine rejects. It is what separates "the service answers" from "Compose knows it
+#     does": without it a service ready at t=8s is only declared healthy at the next `interval`,
+#     and those granularities stack up along a chain of `service_healthy` dependencies.
+#   * ~16 GB of RAM for the default 7B chat model, and ~6 GB of disk for the GGUF weights.
+#     A smaller model: set LLM_CHAT_MODEL_FILE + LLM_CHAT_MODEL_NAME and drop the GGUF into the
+#     volume yourself, or install it from the Spectra UI's Model Hub.
+#   * THE FIRST BOOT DOWNLOADS ~4.8 GB OF MODEL WEIGHTS and the chat is silent until it lands.
+#     spectra-api installs the default chat model itself (spectra.startup.auto-install-models),
+#     `spectra-models` fetches the embedding GGUF (~81 MB) beside it, and the two
+#     llama-server containers poll until the file they serve appears. Nothing waits on any of
+#     it: Kafka, the Explorer and the Spectra UI are up in seconds. Do NOT add `--wait` — it
+#     would block on llm-chat's healthcheck for the length of that download.
+#
+# NO AUTHENTICATION ANYWHERE IN THIS STACK, on purpose and by default: Kafka Explorer has none
+# at all, and SPECTRA_API_KEY is empty below. Setting that key would also break the pair —
+# Kafka Explorer's SpectraLlmClient sends `Authorization: Bearer`, while Spectra's ApiKeyFilter
+# reads `X-API-Key` — so the Explorer's audits would answer 401 with nothing else changing.
+# Keep BIND_ADDR on the loopback, or put something authenticating in front of it.
+name: kafka-explorer-spectra-hub
+
+services:
+
+  # ═══ Kafka ══════════════════════════════════════════════════════════════════
+  # No `container_name` anywhere: it is a daemon-global name, so two stacks could never run
+  # side by side. Compose derives `<project>-<service>-<n>`; address services by service name
+  # (`docker compose -f docker-compose-spectra-hub.yml logs kafka`).
+
+  # The apache/kafka image runs as the non-root `appuser`, but Docker creates a fresh named
+  # volume owned by root — chown it once before the broker starts.
+  kafka-data-init:
+    image: apache/kafka:4.3.1
+    user: root
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    entrypoint: ["sh", "-c", "chown -R appuser:appuser /var/lib/kafka/data"]
+
+  kafka:
+    image: apache/kafka:4.3.1
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${KAFKA_PORT:-9092}:9092"
+    # A stopping KRaft node flushes its logs and closes the group / share-state coordinators
+    # cleanly. Docker's default grace period is 10s, past which the broker is SIGKILLed
+    # mid-flush and the next start has to recover the log segments.
+    stop_grace_period: 30s
+    restart: unless-stopped
+    # `kafka-broker-api-versions.sh` starts a whole JVM, so the steady-state interval is 30s
+    # and `start_period` covers the boot, where failures do not count against `retries`.
+    # `start_interval` is what makes the boot fast anyway: 3s probing while we are waiting.
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+      start_interval: 3s
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://:29092,CONTROLLER://:9093,PLAINTEXT_HOST://:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:${KAFKA_PORT:-9092}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      # Single-node dev: 1 __consumer_offsets partition instead of the default 50
+      KAFKA_OFFSETS_TOPIC_NUM_PARTITIONS: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      # Share groups (KIP-932, Kafka 4.1+) state topic on a single node
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: 1
+      # internal.audit.history / internal.metrics.config are auto-created on first write
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      # Fixed KRaft cluster id — the apache/kafka image reads CLUSTER_ID
+      # (KAFKA_CLUSTER_ID would be passed to server.properties and ignored)
+      CLUSTER_ID: "MkU2OhlMTT69sPFvS1n16g"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    depends_on:
+      kafka-data-init:
+        condition: service_completed_successfully
+
+  # 76 demo topics with keys, headers, duplicates and poison records — the dataset the audit,
+  # the traces and the window queries are calibrated on. Idempotent: `seed-demo-once.sh` skips
+  # when the marker topic `internal.demo.seeded` is already there, so an `up` on an existing
+  # volume costs one topic listing instead of replaying ~400 records.
+  demo-setup:
+    image: apache/kafka:4.3.1
+    depends_on:
+      kafka:
+        condition: service_healthy
+    volumes:
+      - ./setup-demo.sh:/data/setup-demo.sh
+      - ./seed-demo-once.sh:/data/seed-demo-once.sh
+    # `$$` escapes the `$` for compose interpolation, which this file needs.
+    entrypoint: ["sh", "-c", "sed 's/\\r$$//' /data/seed-demo-once.sh > /tmp/seed-demo-once.sh && sh /tmp/seed-demo-once.sh kafka:29092"]
+
+  # ═══ Kafka Explorer ═════════════════════════════════════════════════════════
+
+  explorer:
+    image: ${EXPLORER_IMAGE_NAMESPACE:-compagnonsdudev}/kafkaexplorer:${EXPLORER_IMAGE_TAG:-1.8.8}
+    ports:
+      # Loopback only. This application has no authentication and `POST /api/config` can
+      # repoint the Kafka cluster at runtime, so the Docker default of 0.0.0.0 would offer it
+      # to the whole LAN. Expose it deliberately: `BIND_ADDR=0.0.0.0 docker compose … up -d`.
+      - "${BIND_ADDR:-127.0.0.1}:${EXPLORER_PORT:-8080}:8080"
+    # The broker only — not the seed, and NOT spectra-api. The app needs neither to boot, and
+    # waiting on the LLM side would hold the UI back for the whole first-boot model download.
+    # The Dashboard polls every 30s, so topics appear as they are created.
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      # Bundled broker is Kafka 4.3 — use the KIP-848 rebalance protocol for the live consumer
+      - KAFKA_CONSUMER_GROUP_PROTOCOL=consumer
+      # Process Mining answers through SpectraLLM's single-turn RAG endpoint (POST /api/query).
+      - CLAUDE_PROVIDER=SPECTRA
+      - CLAUDE_BASE_URL=http://spectra-api:8080
+      # Retrieval off: the audit prompt already carries every message it reasons about inline.
+      # Turn it on — together with SPECTRA_INGEST_KAFKA below — to let the audits read what
+      # Spectra has indexed from the topics themselves. The collection defaults to the one the
+      # ingestion writes to, so the two halves line up from a single variable; with use-rag
+      # false, Spectra answers directly and never looks at the collection at all.
+      - CLAUDE_USE_RAG=${EXPLORER_USE_RAG:-false}
+      - CLAUDE_COLLECTION=${EXPLORER_RAG_COLLECTION:-${SPECTRA_STREAM_COLLECTION:-spectra_stream}}
+      # 60s is the shipped default and it is sized for a hosted API. A 7B model quantised to
+      # Q4 and running on CPU takes minutes on a Process Mining prompt, and a request timeout
+      # is TERMINAL here (retrying replays the whole prompt on a model that has already shown
+      # it needs longer). Kept in step with SPECTRA_GENERATION_TIMEOUT below — the shorter of
+      # the two is the one that actually decides.
+      - CLAUDE_REQUEST_TIMEOUT_SECONDS=${EXPLORER_LLM_TIMEOUT:-300}
+      # The prompt budget is the other half of that arithmetic. The default 120 000 characters
+      # is ~30k tokens, which does not fit in the 8 192-token window a slot gets below — the
+      # model would silently see a truncated prompt. 16 000 characters is ~4k tokens, leaving
+      # the rest of the slot for the JSON answer. Raise both together, or neither.
+      - PROCESS_MINING_PROMPT_CHAR_BUDGET=${EXPLORER_PROMPT_CHAR_BUDGET:-16000}
+    volumes:
+      # Named volumes, never a bind-mounted file: `./Kafkaexplorer.log:/app/logs/…` pointed at
+      # a path absent from the checkout, so Docker created a directory and Logback could not
+      # open its log at all. The image runs as uid 10001 and a named volume inherits that.
+      - explorer_logs:/app/logs
+      - explorer_data:/app/data
+    # 15s of graceful web shutdown + 10s of bean destruction + the JVM's exit. Docker's default
+    # of 10s would SIGKILL exactly what those budgets exist to protect.
+    stop_grace_period: 35s
+    restart: unless-stopped
+
+  # ═══ SpectraLLM ═════════════════════════════════════════════════════════════
+
+  # One volume holds the document store, the H2 database, the GGUF models and the fine-tuning
+  # jobs — upstream's "one directory, one backup, one reset". This one-shot creates the models
+  # directory and settles ownership BEFORE anything else mounts the volume: llm-chat and
+  # llm-embed run a llama.cpp image that has no /app/data of its own, so if one of them
+  # initialised the volume it would come up empty and root-owned, and spectra-api — which runs
+  # as the non-root `spectra` — could never write to it. Same idiom as kafka-data-init, and it
+  # costs no extra pull: it is the API's own image.
+  spectra-data-init:
+    image: ${SPECTRA_IMAGE_NAMESPACE:-compagnonsdudev}/spectrallm:${SPECTRA_IMAGE_TAG:-0.9.0}
+    user: root
+    volumes:
+      - spectra_data:/app/data
+    entrypoint: ["sh", "-c", "mkdir -p /app/data/models && chown -R spectra:spectra /app/data"]
+
+  # Vector store. Pinned, like every image here: chromadb's `latest` moved its persistence path
+  # from /chroma/chroma to /data without a word, and the volume mounted on the old path stayed
+  # empty for months — the index started from scratch on every `down`, silently.
+  chromadb:
+    image: chromadb/chroma:${CHROMADB_IMAGE_TAG:-1.5.9}
+    volumes:
+      - spectra_chroma:/data
+    environment:
+      - ANONYMIZED_TELEMETRY=FALSE
+      - CHROMA_OTEL_EXPORTER_OTLP_ENDPOINT=
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8000 && echo -e 'GET /api/v2/heartbeat HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && grep -q '200 OK' <&3"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+      start_interval: 3s
+    restart: unless-stopped
+
+  spectra-api:
+    image: ${SPECTRA_IMAGE_NAMESPACE:-compagnonsdudev}/spectrallm:${SPECTRA_IMAGE_TAG:-0.9.0}
+    ports:
+      # The UI reaches the API through nginx (`/api/` → spectra-api:8080), so this publication
+      # is for Swagger, curl and scripts. Host 8081 rather than 8080: the Explorer owns that one.
+      - "${BIND_ADDR:-127.0.0.1}:${SPECTRA_API_PORT:-8081}:8080"
+    depends_on:
+      spectra-data-init:
+        condition: service_completed_successfully
+      chromadb:
+        condition: service_healthy
+    environment:
+      # Heap explicitly, not MaxRAMPercentage: without a container limit that flag reads the
+      # HOST's memory. -Xmx is what bounds this JVM in a stack that ships no limits.
+      - JAVA_OPTS=${SPECTRA_JAVA_OPTS:--Xms256m -Xmx1024m -XX:+UseZGC}
+      # These three default to exactly these values in the image's application.yml. Passed
+      # anyway, so that renaming a service here cannot leave the API talking to nothing.
+      - SPECTRA_LLM_PROVIDER=llama-cpp
+      - SPECTRA_LLM_CHAT_BASE_URL=http://llm-chat:8081
+      - SPECTRA_LLM_EMBEDDING_BASE_URL=http://llm-embed:8082
+      - SPECTRA_CHROMADB_BASE_URL=http://chromadb:8000
+      # The alias the model answers under, and the GGUF actually served — the pair is what lets
+      # the local registry tie the default model to a servable source, and what llm-chat falls
+      # back to before the registry pointer exists (first boot).
+      - SPECTRA_LLM_MODEL=${LLM_CHAT_MODEL_NAME:-qwen2.5-7b-instruct}
+      - SPECTRA_LLM_CHAT_FILE=${LLM_CHAT_MODEL_FILE:-Qwen2.5-7B-Instruct-Q4_K_M.gguf}
+      - SPECTRA_LLM_EMBEDDING_MODEL=${LLM_EMBED_MODEL_NAME:-nomic-embed-text}
+      - SPECTRA_LLM_EMBEDDING_FILE=${LLM_EMBED_MODEL_FILE:-embed.gguf}
+      # Empty = no authentication. Read the header note before setting it: the Explorer sends a
+      # Bearer token, this filter reads X-API-Key, so a key here silences Process Mining.
+      - SPECTRA_API_KEY=${SPECTRA_API_KEY:-}
+      # Must cover a full generation on CPU, and must not be shorter than the Explorer's own
+      # request timeout — the API would abandon the answer while the caller is still waiting.
+      - SPECTRA_PIPELINE_GENERATION_TIMEOUT_SECONDS=${SPECTRA_GENERATION_TIMEOUT:-300}
+      # Installs the default chat model (~4.7 GB) into the shared volume on first boot, through
+      # the Model Hub, so it lands registered rather than merely present. Set to false on a
+      # metered link and install it from the UI when you are ready.
+      - SPECTRA_STARTUP_AUTO_INSTALL_MODELS=${SPECTRA_AUTO_INSTALL_MODELS:-true}
+      # ── Indexing the broker's own topics into Spectra's corpus ──────────────────────────
+      # Until this is on, the two applications only share a model: the Explorer explores the
+      # cluster while Spectra knows nothing about it. On, Spectra consumes the topics named
+      # below and indexes what is IN the messages, so the corpus can be questioned in plain
+      # language with cited sources — and the Explorer's own audits can read it (EXPLORER_USE_RAG).
+      #
+      # OFF by default, for three reasons that each bite if ignored. It is a WRITE into
+      # somebody's corpus, and which topics belong there is theirs to decide. It costs one
+      # embedding per record, on CPU, at the very moment the chat model is still downloading.
+      # And it needs the EMBEDDING model to be there: a record that cannot be vectorised is
+      # retried three times a second apart and then published to `<topic>.DLT` — a new topic,
+      # on the cluster you were exploring.
+      #
+      # TURN IT ON WITH THE OVERLAY, not with this variable: `docker-compose-spectra-hub.ingest.yml`
+      # sets the same flag *and* adds the two dependencies that make it safe on a cold stack —
+      # wait for the seeding (a consumer subscribing to a topic that does not exist yet creates
+      # it, with one partition instead of three) and wait for llm-embed to serve (or the whole
+      # demo history goes to `.DLT` while the model is still downloading). The variable is the
+      # escape hatch for a stack whose broker is already seeded and whose model is already
+      # loaded; the overlay is the answer that does not depend on knowing that.
+      #
+      # The topic list is explicit and there are no patterns: Spring resolves it as a
+      # comma-separated list, and an EMPTY list subscribes the listener to a topic named ""
+      # rather than to nothing, which fails at startup. It excludes `internal.*` on purpose —
+      # those are the Explorer's own bookkeeping (audit history, metric configs, field
+      # mappings), not domain content. Ingesting reads from the EARLIEST offset, so turning it
+      # on indexes the demo history rather than only what arrives next, and it joins the
+      # cluster as an ordinary consumer group (visible on the Cluster page, and counted by the
+      # audit as the third-party consumer it genuinely is).
+      - SPECTRA_KAFKA_ENABLED=${SPECTRA_INGEST_KAFKA:-false}
+      - SPECTRA_KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - SPECTRA_KAFKA_TOPICS=${SPECTRA_INGEST_TOPICS:-demo.orders.1.received,demo.orders.2.validated,demo.orders.3.enriched,demo.customers}
+      - SPECTRA_KAFKA_COLLECTION=${SPECTRA_STREAM_COLLECTION:-spectra_stream}
+      - SPECTRA_KAFKA_GROUP_ID=${SPECTRA_INGEST_GROUP_ID:-spectra-ingestion}
+      - SPECTRA_KAFKA_FORMAT=json
+      # Empty content-field indexes the WHOLE payload, which is the right answer for these
+      # records: a demo order is a flat document whose value is the record itself (id, state,
+      # amount, customer), not one prose field — extracting a single field would index four
+      # words per document. Name a field when the payload carries a real text body.
+      - SPECTRA_KAFKA_CONTENT_FIELD=${SPECTRA_INGEST_CONTENT_FIELD:-}
+      # Copied onto every chunk, so an answer can say which order it came from.
+      - SPECTRA_KAFKA_METADATA_FIELDS=${SPECTRA_INGEST_METADATA_FIELDS:-id,state,customer_id}
+    volumes:
+      - spectra_data:/app/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/actuator/health/readiness"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+      start_interval: 3s
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  # llama.cpp — chat. Pinned to a versioned build: the `server` tag is rebuilt from llama.cpp's
+  # master several times a day, and a broken build there killed containers at startup while
+  # machines running an older cached pull stayed green.
+  llm-chat:
+    image: ghcr.io/ggml-org/llama.cpp:${LLAMA_CPP_IMAGE_TAG:-server-b9828}
+    depends_on:
+      spectra-data-init:
+        condition: service_completed_successfully
+    volumes:
+      # Read-only: this container serves weights, it never writes any. The API and the Model
+      # Hub own what lands in there.
+      - spectra_data:/app/data:ro
+    environment:
+      - LLM_CHAT_MODEL_FILE=${LLM_CHAT_MODEL_FILE:-Qwen2.5-7B-Instruct-Q4_K_M.gguf}
+      - LLM_CHAT_MODEL_NAME=${LLM_CHAT_MODEL_NAME:-qwen2.5-7b-instruct}
+      # TOTAL context, divided by the slot count: 16384/2 = 8192 tokens per request. That is
+      # what the Explorer's prompt budget above is sized against; move the two together.
+      - LLM_CONTEXT=${LLM_CONTEXT:-16384}
+      - LLM_PARALLEL=${LLM_PARALLEL:-2}
+      # e.g. --n-gpu-layers 99 to offload. Threads are left to llama-server's own detection.
+      - LLM_CHAT_EXTRA_ARGS=${LLM_CHAT_EXTRA_ARGS:-}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -u
+        MODELS=/app/data/models
+        FILE="$${LLM_CHAT_MODEL_FILE}"
+        ALIAS="$${LLM_CHAT_MODEL_NAME}"
+        # The registry pointer spectra-api writes when the active model changes: line 1 is the
+        # alias, line 2 the GGUF file name. Read once, at start — see the header note.
+        POINTER="$${MODELS}/active-chat-model"
+        if [ -f "$${POINTER}" ]; then
+          a=$$(head -n 1 "$${POINTER}" | tr -d '\r')
+          f=$$(sed -n '2p' "$${POINTER}" | tr -d '\r')
+          if [ -n "$${a}" ]; then ALIAS="$${a}"; fi
+          if [ -n "$${f}" ]; then FILE="$${f}"; fi
+        fi
+        while [ ! -f "$${MODELS}/$${FILE}" ]; do
+          echo "[llm-chat] waiting for $${MODELS}/$${FILE} — spectra-api is installing it (~4.7 GB on first boot); follow it with: docker compose -f docker-compose-spectra-hub.yml logs -f spectra-api"
+          sleep 10
+        done
+        SERVER=""
+        for c in /app/llama-server /llama-server /usr/local/bin/llama-server; do
+          if [ -x "$${c}" ]; then SERVER="$${c}"; break; fi
+        done
+        if [ -z "$${SERVER}" ]; then echo "[llm-chat] no llama-server binary in this image"; exit 1; fi
+        # An EMPTY LLM_CONTEXT means "let llama-server decide", which is upstream's
+        # pass-through convention — so the flag is omitted rather than passed as `-c ""`,
+        # which llama-server rejects outright.
+        CTX_ARG=""
+        if [ -n "$${LLM_CONTEXT}" ]; then CTX_ARG="-c $${LLM_CONTEXT}"; fi
+        echo "[llm-chat] serving $${FILE} as $${ALIAS}"
+        exec "$${SERVER}" --host 0.0.0.0 --port 8081 --model "$${MODELS}/$${FILE}" \
+          --alias "$${ALIAS}" $${CTX_ARG} --parallel "$${LLM_PARALLEL}" $${LLM_CHAT_EXTRA_ARGS}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8081/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      # Covers loading the GGUF, not downloading it: on a first boot this container is
+      # legitimately unhealthy for as long as the download takes. Nothing depends on it being
+      # healthy, so that is a red line in `ps` and not a broken stack.
+      start_period: 300s
+      start_interval: 5s
+    restart: unless-stopped
+
+  # llama.cpp — embeddings. Same image, one process per role: an embedding server runs with
+  # --embedding and its own batch sizing, and sharing one process would make each ingestion
+  # batch compete with the chat for the same slots.
+  llm-embed:
+    image: ghcr.io/ggml-org/llama.cpp:${LLAMA_CPP_IMAGE_TAG:-server-b9828}
+    depends_on:
+      spectra-data-init:
+        condition: service_completed_successfully
+    volumes:
+      - spectra_data:/app/data:ro
+    environment:
+      - LLM_EMBED_MODEL_FILE=${LLM_EMBED_MODEL_FILE:-embed.gguf}
+      - LLM_EMBED_PARALLEL=${LLM_EMBED_PARALLEL:-4}
+      - LLM_EMBED_EXTRA_ARGS=${LLM_EMBED_EXTRA_ARGS:-}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -u
+        MODEL="/app/data/models/$${LLM_EMBED_MODEL_FILE}"
+        while [ ! -f "$${MODEL}" ]; do
+          echo "[llm-embed] waiting for $${MODEL} — the spectra-models one-shot fetches it (~81 MB)"
+          sleep 5
+        done
+        SERVER=""
+        for c in /app/llama-server /llama-server /usr/local/bin/llama-server; do
+          if [ -x "$${c}" ]; then SERVER="$${c}"; break; fi
+        done
+        if [ -z "$${SERVER}" ]; then echo "[llm-embed] no llama-server binary in this image"; exit 1; fi
+        echo "[llm-embed] serving $${MODEL}"
+        exec "$${SERVER}" --host 0.0.0.0 --port 8082 --model "$${MODEL}" --embedding \
+          -c 8192 -b 2048 -ub 2048 --parallel "$${LLM_EMBED_PARALLEL}" $${LLM_EMBED_EXTRA_ARGS}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8082/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+      start_interval: 3s
+    restart: unless-stopped
+
+  # The GGUF fetcher. Two models, two different reasons for being here.
+  #
+  # The EMBEDDING model is the one spectra-api does not install by itself — llmfit handles
+  # generation models only — and upstream's answer is "run ./setup.sh", a script this repository
+  # does not have. 81 MB, fetched once, skipped when the file is already there.
+  #
+  # The CHAT model is fetched only when SPECTRA_CHAT_MODEL_URL is set, because for the DEFAULT
+  # model spectra-api installs it itself, through the Model Hub, which lands it *registered*
+  # rather than merely present. Naming a URL is how a smaller model gets served instead — see
+  # docker-compose-spectra-hub.small.yml, which is that path made into one flag.
+  #
+  # It runs as the image's own `spectra` user, so what it writes is owned by the process that
+  # will read it. Nothing depends on it: without the embedding model the Explorer's audits still
+  # work (they carry their context inline, useRag=false) — what stops working is ingesting
+  # documents into Spectra.
+  spectra-models:
+    image: ${SPECTRA_IMAGE_NAMESPACE:-compagnonsdudev}/spectrallm:${SPECTRA_IMAGE_TAG:-0.9.0}
+    depends_on:
+      spectra-data-init:
+        condition: service_completed_successfully
+    volumes:
+      - spectra_data:/app/data
+    environment:
+      - LLM_EMBED_MODEL_FILE=${LLM_EMBED_MODEL_FILE:-embed.gguf}
+      - SPECTRA_EMBED_MODEL_URL=${SPECTRA_EMBED_MODEL_URL:-https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q4_K_M.gguf}
+      - SPECTRA_EMBED_MODEL_SHA256=${SPECTRA_EMBED_MODEL_SHA256:-}
+      - LLM_CHAT_MODEL_FILE=${LLM_CHAT_MODEL_FILE:-Qwen2.5-7B-Instruct-Q4_K_M.gguf}
+      # Empty: the default chat model is spectra-api's to install. Set it to serve another one.
+      - SPECTRA_CHAT_MODEL_URL=${SPECTRA_CHAT_MODEL_URL:-}
+      - SPECTRA_CHAT_MODEL_SHA256=${SPECTRA_CHAT_MODEL_SHA256:-}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -u
+        fetch() {
+          url="$$1"; dest="$$2"; want="$$3"; label="$$4"
+          if [ -z "$${url}" ]; then
+            echo "[models] no URL given for the $${label} — skipped (it is installed elsewhere, or not wanted)"
+            return 0
+          fi
+          if [ -s "$${dest}" ]; then
+            echo "[models] $${label} already present: $${dest}"
+            return 0
+          fi
+          echo "[models] downloading the $${label} from $${url}"
+          # -C - resumes a partial transfer, so a run interrupted mid-download costs nothing on
+          # the next `up`. The .part name is what keeps a truncated file from ever being served:
+          # the llama-server containers wait on the final name, and only a completed — and, when
+          # a digest is pinned, verified — transfer takes it.
+          if ! curl -fSL --no-progress-meter --retry 5 --retry-delay 5 -C - -o "$${dest}.part" "$${url}"; then
+            echo "[models] the $${label} download FAILED — the partial transfer is kept, re-run this stack to resume"
+            return 1
+          fi
+          got=$$(sha256sum "$${dest}.part" | cut -d" " -f1)
+          if [ -n "$${want}" ] && [ "$${got}" != "$${want}" ]; then
+            # Deleted, not kept: a resumed transfer would otherwise resume onto the bad bytes
+            # for ever, and a file that failed its digest is not a file to serve a model from.
+            rm -f "$${dest}.part"
+            echo "[models] the $${label} FAILED its checksum (expected $${want}, got $${got}) — the file was deleted"
+            return 1
+          fi
+          mv "$${dest}.part" "$${dest}"
+          if [ -z "$${want}" ]; then
+            echo "[models] $${label} ready: $${dest} (sha256 $${got} — copy it into SPECTRA_*_MODEL_SHA256 to pin it)"
+          else
+            echo "[models] $${label} ready and verified: $${dest}"
+          fi
+        }
+        rc=0
+        fetch "$${SPECTRA_EMBED_MODEL_URL}" "/app/data/models/$${LLM_EMBED_MODEL_FILE}" \
+          "$${SPECTRA_EMBED_MODEL_SHA256}" "embedding model" || rc=1
+        fetch "$${SPECTRA_CHAT_MODEL_URL}" "/app/data/models/$${LLM_CHAT_MODEL_FILE}" \
+          "$${SPECTRA_CHAT_MODEL_SHA256}" "chat model" || rc=1
+        exit $${rc}
+
+  # nginx serving the React UI, and proxying /api/ to spectra-api:8080 — that upstream is
+  # baked into the image's nginx.conf, which is why the API service MUST keep the name
+  # `spectra-api`.
+  frontend:
+    image: ${SPECTRA_IMAGE_NAMESPACE:-compagnonsdudev}/spectrallm-frontend:${SPECTRA_IMAGE_TAG:-0.9.0}
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${SPECTRA_UI_PORT:-8088}:80"
+    depends_on:
+      spectra-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+      start_interval: 3s
+    restart: unless-stopped
+
+volumes:
+  kafka_data:
+  explorer_logs:
+  explorer_data:
+  # Documents, H2 database, GGUF models, fine-tuning jobs — and the registry pointer llm-chat
+  # reads. `down` keeps it, `down -v` throws away the 4.8 GB of weights with everything else.
+  spectra_data:
+  spectra_chroma:

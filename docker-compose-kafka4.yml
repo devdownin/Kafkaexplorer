@@ -160,3 +160,10 @@ services:
 
 volumes:
   kafka_data:
+  # Declared because the explorer service mounts them. They were not, so this stack — the one
+  # this repository recommends — refused to start at all: `service "explorer" refers to
+  # undefined volume explorer_logs: invalid compose project`, from the moment the two mounts
+  # were added. Nothing caught it because nothing parsed these files; the compose-lint job in
+  # ci.yml now does.
+  explorer_logs:
+  explorer_data:
