@@ -699,22 +699,35 @@ jobs:
             || { echo "::error::the Explorer does not point at spectra-api: $body"; exit 1; }
 
       - name: Assert the Spectra API answers, and answers through the UI's proxy
-        # Two different claims: the API is ready on its published port, and nginx still
-        # resolves the upstream baked into its image — which is why the service has to keep
-        # the name `spectra-api`, a constraint nothing else in this repository can enforce.
+        # Three claims that become true at three different moments: the API answers on its
+        # published port, the UI serves, and nginx still resolves the upstream baked into its
+        # image — which is why the service has to keep the name `spectra-api`, a constraint
+        # nothing else in this repository can enforce.
+        #
+        # Each is POLLED, not asserted once. `docker compose up -d` returns when the containers
+        # have started, not when a JVM has finished booting, and the frontend is gated on the
+        # API's *healthcheck*, which lags its readiness by up to a probe interval. Asserting the
+        # UI the instant the API answered passed on a slow runner and failed on a fast one — a
+        # race in the test, on a stack that was fine.
+        #
+        # A probe that gives up prints the last reply, so the next failure explains itself
+        # instead of being dug out of a thousand lines of container logs.
         run: |
           set -euo pipefail
-          for _ in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:8081/actuator/health/readiness | grep -q '"status":"UP"'; then
-              ready=1; break
-            fi
-            sleep 5
-          done
-          [ "${ready:-0}" = 1 ] || { echo "::error::the Spectra API never reported ready"; exit 1; }
-          curl -fsS -o /dev/null http://127.0.0.1:8088/ \
-            || { echo "::error::the Spectra UI does not serve"; exit 1; }
-          curl -fsS -o /dev/null http://127.0.0.1:8088/api/status \
-            || { echo "::error::the UI does not reach spectra-api through its /api/ proxy"; exit 1; }
+          probe() {
+            name="$1"; url="$2"; want="$3"
+            for _ in $(seq 1 60); do
+              body=$(curl -fsS "$url" 2>&1) && case "$body" in
+                *"$want"*) echo "· $name answered"; return 0 ;;
+              esac
+              sleep 5
+            done
+            echo "::error::$name never answered ($url) — last reply: ${body:-(none)}"
+            return 1
+          }
+          probe "the Spectra API" http://127.0.0.1:8081/actuator/health/readiness '"status":"UP"'
+          probe "the Spectra UI" http://127.0.0.1:8088/ ""
+          probe "the UI's /api/ proxy to spectra-api" http://127.0.0.1:8088/api/status ""
 
       - name: Assert a missing model leaves llama-server waiting, not crash-looping
         # The behaviour the inline entrypoints exist for. Without them llama-server would exit
