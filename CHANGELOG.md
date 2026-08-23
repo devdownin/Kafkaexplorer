@@ -46,6 +46,18 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   stacks name their provider explicitly and are unaffected. One thing the move fixes in passing:
   the 120 000-character prompt budget and the shipped provider finally agree, where the budget was
   previously sized for a hosted API the default was not.
+- **Both pages that call a model now say what becomes of the message content.** The question was
+  answered by halves: Settings spoke only when the news was good — `DENY` displayed its restriction
+  while `ALLOW` fell back to a generic "remote inference" line, so the one setting that *widens*
+  exposure was the one that showed nothing — and Process Mining, the page where the content
+  actually leaves, said nothing beyond "digests are sent to this endpoint". One tested module
+  (`pages/llmPolicy.ts`) now produces the sentence for both, in four cases: it stays on this host,
+  no retention (enforced), retention allowed, or governed by the endpoint. Two rules hold it. A
+  policy is asserted only where it is **enforceable** — OpenRouter imposes it at the routing layer,
+  while on Anthropic, an arbitrary gateway or a remote Ollama this application can neither impose
+  nor observe one, and says exactly that rather than guessing. And it describes what the deployment
+  **enforces**, never what a model **declares**: the second would be a third-party claim rendered
+  as our own verdict.
 - **What an analysis cost in money is shown, not just in tokens.** `LlmUsage` carried token counts
   and a duration; OpenRouter prices every response and that figure was being dropped — on the
   provider now shipped by default, which bills per token. It is **read, never derived**: no price

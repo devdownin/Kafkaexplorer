@@ -78,6 +78,15 @@ routable, and OpenRouter reports that with the same 404 it uses for a mistyped s
 message names this setting, or an operator would spend the afternoon checking a model name that was
 correct all along. Set `ALLOW` to widen the choice of models back.
 
+Both pages that call a model say which of four cases you are in, in the same words —
+`Stays on this host`, `No retention`, `Retention allowed`, `Governed by the endpoint` — because a
+policy that reads differently depending on the screen is not a policy. Note what the sentence is
+about: it states what **this deployment enforces**, not what a given model **declares**. Those are
+different claims, and only the first is one this application can stand behind. `No retention` is
+therefore never shown outside OpenRouter — on Anthropic, an arbitrary gateway or a remote Ollama
+the question has an answer, but it belongs to the endpoint's own terms and nothing here can impose
+or observe it, so the UI says exactly that instead of guessing.
+
 Its sibling is deliberately **off**:
 
 ```yaml

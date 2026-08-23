@@ -15,6 +15,7 @@ import { PageHeader, Button, Field, Textarea } from '../components/ui';
 import { clearDraft, readDraft, useDraftConflict, usePersistentState, writeDraft } from '../draftStore';
 import { describeResume, resumableStep } from './processMiningDraft';
 import { describeUsage, formatCostUsd, totalCostUsd, totalTokens } from './llmUsage';
+import { describeDataPolicy } from './llmPolicy';
 import type { AnalysisMode, Step } from './processMiningDraft';
 import type {
   AnomalyReport,
@@ -32,6 +33,8 @@ interface RuntimeLlmInfo {
   llmModel?: string;
   llmBaseUrl?: string;
   llmLocalDeployment?: boolean;
+  /** Vrai seulement là où le routage a pu imposer la non-rétention — voir `llmPolicy.ts`. */
+  llmDataRetentionRefused?: boolean;
 }
 
 interface AuditTemplate {
@@ -307,6 +310,7 @@ const ProcessMining: React.FC = () => {
 
   const sessionTokens = useMemo(() => totalTokens(liveUsageHistory), [liveUsageHistory]);
   const sessionCost = useMemo(() => totalCostUsd(liveUsageHistory), [liveUsageHistory]);
+  const policy = useMemo(() => describeDataPolicy(llmInfo), [llmInfo]);
 
   const missingRolesFor = (t: AuditTemplate): string[] =>
     (t.requiredRoles ?? []).filter(r => !availableRoles.has(r));
@@ -662,11 +666,22 @@ const ProcessMining: React.FC = () => {
                 {llmInfo.llmModel ? ` · ${llmInfo.llmModel}` : ''}
               </p>
               <p className="text-xs text-on-surface-variant mt-1">
-                Profiling and analysis run against this endpoint.
-                {llmInfo.llmLocalDeployment
-                  ? ' It is a loopback address, so no message content leaves this host.'
-                  : ' Message digests are sent to it — never raw payloads.'}
+                Profiling and analysis run against this endpoint — message digests, never raw payloads.
               </p>
+              {/* C'est ici que le contenu part réellement, et la page n'en disait rien : ni la
+                  restriction quand elle est imposée, ni son absence quand elle ne l'est pas. La
+                  phrase vient du même module que celle des Réglages, pour qu'une politique ne
+                  puisse pas se lire différemment selon l'écran. */}
+              {policy && (
+                <p className={`text-xs mt-1.5 flex items-start gap-1.5 ${
+                  policy.tone === 'open' ? 'text-warning' : 'text-on-surface-variant'
+                }`}>
+                  <span aria-hidden="true" className="material-symbols-outlined text-sm flex-shrink-0">
+                    {policy.tone === 'local' || policy.tone === 'restricted' ? 'lock' : 'policy'}
+                  </span>
+                  <span><span className="font-medium">{policy.label}.</span> {policy.detail}</span>
+                </p>
+              )}
               {llmInfo.llmBaseUrl && (
                 <p className="text-[11px] font-mono text-on-surface-variant mt-2 break-all">{llmInfo.llmBaseUrl}</p>
               )}

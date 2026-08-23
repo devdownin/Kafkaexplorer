@@ -13,6 +13,7 @@ import {
   describePersistence, describeSaveOutcome, splitPersistence,
   type SettingsPersistence,
 } from './settingsPersistence';
+import { describeDataPolicy, type LlmPolicyFacts } from './llmPolicy';
 import type { LlmTestResponse } from '../api/types';
 
 interface ClusterConfig {
@@ -186,8 +187,19 @@ const Config: React.FC = () => {
    * « modifié » et dans le brouillon écrit en `localStorage`.
    */
   const [persistence, setPersistence] = useState<SettingsPersistence>({});
+  /*
+   * Ce que le serveur dit être *en vigueur* pour le contenu des messages, tenu à part de `config`
+   * pour la même raison que `persistence` — et parce que le bandeau doit décrire ce qui tourne, pas
+   * ce qui est en train d'être tapé : `llmDataRetentionRefused` est calculé côté serveur et ne suit
+   * pas un fournisseur changé dans le formulaire. Les mélanger afficherait la politique d'un
+   * fournisseur sous le nom d'un autre.
+   */
+  const [inForce, setInForce] = useState<LlmPolicyFacts | null>(null);
   const [saveNote, setSaveNote] = useState<string | null>(null);
   const persistenceNotice = useMemo(() => describePersistence(persistence), [persistence]);
+  const policy = useMemo(() => describeDataPolicy(inForce), [inForce]);
+  /** Le formulaire pointe ailleurs que ce qui tourne : le bandeau décrit encore l'ancien. */
+  const policyIsStale = inForce != null && inForce.llmProvider !== config.llmProvider;
 
   /*
    * Le serveur donne la base — c'est lui qui dit ce qui est réellement en vigueur, et lui seul
@@ -211,6 +223,14 @@ const Config: React.FC = () => {
         savedRef.current = saved ? JSON.stringify(server) : '';
         return mergeDraft(server, readDraft<Partial<ClusterConfig> | null>(DRAFT_KEY, null));
       });
+      // Rien à dire si le serveur n'a pas répondu : sans réponse, la politique est inconnue, et
+      // une phrase rassurante posée par défaut serait exactement l'affirmation invérifiable que
+      // cette page a été réécrite pour retirer.
+      setInForce(saved ? {
+          llmProvider: saved.llmProvider,
+          llmLocalDeployment: saved.llmLocalDeployment,
+          llmDataRetentionRefused: saved.llmDataRetentionRefused,
+        } : null);
       setLoading(false);
     };
     fetchConfig();
@@ -269,6 +289,11 @@ const Config: React.FC = () => {
       return next;
     });
     setPersistence(kept);
+    setInForce({
+      llmProvider: settings.llmProvider,
+      llmLocalDeployment: settings.llmLocalDeployment,
+      llmDataRetentionRefused: settings.llmDataRetentionRefused,
+    });
     // Ce que l'enregistrement a réellement obtenu quand ce n'est pas ce qui était promis : un
     // magasin qu'on n'a pas pu écrire laisse des réglages qui marchent maintenant et disparaissent
     // au redémarrage. Ça ne peut pas rester sous un simple « Saved! ».
@@ -692,21 +717,33 @@ const Config: React.FC = () => {
             </div>
           </fieldset>
 
-          <div className={`rounded-lg border px-4 py-3 text-xs ${
-            config.llmLocalDeployment
-              ? 'border-success/20 bg-success/5 text-success'
+          {/* Ce que devient le contenu envoyé au modèle, dans les quatre cas où la réponse
+              diffère — voir `llmPolicy.ts`. Lu sur l'adresse résolue et sur le réglage de routage,
+              jamais sur le nom du fournisseur : un Ollama pointé sur une autre machine est
+              distant, et « aucune rétention » ne se dit que là où le routage peut l'imposer. */}
+          {policy && (
+            <div className={`rounded-lg border px-4 py-3 text-xs ${
+              policy.tone === 'local' ? 'border-success/20 bg-success/5 text-success'
+              : policy.tone === 'restricted' ? 'border-success/20 bg-success/5 text-success'
+              : policy.tone === 'open' ? 'border-warning/25 bg-warning/5 text-warning'
               : 'border-outline-variant/60 bg-surface-container-low text-on-surface-variant'
-          }`}>
-            {/* Lu sur l'adresse résolue, jamais sur le nom du fournisseur : un Ollama pointé sur
-                une autre machine est distant. Depuis qu'OpenRouter est le défaut, la seconde
-                phrase décrit le cas ordinaire — elle dit donc ce qui part et où aller pour que
-                rien ne parte, sans se lire comme le signalement d'une anomalie. */}
-            {config.llmLocalDeployment
-              ? 'Local inference detected. Lightweight open-source models can be used for snapshot and live process mining.'
-              : config.llmDataRetentionRefused
-                ? 'Remote inference: the message digests Process Mining builds are sent to this endpoint, but routing is restricted to providers that do not retain or train on them (claude.openrouter-data-collection: DENY). Switch to Ollama or SpectraLLM to keep everything on your own network.'
-                : 'Remote inference: the message digests Process Mining builds are sent to this endpoint. Switch to Ollama or SpectraLLM to keep everything on your own network.'}
-          </div>
+            }`}>
+              <p className="font-semibold">Message content: {policy.label}</p>
+              <p className="mt-1 opacity-90">{policy.detail}</p>
+              {policy.tone !== 'local' && (
+                <p className="mt-1 opacity-90">
+                  Switch to Ollama or SpectraLLM to keep everything on your own network.
+                </p>
+              )}
+              {/* Le bandeau décrit ce qui tourne, pas ce qui est tapé — le dire vaut mieux que de
+                  laisser lire la politique d'un fournisseur sous le nom d'un autre. */}
+              {policyIsStale && (
+                <p className="mt-1 font-medium">
+                  This describes the configuration in force. Save to apply the provider selected above.
+                </p>
+              )}
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-4">
             <Field
