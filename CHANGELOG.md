@@ -21,8 +21,78 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   into a model nothing rendered. A table's live endpoint is `/api/query/table/{name}`, under
   `/api` like every other domain endpoint.
 
+### Added
+
+- **`docs/check-compose.py` — the compose files, against `.env.example` and against
+  themselves.** `.env.example` exists so that changing where a stack is published does not mean
+  editing six compose files, which only holds if it lists them all: five variables had a default
+  in compose and no line there (`SPECTRALLM_DIR`, `SPECTRA_JAVA_OPTS`, `LLM_EMBED_MODEL_NAME`,
+  `LLM_EMBED_PARALLEL`, `LLM_EMBED_EXTRA_ARGS`), and nothing noticed — `check-config-table.py`
+  resolves `application.yml` and the Dockerfiles and never reads a stack. The five are now
+  documented and the gap cannot reopen. The reverse is checked too, a documented knob no stack
+  reads being an invitation to set a value that changes nothing. And a third pass is not
+  documentation at all: it asserts that `PROCESS_MINING_PROMPT_CHAR_BUDGET` fits the window the
+  stack serves — the whole context for Ollama, the context divided by `--parallel` slots for
+  llama.cpp. Those two halves are written in three files, each carrying a comment saying it is
+  "kept in step" with the others, and nothing executes a comment; a prompt past the window is
+  dropped in silence and logged at DEBUG rather than refused.
+
+### Changed
+
+- **The compose-lint combinations are generated from a declaration instead of hand-listed.**
+  Eighteen command lines became eight lines saying, per base, which overlays it accepts — and
+  nineteen combinations come out, the extra one being `docker-compose.yml` with *both* its
+  overlays layered together, which the hand-written list had never covered. A declaration rather
+  than a rule read off the file names, which was the tempting version and does not work: the
+  names do not say that `docker-compose.limits.yml` serves four bases, nor that
+  `docker-compose.release.yml` has an overlay's name and is a base, so deriving from the
+  convention would have silently dropped three combinations and misclassified a stack. The guard
+  that fails on a compose file no combination covers is now structural — a file is checked
+  because it is named in that declaration.
+- **The three shell entrypoints of the published-images stack moved to
+  `scripts/spectra-hub/`.** Compose interpolates `${…}` inside a YAML entrypoint, so every shell
+  variable had to be written `$${…}`: around forty escapes, where writing a single `$` yields an
+  empty string at runtime rather than an error — a defect class with no symptom. The compose file
+  loses 111 lines and the shell becomes shell. The cost is stated where it is paid: that stack
+  needs this repository checked out. It already did — it mounts the demo seeder — but
+  `docs/DOCKERHUB.md` claimed otherwise and documented a `curl -O` of the single file, which
+  leaves Docker creating directories where those files should be; the page now says `git clone`.
+- **Three more stacks stopped carrying their own copy of the broker.** `kafka`,
+  `kafka-data-init` and `demo-setup` were restated verbatim in `docker-compose-kafka4.yml`,
+  `docker-compose-llm.yml` and `docker-compose.release.yml` — 235 lines that `docker compose
+  config` reported byte-identical to `docker-compose.yml`'s, each with its own copy of the
+  reasoning beside it. They `extends:` that file now, which changes no command: `extends` reuses
+  a single service and does not turn a stack into an overlay. `docker compose config` resolves
+  the same project for all three, character for character. `docker-compose-dev.yml` stays out
+  (its named volumes shadow the bind mounts on purpose) and so does
+  `docker-compose-spectra-hub.yml`, the one stack meant to be downloaded on its own.
+- **The developer SpectraLLM stack no longer carries its own copy of the broker.**
+  `docker-compose-spectra.yml` restated sixty lines of `docker-compose.yml`'s KRaft service —
+  the healthcheck interval and what it costs at 5s, the grace period a flushing broker needs,
+  `unless-stopped`, the single-partition `__consumer_offsets`, the fixed cluster id — each with
+  its reasoning duplicated beside it. The two resolved services differed in exactly two
+  variables, the two that embed the service name, so the block is `extends`ed and only those
+  two are overridden; `docker compose config` resolves to a byte-identical project. The service
+  keeps the name `explorer-kafka`, which is load-bearing and now documented as such rather than
+  assumed: the `include:` carries SpectraLLM's own profile-gated `kafka`, a same-named service
+  merges with it and *inherits its profile*, and the broker then does not exist unless that
+  profile is activated — `depends_on` stops resolving and the project is rejected outright.
+  `extends` is what reuses a definition under a different name, which a second `-f` cannot do.
+
 ### Fixed
 
+- **A `grep -q` at the end of a pipe reported a line it had just found as absent.** The stack
+  smoke test waited for `[llm-chat] serving` with `docker compose logs … | grep -q`, under
+  `set -o pipefail`. `grep -q` exits on its first match and closes the pipe; the producer then
+  dies of SIGPIPE, and `pipefail` reports the whole pipeline as failed — with the pattern
+  found. Whether it happens at all depends on whether the producer had finished writing, so
+  the same command answered 0 on one iteration and 141 on the next: the wait loop broke on a
+  match and the identical check right after it announced that llama-server had never picked up
+  the model, while the line sat in the very log the failure handler went on to dump. The end of
+  the chain — a Process Mining call travelling explorer → spectra-api → llm-chat — was never
+  reached, on a stack where every container was working. The log is read into a file and the
+  file is grepped, so there is no pipe to signal, and the wait and the verdict now go through
+  one function rather than two copies of a pipeline that could disagree.
 - **The stack smoke test asserted three things that come up at three different moments.** It
   waited for the Spectra API to answer and then, in the same breath, required the UI and the
   UI's proxy to answer too — but `docker compose up -d` returns when the containers have

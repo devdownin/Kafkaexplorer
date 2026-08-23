@@ -95,10 +95,13 @@ Process Mining can be answered by [SpectraLLM](https://hub.docker.com/r/compagno
 — a local RAG stack published under this same namespace — so the flowcharts and the anomaly
 hunt run on your machine, with no API key and nothing leaving your network.
 [`docker-compose-spectra-hub.yml`](https://github.com/devdownin/Kafkaexplorer/blob/main/docker-compose-spectra-hub.yml)
-wires the pair from published images only: no checkout of either project, no Maven, no npm.
+wires the pair from published images only — **no Maven, no npm, no SpectraLLM checkout, and
+nothing built**. It does need this repository, for the demo seeder and the three entrypoints it
+mounts:
 
 ```bash
-curl -O https://raw.githubusercontent.com/devdownin/Kafkaexplorer/main/docker-compose-spectra-hub.yml
+git clone --depth 1 https://github.com/devdownin/Kafkaexplorer.git
+cd Kafkaexplorer
 docker compose -f docker-compose-spectra-hub.yml pull
 docker compose -f docker-compose-spectra-hub.yml up -d
 ```

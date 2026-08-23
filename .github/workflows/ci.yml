@@ -584,39 +584,63 @@ jobs:
             > /tmp/spectrallm-stub/deploy/docker/docker-compose.yml
           export SPECTRALLM_DIR=/tmp/spectrallm-stub
 
-          combos=(
-            "-f docker-compose.yml"
-            "-f docker-compose.yml -f docker-compose.ci.yml"
-            "-f docker-compose.yml -f docker-compose.limits.yml"
-            "-f docker-compose-kafka4.yml"
-            "-f docker-compose-kafka4.yml -f docker-compose.limits.yml"
-            "-f docker-compose-llm.yml"
-            "-f docker-compose-llm.yml -f docker-compose.limits.yml"
-            "-f docker-compose.release.yml"
-            "-f docker-compose.release.yml -f docker-compose.limits.yml"
-            "-f docker-compose-build.yml"
-            "-f docker-compose-dev.yml"
-            "-f docker-compose-spectra.yml"
-            "-f docker-compose-spectra-hub.yml"
-            "-f docker-compose-spectra-hub.yml -f docker-compose-spectra-hub.ingest.yml"
-            "-f docker-compose-spectra-hub.yml -f docker-compose-spectra-hub.gpu.yml"
-            "-f docker-compose-spectra-hub.yml -f docker-compose-spectra-hub.limits.yml"
-            "-f docker-compose-spectra-hub.yml -f docker-compose-spectra-hub.small.yml"
-            "-f docker-compose-spectra-hub.yml -f docker-compose-spectra-hub.ingest.yml -f docker-compose-spectra-hub.gpu.yml -f docker-compose-spectra-hub.limits.yml -f docker-compose-spectra-hub.small.yml"
+          # One declaration — every base, and the overlays it accepts. The combinations are
+          # GENERATED from it: each base alone, each base with each of its overlays, and each
+          # base with all of them at once. That last shape was missing from the eighteen
+          # hand-written combinations this replaces: docker-compose.yml's two overlays had
+          # never been layered together, so nineteen combinations now come out of less data.
+          #
+          # A declaration rather than a rule read off the file names, and that is the whole
+          # point: the names do not carry what matters. docker-compose.limits.yml serves FOUR
+          # bases while its name mentions one, and docker-compose.release.yml has an overlay's
+          # name and is a base — deriving from the convention would silently drop three
+          # combinations and misclassify a stack. What the generation does buy is the guard
+          # below: a file is checked because it is NAMED here, so the omission is structural
+          # rather than a string search over a list of command lines.
+          declare -A OVERLAYS=(
+            [docker-compose.yml]="docker-compose.ci.yml docker-compose.limits.yml"
+            [docker-compose-kafka4.yml]="docker-compose.limits.yml"
+            [docker-compose-llm.yml]="docker-compose.limits.yml"
+            [docker-compose.release.yml]="docker-compose.limits.yml"
+            [docker-compose-build.yml]=""
+            [docker-compose-dev.yml]=""
+            [docker-compose-spectra.yml]=""
+            [docker-compose-spectra-hub.yml]="docker-compose-spectra-hub.ingest.yml docker-compose-spectra-hub.gpu.yml docker-compose-spectra-hub.limits.yml docker-compose-spectra-hub.small.yml"
           )
-          for combo in "${combos[@]}"; do
-            echo "· $combo"
-            # shellcheck disable=SC2086 - the combination is a deliberate word list.
-            docker compose $combo config -q
-          done
 
-          # Every compose file in the tree is named above, base or overlay. A new one added
-          # without a line here would be checked by nothing, which is the situation this job
-          # exists to end — so the omission fails rather than passing quietly.
+          named=""
+          resolved=0
+          # Sorted, because an associative array has no iteration order of its own and a log
+          # whose lines move between runs is one nobody diffs.
+          for base in $(printf '%s\n' "${!OVERLAYS[@]}" | sort); do
+            named="$named $base ${OVERLAYS[$base]}"
+            combos=("-f $base")
+            every=""
+            for overlay in ${OVERLAYS[$base]}; do
+              combos+=("-f $base -f $overlay")
+              every="$every -f $overlay"
+            done
+            if [ "$(printf '%s\n' ${OVERLAYS[$base]} | grep -c .)" -gt 1 ]; then
+              combos+=("-f $base$every")
+            fi
+            for combo in "${combos[@]}"; do
+              echo "· $combo"
+              # shellcheck disable=SC2086 - the combination is a deliberate word list.
+              docker compose $combo config -q
+              resolved=$((resolved + 1))
+            done
+          done
+          echo "$resolved combinations resolved"
+
+          # Every compose file in the tree is named above, as a base or as somebody's overlay.
+          # A new one added without a line there would be checked by nothing, which is the
+          # situation this job exists to end — so the omission fails rather than passing
+          # quietly. The reverse is covered by the loop itself: a file named here and absent
+          # from disk fails at `config`.
           for f in docker-compose*.yml; do
-            case " ${combos[*]} " in
-              *" -f $f"*) ;;
-              *) echo "::error file=$f::$f is in no combination above — add it to compose-lint"; exit 1 ;;
+            case " $named " in
+              *" $f "*) ;;
+              *) echo "::error file=$f::$f is named as neither a base nor an overlay in the declaration above — add it to compose-lint"; exit 1 ;;
             esac
           done
 
@@ -745,7 +769,13 @@ jobs:
           done
           # The chat model is the one nothing downloads in this job, so this line is
           # deterministic where llm-embed's would be a race with an 81 MB transfer.
-          docker compose logs --no-color llm-chat | grep -q 'waiting for' \
+          #
+          # Into a file, never piped into `grep -q`: that combination is unsound under
+          # `pipefail` — see the next step, where it reported a pattern it had just found as
+          # absent. Deterministic here only because the log is still short; the defect is in
+          # the shape, not in the size, so it is not written that way anywhere in this job.
+          docker compose logs --no-color llm-chat > "$RUNNER_TEMP/llm-chat.log" 2>&1
+          grep -q 'waiting for' "$RUNNER_TEMP/llm-chat.log" \
             || { echo "::error::llm-chat did not report waiting for its model"; exit 1; }
 
       - name: Serve a tiny model, and prove the whole chain answers
@@ -768,12 +798,26 @@ jobs:
           # the healthcheck belongs to the llama.cpp image and asserting through it would make
           # this step depend on a tool being present in somebody else's image, which is exactly
           # the assumption that put a curl in the fetcher.
+          #
+          # `docker compose logs … | grep -q` is what this was, and it cost a red run on a
+          # stack that was working: `grep -q` exits on its first match and closes the pipe,
+          # `docker compose logs` then dies of SIGPIPE, and `pipefail` reports the pipeline as
+          # failed — with the pattern found. Whether that happens depends on whether the
+          # producer had finished writing, so one iteration answered 0 and the next non-zero:
+          # the loop broke on a match and the identical check right after it announced that
+          # `[llm-chat] serving` had never appeared, while it sat in the log the failure
+          # handler then dumped. The log goes to a file and the file is grepped — no pipe,
+          # nothing to signal — and both the wait and the verdict read it through one
+          # function, so they cannot disagree again.
+          serving() {
+            docker compose logs --no-color llm-chat > "$RUNNER_TEMP/llm-chat.log" 2>&1
+            grep -q '\[llm-chat\] serving' "$RUNNER_TEMP/llm-chat.log"
+          }
           for _ in $(seq 1 60); do
-            docker compose logs --no-color llm-chat | grep -q '\[llm-chat\] serving' && break
+            serving && break
             sleep 5
           done
-          docker compose logs --no-color llm-chat | grep -q '\[llm-chat\] serving' \
-            || { echo "::error::llm-chat never picked up the model"; exit 1; }
+          serving || { echo "::error::llm-chat never picked up the model"; exit 1; }
 
           # The end-to-end call, retried while llama-server finishes loading the weights: the
           # Explorer asks SpectraLLM, SpectraLLM asks llama-server, and the answer comes back.
@@ -859,6 +903,17 @@ jobs:
       # below it) and requires the llama.cpp CPU and CUDA images to name the same build, since
       # the GPU overlay must change the hardware and not the engine's revision.
       - run: python3 docs/check-image-pins.py
+
+      # The compose files themselves, against .env.example and against each other. That file
+      # exists so changing where a stack is published does not mean editing six compose files,
+      # which only works if it lists them all — five variables had a default in compose and no
+      # line there, and nothing noticed, because check-config-table.py reads application.yml
+      # and the Dockerfiles rather than the stacks. It also asserts the half that is not
+      # documentation at all: that the prompt budget fits the window the stack serves. Those
+      # two settings are written in three files, each carrying a comment saying it is "kept in
+      # step" with the others — and nothing executes a comment, while a prompt that exceeds the
+      # window is truncated in silence at DEBUG rather than refused.
+      - run: python3 docs/check-compose.py
 
   # docs/img/*.png is what the Docker Hub overview, the READMEs and the Pages site show, and
   # it is generated by docs/screenshots/ rather than photographed. Nothing ran that pipeline,
