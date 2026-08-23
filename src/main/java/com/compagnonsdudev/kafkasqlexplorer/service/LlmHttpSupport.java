@@ -66,6 +66,28 @@ final class LlmHttpSupport {
             .build();
     }
 
+    /**
+     * Joins a path onto an OpenAI-style base URL, tolerating whether the operator wrote the
+     * {@code /v1} segment or not.
+     *
+     * <p>Shared rather than restated because there are two callers now — the chat endpoint and
+     * OpenRouter's model catalogue — and the whole content of this rule is a judgement about a
+     * string somebody typed into a settings field. Two copies of that judgement is how one of them
+     * comes to accept a trailing slash the other does not.
+     *
+     * @param path the path below {@code /v1}, with no leading slash (e.g. {@code chat/completions})
+     */
+    static String v1Url(ClaudeConfig config, String path) {
+        String baseUrl = config.getResolvedBaseUrl();
+        if (baseUrl.endsWith("/v1")) {
+            return baseUrl + "/" + path;
+        }
+        if (baseUrl.endsWith("/v1/")) {
+            return baseUrl + path;
+        }
+        return baseUrl + "/v1/" + path;
+    }
+
     /** Applies the configured per-request timeout to a request builder. */
     static HttpRequest.Builder withTimeout(HttpRequest.Builder builder, ClaudeConfig config) {
         return builder.timeout(Duration.ofSeconds(config.getRequestTimeoutSeconds()));

@@ -491,6 +491,45 @@ class LlmStructuredOutputTest {
             "zero would say the cache was consulted and missed, which nobody measured");
     }
 
+    /**
+     * The symmetric breakdown to the cache figure, on the output side. It explains a cost rather
+     * than adding to it, so the totals it breaks down must not move.
+     */
+    @Test
+    void readsBackHowMuchOfTheAnswerWasDeliberation() throws Exception {
+        ClaudeConfig config = startServer(List.of(new StubResponse(200,
+            "{\"choices\":[{\"message\":{\"content\":\"{}\"}}],"
+                + "\"usage\":{\"prompt_tokens\":1200,\"completion_tokens\":340,"
+                + "\"completion_tokens_details\":{\"reasoning_tokens\":260}}}")));
+
+        LlmUsage usage = new OpenAiCompatibleLlmClient(config)
+            .generateWithMeta("SYS", "USR", null).usage();
+
+        assertEquals(260L, usage.reasoningTokens());
+        assertEquals(340L, usage.outputTokens(),
+            "reasoning is already inside the completion tokens — a breakdown, not an addition");
+        assertEquals(1540L, usage.totalTokens());
+    }
+
+    /**
+     * Nullability reads the other way round from the cache figure: {@code 0} is the ordinary case
+     * — a model that did not deliberate — so only a genuinely absent field may be null.
+     */
+    @Test
+    void tellsAModelThatDidNotDeliberateFromOneNobodyCounted() throws Exception {
+        ClaudeConfig config = startServer(List.of(
+            new StubResponse(200, "{\"choices\":[{\"message\":{\"content\":\"{}\"}}],"
+                + "\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,"
+                + "\"completion_tokens_details\":{\"reasoning_tokens\":0}}}"),
+            new StubResponse(200, okBody())));
+
+        OpenAiCompatibleLlmClient client = new OpenAiCompatibleLlmClient(config);
+        assertEquals(0L, client.generateWithMeta("SYS", "USR", null).usage().reasoningTokens(),
+            "zero is a measurement: this model answered without thinking first");
+        assertNull(client.generateWithMeta("SYS", "USR", null).usage().reasoningTokens(),
+            "a provider that reports no breakdown said nothing, which is not zero");
+    }
+
     @Test
     void schemasAreValidJsonSchemaObjects() {
         for (Map<String, Object> schema : List.of(
