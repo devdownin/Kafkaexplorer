@@ -467,6 +467,12 @@ export interface QueryCancelResponse {
 export interface LlmTestResponse {
   ok: boolean;
   message: string;
+  /**
+   * Vrai quand la sonde a testé un modèle (ou un endpoint) que le déploiement n'utilise pas — une
+   * saisie du formulaire, pas encore appliquée. La phrase affichée doit suivre : « joignable » ne
+   * dit pas la même chose d'un candidat et de ce qui tourne.
+   */
+  candidate?: boolean;
   modelCheck?: LlmModelCheck;
 }
 
@@ -707,6 +713,48 @@ export interface LlmModelCheck {
    */
   promptBudgetFits: boolean | null;
   /** Pourquoi la consultation n'a rien donné, ou `null` quand elle a donné quelque chose. */
+  error: string | null;
+}
+
+/**
+ * Une ligne de la liste restreinte des modèles.
+ *
+ * @java LlmModelOption
+ */
+export interface LlmModelOption {
+  id: string;
+  name: string | null;
+  contextLength: number | null;
+  schemaSupport: SchemaSupport;
+  reasoningMandatory: boolean | null;
+  promptPriceUsdPerMillion: number | null;
+  completionPriceUsdPerMillion: number | null;
+  /**
+   * Ce qu'une fenêtre Process Mining coûterait sur ce modèle — **une projection, pas une mesure**,
+   * et la distinction n'est pas de la pédanterie : `LlmUsage.costUsd` est *lu* chez le fournisseur
+   * précisément parce qu'aucune table de prix ne vit ici, alors que celui-ci est un prix publié
+   * multiplié par une estimation, sur le même plancher optimiste que partout ailleurs. Il peut donc
+   * sous-estimer, et doit être étiqueté partout où il s'affiche. `null` quand le modèle ne publie
+   * pas de prix — jamais `0`, qui est une vraie mesure (un modèle gratuit).
+   */
+  projectedCostUsd: number | null;
+}
+
+/**
+ * Les modèles vers lesquels cette application pourrait être pointée, et ce qui a été demandé pour
+ * les obtenir.
+ *
+ * `criteria` n'est pas de l'ornement : une vue filtrée présentée comme « les modèles » est le même
+ * mensonge qu'une liste tronquée présentée comme complète. Et `available: false` avec une liste
+ * vide n'est pas `available: true` avec une liste vide — « on n'a pas pu demander » contre « rien
+ * ne correspond », et seule la seconde dit quelque chose du catalogue.
+ *
+ * @java LlmModelShortlist
+ */
+export interface LlmModelShortlist {
+  available: boolean;
+  models: LlmModelOption[];
+  criteria: string[];
   error: string | null;
 }
 

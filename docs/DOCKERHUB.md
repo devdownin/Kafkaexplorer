@@ -255,7 +255,7 @@ re-entered after each restart.
 |---|---|---|
 | `CLAUDE_PROVIDER` | `OPENROUTER` | `ANTHROPIC`, `OPENAI_COMPATIBLE`, `OLLAMA`, `OPENROUTER` or `SPECTRA`. The default is a **hosted** gateway: message digests leave the host. Use `OLLAMA` or `SPECTRA` to keep everything on your own network. |
 | `CLAUDE_BASE_URL` | `https://openrouter.ai/api/v1` | Endpoint of the provider. Blank falls back to the provider's own default — `http://localhost:11434/v1` for `OLLAMA`. |
-| `CLAUDE_MODEL` | `openai/gpt-4o-mini` | Model name at that endpoint. `OPENROUTER` names models `vendor/model` — anything on [its model list](https://openrouter.ai/models). |
+| `CLAUDE_MODEL` | `openai/gpt-4o-mini` | Model name at that endpoint. `OPENROUTER` names models `vendor/model` — anything on [its model list](https://openrouter.ai/models), though you need not know a name: the Settings page lists the models that fit this deployment, cheapest first. |
 | `OPENROUTER_API_KEY` | — | The OpenRouter key (`sk-or-v1-…`), and with the default provider it is **required**: an anonymous request is a 401. |
 | `ANTHROPIC_API_KEY` | — | The same setting under its historical name, read when `OPENROUTER_API_KEY` is unset. Required for `ANTHROPIC`; ignored by a local Ollama. On a machine that exports several, `CLAUDE_API_KEY` outranks both and is the unambiguous form. |
 | `CLAUDE_USE_RAG` | `false` | `SPECTRA` provider only: also retrieve from SpectraLLM's ingested corpus instead of reasoning solely on the messages inlined in the prompt. |
@@ -268,8 +268,13 @@ re-entered after each restart.
 Leave it alone and every other feature works — Process Mining is the only page that calls
 a model.
 
-**The prompt has to fit the model's window, and nothing here can check that** — the window
-belongs to the endpoint. The shipped default is sized for the shipped provider: a hosted
+**The prompt has to fit the model's window**, and on every provider but one nothing here can
+check that — the window belongs to the endpoint. OpenRouter is the exception: it publishes each
+model's context length, so **Test LLM** compares the two and says which way it came out. Read that
+as a floor rather than a calibration; the estimate is deliberately optimistic, so a budget it
+passes may still not fit while one it rejects certainly does not.
+
+The shipped default is sized for the shipped provider: a hosted
 OpenRouter model has room for 30 000 tokens. It is when you point this at a **local** model that
 the budget stops fitting, and it does so in silence: Ollama gives a
 model 4 096 tokens unless the machine has the VRAM for more, this image's request carries no

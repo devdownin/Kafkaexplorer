@@ -5,6 +5,8 @@ package com.compagnonsdudev.kafkasqlexplorer.service;
 import com.compagnonsdudev.kafkasqlexplorer.config.ClaudeConfig;
 import com.compagnonsdudev.kafkasqlexplorer.config.ProcessMiningConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.LlmModelCheck;
+import com.compagnonsdudev.kafkasqlexplorer.domain.LlmModelOption;
+import com.compagnonsdudev.kafkasqlexplorer.domain.LlmModelShortlist;
 import com.compagnonsdudev.kafkasqlexplorer.domain.SchemaSupport;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -19,6 +21,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Asks OpenRouter what the configured model can do, so the Test button can answer the question an
@@ -67,6 +71,20 @@ public class OpenRouterModelCatalog {
     /** A catalogue read is metadata. Past this it is not slow, it is unreachable. */
     private static final int LOOKUP_TIMEOUT_SECONDS = 10;
 
+    /**
+     * A shortlist is meant to be read, not scrolled. The gateway sorts server-side, so asking for
+     * more would only move the choosing back into the browser — which is the problem this replaces.
+     */
+    private static final int MAX_SHORTLIST = 50;
+
+    /**
+     * What may address the catalogue path. Two or more segments, each beginning with a letter or a
+     * digit — which is the part that matters, since it is what a `.` or `..` segment cannot satisfy.
+     * Colons are allowed inside a segment: OpenRouter carries variants that way (`…:free`).
+     */
+    private static final java.util.regex.Pattern SLUG =
+        java.util.regex.Pattern.compile("[A-Za-z0-9][\\w.:-]*(/[A-Za-z0-9][\\w.:-]*)+");
+
     private final ClaudeConfig claudeConfig;
     private final ProcessMiningConfig processMiningConfig;
     private final HttpClient httpClient;
@@ -82,7 +100,12 @@ public class OpenRouterModelCatalog {
 
     /** Whether a lookup is possible at all — false for every provider but OpenRouter's own host. */
     public boolean isSupported() {
-        return claudeConfig.isOpenRouterEndpoint();
+        return isSupported(claudeConfig);
+    }
+
+    /** Same question about a candidate configuration the operator has not committed to. */
+    public boolean isSupported(ClaudeConfig config) {
+        return config.isOpenRouterEndpoint();
     }
 
     /**
@@ -92,12 +115,22 @@ public class OpenRouterModelCatalog {
      *         {@link LlmModelCheck#unavailable}
      */
     public LlmModelCheck describeConfiguredModel() {
-        if (!isSupported()) {
+        return describeModel(claudeConfig);
+    }
+
+    /**
+     * The same read against a candidate configuration — a model typed into the Settings form and
+     * not yet applied. The budget comparison still uses <em>this deployment's</em> prompt budget
+     * and {@code max-tokens}, because those are what an analysis would actually send; only the
+     * endpoint and the slug are the candidate's.
+     */
+    public LlmModelCheck describeModel(ClaudeConfig config) {
+        if (!isSupported(config)) {
             return LlmModelCheck.unavailable(
                 "Model capabilities are published by OpenRouter; this endpoint is "
-                    + claudeConfig.getResolvedBaseUrl() + ".");
+                    + config.getResolvedBaseUrl() + ".");
         }
-        String slug = claudeConfig.getModel() == null ? "" : claudeConfig.getModel().strip();
+        String slug = config.getModel() == null ? "" : config.getModel().strip();
         if (slug.isEmpty()) {
             return LlmModelCheck.unavailable("No model is configured.");
         }
@@ -105,29 +138,24 @@ public class OpenRouterModelCatalog {
         // separately. A slug with no slash cannot address it — that is the shape of an Ollama model
         // name left behind by a provider switch, and saying so beats a 404 the operator would read
         // as a routing refusal.
-        int slash = slug.indexOf('/');
-        if (slash <= 0 || slash == slug.length() - 1) {
+        //
+        // The shape is *validated*, not merely split, because this string becomes a URL path and a
+        // probe may name it: every segment has to start alphanumeric, which is what rules out `.`
+        // and `..` reaching the path a client or a proxy might then normalise. Percent-encoding
+        // alone does not — `URLEncoder` leaves a dot untouched.
+        if (!SLUG.matcher(slug).matches()) {
             return LlmModelCheck.unavailable(
                 "\"" + slug + "\" is not an OpenRouter slug — they are named vendor/model, "
                     + "for example openai/gpt-4o-mini.");
         }
+        int slash = slug.indexOf('/');
         String author = slug.substring(0, slash);
         // Everything after the first slash: a slug may carry a variant suffix of its own.
         String name = slug.substring(slash + 1);
 
         try {
-            String url = LlmHttpSupport.v1Url(claudeConfig, "model/" + encode(author) + "/" + encode(name));
-            HttpRequest.Builder request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .header("Accept", "application/json")
-                .timeout(Duration.ofSeconds(LOOKUP_TIMEOUT_SECONDS))
-                .GET();
-            if (claudeConfig.isApiKeyConfigured()) {
-                request.header("Authorization", "Bearer " + claudeConfig.getApiKey());
-            }
-
-            HttpResponse<String> response =
-                httpClient.send(request.build(), HttpResponse.BodyHandlers.ofString());
+            String url = LlmHttpSupport.v1Url(config, "model/" + encode(author) + "/" + encode(name));
+            HttpResponse<String> response = get(config, url);
             if (response.statusCode() / 100 != 2) {
                 return LlmModelCheck.unavailable("OpenRouter answered HTTP " + response.statusCode()
                     + " for \"" + slug + "\".");
@@ -137,10 +165,168 @@ public class OpenRouterModelCatalog {
             Thread.currentThread().interrupt();
             return LlmModelCheck.unavailable("Interrupted while reading the model catalogue.");
         } catch (Exception e) {
-            log.debug("Model catalogue lookup failed for {}", slug, e);
+            log.debug("Model catalogue lookup failed for {}", FlinkSqlService.sanitizeForLog(slug), e);
             return LlmModelCheck.unavailable("Could not read the model catalogue: "
                 + SqlErrorClassifier.explain(e));
         }
+    }
+
+    /**
+     * The models that can do this application's job, cheapest first.
+     *
+     * <p>One request, not a download of the catalogue: OpenRouter filters and sorts server-side, so
+     * what comes back is already the shortlist. Every filter is a fact this application knows about
+     * itself — it needs a model that emits text, that constrains its answers to a schema, and whose
+     * window holds {@link #estimatedPromptTokens()} — which is what turns choosing a model from
+     * recalling a slug into recognising one.
+     *
+     * @param includeUnconstrained widen the list to models without schema support. Off by default
+     *        because a constrained answer is what the pipeline is built on, and on by request
+     *        because the client degrades gracefully without one — that is the operator's call, not
+     *        this method's.
+     */
+    public LlmModelShortlist shortlist(ClaudeConfig config, boolean includeUnconstrained, int limit) {
+        if (!isSupported(config)) {
+            return LlmModelShortlist.unavailable(
+                "OpenRouter is the only configured provider that publishes a model catalogue; "
+                    + "this endpoint is " + config.getResolvedBaseUrl() + ".");
+        }
+        long needed = estimatedPromptTokens();
+        int bounded = Math.max(1, Math.min(MAX_SHORTLIST, limit));
+
+        List<String> criteria = new ArrayList<>();
+        criteria.add("emits text");
+        if (!includeUnconstrained) {
+            criteria.add("supports structured outputs");
+        }
+        criteria.add("context of at least " + needed + " tokens (this deployment's prompt budget "
+            + "plus its answer, on the same optimistic estimate — a floor)");
+        criteria.add("cheapest first");
+
+        StringBuilder query = new StringBuilder("models?output_modalities=text")
+            .append("&context=").append(needed)
+            .append("&sort=pricing-low-to-high")
+            .append("&limit=").append(bounded);
+        if (!includeUnconstrained) {
+            query.append("&supported_parameters=structured_outputs");
+        }
+
+        try {
+            HttpResponse<String> response = get(config, LlmHttpSupport.v1Url(config, query.toString()));
+            if (response.statusCode() / 100 != 2) {
+                return LlmModelShortlist.unavailable(
+                    "OpenRouter answered HTTP " + response.statusCode() + " for the model list.");
+            }
+            return parseShortlist(objectMapper.readTree(response.body()), criteria);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return LlmModelShortlist.unavailable("Interrupted while reading the model catalogue.");
+        } catch (Exception e) {
+            log.debug("Model shortlist lookup failed", e);
+            return LlmModelShortlist.unavailable("Could not read the model catalogue: "
+                + SqlErrorClassifier.explain(e));
+        }
+    }
+
+    /** Package-private for the same reason {@link #parse} is: the wire shape is the risky half. */
+    LlmModelShortlist parseShortlist(JsonNode root, List<String> criteria) {
+        JsonNode data = root.has("data") ? root.path("data") : root;
+        if (!data.isArray()) {
+            return LlmModelShortlist.unavailable("OpenRouter returned no model list.");
+        }
+        List<LlmModelOption> models = new ArrayList<>();
+        for (JsonNode model : data) {
+            LlmModelOption option = toOption(model);
+            if (option != null) {
+                models.add(option);
+            }
+        }
+        return new LlmModelShortlist(true, List.copyOf(models), List.copyOf(criteria), null);
+    }
+
+    /** {@code null} for an entry with no usable id — a row nothing could be selected from. */
+    private LlmModelOption toOption(JsonNode model) {
+        String id = text(model, "id", null);
+        if (id == null) {
+            return null;
+        }
+        JsonNode pricing = model.path("pricing");
+        // Published as USD *per token*, as decimal strings — so they are tiny, and rendering them
+        // per million is the only form anybody reads. Parsed leniently: a price this application
+        // cannot read is an absent price, never a free model.
+        Double promptPerToken = price(pricing, "prompt");
+        Double completionPerToken = price(pricing, "completion");
+
+        JsonNode reasoning = model.path("reasoning");
+        Boolean reasoningMandatory = reasoning.isObject() && reasoning.path("mandatory").isBoolean()
+            ? reasoning.path("mandatory").asBoolean()
+            : null;
+
+        return new LlmModelOption(
+            id,
+            text(model, "name", null),
+            positiveLong(model.path("context_length")),
+            gradeSchemaSupport(model.path("supported_parameters")),
+            reasoningMandatory,
+            perMillion(promptPerToken),
+            perMillion(completionPerToken),
+            projectedCost(promptPerToken, completionPerToken));
+    }
+
+    /**
+     * What one Process Mining window would cost on this model.
+     *
+     * <p>A <strong>projection</strong>, and the word is carried all the way to the screen. Every
+     * other money figure in this application is <em>read</em> from the provider's own accounting
+     * precisely because no price table lives here; this one is published prices multiplied by an
+     * estimate, on the same optimistic token floor as everything else, so it can understate. It
+     * earns its place because the alternative at pick time is no idea at all — not because it is
+     * the same kind of number as {@code LlmUsage.costUsd}.
+     *
+     * <p>{@code null} as soon as either half is unpublished: half a price is not a cheaper model.
+     */
+    private Double projectedCost(Double promptPerToken, Double completionPerToken) {
+        if (promptPerToken == null || completionPerToken == null) {
+            return null;
+        }
+        long answerTokens = Math.max(0, claudeConfig.getMaxTokens());
+        long promptTokens = Math.max(0, estimatedPromptTokens() - answerTokens);
+        return promptTokens * promptPerToken + answerTokens * completionPerToken;
+    }
+
+    private static Double perMillion(Double perToken) {
+        return perToken == null ? null : perToken * 1_000_000d;
+    }
+
+    /** Prices arrive as decimal strings; a negative or unparseable one is an absent price. */
+    private static Double price(JsonNode pricing, String field) {
+        JsonNode value = pricing.path(field);
+        try {
+            if (value.isNumber()) {
+                return value.asDouble() >= 0 ? value.asDouble() : null;
+            }
+            if (value.isTextual() && !value.asText().isBlank()) {
+                double parsed = Double.parseDouble(value.asText().strip());
+                return parsed >= 0 ? parsed : null;
+            }
+        } catch (NumberFormatException e) {
+            return null;
+        }
+        return null;
+    }
+
+    /** One GET against the catalogue, carrying the key when there is one. */
+    private HttpResponse<String> get(ClaudeConfig config, String url)
+            throws java.io.IOException, InterruptedException {
+        HttpRequest.Builder request = HttpRequest.newBuilder()
+            .uri(URI.create(url))
+            .header("Accept", "application/json")
+            .timeout(Duration.ofSeconds(LOOKUP_TIMEOUT_SECONDS))
+            .GET();
+        if (config.isApiKeyConfigured()) {
+            request.header("Authorization", "Bearer " + config.getApiKey());
+        }
+        return httpClient.send(request.build(), HttpResponse.BodyHandlers.ofString());
     }
 
     /**

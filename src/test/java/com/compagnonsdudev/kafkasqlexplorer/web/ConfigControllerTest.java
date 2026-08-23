@@ -81,6 +81,122 @@ class ConfigControllerTest {
     }
 
     /**
+     * The point of the candidate probe: trying a model must not repoint the deployment. Before
+     * this, the page had to apply the whole form before it could test anything, so exploring and
+     * committing were one gesture — and with persistence on, the candidate reached disk.
+     */
+    @Test
+    void probingACandidateChangesNeitherTheRunningConfigNorTheStore() throws Exception {
+        claudeConfig.setProvider(ClaudeConfig.Provider.OPENROUTER);
+        claudeConfig.setModel("openai/gpt-4o-mini");
+        claudeConfig.setApiKey("sk-or-configured");
+
+        mockMvc.perform(post("/api/config/test-llm").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"llmModel\":\"some-vendor/candidate\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.candidate").value(true))
+            .andExpect(jsonPath("$.model").value("some-vendor/candidate"));
+
+        assertEquals("openai/gpt-4o-mini", claudeConfig.getModel(),
+            "the running configuration must be exactly where it was");
+        assertFalse(java.nio.file.Files.exists(storePath),
+            "a probe is not a save; nothing may reach the settings store");
+    }
+
+    /**
+     * The security boundary of the whole feature, and the reason only the model is overridable.
+     *
+     * <p>A probe that accepted a base URL would be an unauthenticated server-side request forgery
+     * with the response handed back to the caller — and since a blank key falls through to the
+     * configured one, a single call would post the operator's API key to any host. The endpoint
+     * must therefore come from the running configuration whatever the body says.
+     */
+    @Test
+    void aProbeCannotRedirectTheRequestOrBorrowTheStoredKeyForIt() throws Exception {
+        claudeConfig.setProvider(ClaudeConfig.Provider.OLLAMA);
+        claudeConfig.setBaseUrl("http://localhost:11434/v1");
+        claudeConfig.setModel("qwen3:4b");
+        claudeConfig.setApiKey("sk-configured");
+
+        mockMvc.perform(post("/api/config/test-llm").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"llmBaseUrl\":\"https://attacker.example/v1\","
+                    + "\"llmProvider\":\"OPENROUTER\",\"llmApiKey\":\"\"}"))
+            .andExpect(status().isOk())
+            // Neither the endpoint nor the provider moved: the body's connection fields are
+            // ignored, not honoured, so nothing was sent anywhere the operator did not configure.
+            .andExpect(jsonPath("$.provider").value("Ollama"))
+            .andExpect(jsonPath("$.candidate").value(false));
+
+        assertEquals("http://localhost:11434/v1", claudeConfig.getBaseUrl());
+        assertEquals(ClaudeConfig.Provider.OLLAMA, claudeConfig.getProvider());
+    }
+
+    /** No body at all is the historical call, and it must behave exactly as it did. */
+    @Test
+    void anEmptyProbeStillTestsWhatIsRunning() throws Exception {
+        claudeConfig.setProvider(ClaudeConfig.Provider.OLLAMA);
+        claudeConfig.setModel("qwen3:4b");
+
+        mockMvc.perform(post("/api/config/test-llm"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.candidate").value(false))
+            .andExpect(jsonPath("$.model").value("qwen3:4b"));
+    }
+
+    /**
+     * A body naming the same model as the running configuration is not a candidate. The flag drives
+     * what the answer claims to have tested, so it has to follow the difference and not the mere
+     * presence of a body.
+     */
+    @Test
+    void abodyThatChangesNothingIsNotReportedAsACandidate() throws Exception {
+        claudeConfig.setProvider(ClaudeConfig.Provider.OLLAMA);
+        claudeConfig.setModel("qwen3:4b");
+
+        mockMvc.perform(post("/api/config/test-llm").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"llmModel\":\"qwen3:4b\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.candidate").value(false));
+    }
+
+    /**
+     * The defaults the form used to restate.    /**
+     * The defaults the form used to restate. Every provider is present, so the page cannot fall
+     * back to a literal for the one that was forgotten.
+     */
+    @Test
+    void servesTheDefaultBaseUrlAndModelOfEveryProvider() throws Exception {
+        mockMvc.perform(get("/api/config"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.llmProviderDefaults.OPENROUTER.baseUrl")
+                .value("https://openrouter.ai/api/v1"))
+            .andExpect(jsonPath("$.llmProviderDefaults.OPENROUTER.model")
+                .value(ClaudeConfig.defaultModel(ClaudeConfig.Provider.OPENROUTER)))
+            .andExpect(jsonPath("$.llmProviderDefaults.OLLAMA.model").value("qwen3:4b"))
+            // Empty is a real answer here: we have nothing to propose for an endpoint we know
+            // nothing about, and for a provider that ignores the field entirely.
+            .andExpect(jsonPath("$.llmProviderDefaults.OPENAI_COMPATIBLE.model").value(""))
+            .andExpect(jsonPath("$.llmProviderDefaults.SPECTRA.model").value(""));
+    }
+
+    /**
+     * The shortlist has no catalogue to read on a provider that publishes none — and it reads the
+     * provider in force, so no query parameter can send it somewhere else.
+     */
+    @Test
+    void theModelShortlistIsUnavailableWithoutOpenRouterWhateverTheCallerAsksFor() throws Exception {
+        claudeConfig.setProvider(ClaudeConfig.Provider.OLLAMA);
+
+        mockMvc.perform(get("/api/config/llm-models")
+                .param("provider", "OPENROUTER")
+                .param("baseUrl", "https://attacker.example/v1"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.available").value(false))
+            .andExpect(jsonPath("$.error").isNotEmpty())
+            .andExpect(jsonPath("$.models").isEmpty());
+    }
+
+    /**
      * The catalogue is a side read on {@code test-llm} against OpenRouter's own host, and these
      * tests are about the settings form. A real one built over the running config is enough: with
      * no key and no network reached, {@code isSupported()} decides whether it is consulted at all.

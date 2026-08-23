@@ -4,8 +4,8 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import axios from 'axios';
 import {
-  PageHeader, Button, CardSkeleton, Checkbox, Field, Input, NumberInput, PasswordInput, useConfirm,
-  useUnsavedGuard,
+  PageHeader, Button, CardSkeleton, Checkbox, Combobox, Field, Input, NumberInput, PasswordInput,
+  useConfirm, useUnsavedGuard,
 } from '../components/ui';
 import { clearDraft, readDraft, useDraftConflict, writeDraft } from '../draftStore';
 import { draftableOnly, mergeDraft } from './configDraft';
@@ -14,8 +14,9 @@ import {
   type SettingsPersistence,
 } from './settingsPersistence';
 import { describeDataPolicy, type LlmPolicyFacts } from './llmPolicy';
-import type { LlmTestResponse } from '../api/types';
+import type { LlmModelShortlist, LlmTestResponse } from '../api/types';
 import { describeModelCheck, describeModelIdentity, hasModelWarning } from './llmModelCheck';
+import { PROJECTION_NOTE, describeOption, describeShortlist, optionSlugs } from './llmModelPicker';
 
 interface ClusterConfig {
   bootstrapServers: string;
@@ -117,18 +118,24 @@ const LLM_PROVIDERS = [
  */
 const API_KEY_REQUIRED: ReadonlySet<ClusterConfig['llmProvider']> = new Set(['ANTHROPIC', 'OPENROUTER']);
 
-/** Base URL par défaut de chaque fournisseur — miroir de `ClaudeConfig.defaultBaseUrl`. */
-const PROVIDER_BASE_URLS: Record<ClusterConfig['llmProvider'], string> = {
-  ANTHROPIC: 'https://api.anthropic.com',
-  OPENROUTER: 'https://openrouter.ai/api/v1',
-  OPENAI_COMPATIBLE: '',
-  OLLAMA: 'http://localhost:11434/v1',
-  SPECTRA: 'http://localhost:8080',
-};
+/**
+ * Base URL et modèle par défaut de chaque fournisseur, **servis par `GET /api/config`**.
+ *
+ * Ils étaient écrits ici : une table recopiant `ClaudeConfig.defaultBaseUrl` et, deux fois,
+ * `openai/gpt-4o-mini` en dur — dans l'état initial et dans le repli au changement de fournisseur.
+ * C'est le motif de miroir que ce dépôt retire partout ailleurs, et il mord le jour où un défaut
+ * livré bouge : le formulaire propose un modèle pendant que le moteur en fait tourner un autre.
+ */
+type ProviderDefaults = Partial<Record<ClusterConfig['llmProvider'], { baseUrl: string; model: string }>>;
 
-/** Une base URL qu'aucun opérateur n'a choisie : c'est le défaut d'un autre fournisseur. */
-const isProviderDefaultUrl = (url?: string): boolean =>
-  !url || Object.values(PROVIDER_BASE_URLS).some(known => known !== '' && known === url);
+/**
+ * Une base URL qu'aucun opérateur n'a choisie : c'est le défaut d'un autre fournisseur.
+ *
+ * Tant que le serveur n'a pas répondu, la réponse est « non » plutôt qu'un jugement porté sur une
+ * table devinée : remplacer une URL saisie à la main serait pire que de la laisser en place.
+ */
+const isProviderDefaultUrl = (defaults: ProviderDefaults, url?: string): boolean =>
+  !url || Object.values(defaults).some(known => known.baseUrl !== '' && known.baseUrl === url);
 
 /**
  * Ce qu'on peut dire d'un mot de passe qu'on ne montre pas.
@@ -160,11 +167,17 @@ const Config: React.FC = () => {
   const [config, setConfig] = useState<ClusterConfig>({
     bootstrapServers: 'localhost:9092',
     mode: 'PLAIN',
-    // Miroir des défauts de `application.yml` : ce que le formulaire montre le temps que
-    // `GET /api/config` réponde, jamais un fournisseur que le serveur n'utilise pas.
+    /*
+     * Le formulaire est derrière une garde `loading`, donc rien de tout ceci ne s'affiche avant
+     * que `GET /api/config` ait répondu — et la réponse porte le fournisseur, l'URL et le modèle
+     * réellement en vigueur. Une base URL et un modèle vides sont donc la valeur juste : ils
+     * disent « le serveur ne l'a pas encore dit », là où une copie des défauts livrés était une
+     * affirmation qui dérive. Le fournisseur, lui, doit valoir quelque chose — c'est une énumération
+     * qui pilote un groupe de boutons radio.
+     */
     llmProvider: 'OPENROUTER',
-    llmBaseUrl: 'https://openrouter.ai/api/v1',
-    llmModel: 'openai/gpt-4o-mini',
+    llmBaseUrl: '',
+    llmModel: '',
     llmMaxTokens: 4096,
     llmSnapshotWindowSize: 100,
     llmSnapshotWindowTimeoutSeconds: 30,
@@ -178,6 +191,11 @@ const Config: React.FC = () => {
   const [errors, setErrors] = useState<FieldErrors>({});
   const [llmTesting, setLlmTesting] = useState(false);
   const [llmTestResult, setLlmTestResult] = useState<LlmTestResponse | null>(null);
+  const [providerDefaults, setProviderDefaults] = useState<ProviderDefaults>({});
+  const [models, setModels] = useState<LlmModelShortlist | null>(null);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsOpen, setModelsOpen] = useState(false);
+  const [includeUnconstrained, setIncludeUnconstrained] = useState(false);
   /** Dernier état persisté, pour savoir si le formulaire a été modifié. */
   const savedRef = useRef<string>('');
   const [dirty, setDirty] = useState(false);
@@ -208,6 +226,16 @@ const Config: React.FC = () => {
     () => describeModelCheck(llmTestResult?.modelCheck), [llmTestResult]);
   const modelIdentity = llmTestResult?.modelCheck
     ? describeModelIdentity(llmTestResult.modelCheck) : null;
+  /*
+   * La sonde et la liste n'essaient que le *modèle* : le point d'accès reste celui en vigueur, et
+   * délibérément — voir `probeBody`. Il faut donc le dire quand le formulaire a pris de l'avance
+   * dessus, sinon « joignable » se lit comme un verdict sur le fournisseur qu'on vient de choisir.
+   * Même source que la politique de confidentialité (`inForce`), pour la même raison : ce qui
+   * tourne n'est pas ce qui est saisi.
+   */
+  const connectionIsStale = inForce != null && inForce.llmProvider !== config.llmProvider;
+  const modelSlugs = useMemo(() => optionSlugs(models), [models]);
+  const shortlistState = useMemo(() => describeShortlist(models), [models]);
   /** Le formulaire pointe ailleurs que ce qui tourne : le bandeau décrit encore l'ancien. */
   const policyIsStale = inForce != null && inForce.llmProvider !== config.llmProvider;
 
@@ -221,10 +249,21 @@ const Config: React.FC = () => {
     const fetchConfig = async () => {
       let saved: ClusterConfig | null = null;
       try {
-        const res = await axios.get<ClusterConfig & SettingsPersistence>('/api/config');
+        const res = await axios.get<ClusterConfig & SettingsPersistence
+          & { llmProviderDefaults?: ProviderDefaults }>('/api/config');
         const split = splitPersistence(res.data);
-        saved = split.settings;
         setPersistence(split.persistence);
+        /*
+         * Les défauts par fournisseur, servis plutôt que recopiés ici. Sortis de l'objet avant
+         * qu'il ne devienne l'état du formulaire, pour la raison exacte que `splitPersistence`
+         * documente : un champ qui n'existe sur aucun formulaire entrerait dans la comparaison qui
+         * décide s'il est modifié, et dans le brouillon écrit en `localStorage`. Absents d'une
+         * réponse plus ancienne, auquel cas le changement de fournisseur ne propose rien — ce qui
+         * vaut mieux que proposer une valeur devinée.
+         */
+        const { llmProviderDefaults, ...settings } = split.settings;
+        if (llmProviderDefaults) setProviderDefaults(llmProviderDefaults);
+        saved = settings;
       } catch {
         // Backend may not expose REST config yet - use defaults
       }
@@ -362,15 +401,32 @@ const Config: React.FC = () => {
     }
   };
 
+  /**
+   * Ce que la sonde envoie : le modèle saisi, et rien d'autre.
+   *
+   * Ni le point d'accès ni la clé ne voyagent — le serveur les refuserait. Une URL prise dans une
+   * requête est une contrefaçon de requête côté serveur, et une clé qui retomberait sur celle du
+   * déploiement en ferait une exfiltration en un appel. Changer d'endpoint reste le rôle
+   * d'Enregistrer, qui est un geste délibéré et persisté.
+   */
+  const probeBody = () => ({ llmModel: config.llmModel ?? '' });
+
+  /**
+   * Teste ce qui est dans le formulaire — sans l'enregistrer.
+   *
+   * Cette fonction commençait par `POST /api/config`, donc *essayer* un modèle repointait le
+   * déploiement en cours et, quand la persistance est active, l'écrivait sur disque. Explorer et
+   * s'engager étaient le même geste, ce qui est précisément pourquoi personne ne comparait deux
+   * modèles. Le serveur construit maintenant un client jetable à partir de ce corps et ne touche à
+   * rien.
+   */
   const handleTestLlm = async () => {
     if (!checkBeforeSubmit()) return;
     setLlmTesting(true);
     setLlmTestResult(null);
     setError(null);
     try {
-      // Persist current settings first so the server tests against the selected provider.
-      await axios.post('/api/config', config);
-      const res = await axios.post<LlmTestResponse>('/api/config/test-llm');
+      const res = await axios.post<LlmTestResponse>('/api/config/test-llm', probeBody());
       setLlmTestResult(res.data);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'LLM test failed';
@@ -378,6 +434,41 @@ const Config: React.FC = () => {
     } finally {
       setLlmTesting(false);
     }
+  };
+
+  /**
+   * Va chercher la liste restreinte des modèles.
+   *
+   * Paresseux, et déclenché par un geste : la liste n'est utile qu'à qui choisit un modèle, et
+   * rien dont le seul produit est un confort de formulaire ne doit peser sur le chargement de la
+   * page. Lue contre le point d'accès *en vigueur*, jamais contre un que la requête nommerait —
+   * même règle que la sonde. La conséquence est dite à l'écran : changer de fournisseur dans le
+   * formulaire demande de l'enregistrer avant que la liste décrive le nouveau point d'accès.
+   */
+  const loadModels = async (unconstrained: boolean) => {
+    setModelsLoading(true);
+    try {
+      const res = await axios.get<LlmModelShortlist>('/api/config/llm-models', {
+        params: { includeUnconstrained: unconstrained },
+      });
+      setModels(res.data);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'The model list could not be read.';
+      setModels({ available: false, models: [], criteria: [], error: msg });
+    } finally {
+      setModelsLoading(false);
+    }
+  };
+
+  const toggleModelPicker = () => {
+    const opening = !modelsOpen;
+    setModelsOpen(opening);
+    if (opening && !models && !modelsLoading) void loadModels(includeUnconstrained);
+  };
+
+  const applyUnconstrained = (value: boolean) => {
+    setIncludeUnconstrained(value);
+    if (modelsOpen) void loadModels(value);
   };
 
   /**
@@ -467,22 +558,25 @@ const Config: React.FC = () => {
       // c'est un défaut, pas un choix, et la laisser en place pointe le nouveau fournisseur vers
       // l'ancien endpoint. La règle était écrite fournisseur par fournisseur, chacun énumérant les
       // défauts des autres : le cinquième aurait demandé de retoucher les quatre.
-      const fallback = PROVIDER_BASE_URLS[provider];
-      if (fallback && isProviderDefaultUrl(prev.llmBaseUrl)) {
-        next.llmBaseUrl = fallback;
+      const suggested = providerDefaults[provider];
+      if (suggested?.baseUrl && isProviderDefaultUrl(providerDefaults, prev.llmBaseUrl)) {
+        next.llmBaseUrl = suggested.baseUrl;
       }
-      if (provider === 'ANTHROPIC' && !prev.llmModel) {
-        next.llmModel = 'claude-3-5-sonnet-20241022';
-      }
-      if (provider === 'OPENROUTER' && (!prev.llmModel || !prev.llmModel.includes('/'))) {
-        // Les modèles OpenRouter s'appellent `vendor/model` : un `qwen3:4b` hérité d'Ollama n'y
-        // résout rien, et l'erreur arriverait à la première fenêtre analysée plutôt qu'ici.
-        next.llmModel = 'openai/gpt-4o-mini';
+      /*
+       * Le modèle ne suit que lorsque celui en place ne peut pas convenir au nouveau fournisseur :
+       * les slugs OpenRouter s'appellent `vendor/model`, donc un `qwen3:4b` hérité d'Ollama n'y
+       * résout rien et l'erreur arriverait à la première fenêtre analysée. La valeur proposée vient
+       * du serveur, jamais d'une constante écrite ici.
+       */
+      const staleModel =
+        !prev.llmModel
+        || (provider === 'OPENROUTER' && !prev.llmModel.includes('/'))
+        || (provider === 'OLLAMA'
+            && (prev.llmModel.startsWith('claude-') || prev.llmModel.includes('/')));
+      if (staleModel && suggested?.model) {
+        next.llmModel = suggested.model;
       }
       if (provider === 'OLLAMA') {
-        if (!prev.llmModel || prev.llmModel.startsWith('claude-') || prev.llmModel.includes('/')) {
-          next.llmModel = 'qwen3:4b';
-        }
         next.llmApiKey = '';
       }
       if (provider === 'SPECTRA') {
@@ -767,20 +861,34 @@ const Config: React.FC = () => {
                 : undefined}
             >
               {p => (
-                <Input
-                  {...p}
-                  className="font-mono"
-                  value={config.llmModel}
-                  onChange={e => set('llmModel', e.target.value)}
-                  placeholder={
-                    config.llmProvider === 'OLLAMA' ? 'qwen3:4b'
-                    : config.llmProvider === 'OPENROUTER' ? 'openai/gpt-4o-mini'
-                    : config.llmProvider === 'SPECTRA' ? 'Served by SpectraLLM (ignored)'
-                    : 'model name'}
-                  disabled={config.llmProvider === 'SPECTRA'}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
+                /*
+                 * Un Combobox sur OpenRouter, un Input ailleurs : la liste n'existe que là où une
+                 * passerelle publie un catalogue. Non contraignant dans les deux cas — un slug tout
+                 * neuf doit rester saisissable, la liste ne fait qu'éviter de le retaper de mémoire.
+                 */
+                config.llmProvider === 'OPENROUTER' ? (
+                  <Combobox
+                    {...p}
+                    className="font-mono"
+                    value={config.llmModel}
+                    onChange={value => set('llmModel', value)}
+                    options={modelSlugs}
+                    placeholder={providerDefaults.OPENROUTER?.model ?? 'vendor/model'}
+                  />
+                ) : (
+                  <Input
+                    {...p}
+                    className="font-mono"
+                    value={config.llmModel}
+                    onChange={e => set('llmModel', e.target.value)}
+                    placeholder={
+                      config.llmProvider === 'SPECTRA' ? 'Served by SpectraLLM (ignored)'
+                      : providerDefaults[config.llmProvider]?.model || 'model name'}
+                    disabled={config.llmProvider === 'SPECTRA'}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                )
               )}
             </Field>
             <Field
@@ -892,6 +1000,79 @@ const Config: React.FC = () => {
               {llmTesting ? 'Testing LLM…' : 'Test LLM'}
             </Button>
           </div>
+
+          {/*
+            * La liste restreinte : les modèles qui savent faire ce travail, le moins cher d'abord.
+            * Paresseuse et derrière un geste — elle ne sert qu'à qui choisit un modèle. OpenRouter
+            * seul, parce que c'est le seul fournisseur ici qui publie un catalogue.
+            */}
+          {config.llmProvider === 'OPENROUTER' && (
+            <div className="mt-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <Button type="button" variant="outline" icon="format_list_bulleted"
+                  loading={modelsLoading} onClick={toggleModelPicker}
+                  aria-expanded={modelsOpen} aria-controls="llm-model-picker">
+                  {modelsOpen ? 'Hide models' : 'Browse models'}
+                </Button>
+                {modelsOpen && (
+                  <label className="flex items-center gap-2 text-[12px] text-on-surface-variant">
+                    <Checkbox
+                      checked={includeUnconstrained}
+                      onChange={applyUnconstrained}
+                      aria-label="Include models without schema support"
+                    />
+                    Include models without schema support
+                  </label>
+                )}
+              </div>
+
+              {modelsOpen && (
+                <div id="llm-model-picker" className="mt-2 rounded-lg border border-outline-variant
+                  bg-surface-container-low px-4 py-3 text-[12px]">
+                  <p className="text-on-surface-variant">{shortlistState.text}</p>
+                  {shortlistState.tone === 'ready' && (
+                    <>
+                      <ul className="mt-2 space-y-1 max-h-72 overflow-y-auto">
+                        {models?.models.map(option => (
+                          <li key={option.id}>
+                            <button
+                              type="button"
+                              onClick={() => set('llmModel', option.id)}
+                              aria-current={config.llmModel === option.id}
+                              className={`w-full text-left rounded-md px-2 py-1.5 transition-colors
+                                hover:bg-surface-container ${
+                                config.llmModel === option.id ? 'bg-surface-container' : ''}`}
+                            >
+                              <span className="font-mono text-on-surface">{option.id}</span>
+                              {option.name && (
+                                <span className="ml-2 text-on-surface-variant">{option.name}</span>
+                              )}
+                              <span className="block text-on-surface-variant">
+                                {describeOption(option).join(' · ')}
+                              </span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                      {/*
+                        * L'étiquette est obligatoire, pas décorative : partout ailleurs ici un
+                        * montant affiché est un montant qu'un fournisseur a assumé, et celui-ci
+                        * n'en est pas un.
+                        */}
+                      <p className="mt-2 text-[11px] text-on-surface-variant">{PROJECTION_NOTE}</p>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {connectionIsStale && (
+            <p className="mt-2 text-[12px] text-on-surface-variant">
+              Test tries the model against the connection currently in force
+              ({inForce?.llmProvider}). Save to test a different provider or endpoint.
+            </p>
+          )}
 
           {llmTestResult && (
             <div className={`mt-3 rounded-lg border px-4 py-3 text-[12px] flex items-start gap-2 ${

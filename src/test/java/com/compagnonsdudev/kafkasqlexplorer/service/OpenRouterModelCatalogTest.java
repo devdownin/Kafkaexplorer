@@ -5,10 +5,14 @@ package com.compagnonsdudev.kafkasqlexplorer.service;
 import com.compagnonsdudev.kafkasqlexplorer.config.ClaudeConfig;
 import com.compagnonsdudev.kafkasqlexplorer.config.ProcessMiningConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.LlmModelCheck;
+import com.compagnonsdudev.kafkasqlexplorer.domain.LlmModelOption;
+import com.compagnonsdudev.kafkasqlexplorer.domain.LlmModelShortlist;
 import com.compagnonsdudev.kafkasqlexplorer.domain.SchemaSupport;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -204,6 +208,40 @@ class OpenRouterModelCatalogTest {
     }
 
     /**
+     * The slug becomes a URL path and a probe may name it, so its shape is validated rather than
+     * merely split. Percent-encoding is not enough on its own: {@code URLEncoder} leaves a dot
+     * untouched, so a segment of {@code ..} would survive into a path something downstream may
+     * normalise.
+     */
+    @Test
+    void refusesASlugThatCouldTraverseTheCataloguePath() {
+        claudeConfig.setProvider(ClaudeConfig.Provider.OPENROUTER);
+
+        for (String hostile : new String[] {"../admin/keys", "openai/../../admin", "./x/y", "a//b"}) {
+            claudeConfig.setModel(hostile);
+            LlmModelCheck check = catalog.describeConfiguredModel();
+            assertNotNull(check.error(), "should have been refused: " + hostile);
+            assertTrue(check.error().contains("vendor/model"), check.error());
+        }
+    }
+
+    /** The shapes OpenRouter really publishes have to keep working, variants included. */
+    @Test
+    void acceptsTheSlugShapesOpenRouterActuallyUses() {
+        for (String slug : new String[] {
+                "openai/gpt-4o-mini", "meta-llama/llama-3.1-8b-instruct:free",
+                "qwen/qwen3-4b", "google/gemini-2.0-flash-001"}) {
+            claudeConfig.setProvider(ClaudeConfig.Provider.OPENROUTER);
+            claudeConfig.setModel(slug);
+            LlmModelCheck check = catalog.describeConfiguredModel();
+            // It cannot reach the network here, so what is asserted is that it got *past* the shape
+            // check — the refusal below is the one this test is about, and it must not fire.
+            assertFalse(check.error() != null && check.error().contains("vendor/model"),
+                "wrongly refused a real slug: " + slug + " — " + check.error());
+        }
+    }
+
+    /**
      * The lookup is a vendor-specific path, so it is only made against the vendor's own host —
      * the same rule as the attribution headers, and deliberately not the rule the routing policy
      * follows, which must survive a proxy because it carries a guarantee.
@@ -217,6 +255,130 @@ class OpenRouterModelCatalogTest {
         LlmModelCheck check = catalog.describeConfiguredModel();
         assertNotNull(check.error());
         assertNull(check.emitsText(), "an unasked question has no answer");
+    }
+
+    // ─── The shortlist ──────────────────────────────────────────────────────────────────────
+
+    @Test
+    void readsAShortlistRowWithItsPriceExpressedPerMillionTokens() {
+        LlmModelShortlist list = catalog.parseShortlist(json("""
+            {"data": [
+              {"id": "openai/gpt-4o-mini",
+               "name": "GPT-4o mini",
+               "context_length": 128000,
+               "supported_parameters": ["response_format", "structured_outputs"],
+               "pricing": {"prompt": "0.00000015", "completion": "0.0000006"}}
+            ]}
+            """), List.of("cheapest first"));
+
+        assertTrue(list.available());
+        assertEquals(1, list.models().size());
+        LlmModelOption option = list.models().get(0);
+        assertEquals("openai/gpt-4o-mini", option.id());
+        assertEquals(SchemaSupport.CONSTRAINED, option.schemaSupport());
+        // Published per token; nobody reads 0.00000015, so it travels per million.
+        assertEquals(0.15d, option.promptPriceUsdPerMillion(), 1e-9);
+        assertEquals(0.60d, option.completionPriceUsdPerMillion(), 1e-9);
+    }
+
+    /**
+     * The projection, and the arithmetic behind it: the prompt half of the budget at the prompt
+     * price, plus the whole answer allowance at the completion price. It is a projection and not a
+     * measurement — every other money figure here is read from the provider — which is why the
+     * record and the UI both say so.
+     */
+    @Test
+    void projectsWhatOneWindowWouldCost() {
+        processMiningConfig.setPromptCharBudget(120_000);
+        claudeConfig.setMaxTokens(4096);
+        // 30 000 prompt tokens at $0.15/M, 4 096 answer tokens at $0.60/M.
+        double expected = 30_000 * 0.00000015d + 4_096 * 0.0000006d;
+
+        LlmModelShortlist list = catalog.parseShortlist(json("""
+            {"data": [{"id": "a/b", "pricing": {"prompt": "0.00000015", "completion": "0.0000006"}}]}
+            """), List.of());
+
+        assertEquals(expected, list.models().get(0).projectedCostUsd(), 1e-12);
+    }
+
+    /** Half a published price is not a cheaper model — it is an unpriced one. */
+    @Test
+    void refusesToProjectFromHalfAPrice() {
+        LlmModelShortlist list = catalog.parseShortlist(json("""
+            {"data": [
+              {"id": "a/b", "pricing": {"prompt": "0.000001"}},
+              {"id": "c/d"}
+            ]}
+            """), List.of());
+
+        assertNull(list.models().get(0).projectedCostUsd());
+        assertNull(list.models().get(0).completionPriceUsdPerMillion());
+        assertNull(list.models().get(1).projectedCostUsd());
+    }
+
+    /** A free model prices at 0, which is a measurement — it must not read as "unpriced". */
+    @Test
+    void aFreeModelIsPricedAtZeroRatherThanUnpriced() {
+        LlmModelShortlist list = catalog.parseShortlist(json("""
+            {"data": [{"id": "a/b:free", "pricing": {"prompt": "0", "completion": "0"}}]}
+            """), List.of());
+
+        assertEquals(0.0d, list.models().get(0).projectedCostUsd());
+        assertEquals(0.0d, list.models().get(0).promptPriceUsdPerMillion());
+    }
+
+    /** A price this application cannot read is an absent price, never a free model. */
+    @Test
+    void anUnreadablePriceIsAbsentRatherThanFree() {
+        LlmModelShortlist list = catalog.parseShortlist(json("""
+            {"data": [{"id": "a/b", "pricing": {"prompt": "n/a", "completion": "0.000001"}}]}
+            """), List.of());
+
+        assertNull(list.models().get(0).promptPriceUsdPerMillion());
+        assertNull(list.models().get(0).projectedCostUsd());
+    }
+
+    /** A row nothing could be selected from is dropped rather than rendered as a blank choice. */
+    @Test
+    void skipsAnEntryWithNoSlug() {
+        LlmModelShortlist list = catalog.parseShortlist(json("""
+            {"data": [{"name": "nameless"}, {"id": "a/b"}]}
+            """), List.of());
+
+        assertEquals(1, list.models().size());
+        assertEquals("a/b", list.models().get(0).id());
+    }
+
+    /**
+     * "We could not ask" and "nothing matches" are different answers, and only the second says
+     * anything about the catalogue — the same rule the single-model check follows.
+     */
+    @Test
+    void tellsAnEmptyCatalogueFromAnUnreadableOne() {
+        LlmModelShortlist empty = catalog.parseShortlist(json("{\"data\": []}"), List.of());
+        assertTrue(empty.available());
+        assertTrue(empty.models().isEmpty());
+        assertNull(empty.error());
+
+        LlmModelShortlist broken = catalog.parseShortlist(json("{\"data\": {}}"), List.of());
+        assertFalse(broken.available());
+        assertNotNull(broken.error());
+    }
+
+    /** A filtered view presented as "the models" is the same lie as a silently truncated list. */
+    @Test
+    void carriesTheCriteriaItWasFilteredBy() {
+        LlmModelShortlist list = catalog.parseShortlist(json("{\"data\": []}"),
+            List.of("emits text", "supports structured outputs"));
+        assertEquals(List.of("emits text", "supports structured outputs"), list.criteria());
+    }
+
+    @Test
+    void doesNotOfferAShortlistForAProviderWithNoCatalogue() {
+        claudeConfig.setProvider(ClaudeConfig.Provider.OLLAMA);
+        LlmModelShortlist list = catalog.shortlist(claudeConfig, false, 20);
+        assertFalse(list.available());
+        assertNotNull(list.error());
     }
 
     @Test

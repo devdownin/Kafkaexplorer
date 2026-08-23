@@ -117,7 +117,7 @@ Every feature in detail: **[docs/FEATURES.md](docs/FEATURES.md)** · Ready-to-ru
 
 ## 🤖 Bring your own AI
 
-Process Mining works with the LLM you already have — **OpenRouter** (the default: one key in front of most hosted vendors, so `OPENROUTER_API_KEY=sk-or-v1-…` is the whole setup), **Anthropic Claude**, anything speaking the OpenAI API (**Ollama**, vLLM, LM Studio…), or a fully private, RAG-enabled **SpectraLLM**. Provider, model and connectivity test are all configurable live from the UI.
+Process Mining works with the LLM you already have — **OpenRouter** (the default: one key in front of most hosted vendors, so `OPENROUTER_API_KEY=sk-or-v1-…` is the whole setup), **Anthropic Claude**, anything speaking the OpenAI API (**Ollama**, vLLM, LM Studio…), or a fully private, RAG-enabled **SpectraLLM**. Provider, model and connectivity test are all configurable live from the UI — and on OpenRouter the model is picked from a list of those that fit, cheapest first, then tried without saving it.
 
 The default is a *hosted* endpoint, so the message digests it builds leave your machine. Ollama and SpectraLLM keep every byte on your own network, and the Settings page says which of the two you are on — read off the address actually configured, not off the provider's name.
 

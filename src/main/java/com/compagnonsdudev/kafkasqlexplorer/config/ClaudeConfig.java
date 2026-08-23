@@ -363,6 +363,89 @@ public class ClaudeConfig {
     }
 
     /**
+     * The model a deployment gets when it picks this provider and names none.
+     *
+     * <p>Served to the Settings page rather than restated there. The browser carried
+     * {@code openai/gpt-4o-mini} twice — as initial form state and in the provider-switch
+     * fallback — beside a table mirroring {@link #defaultBaseUrl}, which is the mirror-drift
+     * pattern this codebase keeps removing: the day a shipped default moves, the form offers one
+     * model while the engine runs another.
+     *
+     * <p>Empty for {@link Provider#OPENAI_COMPATIBLE}, whose endpoint we know nothing about, and
+     * for {@link Provider#SPECTRA}, which serves whichever model it is configured to run and
+     * ignores the field entirely. Empty means "we have nothing to propose", not "no model".
+     */
+    public static String defaultModel(Provider provider) {
+        return switch (provider) {
+            case ANTHROPIC -> "claude-3-5-sonnet-20241022";
+            case OPENAI_COMPATIBLE -> "";
+            case OLLAMA -> "qwen3:4b";
+            case OPENROUTER -> "openai/gpt-4o-mini";
+            case SPECTRA -> "";
+        };
+    }
+
+    /**
+     * A throw-away copy of this configuration naming a different model, for probing a candidate
+     * the operator has not committed to.
+     *
+     * <p>{@code POST /api/config/test-llm} used to require the form to be <em>applied</em> first,
+     * so trying a model repointed the running deployment and — with
+     * {@code explorer.settings-persistence} on — wrote it into the settings store. Exploring and
+     * committing were the same gesture, which is why nobody compared two models. A copy has no
+     * such cost: nothing here is a Spring bean, nothing is published to another thread, and the
+     * running configuration is untouched.
+     *
+     * <p><strong>Only the model is overridable, and that restriction is the security boundary.</strong>
+     * An earlier draft let a probe carry its own provider, base URL and key. That turned an
+     * unauthenticated request into a server-side request forgery with the response reflected back
+     * to the caller — and worse, a blank key fell back to the <em>stored</em> one, so pointing a
+     * probe at any host exfiltrated the operator's API key in a single call that changed no state
+     * and left nothing in the settings file. Changing where this deployment sends its data is what
+     * {@code POST /api/config} is for; it is a deliberate, persisted act. Trying another model
+     * against the endpoint already configured is not, and it is the whole of what the Settings
+     * page needs.
+     *
+     * <p>A blank or null model keeps this configuration's, so a probe that names nothing tests
+     * exactly what is running.
+     */
+    public ClaudeConfig probeCopy(String overrideModel) {
+        ClaudeConfig copy = new ClaudeConfig();
+        copy.model = blankToNull(overrideModel) != null ? overrideModel.strip() : model;
+        // Everything else is this deployment's, deliberately — the endpoint, the credential, and
+        // the budgets and routing policy that describe how it calls a model rather than which one.
+        // A probe that quietly used different ones would be testing something other than what an
+        // analysis will do.
+        copy.provider = provider;
+        copy.baseUrl = baseUrl;
+        copy.apiKey = apiKey;
+        copy.maxTokens = maxTokens;
+        copy.snapshotWindowSize = snapshotWindowSize;
+        copy.snapshotWindowTimeoutSeconds = snapshotWindowTimeoutSeconds;
+        copy.requestTimeoutSeconds = requestTimeoutSeconds;
+        copy.useRag = useRag;
+        copy.collection = collection;
+        copy.structuredOutput = structuredOutput;
+        copy.openrouterDataCollection = openrouterDataCollection;
+        copy.openrouterRequireParameters = openrouterRequireParameters;
+        copy.sessionCostLimitUsd = sessionCostLimitUsd;
+        return copy;
+    }
+
+    /**
+     * Whether this copy names a model other than the one running — the one thing the answer of a
+     * probe must state, since "the endpoint is reachable" means a different thing about a
+     * candidate than about the deployment.
+     */
+    public boolean differsFrom(ClaudeConfig other) {
+        return !java.util.Objects.equals(model, other.model);
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
+    }
+
+    /**
      * Whether a URL names this host. The <em>host</em> is compared, not the URL text: a substring
      * scan answered yes for {@code https://localhost.example.com/} and for any path or query that
      * happened to contain the word — on the one flag that tells an operator their data stays put.
