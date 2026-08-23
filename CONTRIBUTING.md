@@ -93,9 +93,16 @@ npm test        # Vitest; npm run test:watch to iterate
 
 ### The checks `mvn verify` does not run
 
-CI runs five documentation checks and a compose check that the Maven build knows nothing about,
+CI runs a family of documentation and compose checks that the Maven build knows nothing about,
 so a change to a `.md`, to a compose file or to `api/types.ts` can be green locally and red on
-the pull request. They need no network, no daemon and no build — running them takes seconds:
+the pull request. They need no network, no daemon and no build — running them takes seconds.
+Run the lot the way CI does, so a check added later is picked up without editing anything:
+
+```bash
+for check in docs/check-*.py; do python3 "$check"; done
+```
+
+Or one at a time, which is what you want while fixing one:
 
 ```bash
 python3 docs/check-links.py        # every repository link in the docs resolves
@@ -112,8 +119,9 @@ docker compose -f docker-compose.yml config -q
 docker compose -f docker-compose.yml -f docker-compose.limits.yml config -q
 ```
 
-The full list of combinations lives in the `compose-lint` job of `.github/workflows/ci.yml`,
-which also **fails on a compose file that no combination names** — add a stack, add its line.
+The combinations are **generated** in the `compose-lint` job of `.github/workflows/ci.yml`,
+from one declaration naming every base and the overlays it accepts. That job also **fails on a
+compose file named in neither** — add a stack, add it to the declaration.
 
 `check-image-pins.py` needs tags (`git fetch --tags`) and fails rather than skipping without
 them. Run this way it checks that nothing floats, that the llama.cpp CPU and CUDA images name

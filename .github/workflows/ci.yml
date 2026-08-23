@@ -644,6 +644,51 @@ jobs:
             esac
           done
 
+  # Does this change touch the published-images stack? Five of six consecutive `main` runs
+  # were red on the job below, every one of them found AFTER a merge, because it does not run
+  # on pull requests — it pulls roughly two gigabytes to exercise a deployment file, which is
+  # the right trade for every pull request and the wrong one for the handful that edit that
+  # file. This makes the distinction, so those few get the feedback before merging and the
+  # rest still pay nothing.
+  #
+  # A job with an `if:`, deliberately NOT a `paths:` filter on the workflow: `paths:` makes a
+  # job SKIP, and a required check that skips blocks a merge for ever, whereas a job whose
+  # `if:` is false reports success. Plain git rather than a filter action, because three lines
+  # beat one more dependency to pin, review and update.
+  hub-changes:
+    name: Does this change touch the published-images stack?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      touched: ${{ steps.diff.outputs.touched }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # The base commit has to be in the clone for the diff below to resolve.
+          fetch-depth: 0
+      - id: diff
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" != 'pull_request' ]; then
+            echo "touched=true" >> "$GITHUB_OUTPUT"
+            echo "· not a pull request — the stack is booted"
+            exit 0
+          fi
+          # Into a file, then grep the file — never `git diff | grep -q`, which is unsound
+          # under `pipefail`: see the note on the wait loop further down.
+          git diff --name-only '${{ github.event.pull_request.base.sha }}'...HEAD > changed.txt
+          echo "· files changed:"; sed 's/^/    /' changed.txt
+          # ci.yml is in the list because this job is DEFINED there: editing the workflow can
+          # edit the stack's own assertions. setup-demo.sh / seed-demo-once.sh and
+          # .env.example are in it because the stack mounts and reads them.
+          if grep -qE '^(docker-compose-spectra-hub|scripts/spectra-hub/|setup-demo\.sh$|seed-demo-once\.sh$|\.env\.example$|docs/check-image-pins\.py$|\.github/workflows/ci\.yml$)' changed.txt; then
+            echo "touched=true" >> "$GITHUB_OUTPUT"
+            echo "· the published-images stack is affected — booting it"
+          else
+            echo "touched=false" >> "$GITHUB_OUTPUT"
+            echo "· nothing the published-images stack depends on changed — not booting it"
+          fi
+
   # docker-compose-spectra-hub.yml is the one stack made entirely of published images, so what
   # it can break is not the code but the WIRING: a service renamed out from under nginx's
   # hardcoded upstream, an ownership fix that stops covering the volume, an entrypoint that
@@ -659,7 +704,8 @@ jobs:
   # release-image, and `workflow_dispatch` covers a branch that touches these files.
   spectra-hub-stack:
     name: Smoke-test the SpectraLLM stack
-    if: github.event_name != 'pull_request'
+    needs: hub-changes
+    if: needs.hub-changes.outputs.touched == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -673,6 +719,11 @@ jobs:
       # ~400 MB, and the smallest model that still answers a one-word health check coherently.
       # A wrong URL fails this job loudly at the fetch step; it is a one-line fix here.
       CI_CHAT_MODEL_URL: https://huggingface.co/bartowski/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf
+      # Pinned, and observed twice on two independent downloads before being written here.
+      # It buys two things: a substituted or truncated file is refused rather than served to
+      # the assertion below, and the fetcher's verification branch — which is what
+      # SPECTRA_*_MODEL_SHA256 exists for — stops being code that CI never executes.
+      CI_CHAT_MODEL_SHA256: 6eb923e7d26e9cea28811e1a8e852009b21242fb157b26149d3b188f3a8c8653
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -789,8 +840,35 @@ jobs:
         # because its dependency is a one-shot that has already completed.
         run: |
           set -euo pipefail
-          docker compose run --rm --no-deps -T \
-            -e SPECTRA_CHAT_MODEL_URL="$CI_CHAT_MODEL_URL" spectra-models
+          # The fetch reaches huggingface.co, which is nobody's here. A default branch that
+          # goes red meaning "HuggingFace was unavailable" is indistinguishable from one that
+          # goes red meaning "the stack broke", and the second is the only one worth waking
+          # somebody for. This repository already writes the right rule elsewhere — see
+          # check-image-pins.py --published: "we asked and it is stale" and "we could not ask"
+          # are different answers.
+          #
+          # So a failed TRANSFER warns and skips the end-to-end assertion, while every other
+          # failure of the fetcher still fails the job. That distinction is the whole reason
+          # the outcome is read from the fetcher's own message rather than from its exit code:
+          # a digest that does not match is a substituted file, not a network problem, and
+          # swallowing it would undo the pin two lines above.
+          set +e
+          out=$(docker compose run --rm --no-deps -T \
+            -e SPECTRA_CHAT_MODEL_URL="$CI_CHAT_MODEL_URL" \
+            -e SPECTRA_CHAT_MODEL_SHA256="$CI_CHAT_MODEL_SHA256" spectra-models 2>&1)
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+          if [ "$rc" -ne 0 ]; then
+            case "$out" in
+              *"download FAILED"*)
+                echo "::warning::the chat model could not be downloaded — the end-to-end assertion is SKIPPED, not failed. Everything up to here passed."
+                exit 0 ;;
+              *)
+                echo "::error::the model fetcher failed for a reason that is not the transfer — a mismatched digest, or an image without sha256sum"
+                exit 1 ;;
+            esac
+          fi
 
           # No restart: llama-server's entrypoint polls for the file and starts on its own,
           # which is the behaviour the previous step just asserted from the other side. What is
@@ -869,51 +947,42 @@ jobs:
           # newest release tag, and the default checkout carries no tags at all — the check
           # would fail on their absence rather than on a drift.
           fetch-tags: true
-      - run: python3 docs/check-links.py
-
-      # The configuration tables on that same page have the same exposure as its links and
-      # had no check at all — so the page advertised a JRE two majors behind the image it
-      # describes, and that was found by reading it rather than by CI. This resolves every
-      # documented variable back to a real bindable property (application.yml, the
-      # @ConfigurationProperties classes, or an ENV of the runtime images), compares the
-      # documented defaults with the YAML, and matches the base-image claim against both
-      # Dockerfiles.
-      - run: python3 docs/check-config-table.py
-
-      # Same principle, applied to the contract between the two halves of the app. The frontend
-      # asserted its response types by hand (`axios.get<{ samples: string[] }>(…)`), which
-      # TypeScript believes without checking anything: when the endpoint started returning
-      # records instead of strings, nothing failed to compile and the Compare page died at
-      # runtime, months later. This resolves every @java-marked interface in
-      # src/main/webapp/src/api/types.ts against the record it mirrors — field names both ways,
-      # and types through an explicit mapping.
-      - run: python3 docs/check-api-types.py
-
-      # Same rot, one level up: CLAUDE.md and CONTRIBUTING.md refer to the codebase in prose
-      # rather than in links, so check-links.py never saw those references — and three of them
-      # pointed at documents and a directory that had been deleted, one of them for months.
-      # A reader following the file explaining the repository was sent to nothing.
-      - run: python3 docs/check-doc-paths.py
-
-      # And the same rot in the deployment files: an image reference is written by hand, and
-      # Dependabot cannot read a `${VAR:-1.8.8}` form, so nothing would ever move the Explorer
-      # pin — the hub stack would go on serving an old image to everyone who does not pin, for
-      # as long as nobody noticed. It also refuses a floating tag (the comment claiming Ollama
-      # was "the only floating tag left in the tree" had `curlimages/curl:latest` two services
-      # below it) and requires the llama.cpp CPU and CUDA images to name the same build, since
-      # the GPU overlay must change the hardware and not the engine's revision.
-      - run: python3 docs/check-image-pins.py
-
-      # The compose files themselves, against .env.example and against each other. That file
-      # exists so changing where a stack is published does not mean editing six compose files,
-      # which only works if it lists them all — five variables had a default in compose and no
-      # line there, and nothing noticed, because check-config-table.py reads application.yml
-      # and the Dockerfiles rather than the stacks. It also asserts the half that is not
-      # documentation at all: that the prompt budget fits the window the stack serves. Those
-      # two settings are written in three files, each carrying a comment saying it is "kept in
-      # step" with the others — and nothing executes a comment, while a prompt that exceeds the
-      # window is truncated in silence at DEBUG rather than refused.
-      - run: python3 docs/check-compose.py
+      # Discovered, not listed. This was six `- run:` lines, so a seventh script would have
+      # been executed by nothing until somebody remembered to add one — the same structural
+      # argument compose-lint was rewritten for, left standing one job below it. What each
+      # check answers, since the lines that said so are now this comment:
+      #
+      #   check-links       every repository link in the documentation resolves. docs/DOCKERHUB.md
+      #                     is RENDERED OUTSIDE the repository, so none of its links can be
+      #                     verified by reading the page and a rotten one stays invisible until a
+      #                     visitor hits a 404 on the page that sells the image.
+      #   check-config-table  every documented variable binds to a real property (application.yml,
+      #                     a @ConfigurationProperties field, or an ENV of either runtime image),
+      #                     the documented defaults match the YAML, and the base-image and
+      #                     dependency-version claims match the Dockerfiles and the pom. The page
+      #                     advertised a JRE two majors behind the image for a long while, and
+      #                     that was found by reading it rather than by CI.
+      #   check-api-types   every @java-marked interface in api/types.ts against the record it
+      #                     mirrors, both ways. The frontend asserted its response types by hand,
+      #                     which TypeScript believes without checking: when an endpoint started
+      #                     returning records instead of strings nothing failed to compile and the
+      #                     Compare page died at runtime, months later.
+      #   check-doc-paths   every repository path CLAUDE.md and CONTRIBUTING.md name in PROSE
+      #                     rather than in a link — check-links.py never saw those, and three
+      #                     pointed at documents and a directory deleted months earlier.
+      #   check-image-pins  the images the stacks pull: nothing floating, the llama.cpp CPU and
+      #                     CUDA tags naming the same build, and no pin ahead of the newest
+      #                     release. Its --published half asks the registry and runs in
+      #                     spectra-hub-stack, where the network is already a dependency.
+      #   check-compose     the stacks against .env.example and against themselves, the prompt
+      #                     budget against the window each one serves included.
+      - name: Resolve every documentation check
+        run: |
+          set -euo pipefail
+          for check in docs/check-*.py; do
+            echo "· $check"
+            python3 "$check"
+          done
 
   # docs/img/*.png is what the Docker Hub overview, the READMEs and the Pages site show, and
   # it is generated by docs/screenshots/ rather than photographed. Nothing ran that pipeline,

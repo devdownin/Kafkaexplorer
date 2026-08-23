@@ -11,6 +11,48 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Three pages claimed the published-images stack needed no checkout.** `docs/DOCKERHUB.md`
+  was corrected when the entrypoints moved into `scripts/spectra-hub/`; `README.md`,
+  `README.fr.md` and `docs/LLM-PROVIDERS.md` still said "no checkout" flatly, which was never
+  true — that stack has always mounted the demo seeder from the repository. They now say what
+  is true: no SpectraLLM checkout, nothing built, and this repository is needed. The Docker Hub
+  page also stopped promising it "in one command" above a snippet that is four, and gained a
+  troubleshooting entry for the symptom of downloading the file on its own — Docker creates a
+  *directory* where a bind-mount source is missing, so the seeder is handed a directory instead
+  of a script.
+- **The SpectraLLM stack was described as having nine services.** It has eleven, and
+  `…limits.yml` bounds the seven long-running ones — the four it leaves out are one-shots that
+  exit. The figure was wrong in `CLAUDE.md`, in `docs/LLM-PROVIDERS.md` and in this file's
+  unreleased notes. No check catches a claim of that kind; it was found by counting.
+
+### Changed
+
+- **The published-images stack is now smoke-tested on the pull requests that touch it.** It ran
+  on `main` only, because it pulls ~2 GB to exercise a deployment file whose content does not
+  move with the code — right for every pull request, wrong for the handful that edit those
+  files, and the cost was measured rather than guessed: five of six consecutive `main` runs were
+  red on that job, every failure found *after* a merge. A `hub-changes` job decides from a plain
+  `git diff`, and it is a job with an `if:` rather than a `paths:` filter on purpose: `paths:`
+  makes a job skip, and a required check that skips blocks a merge for ever.
+- **A HuggingFace outage can no longer redden the default branch.** The smoke test downloads its
+  model from `huggingface.co`, and a red `main` meaning "that host was unavailable" is
+  indistinguishable from one meaning "the stack broke". A failed *transfer* now warns and skips
+  the end-to-end assertion; every other failure of the fetcher still fails the job — the outcome
+  is read from the fetcher's own message rather than its exit code, since a mismatched digest is
+  a substituted file and not a network problem. Same rule `check-image-pins.py --published`
+  already applies to the registry: "we asked and it is stale" and "we could not ask" are
+  different answers.
+- **The CI model is pinned by digest**, observed on two independent downloads before being
+  written down. A substituted or truncated file is refused rather than served to the assertion,
+  and the fetcher's verification branch — what `SPECTRA_*_MODEL_SHA256` exists for — stops being
+  code CI never executes.
+- **The documentation checks are discovered rather than listed** (`for check in
+  docs/check-*.py`). Six `- run:` lines meant a seventh script would have been run by nothing
+  until somebody remembered to add one — the same structural argument `compose-lint` was
+  rewritten for, left standing one job below it.
+
 ### Removed
 
 - **A dead `TableController`.** Its only mapping, `GET /table/{name}`, returned the view name
@@ -187,8 +229,9 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `Bearer` mismatch this pairing documents, instead of leaving it a paragraph nobody executes.
 - **Three overlays beside it.** `…gpu.yml` moves both llama.cpp servers onto CUDA, pinned to the
   same build as the CPU image — the change that turns minutes per analysis into seconds.
-  `…limits.yml` bounds all nine services (the shared limits overlay names two, and a service named
-  in an overlay but absent from its base file fails the whole `up`), with no `cpus` on the
+  `…limits.yml` bounds the seven long-running services of its eleven — the four it leaves out are
+  one-shots that exit (the shared limits overlay names two, and a service named in an overlay but
+  absent from its base file fails the whole `up`), with no `cpus` on the
   inference servers, whose throughput *is* the core count. `…ingest.yml` has SpectraLLM index the
   topics themselves, so the corpus answers questions about what is in the messages with cited
   sources, and the explorer's audits can read it. That last one is an overlay rather than a flag

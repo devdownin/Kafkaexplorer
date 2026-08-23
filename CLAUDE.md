@@ -237,8 +237,9 @@ files wire the pair, and they are not variants of one another:
   overlay. `docker-compose-spectra-hub.limits.yml` is this stack's own limits file rather than a
   few lines added to `docker-compose.limits.yml`: that one names `explorer` and `kafka`, and a
   service named in an overlay but absent from the base file becomes a new imageless service and
-  fails the whole `up` — so a nine-service stack needs its own, and it covers all nine instead of
-  leaving the four heaviest unbounded. It deliberately sets **no `cpus` on the llama.cpp
+  fails the whole `up` — so this stack needs its own, and it bounds the **seven long-running
+  services of its eleven** (the four it leaves out are one-shots that exit) instead of leaving the
+  four heaviest unbounded. It deliberately sets **no `cpus` on the llama.cpp
   servers**: on CPU inference throughput *is* the core count.
 
   `docker-compose-spectra-hub.small.yml` is the fourth, and the one an ordinary laptop wants:
@@ -359,6 +360,12 @@ KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `
   that cannot be reached is reported rather than failing the build: "we asked and it is stale"
   and "we could not ask" are different answers. It needs tags, hence `fetch-tags` on both jobs'
   checkouts, and it fails rather than skipping when they are absent.
+- **The documentation checks are discovered, not listed** (`for check in docs/check-*.py`).
+  That step was six `- run:` lines, so a seventh script would have been executed by nothing
+  until somebody remembered to add one — the same structural argument `compose-lint` was
+  rewritten for, left standing one job below it. What each check answers is now a comment block
+  above the loop rather than a line beside each invocation. `check-image-pins.py --published`
+  stays a separate step in `spectra-hub-stack`: it takes an argument and needs the network.
 - **The stacks are also checked against `.env.example`, and against themselves**
   (`docs/check-compose.py`, in the `docs-links` job). `.env.example` exists so that changing
   where a stack is published does not mean editing six compose files, which only holds if it
@@ -381,9 +388,27 @@ KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `
   that exceeds the window is dropped in silence and logged at DEBUG rather than refused. The
   4 characters-per-token ratio is deliberately optimistic, so a budget it passes may still not
   fit while one it rejects certainly does not — a floor, not a calibration.
-- **The published-images stack is booted too** (`spectra-hub-stack`, on main and
-  `workflow_dispatch` only — it pulls ~2 GB to test a deployment file whose content does not move
-  with the code, the same trade-off as the arm64 boot). It runs with
+- **The published-images stack is booted too** (`spectra-hub-stack`), and **on a pull request
+  that touches it**. It used to run on main and `workflow_dispatch` only — it pulls ~2 GB to test
+  a deployment file whose content does not move with the code, the same trade-off as the arm64
+  boot — and the cost of that was measured rather than guessed: **five of six consecutive `main`
+  runs were red on this job**, every failure found *after* a merge, each costing a merge, a fix
+  and a second merge. The trade is right for every pull request and wrong for the handful that
+  edit those files, so a `hub-changes` job makes the distinction from a plain `git diff`. It is a
+  job with an `if:` and deliberately **not** a `paths:` filter: `paths:` makes a job *skip*, and
+  a required check that skips blocks a merge for ever, where a job whose `if:` is false reports
+  success. The file list includes `ci.yml` (this job is defined there), the seeders and
+  `.env.example` (the stack mounts and reads them). **The model fetch is not allowed to redden
+  `main` on somebody else's outage**: it reaches `huggingface.co`, and a red default branch
+  meaning "HuggingFace was unavailable" is indistinguishable from one meaning "the stack broke".
+  A failed *transfer* warns and skips the end-to-end assertion; every other failure of the
+  fetcher still fails the job — which is why the outcome is read from the fetcher's own message
+  and not from its exit code, a mismatched digest being a substituted file rather than a network
+  problem. The same rule `check-image-pins.py --published` already applies to the registry: "we
+  asked and it is stale" and "we could not ask" are different answers. The CI model is **pinned
+  by digest** (`CI_CHAT_MODEL_SHA256`, observed on two independent downloads before being
+  written down), which also stops the fetcher's verification branch from being code CI never
+  runs. It runs with
   `SPECTRA_AUTO_INSTALL_MODELS=false`, because the interesting assertion about a missing model is
   that the containers **wait** for it rather than crash-looping — which is what the inline
   entrypoints exist for. It also pins the wiring nothing else can: that `GET /api/config` really

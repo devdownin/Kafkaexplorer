@@ -89,7 +89,7 @@ further: `docker compose up -d` there also seeds **76 demo topics** — a 6-step
 pipeline to trace across partitions, header-only correlations, a real time series to
 window, plus duplicates and poison records for the audit to find.
 
-### With a private AI beside it, still in one command
+### With a private AI beside it, from published images
 
 Process Mining can be answered by [SpectraLLM](https://hub.docker.com/r/compagnonsdudev/spectrallm)
 — a local RAG stack published under this same namespace — so the flowcharts and the anomaly
@@ -337,6 +337,14 @@ container, not your host: use the service name on a compose network, or
 `KAFKA_BOOTSTRAP_SERVERS`. `SPRING_KAFKA_BOOTSTRAP_SERVERS` binds to nothing here — this
 app uses `kafka-clients` directly, not `spring-kafka`, so the property prefix is `kafka.`
 and not `spring.kafka.`.
+
+**The SpectraLLM stack starts but seeds no demo topics, and `demo-setup` exited non-zero.**
+That file is not self-contained, and downloading it on its own is the way to reproduce this:
+it mounts `setup-demo.sh`, `seed-demo-once.sh` and the three service entrypoints from the
+repository, and Docker creates a *directory* where a bind-mount source is missing — so the
+seeder is handed a directory instead of a script. `git clone` the repository and run the file
+from inside it, as the snippet above does. Everything else in the stack still works: the
+Explorer, the broker and the SpectraLLM UI do not depend on the seeding.
 
 **The container exits at once with `Failed to mark memory page as executable — check if
 grsecurity/PaX is enabled`.** This is the host, not the image: the JVM asked the kernel to
