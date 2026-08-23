@@ -91,6 +91,34 @@ npm run lint    # ESLint, flat config, --max-warnings 0
 npm test        # Vitest; npm run test:watch to iterate
 ```
 
+### The checks `mvn verify` does not run
+
+CI runs five documentation checks and a compose check that the Maven build knows nothing about,
+so a change to a `.md`, to a compose file or to `api/types.ts` can be green locally and red on
+the pull request. They need no network, no daemon and no build — running them takes seconds:
+
+```bash
+python3 docs/check-links.py        # every repository link in the docs resolves
+python3 docs/check-doc-paths.py    # every path CLAUDE.md and this file name in prose exists
+python3 docs/check-config-table.py # documented variables and defaults match the code
+python3 docs/check-api-types.py    # api/types.ts still matches the Java records it mirrors
+python3 docs/check-image-pins.py   # compose images: pinned, consistent, and the current release
+```
+
+```bash
+# Every stack and every overlay layered onto its base — an overlay alone is invalid by design.
+docker compose -f docker-compose.yml config -q
+docker compose -f docker-compose.yml -f docker-compose.limits.yml config -q
+```
+
+The full list of combinations lives in the `compose-lint` job of `.github/workflows/ci.yml`,
+which also **fails on a compose file that no combination names** — add a stack, add its line.
+
+`check-image-pins.py` needs tags (`git fetch --tags`) and fails rather than skipping without
+them: it compares the Explorer image the published-images stack pulls against the newest
+release. That one fails on a *release* rather than on a change, which is the point — it is the
+reminder that the pin has gone stale.
+
 ### When `packages.confluent.io` is unreachable
 
 `io.confluent:kafka-avro-serializer` and `io.confluent:kafka-schema-registry-client` are published

@@ -11,10 +11,19 @@ C4Context
     Person(user, "Data Engineer / Architect", "Uses the explorer to analyze Kafka data and monitor flows.")
     System(explorer, "Kafka SQL Explorer", "Provides a web interface to query Kafka topics via Flink SQL and perform audits.")
     System_Ext(kafka, "Kafka Cluster", "Source of data and metadata.")
+    System_Ext(llm, "LLM provider", "Anthropic, an OpenAI-compatible endpoint (Ollama, vLLM, LM Studio) or SpectraLLM. Optional: Process Mining is the only feature that calls it.")
 
     Rel(user, explorer, "Uses", "HTTPS/8080")
     Rel(explorer, kafka, "Queries metadata and samples records", "Kafka Protocol")
+    Rel(explorer, llm, "Sends digested message samples, receives flowcharts and anomalies", "HTTPS/JSON")
 ```
+
+The LLM is drawn here because it is the boundary a reader most needs to see: it is the only
+component of this diagram that can sit outside your network, and what crosses it is *digested*
+samples — mapped fields, payload skeletons and bounded previews, never raw topics. Point it at a
+loopback address (Ollama, SpectraLLM) and nothing leaves the host at all; the Process Mining page
+states which of the two situations it is in, read from the address rather than from the provider's
+name.
 
 ## 2. Container Diagram
 
