@@ -171,12 +171,28 @@ files wire the pair, and they are not variants of one another:
   the file you download on its own, so it can extend nothing.
 - **`docker-compose-spectra-hub.yml`** builds nothing. Both projects publish their images under
   `compagnonsdudev` on Docker Hub (`kafkaexplorer`, `spectrallm`, `spectrallm-frontend`), so a
-  machine with only Docker runs the pair — no SpectraLLM checkout, no Maven, no npm:
+  machine with only Docker runs the pair — no Maven, no npm, no SpectraLLM checkout, and
+  nothing built. It does need **this** repository checked out, which the page it is
+  advertised on used to deny: it mounts the demo seeder and the three service entrypoints,
+  so a `curl -O` of the single file left Docker to create directories where those files
+  should be. That was true before the entrypoints moved out of the YAML; extracting them
+  made it definitive rather than introducing it, and `docs/DOCKERHUB.md` now says `git
+  clone` where it said `curl`:
 
   ```bash
   docker compose -f docker-compose-spectra-hub.yml pull
   docker compose -f docker-compose-spectra-hub.yml up -d
   ```
+
+  **The three services that run a shell take it from `scripts/spectra-hub/`**, not from a YAML
+  literal: compose interpolates `${…}` inside an entrypoint, so every shell variable had to be
+  written `$${…}` — around forty escapes across the three, and a single `$` written where two
+  belong yields an empty string at runtime rather than an error, which is the failure mode with
+  no symptom. They are mounted read-only, and `.gitattributes` pins `*.sh` to LF on every
+  platform so a Windows checkout still mounts something the image's `/bin/sh` can run. Note what
+  this is **not**: it is not a copy of upstream's `scripts/llm-chat-entrypoint.sh` — see the
+  registry-pointer note below, which is exactly the thing this repository refuses to duplicate.
+  These are our own three, and they were already ours; only their address changed.
 
   Four things in it are load-bearing. **The models live in a named volume** (`spectra_data`), not
   in `./data` as upstream: there is no SpectraLLM checkout here to hold that directory, and a

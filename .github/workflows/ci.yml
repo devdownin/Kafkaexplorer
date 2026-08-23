@@ -584,39 +584,63 @@ jobs:
             > /tmp/spectrallm-stub/deploy/docker/docker-compose.yml
           export SPECTRALLM_DIR=/tmp/spectrallm-stub
 
-          combos=(
-            "-f docker-compose.yml"
-            "-f docker-compose.yml -f docker-compose.ci.yml"
-            "-f docker-compose.yml -f docker-compose.limits.yml"
-            "-f docker-compose-kafka4.yml"
-            "-f docker-compose-kafka4.yml -f docker-compose.limits.yml"
-            "-f docker-compose-llm.yml"
-            "-f docker-compose-llm.yml -f docker-compose.limits.yml"
-            "-f docker-compose.release.yml"
-            "-f docker-compose.release.yml -f docker-compose.limits.yml"
-            "-f docker-compose-build.yml"
-            "-f docker-compose-dev.yml"
-            "-f docker-compose-spectra.yml"
-            "-f docker-compose-spectra-hub.yml"
-            "-f docker-compose-spectra-hub.yml -f docker-compose-spectra-hub.ingest.yml"
-            "-f docker-compose-spectra-hub.yml -f docker-compose-spectra-hub.gpu.yml"
-            "-f docker-compose-spectra-hub.yml -f docker-compose-spectra-hub.limits.yml"
-            "-f docker-compose-spectra-hub.yml -f docker-compose-spectra-hub.small.yml"
-            "-f docker-compose-spectra-hub.yml -f docker-compose-spectra-hub.ingest.yml -f docker-compose-spectra-hub.gpu.yml -f docker-compose-spectra-hub.limits.yml -f docker-compose-spectra-hub.small.yml"
+          # One declaration — every base, and the overlays it accepts. The combinations are
+          # GENERATED from it: each base alone, each base with each of its overlays, and each
+          # base with all of them at once. That last shape was missing from the eighteen
+          # hand-written combinations this replaces: docker-compose.yml's two overlays had
+          # never been layered together, so nineteen combinations now come out of less data.
+          #
+          # A declaration rather than a rule read off the file names, and that is the whole
+          # point: the names do not carry what matters. docker-compose.limits.yml serves FOUR
+          # bases while its name mentions one, and docker-compose.release.yml has an overlay's
+          # name and is a base — deriving from the convention would silently drop three
+          # combinations and misclassify a stack. What the generation does buy is the guard
+          # below: a file is checked because it is NAMED here, so the omission is structural
+          # rather than a string search over a list of command lines.
+          declare -A OVERLAYS=(
+            [docker-compose.yml]="docker-compose.ci.yml docker-compose.limits.yml"
+            [docker-compose-kafka4.yml]="docker-compose.limits.yml"
+            [docker-compose-llm.yml]="docker-compose.limits.yml"
+            [docker-compose.release.yml]="docker-compose.limits.yml"
+            [docker-compose-build.yml]=""
+            [docker-compose-dev.yml]=""
+            [docker-compose-spectra.yml]=""
+            [docker-compose-spectra-hub.yml]="docker-compose-spectra-hub.ingest.yml docker-compose-spectra-hub.gpu.yml docker-compose-spectra-hub.limits.yml docker-compose-spectra-hub.small.yml"
           )
-          for combo in "${combos[@]}"; do
-            echo "· $combo"
-            # shellcheck disable=SC2086 - the combination is a deliberate word list.
-            docker compose $combo config -q
-          done
 
-          # Every compose file in the tree is named above, base or overlay. A new one added
-          # without a line here would be checked by nothing, which is the situation this job
-          # exists to end — so the omission fails rather than passing quietly.
+          named=""
+          resolved=0
+          # Sorted, because an associative array has no iteration order of its own and a log
+          # whose lines move between runs is one nobody diffs.
+          for base in $(printf '%s\n' "${!OVERLAYS[@]}" | sort); do
+            named="$named $base ${OVERLAYS[$base]}"
+            combos=("-f $base")
+            every=""
+            for overlay in ${OVERLAYS[$base]}; do
+              combos+=("-f $base -f $overlay")
+              every="$every -f $overlay"
+            done
+            if [ "$(printf '%s\n' ${OVERLAYS[$base]} | grep -c .)" -gt 1 ]; then
+              combos+=("-f $base$every")
+            fi
+            for combo in "${combos[@]}"; do
+              echo "· $combo"
+              # shellcheck disable=SC2086 - the combination is a deliberate word list.
+              docker compose $combo config -q
+              resolved=$((resolved + 1))
+            done
+          done
+          echo "$resolved combinations resolved"
+
+          # Every compose file in the tree is named above, as a base or as somebody's overlay.
+          # A new one added without a line there would be checked by nothing, which is the
+          # situation this job exists to end — so the omission fails rather than passing
+          # quietly. The reverse is covered by the loop itself: a file named here and absent
+          # from disk fails at `config`.
           for f in docker-compose*.yml; do
-            case " ${combos[*]} " in
-              *" -f $f"*) ;;
-              *) echo "::error file=$f::$f is in no combination above — add it to compose-lint"; exit 1 ;;
+            case " $named " in
+              *" $f "*) ;;
+              *) echo "::error file=$f::$f is named as neither a base nor an overlay in the declaration above — add it to compose-lint"; exit 1 ;;
             esac
           done
 

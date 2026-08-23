@@ -39,6 +39,24 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **The compose-lint combinations are generated from a declaration instead of hand-listed.**
+  Eighteen command lines became eight lines saying, per base, which overlays it accepts — and
+  nineteen combinations come out, the extra one being `docker-compose.yml` with *both* its
+  overlays layered together, which the hand-written list had never covered. A declaration rather
+  than a rule read off the file names, which was the tempting version and does not work: the
+  names do not say that `docker-compose.limits.yml` serves four bases, nor that
+  `docker-compose.release.yml` has an overlay's name and is a base, so deriving from the
+  convention would have silently dropped three combinations and misclassified a stack. The guard
+  that fails on a compose file no combination covers is now structural — a file is checked
+  because it is named in that declaration.
+- **The three shell entrypoints of the published-images stack moved to
+  `scripts/spectra-hub/`.** Compose interpolates `${…}` inside a YAML entrypoint, so every shell
+  variable had to be written `$${…}`: around forty escapes, where writing a single `$` yields an
+  empty string at runtime rather than an error — a defect class with no symptom. The compose file
+  loses 111 lines and the shell becomes shell. The cost is stated where it is paid: that stack
+  needs this repository checked out. It already did — it mounts the demo seeder — but
+  `docs/DOCKERHUB.md` claimed otherwise and documented a `curl -O` of the single file, which
+  leaves Docker creating directories where those files should be; the page now says `git clone`.
 - **Three more stacks stopped carrying their own copy of the broker.** `kafka`,
   `kafka-data-init` and `demo-setup` were restated verbatim in `docker-compose-kafka4.yml`,
   `docker-compose-llm.yml` and `docker-compose.release.yml` — 235 lines that `docker compose
