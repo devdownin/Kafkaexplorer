@@ -46,6 +46,26 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   stacks name their provider explicitly and are unaffected. One thing the move fixes in passing:
   the 120 000-character prompt budget and the shipped provider finally agree, where the budget was
   previously sized for a hosted API the default was not.
+- **The profiling call's cost is counted.** The pipeline makes two model calls and only the
+  second reported anything: the figure on screen understated every run. `FieldProfileResult`
+  carries its `usage`, the page shows it, and the total now covers the whole run — the rule
+  already enforced between live windows, applied between the two steps of one pipeline.
+- **A live session can be given a spend limit** (`claude.session-cost-limit-usd`, `0` = off). It
+  calls the model on every window for up to twelve hours, so a tab left open overnight is on the
+  order of a thousand analyses — free while the shipped provider was a local Ollama, a real bill
+  now that it bills per token, and bounded by nothing. Off by default on purpose: any figure would
+  be arbitrary, and what makes that defensible is that the running total is now on screen, so a cap
+  can be chosen from a measurement. It bounds a session's analyses, not the profiling call before
+  them, and where a provider reports no cost the session says the limit cannot apply rather than
+  counting calls it cannot price. Reaching it stops the session through its own event, not through
+  `ANALYSIS_ERROR`: a budget doing its job is not a broken analysis, and the page renders it in
+  amber beside the error, never in its place.
+- **How much of a prompt was served from the provider's cache is reported** (`cachedInputTokens`,
+  from `prompt_tokens_details.cached_tokens`), beside the tokens and the cost. A measurement, not
+  a promise: nothing here claims a saving, and `0` — a genuine miss — is distinguished from a
+  provider that counts nothing. No cache breakpoint is sent yet; that only pays once the stable
+  part of the prompt is a long enough prefix, which is a prompt-restructuring decision rather than
+  plumbing, and this is the number that will say whether it was worth making.
 - **Both pages that call a model now say what becomes of the message content.** The question was
   answered by halves: Settings spoke only when the news was good — `DENY` displayed its restriction
   while `ALLOW` fell back to a generic "remote inference" line, so the one setting that *widens*

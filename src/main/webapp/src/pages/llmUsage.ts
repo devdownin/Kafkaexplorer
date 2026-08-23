@@ -16,7 +16,15 @@ export const describeUsage = (usage: LlmUsage): string => {
     ? `${usage.inputTokens.toLocaleString()} in / ${usage.outputTokens.toLocaleString()} out`
     : 'tokens not reported';
   const cost = usage.costUsd == null ? '' : ` · ${formatCostUsd(usage.costUsd)}`;
-  return `${usage.model} · ${tokens}${cost} · ${describeDuration(usage.durationMs)}`;
+  /*
+   * Affiché seulement quand le cache a servi à quelque chose. Un « 0 cached » sur chaque fenêtre
+   * serait du bruit — l'information « le cache n'a rien servi » vaut d'être cherchée dans le log,
+   * pas répétée à l'écran toutes les trente secondes.
+   */
+  const cached = usage.cachedInputTokens != null && usage.cachedInputTokens > 0
+    ? ` · ${usage.cachedInputTokens.toLocaleString()} cached`
+    : '';
+  return `${usage.model} · ${tokens}${cached}${cost} · ${describeDuration(usage.durationMs)}`;
 };
 
 /**

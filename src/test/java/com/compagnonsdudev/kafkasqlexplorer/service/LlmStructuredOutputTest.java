@@ -293,7 +293,7 @@ class LlmStructuredOutputTest {
      * not this application's business.
      */
     @Test
-    void sendsAttributionHeadersToOpenRouterOnly() throws Exception {
+    void sendsTheKeyButNotTheAttributionHeadersToAnAddressThatIsNotOpenRouters() throws Exception {
         ClaudeConfig config = startServer(List.of(new StubResponse(200, okBody())));
         config.setProvider(ClaudeConfig.Provider.OPENROUTER);
         config.setApiKey("sk-or-v1-test");
@@ -301,16 +301,27 @@ class LlmStructuredOutputTest {
         new OpenAiCompatibleLlmClient(config).generateWithMeta("SYS", "USR", null);
 
         Map<String, List<String>> sent = requestHeaders.get(0);
-        assertEquals(List.of("Kafka SQL Explorer"), sent.get("X-title"),
-            "header names come back capitalised by com.sun.net.httpserver");
-        assertEquals(List.of("https://github.com/devdownin/Kafkaexplorer"), sent.get("Http-referer"));
         assertEquals(List.of("Bearer sk-or-v1-test"), sent.get("Authorization"));
+        // Header names come back capitalised by com.sun.net.httpserver.
+        assertNull(sent.get("X-title"), "naming this project at somebody's own gateway is not our business");
+        assertNull(sent.get("Http-referer"));
+    }
+
+    /** The address decides the courtesy headers; the shipped default is the real gateway. */
+    @Test
+    void recognisesOpenRoutersOwnAddressForAttribution() {
+        ClaudeConfig config = new ClaudeConfig();
+        config.setProvider(ClaudeConfig.Provider.OPENROUTER);
+        config.setBaseUrl("");
+        assertTrue(config.isOpenRouterEndpoint());
+
+        config.setBaseUrl("https://gateway.corp.example/openrouter/v1");
+        assertFalse(config.isOpenRouterEndpoint());
 
         config.setProvider(ClaudeConfig.Provider.OPENAI_COMPATIBLE);
-        new OpenAiCompatibleLlmClient(config).generateWithMeta("SYS", "USR", null);
-
-        assertNull(requestHeaders.get(1).get("X-title"));
-        assertNull(requestHeaders.get(1).get("Http-referer"));
+        config.setBaseUrl("https://openrouter.ai/api/v1");
+        assertFalse(config.isOpenRouterEndpoint(),
+            "the address alone is not enough — the provider chooses the dialect");
     }
 
     /**
@@ -425,6 +436,59 @@ class LlmStructuredOutputTest {
 
         assertTrue(e.getMessage().contains("routing is restricted"), e.getMessage());
         assertTrue(e.getMessage().contains("claude.openrouter-data-collection"), e.getMessage());
+    }
+
+    /**
+     * The provider enum says which dialect to speak; it does not say who answers. Sending
+     * OpenRouter's routing object and attribution headers to a corporate proxy is both none of this
+     * application's business and one more way to be answered 400 — which the schema latch would
+     * then blame on the schema.
+     */
+    /**
+     * The asymmetry, pinned: behind a proxy the privacy restriction still travels while the
+     * courtesy header does not. Dropping {@code data_collection} because the hostname is
+     * unfamiliar would silently remove a guarantee the operator configured — the exact failure
+     * that setting exists to prevent — whereas a withheld header costs nothing.
+     */
+    @Test
+    void keepsThePrivacyRestrictionBehindAProxyWhileWithholdingTheCourtesyHeader() throws Exception {
+        ClaudeConfig config = startServer(List.of(new StubResponse(200, okBody())));
+        // Provider OPENROUTER, base URL the local stub — as a corporate egress proxy would be.
+        config.setProvider(ClaudeConfig.Provider.OPENROUTER);
+
+        new OpenAiCompatibleLlmClient(config).generateWithMeta("SYS", "USR", null);
+
+        assertEquals("deny", new ObjectMapper().readTree(requestBodies.get(0))
+            .path("provider").path("data_collection").asText());
+        assertNull(requestHeaders.get(0).get("X-title"));
+        assertFalse(config.isOpenRouterEndpoint());
+        assertTrue(config.isDataRetentionRefused(),
+            "the UI states the restriction because the request really carried it");
+    }
+
+    /** Cache accounting is a measurement, so a miss and an unreported figure must not look alike. */
+    @Test
+    void readsBackHowMuchOfThePromptWasCached() throws Exception {
+        ClaudeConfig config = startServer(List.of(new StubResponse(200,
+            "{\"choices\":[{\"message\":{\"content\":\"{}\"}}],"
+                + "\"usage\":{\"prompt_tokens\":1200,\"completion_tokens\":340,"
+                + "\"prompt_tokens_details\":{\"cached_tokens\":900}}}")));
+
+        LlmUsage usage = new OpenAiCompatibleLlmClient(config)
+            .generateWithMeta("SYS", "USR", null).usage();
+
+        assertEquals(900L, usage.cachedInputTokens());
+    }
+
+    @Test
+    void leavesCacheAccountingUnknownWhenTheProviderCountsNone() throws Exception {
+        ClaudeConfig config = startServer(List.of(new StubResponse(200, okBody())));
+
+        LlmUsage usage = new OpenAiCompatibleLlmClient(config)
+            .generateWithMeta("SYS", "USR", null).usage();
+
+        assertNull(usage.cachedInputTokens(),
+            "zero would say the cache was consulted and missed, which nobody measured");
     }
 
     @Test

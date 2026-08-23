@@ -98,6 +98,9 @@ public class AnthropicLlmClient implements LlmClient {
                 // The Anthropic API prices nothing in its response, and this application keeps no
                 // price table — a cost shown here is one a provider stood behind, or none.
                 null,
+                // Cache accounting is not read on this path: nothing here sets a cache breakpoint,
+                // so a figure would only ever be zero, and a zero nobody can act on is noise.
+                null,
                 System.currentTimeMillis() - startedAt,
                 config.getProviderLabel(),
                 config.getModel());

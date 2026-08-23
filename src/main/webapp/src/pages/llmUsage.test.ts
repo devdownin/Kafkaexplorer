@@ -9,6 +9,7 @@ const usage = (over: Partial<LlmUsage> = {}): LlmUsage => ({
   inputTokens: 1200,
   outputTokens: 340,
   costUsd: null,
+  cachedInputTokens: null,
   durationMs: 8400,
   provider: 'Ollama',
   model: 'qwen3:4b',
@@ -44,6 +45,18 @@ describe('describeUsage', () => {
   // A provider that prices nothing must not make the call look free.
   it('says nothing about money when the provider priced nothing', () => {
     expect(describeUsage(usage())).not.toContain('$');
+  });
+});
+
+describe('describeUsage cache reporting', () => {
+  it('shows a cache hit when there was one', () => {
+    expect(describeUsage(usage({ cachedInputTokens: 900 }))).toContain('900 cached');
+  });
+
+  // Un « 0 cached » sur chaque fenêtre serait du bruit ; l'absence de rapport n'est pas un zéro.
+  it('stays quiet on a miss and on a provider that counts nothing', () => {
+    expect(describeUsage(usage({ cachedInputTokens: 0 }))).not.toContain('cached');
+    expect(describeUsage(usage({ cachedInputTokens: null }))).not.toContain('cached');
   });
 });
 

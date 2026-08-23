@@ -110,6 +110,29 @@ public class ClaudeConfig {
      */
     private boolean openrouterRequireParameters = false;
 
+    /**
+     * Upper bound, in USD, on what one live Process Mining session may spend before it stops
+     * itself. {@code 0} — the default — means no bound.
+     *
+     * <p>A live session calls the model every time a window is cut, on a timer, and its SSE
+     * emitter lives twelve hours: a tab left open overnight is on the order of a thousand
+     * analyses. That was free while the shipped provider was a local Ollama and is a real bill
+     * now that it bills per token, and nothing anywhere bounded it — the only limits in the
+     * pipeline are on prompt size and window count, neither of which is money.
+     *
+     * <p>Off by default, deliberately. Any figure picked here would be arbitrary — the same reason
+     * the audit refuses a threshold on consumer lag — and a session that stops on its own is a
+     * surprise of its own kind. What makes off defensible is that the running total is now on
+     * screen, so an operator can see what a configuration costs before deciding what to cap it at.
+     *
+     * <p>It bounds the <em>analyses</em> of one session, not the profiling call that precedes it:
+     * profiling is a separate request the server does not attribute to a session. And it can only
+     * be enforced where cost is reported — on a provider that prices nothing (Ollama, SpectraLLM,
+     * the OpenAI API) the session says the bound cannot apply rather than counting calls it cannot
+     * price, which would be a budget in name only.
+     */
+    private double sessionCostLimitUsd = 0.0;
+
     public Provider getProvider() {
         return provider;
     }
@@ -213,6 +236,19 @@ public class ClaudeConfig {
         this.openrouterDataCollection = openrouterDataCollection;
     }
 
+    public double getSessionCostLimitUsd() {
+        return sessionCostLimitUsd;
+    }
+
+    public void setSessionCostLimitUsd(double sessionCostLimitUsd) {
+        this.sessionCostLimitUsd = sessionCostLimitUsd;
+    }
+
+    /** Whether a live session should stop itself once it has spent that much. */
+    public boolean hasSessionCostLimit() {
+        return sessionCostLimitUsd > 0;
+    }
+
     public boolean isOpenrouterRequireParameters() {
         return openrouterRequireParameters;
     }
@@ -222,12 +258,47 @@ public class ClaudeConfig {
     }
 
     /**
+     * Whether the configured endpoint really is OpenRouter's, and not merely named after it.
+     *
+     * <p>Used for the <em>attribution headers</em> and nothing else. The provider enum says which
+     * dialect to speak; it does not say who answers, and {@code claude.base-url} is free text —
+     * pointing the OPENROUTER provider at a corporate egress proxy is an ordinary thing to do.
+     * Naming this project to somebody's internal gateway is not this application's business, and a
+     * header is a courtesy that can be withheld on a guess with nothing lost.
+     *
+     * <p>The routing policy deliberately does <em>not</em> use this, and the asymmetry is the
+     * point: that one carries a privacy restriction the operator configured, and a proxy in front
+     * of OpenRouter still forwards it. Withholding it because the hostname is unfamiliar would
+     * silently drop the guarantee — the failure this whole setting exists to prevent.
+     */
+    public boolean isOpenRouterEndpoint() {
+        if (provider != Provider.OPENROUTER) {
+            return false;
+        }
+        String host;
+        try {
+            host = java.net.URI.create(getResolvedBaseUrl().strip()).getHost();
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+        if (host == null) {
+            return false;
+        }
+        host = host.toLowerCase(java.util.Locale.ROOT);
+        return host.equals("openrouter.ai") || host.endsWith(".openrouter.ai");
+    }
+
+    /**
      * Whether this configuration asks the gateway to keep message content away from providers that
      * would retain it. False for every provider but OpenRouter, where the question has no answer
      * this application can enforce — the Settings banner uses it to qualify its "remote" sentence
      * rather than to replace it.
      */
     public boolean isDataRetentionRefused() {
+        // Follows what the request actually carries, which is keyed on the provider — see
+        // OpenAiCompatibleLlmClient.routingPolicy(). The UI must claim the restriction exactly
+        // where it was sent: no more (it would be inventing one) and no less (it would hide one
+        // the operator configured).
         return provider == Provider.OPENROUTER && openrouterDataCollection == DataCollection.DENY;
     }
 

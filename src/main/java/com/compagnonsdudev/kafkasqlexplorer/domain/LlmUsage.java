@@ -26,6 +26,13 @@ package com.compagnonsdudev.kafkasqlexplorer.domain;
  *                     provider stood behind. OpenRouter returns it on every response; the OpenAI
  *                     API, Ollama and SpectraLLM do not, and there it stays null. Note that
  *                     {@code 0.0} is a real measurement (a free model), not an absent one.
+ * @param cachedInputTokens how many of the prompt tokens were served from the provider's prompt
+ *                     cache, or {@code null} when the provider does not report it. A cache read
+ *                     costs a fraction of a fresh input token, so this is the measurement that says
+ *                     whether caching is doing anything — and it is deliberately a measurement
+ *                     rather than a promise: nothing here claims a saving, it reports what the
+ *                     provider counted. {@code 0} means the prompt missed the cache, which is a
+ *                     finding in itself.
  * @param durationMs   wall-clock time of the call, always measured here
  * @param provider     the provider label the call went to
  * @param model        the model the call named
@@ -34,13 +41,14 @@ public record LlmUsage(
         Long inputTokens,
         Long outputTokens,
         Double costUsd,
+        Long cachedInputTokens,
         long durationMs,
         String provider,
         String model
 ) {
     /** Usage for a provider that reports no token counts: the duration is still worth having. */
     public static LlmUsage untokenized(long durationMs, String provider, String model) {
-        return new LlmUsage(null, null, null, durationMs, provider, model);
+        return new LlmUsage(null, null, null, null, durationMs, provider, model);
     }
 
     /** Null when either half is unreported — a partial sum would be worse than no sum. */
@@ -57,6 +65,7 @@ public record LlmUsage(
             + " · in=" + (inputTokens == null ? "?" : inputTokens)
             + " out=" + (outputTokens == null ? "?" : outputTokens)
             + (costUsd == null ? "" : " · $" + formatCost(costUsd))
+            + (cachedInputTokens == null ? "" : " · cached=" + cachedInputTokens)
             + " · " + durationMs + "ms";
     }
 

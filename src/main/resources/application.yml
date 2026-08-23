@@ -316,6 +316,22 @@ claude:
   # whose providers lack schema support becomes *unroutable* instead of degrading, and that arrives
   # as "no endpoints found" rather than as the 400/422 the per-model latch can act on.
   openrouter-require-parameters: false
+  # Plafond, en USD, de ce qu'une session Process Mining en direct peut dépenser avant de s'arrêter
+  # d'elle-même. 0 = aucun plafond, et c'est le défaut.
+  #
+  # Une session live appelle le modèle à chaque fenêtre, sur minuterie, et son flux SSE vit douze
+  # heures : un onglet laissé ouvert la nuit, c'est de l'ordre du millier d'analyses. C'était sans
+  # conséquence tant que le fournisseur livré était un Ollama local ; ça ne l'est plus depuis qu'il
+  # facture au token, et rien ne le bornait — les seules limites du pipeline portent sur la taille
+  # du prompt et le nombre de messages, pas sur l'argent.
+  #
+  # Désactivé par défaut à dessein : tout chiffre choisi ici serait arbitraire, et une session qui
+  # s'arrête seule est une surprise d'un autre genre. Ce qui rend ce défaut défendable, c'est que le
+  # cumul est maintenant affiché — on mesure d'abord, on plafonne ensuite. Il ne borne que les
+  # analyses d'une session (pas l'appel de profilage qui la précède) et ne peut s'appliquer que là
+  # où le coût est rapporté : sur un fournisseur qui n'en rapporte aucun, la session le dit au lieu
+  # de compter des appels dont elle ignore le prix.
+  session-cost-limit-usd: 0
 
 logging:
   file:

@@ -629,6 +629,12 @@ export interface LlmUsage {
    * mesure — un modèle gratuit — et non une mesure absente.
    */
   costUsd: number | null;
+  /**
+   * Combien de tokens du prompt ont été servis depuis le cache du fournisseur — `null` quand il ne
+   * le rapporte pas, `0` quand le prompt a manqué le cache. Une mesure, pas une promesse : rien ici
+   * n'affirme une économie, on rapporte ce que le fournisseur a compté.
+   */
+  cachedInputTokens: number | null;
   durationMs: number;
   provider: string;
   model: string;

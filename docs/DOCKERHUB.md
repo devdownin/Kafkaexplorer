@@ -261,6 +261,7 @@ re-entered after each restart.
 | `CLAUDE_COLLECTION` | — | `SPECTRA` + `CLAUDE_USE_RAG` only: which ChromaDB collection to retrieve from. Blank uses SpectraLLM's default. |
 | `CLAUDE_OPENROUTER_DATA_COLLECTION` | `DENY` | `OPENROUTER` only: `DENY` restricts routing to upstream providers that do not retain or train on what is sent. `ALLOW` widens the choice of models back — a model served only by data-collecting providers is otherwise unroutable, and the error says so. |
 | `CLAUDE_OPENROUTER_REQUIRE_PARAMETERS` | `false` | `OPENROUTER` only: route only to providers implementing every parameter sent, making structured output a routing guarantee. Off by default because a model whose providers lack it then becomes unroutable rather than degrading. |
+| `CLAUDE_SESSION_COST_LIMIT_USD` | `0` | Spend cap, in USD, for one live Process Mining session — it stops itself when reached. `0` disables it. A live session calls the model on every window for up to twelve hours, so this is what bounds a tab left open overnight. Applies only where the provider reports a cost. |
 | `PROCESS_MINING_PROMPT_CHAR_BUDGET` | `120000` | Characters of Kafka messages one analysis prompt may carry — about 30 000 tokens. **Lower it, or widen the model's window, when you point this at a small local model.** |
 
 Leave it alone and every other feature works — Process Mining is the only page that calls

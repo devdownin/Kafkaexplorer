@@ -112,6 +112,13 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
      * guarantee it may not need is the same trade {@code structured-output: AUTO} already refuses.
      */
     private Map<String, Object> routingPolicy() {
+        // Keyed on the *provider*, not on the address, and that is the opposite of the rule the
+        // attribution headers follow — deliberately. Someone who selects OPENROUTER and points the
+        // base URL at a corporate egress proxy is proxying *to* OpenRouter: dropping
+        // data_collection there because the hostname is theirs would silently remove the privacy
+        // restriction they configured, which is a far worse failure than sending a field a
+        // pass-through does not read. A courtesy header can be withheld on a guess; a privacy
+        // guarantee cannot.
         if (config.getProvider() != ClaudeConfig.Provider.OPENROUTER) {
             return Map.of();
         }
@@ -218,7 +225,7 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
             if (config.isApiKeyConfigured()) {
                 requestBuilder.header("Authorization", "Bearer " + config.getApiKey());
             }
-            if (config.getProvider() == ClaudeConfig.Provider.OPENROUTER) {
+            if (config.isOpenRouterEndpoint()) {
                 // OpenRouter's two optional attribution headers, which is how a request is credited
                 // to an application on its public leaderboard. They carry this project's identity
                 // and nothing about the deployment or the messages — no host name, no topic, no
@@ -265,6 +272,11 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
             // token. Read, never computed: no price table lives here, so a figure on screen is one
             // the provider stood behind. Absent on OpenAI and Ollama, and null there rather than 0.
             doubleOrNull(usage, "cost"),
+            // How much of the prompt the provider served from its cache. Reported under
+            // prompt_tokens_details by OpenAI-shaped APIs; absent elsewhere, and null there rather
+            // than 0 — "no cache hit" and "nobody counted" are different answers, and only the
+            // first is evidence that a cache breakpoint is doing nothing.
+            longOrNull(usage.path("prompt_tokens_details"), "cached_tokens"),
             durationMs,
             config.getProviderLabel(),
             config.getModel());

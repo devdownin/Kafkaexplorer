@@ -3,6 +3,7 @@
 
 import React, { useState } from 'react';
 import { cleanCorrections, mappingProblems, pathProblem } from './schemaMapping';
+import type { LlmUsage } from '../../api/types';
 
 export interface FieldInfo {
   path: string;
@@ -41,6 +42,12 @@ export interface FieldProfileResult {
   topics: TopicProfile[];
   unificationProposal: SchemaUnificationProposal | null;
   warnings: string[];
+  /**
+   * Ce que l'appel de profilage a coûté. Le pipeline fait deux appels au modèle et seul le second
+   * était compté : le chiffre affiché sous-estimait donc la facture de chaque exécution. Absent
+   * d'une réponse écrite par une version antérieure, d'où l'optionnalité.
+   */
+  usage?: LlmUsage | null;
 }
 
 interface SchemaValidationPanelProps {

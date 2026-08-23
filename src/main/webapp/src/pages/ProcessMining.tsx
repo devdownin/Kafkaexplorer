@@ -235,6 +235,12 @@ const ProcessMining: React.FC = () => {
   const [liveError, setLiveError] = useState<string | null>(null);
   const [liveUsage, setLiveUsage] = useState<LlmUsage | null>(null);
   /*
+   * Ce que le budget de session a à dire : il s'est arrêté en atteignant son plafond, ou le
+   * plafond ne peut pas s'appliquer. Tenu à part de `liveError` — un budget qui fait son travail
+   * n'est pas une panne, et le peindre en rouge d'erreur enverrait chercher un problème.
+   */
+  const [liveBudgetNotice, setLiveBudgetNotice] = useState<string | null>(null);
+  /*
    * Every window's cost, not just the last one. A live session calls the model on a timer, so what
    * decides whether a configuration is affordable is the running total — the last window's 900
    * tokens say nothing about the four hours the tab has been open. `totalTokens` already existed
@@ -308,9 +314,21 @@ const ProcessMining: React.FC = () => {
     return roles;
   }, [profileResult]);
 
-  const sessionTokens = useMemo(() => totalTokens(liveUsageHistory), [liveUsageHistory]);
-  const sessionCost = useMemo(() => totalCostUsd(liveUsageHistory), [liveUsageHistory]);
   const policy = useMemo(() => describeDataPolicy(llmInfo), [llmInfo]);
+  /*
+   * Tous les appels au modèle de l'exécution en cours, profilage compris. Le pipeline en fait deux
+   * et seul le second était compté : le chiffre affiché sous-estimait donc la facture, ce qui est
+   * exactement la règle appliquée entre les fenêtres et ignorée entre les deux étapes.
+   */
+  const runUsages = useMemo(() => {
+    const all: LlmUsage[] = [];
+    if (profileResult?.usage) all.push(profileResult.usage);
+    if (analysisMode === 'LIVE') all.push(...liveUsageHistory);
+    else if (snapshotResult?.usage) all.push(snapshotResult.usage);
+    return all;
+  }, [profileResult, analysisMode, liveUsageHistory, snapshotResult]);
+  const runTokens = useMemo(() => totalTokens(runUsages), [runUsages]);
+  const runCost = useMemo(() => totalCostUsd(runUsages), [runUsages]);
 
   const missingRolesFor = (t: AuditTemplate): string[] =>
     (t.requiredRoles ?? []).filter(r => !availableRoles.has(r));
@@ -418,6 +436,7 @@ const ProcessMining: React.FC = () => {
     eventSourceRef.current = es;
     setLiveStarted(true);
     setLiveError(null);
+    setLiveBudgetNotice(null);
 
     es.onopen = () => {
       setLiveConnected(true);
@@ -516,6 +535,27 @@ const ProcessMining: React.FC = () => {
         if (e.data) message = e.data;
       }
       setLiveError(message);
+    });
+
+    /*
+     * La session s'est arrêtée d'elle-même en atteignant son plafond de dépense, ou le plafond ne
+     * peut pas s'appliquer faute de coût rapporté. Événement distinct d'`ANALYSIS_ERROR` : un
+     * budget qui fait son travail n'est pas une analyse cassée, et l'afficher en rouge d'erreur
+     * ferait chercher une panne là où il n'y en a pas. Sans écouteur ici, le serveur parlerait
+     * dans le vide — c'est exactement ce qui était arrivé à `ANALYSIS_ERROR`.
+     */
+    es.addEventListener('SESSION_BUDGET', (e) => {
+      try {
+        const payload = JSON.parse(e.data) as { message?: string; stopped?: boolean };
+        if (payload?.message) setLiveBudgetNotice(payload.message);
+        if (payload?.stopped) {
+          es.close();
+          if (eventSourceRef.current === es) eventSourceRef.current = null;
+          setLiveConnected(false);
+        }
+      } catch {
+        // Une ligne de budget illisible ne justifie pas de casser le flux.
+      }
     });
 
     // What the last window cost. A live session calls the model on every window, so this is
@@ -951,6 +991,25 @@ const ProcessMining: React.FC = () => {
                   </div>
                 )}
 
+                {/* Un plafond de dépense atteint est une décision qui s'applique, pas une panne :
+                    il se lit en ambre, à côté de l'erreur et jamais à sa place. */}
+                {liveBudgetNotice && (
+                  <div className="bg-warning/10 border border-warning/30 rounded-xl p-3 flex items-start gap-3">
+                    <span aria-hidden="true" className="material-symbols-outlined text-warning text-lg flex-shrink-0">savings</span>
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-warning">Session spend limit</p>
+                      <p className="text-xs text-warning/90 mt-0.5 break-words">{liveBudgetNotice}</p>
+                    </div>
+                    <button
+                      type="button"
+                      aria-label="Dismiss"
+                      onClick={() => setLiveBudgetNotice(null)}
+                      className="ml-auto text-warning hover:text-warning/80 flex-shrink-0"
+                    >
+                      <span aria-hidden="true" className="material-symbols-outlined text-base">close</span>
+                    </button>
+                  </div>
+                )}
                 {liveError && (
                   <div className="bg-error/10 border border-error/30 rounded-xl p-3 flex items-start gap-3">
                     <span aria-hidden="true" className="material-symbols-outlined text-error text-lg flex-shrink-0">error</span>
@@ -980,29 +1039,39 @@ const ProcessMining: React.FC = () => {
                 run. */}
             {(() => {
               const usage = analysisMode === 'LIVE' ? liveUsage : snapshotResult?.usage ?? null;
-              if (!usage) return null;
+              if (!usage && runUsages.length === 0) return null;
               return (
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-on-surface-variant">
-                  <span className="flex items-center gap-2">
-                    <span aria-hidden="true" className="material-symbols-outlined text-sm">speed</span>
-                    <span>
-                      {analysisMode === 'LIVE' ? 'Last window: ' : 'This analysis: '}
-                      {describeUsage(usage)}
+                  {usage && (
+                    <span className="flex items-center gap-2">
+                      <span aria-hidden="true" className="material-symbols-outlined text-sm">speed</span>
+                      <span>
+                        {analysisMode === 'LIVE' ? 'Last window: ' : 'This analysis: '}
+                        {describeUsage(usage)}
+                      </span>
                     </span>
-                  </span>
-                  {/* Ce que la session a coûté depuis le début, et non la seule dernière fenêtre :
-                      c'est le cumul qui dit si la configuration est tenable sur la durée. Le total
-                      est absent — jamais partiel — dès qu'un fournisseur n'a pas rapporté ses
-                      comptes, une mesure manquante n'étant pas une mesure nulle. */}
-                  {analysisMode === 'LIVE' && liveUsageHistory.length > 1 && (
+                  )}
+                  {/* Le profilage est un appel au modèle comme un autre, et il se paie : l'omettre
+                      faisait passer une exécution pour moins chère qu'elle n'est. */}
+                  {profileResult?.usage && (
+                    <span className="flex items-center gap-2">
+                      <span aria-hidden="true" className="material-symbols-outlined text-sm">psychology</span>
+                      <span>Profiling: {describeUsage(profileResult.usage)}</span>
+                    </span>
+                  )}
+                  {/* Ce que l'exécution entière a coûté — profilage plus analyses — et non la seule
+                      dernière fenêtre : c'est le cumul qui dit si la configuration est tenable sur
+                      la durée. Le total est absent, jamais partiel, dès qu'un appel n'a pas été
+                      chiffré : une mesure manquante n'est pas une mesure nulle. */}
+                  {runUsages.length > 1 && (
                     <span className="flex items-center gap-2">
                       <span aria-hidden="true" className="material-symbols-outlined text-sm">functions</span>
                       <span>
-                        {liveUsageHistory.length} windows ·{' '}
-                        {sessionTokens == null
+                        {analysisMode === 'LIVE' ? `${liveUsageHistory.length} windows · ` : ''}
+                        {runTokens == null
                           ? 'tokens not reported'
-                          : `${sessionTokens.toLocaleString()} tokens total`}
-                        {sessionCost != null && ` · ${formatCostUsd(sessionCost)} total`}
+                          : `${runTokens.toLocaleString()} tokens`}
+                        {runCost != null && ` · ${formatCostUsd(runCost)}`} this run
                       </span>
                     </span>
                   )}
