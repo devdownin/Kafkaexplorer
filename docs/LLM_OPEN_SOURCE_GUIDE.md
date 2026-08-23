@@ -2,6 +2,13 @@
 
 Ce guide explique comment configurer et exploiter des modèles d'IA **Open Source** et **légers** pour l'analyse de flux Kafka (Process Mining).
 
+> **Ce n'est pas le défaut livré.** Depuis la bascule vers OpenRouter, une installation qui ne
+> configure rien parle à une passerelle hébergée : les digests de messages quittent la machine.
+> Ce guide décrit l'option qui garde tout chez vous, et c'est aussi celle qui demande le plus de
+> soin — la fenêtre de contexte, en particulier, est le réglage que l'on rate en silence (voir le
+> dépannage plus bas). Le tour d'horizon des fournisseurs, lui, est dans le
+> [guide des fournisseurs LLM](LLM-PROVIDERS.md).
+
 ---
 
 ## 🏗️ Architecture d'Inférence Locale
@@ -51,9 +58,12 @@ Les petits modèles (1B à 7B) sont plus sensibles à la structure des prompts. 
     compatible OpenAI), de sorte que le décodeur ne *peut* pas produire autre chose. C'est sur un
     petit modèle que cela compte le plus, lui qui est bien plus enclin à broder autour du JSON
     demandé. `claude.structured-output` vaut `AUTO` par défaut : actif là où le support est connu
-    (Anthropic, Ollama), laissé de côté sur une passerelle `OPENAI_COMPATIBLE` quelconque, dont
-    certaines répondent 400 à un `response_format` qu'elles ne connaissent pas — et le client se
-    dégrade tout seul, avec un réessai sans schéma, plutôt que de vous annoncer une panne. La
+    (Anthropic, Ollama, OpenRouter), laissé de côté sur une passerelle `OPENAI_COMPATIBLE`
+    quelconque, dont certaines répondent 400 à un `response_format` qu'elles ne connaissent pas —
+    et le client se dégrade tout seul, avec un réessai sans schéma, plutôt que de vous annoncer une
+    panne. Ce refus est retenu **par modèle** et non par point d'accès, ce qui n'a l'air de rien
+    tant qu'un fournisseur sert un modèle : sur une passerelle qui en route des centaines, un seul
+    modèle sans schéma désactivait la contrainte pour tous les suivants. La
     consigne "Return ONLY JSON" reste dans le prompt, et le nettoyage des balises markdown reste
     en filet : c'est ce qui rattrape les chemins où aucun schéma ne s'applique.
 3.  **Mapping Prévue** : L'ÉTAPE 2 (Validation Schéma) est cruciale. En validant manuellement le mapping, vous facilitez énormément le travail du LLM lors de la reconstruction du flowchart (ÉTAPE 3).

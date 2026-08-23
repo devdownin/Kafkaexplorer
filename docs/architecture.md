@@ -11,7 +11,7 @@ C4Context
     Person(user, "Data Engineer / Architect", "Uses the explorer to analyze Kafka data and monitor flows.")
     System(explorer, "Kafka SQL Explorer", "Provides a web interface to query Kafka topics via Flink SQL and perform audits.")
     System_Ext(kafka, "Kafka Cluster", "Source of data and metadata.")
-    System_Ext(llm, "LLM provider", "Anthropic, an OpenAI-compatible endpoint (Ollama, vLLM, LM Studio) or SpectraLLM. Optional: Process Mining is the only feature that calls it.")
+    System_Ext(llm, "LLM provider", "OpenRouter (the default), Anthropic, an OpenAI-compatible endpoint (Ollama, vLLM, LM Studio) or SpectraLLM. Optional: Process Mining is the only feature that calls it.")
 
     Rel(user, explorer, "Uses", "HTTPS/8080")
     Rel(explorer, kafka, "Queries metadata and samples records", "Kafka Protocol")
@@ -21,9 +21,13 @@ C4Context
 The LLM is drawn here because it is the boundary a reader most needs to see: it is the only
 component of this diagram that can sit outside your network, and what crosses it is *digested*
 samples — mapped fields, payload skeletons and bounded previews, never raw topics. Point it at a
-loopback address (Ollama, SpectraLLM) and nothing leaves the host at all; the Process Mining page
-states which of the two situations it is in, read from the address rather than from the provider's
-name.
+loopback address (Ollama, SpectraLLM) and nothing leaves the host at all. **The shipped default
+does not**: it is OpenRouter, a hosted gateway, so out of the box this boundary is crossed — which
+is why both the Process Mining page and Settings state which case applies, read from the resolved
+address rather than from the provider's name. On OpenRouter the claim goes one step further than a
+warning, because the routing layer can be told to exclude providers that retain what they are
+sent (`claude.openrouter-data-collection`, `DENY` by default); everywhere else the policy belongs
+to the endpoint's own terms and the UI says so instead of guessing.
 
 ## 2. Container Diagram
 
