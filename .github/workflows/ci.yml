@@ -738,18 +738,27 @@ jobs:
             -e SPECTRA_CHAT_MODEL_URL="$CI_CHAT_MODEL_URL" spectra-models
 
           # No restart: llama-server's entrypoint polls for the file and starts on its own,
-          # which is the behaviour the previous step just asserted from the other side.
-          chat=$(docker compose ps -q llm-chat)
+          # which is the behaviour the previous step just asserted from the other side. What is
+          # waited on is that entrypoint's own line rather than the container's health status —
+          # the healthcheck belongs to the llama.cpp image and asserting through it would make
+          # this step depend on a tool being present in somebody else's image, which is exactly
+          # the assumption that put a curl in the fetcher.
           for _ in $(seq 1 60); do
-            status=$(docker inspect -f '{{.State.Health.Status}}' "$chat" 2>/dev/null || echo missing)
-            [ "$status" = healthy ] && break
+            docker compose logs --no-color llm-chat | grep -q '\[llm-chat\] serving' && break
             sleep 5
           done
-          [ "${status:-}" = healthy ] || { echo "::error::llm-chat never served the model"; exit 1; }
+          docker compose logs --no-color llm-chat | grep -q '\[llm-chat\] serving' \
+            || { echo "::error::llm-chat never picked up the model"; exit 1; }
 
-          answer=$(curl -fsS -X POST http://127.0.0.1:8080/api/config/test-llm)
-          echo "$answer"
-          echo "$answer" | grep -q '"ok":true' \
+          # The end-to-end call, retried while llama-server finishes loading the weights: the
+          # Explorer asks SpectraLLM, SpectraLLM asks llama-server, and the answer comes back.
+          for _ in $(seq 1 30); do
+            answer=$(curl -fsS -X POST http://127.0.0.1:8080/api/config/test-llm || echo '{}')
+            case "$answer" in *'"ok":true'*) ok=1; break ;; esac
+            sleep 5
+          done
+          echo "${answer:-(no answer)}"
+          [ "${ok:-0}" = 1 ] \
             || { echo "::error::the Explorer could not reach the model through SpectraLLM"; exit 1; }
 
       - name: Assert the demo seeding ran to completion

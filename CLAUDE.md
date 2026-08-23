@@ -180,9 +180,14 @@ files wire the pair, and they are not variants of one another:
   model in the Spectra UI needs a `restart llm-chat`, which the file says. **Nothing waits on the
   first-boot model download** (~4.8 GB): `spectra-api` installs the chat model itself
   (`spectra.startup.auto-install-models`), a `spectra-models` one-shot fetches the embedding
-  GGUF that the API does *not* install — verifying a `SPECTRA_*_MODEL_SHA256` when one is pinned,
-  and deleting the file rather than serving it when the digest does not match — and the two
-  llama.cpp containers poll until the file they serve appears — so the Explorer, the broker and the Spectra UI are up in seconds, and
+  GGUF that the API does *not* install — with **`wget`, never `curl`**: the Spectra image
+  installs both to run the llmfit installer and purges curl at the end of that same layer, so a
+  curl there finds nothing at runtime, which is what the CI boot caught (`curl: not found`, and
+  no model fetched, on a stack that otherwise looked healthy). It verifies a
+  `SPECTRA_*_MODEL_SHA256` when one is pinned and deletes the file rather than serving it when
+  the digest does not match, and it does **not** resume a partial transfer: `wget -c` with `-O`
+  appends blindly when the server ignores a Range request, which yields the right size and the
+  wrong bytes. The two llama.cpp containers poll until the file they serve appears — so the Explorer, the broker and the Spectra UI are up in seconds, and
   `up --wait` is the one thing not to use. **And the two prompt budgets are sized against each
   other**: `LLM_CONTEXT` (16384, split across 2 slots = 8192 tokens per request) against the
   Explorer's `PROCESS_MINING_PROMPT_CHAR_BUDGET`, lowered to 16 000 from the shipped 120 000 —
