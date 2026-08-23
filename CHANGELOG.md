@@ -21,6 +21,21 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   into a model nothing rendered. A table's live endpoint is `/api/query/table/{name}`, under
   `/api` like every other domain endpoint.
 
+### Changed
+
+- **The developer SpectraLLM stack no longer carries its own copy of the broker.**
+  `docker-compose-spectra.yml` restated sixty lines of `docker-compose.yml`'s KRaft service —
+  the healthcheck interval and what it costs at 5s, the grace period a flushing broker needs,
+  `unless-stopped`, the single-partition `__consumer_offsets`, the fixed cluster id — each with
+  its reasoning duplicated beside it. The two resolved services differed in exactly two
+  variables, the two that embed the service name, so the block is `extends`ed and only those
+  two are overridden; `docker compose config` resolves to a byte-identical project. The service
+  keeps the name `explorer-kafka`, which is load-bearing and now documented as such rather than
+  assumed: the `include:` carries SpectraLLM's own profile-gated `kafka`, a same-named service
+  merges with it and *inherits its profile*, and the broker then does not exist unless that
+  profile is activated — `depends_on` stops resolving and the project is rejected outright.
+  `extends` is what reuses a definition under a different name, which a second `-f` cannot do.
+
 ### Fixed
 
 - **A `grep -q` at the end of a pipe reported a line it had just found as absent.** The stack

@@ -158,7 +158,17 @@ files wire the pair, and they are not variants of one another:
   against, since this application needs no model to boot, only when somebody opens Process
   Mining — and it carried neither the prompt budget nor the timeout the local model needs; both
   are aligned with the hub stack now, one pairing described in two files being the way they
-  drift.
+  drift. Its broker is **`extends`ed from `docker-compose.yml`, not copied**: the two resolved
+  services differed in exactly the two variables that carry the service name, so sixty lines of
+  KRaft settings — each with a reason written beside it — were being maintained twice. The
+  service keeps the name **`explorer-kafka`**, and that is load-bearing rather than cosmetic:
+  the `include:` carries SpectraLLM's own profile-gated `kafka`, a same-named service **merges
+  with it and inherits its profile**, so the broker then does not exist unless that profile is
+  activated — `depends_on` stops resolving and the whole project is rejected as invalid, and
+  `profiles: []` does not clear it. `extends` is what reuses a definition under a *different*
+  name, which a second `-f` cannot do. Anything added to the base broker that embeds the service
+  name has to be overridden there too. The hub stack deliberately does **not** do this: it is
+  the file you download on its own, so it can extend nothing.
 - **`docker-compose-spectra-hub.yml`** builds nothing. Both projects publish their images under
   `compagnonsdudev` on Docker Hub (`kafkaexplorer`, `spectrallm`, `spectrallm-frontend`), so a
   machine with only Docker runs the pair — no SpectraLLM checkout, no Maven, no npm:
