@@ -46,7 +46,16 @@ Pour le **Process Mining**, l'IA doit être excellente en extraction JSON et en 
 Les petits modèles (1B à 7B) sont plus sensibles à la structure des prompts. Kafka Explorer a été optimisé pour :
 
 1.  **Prompts Concis** : Réduction du bruit pour focaliser l'attention du modèle.
-2.  **Contraintes JSON Strictes** : Utilisation d'instructions "Return ONLY JSON" pour éviter les textes de bavardage.
+2.  **Sortie JSON contrainte, pas seulement demandée** : un schéma JSON voyage avec la requête
+    (`output_config.format` chez Anthropic, `response_format: {type: json_schema}` sur le chemin
+    compatible OpenAI), de sorte que le décodeur ne *peut* pas produire autre chose. C'est sur un
+    petit modèle que cela compte le plus, lui qui est bien plus enclin à broder autour du JSON
+    demandé. `claude.structured-output` vaut `AUTO` par défaut : actif là où le support est connu
+    (Anthropic, Ollama), laissé de côté sur une passerelle `OPENAI_COMPATIBLE` quelconque, dont
+    certaines répondent 400 à un `response_format` qu'elles ne connaissent pas — et le client se
+    dégrade tout seul, avec un réessai sans schéma, plutôt que de vous annoncer une panne. La
+    consigne "Return ONLY JSON" reste dans le prompt, et le nettoyage des balises markdown reste
+    en filet : c'est ce qui rattrape les chemins où aucun schéma ne s'applique.
 3.  **Mapping Prévue** : L'ÉTAPE 2 (Validation Schéma) est cruciale. En validant manuellement le mapping, vous facilitez énormément le travail du LLM lors de la reconstruction du flowchart (ÉTAPE 3).
 
 ---
@@ -59,6 +68,24 @@ Si vous utilisez un modèle très petit (ex: Llama 3.2 1B), il peut arriver qu'i
 
 ### Latence élevée en mode LIVE
 - **Solution** : Utilisez un modèle quantizé (Q4_K_M ou Q8_0) ou réduisez la `snapshot-window-size` dans la configuration.
+
+### L'analyse ignore des messages qu'elle a pourtant reçus
+C'est le défaut le plus silencieux de cette page, et il n'a rien à voir avec le modèle : **le
+prompt ne tient pas dans sa fenêtre de contexte**. Ollama donne 4 096 jetons à un modèle sauf si
+la machine a la VRAM pour davantage, la requête compatible OpenAI envoie `model`, `messages`,
+`max_tokens`, `temperature` et `stream` — jamais `num_ctx`, que cet endpoint ne lirait pas depuis
+le corps de toute façon — et `process-mining.prompt-char-budget` vaut 120 000 caractères, soit
+~30 000 jetons. Ollama ne refuse pas l'excédent : il enlève les messages les plus anciens jusqu'à
+ce que le prompt entre, et le journalise en DEBUG. L'analyse répond donc depuis une fraction de
+ce qu'on lui a donné, sans que rien ne dise laquelle.
+
+- **Solution** : posez les deux moitiés ensemble, comme le fait `docker-compose-llm.yml` —
+  `OLLAMA_CONTEXT_LENGTH=16384` côté serveur (llama.cpp : `-c 16384`, vLLM : `--max-model-len`)
+  et `PROCESS_MINING_PROMPT_CHAR_BUDGET=16000` côté application. En élargir une seule n'apporte
+  rien, ou tronque de nouveau. Le coût d'une fenêtre plus large est le cache KV : ~2 Go pour un
+  7B à 16k.
+- **Vérification** : sur l'API native d'Ollama, `prompt_eval_count` dans la réponse dit combien
+  de jetons ont *réellement* été lus.
 
 ---
 
@@ -85,8 +112,12 @@ Le LLM est capable d'identifier des problèmes que le SQL traditionnel détecte 
 *   **STRUCTURAL** : Valeurs aberrantes ou champs manquants dans des payloads JSON/XML imbriqués.
 *   **BUSINESS** : Violations de règles métier (ex: passage direct de "Commande créée" à "Livrée" sans "Paiement").
 
-### 4. Aide à la Remédiation (KSQL)
-Pour chaque anomalie détectée, le LLM propose une **suggestion KSQL** (ex: `CREATE STREAM ... AS SELECT ...`) permettant au Data Engineer de créer immédiatement un flux de monitoring ou de filtrage pour isoler l'erreur.
+### 4. Aide à la Remédiation (`ksqlSuggestion`)
+Pour chaque anomalie détectée, le LLM propose une **requête qui la ferait apparaître** — le champ
+s'appelle `ksqlSuggestion` et l'interface l'affiche sous « KSQL / Flink SQL Suggestion ». C'est une
+piste à lire, pas une commande à exécuter : le moteur embarqué ici est **Flink SQL**, sa liste
+blanche n'accepte que `SELECT`, `EXPLAIN` et `CREATE TABLE`, et un `CREATE STREAM` — syntaxe
+ksqlDB — y serait refusé. Transposez-la avant de la lancer dans l'éditeur.
 
 ---
 *Astuce : Pour une analyse de production sans GPU, le modèle **Qwen 2.5-Coder 7B** en quantification 4-bit (via Ollama) offre le meilleur rapport précision/performance.*

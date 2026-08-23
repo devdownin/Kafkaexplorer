@@ -1,9 +1,10 @@
 # Audit du déploiement Docker — démarrage et arrêt des services (2026-08)
 
-Audit ciblé de la **surface de déploiement** : les six stacks `docker-compose*.yml` de la racine,
-les quatre `Dockerfile*`, `.dockerignore`, les deux workflows GitHub, la plateforme
-`deploy/kraft-platform/`, et le cycle de vie applicatif côté JVM (`@PreDestroy`, pools d'exécution,
-producteurs Kafka, émetteurs SSE).
+Audit ciblé de la **surface de déploiement** : les stacks `docker-compose*.yml` de la racine (six
+au moment de l'audit, douze aujourd'hui — cf. § 8), les quatre `Dockerfile*`, `.dockerignore`, les
+deux workflows GitHub, la plateforme `deploy/kraft-platform/` (supprimée du dépôt depuis, cf. § 6)
+et le cycle de vie applicatif côté JVM (`@PreDestroy`, pools d'exécution, producteurs Kafka,
+émetteurs SSE).
 
 Ce document décrit l'**état d'avant correction** et la décision prise pour chaque point. Il a été
 étendu par lots successifs (§ 4 à 7) ; tous les points relevés sont désormais traités, chacun avec
@@ -477,7 +478,84 @@ atteinte — c'est une information, on augmente la valeur plutôt que de retirer
 
 ---
 
-## 8. Validation
+## 8. Sixième lot — ce que personne n'analysait
+
+Ce lot n'est pas sorti d'une relecture : il est sorti d'un contrôle ajouté à la CI, qui a trouvé
+en quelques secondes ce que douze fichiers Compose non analysés cachaient depuis des jours.
+
+### V1 — Aucun fichier Compose n'était analysé par le build ✅
+
+Douze fichiers, aucun `docker compose config` nulle part. C'est exactement la forme de
+pourrissement que ce dépôt a déjà payée deux fois (une stack que personne n'exécute, une image que
+personne ne construit), et le contrôle est le moins cher qui soit : quelques secondes, pas de
+démon, pas de réseau, aucune image tirée.
+
+Le job `compose-lint` résout les 18 combinaisons — chaque stack, chaque overlay **superposé à sa
+base** puisqu'un overlay seul est un ensemble de services sans image, donc invalide par
+construction. Il **échoue aussi sur un fichier Compose qu'aucune combinaison ne nomme** : une
+stack ajoutée demain ne peut pas échapper à la relecture. L'`include:` de
+`docker-compose-spectra.yml` est résolu contre un stub de trois lignes — ce qui est sous test,
+c'est la syntaxe de *notre* fichier, pas la disponibilité d'un autre dépôt.
+
+### V2 — `docker-compose-kafka4.yml` ne démarrait plus du tout ✅
+
+Trouvé par V1, au premier essai. La stack que le dépôt **recommande** refusait de démarrer depuis
+le 13 août (`c0aaf41`) : deux montages de volumes ajoutés au service `explorer` sans leurs
+déclarations de premier niveau.
+
+```
+service "explorer" refers to undefined volume explorer_logs: invalid compose project
+```
+
+Avant la création d'un seul conteneur. Neuf jours, sur le chemin le plus emprunté de la
+documentation, sans que rien ne le signale — parce que rien n'analysait ces fichiers.
+
+### V3 — Un tag flottant, sous le commentaire qui affirmait le contraire ✅
+
+`docker-compose-llm.yml` épinglait `ollama/ollama` avec ce commentaire : « le seul tag flottant
+restant dans l'arbre ». Deux services plus bas, `ollama-pull-model` tournait sur
+`curlimages/curl:latest`. Une affirmation sur l'épinglage est précisément le genre d'affirmation
+qui se périme sans être relue.
+
+`docs/check-image-pins.py` la vérifie désormais, avec deux autres propriétés qu'aucun contrôle ne
+couvrait : les images llama.cpp CPU et CUDA doivent nommer **le même build** (l'overlay GPU doit
+changer le matériel, pas la révision du moteur), et l'image de l'explorateur que tire la stack
+« images publiées » doit être la **version courante** — ce défaut est écrit à la main et
+Dependabot ne sait pas lire une forme `${VAR:-1.8.8}`, donc rien d'autre ne le ferait bouger. Ce
+dernier point échoue sur une *publication* plutôt que sur une modification : c'est le moment où
+le rappel est dû.
+
+### V4 — Le prompt ne tenait pas dans la fenêtre du modèle ✅
+
+Hors surface Docker au sens strict, mais trouvé en dimensionnant la stack SpectraLLM et corrigé
+dans les fichiers de déploiement : `process-mining.prompt-char-budget` vaut 120 000 caractères
+(~30 000 jetons) pendant qu'Ollama donne 4 096 jetons à un modèle sauf VRAM suffisante, et que le
+client compatible OpenAI n'envoie aucun `num_ctx`. Ollama ne refuse pas l'excédent — il enlève les
+messages les plus anciens et le journalise en DEBUG. Les stacks posent maintenant la fenêtre et le
+budget ensemble (`OLLAMA_CONTEXT_LENGTH` / `LLM_CONTEXT` contre
+`PROCESS_MINING_PROMPT_CHAR_BUDGET`) ; le défaut applicatif est inchangé, un modèle hébergé
+pouvant se le permettre, et porte la règle à côté de lui.
+
+### V5 — La paire Explorer + SpectraLLM démarrable sans rien construire ✅
+
+`docker-compose-spectra-hub.yml` et ses quatre overlays (`gpu`, `small`, `limits`, `ingest`).
+Trois décisions y sont structurantes et sont documentées dans l'en-tête du fichier : les modèles
+vivent dans un **volume nommé** avec un one-shot d'initialisation de propriété (même idiome que
+`kafka-data-init`, et pour la même raison — l'image llama.cpp ne porte aucun `/app/data`) ;
+**rien n'attend** les ~4,8 Go de poids du premier démarrage ; et l'ingestion Kafka est un
+**overlay** plutôt qu'un drapeau, parce que ce que le drapeau seul rate sont deux problèmes
+d'ordonnancement — un consommateur qui s'abonne à un topic inexistant le crée à une partition au
+lieu de trois, et indexer avant que le modèle d'embedding ne soit là envoie tout l'historique en
+`<topic>.DLT`.
+
+Le job `spectra-hub-stack` la démarre sur `main`, **sans les modèles** : l'assertion qui vaut la
+peine à propos d'un modèle absent, c'est que les conteneurs l'attendent au lieu de boucler en
+crash. Il dépose ensuite un modèle 0,5B et exige que `POST /api/config/test-llm` réponde `ok` —
+un appel qui traverse réellement explorateur → spectra-api → llm-chat.
+
+---
+
+## 9. Validation
 
 Pas de démon Docker dans l'environnement de cet audit. Ce qui a pu être vérifié ici l'a été :
 
@@ -495,3 +573,8 @@ Ce qui demande un vrai démon — construction des images, non-root, multi-arch,
 code de sortie à l'arrêt — est désormais couvert par la CI elle-même (S1) : le job `docker` démarre
 la stack à chaque exécution et le job `release-image` construit et démarre `Dockerfile.release`. Ces
 deux jobs sont la validation de ce document autant que sa conséquence.
+
+Le sixième lot (§ 8) en ajoute trois, dans le même esprit : `compose-lint` et
+`docs/check-image-pins.py`, qui ne demandent ni démon ni réseau et tournent partout, et
+`spectra-hub-stack`, qui démarre la stack d'images publiées sur `main`. Là encore, le contenu de
+ce lot est ce que ces contrôles ont trouvé — pas ce qu'une relecture avait deviné.
