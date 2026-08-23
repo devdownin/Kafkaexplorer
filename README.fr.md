@@ -117,7 +117,7 @@ Chaque fonctionnalité en détail : **[docs/FEATURES.md](docs/FEATURES.md)** · 
 
 ## 🤖 Apportez votre IA
 
-Le Process Mining fonctionne avec le LLM que vous avez déjà — **OpenRouter** (le défaut : une seule clé devant la plupart des fournisseurs hébergés, donc `OPENROUTER_API_KEY=sk-or-v1-…` suffit), **Claude (Anthropic)**, tout ce qui parle l'API OpenAI (**Ollama**, vLLM, LM Studio…), ou un **SpectraLLM** entièrement privé avec RAG. Fournisseur, modèle et test de connectivité se configurent en direct depuis l'interface.
+Le Process Mining fonctionne avec le LLM que vous avez déjà — **OpenRouter** (le défaut : une seule clé devant la plupart des fournisseurs hébergés, donc `OPENROUTER_API_KEY=sk-or-v1-…` suffit), **Claude (Anthropic)**, tout ce qui parle l'API OpenAI (**Ollama**, vLLM, LM Studio…), ou un **SpectraLLM** entièrement privé avec RAG. Fournisseur, modèle et test de connectivité se configurent en direct depuis l'interface — et sur OpenRouter le modèle se choisit dans une liste de ceux qui conviennent, le moins cher d'abord, puis s'essaie sans l'enregistrer.
 
 Le défaut est un point d'accès *hébergé* : les digests de messages qu'il construit quittent donc votre machine. Ollama et SpectraLLM gardent tout sur votre réseau, et la page Réglages indique dans lequel des deux cas vous êtes — lu sur l'adresse réellement configurée, pas sur le nom du fournisseur.
 
