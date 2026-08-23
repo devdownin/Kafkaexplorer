@@ -23,6 +23,14 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The stack smoke test asserted three things that come up at three different moments.** It
+  waited for the Spectra API to answer and then, in the same breath, required the UI and the
+  UI's proxy to answer too — but `docker compose up -d` returns when the containers have
+  started, not when a JVM has finished booting, and the frontend is gated on the API's
+  *healthcheck*, which lags its readiness. It passed on a slow runner and failed on a fast one:
+  a race in the test, on a stack that was fine. Each endpoint is polled now, and a probe that
+  gives up prints the last reply — the previous failure had to be dug out of a thousand lines of
+  container logs, which is a cost this job should never impose twice.
 - **The image-pin check asked the git tags what the registry serves.** It demanded a bump to
   `kafkaexplorer:1.8.9` while `1.8.9` was still being built and pushed — taking it would have
   pointed the stack at a manifest that did not exist — and a release whose publication *failed*
