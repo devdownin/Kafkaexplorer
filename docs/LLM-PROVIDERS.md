@@ -63,9 +63,10 @@ When RAG is enabled, the Process Mining results show an **Evidence — cited sou
 the corpus passages SpectraLLM grounded the audit on (with source file and relevance score),
 turning each verdict into something verifiable.
 
-**One-command combined stack, nothing built** — Kafka (with demo topics) + Kafka Explorer +
-a full local SpectraLLM instance, all from the images both projects publish under
-`compagnonsdudev`. No checkout of SpectraLLM, no Maven, no npm:
+**Combined stack, nothing built** — Kafka (with demo topics) + Kafka Explorer + a full local
+SpectraLLM instance, all from the images both projects publish under `compagnonsdudev`. No
+SpectraLLM checkout, no Maven, no npm. It does need **this** repository, whose demo seeder and
+three service entrypoints the stack mounts:
 
 ```bash
 docker compose -f docker-compose-spectra-hub.yml pull
@@ -83,7 +84,7 @@ Four overlays sit beside it, each layered onto that file:
 |---|---|
 | [`…gpu.yml`](../docker-compose-spectra-hub.gpu.yml) | Both llama.cpp servers on CUDA — minutes per analysis become seconds. |
 | [`…small.yml`](../docker-compose-spectra-hub.small.yml) | A 3B chat model instead of the 7B: ~2 GB, half the memory, far faster. |
-| [`…limits.yml`](../docker-compose-spectra-hub.limits.yml) | Memory limits on all nine services. |
+| [`…limits.yml`](../docker-compose-spectra-hub.limits.yml) | Memory limits on the seven long-running services. The four it leaves out are one-shots that exit. |
 | [`…ingest.yml`](../docker-compose-spectra-hub.ingest.yml) | SpectraLLM indexes the topics themselves, so the corpus answers questions about what is *in* your messages — and `CLAUDE_USE_RAG=true` lets the audits read it. |
 
 **Do not set `SPECTRA_API_KEY` on that stack**: SpectraLLM's filter reads `X-API-Key` while this

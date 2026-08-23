@@ -78,7 +78,7 @@ Ouvrez ensuite **http://localhost:8080** et commencez à cliquer. C'est tout.
 
 - **Avec Confluent Schema Registry** (topics Avro) : `docker compose -f docker-compose-kafka4.yml up -d`
 - **Avec un LLM local pré-câblé** (Ollama) : `docker compose -f docker-compose-llm.yml up -d`
-- **Avec une IA privée à côté** (SpectraLLM, images seules — aucun checkout, aucune construction) : `docker compose -f docker-compose-spectra-hub.yml up -d` — l'explorateur sur 8080, l'interface SpectraLLM sur 8088. Le premier démarrage télécharge ~4,8 Go de poids en arrière-plan, et rien ne l'attend. Des overlays voisins ajoutent le GPU (`.gpu.yml`), les limites mémoire (`.limits.yml`), un modèle 3B pour un portable (`.small.yml`), ou font indexer les topics eux-mêmes par SpectraLLM (`.ingest.yml`).
+- **Avec une IA privée à côté** (SpectraLLM, images seules — rien n'est construit, aucun checkout de SpectraLLM) : `docker compose -f docker-compose-spectra-hub.yml up -d` — l'explorateur sur 8080, l'interface SpectraLLM sur 8088. Le premier démarrage télécharge ~4,8 Go de poids en arrière-plan, et rien ne l'attend. Des overlays voisins ajoutent le GPU (`.gpu.yml`), les limites mémoire (`.limits.yml`), un modèle 3B pour un portable (`.small.yml`), ou font indexer les topics eux-mêmes par SpectraLLM (`.ingest.yml`).
 - **Depuis les sources** (JDK 25) : lancez Kafka avec `docker compose up -d kafka`, puis `./mvnw spring-boot:run`
 - **Builder sans rien installer d'autre que Docker** — ni JDK, ni Maven, ni Node :
   ```bash

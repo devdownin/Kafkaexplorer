@@ -237,8 +237,9 @@ files wire the pair, and they are not variants of one another:
   overlay. `docker-compose-spectra-hub.limits.yml` is this stack's own limits file rather than a
   few lines added to `docker-compose.limits.yml`: that one names `explorer` and `kafka`, and a
   service named in an overlay but absent from the base file becomes a new imageless service and
-  fails the whole `up` — so a nine-service stack needs its own, and it covers all nine instead of
-  leaving the four heaviest unbounded. It deliberately sets **no `cpus` on the llama.cpp
+  fails the whole `up` — so this stack needs its own, and it bounds the **seven long-running
+  services of its eleven** (the four it leaves out are one-shots that exit) instead of leaving the
+  four heaviest unbounded. It deliberately sets **no `cpus` on the llama.cpp
   servers**: on CPU inference throughput *is* the core count.
 
   `docker-compose-spectra-hub.small.yml` is the fourth, and the one an ordinary laptop wants:
