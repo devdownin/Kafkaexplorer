@@ -11,6 +11,32 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **The published-images stack is now smoke-tested on the pull requests that touch it.** It ran
+  on `main` only, because it pulls ~2 GB to exercise a deployment file whose content does not
+  move with the code — right for every pull request, wrong for the handful that edit those
+  files, and the cost was measured rather than guessed: five of six consecutive `main` runs were
+  red on that job, every failure found *after* a merge. A `hub-changes` job decides from a plain
+  `git diff`, and it is a job with an `if:` rather than a `paths:` filter on purpose: `paths:`
+  makes a job skip, and a required check that skips blocks a merge for ever.
+- **A HuggingFace outage can no longer redden the default branch.** The smoke test downloads its
+  model from `huggingface.co`, and a red `main` meaning "that host was unavailable" is
+  indistinguishable from one meaning "the stack broke". A failed *transfer* now warns and skips
+  the end-to-end assertion; every other failure of the fetcher still fails the job — the outcome
+  is read from the fetcher's own message rather than its exit code, since a mismatched digest is
+  a substituted file and not a network problem. Same rule `check-image-pins.py --published`
+  already applies to the registry: "we asked and it is stale" and "we could not ask" are
+  different answers.
+- **The CI model is pinned by digest**, observed on two independent downloads before being
+  written down. A substituted or truncated file is refused rather than served to the assertion,
+  and the fetcher's verification branch — what `SPECTRA_*_MODEL_SHA256` exists for — stops being
+  code CI never executes.
+- **The documentation checks are discovered rather than listed** (`for check in
+  docs/check-*.py`). Six `- run:` lines meant a seventh script would have been run by nothing
+  until somebody remembered to add one — the same structural argument `compose-lint` was
+  rewritten for, left standing one job below it.
+
 ### Removed
 
 - **A dead `TableController`.** Its only mapping, `GET /table/{name}`, returned the view name
