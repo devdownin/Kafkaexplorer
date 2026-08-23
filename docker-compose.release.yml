@@ -1,80 +1,37 @@
 services:
-  # No `container_name`. It is a *daemon-global* name, so two stacks could never run
-  # side by side — and these files share it (`kafka`, `kafka-sql-explorer`), which also
-  # made switching between them without a `down` first fail on a name collision. Compose
-  # derives `<project>-<service>-<n>` instead, so `docker compose -p other … up` is enough
-  # to get a second, fully independent stack.
+  # ── Kafka broker (KRaft, single node) ─────────────────────────────────────
+  # `extends`, not a copy. The resolved service was byte-identical to the one in
+  # docker-compose.yml — healthcheck, grace period, restart policy, every KRaft
+  # setting — so the sixty lines of reasoning that go with them (what a 5s probe
+  # interval costs, what a flushing broker needs before SIGKILL, why
+  # __consumer_offsets has one partition, why CLUSTER_ID is fixed) are read and
+  # maintained in ONE file instead of four, and cannot drift the day only one copy
+  # is touched.
   #
-  # The project name still defaults to the directory, so `kafka_data` keeps its name and
-  # the topics you already seeded are still there. Address services by service name:
-  # `docker compose logs kafka`, `docker compose exec explorer sh`.
+  # This does not turn the file into an overlay: `extends` reuses a single service,
+  # so `docker compose -f <this file> up -d` is exactly what it was. No
+  # `container_name` anywhere either — it is daemon-global, so two stacks could
+  # never run side by side; address services by service name.
+  #
+  # `depends_on` is restated rather than inherited: Compose v5 does carry it through
+  # `extends` and earlier specifications excluded it. Top-level volumes are NOT
+  # inherited, which is why `kafka_data` is still declared at the bottom of this
+  # file.
   kafka:
-    image: apache/kafka:4.3.1
-    ports:
-      - "${BIND_ADDR:-127.0.0.1}:${KAFKA_PORT:-9092}:9092"
-    # A stopping KRaft node flushes its logs and closes the group / share-state
-    # coordinators cleanly. Docker's default grace period is 10s, past which the broker is
-    # SIGKILLed mid-flush and the next start has to recover the log segments — on a seeded
-    # demo volume that turns a ten-second boot into a much longer one.
-    stop_grace_period: 30s
-    # `unless-stopped`, not the absent default: after a host reboot or a Docker daemon
-    # restart the broker comes back with the app, which does carry a restart policy. It
-    # did not, so the stack came back up as an explorer pointed at nothing.
-    restart: unless-stopped
-    # `kafka-broker-api-versions.sh` starts a whole JVM. At the previous `interval: 5s`
-    # that cost ran every five seconds for the entire life of the stack — roughly a fifth
-    # of a core, permanently, to re-answer a question settled during the first minute.
-    # The interval now describes the steady state and `start_period` covers the boot,
-    # during which failures do not count against `retries`.
-    healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
-    environment:
-      # KRaft settings
-      KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
-      KAFKA_LISTENERS: PLAINTEXT://:29092,CONTROLLER://:9093,PLAINTEXT_HOST://:9092
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:${KAFKA_PORT:-9092}
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      # Single-node dev: 1 __consumer_offsets partition instead of the default 50
-      KAFKA_OFFSETS_TOPIC_NUM_PARTITIONS: 1
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      # Share groups (KIP-932, Kafka 4.1+) state topic on a single node
-      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: 1
-      # internal.audit.history / internal.metrics.config are auto-created on first write
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-      # Fixed KRaft cluster id — the apache/kafka image reads CLUSTER_ID
-      # (KAFKA_CLUSTER_ID would be passed to server.properties and ignored)
-      CLUSTER_ID: "MkU2OhlMTT69sPFvS1n16g"
-      # Persist data & metadata logs across restarts — KRaft re-uses the storage
-      # formatted with the fixed CLUSTER_ID above, so metric configs and audit
-      # history (internal.* topics) survive `docker compose down`.
-      # `docker compose down -v` still resets everything.
-      KAFKA_LOG_DIRS: /var/lib/kafka/data
-    volumes:
-      - kafka_data:/var/lib/kafka/data
+    extends:
+      file: docker-compose.yml
+      service: kafka
     depends_on:
       kafka-data-init:
         condition: service_completed_successfully
 
-  # The apache/kafka image runs as the non-root `appuser`, but Docker creates a
-  # fresh named volume owned by root — chown it once before the broker starts.
+  # The apache/kafka image runs as the non-root `appuser`, but Docker creates a fresh
+  # named volume owned by root — chown it once before the broker starts. Identical to
+  # docker-compose.yml's, so it is taken from there rather than restated.
   kafka-data-init:
-    image: apache/kafka:4.3.1
-    user: root
-    volumes:
-      - kafka_data:/var/lib/kafka/data
-    entrypoint: ["sh", "-c", "chown -R appuser:appuser /var/lib/kafka/data"]
+    extends:
+      file: docker-compose.yml
+      service: kafka-data-init
 
   # Named `explorer` in every stack. Two of these files called it `app` and three called
   # it `explorer`, so `docker compose logs <name>` depended on which file you had opened,

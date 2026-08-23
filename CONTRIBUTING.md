@@ -103,6 +103,7 @@ python3 docs/check-doc-paths.py    # every path CLAUDE.md and this file name in 
 python3 docs/check-config-table.py # documented variables and defaults match the code
 python3 docs/check-api-types.py    # api/types.ts still matches the Java records it mirrors
 python3 docs/check-image-pins.py   # compose images: pinned, consistent, and the current release
+python3 docs/check-compose.py      # compose vars documented in .env.example; prompt budget fits the window
 ```
 
 ```bash

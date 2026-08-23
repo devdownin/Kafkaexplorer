@@ -21,8 +21,33 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   into a model nothing rendered. A table's live endpoint is `/api/query/table/{name}`, under
   `/api` like every other domain endpoint.
 
+### Added
+
+- **`docs/check-compose.py` — the compose files, against `.env.example` and against
+  themselves.** `.env.example` exists so that changing where a stack is published does not mean
+  editing six compose files, which only holds if it lists them all: five variables had a default
+  in compose and no line there (`SPECTRALLM_DIR`, `SPECTRA_JAVA_OPTS`, `LLM_EMBED_MODEL_NAME`,
+  `LLM_EMBED_PARALLEL`, `LLM_EMBED_EXTRA_ARGS`), and nothing noticed — `check-config-table.py`
+  resolves `application.yml` and the Dockerfiles and never reads a stack. The five are now
+  documented and the gap cannot reopen. The reverse is checked too, a documented knob no stack
+  reads being an invitation to set a value that changes nothing. And a third pass is not
+  documentation at all: it asserts that `PROCESS_MINING_PROMPT_CHAR_BUDGET` fits the window the
+  stack serves — the whole context for Ollama, the context divided by `--parallel` slots for
+  llama.cpp. Those two halves are written in three files, each carrying a comment saying it is
+  "kept in step" with the others, and nothing executes a comment; a prompt past the window is
+  dropped in silence and logged at DEBUG rather than refused.
+
 ### Changed
 
+- **Three more stacks stopped carrying their own copy of the broker.** `kafka`,
+  `kafka-data-init` and `demo-setup` were restated verbatim in `docker-compose-kafka4.yml`,
+  `docker-compose-llm.yml` and `docker-compose.release.yml` — 235 lines that `docker compose
+  config` reported byte-identical to `docker-compose.yml`'s, each with its own copy of the
+  reasoning beside it. They `extends:` that file now, which changes no command: `extends` reuses
+  a single service and does not turn a stack into an overlay. `docker compose config` resolves
+  the same project for all three, character for character. `docker-compose-dev.yml` stays out
+  (its named volumes shadow the bind mounts on purpose) and so does
+  `docker-compose-spectra-hub.yml`, the one stack meant to be downloaded on its own.
 - **The developer SpectraLLM stack no longer carries its own copy of the broker.**
   `docker-compose-spectra.yml` restated sixty lines of `docker-compose.yml`'s KRaft service —
   the healthcheck interval and what it costs at 5s, the grace period a flushing broker needs,

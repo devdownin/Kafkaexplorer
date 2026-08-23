@@ -300,6 +300,21 @@ KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `
 - **The app writes under `/app` and both paths are volumes**: `logs/` (`logging.file.name`) and `data/` (`explorer.flink-job-store-path` — Flink job history was lost on every recreate). They are named volumes, never a bind-mounted *file*: `./Kafkaexplorer.log:/app/logs/kafkaexplorer.log` pointed at a path absent from the checkout, so Docker created a directory there and Logback could not open its log at all. That broken mount was also the stated reason the runtime image stayed root; both images now run as `USER 10001:10001`, owning `/app/logs` and `/app/data`, and a named volume inherits that ownership where a host bind mount would not.
 - **Both runtime images ship the JAR as Spring Boot's four layers**, most stable first (`dependencies` → `spring-boot-loader` → `snapshot-dependencies` → `application`), extracted with `-Djarmode=tools … extract --layers --launcher` (the Boot 3.3+ entry point; `layertools` is gone). There is no fat JAR in the image any more, so the entrypoint is `java org.springframework.boot.loader.launch.JarLauncher`, and a patch release re-pushes only the small application layer instead of a few hundred megabytes that are ~95% identical to the previous version's. Keep the four COPY lines in that order — a COPY invalidates every layer after it. **A Class Data Sharing archive is built on top of them**, by a training run in the runtime stage (`-XX:ArchiveClassesAtExit` with `-Dspring.context.exit=onRefresh`, which refreshes the context and exits without opening a port). Measured against this exact layout — the extracted layers behind `JarLauncher`, with no broker listening: **7.74 s without it, 6.39 s with**, and 12 911 of the 24 343 classes loaded are served from the archive, application classes included. Three things about it are load-bearing. It is dumped in the **runtime** stage rather than a `--platform=$BUILDPLATFORM` one like the extractor, because a CDS archive is architecture-specific — so the arm64 variant produces its own under emulation, which is the real cost of this alongside ~90 MB of image. The flag goes on the **ENTRYPOINT, not into `JAVA_TOOL_OPTIONS`**: that variable is documented as replaced wholesale when an operator sets one, so a container started with a tuned `-XX:MaxRAMPercentage` would have silently dropped the archive and paid the 90 MB anyway. And it stays on the JVM default `-Xshare:auto`, so a JVM that cannot map the archive starts normally instead of refusing to boot over an optimisation — which is exactly why `ci.yml` runs `-Xshare:on` against it once in the `release-image` job: that leniency is also what would let a mis-wiring ship 90 MB buying nothing, in silence.
 - `release.yml` publishes `linux/amd64,linux/arm64` (free here — a JRE base plus architecture-independent bytecode, and the extraction stage is pinned to `--platform=$BUILDPLATFORM` so it is not replayed under QEMU) and gates `latest` on the absence of a `-` in the tag, so a `v1.3.0-rc1` no longer becomes what `docker run …/kafkaexplorer` pulls.
+- **The broker is defined once and `extends`ed, not copied into every stack.** `kafka`,
+  `kafka-data-init` and `demo-setup` were restated verbatim in `docker-compose-kafka4.yml`,
+  `docker-compose-llm.yml` and `docker-compose.release.yml` — 235 lines whose resolved
+  services `docker compose config` reported **byte-identical** to `docker-compose.yml`'s, each
+  carrying its own copy of the reasoning (what a 5s probe interval costs, what a flushing KRaft
+  node needs before SIGKILL, why `__consumer_offsets` has one partition). They now `extends:`
+  that file, which changes no command — `extends` reuses one service and does **not** make the
+  file an overlay, so `-f docker-compose-kafka4.yml up -d` is what it was. Two things are
+  measured rather than assumed: `depends_on` **is** carried through `extends` by Compose v5
+  while earlier specifications excluded it, so it is restated; and top-level `volumes:` are
+  **not** inherited, which is why every one of those files still declares `kafka_data`. The
+  transform is verifiable exactly as it was made — the `config` output is unchanged. Two files
+  deliberately stay out: `docker-compose-dev.yml`, whose named volumes shadow the bind mounts
+  on purpose, and `docker-compose-spectra-hub.yml`, which is the one stack meant to be
+  downloaded on its own and can therefore extend nothing.
 - **No `container_name`, and the app service is `explorer` in every stack.** `container_name` is daemon-global, so the shared `kafka` / `kafka-sql-explorer` names meant two stacks could never coexist and switching files without a `down` first collided; compose derives `<project>-<service>-<n>` instead, and `docker compose -p other … up` gives a second independent stack. The project name still defaults to the directory, so `kafka_data` keeps its name and already-seeded topics survive. Address services by service name (`docker compose logs kafka`). The `app` → `explorer` rename removes an inconsistency and is what lets an overlay target the service at all — a name present in an overlay but absent from the base file becomes a new, imageless service and fails the whole `up`.
 - **Resource limits are an opt-in overlay** (`docker-compose.limits.yml`, layered onto `docker-compose.yml` / `-kafka4` / `-llm` / `.release`). Not in the stacks themselves, because a limit set too low is worse than none — the JVM is OOM-killed instead of running a GC. But without *any* limit, `-XX:MaxRAMPercentage=75.0` reads the host's memory, so on a 32 GB workstation the JVM believes it may take 24 GB: `mem_limit` is what gives that flag a meaning. Use `mem_limit`/`cpus`, never a `deploy:` block — that is Swarm syntax, silently ignored by `docker compose up`.
 - **Every compose file is parsed by CI** (`compose-lint` in `ci.yml`), each overlay layered onto
@@ -328,6 +343,28 @@ KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `
   that cannot be reached is reported rather than failing the build: "we asked and it is stale"
   and "we could not ask" are different answers. It needs tags, hence `fetch-tags` on both jobs'
   checkouts, and it fails rather than skipping when they are absent.
+- **The stacks are also checked against `.env.example`, and against themselves**
+  (`docs/check-compose.py`, in the `docs-links` job). `.env.example` exists so that changing
+  where a stack is published does not mean editing six compose files, which only holds if it
+  lists them all — **five variables had a default in compose and no line there**
+  (`SPECTRALLM_DIR`, `SPECTRA_JAVA_OPTS`, `LLM_EMBED_MODEL_NAME`, `LLM_EMBED_PARALLEL`,
+  `LLM_EMBED_EXTRA_ARGS`), and nothing noticed, because `check-config-table.py` resolves
+  `application.yml` and the Dockerfiles and never reads a compose file. The reverse is checked
+  too: a documented knob no stack reads invites an operator to set a value that changes
+  nothing. Defaults are compared against **the set the stacks use** rather than one value, so
+  an overlay that changes one deliberately (`LLM_EMBED_EXTRA_ARGS` is empty in the base and
+  `--n-gpu-layers 99` in the GPU one) is not a finding, while the ordinary single-default case
+  stays an exact comparison. The interpolation scan is hand-rolled rather than a regex for two
+  reasons a regex gets wrong: `$${…}` is a literal `$` for a shell inside an entrypoint and is
+  not an interpolation at all, and a default can itself be one (`${A:-${B:-c}}`), which
+  `[^}]*` truncates at the first brace and attributes to the wrong variable. **And the third
+  pass is not documentation**: it asserts that `PROCESS_MINING_PROMPT_CHAR_BUDGET` fits the
+  window the stack serves — the whole context for Ollama, the context divided by
+  `--parallel` slots for llama.cpp. Those two halves are written in three files, each with a
+  comment saying it is "kept in step" with the others, and nothing executes a comment; a prompt
+  that exceeds the window is dropped in silence and logged at DEBUG rather than refused. The
+  4 characters-per-token ratio is deliberately optimistic, so a budget it passes may still not
+  fit while one it rejects certainly does not — a floor, not a calibration.
 - **The published-images stack is booted too** (`spectra-hub-stack`, on main and
   `workflow_dispatch` only — it pulls ~2 GB to test a deployment file whose content does not move
   with the code, the same trade-off as the arm64 boot). It runs with
