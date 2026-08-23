@@ -2,13 +2,129 @@
 
 Kafka SQL Explorer's AI-assisted auditing works with cloud **and** fully local LLMs. Pick the option that matches your constraints — everything is also editable live from the **Config** page, which includes a **Test LLM** button to verify connectivity.
 
-## Option A: Anthropic Claude (Default)
-Set your API key as an environment variable:
+**The default is Option A, OpenRouter**, which is a *hosted* endpoint: the message digests Process
+Mining builds leave your machine. If that is not acceptable, Option C and Option D keep everything
+on your own network, and the Config page states which of the two you are on — read off the
+resolved address, not off the provider's name, so an Ollama pointed at another box counts as
+remote.
+
+## Option A: OpenRouter (default — one key, many hosted models)
+
+[OpenRouter](https://openrouter.ai) is a gateway in front of most hosted vendors, which makes it
+the cheapest way to *try* several models against your own topics without opening an account with
+each of them. It is also what this application ships pointed at, so the setup is one variable —
+everything else is already the default:
+
 ```bash
-export ANTHROPIC_API_KEY='your-api-key'
+export OPENROUTER_API_KEY='sk-or-v1-…'
 ```
 
-## Option B: Open Source / Local (Ollama, vLLM, LM Studio)
+```bash
+docker run -p 127.0.0.1:8080:8080 \
+  -e KAFKA_BOOTSTRAP_SERVERS=host.docker.internal:9092 \
+  -e OPENROUTER_API_KEY=sk-or-v1-… \
+  compagnonsdudev/kafkaexplorer:latest
+```
+
+The shipped values, for reference — nothing here needs to be written out unless you are changing it:
+
+```yaml
+claude:
+  provider: OPENROUTER
+  api-key: ${OPENROUTER_API_KEY:${ANTHROPIC_API_KEY:}}
+  base-url: https://openrouter.ai/api/v1
+  model: openai/gpt-4o-mini        # OpenRouter names models vendor/model
+```
+
+`ANTHROPIC_API_KEY` is read when `OPENROUTER_API_KEY` is unset — it is the historical name of this
+one setting, not a second key — and `CLAUDE_API_KEY` outranks both, which is the unambiguous form
+on a machine that exports several. Pick any slug from
+[openrouter.ai/models](https://openrouter.ai/models); the default is cheap, current and supports
+schemas, which makes it a starting point rather than a recommendation.
+
+Three things worth knowing before you point it at a production cluster:
+
+- **The key is required.** An anonymous request is a 401, so the Config page marks the field
+  mandatory for this provider and Process Mining refuses up front instead of failing on the first
+  analysed window.
+- **Your messages go to whichever vendor serves the model.** This is a hosted gateway with a second
+  hop behind it: the digests Process Mining builds leave your network, and the connection banner on
+  the Config page says "remote inference" accordingly. If that is not acceptable, Option C or D.
+- **Structured output depends on the model, not on OpenRouter.** Only some models — and only some
+  of the upstream providers serving them — implement `response_format`. The app sends the schema
+  anyway, and a model that refuses it gets one unconstrained retry and is remembered as such, *for
+  that model alone*, so trying another one is not penalised by the first. `claude.structured-output:
+  OFF` skips the probe entirely; the JSON is then recovered from the answer the way it is for
+  SpectraLLM.
+
+Requests carry OpenRouter's two attribution headers (`HTTP-Referer`, `X-Title`) naming this
+project. They are sent to OpenRouter only, and they say nothing about your deployment, your
+cluster or your messages.
+
+### Where your messages are allowed to go
+
+This is the one place in the application where "where does my data go" has an answer better than a
+warning. OpenRouter can constrain routing at its own layer, so the shipped configuration asks it to:
+
+```yaml
+claude:
+  openrouter-data-collection: DENY   # the default
+```
+
+`DENY` restricts routing to upstream providers that do **not** retain or train on what is sent, and
+the Settings banner then states that property instead of merely warning that inference is remote.
+The cost is stated where it is paid: a model served only by data-collecting providers stops being
+routable, and OpenRouter reports that with the same 404 it uses for a mistyped slug — so the error
+message names this setting, or an operator would spend the afternoon checking a model name that was
+correct all along. Set `ALLOW` to widen the choice of models back.
+
+Both pages that call a model say which of four cases you are in, in the same words —
+`Stays on this host`, `No retention`, `Retention allowed`, `Governed by the endpoint` — because a
+policy that reads differently depending on the screen is not a policy. Note what the sentence is
+about: it states what **this deployment enforces**, not what a given model **declares**. Those are
+different claims, and only the first is one this application can stand behind. `No retention` is
+therefore never shown outside OpenRouter — on Anthropic, an arbitrary gateway or a remote Ollama
+the question has an answer, but it belongs to the endpoint's own terms and nothing here can impose
+or observe it, so the UI says exactly that instead of guessing.
+
+Its sibling is deliberately **off**:
+
+```yaml
+claude:
+  openrouter-require-parameters: false   # the default
+```
+
+`true` routes only to providers implementing every parameter sent, which turns structured output
+from something discovered by a refusal into a routing guarantee. It is opt-in for the same reason
+`structured-output: AUTO` leaves an unknown gateway alone: a model whose providers lack schema
+support becomes *unroutable* rather than degrading, and that arrives as "no endpoints found" — not
+as the 400 or 422 the per-model fallback can act on. Turn it on when you know your model is served
+with schema support.
+
+### What each analysis cost
+
+OpenRouter prices every response, so Process Mining shows the real figure beside the token counts —
+the last window and the running session total — rather than an estimate. It is read from the
+provider's own accounting: this application keeps no price table, so a model that reports no cost
+(the OpenAI API, Ollama, SpectraLLM) shows none rather than a zero, and a session containing one
+unpriced call reports no total at all instead of one that understates the bill.
+
+## Option B: Anthropic Claude
+Set the provider and your API key:
+```bash
+CLAUDE_PROVIDER=ANTHROPIC
+ANTHROPIC_API_KEY=sk-ant-…
+CLAUDE_MODEL=claude-3-5-sonnet-20241022
+```
+The base URL fills itself in (`https://api.anthropic.com`) when you switch provider and have not
+set one.
+
+## Option C: Open Source / Local (Ollama, vLLM, LM Studio)
+
+This is the option that keeps every byte on your machine, and the one to pick if the hosted
+default is not acceptable. Note the two settings that have to move together — see the window
+section just below, which is the trap this option carries.
+
 1. Run your model (e.g., `ollama run qwen2.5-coder:7b`).
 2. Update `src/main/resources/application.yml`:
 ```yaml
@@ -25,8 +141,10 @@ docker compose -f docker-compose-llm.yml up -d
 
 ### The prompt has to fit the model's window
 
-This is the one setting a local deployment gets wrong silently. Ollama gives a model **4 096
-tokens** unless the machine has the VRAM for more; the app's OpenAI-compatible request carries
+This is the one setting a local deployment gets wrong silently, and the reason it is a *local*
+problem is that the shipped budget is sized for the shipped provider: a hosted model has room for
+it, so moving to Option C is exactly the moment the two numbers stop agreeing. Ollama gives a model
+**4 096 tokens** unless the machine has the VRAM for more; the app's OpenAI-compatible request carries
 `model`, `messages`, `max_tokens`, `temperature` and `stream` — never `num_ctx`, which that
 endpoint would not read from the body anyway; and `process-mining.prompt-char-budget` is 120 000
 characters, about 30 000 tokens. Ollama does not refuse the excess: it drops the oldest messages
@@ -44,7 +162,7 @@ Raising one without the other buys nothing, or truncates again. A wider window c
 roughly 2 GB for a 7B model at 16k. The same arithmetic applies to vLLM (`--max-model-len`) and
 to LM Studio's context slider.
 
-## Option C: SpectraLLM (local, private, domain-tuned)
+## Option D: SpectraLLM (local, private, domain-tuned)
 Audit Kafka exchanges with a self-hosted [SpectraLLM](https://github.com/devdownin/SpectraLLM)
 instance — a fully local RAG + fine-tuning platform. Kafka Explorer calls SpectraLLM's
 `POST /api/query` endpoint; no API key leaves your network.

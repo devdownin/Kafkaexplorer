@@ -59,7 +59,7 @@ Ces captures sont générées, pas prises à la main : `docs/screenshots/` pilot
 - 🕸️ **Lignage & traçage** — un graphe interactif topics → tables → jobs actifs, résolu par le parseur de Flink lui-même ; plus le traçage d'un message à travers les topics par clé, header, JSONPath ou XPath, qui affiche ses sauts au fil de la recherche, dit exactement ce qu'il a lu, reprend là où le budget l'a arrêté, et compare deux clés côte à côte.
 - 🗺️ **Un modèle de données que vous n'avez pas eu à dessiner** — choisissez des topics et lisez-les comme des tables, avec les relations entre elles déduites des noms de colonnes clés. Kafka n'a pas de clés étrangères : chaque arête est donc une affirmation, qui porte son grade de confiance, énonce son évidence en toutes lettres, et s'ouvre en `JOIN` prêt à l'emploi — une relation ou tout un sous-graphe.
 - 🩺 **Audit du cluster en un clic** — messages toxiques, doublons, pertes en ligne et latence des flux, calculés sur tout le cluster en tâche de fond.
-- 🤖 **Process mining assisté par IA** — reconstruisez vos flux métier en flowcharts et traquez les anomalies avec Claude, un LLM local (Ollama…) ou un [SpectraLLM](https://github.com/devdownin/SpectraLLM) privé.
+- 🤖 **Process mining assisté par IA** — reconstruisez vos flux métier en flowcharts et traquez les anomalies avec OpenRouter (le défaut : une clé, la plupart des fournisseurs hébergés), Claude, un LLM local (Ollama…) ou un [SpectraLLM](https://github.com/devdownin/SpectraLLM) privé.
 - 🔭 **Nativement Kafka 4** — quorum de contrôleurs KRaft, groupes KIP-848, share groups (KIP-932) et versions de features, visibles dans l'UI et exportés vers Prometheus.
 - 🎁 **Un bac à sable inclus** — 76 topics de démo créés automatiquement, du pipeline de commandes en 6 étapes à la supply chain de 60 topics, tous avec clé de record et headers : une commande à tracer à travers les partitions, une corrélation qui ne vit que dans les headers, une vraie série temporelle à fenêtrer, des doublons et des messages poison pour l'audit.
 
@@ -117,7 +117,9 @@ Chaque fonctionnalité en détail : **[docs/FEATURES.md](docs/FEATURES.md)** · 
 
 ## 🤖 Apportez votre IA
 
-Le Process Mining fonctionne avec le LLM que vous avez déjà — **Claude (Anthropic)**, tout ce qui parle l'API OpenAI (**Ollama**, vLLM, LM Studio…), ou un **SpectraLLM** entièrement privé avec RAG, où aucun octet ne quitte votre réseau. Fournisseur, modèle et test de connectivité se configurent en direct depuis l'interface.
+Le Process Mining fonctionne avec le LLM que vous avez déjà — **OpenRouter** (le défaut : une seule clé devant la plupart des fournisseurs hébergés, donc `OPENROUTER_API_KEY=sk-or-v1-…` suffit), **Claude (Anthropic)**, tout ce qui parle l'API OpenAI (**Ollama**, vLLM, LM Studio…), ou un **SpectraLLM** entièrement privé avec RAG. Fournisseur, modèle et test de connectivité se configurent en direct depuis l'interface.
+
+Le défaut est un point d'accès *hébergé* : les digests de messages qu'il construit quittent donc votre machine. Ollama et SpectraLLM gardent tout sur votre réseau, et la page Réglages indique dans lequel des deux cas vous êtes — lu sur l'adresse réellement configurée, pas sur le nom du fournisseur.
 
 → **[Guide des fournisseurs LLM](docs/LLM-PROVIDERS.md)** *(en anglais)*
 

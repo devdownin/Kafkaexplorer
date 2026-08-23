@@ -17,6 +17,8 @@ import java.net.http.HttpResponse;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class OpenAiCompatibleLlmClient implements LlmClient {
     private static final Logger log = LoggerFactory.getLogger(OpenAiCompatibleLlmClient.class);
@@ -25,12 +27,28 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /**
-     * Set once an endpoint has refused a schema-constrained request, so the next call does not
-     * repeat the mistake. Instance state rather than config: the client is rebuilt whenever the
+     * The models this endpoint has refused a schema-constrained request for, so the next call does
+     * not repeat the mistake. Instance state rather than config: the client is rebuilt whenever the
      * provider, base URL or key changes, which is exactly the lifetime this observation is valid
      * for.
+     *
+     * <p>Keyed by <em>model</em> rather than being one flag for the client, because on a gateway
+     * that routes — OpenRouter above all — schema support is a property of the model and of the
+     * upstream provider serving it, not of the endpoint. One flag meant a model that cannot be
+     * constrained disabled constrained decoding for every model chosen afterwards, silently and for
+     * the client's whole lifetime: {@link LlmClientProvider} fingerprints provider, base URL and
+     * key, and the model is in none of them, so changing the model in Settings reuses this very
+     * client. A bounded map, since the set of models one deployment tries is small and this lives
+     * on a long-lived bean.
      */
-    private volatile boolean structuredOutputUnsupported;
+    private final Set<String> modelsRefusingSchema = ConcurrentHashMap.newKeySet();
+
+    /** Upper bound on {@link #modelsRefusingSchema} — a guard against an unbounded field, not a policy. */
+    private static final int MAX_REMEMBERED_MODELS = 64;
+
+    /** Sent only to OpenRouter — see the header block in {@link #call}. */
+    private static final String OPENROUTER_APP_URL = "https://github.com/devdownin/Kafkaexplorer";
+    private static final String OPENROUTER_APP_TITLE = "Kafka SQL Explorer";
 
     public OpenAiCompatibleLlmClient(ClaudeConfig config) {
         this.config = config;
@@ -50,9 +68,10 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
     @Override
     public LlmResponse generateWithMeta(String systemPrompt, String userPrompt,
                                         LlmOutputSchema schema) {
+        String model = modelKey();
         boolean constrain = schema != null
             && config.isStructuredOutputEnabled()
-            && !structuredOutputUnsupported;
+            && !modelsRefusingSchema.contains(model);
 
         try {
             return call(systemPrompt, userPrompt, constrain ? schema : null);
@@ -64,13 +83,92 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
             // Retrying unconstrained is worth one attempt: the alternative is telling an operator
             // their gateway is broken when it merely does not implement response_format. If the
             // second call fails too, that error is the honest one to report.
-            log.warn("{} refused a schema-constrained request (status {}); retrying without the "
-                    + "constraint and not sending one again for this endpoint. Set "
+            log.warn("{} refused a schema-constrained request for model '{}' (status {}); retrying "
+                    + "without the constraint and not sending one again for that model. Set "
                     + "claude.structured-output=OFF to skip this probe.",
-                config.getProviderLabel(), e.status());
-            structuredOutputUnsupported = true;
+                config.getProviderLabel(), model, e.status());
+            rememberSchemaRefusal(model);
             return call(systemPrompt, userPrompt, null);
         }
+    }
+
+    /**
+     * OpenRouter's {@code provider} routing object, empty for every other provider.
+     *
+     * <p>A routing gateway is the one place where "where does my data go" has an answer better than
+     * a warning. {@code data_collection: "deny"} restricts routing to upstream providers that do
+     * not retain or train on what is sent — so the Settings page can state a property instead of a
+     * risk, which is the whole reason this application reads its privacy claims off the resolved
+     * address rather than off a provider's name. It defaults to deny: a model served only by
+     * data-collecting providers then fails to route, and an error naming the policy is the right
+     * outcome when the alternative is Kafka message digests silently becoming training data.
+     *
+     * <p>{@code require_parameters} is the other half and is deliberately <em>off</em> by default.
+     * It routes only to providers implementing every parameter sent, which would make structured
+     * output a routing guarantee rather than something discovered by a 400 — but a model whose
+     * providers do not support schemas then becomes unroutable instead of degrading, and the
+     * per-model latch cannot catch that: a refusal arrives as "no endpoints found", not as the
+     * 400/422 the latch keys on. Turning a working deployment into a failing one to gain a
+     * guarantee it may not need is the same trade {@code structured-output: AUTO} already refuses.
+     */
+    private Map<String, Object> routingPolicy() {
+        // Keyed on the *provider*, not on the address, and that is the opposite of the rule the
+        // attribution headers follow — deliberately. Someone who selects OPENROUTER and points the
+        // base URL at a corporate egress proxy is proxying *to* OpenRouter: dropping
+        // data_collection there because the hostname is theirs would silently remove the privacy
+        // restriction they configured, which is a far worse failure than sending a field a
+        // pass-through does not read. A courtesy header can be withheld on a guess; a privacy
+        // guarantee cannot.
+        if (config.getProvider() != ClaudeConfig.Provider.OPENROUTER) {
+            return Map.of();
+        }
+        Map<String, Object> routing = new LinkedHashMap<>();
+        if (config.getOpenrouterDataCollection() == ClaudeConfig.DataCollection.DENY) {
+            routing.put("data_collection", "deny");
+        }
+        if (config.isOpenrouterRequireParameters()) {
+            routing.put("require_parameters", true);
+        }
+        return routing;
+    }
+
+    /**
+     * Names the routing policy when a "not found" is plausibly its doing.
+     *
+     * <p>Restricting routing turns "this model exists" into "this model exists <em>and</em> some
+     * provider serving it satisfies your policy", and the gateway answers the second question with
+     * the same 404 it uses for a mistyped slug. Left alone, an operator reads "model not found",
+     * checks the spelling — which is correct — and has no way to reach the real cause. The
+     * exception keeps its status, because {@link #looksLikeSchemaRefusal} reads it and a 404 must
+     * go on meaning "do not retry without the schema".
+     */
+    private LlmHttpSupport.ClientErrorException explainRoutingRefusal(
+            LlmHttpSupport.ClientErrorException e) {
+        Map<String, Object> routing = routingPolicy();
+        if (e.status() != 404 || routing.isEmpty()) {
+            return e;
+        }
+        return new LlmHttpSupport.ClientErrorException(e.status(), e.getMessage()
+            + " — note that provider routing is restricted (" + routing
+            + "), so a model whose providers do not satisfy it is reported exactly like an unknown "
+            + "one. Relax claude.openrouter-data-collection or claude.openrouter-require-parameters "
+            + "to tell the two apart.");
+    }
+
+    /** The configured model, normalised so a null or blank one still keys the map. */
+    private String modelKey() {
+        String model = config.getModel();
+        return model == null || model.isBlank() ? "" : model.strip();
+    }
+
+    private void rememberSchemaRefusal(String model) {
+        if (modelsRefusingSchema.size() >= MAX_REMEMBERED_MODELS) {
+            // Nothing here is worth an eviction policy: forget the lot and re-probe. Sixty-four
+            // models on one client means the operator has been switching all afternoon, and one
+            // extra request per model is cheaper than a field that grows without bound.
+            modelsRefusingSchema.clear();
+        }
+        modelsRefusingSchema.add(model);
     }
 
     /**
@@ -111,6 +209,10 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
                         "strict", true,
                         "schema", schema.schema())));
             }
+            Map<String, Object> routing = routingPolicy();
+            if (!routing.isEmpty()) {
+                body.put("provider", routing);
+            }
 
             String requestBody = objectMapper.writeValueAsString(body);
 
@@ -123,6 +225,14 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
             if (config.isApiKeyConfigured()) {
                 requestBuilder.header("Authorization", "Bearer " + config.getApiKey());
             }
+            if (config.isOpenRouterEndpoint()) {
+                // OpenRouter's two optional attribution headers, which is how a request is credited
+                // to an application on its public leaderboard. They carry this project's identity
+                // and nothing about the deployment or the messages — no host name, no topic, no
+                // payload — so they say who wrote the client, not who is running it.
+                requestBuilder.header("HTTP-Referer", OPENROUTER_APP_URL);
+                requestBuilder.header("X-Title", OPENROUTER_APP_TITLE);
+            }
 
             HttpResponse<String> response =
                 LlmHttpSupport.sendWithRetry(httpClient, requestBuilder.build(), config.getProviderLabel());
@@ -133,6 +243,10 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
             log.debug("{} call complete — {}", config.getProviderLabel(), usage.summary());
             return new LlmResponse(text, List.of(), usage);
 
+        } catch (LlmHttpSupport.ClientErrorException e) {
+            LlmHttpSupport.ClientErrorException reported = explainRoutingRefusal(e);
+            log.error("Error calling OpenAI-compatible API: {}", reported.getMessage());
+            throw reported;
         } catch (RuntimeException e) {
             log.error("Error calling OpenAI-compatible API: {}", e.getMessage());
             throw e;
@@ -153,6 +267,16 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
         return new LlmUsage(
             longOrNull(usage, "prompt_tokens"),
             longOrNull(usage, "completion_tokens"),
+            // OpenRouter prices every response, so the money is already on the wire and used to be
+            // thrown away — on the provider this application now ships pointed at, which bills per
+            // token. Read, never computed: no price table lives here, so a figure on screen is one
+            // the provider stood behind. Absent on OpenAI and Ollama, and null there rather than 0.
+            doubleOrNull(usage, "cost"),
+            // How much of the prompt the provider served from its cache. Reported under
+            // prompt_tokens_details by OpenAI-shaped APIs; absent elsewhere, and null there rather
+            // than 0 — "no cache hit" and "nobody counted" are different answers, and only the
+            // first is evidence that a cache breakpoint is doing nothing.
+            longOrNull(usage.path("prompt_tokens_details"), "cached_tokens"),
             durationMs,
             config.getProviderLabel(),
             config.getModel());
@@ -161,6 +285,11 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
     private static Long longOrNull(JsonNode parent, String field) {
         JsonNode value = parent.path(field);
         return value.isNumber() ? value.asLong() : null;
+    }
+
+    private static Double doubleOrNull(JsonNode parent, String field) {
+        JsonNode value = parent.path(field);
+        return value.isNumber() ? value.asDouble() : null;
     }
 
     private String resolveChatCompletionsUrl() {

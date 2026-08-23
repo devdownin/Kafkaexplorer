@@ -92,7 +92,7 @@ final class LlmHttpSupport {
                     // one caller can actually act on it: an endpoint that rejects a request field
                     // it does not implement answers this way, and the client can retry without it.
                     throw new ClientErrorException(status, provider + " call failed with status "
-                        + status + " (check base URL, model and API key): "
+                        + status + " — " + remedyFor(status) + ": "
                         + truncate(response.body()));
                 }
                 // 5xx or 429 → transient.
@@ -127,6 +127,37 @@ final class LlmHttpSupport {
             }
         }
         throw lastError != null ? lastError : new RuntimeException(provider + " call failed");
+    }
+
+    /**
+     * What a client error most often means, in words that name the thing to go and change.
+     *
+     * <p>Every 4xx used to read "check base URL, model and API key" — three things that are all
+     * fine on the two statuses a hosted, metered gateway actually returns. A 402 is an account out
+     * of credit or past its spending cap, and sending its owner to re-read their base URL is worse
+     * than saying nothing; a 403 is a moderation or permission refusal, which no amount of checking
+     * the model name resolves. The provider's own body still follows, because it is the half that
+     * says <em>which</em> guardrail or which cap.
+     *
+     * <p>Deliberately phrased as what the status usually means rather than as a verdict: this is
+     * shared by every plain-HTTP provider here, and a corporate gateway is free to use these codes
+     * its own way.
+     */
+    private static String remedyFor(int status) {
+        return switch (status) {
+            case 400, 422 -> "the endpoint rejected the request body (a field it does not implement, "
+                + "or a malformed one)";
+            case 401 -> "the API key was refused (check claude.api-key, or the variable it is bound "
+                + "to)";
+            case 402 -> "payment required: the account is out of credit or past a spending cap — "
+                + "topping it up is the fix, not the configuration";
+            case 403 -> "refused as a permission, guardrail or moderation matter, not a "
+                + "configuration one";
+            case 404 -> "no such model or endpoint (check claude.model and claude.base-url)";
+            case 413 -> "the request was too large — lower process-mining.prompt-char-budget or "
+                + "claude.max-tokens";
+            default -> "check base URL, model and API key";
+        };
     }
 
     private static String timeoutSeconds(HttpRequest request) {

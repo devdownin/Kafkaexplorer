@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.compagnonsdudev.kafkasqlexplorer.config.ClaudeConfig;
 import com.compagnonsdudev.kafkasqlexplorer.config.ProcessMiningConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.FieldProfileResult;
+import com.compagnonsdudev.kafkasqlexplorer.domain.LlmUsage;
 import com.compagnonsdudev.kafkasqlexplorer.domain.LlmResponse;
 import com.compagnonsdudev.kafkasqlexplorer.domain.PayloadDigest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.PayloadShape;
@@ -100,6 +101,7 @@ public class FieldProfilingService {
 
         // 4. Call LLM API
         String rawResponse;
+        LlmUsage usage = null;
         try {
             String systemPrompt = """
                 Expert Kafka & Data Mining. Analyze Kafka message samples.
@@ -110,8 +112,9 @@ public class FieldProfilingService {
             // the cited sources with it — for no reason other than the narrower return type.
             LlmResponse response =
                 llmClient.get().generateWithMeta(systemPrompt, userPrompt, PROFILING_SCHEMA);
-            if (response.usage() != null) {
-                log.info("Field profiling — {}", response.usage().summary());
+            usage = response.usage();
+            if (usage != null) {
+                log.info("Field profiling — {}", usage.summary());
             }
             rawResponse = response.text();
         } catch (Exception e) {
@@ -123,8 +126,10 @@ public class FieldProfilingService {
             );
         }
 
-        // 5. Parse response
-        return parseProfileResult(rawResponse);
+        // 5. Parse response. The accounting is attached here rather than parsed: it describes the
+        // call, not the answer, and the answer is the model's own JSON — which must never be able
+        // to state what it cost.
+        return parseProfileResult(rawResponse).withUsage(usage);
     }
 
     /**

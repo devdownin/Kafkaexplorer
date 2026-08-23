@@ -18,7 +18,10 @@ public final class LlmClientFactory {
         return switch (config.getProvider()) {
             case ANTHROPIC -> new AnthropicLlmClient(config);
             case SPECTRA -> new SpectraLlmClient(config);
-            case OPENAI_COMPATIBLE, OLLAMA -> new OpenAiCompatibleLlmClient(config);
+            // OpenRouter speaks the OpenAI /chat/completions API verbatim; what is specific to it
+            // (its base URL, its required key, its attribution headers) is carried by the config
+            // and by that client, not by a class of its own.
+            case OPENAI_COMPATIBLE, OLLAMA, OPENROUTER -> new OpenAiCompatibleLlmClient(config);
         };
     }
 }

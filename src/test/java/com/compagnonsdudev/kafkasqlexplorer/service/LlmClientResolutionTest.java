@@ -68,6 +68,25 @@ class LlmClientResolutionTest {
         assertNotSame(before, provider.get());
     }
 
+    /**
+     * OpenRouter speaks the OpenAI API, so it deliberately has no client of its own — what has to
+     * hold is that the factory says so, and that a blank base URL resolves to the gateway rather
+     * than to whatever the previous provider was pointed at.
+     */
+    @Test
+    void openRouterUsesTheOpenAiCompatibleClientAndItsOwnDefaultEndpoint() {
+        ClaudeConfig config = new ClaudeConfig();
+        config.setProvider(ClaudeConfig.Provider.OPENROUTER);
+        config.setBaseUrl("");
+
+        assertEquals("https://openrouter.ai/api/v1", config.getResolvedBaseUrl());
+        assertInstanceOf(OpenAiCompatibleLlmClient.class, LlmClientFactory.create(config));
+        assertTrue(config.isApiKeyRequired(),
+            "an anonymous OpenRouter request is a 401, so a blank key is a broken deployment, "
+                + "not optional credentials");
+        assertFalse(config.isLocalDeployment());
+    }
+
     @Test
     void firstChoiceContentReadsTheAnswer() throws Exception {
         String body = "{\"choices\":[{\"message\":{\"content\":\"hello\"}}]}";

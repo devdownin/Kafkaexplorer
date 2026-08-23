@@ -286,6 +286,9 @@ public class KafkaLiveConsumer {
                 if (result.usage() != null) {
                     sseEmitterManager.send(sessionId, "ANALYSIS_USAGE", result.usage());
                 }
+                // A window that failed still spent: a session that keeps failing must not look
+                // free to the budget any more than it does on screen.
+                recordSpend(session, result.usage());
                 return;
             }
 
@@ -315,6 +318,7 @@ public class KafkaLiveConsumer {
             if (result.usage() != null) {
                 sseEmitterManager.send(sessionId, "ANALYSIS_USAGE", result.usage());
             }
+            recordSpend(session, result.usage());
 
         } catch (Exception e) {
             log.error("Error during live analysis for session {}: {}", sessionId, e.getMessage(), e);
@@ -323,6 +327,50 @@ public class KafkaLiveConsumer {
         } finally {
             session.analysisInFlight.set(false);
         }
+    }
+
+    /**
+     * Adds one analysis to the session's bill and stops the session if that crosses the bound.
+     *
+     * <p>The bound can only be enforced on a figure that exists: a provider that prices nothing
+     * leaves {@code costUsd} null, and counting those calls as free would be a budget in name only
+     * — it would never trip, on the deployments where it never can. So the first unpriced call
+     * turns enforcement off for the session and says so once, rather than silently under-counting.
+     *
+     * <p>Stopping is a deliberate outcome, not a failure, so it travels as its own event: folding
+     * it into {@code ANALYSIS_ERROR} would render a budget doing its job as a broken analysis.
+     */
+    private void recordSpend(LiveSession session, com.compagnonsdudev.kafkasqlexplorer.domain.LlmUsage usage) {
+        if (!claudeConfig.hasSessionCostLimit() || session.costUnknown) {
+            return;
+        }
+        if (usage == null || usage.costUsd() == null) {
+            session.costUnknown = true;
+            log.info("Live session {}: the provider reports no cost, so "
+                + "claude.session-cost-limit-usd cannot be enforced for it.", session.sessionId);
+            sseEmitterManager.send(session.sessionId, "SESSION_BUDGET", Map.of(
+                "enforceable", false,
+                "message", "This provider reports no cost, so the session spend limit cannot be "
+                    + "applied."));
+            return;
+        }
+
+        session.spentUsd += usage.costUsd();
+        double limit = claudeConfig.getSessionCostLimitUsd();
+        if (session.spentUsd < limit) {
+            return;
+        }
+
+        log.info("Live session {}: spend limit reached ({} of {} USD) — stopping.",
+            session.sessionId, session.spentUsd, limit);
+        sseEmitterManager.send(session.sessionId, "SESSION_BUDGET", Map.of(
+            "enforceable", true,
+            "stopped", true,
+            "spentUsd", session.spentUsd,
+            "limitUsd", limit,
+            "message", "Live monitoring stopped: this session reached its spend limit of $"
+                + limit + " (claude.session-cost-limit-usd)."));
+        stopSession(session.sessionId);
     }
 
     /**
@@ -439,6 +487,15 @@ public class KafkaLiveConsumer {
         private volatile ScheduledFuture<?> pollingFuture;
         private volatile ScheduledFuture<?> heartbeatFuture;
         private volatile String lastFlowchart;
+
+        /**
+         * What this session's analyses have cost so far, and whether that figure is complete.
+         * Written only from the analysis pool, one analysis at a time per session
+         * ({@code analysisInFlight} guarantees it), so a volatile read is enough.
+         */
+        private volatile double spentUsd;
+        /** True as soon as one call came back unpriced — the budget then cannot be enforced. */
+        private volatile boolean costUnknown;
 
         private volatile boolean finished;
         private boolean initialized;

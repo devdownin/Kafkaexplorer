@@ -173,6 +173,7 @@ public class ConfigController {
 
         checkEnum(body, "llmProvider", ClaudeConfig.Provider.class, problems);
         checkEnum(body, "llmStructuredOutput", ClaudeConfig.StructuredOutput.class, problems);
+        checkEnum(body, "llmOpenrouterDataCollection", ClaudeConfig.DataCollection.class, problems);
         for (String field : List.of("llmRequestTimeoutSeconds", "llmMaxTokens",
                                     "llmSnapshotWindowSize", "llmSnapshotWindowTimeoutSeconds")) {
             checkPositiveInt(body, field, problems);
@@ -285,6 +286,16 @@ public class ConfigController {
             claudeConfig.setStructuredOutput(
                 ClaudeConfig.StructuredOutput.valueOf(asString(body.get("llmStructuredOutput"))));
         }
+        if (body.containsKey("llmOpenrouterDataCollection")
+            && body.get("llmOpenrouterDataCollection") != null) {
+            claudeConfig.setOpenrouterDataCollection(
+                ClaudeConfig.DataCollection.valueOf(asString(body.get("llmOpenrouterDataCollection"))));
+        }
+        if (body.containsKey("llmOpenrouterRequireParameters")
+            && body.get("llmOpenrouterRequireParameters") != null) {
+            claudeConfig.setOpenrouterRequireParameters(
+                Boolean.parseBoolean(asString(body.get("llmOpenrouterRequireParameters"))));
+        }
         if (body.containsKey("llmRequestTimeoutSeconds") && body.get("llmRequestTimeoutSeconds") != null) {
             claudeConfig.setRequestTimeoutSeconds(Integer.parseInt(asString(body.get("llmRequestTimeoutSeconds"))));
         }
@@ -381,6 +392,9 @@ public class ConfigController {
         snapshot.put("llmUseRag", String.valueOf(claudeConfig.isUseRag()));
         snapshot.put("llmCollection", claudeConfig.getCollection());
         snapshot.put("llmStructuredOutput", claudeConfig.getStructuredOutput().name());
+        snapshot.put("llmOpenrouterDataCollection", claudeConfig.getOpenrouterDataCollection().name());
+        snapshot.put("llmOpenrouterRequireParameters",
+            String.valueOf(claudeConfig.isOpenrouterRequireParameters()));
         snapshot.put("llmRequestTimeoutSeconds", String.valueOf(claudeConfig.getRequestTimeoutSeconds()));
         snapshot.put("llmMaxTokens", String.valueOf(claudeConfig.getMaxTokens()));
         snapshot.put("llmSnapshotWindowSize", String.valueOf(claudeConfig.getSnapshotWindowSize()));
@@ -438,6 +452,12 @@ public class ConfigController {
         result.put("llmUseRag", claudeConfig.isUseRag());
         result.put("llmCollection", claudeConfig.getCollection());
         result.put("llmStructuredOutput", claudeConfig.getStructuredOutput().name());
+        result.put("llmOpenrouterDataCollection", claudeConfig.getOpenrouterDataCollection().name());
+        result.put("llmOpenrouterRequireParameters", claudeConfig.isOpenrouterRequireParameters());
+        // What the banner needs to qualify "remote": whether the gateway was asked to keep
+        // message content away from providers that would retain it. False wherever the
+        // question cannot be enforced, which is every provider but OpenRouter.
+        result.put("llmDataRetentionRefused", claudeConfig.isDataRetentionRefused());
         // What AUTO actually resolves to for the provider in force — the setting alone does not
         // say whether a schema will be sent, and that is the question an operator has.
         result.put("llmStructuredOutputActive", claudeConfig.isStructuredOutputEnabled());

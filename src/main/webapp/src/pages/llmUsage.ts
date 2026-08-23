@@ -15,8 +15,29 @@ export const describeUsage = (usage: LlmUsage): string => {
   const tokens = usage.inputTokens != null && usage.outputTokens != null
     ? `${usage.inputTokens.toLocaleString()} in / ${usage.outputTokens.toLocaleString()} out`
     : 'tokens not reported';
-  return `${usage.model} · ${tokens} · ${describeDuration(usage.durationMs)}`;
+  const cost = usage.costUsd == null ? '' : ` · ${formatCostUsd(usage.costUsd)}`;
+  /*
+   * Affiché seulement quand le cache a servi à quelque chose. Un « 0 cached » sur chaque fenêtre
+   * serait du bruit — l'information « le cache n'a rien servi » vaut d'être cherchée dans le log,
+   * pas répétée à l'écran toutes les trente secondes.
+   */
+  const cached = usage.cachedInputTokens != null && usage.cachedInputTokens > 0
+    ? ` · ${usage.cachedInputTokens.toLocaleString()} cached`
+    : '';
+  return `${usage.model} · ${tokens}${cached}${cost} · ${describeDuration(usage.durationMs)}`;
 };
+
+/**
+ * Rend un montant en dollars sans le réduire à zéro.
+ *
+ * Un appel coûte presque toujours une fraction de centime, donc un rendu à deux décimales
+ * afficherait `$0.00` sur chaque analyse et rendrait le chiffre inutile : sous le centime on
+ * descend à six décimales, au-dessus deux suffisent et se lisent mieux. `0` est une vraie mesure —
+ * un modèle gratuit — et s'affiche donc `$0.00`, pas « non rapporté » : c'est l'absence de valeur,
+ * traitée ailleurs, qui veut dire qu'on ne sait pas.
+ */
+export const formatCostUsd = (value: number): string =>
+  value !== 0 && Math.abs(value) < 0.01 ? `$${value.toFixed(6)}` : `$${value.toFixed(2)}`;
 
 /** Sous la seconde on lit mieux des millisecondes ; au-delà, une seconde à une décimale. */
 export const describeDuration = (durationMs: number): string =>
@@ -36,6 +57,24 @@ export const totalTokens = (usages: readonly LlmUsage[]): number | null => {
   for (const usage of usages) {
     if (usage.inputTokens == null || usage.outputTokens == null) return null;
     total += usage.inputTokens + usage.outputTokens;
+  }
+  return total;
+};
+
+/**
+ * Somme des coûts d'une suite d'appels — la facture d'une session live.
+ *
+ * Même règle que `totalTokens`, et elle compte davantage ici : une session dont un appel n'a pas
+ * été chiffré a une facture *supérieure* à ce qu'on sait additionner, et l'afficher quand même
+ * sous-estimerait une dépense réelle avec l'aplomb d'un total exact. `null` dit « on ne peut pas
+ * répondre », ce qui est la seule réponse honnête.
+ */
+export const totalCostUsd = (usages: readonly LlmUsage[]): number | null => {
+  if (usages.length === 0) return null;
+  let total = 0;
+  for (const usage of usages) {
+    if (usage.costUsd == null) return null;
+    total += usage.costUsd;
   }
   return total;
 };

@@ -29,6 +29,98 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **OpenRouter is now the default LLM provider**, replacing Ollama at
+  `http://localhost:11434/v1`. That default only ever worked in one situation — a developer
+  running this application outside a container with Ollama installed on the same machine —
+  because inside every image published here `localhost` is the container, where no Ollama runs,
+  so the shipped default answered a connection refused to itself. A default is what the largest
+  number of people meet first, and this one takes a key and nothing else:
+  `OPENROUTER_API_KEY=sk-or-v1-…`. `claude.model` follows to `openai/gpt-4o-mini`, and
+  `claude.base-url` to `https://openrouter.ai/api/v1`.
+
+  **It is a hosted endpoint, so the message digests Process Mining builds now leave the host by
+  default**, and that is stated rather than implied — in `application.yml`, on the Docker Hub
+  page, in both READMEs, in the provider guide and on the Settings banner, which reads it off the
+  resolved address rather than the provider's name. A deployment that must keep everything
+  in-house sets `CLAUDE_PROVIDER=OLLAMA` or `SPECTRA`; `docker-compose-llm.yml` and the SpectraLLM
+  stacks name their provider explicitly and are unaffected. One thing the move fixes in passing:
+  the 120 000-character prompt budget and the shipped provider finally agree, where the budget was
+  previously sized for a hosted API the default was not.
+- **The profiling call's cost is counted.** The pipeline makes two model calls and only the
+  second reported anything: the figure on screen understated every run. `FieldProfileResult`
+  carries its `usage`, the page shows it, and the total now covers the whole run — the rule
+  already enforced between live windows, applied between the two steps of one pipeline.
+- **A live session can be given a spend limit** (`claude.session-cost-limit-usd`, `0` = off). It
+  calls the model on every window for up to twelve hours, so a tab left open overnight is on the
+  order of a thousand analyses — free while the shipped provider was a local Ollama, a real bill
+  now that it bills per token, and bounded by nothing. Off by default on purpose: any figure would
+  be arbitrary, and what makes that defensible is that the running total is now on screen, so a cap
+  can be chosen from a measurement. It bounds a session's analyses, not the profiling call before
+  them, and where a provider reports no cost the session says the limit cannot apply rather than
+  counting calls it cannot price. Reaching it stops the session through its own event, not through
+  `ANALYSIS_ERROR`: a budget doing its job is not a broken analysis, and the page renders it in
+  amber beside the error, never in its place.
+- **How much of a prompt was served from the provider's cache is reported** (`cachedInputTokens`,
+  from `prompt_tokens_details.cached_tokens`), beside the tokens and the cost. A measurement, not
+  a promise: nothing here claims a saving, and `0` — a genuine miss — is distinguished from a
+  provider that counts nothing. No cache breakpoint is sent yet; that only pays once the stable
+  part of the prompt is a long enough prefix, which is a prompt-restructuring decision rather than
+  plumbing, and this is the number that will say whether it was worth making.
+- **Both pages that call a model now say what becomes of the message content.** The question was
+  answered by halves: Settings spoke only when the news was good — `DENY` displayed its restriction
+  while `ALLOW` fell back to a generic "remote inference" line, so the one setting that *widens*
+  exposure was the one that showed nothing — and Process Mining, the page where the content
+  actually leaves, said nothing beyond "digests are sent to this endpoint". One tested module
+  (`pages/llmPolicy.ts`) now produces the sentence for both, in four cases: it stays on this host,
+  no retention (enforced), retention allowed, or governed by the endpoint. Two rules hold it. A
+  policy is asserted only where it is **enforceable** — OpenRouter imposes it at the routing layer,
+  while on Anthropic, an arbitrary gateway or a remote Ollama this application can neither impose
+  nor observe one, and says exactly that rather than guessing. And it describes what the deployment
+  **enforces**, never what a model **declares**: the second would be a third-party claim rendered
+  as our own verdict.
+- **What an analysis cost in money is shown, not just in tokens.** `LlmUsage` carried token counts
+  and a duration; OpenRouter prices every response and that figure was being dropped — on the
+  provider now shipped by default, which bills per token. It is **read, never derived**: no price
+  table lives in this application, so a figure on screen is one the provider stood behind, and a
+  provider that prices nothing (the OpenAI API, Ollama, SpectraLLM) shows nothing rather than a
+  zero. Process Mining renders it beside the tokens for the last window and as a running session
+  total, and a session containing one unpriced call reports **no** total instead of one that
+  understates the bill.
+- **`claude.openrouter-data-collection: DENY` — the routing layer answers "where does my data go".**
+  Until now the Settings banner could say a deployment was remote and no more: what an upstream
+  vendor does with a Kafka message digest is outside anything this application can observe.
+  OpenRouter enforces it at its own layer, so the shipped configuration restricts routing to
+  providers that do not retain or train on what is sent, and the banner states that property
+  instead of merely warning. The cost is stated where it is paid: a model served only by
+  data-collecting providers stops being routable, and since the gateway reports that with the same
+  404 it uses for a mistyped slug, the error names the setting — otherwise an operator checks a
+  model name that was correct all along. `ALLOW` widens the choice of models back.
+  `claude.openrouter-require-parameters` is the sibling knob and is deliberately **off**: it would
+  make structured output a routing guarantee, but a model whose providers lack it becomes
+  *unroutable* rather than degrading, and that arrives as "no endpoints found" — not as the 400 or
+  422 the per-model latch can act on.
+- **A 4xx from the model now names the thing to go and change.** Every client error read "check
+  base URL, model and API key", which on a metered gateway is three things that are all fine: a 402
+  is an account out of credit or past a spending cap, and a 403 a moderation or permission refusal.
+  Both now say so, with the provider's own words still following — that is the half that says which
+  cap or which guardrail. 401, 404 and 413 get the same treatment.
+- **`OPENROUTER_API_KEY` is read, so a key set under the name its own provider documents is not
+  silently ignored.** `claude.api-key` is bound through a placeholder, so `StoredSettingsInitializer`
+  has to be told which environment variables name it — and it knew exactly one,
+  `ANTHROPIC_API_KEY`. With OpenRouter as the default, a key exported under the obvious name would
+  have been outranked by a stored one: the identical defect that single alias was added to fix, on
+  the identical field. The chain is now `${OPENROUTER_API_KEY:${ANTHROPIC_API_KEY:}}`, and
+  `CLAUDE_API_KEY` outranks both — the unambiguous form on a machine that exports several.
+- **A model that refuses a JSON Schema no longer disables constrained decoding for the next
+  one.** The "this endpoint does not implement `response_format`" latch was one flag per client,
+  and a client outlives a model change — `LlmClientProvider` fingerprints provider, base URL and
+  key, and the model is in none of them. That was survivable while every provider was one
+  endpoint serving one model, and is exactly wrong on a routing gateway: OpenRouter puts hundreds
+  of models behind one base URL and one key, only some of which (served by only some upstream
+  providers) support schemas, so the first schema-less model tried would have run the whole
+  deployment unconstrained from then on, silently. The refusal is now remembered against the
+  model that provoked it, which is what lets `OPENROUTER` join `ANTHROPIC` and `OLLAMA` in the
+  `structured-output: AUTO` set at all.
 - **The published-images stack is now smoke-tested on the pull requests that touch it.** It ran
   on `main` only, because it pulls ~2 GB to exercise a deployment file whose content does not
   move with the code — right for every pull request, wrong for the handful that edit those
@@ -65,6 +157,16 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **OpenRouter as an LLM provider for Process Mining** — and, see below, as the *default* one.
+  One key in front of most hosted vendors, which is the cheapest way to try several models
+  against your own topics without an account per vendor. It
+  speaks the OpenAI `/chat/completions` API verbatim, so it deliberately has **no client class of
+  its own** — what is specific to it lives in the configuration: a default base URL of
+  `https://openrouter.ai/api/v1`, and a key that `isApiKeyRequired()` treats as mandatory, since
+  an anonymous request there is a 401 and a blank key is a deployment that cannot analyse
+  anything rather than "optional credentials" as on a local Ollama. Requests carry OpenRouter's
+  two attribution headers (`HTTP-Referer`, `X-Title`) naming this project, sent to OpenRouter
+  alone and saying nothing about the deployment, the cluster or the messages.
 - **`docs/check-compose.py` — the compose files, against `.env.example` and against
   themselves.** `.env.example` exists so that changing where a stack is published does not mean
   editing six compose files, which only holds if it lists them all: five variables had a default

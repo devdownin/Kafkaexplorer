@@ -33,9 +33,12 @@ final class LlmJsonSupport {
     /**
      * Removes a reasoning model's deliberation, so only the answer is parsed.
      *
-     * <p>This matters on the deployment shipped by default. {@code claude.model} is {@code qwen3:4b},
-     * a hybrid reasoning model: through Ollama it puts its whole train of thought in the content,
-     * inside {@code <think>} tags, and only then the JSON. {@link #extractJsonPayload} looks for the
+     * <p>Found on {@code qwen3:4b}, which this application shipped as its default model for
+     * several releases: a hybrid reasoning model, which through Ollama puts its whole train of
+     * thought in the content, inside {@code <think>} tags, and only then the JSON. The default has
+     * since moved to a hosted gateway, and that widens the case rather than retiring it — a
+     * reasoning model is now one slug away on OpenRouter, and several of the models people reach
+     * for there behave exactly this way. {@link #extractJsonPayload} looks for the
      * <em>first</em> {@code &#123;} in the text — and a model reasoning about the JSON it is about to
      * write quotes fragments of that JSON while doing so, so the first brace very often sits inside
      * the trace. The balanced scan then returns a piece of the model's deliberation, and a run that

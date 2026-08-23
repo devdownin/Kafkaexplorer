@@ -59,7 +59,7 @@ These are generated, not photographed: `docs/screenshots/` drives the compiled S
 - 🕸️ **Lineage & tracing** — an interactive graph of topics → tables → live jobs, resolved by Flink's own parser; plus cross-topic message tracing by key, header, JSONPath or XPath, which streams its hops as it finds them, says exactly what it scanned, resumes where a time budget stopped it, and compares two keys side by side.
 - 🗺️ **A data model you did not have to draw** — pick a set of topics and read them as tables, with the relations between them deduced from key-column names. Kafka has no foreign keys, so every edge is a claim: it carries a confidence grade, states its evidence in plain words, and opens as a ready `JOIN` — one relation or a whole subgraph.
 - 🩺 **One-click cluster audit** — poison messages, duplicates, flow drop-offs and latency, computed across your whole cluster in the background.
-- 🤖 **AI-powered process mining** — reconstruct business flows as flowcharts and hunt anomalies with Claude, any local LLM (Ollama…), or a private [SpectraLLM](https://github.com/devdownin/SpectraLLM).
+- 🤖 **AI-powered process mining** — reconstruct business flows as flowcharts and hunt anomalies with OpenRouter (the default: one key, most hosted vendors), Claude, any local LLM (Ollama…), or a private [SpectraLLM](https://github.com/devdownin/SpectraLLM).
 - 🔭 **Kafka 4 native** — KRaft controller quorum, KIP-848 consumer groups, share groups (KIP-932) and feature versions, visible in the UI and exported to Prometheus.
 - 🎁 **A batteries-included sandbox** — 76 demo topics seeded automatically, from a 6-step order pipeline to a 60-topic supply chain, all keyed and header-stamped: an order to trace across partitions, a header-only correlation to follow, a real time series to window, duplicates and poison records for the audit to find.
 
@@ -117,7 +117,9 @@ Every feature in detail: **[docs/FEATURES.md](docs/FEATURES.md)** · Ready-to-ru
 
 ## 🤖 Bring your own AI
 
-Process Mining works with the LLM you already have — **Anthropic Claude**, anything speaking the OpenAI API (**Ollama**, vLLM, LM Studio…), or a fully private, RAG-enabled **SpectraLLM** where no byte leaves your network. Provider, model and connectivity test are all configurable live from the UI.
+Process Mining works with the LLM you already have — **OpenRouter** (the default: one key in front of most hosted vendors, so `OPENROUTER_API_KEY=sk-or-v1-…` is the whole setup), **Anthropic Claude**, anything speaking the OpenAI API (**Ollama**, vLLM, LM Studio…), or a fully private, RAG-enabled **SpectraLLM**. Provider, model and connectivity test are all configurable live from the UI.
+
+The default is a *hosted* endpoint, so the message digests it builds leave your machine. Ollama and SpectraLLM keep every byte on your own network, and the Settings page says which of the two you are on — read off the address actually configured, not off the provider's name.
 
 → **[LLM provider guide](docs/LLM-PROVIDERS.md)**
 

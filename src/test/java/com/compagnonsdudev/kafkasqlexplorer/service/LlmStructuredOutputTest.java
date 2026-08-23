@@ -34,6 +34,7 @@ class LlmStructuredOutputTest {
 
     private HttpServer server;
     private final List<String> requestBodies = new ArrayList<>();
+    private final List<Map<String, List<String>>> requestHeaders = new ArrayList<>();
 
     @AfterEach
     void tearDown() {
@@ -47,6 +48,7 @@ class LlmStructuredOutputTest {
         AtomicInteger call = new AtomicInteger();
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/v1/chat/completions", exchange -> {
+            requestHeaders.add(Map.copyOf(exchange.getRequestHeaders()));
             requestBodies.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             StubResponse stub = script.get(Math.min(call.getAndIncrement(), script.size() - 1));
             byte[] body = stub.body().getBytes(StandardCharsets.UTF_8);
@@ -70,6 +72,12 @@ class LlmStructuredOutputTest {
     private static String okBody() {
         return "{\"choices\":[{\"message\":{\"content\":\"{}\"}}],"
             + "\"usage\":{\"prompt_tokens\":1200,\"completion_tokens\":340}}";
+    }
+
+    /** OpenRouter prices every response; this is the shape it answers with. */
+    private static String pricedBody() {
+        return "{\"choices\":[{\"message\":{\"content\":\"{}\"}}],"
+            + "\"usage\":{\"prompt_tokens\":1200,\"completion_tokens\":340,\"cost\":0.00042}}";
     }
 
     private static LlmOutputSchema schema() {
@@ -229,6 +237,258 @@ class LlmStructuredOutputTest {
 
         config.setStructuredOutput(ClaudeConfig.StructuredOutput.ON);
         assertTrue(config.isStructuredOutputEnabled(), "ON is how an operator opts a known gateway in");
+    }
+
+    /**
+     * OpenRouter is in the AUTO set, and it is the one provider whose schema support is a property
+     * of the <em>model</em> — one base URL and one key route to hundreds of them, only some of
+     * which implement {@code response_format}.
+     */
+    @Test
+    void autoConstrainsOnOpenRouter() throws Exception {
+        ClaudeConfig config = startServer(List.of(new StubResponse(200, okBody())));
+        config.setProvider(ClaudeConfig.Provider.OPENROUTER);
+        config.setModel("openai/gpt-4o-mini");
+
+        assertTrue(config.isStructuredOutputEnabled());
+        new OpenAiCompatibleLlmClient(config).generateWithMeta("SYS", "USR", schema());
+
+        assertTrue(requestBodies.get(0).contains("response_format"));
+    }
+
+    /**
+     * The precondition for the line above: a model that cannot be constrained must cost one extra
+     * request for <em>itself</em>, not disable constrained decoding for every model chosen
+     * afterwards. The latch used to be one flag per client, and a client outlives a model change —
+     * {@link LlmClientProvider} fingerprints provider, base URL and key, and the model is in none
+     * of them, so on a routing gateway one schema-less model silently degraded all the others.
+     */
+    @Test
+    void aModelThatRefusesTheSchemaDoesNotDisableItForTheNextOne() throws Exception {
+        ClaudeConfig config = startServer(List.of(
+            new StubResponse(400, "{\"error\":{\"message\":\"response_format is not supported\"}}"),
+            new StubResponse(200, okBody())));
+        config.setProvider(ClaudeConfig.Provider.OPENROUTER);
+        config.setModel("some-vendor/no-schemas-here");
+
+        OpenAiCompatibleLlmClient client = new OpenAiCompatibleLlmClient(config);
+        client.generateWithMeta("SYS", "USR", schema());
+        assertEquals(2, requestBodies.size());
+        assertFalse(requestBodies.get(1).contains("response_format"), "the retry drops the field");
+
+        // Same model again: remembered, so no second probe.
+        client.generateWithMeta("SYS", "USR", schema());
+        assertFalse(requestBodies.get(2).contains("response_format"));
+
+        // A different model on the same gateway, through the same client: constrained again.
+        config.setModel("openai/gpt-4o-mini");
+        client.generateWithMeta("SYS", "USR", schema());
+        assertTrue(requestBodies.get(3).contains("response_format"),
+            "one model's refusal says nothing about another model's capabilities");
+    }
+
+    /**
+     * OpenRouter's attribution headers name this project and nothing about the deployment. They go
+     * only to OpenRouter: sending an unsolicited {@code X-Title} to somebody's corporate gateway is
+     * not this application's business.
+     */
+    @Test
+    void sendsTheKeyButNotTheAttributionHeadersToAnAddressThatIsNotOpenRouters() throws Exception {
+        ClaudeConfig config = startServer(List.of(new StubResponse(200, okBody())));
+        config.setProvider(ClaudeConfig.Provider.OPENROUTER);
+        config.setApiKey("sk-or-v1-test");
+
+        new OpenAiCompatibleLlmClient(config).generateWithMeta("SYS", "USR", null);
+
+        Map<String, List<String>> sent = requestHeaders.get(0);
+        assertEquals(List.of("Bearer sk-or-v1-test"), sent.get("Authorization"));
+        // Header names come back capitalised by com.sun.net.httpserver.
+        assertNull(sent.get("X-title"), "naming this project at somebody's own gateway is not our business");
+        assertNull(sent.get("Http-referer"));
+    }
+
+    /** The address decides the courtesy headers; the shipped default is the real gateway. */
+    @Test
+    void recognisesOpenRoutersOwnAddressForAttribution() {
+        ClaudeConfig config = new ClaudeConfig();
+        config.setProvider(ClaudeConfig.Provider.OPENROUTER);
+        config.setBaseUrl("");
+        assertTrue(config.isOpenRouterEndpoint());
+
+        config.setBaseUrl("https://gateway.corp.example/openrouter/v1");
+        assertFalse(config.isOpenRouterEndpoint());
+
+        config.setProvider(ClaudeConfig.Provider.OPENAI_COMPATIBLE);
+        config.setBaseUrl("https://openrouter.ai/api/v1");
+        assertFalse(config.isOpenRouterEndpoint(),
+            "the address alone is not enough — the provider chooses the dialect");
+    }
+
+    /**
+     * The money is on the wire and used to be dropped. It is read, never derived — no price table
+     * lives in this application, so a figure shown is one the provider stood behind.
+     */
+    @Test
+    void readsBackWhatTheCallCostInMoney() throws Exception {
+        ClaudeConfig config = startServer(List.of(new StubResponse(200, pricedBody())));
+        config.setProvider(ClaudeConfig.Provider.OPENROUTER);
+
+        LlmUsage usage = new OpenAiCompatibleLlmClient(config)
+            .generateWithMeta("SYS", "USR", null).usage();
+
+        assertEquals(0.00042, usage.costUsd(), 1e-9);
+        assertTrue(usage.summary().contains("$0.000420"), usage.summary());
+    }
+
+    /**
+     * A gateway that does not price its answers — the OpenAI API, Ollama — leaves the cost unknown.
+     * Zero would say the call was free, on a page whose whole point is what a configuration costs.
+     */
+    @Test
+    void reportsAnUnknownCostRatherThanAFreeOne() throws Exception {
+        ClaudeConfig config = startServer(List.of(new StubResponse(200, okBody())));
+
+        LlmUsage usage = new OpenAiCompatibleLlmClient(config)
+            .generateWithMeta("SYS", "USR", null).usage();
+
+        assertNull(usage.costUsd(), "an unpriced call is not a free one");
+        assertFalse(usage.summary().contains("$"), usage.summary());
+    }
+
+    /**
+     * The privacy control: OpenRouter can enforce at the routing layer what the Settings banner can
+     * otherwise only warn about.
+     */
+    @Test
+    void asksOpenRouterToKeepMessagesAwayFromProvidersThatRetainThem() throws Exception {
+        ClaudeConfig config = startServer(List.of(new StubResponse(200, okBody())));
+        config.setProvider(ClaudeConfig.Provider.OPENROUTER);
+
+        new OpenAiCompatibleLlmClient(config).generateWithMeta("SYS", "USR", null);
+
+        JsonNode sent = new ObjectMapper().readTree(requestBodies.get(0));
+        assertEquals("deny", sent.path("provider").path("data_collection").asText());
+        assertTrue(sent.path("provider").path("require_parameters").isMissingNode(),
+            "require_parameters is opt-in: it makes a schema-less model unroutable rather than "
+                + "degrading, which the per-model latch cannot rescue");
+        assertTrue(config.isDataRetentionRefused());
+    }
+
+    @Test
+    void sendsNoRoutingPolicyToAGatewayThatIsNotOpenRouter() throws Exception {
+        ClaudeConfig config = startServer(List.of(new StubResponse(200, okBody())));
+        config.setProvider(ClaudeConfig.Provider.OPENAI_COMPATIBLE);
+
+        new OpenAiCompatibleLlmClient(config).generateWithMeta("SYS", "USR", null);
+
+        JsonNode sent = new ObjectMapper().readTree(requestBodies.get(0));
+        assertTrue(sent.path("provider").isMissingNode(),
+            "an arbitrary gateway has no notion of OpenRouter's routing object");
+        assertFalse(config.isDataRetentionRefused(),
+            "the claim is only true where it can be enforced");
+    }
+
+    @Test
+    void routingCanBeWidenedAndTightenedFromTheConfiguration() throws Exception {
+        ClaudeConfig config = startServer(List.of(new StubResponse(200, okBody())));
+        config.setProvider(ClaudeConfig.Provider.OPENROUTER);
+        config.setOpenrouterDataCollection(ClaudeConfig.DataCollection.ALLOW);
+        config.setOpenrouterRequireParameters(true);
+
+        new OpenAiCompatibleLlmClient(config).generateWithMeta("SYS", "USR", null);
+
+        JsonNode routing = new ObjectMapper().readTree(requestBodies.get(0)).path("provider");
+        assertTrue(routing.path("data_collection").isMissingNode());
+        assertTrue(routing.path("require_parameters").asBoolean());
+    }
+
+    /**
+     * A 402 is an account out of credit. Telling its owner to check their base URL, model and API
+     * key — which are all correct — is worse than saying nothing.
+     */
+    @Test
+    void namesTheRealRemedyOnAMeteredGatewaysErrors() throws Exception {
+        ClaudeConfig config = startServer(List.of(
+            new StubResponse(402, "{\"error\":{\"message\":\"Insufficient credits\"}}")));
+        config.setProvider(ClaudeConfig.Provider.OPENROUTER);
+
+        RuntimeException e = assertThrows(RuntimeException.class,
+            () -> new OpenAiCompatibleLlmClient(config).generateWithMeta("SYS", "USR", null));
+
+        assertTrue(e.getMessage().contains("out of credit"), e.getMessage());
+        assertTrue(e.getMessage().contains("Insufficient credits"),
+            "the provider's own words are the half that says which cap");
+        assertFalse(e.getMessage().contains("check base URL, model and API key"), e.getMessage());
+    }
+
+    /**
+     * Restricting routing makes "no provider satisfies your policy" arrive as the same 404 a
+     * mistyped slug does. Unqualified, an operator checks a model name that is already correct.
+     */
+    @Test
+    void aRoutingRefusalIsNotReportedAsAnUnknownModel() throws Exception {
+        ClaudeConfig config = startServer(List.of(
+            new StubResponse(404, "{\"error\":{\"message\":\"No endpoints found\"}}")));
+        config.setProvider(ClaudeConfig.Provider.OPENROUTER);
+
+        RuntimeException e = assertThrows(RuntimeException.class,
+            () -> new OpenAiCompatibleLlmClient(config).generateWithMeta("SYS", "USR", null));
+
+        assertTrue(e.getMessage().contains("routing is restricted"), e.getMessage());
+        assertTrue(e.getMessage().contains("claude.openrouter-data-collection"), e.getMessage());
+    }
+
+    /**
+     * The provider enum says which dialect to speak; it does not say who answers. Sending
+     * OpenRouter's routing object and attribution headers to a corporate proxy is both none of this
+     * application's business and one more way to be answered 400 — which the schema latch would
+     * then blame on the schema.
+     */
+    /**
+     * The asymmetry, pinned: behind a proxy the privacy restriction still travels while the
+     * courtesy header does not. Dropping {@code data_collection} because the hostname is
+     * unfamiliar would silently remove a guarantee the operator configured — the exact failure
+     * that setting exists to prevent — whereas a withheld header costs nothing.
+     */
+    @Test
+    void keepsThePrivacyRestrictionBehindAProxyWhileWithholdingTheCourtesyHeader() throws Exception {
+        ClaudeConfig config = startServer(List.of(new StubResponse(200, okBody())));
+        // Provider OPENROUTER, base URL the local stub — as a corporate egress proxy would be.
+        config.setProvider(ClaudeConfig.Provider.OPENROUTER);
+
+        new OpenAiCompatibleLlmClient(config).generateWithMeta("SYS", "USR", null);
+
+        assertEquals("deny", new ObjectMapper().readTree(requestBodies.get(0))
+            .path("provider").path("data_collection").asText());
+        assertNull(requestHeaders.get(0).get("X-title"));
+        assertFalse(config.isOpenRouterEndpoint());
+        assertTrue(config.isDataRetentionRefused(),
+            "the UI states the restriction because the request really carried it");
+    }
+
+    /** Cache accounting is a measurement, so a miss and an unreported figure must not look alike. */
+    @Test
+    void readsBackHowMuchOfThePromptWasCached() throws Exception {
+        ClaudeConfig config = startServer(List.of(new StubResponse(200,
+            "{\"choices\":[{\"message\":{\"content\":\"{}\"}}],"
+                + "\"usage\":{\"prompt_tokens\":1200,\"completion_tokens\":340,"
+                + "\"prompt_tokens_details\":{\"cached_tokens\":900}}}")));
+
+        LlmUsage usage = new OpenAiCompatibleLlmClient(config)
+            .generateWithMeta("SYS", "USR", null).usage();
+
+        assertEquals(900L, usage.cachedInputTokens());
+    }
+
+    @Test
+    void leavesCacheAccountingUnknownWhenTheProviderCountsNone() throws Exception {
+        ClaudeConfig config = startServer(List.of(new StubResponse(200, okBody())));
+
+        LlmUsage usage = new OpenAiCompatibleLlmClient(config)
+            .generateWithMeta("SYS", "USR", null).usage();
+
+        assertNull(usage.cachedInputTokens(),
+            "zero would say the cache was consulted and missed, which nobody measured");
     }
 
     @Test

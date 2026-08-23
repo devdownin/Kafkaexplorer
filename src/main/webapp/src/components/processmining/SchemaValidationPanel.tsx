@@ -3,6 +3,7 @@
 
 import React, { useState } from 'react';
 import { cleanCorrections, mappingProblems, pathProblem } from './schemaMapping';
+import type { LlmUsage } from '../../api/types';
 
 export interface FieldInfo {
   path: string;
@@ -41,6 +42,12 @@ export interface FieldProfileResult {
   topics: TopicProfile[];
   unificationProposal: SchemaUnificationProposal | null;
   warnings: string[];
+  /**
+   * Ce que l'appel de profilage a coûté. Le pipeline fait deux appels au modèle et seul le second
+   * était compté : le chiffre affiché sous-estimait donc la facture de chaque exécution. Absent
+   * d'une réponse écrite par une version antérieure, d'où l'optionnalité.
+   */
+  usage?: LlmUsage | null;
 }
 
 interface SchemaValidationPanelProps {
@@ -221,8 +228,9 @@ const SchemaValidationPanel: React.FC<SchemaValidationPanelProps> = ({
     <form className="space-y-6" onSubmit={handleValidate}>
       <div>
         <h2 className="text-lg font-semibold text-on-surface mb-1">Validate Schema Mapping</h2>
-        {/* Named "Claude" whatever the runtime, on a page whose banner two blocks up says the
-            provider is Ollama by default. The proposal comes from whichever model is configured. */}
+        {/* Named "Claude" whatever the runtime, on a page whose banner two blocks up names the
+            provider actually configured — which by default is not Anthropic at all. The proposal
+            comes from whichever model is configured. */}
         <p className="text-sm text-on-surface-variant">
           Review and correct the field mappings proposed by {providerLabel ?? 'the configured model'}.
           These mappings are what correlates messages across topics — a path left blank means that
