@@ -139,6 +139,10 @@ A one-command stack with Ollama pre-wired is available:
 docker compose -f docker-compose-llm.yml up -d
 ```
 
+Going further on this option — which engine, which model at which quantisation, how small models
+behave on constrained JSON, and how to tell that a prompt was silently truncated — is covered in
+the [open-source LLM guide](LLM_OPEN_SOURCE_GUIDE.md) *(en français)*.
+
 ### The prompt has to fit the model's window
 
 This is the one setting a local deployment gets wrong silently, and the reason it is a *local*

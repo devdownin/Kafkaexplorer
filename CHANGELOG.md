@@ -13,6 +13,18 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Four documents still described the LLM setup as it was before OpenRouter became the default.**
+  The provider guide, the Docker Hub page and both READMEs were updated with the change itself;
+  these were not, and three of them are published. `docs/FEATURES.md` listed the providers without
+  OpenRouter; `docs/architecture.md` did the same in its context diagram *and* still implied the
+  boundary it draws is only crossed by choice, which stopped being true the day the default became
+  a hosted gateway; the website (`docs/index.html`) advertised "Claude, a local Ollama, or
+  SpectraLLM"; and `docs/LLM_OPEN_SOURCE_GUIDE.md` — reachable from the website, so a page a
+  visitor lands on — still presented the local setup as the norm rather than as the option that
+  keeps everything on your machine. Its note on constrained output also predated the per-model
+  latch. The website's "LLM Guide" card now opens `LLM-PROVIDERS.md`, the maintained entry point,
+  which links the open-source guide as its deeper dive: one door instead of two that drift.
+
 - **Three pages claimed the published-images stack needed no checkout.** `docs/DOCKERHUB.md`
   was corrected when the entrypoints moved into `scripts/spectra-hub/`; `README.md`,
   `README.fr.md` and `docs/LLM-PROVIDERS.md` still said "no checkout" flatly, which was never
