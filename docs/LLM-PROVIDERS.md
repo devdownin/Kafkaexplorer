@@ -2,33 +2,47 @@
 
 Kafka SQL Explorer's AI-assisted auditing works with cloud **and** fully local LLMs. Pick the option that matches your constraints — everything is also editable live from the **Config** page, which includes a **Test LLM** button to verify connectivity.
 
-## Option A: Anthropic Claude (Default)
-Set your API key as an environment variable:
-```bash
-export ANTHROPIC_API_KEY='your-api-key'
-```
+**The default is Option A, OpenRouter**, which is a *hosted* endpoint: the message digests Process
+Mining builds leave your machine. If that is not acceptable, Option C and Option D keep everything
+on your own network, and the Config page states which of the two you are on — read off the
+resolved address, not off the provider's name, so an Ollama pointed at another box counts as
+remote.
 
-## Option B: OpenRouter (one key, many hosted models)
+## Option A: OpenRouter (default — one key, many hosted models)
 
 [OpenRouter](https://openrouter.ai) is a gateway in front of most hosted vendors, which makes it
 the cheapest way to *try* several models against your own topics without opening an account with
-each of them.
+each of them. It is what this application ships pointed at, so a key and, if you want something
+other than the default model, one slug are the whole setup.
+
+The whole setup is one variable, because everything else is already the default:
+
+```bash
+export OPENROUTER_API_KEY='sk-or-v1-…'
+```
+
+```bash
+docker run -p 127.0.0.1:8080:8080 \
+  -e KAFKA_BOOTSTRAP_SERVERS=host.docker.internal:9092 \
+  -e OPENROUTER_API_KEY=sk-or-v1-… \
+  compagnonsdudev/kafkaexplorer:latest
+```
+
+The shipped values, for reference — nothing here needs to be written out unless you are changing it:
 
 ```yaml
 claude:
   provider: OPENROUTER
-  api-key: ${ANTHROPIC_API_KEY:}   # an OpenRouter key, sk-or-v1-… — the variable name is historical
-  base-url: https://openrouter.ai/api/v1   # the default; you can leave it blank
+  api-key: ${OPENROUTER_API_KEY:${ANTHROPIC_API_KEY:}}
+  base-url: https://openrouter.ai/api/v1
   model: openai/gpt-4o-mini        # OpenRouter names models vendor/model
 ```
 
-Or entirely from the environment, which is what a container wants:
-
-```bash
-CLAUDE_PROVIDER=OPENROUTER
-ANTHROPIC_API_KEY=sk-or-v1-…
-CLAUDE_MODEL=openai/gpt-4o-mini
-```
+`ANTHROPIC_API_KEY` is read when `OPENROUTER_API_KEY` is unset — it is the historical name of this
+one setting, not a second key — and `CLAUDE_API_KEY` outranks both, which is the unambiguous form
+on a machine that exports several. Pick any slug from
+[openrouter.ai/models](https://openrouter.ai/models); the default is cheap, current and supports
+schemas, which makes it a starting point rather than a recommendation.
 
 Three things worth knowing before you point it at a production cluster:
 
@@ -49,7 +63,22 @@ Requests carry OpenRouter's two attribution headers (`HTTP-Referer`, `X-Title`) 
 project. They are sent to OpenRouter only, and they say nothing about your deployment, your
 cluster or your messages.
 
+## Option B: Anthropic Claude
+Set the provider and your API key:
+```bash
+CLAUDE_PROVIDER=ANTHROPIC
+ANTHROPIC_API_KEY=sk-ant-…
+CLAUDE_MODEL=claude-3-5-sonnet-20241022
+```
+The base URL fills itself in (`https://api.anthropic.com`) when you switch provider and have not
+set one.
+
 ## Option C: Open Source / Local (Ollama, vLLM, LM Studio)
+
+This is the option that keeps every byte on your machine, and the one to pick if the hosted
+default is not acceptable. Note the two settings that have to move together — see the window
+section just below, which is the trap this option carries.
+
 1. Run your model (e.g., `ollama run qwen2.5-coder:7b`).
 2. Update `src/main/resources/application.yml`:
 ```yaml
@@ -66,8 +95,10 @@ docker compose -f docker-compose-llm.yml up -d
 
 ### The prompt has to fit the model's window
 
-This is the one setting a local deployment gets wrong silently. Ollama gives a model **4 096
-tokens** unless the machine has the VRAM for more; the app's OpenAI-compatible request carries
+This is the one setting a local deployment gets wrong silently, and the reason it is a *local*
+problem is that the shipped budget is sized for the shipped provider: a hosted model has room for
+it, so moving to Option C is exactly the moment the two numbers stop agreeing. Ollama gives a model
+**4 096 tokens** unless the machine has the VRAM for more; the app's OpenAI-compatible request carries
 `model`, `messages`, `max_tokens`, `temperature` and `stream` — never `num_ctx`, which that
 endpoint would not read from the body anyway; and `process-mining.prompt-char-budget` is 120 000
 characters, about 30 000 tokens. Ollama does not refuse the excess: it drops the oldest messages

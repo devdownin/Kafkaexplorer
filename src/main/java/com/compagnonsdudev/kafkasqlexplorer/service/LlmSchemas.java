@@ -13,9 +13,10 @@ import java.util.Map;
  * and {@link LlmJsonSupport} existed to dig the object back out of whatever prose or ``` fence the
  * model wrapped it in. When that failed the user got a parse error. Asking is not constraining: a
  * schema sent with the request makes the provider's decoder unable to emit anything else, which
- * removes the failure instead of reporting it better. It matters most on exactly the deployment
- * this app ships by default — a 4-billion-parameter local model, which is far likelier than a
- * frontier one to editorialise around the JSON it was asked for.
+ * removes the failure instead of reporting it better. It matters most on the small models this
+ * application is routinely pointed at — a 4-billion-parameter local one, or whichever cheap slug
+ * an operator picks on OpenRouter — which are far likelier than a frontier model to editorialise
+ * around the JSON they were asked for.
  *
  * <p>The schemas stay deliberately shallow. Constrained decoding narrows the model's choices at
  * every token, so an over-specified schema (enums on every field, minimums, nested requirements)

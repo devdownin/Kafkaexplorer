@@ -87,20 +87,27 @@ public class SettingsStore {
      *                 be a plain {@code PropertySource} with no translation table of its own, and
      *                 therefore what stops the two halves from drifting apart
      * @param secret   whether the value is a credential, for {@code explorer.settings-store-secrets}
-     * @param envAlias the environment variable that also sets this property when it is bound
-     *                 through a placeholder, or {@code null}. Only {@code claude.api-key} has one:
-     *                 {@code application.yml} binds it as {@code ${ANTHROPIC_API_KEY:}}, so the
-     *                 relaxed name {@code CLAUDE_API_KEY} is not what a deployment actually sets,
-     *                 and without this a stored key would silently outrank the one in the
-     *                 environment.
+     * @param envAliases the environment variables that also set this property when it is bound
+     *                 through a placeholder, or empty. Only {@code claude.api-key} has any:
+     *                 {@code application.yml} binds it as
+     *                 {@code ${OPENROUTER_API_KEY:${ANTHROPIC_API_KEY:}}}, so the relaxed name
+     *                 {@code CLAUDE_API_KEY} is not the only name a deployment actually sets, and
+     *                 without this a stored key would silently outrank the one in the environment.
+     *                 A list rather than one name since the default provider became OpenRouter: a
+     *                 key set under the variable that provider's own documentation names has to
+     *                 count as "the environment named this", exactly as the historical one does.
      */
-    public record Field(String apiField, String property, boolean secret, String envAlias) {
+    public record Field(String apiField, String property, boolean secret, List<String> envAliases) {
         Field(String apiField, String property) {
-            this(apiField, property, false, null);
+            this(apiField, property, false, List.of());
         }
 
         Field(String apiField, String property, boolean secret) {
-            this(apiField, property, secret, null);
+            this(apiField, property, secret, List.of());
+        }
+
+        Field(String apiField, String property, boolean secret, String... envAliases) {
+            this(apiField, property, secret, List.of(envAliases));
         }
     }
 
@@ -125,7 +132,7 @@ public class SettingsStore {
         new Field("confluentKey", "kafka.confluent-key"),
         new Field("confluentSecret", "kafka.confluent-secret", true),
         new Field("llmProvider", "claude.provider"),
-        new Field("llmApiKey", "claude.api-key", true, "ANTHROPIC_API_KEY"),
+        new Field("llmApiKey", "claude.api-key", true, "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY"),
         new Field("llmBaseUrl", "claude.base-url"),
         new Field("llmModel", "claude.model"),
         new Field("llmUseRag", "claude.use-rag"),

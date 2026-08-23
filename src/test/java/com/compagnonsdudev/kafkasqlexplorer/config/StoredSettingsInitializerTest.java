@@ -145,6 +145,25 @@ class StoredSettingsInitializerTest {
             "the YAML placeholder resolves the environment variable itself");
     }
 
+    /**
+     * Same rule, second name. Now that OpenRouter is the default provider, the variable an
+     * operator actually exports is the one OpenRouter's own documentation names — and a key set
+     * there being outranked by a stored one would be the identical defect, on the identical field,
+     * arrived at through the identical single-name assumption.
+     */
+    @Test
+    void theOpenRouterKeyEnvironmentVariableIsRecognisedThroughItsAliasToo() throws IOException {
+        Path path = tempDir.resolve("settings.json");
+        store(path, "claude.api-key", "sk-or-from-store");
+        StandardEnvironment environment = environmentWith(path,
+            Map.of("OPENROUTER_API_KEY", "sk-or-v1-from-env"));
+
+        new StoredSettingsInitializer().apply(environment);
+
+        assertNull(environment.getPropertySources().get("storedSettings"),
+            "the environment named the key, so the stored one must not be restored over it");
+    }
+
     // ── Not being restored ────────────────────────────────────────────────────
 
     @Test

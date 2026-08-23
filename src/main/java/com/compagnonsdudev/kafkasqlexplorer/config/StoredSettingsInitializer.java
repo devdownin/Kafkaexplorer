@@ -133,8 +133,8 @@ public class StoredSettingsInitializer implements ApplicationContextInitializer<
      * <p>Only the three sources that carry a deliberate act by whoever started the process are
      * consulted. {@code SystemEnvironmentPropertySource} does the relaxed-name mapping itself, so
      * {@code kafka.bootstrap-servers} finds {@code KAFKA_BOOTSTRAP_SERVERS} without this having to
-     * know the rule. The {@link SettingsStore.Field#envAlias() alias} covers the one property that
-     * is bound through a placeholder and therefore answers to a name the mapping cannot derive.
+     * know the rule. The {@link SettingsStore.Field#envAliases() aliases} cover the one property
+     * that is bound through a placeholder and therefore answers to names the mapping cannot derive.
      */
     private boolean namedByEnvironment(ConfigurableEnvironment environment, SettingsStore.Field field) {
         for (String sourceName : List.of(
@@ -144,7 +144,9 @@ public class StoredSettingsInitializer implements ApplicationContextInitializer<
             PropertySource<?> source = environment.getPropertySources().get(sourceName);
             if (source == null) continue;
             if (source.containsProperty(field.property())) return true;
-            if (field.envAlias() != null && source.containsProperty(field.envAlias())) return true;
+            for (String alias : field.envAliases()) {
+                if (source.containsProperty(alias)) return true;
+            }
         }
         return false;
     }

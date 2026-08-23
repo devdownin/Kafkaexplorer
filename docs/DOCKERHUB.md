@@ -133,7 +133,7 @@ and the compose file explains each choice it makes.
 - 📉 **Consumer lag that grades itself** — who reads a topic and how far behind, with `stalled` (nothing assigned), `partial` (never committed on some partitions) and `ahead` called out rather than folded into one number.
 - ⏱️ **Backlog in time, not just in records** — the same 4 000 messages are four seconds of traffic on one topic and four days on another. Ask any group how long its oldest unread message has been waiting, from the topic page or as a scheduled metric; a partition that could not be read says so instead of reporting zero.
 - 💡 **KPIs proposed from what your cluster was observed doing** — the Metrics page derives them from your audit, your traces, your running Flink jobs and your Process Mining mapping. Every card names the measurement it rests on and where its thresholds come from; nothing is created until you preview and save it.
-- 🤖 **AI process mining** — reconstruct business flows as flowcharts and hunt anomalies with Claude, any local LLM (Ollama, vLLM, LM Studio…), or a fully private [SpectraLLM](https://github.com/devdownin/SpectraLLM). Nothing leaves your network unless you point it outside.
+- 🤖 **AI process mining** — reconstruct business flows as flowcharts and hunt anomalies with OpenRouter (the default: one key, most hosted vendors), Claude, any local LLM (Ollama, vLLM, LM Studio…), or a fully private [SpectraLLM](https://github.com/devdownin/SpectraLLM). Point it at a local provider and nothing leaves your network; the default is hosted, and the Settings page says which of the two you are on.
 - 🔭 **Kafka 4 native** — KRaft controller quorum, KIP-848 consumer groups, share groups (KIP-932) and feature versions, in the UI and on `/actuator/prometheus`.
 
 Full feature tour: **[docs/FEATURES.md](https://github.com/devdownin/Kafkaexplorer/blob/main/docs/FEATURES.md)**
@@ -252,10 +252,11 @@ re-entered after each restart.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `CLAUDE_PROVIDER` | `OLLAMA` | `ANTHROPIC`, `OPENAI_COMPATIBLE`, `OLLAMA`, `OPENROUTER` or `SPECTRA`. |
-| `CLAUDE_BASE_URL` | `http://localhost:11434/v1` | Endpoint of the local/compatible provider. Blank falls back to the provider's own default — `https://openrouter.ai/api/v1` for `OPENROUTER`. |
-| `CLAUDE_MODEL` | `qwen3:4b` | Model name at that endpoint. `OPENROUTER` names models `vendor/model`, e.g. `openai/gpt-4o-mini`. |
-| `ANTHROPIC_API_KEY` | — | The LLM API key, whatever the provider — the name is historical. Required for `ANTHROPIC` and for `OPENROUTER` (an anonymous OpenRouter request is a 401); ignored by a local Ollama. |
+| `CLAUDE_PROVIDER` | `OPENROUTER` | `ANTHROPIC`, `OPENAI_COMPATIBLE`, `OLLAMA`, `OPENROUTER` or `SPECTRA`. The default is a **hosted** gateway: message digests leave the host. Use `OLLAMA` or `SPECTRA` to keep everything on your own network. |
+| `CLAUDE_BASE_URL` | `https://openrouter.ai/api/v1` | Endpoint of the provider. Blank falls back to the provider's own default — `http://localhost:11434/v1` for `OLLAMA`. |
+| `CLAUDE_MODEL` | `openai/gpt-4o-mini` | Model name at that endpoint. `OPENROUTER` names models `vendor/model` — anything on [its model list](https://openrouter.ai/models). |
+| `OPENROUTER_API_KEY` | — | The OpenRouter key (`sk-or-v1-…`), and with the default provider it is **required**: an anonymous request is a 401. |
+| `ANTHROPIC_API_KEY` | — | The same setting under its historical name, read when `OPENROUTER_API_KEY` is unset. Required for `ANTHROPIC`; ignored by a local Ollama. On a machine that exports several, `CLAUDE_API_KEY` outranks both and is the unambiguous form. |
 | `CLAUDE_USE_RAG` | `false` | `SPECTRA` provider only: also retrieve from SpectraLLM's ingested corpus instead of reasoning solely on the messages inlined in the prompt. |
 | `CLAUDE_COLLECTION` | — | `SPECTRA` + `CLAUDE_USE_RAG` only: which ChromaDB collection to retrieve from. Blank uses SpectraLLM's default. |
 | `PROCESS_MINING_PROMPT_CHAR_BUDGET` | `120000` | Characters of Kafka messages one analysis prompt may carry — about 30 000 tokens. **Lower it, or widen the model's window, when you point this at a small local model.** |
@@ -264,7 +265,9 @@ Leave it alone and every other feature works — Process Mining is the only page
 a model.
 
 **The prompt has to fit the model's window, and nothing here can check that** — the window
-belongs to the endpoint. It bites hardest on the most ordinary local setup: Ollama gives a
+belongs to the endpoint. The shipped default is sized for the shipped provider: a hosted
+OpenRouter model has room for 30 000 tokens. It is when you point this at a **local** model that
+the budget stops fitting, and it does so in silence: Ollama gives a
 model 4 096 tokens unless the machine has the VRAM for more, this image's request carries no
 `num_ctx` (the OpenAI-compatible endpoint would not read one from the body), and the default
 budget above is roughly 30 000 tokens. Ollama does not refuse the excess — it drops the oldest

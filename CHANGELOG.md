@@ -29,6 +29,30 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **OpenRouter is now the default LLM provider**, replacing Ollama at
+  `http://localhost:11434/v1`. That default only ever worked in one situation — a developer
+  running this application outside a container with Ollama installed on the same machine —
+  because inside every image published here `localhost` is the container, where no Ollama runs,
+  so the shipped default answered a connection refused to itself. A default is what the largest
+  number of people meet first, and this one takes a key and nothing else:
+  `OPENROUTER_API_KEY=sk-or-v1-…`. `claude.model` follows to `openai/gpt-4o-mini`, and
+  `claude.base-url` to `https://openrouter.ai/api/v1`.
+
+  **It is a hosted endpoint, so the message digests Process Mining builds now leave the host by
+  default**, and that is stated rather than implied — in `application.yml`, on the Docker Hub
+  page, in both READMEs, in the provider guide and on the Settings banner, which reads it off the
+  resolved address rather than the provider's name. A deployment that must keep everything
+  in-house sets `CLAUDE_PROVIDER=OLLAMA` or `SPECTRA`; `docker-compose-llm.yml` and the SpectraLLM
+  stacks name their provider explicitly and are unaffected. One thing the move fixes in passing:
+  the 120 000-character prompt budget and the shipped provider finally agree, where the budget was
+  previously sized for a hosted API the default was not.
+- **`OPENROUTER_API_KEY` is read, so a key set under the name its own provider documents is not
+  silently ignored.** `claude.api-key` is bound through a placeholder, so `StoredSettingsInitializer`
+  has to be told which environment variables name it — and it knew exactly one,
+  `ANTHROPIC_API_KEY`. With OpenRouter as the default, a key exported under the obvious name would
+  have been outranked by a stored one: the identical defect that single alias was added to fix, on
+  the identical field. The chain is now `${OPENROUTER_API_KEY:${ANTHROPIC_API_KEY:}}`, and
+  `CLAUDE_API_KEY` outranks both — the unambiguous form on a machine that exports several.
 - **A model that refuses a JSON Schema no longer disables constrained decoding for the next
   one.** The "this endpoint does not implement `response_format`" latch was one flag per client,
   and a client outlives a model change — `LlmClientProvider` fingerprints provider, base URL and
@@ -75,9 +99,9 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **OpenRouter as an LLM provider for Process Mining** (`CLAUDE_PROVIDER=OPENROUTER`, or the
-  fifth card on the Settings page). One key in front of most hosted vendors, which is the
-  cheapest way to try several models against your own topics without an account per vendor. It
+- **OpenRouter as an LLM provider for Process Mining** — and, see below, as the *default* one.
+  One key in front of most hosted vendors, which is the cheapest way to try several models
+  against your own topics without an account per vendor. It
   speaks the OpenAI `/chat/completions` API verbatim, so it deliberately has **no client class of
   its own** — what is specific to it lives in the configuration: a default base URL of
   `https://openrouter.ai/api/v1`, and a key that `isApiKeyRequired()` treats as mandatory, since

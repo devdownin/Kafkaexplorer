@@ -254,14 +254,28 @@ management:
       application: kafka-sql-explorer
 
 claude:
-  provider: OLLAMA # ANTHROPIC | OPENAI_COMPATIBLE | OLLAMA | OPENROUTER | SPECTRA
-  # OPENROUTER: one hosted gateway in front of many vendors' models. Set provider: OPENROUTER,
-  # api-key to an OpenRouter key (sk-or-v1-…, and it is required — an anonymous request is a 401),
-  # and model to a slug of the form vendor/model, e.g. openai/gpt-4o-mini. base-url defaults to
-  # https://openrouter.ai/api/v1; it speaks the same /chat/completions API as the entry above.
-  api-key: ${ANTHROPIC_API_KEY:}
-  base-url: http://localhost:11434/v1
-  model: qwen3:4b
+  # ANTHROPIC | OPENAI_COMPATIBLE | OLLAMA | OPENROUTER | SPECTRA
+  #
+  # OPENROUTER is the default: one hosted gateway in front of most vendors' models, so a key and a
+  # model slug are all a deployment needs. It replaced OLLAMA at http://localhost:11434/v1, which
+  # only ever worked for a developer running this application outside a container with Ollama on
+  # the same machine — inside every image published here `localhost` is the container itself, so
+  # the shipped default answered a connection refused to itself.
+  #
+  # What it costs is stated rather than implied: this is a hosted endpoint, so the message digests
+  # Process Mining builds leave the host. Keep everything in-house with provider: OLLAMA (see
+  # docker-compose-llm.yml) or provider: SPECTRA (docker-compose-spectra-hub.yml) — both of those
+  # stacks name their provider explicitly and are unaffected by this default.
+  provider: OPENROUTER
+  # The key for whichever provider is configured — the variable names are historical, and both are
+  # read so that a key set under the name its own provider documents is not silently ignored.
+  # OPENROUTER_API_KEY wins when both are set; CLAUDE_API_KEY (the property's own relaxed name)
+  # outranks either and is the unambiguous form on a machine that has several.
+  api-key: ${OPENROUTER_API_KEY:${ANTHROPIC_API_KEY:}}
+  base-url: https://openrouter.ai/api/v1
+  # OpenRouter names models vendor/model. This one is cheap and supports schemas; change it to
+  # anything on https://openrouter.ai/models.
+  model: openai/gpt-4o-mini
   max-tokens: 4096
   snapshot-window-size: 100
   snapshot-window-timeout-seconds: 30

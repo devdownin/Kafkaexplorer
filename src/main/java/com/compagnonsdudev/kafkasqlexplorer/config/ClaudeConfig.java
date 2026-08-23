@@ -34,10 +34,29 @@ public class ClaudeConfig {
      */
     public enum StructuredOutput { AUTO, ON, OFF }
 
-    private Provider provider = Provider.OLLAMA;
+    /**
+     * The provider a deployment that configures nothing gets.
+     *
+     * <p>{@code OPENROUTER}, and it used to be {@code OLLAMA} pointed at
+     * {@code http://localhost:11434/v1}. That default only ever worked in one situation — a
+     * developer running this application outside a container with Ollama installed on the same
+     * machine — because inside every image published here {@code localhost} is the container, where
+     * no Ollama runs, so the shipped default answered a connection refused to itself. A default is
+     * what the largest number of people meet first, and OpenRouter is reachable from anywhere with
+     * a key and one line of configuration.
+     *
+     * <p>It is a hosted gateway, so what it costs is stated rather than implied: message digests
+     * leave the host, and both the Settings banner and the Process Mining page read that off the
+     * resolved address (see {@link #isLocalDeployment()}) rather than off this constant. A
+     * deployment that must keep everything in-house sets {@code claude.provider} to {@code OLLAMA}
+     * or {@code SPECTRA} — {@code docker-compose-llm.yml} and the SpectraLLM stacks name their
+     * provider explicitly and are untouched by this.
+     */
+    private Provider provider = Provider.OPENROUTER;
     private String apiKey = "";
     private String baseUrl = "";
-    private String model = "qwen3:4b";
+    /** An OpenRouter slug, matching the default provider — cheap, current, and it supports schemas. */
+    private String model = "openai/gpt-4o-mini";
     private int maxTokens = 4096;
     private int snapshotWindowSize = 100;
     private int snapshotWindowTimeoutSeconds = 30;

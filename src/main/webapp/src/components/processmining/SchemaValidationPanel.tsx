@@ -221,8 +221,9 @@ const SchemaValidationPanel: React.FC<SchemaValidationPanelProps> = ({
     <form className="space-y-6" onSubmit={handleValidate}>
       <div>
         <h2 className="text-lg font-semibold text-on-surface mb-1">Validate Schema Mapping</h2>
-        {/* Named "Claude" whatever the runtime, on a page whose banner two blocks up says the
-            provider is Ollama by default. The proposal comes from whichever model is configured. */}
+        {/* Named "Claude" whatever the runtime, on a page whose banner two blocks up names the
+            provider actually configured — which by default is not Anthropic at all. The proposal
+            comes from whichever model is configured. */}
         <p className="text-sm text-on-surface-variant">
           Review and correct the field mappings proposed by {providerLabel ?? 'the configured model'}.
           These mappings are what correlates messages across topics — a path left blank means that

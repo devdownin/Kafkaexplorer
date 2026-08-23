@@ -236,15 +236,8 @@ class ConfigControllerTest {
      */
     @Test
     void submittingTheWholeFormUnchangedTakesOverNothing() throws Exception {
-        String wholeForm = "{"
-            + "\"bootstrapServers\":\"old:9092\","
-            + "\"mode\":\"PLAIN\","
-            + "\"llmProvider\":\"OLLAMA\","
-            + "\"llmModel\":\"qwen3:4b\","
-            + "\"llmMaxTokens\":\"4096\"}";
-
         mockMvc.perform(post("/api/config").contentType(MediaType.APPLICATION_JSON)
-            .content(wholeForm)).andExpect(status().isOk());
+            .content(wholeFormWithModel(claudeConfig.getModel()))).andExpect(status().isOk());
 
         assertTrue(SettingsStore.read(storePath).isEmpty(),
             "nothing was changed, so nothing was taken over from application.yml");
@@ -252,17 +245,28 @@ class ConfigControllerTest {
 
     @Test
     void submittingTheWholeFormWithOneChangeTakesOverOnlyThatOne() throws Exception {
-        String wholeForm = "{"
-            + "\"bootstrapServers\":\"old:9092\","
-            + "\"mode\":\"PLAIN\","
-            + "\"llmProvider\":\"OLLAMA\","
-            + "\"llmModel\":\"qwen3:8b\"}";
-
         mockMvc.perform(post("/api/config").contentType(MediaType.APPLICATION_JSON)
-            .content(wholeForm)).andExpect(status().isOk());
+            .content(wholeFormWithModel("some-vendor/some-other-model"))).andExpect(status().isOk());
 
-        assertEquals(Map.of("claude.model", "qwen3:8b"),
+        assertEquals(Map.of("claude.model", "some-vendor/some-other-model"),
             SettingsStore.read(storePath).values());
+    }
+
+    /**
+     * The form as the page posts it: every field, carrying what is <em>currently in force</em>
+     * except the model. Read off the running configuration rather than written out, because what
+     * these two tests are about is the difference between "carried" and "changed" — spelling the
+     * shipped defaults into the fixture made them fail the day one of those defaults moved, on a
+     * rule that has nothing to say about which provider ships.
+     */
+    private String wholeFormWithModel(String model) {
+        return "{"
+            + "\"bootstrapServers\":\"" + kafkaConfig.getBootstrapServers() + "\","
+            + "\"mode\":\"" + kafkaConfig.getMode() + "\","
+            + "\"llmProvider\":\"" + claudeConfig.getProvider().name() + "\","
+            + "\"llmBaseUrl\":\"" + claudeConfig.getBaseUrl() + "\","
+            + "\"llmModel\":\"" + model + "\","
+            + "\"llmMaxTokens\":\"" + claudeConfig.getMaxTokens() + "\"}";
     }
 
     /** A second save keeps what the first one took over, and adds to it. */

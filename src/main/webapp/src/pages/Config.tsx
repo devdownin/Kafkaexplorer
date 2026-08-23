@@ -149,9 +149,11 @@ const Config: React.FC = () => {
   const [config, setConfig] = useState<ClusterConfig>({
     bootstrapServers: 'localhost:9092',
     mode: 'PLAIN',
-    llmProvider: 'OLLAMA',
-    llmBaseUrl: 'http://localhost:11434/v1',
-    llmModel: 'qwen3:4b',
+    // Miroir des défauts de `application.yml` : ce que le formulaire montre le temps que
+    // `GET /api/config` réponde, jamais un fournisseur que le serveur n'utilise pas.
+    llmProvider: 'OPENROUTER',
+    llmBaseUrl: 'https://openrouter.ai/api/v1',
+    llmModel: 'openai/gpt-4o-mini',
     llmMaxTokens: 4096,
     llmSnapshotWindowSize: 100,
     llmSnapshotWindowTimeoutSeconds: 30,
@@ -686,9 +688,13 @@ const Config: React.FC = () => {
               ? 'border-success/20 bg-success/5 text-success'
               : 'border-outline-variant/60 bg-surface-container-low text-on-surface-variant'
           }`}>
+            {/* Lu sur l'adresse résolue, jamais sur le nom du fournisseur : un Ollama pointé sur
+                une autre machine est distant. Depuis qu'OpenRouter est le défaut, la seconde
+                phrase décrit le cas ordinaire — elle dit donc ce qui part et où aller pour que
+                rien ne parte, sans se lire comme le signalement d'une anomalie. */}
             {config.llmLocalDeployment
               ? 'Local inference detected. Lightweight open-source models can be used for snapshot and live process mining.'
-              : 'Remote inference detected. You can switch to Ollama or another OpenAI-compatible endpoint for local lightweight models.'}
+              : 'Remote inference: the message digests Process Mining builds are sent to this endpoint. Switch to Ollama or SpectraLLM to keep everything on your own network.'}
           </div>
 
           <div className="grid grid-cols-2 gap-4">
