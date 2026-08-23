@@ -745,7 +745,13 @@ jobs:
           done
           # The chat model is the one nothing downloads in this job, so this line is
           # deterministic where llm-embed's would be a race with an 81 MB transfer.
-          docker compose logs --no-color llm-chat | grep -q 'waiting for' \
+          #
+          # Into a file, never piped into `grep -q`: that combination is unsound under
+          # `pipefail` — see the next step, where it reported a pattern it had just found as
+          # absent. Deterministic here only because the log is still short; the defect is in
+          # the shape, not in the size, so it is not written that way anywhere in this job.
+          docker compose logs --no-color llm-chat > "$RUNNER_TEMP/llm-chat.log" 2>&1
+          grep -q 'waiting for' "$RUNNER_TEMP/llm-chat.log" \
             || { echo "::error::llm-chat did not report waiting for its model"; exit 1; }
 
       - name: Serve a tiny model, and prove the whole chain answers
@@ -768,12 +774,26 @@ jobs:
           # the healthcheck belongs to the llama.cpp image and asserting through it would make
           # this step depend on a tool being present in somebody else's image, which is exactly
           # the assumption that put a curl in the fetcher.
+          #
+          # `docker compose logs … | grep -q` is what this was, and it cost a red run on a
+          # stack that was working: `grep -q` exits on its first match and closes the pipe,
+          # `docker compose logs` then dies of SIGPIPE, and `pipefail` reports the pipeline as
+          # failed — with the pattern found. Whether that happens depends on whether the
+          # producer had finished writing, so one iteration answered 0 and the next non-zero:
+          # the loop broke on a match and the identical check right after it announced that
+          # `[llm-chat] serving` had never appeared, while it sat in the log the failure
+          # handler then dumped. The log goes to a file and the file is grepped — no pipe,
+          # nothing to signal — and both the wait and the verdict read it through one
+          # function, so they cannot disagree again.
+          serving() {
+            docker compose logs --no-color llm-chat > "$RUNNER_TEMP/llm-chat.log" 2>&1
+            grep -q '\[llm-chat\] serving' "$RUNNER_TEMP/llm-chat.log"
+          }
           for _ in $(seq 1 60); do
-            docker compose logs --no-color llm-chat | grep -q '\[llm-chat\] serving' && break
+            serving && break
             sleep 5
           done
-          docker compose logs --no-color llm-chat | grep -q '\[llm-chat\] serving' \
-            || { echo "::error::llm-chat never picked up the model"; exit 1; }
+          serving || { echo "::error::llm-chat never picked up the model"; exit 1; }
 
           # The end-to-end call, retried while llama-server finishes loading the weights: the
           # Explorer asks SpectraLLM, SpectraLLM asks llama-server, and the answer comes back.

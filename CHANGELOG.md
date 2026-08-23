@@ -23,6 +23,18 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A `grep -q` at the end of a pipe reported a line it had just found as absent.** The stack
+  smoke test waited for `[llm-chat] serving` with `docker compose logs … | grep -q`, under
+  `set -o pipefail`. `grep -q` exits on its first match and closes the pipe; the producer then
+  dies of SIGPIPE, and `pipefail` reports the whole pipeline as failed — with the pattern
+  found. Whether it happens at all depends on whether the producer had finished writing, so
+  the same command answered 0 on one iteration and 141 on the next: the wait loop broke on a
+  match and the identical check right after it announced that llama-server had never picked up
+  the model, while the line sat in the very log the failure handler went on to dump. The end of
+  the chain — a Process Mining call travelling explorer → spectra-api → llm-chat — was never
+  reached, on a stack where every container was working. The log is read into a file and the
+  file is grepped, so there is no pipe to signal, and the wait and the verdict now go through
+  one function rather than two copies of a pipeline that could disagree.
 - **The stack smoke test asserted three things that come up at three different moments.** It
   waited for the Spectra API to answer and then, in the same breath, required the UI and the
   UI's proxy to answer too — but `docker compose up -d` returns when the containers have
