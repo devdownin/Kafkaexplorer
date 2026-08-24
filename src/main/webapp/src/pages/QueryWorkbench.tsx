@@ -1589,7 +1589,7 @@ const QueryWorkbench: React.FC = () => {
       const ok = await confirm({
         title: 'Replace the editor content?',
         description: <>The window query replaces everything in “{activeTab.name}”. The overwritten
-          SQL stays one undo (⌘Z) away in the editor.</>,
+          SQL stays one undo (⌘Z / Ctrl+Z) away in the editor.</>,
         confirmLabel: 'Replace',
         tone: 'danger',
         icon: 'bolt',
@@ -1599,7 +1599,7 @@ const QueryWorkbench: React.FC = () => {
     const where = replaceSql(generated);
     toast({
       filled: 'Window query written to the editor',
-      replaced: 'Window query replaced the editor content — ⌘Z to undo',
+      replaced: 'Window query replaced the editor content — ⌘Z / Ctrl+Z to undo',
     }[where], 'success');
   }, [sql, activeTab.name, confirm, replaceSql, toast]);
 
