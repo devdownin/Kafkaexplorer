@@ -2,13 +2,13 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.compagnonsdudev.kafkasqlexplorer.web;
 
+import com.compagnonsdudev.kafkasqlexplorer.domain.ApiError;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricLabelPreview;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricPreviewResult;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricSuggestionRequest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricSuggestions;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricTemplateDescriptor;
-import com.compagnonsdudev.kafkasqlexplorer.domain.QueryRequest;
 import com.compagnonsdudev.kafkasqlexplorer.service.DdlGeneratorService;
 import com.compagnonsdudev.kafkasqlexplorer.service.FlinkSqlService;
 import com.compagnonsdudev.kafkasqlexplorer.service.KafkaAdminService;
@@ -85,7 +85,11 @@ public class MetricController {
             metricService.save(metric);
             return ResponseEntity.ok().build();
         } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            // ApiError.of, et non Map.of("error", e.getMessage()) : `getMessage()` est nul sur une
+            // NPE et Map.of refuse un nul, donc ce chemin répondait 500 sans corps exactement
+            // quand l'appelant a besoin d'une raison — le défaut corrigé sur `ddl-preview`,
+            // resté debout ici. La forme sur le fil est la même, le navigateur lit `error`.
+            return ResponseEntity.badRequest().body(ApiError.of(e));
         }
     }
 
@@ -132,31 +136,6 @@ public class MetricController {
                 messageFieldExtractorService.extractLeafFields(message.value())
             ))
             .orElseGet(() -> new MetricLabelPreview(topic, null, null, Map.of()));
-    }
-
-    /** Run SQL immediately and return the first metric_value for preview purposes. */
-    @PostMapping("/preview")
-    public Map<String, Object> preview(@RequestBody Map<String, String> body) {
-        String sql = body.get("sql");
-        if (sql == null || sql.isBlank()) {
-            return Map.of("error", "SQL is required");
-        }
-        try {
-            // Use earliest-offset (bounded scan) to match how scheduled metrics execute.
-            // With latest-offset an aggregate like COUNT(*) sees no backlog and returns
-            // "No rows returned", making the preview misleading for working metrics.
-            var result = flinkSqlService.executeSql(QueryRequest.sql(sql, 10, 5000L, "earliest-offset"));
-            if (result.error() != null) return Map.of("error", result.error());
-            if (result.rows().isEmpty()) return Map.of("error", "No rows returned");
-            Object val = result.rows().get(0).entrySet().stream()
-                .filter(e -> "metric_value".equalsIgnoreCase(e.getKey()))
-                .map(Map.Entry::getValue)
-                .findFirst()
-                .orElse(result.rows().get(0).values().iterator().next());
-            return Map.of("value", val, "rows", result.rows());
-        } catch (Exception e) {
-            return Map.of("error", e.getMessage());
-        }
     }
 
     @PostMapping("/preview-template")

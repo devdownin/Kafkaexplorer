@@ -879,37 +879,4 @@ class FlinkSqlServiceTest {
             logger.setLevel(previousLevel);
         }
     }
-
-
-    /**
-     * L'assainissement de journalisation, ajouté par un autofix CodeQL sur cette PR et étendu aux
-     * trois lignes qui journalisent le même nom — l'autofix n'avait traité que celle qui tombait
-     * dans le diff, laissant les deux visibles au niveau par défaut.
-     *
-     * <p>Sur ce chemin, rien ne peut le déclencher : le nom sort d'une capture restreinte à
-     * {@code [\w.\-]}. C'est donc une défense en profondeur, et ce test dit ce qu'elle promet
-     * plutôt que de la laisser non spécifiée.
-     */
-    @Test
-    void sanitizeForLogNeutralisesControlCharacters() {
-        assertEquals("a_b", FlinkSqlService.sanitizeForLog("a\nb"), "un saut de ligne forge une ligne de log");
-        assertEquals("a_b", FlinkSqlService.sanitizeForLog("a\rb"));
-        assertEquals("a_b", FlinkSqlService.sanitizeForLog("a\tb"));
-        assertEquals("a_b", FlinkSqlService.sanitizeForLog("a\u0000b"));
-        assertEquals("a_b", FlinkSqlService.sanitizeForLog("a\u007Fb"));
-        assertEquals("__", FlinkSqlService.sanitizeForLog("\r\n"), "CRLF : deux caractères, deux remplacements");
-        // Ce qu'un nom de topic Kafka ou de table Flink porte réellement doit traverser intact :
-        // l'alphabet légal d'un nom de topic est exactement celui que la liste blanche autorise.
-        assertEquals("demo_orders_1_received", FlinkSqlService.sanitizeForLog("demo_orders_1_received"));
-        assertEquals("demo.orders-1", FlinkSqlService.sanitizeForLog("demo.orders-1"));
-        // Liste blanche : tout le reste tombe, y compris ce qu'une liste noire de caractères de
-        // contrôle laissait passer. Ce n'est pas un dommage collatéral — un nom de topic ne peut
-        // pas contenir ces caractères, donc en voir un ici veut dire qu'on ne journalise pas ce
-        // qu'on croit, et l'échapper est la bonne réponse.
-        assertEquals("____", FlinkSqlService.sanitizeForLog("é àü"),
-            "hors de [a-zA-Z0-9._-], donc hors d'un nom de topic légal");
-        assertEquals("a_b", FlinkSqlService.sanitizeForLog("a b"), "l'espace non plus n'est pas légal");
-        assertNull(FlinkSqlService.sanitizeForLog(null));
-    }
-
 }

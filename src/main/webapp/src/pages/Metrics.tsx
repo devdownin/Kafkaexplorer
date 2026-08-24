@@ -23,7 +23,7 @@ import { clearDraft, readDraft, writeDraft } from '../draftStore';
 import { copyText } from '../clipboard';
 // La forme vit dans api/types.ts, où check-api-types.py la résout contre le record Java —
 // une interface écrite dans la page est exactement ce qui a divergé sans bruit ailleurs.
-import type { AuditHistory, MetricConfig, MetricSuggestion, MetricSuggestions, MetricTestResponse } from '../api/types';
+import type { AuditHistory, MetricConfig, MetricSuggestion, MetricSuggestions, MetricTestResponse, TableMetadata } from '../api/types';
 import { SuggestionsPanel } from '../components/metrics/SuggestionsPanel';
 import { readFlowChains } from './flowChains';
 import { newerAuditNote, suggestionToDraft } from './metricSuggestions';
@@ -715,11 +715,18 @@ const Metrics: React.FC = () => {
   const confirm = useConfirm();
   const navigate = useNavigate();
   const [metrics, setMetrics]           = useState<MetricConfig[]>([]);
-  const [metadata, setMetadata]         = useState<Record<string, string[]>>({});
+  const [metadata, setMetadata]         = useState<TableMetadata>({});
   // Le catalogue partagé (alimenté par le sondage /api/dashboard de Layout) évite une
   // seconde requête vers le même endpoint et reste rafraîchi toutes les 30 s.
-  const { topics } = useCatalog();
-  const [bootstrapServers, setBootstrapServers] = useState<string>('localhost:9092');
+  const { topics, bootstrapServers: catalogBootstrap } = useCatalog();
+  /*
+   * L'adresse vient du catalogue que `Layout` alimente depuis son sondage de `/api/dashboard`,
+   * et non d'un `GET /api/config` posé au montage pour ce seul champ — une requête de plus, et
+   * une forme de réponse déclarée à la main au point d'appel, c'est-à-dire invisible pour
+   * `check-api-types.py`. `localhost:9092` reste le repli tant que le premier sondage n'a pas
+   * répondu : c'est un gabarit de DDL, pas une affirmation sur le cluster.
+   */
+  const bootstrapServers = catalogBootstrap || 'localhost:9092';
   const [loading, setLoading]           = useState(true);
   /*
    * L'éditeur de métrique est du SQL écrit à la main, parfois long, et il vivait entièrement dans
@@ -814,10 +821,7 @@ const Metrics: React.FC = () => {
     fetchMetrics();
     void fetchSuggestions();
     void fetchAuditHistory();
-    axios.get<Record<string, string[]>>('/api/metrics/metadata').then(r => setMetadata(r.data)).catch(() => { toast('Failed to load table metadata', 'error'); });
-    axios.get<{ bootstrapServers: string }>('/api/config').then(r => {
-      if (r.data.bootstrapServers) setBootstrapServers(r.data.bootstrapServers);
-    }).catch(() => {});
+    axios.get<TableMetadata>('/api/metrics/metadata').then(r => setMetadata(r.data)).catch(() => { toast('Failed to load table metadata', 'error'); });
     // `.catch(() => {})` laissait la liste de gabarits vide sans que rien ne le dise.
     axios.get<MetricTemplateDescriptor[]>('/api/metrics/templates')
       .then(r => setTemplates(r.data))

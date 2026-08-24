@@ -7,6 +7,7 @@ import com.compagnonsdudev.kafkasqlexplorer.config.KafkaConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicMessage;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicSearchRequest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicSearchResponse;
+import com.compagnonsdudev.kafkasqlexplorer.util.LogSafe;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -169,7 +170,7 @@ public class TopicSearchService {
                 nextCursor, warnings);
 
         } catch (Exception e) {
-            log.error("Error searching topic {}: {}", topic, e.getMessage(), e);
+            log.error("Error searching topic {}: {}", LogSafe.name(topic), LogSafe.text(e.getMessage()), e);
             warnings.add("Search failed: " + e.getMessage());
             return new TopicSearchResponse(hits, scanned, matched,
                 System.currentTimeMillis() - startedAt, false, "ERROR", nextCursor, warnings);
@@ -232,7 +233,8 @@ public class TopicSearchService {
             }
             return null;
         } catch (Exception e) {
-            log.error("Error reading {}-{} at offset {}: {}", topic, partition, offset, e.getMessage(), e);
+            log.error("Error reading {}-{} at offset {}: {}",
+                LogSafe.name(topic), partition, offset, LogSafe.text(e.getMessage()), e);
             throw new IllegalStateException("Could not read record: " + e.getMessage(), e);
         }
     }

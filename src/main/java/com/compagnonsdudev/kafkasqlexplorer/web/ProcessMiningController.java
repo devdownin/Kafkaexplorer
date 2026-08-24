@@ -30,6 +30,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import com.compagnonsdudev.kafkasqlexplorer.service.SseEmitterManager;
+import com.compagnonsdudev.kafkasqlexplorer.util.LogSafe;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -171,11 +172,13 @@ public class ProcessMiningController {
                                  @RequestParam(required = false) List<String> auditPromptIds,
                                  @RequestParam(required = false) String customAuditPrompt) {
         String sessionId = UUID.randomUUID().toString();
-        log.info("Starting live session {} for topics: {}", sessionId, topics);
+        log.info("Starting live session {} for topics: {}",
+            LogSafe.name(sessionId), LogSafe.names(topics));
 
         FieldMapping fieldMapping = fieldMappingStore.find(fieldMappingId).orElse(null);
         if (fieldMapping == null) {
-            log.warn("FieldMapping not found for id: {} — proceeding without mapping", fieldMappingId);
+            log.warn("FieldMapping not found for id: {} — proceeding without mapping",
+                LogSafe.name(fieldMappingId));
         }
 
         SseEmitter emitter = sseEmitterManager.create(sessionId);

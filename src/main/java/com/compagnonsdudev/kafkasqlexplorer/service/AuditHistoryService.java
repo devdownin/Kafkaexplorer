@@ -8,6 +8,7 @@ import com.compagnonsdudev.kafkasqlexplorer.config.ExplorerConfig;
 import com.compagnonsdudev.kafkasqlexplorer.config.KafkaConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.AuditHistory;
 import com.compagnonsdudev.kafkasqlexplorer.domain.AuditRunSummary;
+import com.compagnonsdudev.kafkasqlexplorer.util.LogSafe;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -106,7 +107,8 @@ public class AuditHistoryService {
                 try {
                     return objectMapper.readTree(record.value());
                 } catch (Exception e) {
-                    log.warn("Audit history record for {} is not readable JSON: {}", auditId, e.getMessage());
+                    log.warn("Audit history record for {} is not readable JSON: {}",
+                        LogSafe.name(auditId), LogSafe.text(e.getMessage()));
                     return null;
                 }
             }

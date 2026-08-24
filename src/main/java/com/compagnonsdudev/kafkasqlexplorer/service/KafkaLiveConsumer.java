@@ -8,6 +8,7 @@ import com.compagnonsdudev.kafkasqlexplorer.config.ProcessMiningConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.AnomalyReport;
 import com.compagnonsdudev.kafkasqlexplorer.domain.FieldMapping;
 import com.compagnonsdudev.kafkasqlexplorer.domain.PayloadDigest;
+import com.compagnonsdudev.kafkasqlexplorer.util.LogSafe;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRebalanceListener;
@@ -93,7 +94,8 @@ public class KafkaLiveConsumer {
 
     public void startSession(String sessionId, List<String> topics, FieldMapping fieldMapping,
                              String auditFocus) {
-        log.info("Starting live session {} for topics: {}", sessionId, topics);
+        log.info("Starting live session {} for topics: {}",
+            LogSafe.name(sessionId), LogSafe.names(topics));
 
         // Defensive: a live session id is a fresh UUID per request, but never double-start one —
         // it would overwrite (and leak) the previous consumer and polling task.
