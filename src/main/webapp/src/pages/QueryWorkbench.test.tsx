@@ -36,6 +36,9 @@ const setCursor = (offset: number) => {
 
 let cursorListeners: ((e: { selection: ReturnType<typeof makeSelection> }) => void)[] = [];
 
+/** Éditions soumises à Monaco depuis le montage — voir `executeEdits` dans le stub. */
+let submittedEdits: { range: { _full?: boolean }; text: string }[] = [];
+
 /** Poser une sélection, comme un glissement de souris dans l'éditeur. */
 const setSelection = (start: number, end: number) => {
   selectionRange = { start, end };
@@ -92,7 +95,8 @@ vi.mock('@monaco-editor/react', () => {
           : ''),
         getOffsetAt: (p: { _offset?: number }) => p._offset ?? cursorOffset,
         getPositionAt: (offset: number) => offsetToPosition(currentValue, offset),
-        getFullModelRange: () => ({}),
+        // Marquée, pour que `executeEdits` reconnaisse un remplacement de tout le texte.
+        getFullModelRange: () => ({ _full: true }),
         getValue: () => currentValue,
       }),
       onDidChangeCursorSelection: (fn: (e: { selection: ReturnType<typeof makeSelection> }) => void) => {
@@ -101,11 +105,20 @@ vi.mock('@monaco-editor/react', () => {
       },
       addCommand: () => {},
       getAction: () => ({ run: () => {} }),
-      executeEdits: () => {},
+      // Le vrai Monaco applique l'édition puis notifie `onChange` ; l'assistant de fenêtrage passe
+      // par là pour remplacer tout le texte, donc le stub doit en faire autant ou la page ne
+      // verrait jamais le SQL posé. Les éditions sont retenues : c'est par elles, et non par la
+      // valeur affichée, que se vérifie le passage par la pile d'annulation.
+      executeEdits: (_source: string, edits: { range: { _full?: boolean }; text: string }[]) => {
+        submittedEdits.push(...edits);
+        const edit = edits[0];
+        if (edit?.range?._full) onChange(edit.text);
+      },
       focus: () => {},
       setPosition: () => {},
       setSelection: (range: typeof lastSetSelection) => { lastSetSelection = range; },
       revealPositionInCenter: () => {},
+      revealPositionInCenterIfOutsideViewport: () => {},
     };
     // `onMount` runs once, like the real component's.
     queueMicrotask(() => onMount(editor, monacoStub));
@@ -174,6 +187,7 @@ beforeEach(() => {
   selectionRange = null;
   lastSetSelection = null;
   currentValue = '';
+  submittedEdits = [];
   get.mockReset();
   post.mockReset();
   del.mockReset();
@@ -806,6 +820,70 @@ describe('QueryWorkbench — a closed tab can be reopened', () => {
     renderPage();
     await screen.findByText('demo.orders.1.received');
     expect(screen.queryByRole('button', { name: /^Reopen / })).not.toBeInTheDocument();
+  });
+});
+
+describe('QueryWorkbench — the window assistant', () => {
+  /** Le bouton de l'assistant, une fois la page posée. */
+  const applyButton = () => screen.getByRole('button', { name: 'Replace editor content' });
+
+  it('writes the window query straight into an empty tab, asking nothing', async () => {
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+
+    await userEvent.click(applyButton());
+
+    await waitFor(() => expect(editor().value).toContain('TUMBLE'));
+    // Rien à perdre : la confirmation ne doit pas se mettre en travers d'un onglet vide.
+    expect(screen.queryByText('Replace the editor content?')).not.toBeInTheDocument();
+  });
+
+  it('asks before overwriting a tab that holds SQL, and keeps it when the answer is no', async () => {
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.type(editor(), 'SELECT 1 FROM a');
+
+    await userEvent.click(applyButton());
+
+    expect(await screen.findByText('Replace the editor content?')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    // Le refus est un refus : la requête en cours d'écriture est intacte.
+    expect(editor().value).toBe('SELECT 1 FROM a');
+  });
+
+  /*
+   * L'annulation promise par le dialogue et par le toast n'existe que parce que le remplacement
+   * passe par l'API d'édition de Monaco : écrire la valeur depuis React appelle `model.setValue()`,
+   * qui vide la pile d'annulation. jsdom ne peut pas exercer un vrai ⌘Z, mais il peut vérifier
+   * l'invariant dont il dépend — sans quoi une « simplification » en `updateSql(text)` laisserait
+   * toute cette suite au vert en supprimant l'échappatoire que l'écran annonce.
+   */
+  it('poses the query through the undo stack, not by setting the value', async () => {
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.type(editor(), 'SELECT 1 FROM a');
+
+    await userEvent.click(applyButton());
+    await userEvent.click(await screen.findByRole('button', { name: 'Replace' }));
+    await waitFor(() => expect(editor().value).toContain('TUMBLE'));
+
+    const replacement = submittedEdits.filter(e => e.range._full);
+    expect(replacement).toHaveLength(1);
+    expect(replacement[0].text).toContain('TUMBLE');
+  });
+
+  it('replaces the whole tab once the replacement is confirmed', async () => {
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.type(editor(), 'SELECT 1 FROM a');
+
+    await userEvent.click(applyButton());
+    await userEvent.click(await screen.findByRole('button', { name: 'Replace' }));
+
+    // Remplacement, pas insertion : rien de l'ancien texte ne survit dans l'onglet.
+    await waitFor(() => expect(editor().value).toContain('TUMBLE'));
+    expect(editor().value).not.toContain('SELECT 1 FROM a');
   });
 });
 
