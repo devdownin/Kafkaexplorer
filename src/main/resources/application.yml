@@ -352,8 +352,8 @@ logging:
       total-size-cap: 200MB
       max-history: 7
   level:
-    # INFO by default — switch to DEBUG locally when diagnosing query issues
-    com.compagnonsdudev.kafkasqlexplorer: INFO
+    # WARN by default — switch to DEBUG locally when diagnosing query issues
+    com.compagnonsdudev.kafkasqlexplorer: WARN
     org.apache.flink: WARN
     # Measured, not guessed at: with nothing listening on the bootstrap address, a 45 s run of
     # this application logged 103 775 lines, of which 101 943 — 98.2 % — were this one class
