@@ -1526,18 +1526,30 @@ const QueryWorkbench: React.FC = () => {
     ed.focus();
   }, [sql]);
 
-  /** Insère à la position du curseur — utilisé par les fragments (assistant de fenêtrage). */
-  const insertSql = useCallback((text: string) => {
+  /**
+   * Remplace *tout* le texte de l'onglet actif — utilisé par l'assistant de fenêtrage.
+   *
+   * Le remplacement passe par l'API d'édition de Monaco sur la plage complète du modèle, et non
+   * par `updateSql` : écrire la valeur depuis React appelle `model.setValue()`, qui vide la pile
+   * d'annulation, donc le texte écrasé serait perdu sans recours. Passé par `executeEdits`, il
+   * reste à un ⌘Z. `updateSql` n'est la voie de repli que lorsqu'il n'y a pas d'éditeur monté.
+   */
+  const replaceSql = useCallback((text: string) => {
     const ed = editorRef.current;
-    const selection = ed?.getSelection();
-    if (!ed || !selection) {
-      updateSql(sql ? `${sql}\n\n${text}` : text);
-      return 'appended' as const;
+    const model = ed?.getModel();
+    if (!ed || !model) {
+      updateSql(text);
+      return 'replaced' as const;
     }
-    ed.executeEdits('kse-insert', [{ range: selection, text }]);
+    const had = model.getValue().trim().length > 0;
+    ed.executeEdits('kse-replace', [{ range: model.getFullModelRange(), text }]);
+    // Le curseur en fin de texte : c'est là que la suite s'écrit, et ça évite de laisser une
+    // sélection couvrant tout ce qui vient d'être posé.
+    ed.setPosition(model.getPositionAt(text.length));
+    ed.revealPositionInCenterIfOutsideViewport(model.getPositionAt(text.length));
     ed.focus();
-    return selection.isEmpty() ? ('inserted' as const) : ('replaced' as const);
-  }, [sql, updateSql]);
+    return had ? ('replaced' as const) : ('filled' as const);
+  }, [updateSql]);
 
   /*
    * Les propositions suivent le mode, comme le raccourci de la barre latérale : en mode Job elles
@@ -1560,17 +1572,20 @@ const QueryWorkbench: React.FC = () => {
 
 
   /**
-   * Pose le SQL généré par l'assistant à la position du curseur (en remplaçant la sélection).
-   * Il écrasait auparavant tout l'onglet — le travail en cours était perdu sans confirmation.
+   * Pose le SQL généré par l'assistant à la place de *tout* le contenu de l'onglet actif.
+   *
+   * L'assistant insérait auparavant au curseur, pour ne pas détruire le travail en cours ; ce
+   * qu'il produit est une requête entière et non un fragment, donc l'insertion laissait presque
+   * toujours deux requêtes collées à corriger à la main. Le remplacement est annulable (voir
+   * `replaceSql`), et le message le dit plutôt que de laisser la découverte à l'utilisateur.
    */
   const applyWindowLogic = useCallback((generated: string) => {
-    const where = insertSql(generated);
+    const where = replaceSql(generated);
     toast({
-      appended: 'Window query appended',
-      inserted: 'Window query inserted at cursor',
-      replaced: 'Window query replaced the selection',
+      filled: 'Window query written to the editor',
+      replaced: 'Window query replaced the editor content — ⌘Z to undo',
     }[where], 'success');
-  }, [insertSql, toast]);
+  }, [replaceSql, toast]);
 
 
   // ── Render ────────────────────────────────────────────────────────────────────
@@ -1908,7 +1923,7 @@ const QueryWorkbench: React.FC = () => {
               tableSchema={tableSchemas[toTableName(windowTable)]}
               open={assistantOpen}
               onToggle={toggleAssistant}
-              onInsert={applyWindowLogic}
+              onApply={applyWindowLogic}
             />
           </div>
 

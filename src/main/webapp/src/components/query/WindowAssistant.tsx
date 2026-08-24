@@ -17,7 +17,8 @@ export interface WindowAssistantProps {
   open: boolean;
   onToggle: () => void;
   /** Reçoit le SQL généré ; la page décide où le poser (curseur, sélection, fin de l'onglet). */
-  onInsert: (sql: string) => void;
+  /** Reçoit la requête générée ; elle remplace tout le contenu de l'éditeur. */
+  onApply: (sql: string) => void;
 }
 
 /**
@@ -29,7 +30,7 @@ export interface WindowAssistantProps {
  * branche séparée le remettrait à zéro à chaque ouverture.
  */
 export const WindowAssistant: React.FC<WindowAssistantProps> = ({
-  table, tableSchema, open, onToggle, onInsert,
+  table, tableSchema, open, onToggle, onApply,
 }) => {
   const [windowType, setWindowType] = useState<WindowKind>('TUMBLE');
   const [windowSize, setWindowSize] = useState(5);
@@ -146,8 +147,8 @@ export const WindowAssistant: React.FC<WindowAssistantProps> = ({
           </div>
         )}
         <Button variant="secondary" className="w-full" icon="bolt"
-          onClick={() => onInsert(buildWindowSql(windowSpec))}>
-          Insert at cursor
+          onClick={() => onApply(buildWindowSql(windowSpec))}>
+          Replace editor content
         </Button>
       </div>
     </div>
