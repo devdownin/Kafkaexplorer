@@ -266,7 +266,7 @@ Sized in ideal days, each independently shippable and useful on its own.
 | W4 | Monaco under a real thumb: measure on a device, write down the answer | 1 | — | **closed** — a thumb is exactly what this application is not for |
 | W5 | Tap targets to 24 × 24, app-wide, with triage | 2 | — | **done** — `Checkbox`, then `Switch` and the icon-only controls; what remains is text in dense rows, left by a recorded decision rather than by omission |
 | W6 | Thresholds in `layout-probe.mjs` + a CI job, so this cannot silently regress | 0.5 | — | **done** — `--check` gates overflow and target budgets in `ci.yml` |
-| W7 | Identify the clipped containers; confirm none hides unreachable content | 0.5 | — | **done — and the answer was no** |
+| W7 | Identify the clipped containers; confirm none hides unreachable content | 0.5 | — | **done — and the answer was *mostly* no**, see the correction below: the first reading counted closed tooltips |
 | W8 | The unreachable containers W7 left: the SQL editor's toolbar strip under `lg`, and whatever `--detail` still names once the pages are given time to settle | 1 | W1, W6 | **closed** — depended on W1; the probe keeps measuring it, so a real case would resurface |
 
 **What shipped, and what it cost.** W2 is four files of `md:` → `lg:` in the shell plus the
@@ -310,6 +310,42 @@ Notes that will cost time if discovered late:
   of this.
 - **The primary mobile screen turns out to be Audit or Topic Explorer** → the editor work drops
   below W5 in priority, and this document's centre of gravity is wrong.
+
+### The unreachable column counted closed tooltips, and has been corrected
+
+`Tooltip` keeps its content mounted at all times — deliberately, so `aria-describedby` never points
+at an absent element. Closed, the panel is merely transparent, so its text went on counting in the
+`scrollWidth` of everything around it, and the probe read that as content cut off with no way to
+reach it. It was reporting **twenty** such containers on the Topic Explorer and sixteen on Metrics:
+every one of them a closed tooltip, which is content that appears on demand — the exact opposite of
+what the column claims to measure.
+
+The probe now takes closed `[role="tooltip"]` panels out of the layout for the duration of the
+measurement (`display: none`, restored after) rather than filtering them afterwards, because the
+browser then recomputes the layout and the ancestors' widths come out right too — a rule of the
+"ignore the element that contains a tooltip" kind would have cleaned the wrapper and left every
+container above it. Target counts are unchanged by it, which is the check that it touched only what
+it was meant to.
+
+| page | unreachable before | after |
+|---|---|---|
+| topic-explorer | 20 | **2** |
+| metrics | 16 | **4** |
+| sql-editor | 4 | 4 |
+| stream-flow | 2 | **0** |
+| cluster | 2 | 2 |
+| dashboard / data-model / audit | 0 | 0 |
+
+**What is left is real, and small.** Naming it is the point of the correction — the previous number
+buried it. On the SQL editor at 390 px: one Monaco-internal scroller (the editor scrolls; not our
+markup) and the toolbar strip, which is W8 and closed with the mobile decision. On Metrics: the
+suggestion cards overflow their grid by 8 px at phone width, the clipped line being
+"Already measured by …", which carries no `title`. On Cluster: a property row by 5 px, same shape.
+On the Topic Explorer: the message table's preview cell, `truncate` by design — the full payload is
+reached by selecting the row, which is an affordance the probe cannot see.
+
+So W7's recorded answer holds in substance — nothing of consequence is hidden — but not in the
+absolute form it was written in, and it now rests on a number that means what it says.
 
 ## Keeping it honest
 

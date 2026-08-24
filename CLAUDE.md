@@ -856,6 +856,15 @@ without being a phone — turns out to be painful in practice. What is load-bear
   the opposite**: a metric card's name, description and SQL line all carried `truncate` with no
   `title` anywhere, and the Cluster page's property names overflowed a grid cell with neither
   ellipsis nor title. Those are fixed; what remains is W8.
+- **The `unreachable` column used to count closed tooltips.** `Tooltip` keeps its content mounted
+  so `aria-describedby` always resolves; closed, the panel is only transparent, so its text went on
+  counting in the `scrollWidth` of everything around it. The probe reported twenty such containers
+  on the Topic Explorer and sixteen on Metrics — every one a closed tooltip, which is content that
+  appears on demand rather than content cut off. It now takes those panels out of the layout for
+  the measurement (`display: none`, restored after) instead of filtering them afterwards, so the
+  browser recomputes and the ancestors come out right too. Measured: `topic-explorer` 20 → 2,
+  `metrics` 16 → 4, `stream-flow` 2 → 0, target counts unchanged. What is left is real and named in
+  the document; W7's answer holds in substance but no longer in the absolute form it was written in.
 - Re-run the probe before trusting any number in that document, and read a zero in its
   `unreachable` column as unconfirmed rather than proven: the pages that fetch asynchronously clip
   nothing while their cards are still arriving. Making those counts stable enough to gate a build
@@ -909,6 +918,16 @@ Two workflows beyond `ci.yml` / `release.yml` / `dockerhub-description.yml`:
   The Java half uses `build-mode: manual` with `./mvnw -DskipTests -P '!build-frontend' compile` —
   `autobuild` would activate `build-frontend` (it is `activeByDefault`) and download a whole Node
   toolchain to rebuild a SPA the javascript-typescript half already reads from source.
+  **It also copies its findings into the job log** — severity, query id, file and line, one row
+  each. The check a pull request shows says `8 new alerts including 1 high severity` and nothing
+  else: the detail lives in the Security tab, which needs write access on the repository, and the
+  annotations API is out of reach from a CI environment. So "CodeQL is red" was diagnosed by
+  guessing, and a guessed fix to an injection query is precisely the change that removes a
+  deliberate behaviour to silence a check. Knowing *which* rows they are is also what lets them be
+  crossed against the diff — which is how it was established that not one of the tree's twenty-nine
+  security findings sits on a line the branch reporting them had written. The step cannot fail the
+  job (`if: always()` so a red `analyze` is still explained, `exit 0` so a missing or unexpected
+  SARIF stays a silence rather than a breakage), uploads nothing, and changes no verdict.
 - **`security.yml`** — `dependency-review` on pull requests (fails on a **newly introduced** high
   severity advisory, and on licences that cannot ship inside an AGPL artifact), plus TruffleHog
   over the full history with `--only-verified`. The severity gate is narrow on purpose: it says

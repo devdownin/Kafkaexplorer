@@ -86,3 +86,37 @@ jobs:
         uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4
         with:
           category: "/language:${{ matrix.language }}"
+
+      # Recopie les résultats dans le journal du job, parce qu'autrement ils ne sont lisibles
+      # nulle part d'utilisable. Le check d'une pull request annonce « 8 new alerts including 1
+      # high severity » et rien de plus : le détail vit dans l'onglet Security, qui demande un
+      # droit d'écriture sur le dépôt, et l'API des annotations n'est pas joignable depuis un
+      # environnement d'intégration. Résultat : « CodeQL est rouge » se diagnostiquait en
+      # devinant — et une correction devinée sur une requête d'injection, c'est exactement le
+      # genre de changement qui retire un comportement voulu pour faire taire un contrôle.
+      #
+      # Une ligne par résultat : sévérité, identifiant de requête, fichier et ligne. Ça suffit
+      # à savoir *lesquels*, et à les recouper contre le diff — c'est ainsi qu'on a établi
+      # qu'aucun des vingt-neuf résultats de sécurité de l'arbre ne porte sur une ligne écrite
+      # par la branche qui les faisait signaler.
+      #
+      # Ne peut pas faire échouer le job : `if: always()` pour qu'un `analyze` rouge soit tout
+      # de même expliqué, `exit 0` pour qu'un SARIF absent ou d'une forme inattendue reste un
+      # silence et non une panne. Ce pas ne téléverse rien et ne change pas le verdict.
+      - name: Recopie les résultats dans le journal
+        if: always()
+        run: |
+          set +e
+          for f in ../results/*.sarif; do
+            [ -f "$f" ] || continue
+            echo "=== $f ==="
+            jq -r '
+              .runs[] as $run
+              | ( ($run.tool.driver.rules // []) + ([$run.tool.extensions // [] | .[] | .rules // []] | add // []) ) as $rules
+              | $run.results[]
+              | . as $r
+              | ( [$rules[] | select(.id == $r.ruleId) | .properties["security-severity"]] | first // "-" ) as $sev
+              | "\($sev)\t\($r.ruleId)\t\($r.locations[0].physicalLocation.artifactLocation.uri):\($r.locations[0].physicalLocation.region.startLine)"
+            ' "$f" | sort -r
+          done
+          exit 0
