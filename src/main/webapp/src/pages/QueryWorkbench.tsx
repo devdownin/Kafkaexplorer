@@ -16,7 +16,7 @@ import {
   describeQueryError, describeApiError, offsetLocation,
   type QueryErrorInfo, type QueryErrorLocation,
 } from './queryError';
-import { resolveScope, toTableName } from './sqlScope';
+import { resolveScope, resolveScopeAsTables, toTableName } from './sqlScope';
 import { toCsv, toJson } from './resultExport';
 import {
   sortRows, nextActiveTabId, isResultStale,
@@ -1577,8 +1577,8 @@ const QueryWorkbench: React.FC = () => {
    * même forme, donc il nomme désormais la table que la requête ira réellement chercher.
    */
   const windowTable = useMemo(
-    () => toTableName(resolveScope(sql, [...(schema?.tables ?? []), ...(schema?.topics ?? [])])[0]
-      ?? schema?.tables[0] ?? 'source_table'),
+    () => resolveScopeAsTables(sql, [...(schema?.tables ?? []), ...(schema?.topics ?? [])])[0]
+      ?? toTableName(schema?.tables[0] ?? 'source_table'),
     [sql, schema],
   );
 

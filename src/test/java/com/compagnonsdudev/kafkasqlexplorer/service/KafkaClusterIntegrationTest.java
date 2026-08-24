@@ -42,10 +42,16 @@ class KafkaClusterIntegrationTest {
     /**
      * Two knobs beyond the image, and neither is decoration.
      *
-     * <p>{@code withStartupAttempts(2)} exists because a launch that fails is not a test that
+     * <p>{@code withStartupAttempts(3)} exists because a launch that fails is not a test that
      * failed: it happened twice in twelve hours on hosted runners — once here, once on a push to
      * {@code main} — and it takes the whole {@code mvn verify} down with it, this class's own
-     * assertions never having run. That is survivable on a pull request, where a re-run costs a
+     * assertions never having run. It was 2, and 2 was not enough: a later pull request lost its
+     * {@code build} job to the same "Container startup failed for image apache/kafka-native:4.3.1"
+     * with 797 tests green beside it, and a manual re-run of the job was all it took to pass.
+     * Three attempts is not a claim that three is the right number — it is one more than the
+     * count observed to be insufficient, alongside the CI step that now pulls the image before
+     * the suite runs, so a registry that cannot be reached is named as such instead of arriving
+     * as a failed test. That is survivable on a pull request, where a re-run costs a
      * few minutes; it is not on {@code release.yml}, which gates a tag on the same {@code verify}
      * and offers no way to retry without cutting the version again. One retry turns the commonest
      * infrastructure hiccup into a delay instead of a failed release.
@@ -62,7 +68,7 @@ class KafkaClusterIntegrationTest {
      */
     @Container
     static final KafkaContainer KAFKA = new KafkaContainer(DockerImageName.parse("apache/kafka-native:4.3.1"))
-        .withStartupAttempts(2)
+        .withStartupAttempts(3)
         .withStartupTimeout(Duration.ofMinutes(3));
 
     private static final String TOPIC = "it.orders.json";

@@ -12,6 +12,14 @@ services:
     # The tag exists only in the runner's local daemon; without this compose would try to
     # pull it from Docker Hub and fail.
     pull_policy: never
+    environment:
+      # The application's own package ships at WARN, and this job asserts that
+      # /app/logs/kafkaexplorer.log is not empty — a file that says nothing is exactly what
+      # a WARN-only boot against a healthy broker produces, so the assertion was measuring
+      # the threshold rather than the deployment. Asked for here, so what is checked stays
+      # "the app writes its log to the mounted volume" instead of "the default level happens
+      # to emit something".
+      LOGGING_LEVEL_COM_COMPAGNONSDUDEV_KAFKASQLEXPLORER: INFO
 
   demo-setup:
     environment:
