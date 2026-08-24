@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.compagnonsdudev.kafkasqlexplorer.domain;
 
+import com.compagnonsdudev.kafkasqlexplorer.util.LogSafe;
+
 /**
  * What one call to a model actually cost.
  *
@@ -76,7 +78,14 @@ public record LlmUsage(
 
     /** One-line rendering for logs; says "?" where the provider said nothing. */
     public String summary() {
-        return provider + '/' + model
+        // Assaini ici plutôt qu'aux trois appels : cette chaîne ne sert qu'à être journalisée, et
+        // `model` vient de la configuration — un `%0A` dedans forgerait une ligne dans le fichier
+        // que quiconque colle dans un rapport de bug. `slug` et non `name` parce qu'un identifiant
+        // OpenRouter s'écrit `vendor/model` : le normaliser en `vendor_model` afficherait autre
+        // chose que ce que l'opérateur a saisi, dans la ligne qui existe pour le lui montrer.
+        // `provider` est un libellé d'un ensemble fermé, donc la fonction n'y touche pas — elle est
+        // appliquée quand même pour que le jour où ce champ porte autre chose ne soit pas un trou.
+        return LogSafe.slug(provider) + '/' + LogSafe.slug(model)
             + " · in=" + (inputTokens == null ? "?" : inputTokens)
             + " out=" + (outputTokens == null ? "?" : outputTokens)
             + (costUsd == null ? "" : " · $" + formatCost(costUsd))

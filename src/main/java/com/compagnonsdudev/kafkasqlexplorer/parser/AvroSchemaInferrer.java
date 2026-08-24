@@ -3,6 +3,7 @@
 package com.compagnonsdudev.kafkasqlexplorer.parser;
 
 import com.compagnonsdudev.kafkasqlexplorer.config.KafkaConfig;
+import com.compagnonsdudev.kafkasqlexplorer.util.LogSafe;
 import io.confluent.kafka.schemaregistry.client.CachedSchemaRegistryClient;
 import io.confluent.kafka.schemaregistry.client.SchemaMetadata;
 import io.confluent.kafka.schemaregistry.client.SchemaRegistryClient;
@@ -31,7 +32,8 @@ public class AvroSchemaInferrer {
 
     public Map<String, String> infer(String topicName) {
         if (schemaRegistryClient == null) {
-            log.warn("Schema Registry URL not configured, cannot infer Avro schema for topic {}", topicName);
+            log.warn("Schema Registry URL not configured, cannot infer Avro schema for topic {}",
+                LogSafe.name(topicName));
             return Collections.emptyMap();
         }
 
@@ -48,7 +50,8 @@ public class AvroSchemaInferrer {
             }
             return flinkSchema;
         } catch (Exception e) {
-            log.debug("Failed to fetch Avro schema from registry for topic {}: {}", topicName, e.getMessage());
+            log.debug("Failed to fetch Avro schema from registry for topic {}: {}",
+                LogSafe.name(topicName), LogSafe.text(e.getMessage()));
             return Collections.emptyMap();
         }
     }

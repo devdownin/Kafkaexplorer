@@ -9,6 +9,7 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.QueryRequest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryResult;
 import com.compagnonsdudev.kafkasqlexplorer.config.ExplorerConfig;
 import com.compagnonsdudev.kafkasqlexplorer.parser.SecureXml;
+import com.compagnonsdudev.kafkasqlexplorer.util.LogSafe;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.api.common.JobStatus;
@@ -235,7 +236,7 @@ public class FlinkSqlService {
                 return schema;
             });
         } catch (RuntimeException e) {
-            log.debug("Table not found: {}", tableName);
+            log.debug("Table not found: {}", LogSafe.name(tableName));
             return new LinkedHashMap<>();
         }
     }
@@ -325,37 +326,6 @@ public class FlinkSqlService {
     }
 
     /**
-     * Neutralise ce qui n'a rien à faire dans un nom avant de le journaliser : un `%0A` dans une
-     * valeur influencée par l'appelant forge la ligne qu'il veut dans le fichier censé être le
-     * compte rendu de ce qui s'est passé.
-     *
-     * <p>Sur ce chemin précis, rien ne peut y arriver. CodeQL fait remonter la source à
-     * {@code MetricController.preview} — le SQL que l'utilisateur poste — mais cette valeur ne
-     * parvient ici qu'à travers {@link #extractPrimaryTable}, dont les deux captures sont
-     * {@code [\w.\-]+} et {@code \w[\w.]*} : ni CR ni LF n'en sortent, et {@code toTableName}
-     * ne fait ensuite que remplacer {@code .} et {@code -} par {@code _}. C'est donc une défense
-     * en profondeur, pas une correction — elle tient le jour où cette regex s'élargit, ce qui est
-     * exactement le genre de changement qu'on fait sans y penser.
-     *
-     * <p>Liste blanche, et non liste noire des caractères de contrôle, pour deux raisons qui vont
-     * dans le même sens. Elle est plus stricte : ce que ce paramètre reçoit est un nom de topic
-     * Kafka ou de table Flink, dont l'alphabet légal est précisément {@code [a-zA-Z0-9._-]}, donc
-     * tout le reste est déjà anormal et rien de légitime n'est remplacé. Et c'est la seule des
-     * deux formes que le modèle CodeQL reconnaît comme assainissement — mesuré : la liste noire
-     * laissait les trois constats {@code java/log-injection} de cette méthode en place, la liste
-     * blanche les supprime (27 → 24 sur l'arbre entier, sans en ajouter un seul).
-     *
-     * <p>{@code String.replaceAll} recompile le motif à chaque appel, là où un {@link Pattern}
-     * hoisté ne le ferait pas — mais ce même hoisting sort du modèle ({@code Matcher.replaceAll}
-     * n'est pas déclaré sur {@code String}), et la méthode ne tourne qu'une fois par
-     * enregistrement de table, juste à côté d'une soumission de job Flink. La reconnaissance vaut
-     * plus cher que la recompilation.
-     */
-    static String sanitizeForLog(String value) {
-        return value == null ? null : value.replaceAll("[^\\w.\\-]", "_");
-    }
-
-    /**
      * Before executing a SELECT, checks if the referenced table is already registered in Flink.
      * If not, looks for a Kafka topic whose sanitized name (dots/hyphens → underscores) matches,
      * infers its schema, generates the DDL and registers it automatically.
@@ -409,15 +379,15 @@ public class FlinkSqlService {
             // stacks, et le premier fichier qu'on colle dans un rapport de bug. En DEBUG
             // seulement, mais c'est précisément le niveau qu'un opérateur active pour comprendre
             // pourquoi une requête échoue, c'est-à-dire quand cette ligne s'exécute.
-            log.debug("Auto-registering table '{}' with DDL:\n{}", sanitizeForLog(flinkTableName),
+            log.debug("Auto-registering table '{}' with DDL:\n{}", LogSafe.name(flinkTableName),
                 DdlGeneratorService.maskSensitiveProperties(ddl));
             executeMutationSql("auto-register-table", ddl);
             log.info("Auto-registered table '{}' for Kafka topic '{}'",
-                sanitizeForLog(flinkTableName), sanitizeForLog(matchingTopic));
+                LogSafe.name(flinkTableName), LogSafe.name(matchingTopic));
             return AutoRegResult.tableCreated();
         } catch (Exception e) {
             log.error("Auto-registration failed for topic '{}' (table '{}'): {}",
-                sanitizeForLog(matchingTopic), sanitizeForLog(flinkTableName), e.getMessage(), e);
+                LogSafe.name(matchingTopic), LogSafe.name(flinkTableName), e.getMessage(), e);
             return AutoRegResult.fail(String.format(
                 "Failed to auto-register Flink table '%s' from Kafka topic '%s': %s",
                 flinkTableName, matchingTopic, e.getMessage()));
@@ -665,7 +635,8 @@ public class FlinkSqlService {
         try {
             AutoRegResult autoReg = autoRegisterTableIfNeeded(strippedSql);
             if (autoReg.error() != null) {
-                log.error("Table auto-registration failed — query='{}' error='{}'", request.sql(), autoReg.error());
+                log.error("Table auto-registration failed — query='{}' error='{}'",
+                    LogSafe.text(request.sql()), LogSafe.text(autoReg.error()));
                 return new QueryResult(Collections.emptyList(), Collections.emptyList(),
                         System.currentTimeMillis() - startTime, autoReg.error());
             }
@@ -767,7 +738,8 @@ public class FlinkSqlService {
             }
             return result;
         } catch (Exception e) {
-            log.error("Flink SQL execution error — query='{}' error='{}'", request.sql(), e.getMessage(), e);
+            log.error("Flink SQL execution error — query='{}' error='{}'",
+                LogSafe.text(request.sql()), LogSafe.text(e.getMessage()), e);
             long duration = System.currentTimeMillis() - startTime;
             return new QueryResult(Collections.emptyList(), Collections.emptyList(), duration,
                 SqlErrorClassifier.explain(e));
@@ -913,7 +885,8 @@ public class FlinkSqlService {
         // The topic exists, we chose not to register it, and the planner is only saying so.
         // That is our doing, not the user's — the direct reader is the intended path here.
         if (deferredToDirectReader && UNKNOWN_OBJECT.matcher(classification.message()).find()) return null;
-        log.debug("Rejecting invalid SELECT without falling back — query='{}' error='{}'", sql, classification.message());
+        log.debug("Rejecting invalid SELECT without falling back — query='{}' error='{}'",
+                LogSafe.text(sql), LogSafe.text(classification.message()));
         flinkSelectFailures.set(0);
         return new QueryResult(Collections.emptyList(), Collections.emptyList(),
             System.currentTimeMillis() - startTime, classification.message(), false, "FLINK");
@@ -1013,7 +986,7 @@ public class FlinkSqlService {
             final org.apache.flink.util.CloseableIterator<Row> it = result.collect();
             List<String> columns = result.getResolvedSchema().getColumnNames();
             log.debug("[FlinkSQL] queryId={} sql='{}' resolvedColumns={} resolvedSchema={}",
-                    queryId, finalSql, columns, result.getResolvedSchema());
+                    LogSafe.name(queryId), LogSafe.text(finalSql), columns, result.getResolvedSchema());
             List<Map<String, Object>> rows;
 
             // We use a CompletableFuture to implement the timeout logic.
@@ -1066,7 +1039,7 @@ public class FlinkSqlService {
             try {
                 rows = future.get(timeout, TimeUnit.MILLISECONDS);
             } catch (TimeoutException te) {
-                log.warn("Query timed out after {}ms: {}", timeout, finalSql);
+                log.warn("Query timed out after {}ms: {}", timeout, LogSafe.text(finalSql));
                 // Cancel the job first so the fetcher's hasNext() unblocks and its finally closes the
                 // iterator; then abandon the fetch. The iterator is never closed from this thread.
                 cancelJobInternal(tableResult);
@@ -1076,7 +1049,7 @@ public class FlinkSqlService {
                     "Query timed out after " + timeout + "ms. The Kafka topic may have fewer messages than the limit, " +
                     "or the broker is slow. Try adding LIMIT, reducing maxRows, or switching to 'latest-offset' mode.");
             } catch (ExecutionException ee) {
-                log.error("Query execution failed: {}", finalSql, ee.getCause());
+                log.error("Query execution failed: {}", LogSafe.text(finalSql), ee.getCause());
                 Throwable cause = ee.getCause();
                 if (cause instanceof Exception ex) throw ex;
                 throw new RuntimeException(cause);
@@ -1085,7 +1058,8 @@ public class FlinkSqlService {
             long duration = System.currentTimeMillis() - startTime;
             return new QueryResult(columns, rows, duration, null, false, "FLINK");
         } catch (Exception e) {
-            log.error("Flink SQL execution error — query='{}' error='{}'", finalSql, e.getMessage(), e);
+            log.error("Flink SQL execution error — query='{}' error='{}'",
+                LogSafe.text(finalSql), LogSafe.text(e.getMessage()), e);
             cancelJobInternal(result);
             long duration = System.currentTimeMillis() - startTime;
             // explain() flattens the cause chain and is never blank. e.getMessage() alone is null
@@ -1550,7 +1524,7 @@ public class FlinkSqlService {
             ? List.of("window_start", "window_end")
             : new ArrayList<>(resultRows.get(0).keySet());
         log.debug("[KafkaDirect/Window] topic='{}' timeCol='{}' intervalMs={} windows={} rows={}",
-                 topic, timeCol, intervalMs, windows.size(), resultRows.size());
+                 LogSafe.name(topic), LogSafe.name(timeCol), intervalMs, windows.size(), resultRows.size());
         // The HOP/SESSION approximation travels with the rows, alongside any ignored predicate.
         List<String> allWarnings = new ArrayList<>(windowWarnings);
         allWarnings.addAll(whereWarnings);

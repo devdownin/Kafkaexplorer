@@ -8,6 +8,7 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.LlmModelCheck;
 import com.compagnonsdudev.kafkasqlexplorer.domain.LlmModelOption;
 import com.compagnonsdudev.kafkasqlexplorer.domain.LlmModelShortlist;
 import com.compagnonsdudev.kafkasqlexplorer.domain.SchemaSupport;
+import com.compagnonsdudev.kafkasqlexplorer.util.LogSafe;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -178,7 +179,7 @@ public class OpenRouterModelCatalog {
             Thread.currentThread().interrupt();
             return LlmModelCheck.unavailable("Interrupted while reading the model catalogue.");
         } catch (Exception e) {
-            log.debug("Model catalogue lookup failed for {}", FlinkSqlService.sanitizeForLog(slug), e);
+            log.debug("Model catalogue lookup failed for {}", LogSafe.slug(slug), e);
             return LlmModelCheck.unavailable("Could not read the model catalogue: "
                 + SqlErrorClassifier.explain(e));
         }

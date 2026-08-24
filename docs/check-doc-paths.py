@@ -67,6 +67,9 @@ NOT_A_PATH = {
     # A build platform. Only the arm64 form survives here: the others are written with a
     # comma or alongside amd64, which NOT_PATH_CHARS already rejects.
     'linux/arm64',
+    # An OpenRouter model identifier, which that gateway writes `vendor/model`. Le seul jeton
+    # de cette forme que la prose nomme hors d'un bloc clôturé.
+    'openai/gpt-4o-mini',
     # GitHub Action references, which are owner/repo on GitHub, not paths here. Only the ones
     # the prose still names *bare* need an entry — where a SHA pin is quoted with the name,
     # the `@` in the token is enough for looks_like_path to reject it.

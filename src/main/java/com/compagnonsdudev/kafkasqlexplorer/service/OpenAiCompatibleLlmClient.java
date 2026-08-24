@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.compagnonsdudev.kafkasqlexplorer.config.ClaudeConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.LlmResponse;
 import com.compagnonsdudev.kafkasqlexplorer.domain.LlmUsage;
+import com.compagnonsdudev.kafkasqlexplorer.util.LogSafe;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -86,7 +87,7 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
             log.warn("{} refused a schema-constrained request for model '{}' (status {}); retrying "
                     + "without the constraint and not sending one again for that model. Set "
                     + "claude.structured-output=OFF to skip this probe.",
-                config.getProviderLabel(), model, e.status());
+                config.getProviderLabel(), LogSafe.slug(model), e.status());
             rememberSchemaRefusal(model);
             return call(systemPrompt, userPrompt, null);
         }

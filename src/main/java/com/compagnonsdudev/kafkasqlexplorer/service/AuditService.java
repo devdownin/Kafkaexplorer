@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.compagnonsdudev.kafkasqlexplorer.config.ExplorerConfig;
 import com.compagnonsdudev.kafkasqlexplorer.config.KafkaConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.*;
+import com.compagnonsdudev.kafkasqlexplorer.util.LogSafe;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
@@ -266,7 +267,7 @@ public class AuditService {
         RunHandle handle = currentRun.get();
         if (handle != null && handle.auditId().equals(auditId)) {
             handle.cancelled().set(true);
-            log.info("Cancellation requested for audit {}", auditId);
+            log.info("Cancellation requested for audit {}", LogSafe.name(auditId));
             return CancelResult.CANCELLING;
         }
         return auditRuns.containsKey(auditId) ? CancelResult.ALREADY_FINISHED : CancelResult.NOT_FOUND;

@@ -13,6 +13,7 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.TopicActivityResponse;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicConsumers;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicDescriptor;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicTimeLag;
+import com.compagnonsdudev.kafkasqlexplorer.util.LogSafe;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.DescribeClusterOptions;
 import org.apache.kafka.clients.admin.DescribeClusterResult;
@@ -1577,7 +1578,7 @@ public class KafkaAdminService {
                     deserializeValue(record.topic(), record.value())
                 ));
         } catch (Exception e) {
-            log.error("Failed to get latest message for topic {}", topicName, e);
+            log.error("Failed to get latest message for topic {}", LogSafe.name(topicName), e);
             return Optional.empty();
         }
     }
@@ -1647,7 +1648,7 @@ public class KafkaAdminService {
             consumer.seekToBeginning(partitions);
             records.addAll(drain(consumer, partitions, maxMessages));
         } catch (Exception e) {
-            log.error("Error fetching earliest records for topic {}", topicName, e);
+            log.error("Error fetching earliest records for topic {}", LogSafe.name(topicName), e);
         }
         return records;
     }
@@ -1714,7 +1715,7 @@ public class KafkaAdminService {
 
             records.addAll(drain(consumer, partitions, maxMessages));
         } catch (Exception e) {
-            log.error("Error fetching records for topic {}", topicName, e);
+            log.error("Error fetching records for topic {}", LogSafe.name(topicName), e);
         }
         return records;
     }

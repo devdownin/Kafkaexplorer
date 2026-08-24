@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.compagnonsdudev.kafkasqlexplorer.service;
 
+import com.compagnonsdudev.kafkasqlexplorer.util.LogSafe;
 import org.apache.flink.table.api.TableEnvironment;
 import org.apache.flink.table.api.TableResult;
 import org.apache.flink.table.api.internal.TableEnvironmentImpl;
@@ -215,7 +216,8 @@ public class LineageService {
                 if (v.equals(name)) return true;
             }
         } catch (Exception e) {
-            log.debug("Could not list Flink objects while validating '{}': {}", name, e.getMessage());
+            log.debug("Could not list Flink objects while validating '{}': {}",
+                LogSafe.name(name), LogSafe.text(e.getMessage()));
         }
         return false;
     }
@@ -403,7 +405,8 @@ public class LineageService {
                 }
             );
         } catch (Exception e) {
-            log.debug("Failed to get DDL for {} {}: {}", type, name, e.getMessage());
+            log.debug("Failed to get DDL for {} {}: {}",
+                LogSafe.name(type), LogSafe.name(name), LogSafe.text(e.getMessage()));
         }
         return null;
     }
