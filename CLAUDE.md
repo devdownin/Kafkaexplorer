@@ -918,6 +918,16 @@ Two workflows beyond `ci.yml` / `release.yml` / `dockerhub-description.yml`:
   The Java half uses `build-mode: manual` with `./mvnw -DskipTests -P '!build-frontend' compile` —
   `autobuild` would activate `build-frontend` (it is `activeByDefault`) and download a whole Node
   toolchain to rebuild a SPA the javascript-typescript half already reads from source.
+  **It also copies its findings into the job log** — severity, query id, file and line, one row
+  each. The check a pull request shows says `8 new alerts including 1 high severity` and nothing
+  else: the detail lives in the Security tab, which needs write access on the repository, and the
+  annotations API is out of reach from a CI environment. So "CodeQL is red" was diagnosed by
+  guessing, and a guessed fix to an injection query is precisely the change that removes a
+  deliberate behaviour to silence a check. Knowing *which* rows they are is also what lets them be
+  crossed against the diff — which is how it was established that not one of the tree's twenty-nine
+  security findings sits on a line the branch reporting them had written. The step cannot fail the
+  job (`if: always()` so a red `analyze` is still explained, `exit 0` so a missing or unexpected
+  SARIF stays a silence rather than a breakage), uploads nothing, and changes no verdict.
 - **`security.yml`** — `dependency-review` on pull requests (fails on a **newly introduced** high
   severity advisory, and on licences that cannot ship inside an AGPL artifact), plus TruffleHog
   over the full history with `--only-verified`. The severity gate is narrow on purpose: it says
