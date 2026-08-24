@@ -146,4 +146,29 @@ class MetricControllerTest {
         assertThat(chain.hops().get(1).latencyFromPreviousMs()).isEqualTo(1200L);
         assertThat(chain.hops().get(1).occurrences()).isEqualTo(3);
     }
+
+    /**
+     * {@code POST /api/metrics/preview} n'existe plus, et ce test le fige.
+     *
+     * <p>Il n'avait aucun appelant — ni dans le SPA, ni dans un test, ni nulle part ailleurs dans
+     * l'arbre : la page Metrics prévisualise par {@code /preview-template}. Ce qu'il faisait, en
+     * revanche, était de prendre du SQL dans le corps d'une requête non authentifiée et de le
+     * passer au moteur. C'est la forme de {@code TableController}, supprimé pour cette raison
+     * exacte et dont l'absence est figée de la même façon par
+     * {@code QueryControllerTest.thereIsNoServerSideTablePage} — une seconde entrée publique vers
+     * le moteur de requêtes, qu'aucun test n'exerçait, est la manière dont deux chemins vers un
+     * même comportement se mettent à diverger.
+     *
+     * <p>405 et non 404, et la nuance est mesurée plutôt que supposée : {@code DELETE /{id}}
+     * filtre ce chemin avec {@code id = "preview"}, donc Spring répond « méthode non supportée »
+     * plutôt que « chemin inconnu ». C'est bien l'assertion voulue — aucune méthode POST n'est
+     * mappée là — et rétablir l'endpoint ferait passer la réponse à 200, donc échouer ce test.
+     */
+    @Test
+    void theUncalledSqlPreviewEndpointIsGone() throws Exception {
+        mockMvc.perform(post("/api/metrics/preview")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"sql\":\"SELECT 1 AS metric_value\"}"))
+            .andExpect(status().isMethodNotAllowed());
+    }
 }

@@ -513,6 +513,25 @@ export interface MetricTestResponse {
   summary?: Record<string, unknown>;
 }
 
+/**
+ * Un refus, avec sa raison — la forme que tout `catch` de ce dépôt lit déjà à travers
+ * `extractApiErrorMessage`.
+ *
+ * @java ApiError
+ */
+export interface ApiError {
+  error: string;
+}
+
+/**
+ * `GET /api/metrics/metadata` — les colonnes de chaque table Flink enregistrée.
+ *
+ * Sans marqueur `@java` : le contrôleur sert une `Map<String, List<String>>` et non un record, donc
+ * `check-api-types.py` n'a rien contre quoi la résoudre. Nommée ici tout de même, plutôt que
+ * déclarée à la main au point d'appel : non vérifiée est permis, invisible ne l'est pas.
+ */
+export type TableMetadata = Record<string, string[]>;
+
 /** @java HealthStatus */
 export type HealthStatus = 'HEALTHY' | 'WARNING' | 'CRITICAL';
 
