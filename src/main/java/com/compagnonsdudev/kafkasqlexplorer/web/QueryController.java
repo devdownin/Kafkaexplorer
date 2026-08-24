@@ -2,6 +2,9 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.compagnonsdudev.kafkasqlexplorer.web;
 
+import com.compagnonsdudev.kafkasqlexplorer.domain.SqlValidationResponse;
+import com.compagnonsdudev.kafkasqlexplorer.domain.DdlPreviewResponse;
+import com.compagnonsdudev.kafkasqlexplorer.domain.QueryCancelResponse;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryInitResponse;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryRequest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryResult;
@@ -184,26 +187,23 @@ public class QueryController {
      * regardless.
      */
     @PostMapping("/cancel/{queryId}")
-    public Map<String, Object> cancel(@PathVariable("queryId") String queryId) {
-        FlinkSqlService.CancelOutcome outcome = flinkJobService.cancel(queryId);
-        return Map.of(
-            "cancelled", outcome == FlinkSqlService.CancelOutcome.CANCELLED,
-            "outcome", outcome.name());
+    public QueryCancelResponse cancel(@PathVariable("queryId") String queryId) {
+        return QueryCancelResponse.of(flinkJobService.cancel(queryId));
     }
 
     @PostMapping("/jobs/{queryId}/cancel")
-    public Map<String, Object> cancelJob(@PathVariable("queryId") String queryId) {
+    public QueryCancelResponse cancelJob(@PathVariable("queryId") String queryId) {
         return cancel(queryId);
     }
 
     @GetMapping("/ddl-preview")
-    public Map<String, String> ddlPreview(@RequestParam("topic") String topic) {
+    public DdlPreviewResponse ddlPreview(@RequestParam("topic") String topic) {
         try {
             MessageFormat format = schemaInferenceService.detectFormat(topic);
             Map<String, String> schema = schemaInferenceService.inferSchema(topic, format);
             String ddl = DdlGeneratorService.maskSensitiveProperties(
                     ddlGeneratorService.generateDdl(topic, schema, format));
-            return Map.of("ddl", ddl);
+            return DdlPreviewResponse.of(ddl);
         } catch (Exception e) {
             // SqlErrorClassifier.explain, not e.getMessage(): that is null for a
             // NullPointerException, and Map.of rejects a null value — so the one failure mode
@@ -211,20 +211,17 @@ public class QueryController {
             // 500, which the UI could only report as a generic "Failed to generate DDL preview".
             // explain() is documented never to return null or blank, and it flattens the cause
             // chain, where schema inference habitually keeps the useful text.
-            return Map.of("error", SqlErrorClassifier.explain(e));
+            return DdlPreviewResponse.failed(SqlErrorClassifier.explain(e));
         }
     }
 
     @PostMapping("/validate")
-    public Map<String, Object> validate(@RequestBody QueryRequest request) {
-        Map<String, Object> result = new HashMap<>();
+    public SqlValidationResponse validate(@RequestBody QueryRequest request) {
         try {
             sqlQueryValidator.validate(request.sql());
-            result.put("valid", true);
+            return SqlValidationResponse.accepted();
         } catch (IllegalArgumentException e) {
-            result.put("valid", false);
-            result.put("error", e.getMessage());
+            return SqlValidationResponse.rejected(e.getMessage());
         }
-        return result;
     }
 }

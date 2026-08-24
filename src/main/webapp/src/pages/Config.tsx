@@ -203,7 +203,15 @@ const Config: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [llmTesting, setLlmTesting] = useState(false);
-  const [llmTestResult, setLlmTestResult] = useState<LlmTestResponse | null>(null);
+  /*
+   * Soit la réponse du serveur, soit un échec local — la requête qui n'est jamais partie, ou dont
+   * la réponse n'est pas arrivée. Les deux n'ont pas la même forme et ne doivent pas la partager :
+   * `provider` et `model` disent ce qui a été *sondé*, et un appel qui a échoué avant d'atteindre
+   * le serveur n'a rien sondé du tout. Les remplir de valeurs plausibles serait une affirmation
+   * inventée, ce que le typage vient précisément d'empêcher.
+   */
+  type LlmTestOutcome = LlmTestResponse | { ok: false; message: string; probeFailed: true };
+  const [llmTestResult, setLlmTestResult] = useState<LlmTestOutcome | null>(null);
   const [providerDefaults, setProviderDefaults] = useState<ProviderDefaults>({});
   const [models, setModels] = useState<LlmModelShortlist | null>(null);
   const [modelsLoading, setModelsLoading] = useState(false);
@@ -235,10 +243,11 @@ const Config: React.FC = () => {
    * part : il décrit ce qui a été testé, donc il doit disparaître avec lui plutôt que rester sous
    * un formulaire qu'on a modifié depuis.
    */
-  const modelNotes = useMemo(
-    () => describeModelCheck(llmTestResult?.modelCheck), [llmTestResult]);
-  const modelIdentity = llmTestResult?.modelCheck
-    ? describeModelIdentity(llmTestResult.modelCheck) : null;
+  /* Un échec local n'a pas de `modelCheck` : rien n'a été sondé, donc rien n'a été décrit. */
+  const modelCheck = llmTestResult && 'modelCheck' in llmTestResult
+    ? llmTestResult.modelCheck : undefined;
+  const modelNotes = useMemo(() => describeModelCheck(modelCheck), [modelCheck]);
+  const modelIdentity = modelCheck ? describeModelIdentity(modelCheck) : null;
   /*
    * La sonde et la liste n'essaient que le *modèle* : le point d'accès reste celui en vigueur, et
    * délibérément — voir `probeBody`. Il faut donc le dire quand le formulaire a pris de l'avance
@@ -465,7 +474,7 @@ const Config: React.FC = () => {
       setLlmTestResult(res.data);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'LLM test failed';
-      setLlmTestResult({ ok: false, message: msg });
+      setLlmTestResult({ ok: false, message: msg, probeFailed: true });
     } finally {
       setLlmTesting(false);
     }

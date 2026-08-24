@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.compagnonsdudev.kafkasqlexplorer.web;
 
+import com.compagnonsdudev.kafkasqlexplorer.domain.FieldMappingValidation;
 import com.compagnonsdudev.kafkasqlexplorer.domain.AnomalyReport;
 import com.compagnonsdudev.kafkasqlexplorer.domain.AuditPrompt;
 import com.compagnonsdudev.kafkasqlexplorer.domain.FieldMapping;
@@ -96,7 +97,7 @@ public class ProcessMiningController {
     }
 
     @PostMapping("/profiling/validate")
-    public Map<String, String> validateSchema(@RequestBody ValidationRequest request) {
+    public FieldMappingValidation validateSchema(@RequestBody ValidationRequest request) {
         log.info("Validating schema proposal");
 
         SchemaUnificationProposal proposal = request.proposal();
@@ -140,7 +141,7 @@ public class ProcessMiningController {
         fieldMappingStore.put(fieldMapping);
         log.info("Stored FieldMapping with id: {}", mappingId);
 
-        return Map.of("fieldMappingId", mappingId);
+        return new FieldMappingValidation(mappingId);
     }
 
     @PostMapping("/snapshot")

@@ -435,12 +435,17 @@ export interface FlowChainHop {
  */
 
 /** `GET /api/query/ddl-preview` — l'un ou l'autre, jamais les deux. */
+/** @java DdlPreviewResponse */
 export interface DdlPreviewResponse {
   ddl?: string;
   error?: string;
 }
 
-/** `POST /api/query/validate` — syntaxe seule ; le catalogue n'est pas consulté. */
+/**
+ * `POST /api/query/validate` — syntaxe seule ; le catalogue n'est pas consulté.
+ *
+ * @java SqlValidationResponse
+ */
 export interface SqlValidationResponse {
   valid: boolean;
   error?: string;
@@ -451,6 +456,8 @@ export interface SqlValidationResponse {
  *
  * `cancelled: false` est un résultat normal, pas un échec : un scan `KAFKA_DIRECT` n'a aucun job
  * Flink à annuler. L'UI doit dire « requête abandonnée » et non « annulée » dans ce cas.
+ *
+ * @java QueryCancelResponse
  */
 export interface QueryCancelResponse {
   cancelled: boolean;
@@ -463,28 +470,45 @@ export interface QueryCancelResponse {
  * `modelCheck` n'est présent que chez OpenRouter, seul fournisseur ici à publier ce que sait faire
  * un modèle donné. Son absence ne veut donc rien dire du modèle : elle veut dire qu'on n'a pas
  * demandé.
+ *
+ * @java LlmTestResponse
  */
 export interface LlmTestResponse {
   ok: boolean;
   message: string;
+  /** Le fournisseur et le modèle réellement sondés — ceux du candidat quand il y en a un. */
+  provider: string;
+  model: string;
   /**
    * Vrai quand la sonde a testé un modèle (ou un endpoint) que le déploiement n'utilise pas — une
    * saisie du formulaire, pas encore appliquée. La phrase affichée doit suivre : « joignable » ne
    * dit pas la même chose d'un candidat et de ce qui tourne.
    */
-  candidate?: boolean;
+  candidate: boolean;
   modelCheck?: LlmModelCheck;
 }
 
-/** `POST /api/process-mining/profiling/validate` — identifiant du mapping retenu. */
+/**
+ * `POST /api/process-mining/profiling/validate` — identifiant du mapping retenu.
+ *
+ * @java FieldMappingValidation
+ */
 export interface FieldMappingValidation {
   fieldMappingId: string;
 }
 
-/** `POST /api/metrics/test` — exécution à blanc d'une métrique avant enregistrement. */
+/**
+ * `POST /api/metrics/preview-template` — exécution à blanc d'une métrique avant enregistrement.
+ *
+ * Le record existait déjà côté serveur (`MetricPreviewResult`) : cette interface en était un
+ * doublon écrit à la main, que rien ne reliait à lui — et son commentaire nommait un endpoint
+ * (`/api/metrics/test`) que la page n'appelle pas. Deux dérives qu'un marqueur aurait empêchées.
+ *
+ * @java MetricPreviewResult
+ */
 export interface MetricTestResponse {
-  value?: unknown;
-  rows?: unknown[];
+  value?: number | null;
+  rows?: Record<string, unknown>[];
   error?: string;
   summary?: Record<string, unknown>;
 }

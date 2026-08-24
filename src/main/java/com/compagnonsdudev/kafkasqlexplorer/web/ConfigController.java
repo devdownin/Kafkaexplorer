@@ -4,6 +4,8 @@ package com.compagnonsdudev.kafkasqlexplorer.web;
 
 import com.compagnonsdudev.kafkasqlexplorer.config.ClaudeConfig;
 import com.compagnonsdudev.kafkasqlexplorer.config.KafkaConfig;
+import com.compagnonsdudev.kafkasqlexplorer.domain.LlmModelCheck;
+import com.compagnonsdudev.kafkasqlexplorer.domain.LlmTestResponse;
 import com.compagnonsdudev.kafkasqlexplorer.domain.LlmModelShortlist;
 import com.compagnonsdudev.kafkasqlexplorer.service.AuditService;
 import com.compagnonsdudev.kafkasqlexplorer.service.FlinkSqlService;
@@ -468,21 +470,19 @@ public class ConfigController {
      * says so in {@code candidate} and names the model it actually called.
      */
     @PostMapping("/api/config/test-llm")
-    public Map<String, Object> testLlm(@RequestBody(required = false) Map<String, Object> body) {
+    public LlmTestResponse testLlm(@RequestBody(required = false) Map<String, Object> body) {
         ClaudeConfig target = candidateFrom(body);
         boolean candidate = target != claudeConfig && target.differsFrom(claudeConfig);
 
-        Map<String, Object> result = new HashMap<>();
-        result.put("provider", target.getProviderLabel());
-        result.put("model", target.getModel());
-        result.put("candidate", candidate);
-
         if (target.isApiKeyRequired() && !target.isApiKeyConfigured()) {
-            result.put("ok", false);
-            result.put("message", "An API key is required for " + target.getProviderLabel()
-                + " but none is configured.");
-            return result;
+            return new LlmTestResponse(false,
+                "An API key is required for " + target.getProviderLabel()
+                    + " but none is configured.",
+                target.getProviderLabel(), target.getModel(), candidate, null);
         }
+
+        boolean ok;
+        String message;
 
         try {
             // For the running configuration this is the shared provider, not a private client:
@@ -495,12 +495,12 @@ public class ConfigController {
             String reply = client.generate(
                 "You are a connectivity health check. Answer in one short word.",
                 "Reply with the word OK.");
-            result.put("ok", true);
-            result.put("message", (candidate ? "Candidate reachable via " : "LLM reachable via ")
-                + target.getResolvedBaseUrl() + ". Sample reply: " + summarize(reply));
+            ok = true;
+            message = (candidate ? "Candidate reachable via " : "LLM reachable via ")
+                + target.getResolvedBaseUrl() + ". Sample reply: " + summarize(reply);
         } catch (Exception e) {
-            result.put("ok", false);
-            result.put("message", e.getMessage() != null ? e.getMessage() : e.toString());
+            ok = false;
+            message = e.getMessage() != null ? e.getMessage() : e.toString();
         }
 
         // Deliberately after both branches, and reported on both. "Something answered" is not the
@@ -510,10 +510,10 @@ public class ConfigController {
         // turns an unactionable status into a diagnosis. Never allowed to change the verdict
         // above — this is a side read, and a catalogue that cannot be reached is a catalogue that
         // cannot be reached, not an endpoint that is down.
-        if (modelCatalog.isSupported(target)) {
-            result.put("modelCheck", modelCatalog.describeModel(target));
-        }
-        return result;
+        LlmModelCheck modelCheck =
+            modelCatalog.isSupported(target) ? modelCatalog.describeModel(target) : null;
+        return new LlmTestResponse(ok, message,
+            target.getProviderLabel(), target.getModel(), candidate, modelCheck);
     }
 
     /**
