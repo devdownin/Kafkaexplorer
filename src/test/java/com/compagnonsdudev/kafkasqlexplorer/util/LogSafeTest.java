@@ -80,4 +80,16 @@ class LogSafeTest {
             assertTrue(LogSafe.text(forged).indexOf('\n') < 0 && LogSafe.text(forged).indexOf('\r') < 0);
         }
     }
+
+    @Test
+    void namesSanitisesEachElementOfAList() {
+        // Une liste journalisée telle quelle l'est par son toString(), qui recopie ses éléments :
+        // un saut de ligne dans l'un d'eux forge une ligne comme s'il était journalisé seul.
+        assertEquals(java.util.List.of("demo.orders-1", "a_b"),
+            LogSafe.names(java.util.List.of("demo.orders-1", "a\nb")));
+        assertEquals(java.util.List.of(), LogSafe.names(java.util.List.of()));
+        assertNull(LogSafe.names(null));
+        // Ce que la liste rend est ce qui part au journal : rien n'en sort avec un saut de ligne.
+        assertTrue(LogSafe.names(java.util.List.of("x\r\nERROR forged")).toString().indexOf('\n') < 0);
+    }
 }

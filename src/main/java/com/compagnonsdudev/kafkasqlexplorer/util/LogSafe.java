@@ -60,6 +60,24 @@ public final class LogSafe {
     }
 
     /**
+     * Une liste de noms, chacun passé par {@link #name}.
+     *
+     * <p>Elle existe parce qu'une liste journalisée telle quelle l'est par son {@code toString()},
+     * qui recopie ses éléments : un saut de ligne dans l'un d'eux forge une ligne aussi sûrement
+     * que s'il avait été journalisé seul. C'est le cas exact que CodeQL a trouvé sur les deux
+     * lignes « Starting live session » — dont l'identifiant de session est un UUID frappé deux
+     * lignes plus haut, tandis que la liste de topics arrive d'un {@code @RequestParam}. Assainir
+     * l'argument qui ne pouvait rien porter et laisser l'autre est le genre de correction qui
+     * ressemble à une défense et n'en est pas une.
+     *
+     * <p>Rend une liste et non une chaîne : le formateur de journalisation garde ainsi son propre
+     * rendu, et l'appel reste un argument parmi d'autres.
+     */
+    public static java.util.List<String> names(java.util.Collection<String> values) {
+        return values == null ? null : values.stream().map(LogSafe::name).toList();
+    }
+
+    /**
      * Du texte libre dont la lisibilité est le point — une requête SQL, un message d'exception.
      * Les caractères de contrôle deviennent une espace, tout le reste passe.
      *

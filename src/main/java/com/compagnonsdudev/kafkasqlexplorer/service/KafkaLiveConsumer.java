@@ -94,7 +94,8 @@ public class KafkaLiveConsumer {
 
     public void startSession(String sessionId, List<String> topics, FieldMapping fieldMapping,
                              String auditFocus) {
-        log.info("Starting live session {} for topics: {}", LogSafe.name(sessionId), topics);
+        log.info("Starting live session {} for topics: {}",
+            LogSafe.name(sessionId), LogSafe.names(topics));
 
         // Defensive: a live session id is a fresh UUID per request, but never double-start one —
         // it would overwrite (and leak) the previous consumer and polling task.

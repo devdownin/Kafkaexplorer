@@ -172,7 +172,8 @@ public class ProcessMiningController {
                                  @RequestParam(required = false) List<String> auditPromptIds,
                                  @RequestParam(required = false) String customAuditPrompt) {
         String sessionId = UUID.randomUUID().toString();
-        log.info("Starting live session {} for topics: {}", LogSafe.name(sessionId), topics);
+        log.info("Starting live session {} for topics: {}",
+            LogSafe.name(sessionId), LogSafe.names(topics));
 
         FieldMapping fieldMapping = fieldMappingStore.find(fieldMappingId).orElse(null);
         if (fieldMapping == null) {
