@@ -352,8 +352,18 @@ logging:
       total-size-cap: 200MB
       max-history: 7
   level:
-    # WARN by default — switch to DEBUG locally when diagnosing query issues
-    com.compagnonsdudev.kafkasqlexplorer: WARN
+    # INFO by default — switch to DEBUG locally when diagnosing query issues.
+    #
+    # Not WARN: this package is what *explains* a boot. The startup summary names the broker
+    # this process is pointed at and the reason it did not answer, the warmup probe reports
+    # that the Flink planner really submitted a job in the packaged artefact, and the two
+    # state restores say which of their three answers they got — all at INFO, all created by
+    # the startup audit precisely so that a log could be read at the moment somebody needs
+    # it. At WARN a healthy boot writes nothing at all, and an unhealthy one writes the
+    # failures without the context that situates them. The volume this file worries about
+    # came from a third-party class retrying at INFO, which is pinned two lines below; it was
+    # never this package, whose contribution to that measured 103 775-line boot was six lines.
+    com.compagnonsdudev.kafkasqlexplorer: INFO
     org.apache.flink: WARN
     # Measured, not guessed at: with nothing listening on the bootstrap address, a 45 s run of
     # this application logged 103 775 lines, of which 101 943 — 98.2 % — were this one class
