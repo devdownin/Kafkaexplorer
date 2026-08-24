@@ -182,13 +182,19 @@ jobs:
   docker:
     name: Build and Push Docker image
     runs-on: ubuntu-latest
-    needs: build
+    # `guard` as well as `build`, which changes no ordering — `build` already needs it — and
+    # is what makes `needs.guard.outputs.version` readable here. Job outputs are not
+    # transitive, and re-deriving the version from the tag in a second place is exactly the
+    # duplication that produced the tag defects the guard exists for.
+    needs: [guard, build]
     # The image build is now a COPY of an already-built JAR, not a full recompile.
     timeout-minutes: 15
     permissions:
-      # `write`, because the last step appends the published digest to the Release notes
-      # the `build` job created. Nothing else here writes to the repository.
+      # `contents: write`, because the digest step appends to the Release notes the `build`
+      # job created, and the pin step below pushes a branch. `pull-requests: write` so that
+      # branch can be opened as a pull request — neither writes to `main`.
       contents: write
+      pull-requests: write
       packages: write
 
     steps:
@@ -404,6 +410,88 @@ jobs:
             grep -qx "$want" <<<"$platforms" \
               || { echo "::error::$want is missing from the published image index"; exit 1; }
           done
+
+      # The pin of the hub stack goes stale the instant this job publishes, and this is the
+      # only place that knows a new version exists.
+      #
+      # `docker-compose-spectra-hub.yml` names the Explorer image by hand
+      # (`${EXPLORER_IMAGE_TAG:-<version>}`), because that stack builds nothing and exists to
+      # run what is published. Dependabot cannot read a `${VAR:-…}` default, so nothing moves
+      # it except a person remembering to — and what happens when nobody does is not that the
+      # release notices: it is that the *next* pull request touching a file `hub-changes`
+      # gates on fails on `check-image-pins.py --published`, a check about something it did
+      # not change. That happened twice in one day, on two unrelated branches.
+      #
+      # A pull request rather than a push to `main`: every entry on `main` is a reviewed merge
+      # commit, and a bot commit landing straight on the default branch would be neither. It
+      # also makes the fix prove itself — the pull request touches the hub files, so
+      # `hub-changes` fires and `check-image-pins.py --published` validates the new value
+      # against the registry before anyone merges. The mechanism that reports the problem is
+      # the one that verifies the correction.
+      #
+      # Written with `git` and `gh` (both present on the runner) rather than a third-party
+      # action: this is the release path, and it already holds `contents: write` and a
+      # registry login. One fewer external action with write scope in it is worth ten lines.
+      - name: Open a pull request bumping the hub stack's Explorer pin
+        # Stable releases only — the same rule that gates `latest`. A pre-release must not
+        # move the pin of the stack people actually run.
+        if: ${{ !contains(needs.guard.outputs.version, '-') }}
+        # Best-effort, and deliberately so: the image is published by the time this runs. A
+        # release must never be reported as failed because a follow-up could not be opened —
+        # same posture as the Docker Hub description sync and the cache warming step.
+        continue-on-error: true
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Branch from the current default branch, not from the tagged commit: the tag may
+          # be behind by the time this runs, and a pull request whose base has moved shows a
+          # diff nobody asked for.
+          git fetch --depth 1 origin "$DEFAULT_BRANCH"
+          git switch -c "chore/bump-explorer-pin-${VERSION}" FETCH_HEAD
+
+          # Both halves move together, as the check's own message says. Edited in Python
+          # rather than sed: the pattern contains `${…}`, and getting one layer of shell
+          # quoting wrong there yields a file that still parses and names the wrong image.
+          python3 - <<'PY'
+          import os, pathlib, re
+          version = os.environ["VERSION"]
+          compose = pathlib.Path("docker-compose-spectra-hub.yml")
+          compose.write_text(re.sub(
+              r"(kafkaexplorer:\$\{EXPLORER_IMAGE_TAG:-)[^}]+(\})",
+              lambda m: m.group(1) + version + m.group(2),
+              compose.read_text()))
+          env = pathlib.Path(".env.example")
+          env.write_text(re.sub(
+              r"(?m)^EXPLORER_IMAGE_TAG=.*$", f"EXPLORER_IMAGE_TAG={version}", env.read_text()))
+          PY
+
+          if git diff --quiet; then
+            echo "The pin already names ${VERSION} — nothing to open."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Bump the hub stack's Explorer pin to ${VERSION}"
+          git push -u origin "chore/bump-explorer-pin-${VERSION}"
+
+          if ! gh pr create \
+            --base "$DEFAULT_BRANCH" \
+            --title "Bump the hub stack's Explorer pin to ${VERSION}" \
+            --body "$(printf '%s\n' \
+              "\`v${VERSION}\` is published, so \`docker-compose-spectra-hub.yml\` and \`.env.example\` now name a release behind it — the hub stack builds nothing and pulls what is published, so it would pair an old Explorer with a current SpectraLLM." \
+              "" \
+              "Opened by \`release.yml\` at publication time, because that is the only moment anything knows a new version exists: the hand-written \`\${EXPLORER_IMAGE_TAG:-…}\` default is invisible to Dependabot, and left alone it is discovered by the next unrelated pull request failing \`check-image-pins.py --published\`." \
+              "" \
+              "This pull request touches the hub files, so \`hub-changes\` runs \`spectra-hub-stack\` and the new value is checked against the registry here before it is merged." \
+              "" \
+              "---" \
+              "_Generated by [Claude Code](https://claude.ai/code)_")"; then
+            echo "::warning::The pin bump branch was pushed but no pull request could be opened. If this is a permission refusal, enable Settings → Actions → General → 'Allow GitHub Actions to create and approve pull requests'; the branch chore/bump-explorer-pin-${VERSION} is there and can be opened by hand."
+          fi
 
       # The Release carries SHA256SUMS.txt for the JAR, so the one file a user downloads can
       # be verified — while the image, the artefact most people actually consume, offered
