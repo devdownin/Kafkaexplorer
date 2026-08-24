@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 
 import { describe, it, expect } from 'vitest';
-import { tablesInScope, resolveScope, stripSqlNoise, toTableName } from './sqlScope';
+import { tablesInScope, resolveScope, resolveScopeAsTables, stripSqlNoise, toTableName } from './sqlScope';
 
 describe('stripSqlNoise', () => {
   it('drops line and block comments', () => {
@@ -73,5 +73,25 @@ describe('resolveScope', () => {
 
   it('is case-insensitive on the catalog match', () => {
     expect(resolveScope('SELECT * FROM ORDERS', ['orders'])).toEqual(['orders']);
+  });
+});
+
+describe('resolveScopeAsTables', () => {
+  it('renvoie la forme table Flink là où resolveScope rend la clé du catalogue', () => {
+    const known = ['demo.orders.1.received'];
+    const sql = 'SELECT * FROM demo_orders_1_received';
+    // La distinction est exactement celle qui a produit un bug : la première forme sert à aller
+    // chercher un schéma par nom de topic, la seconde est la seule qu'on puisse écrire dans une
+    // requête — Flink lirait les points comme des séparateurs d'identifiant.
+    expect(resolveScope(sql, known)).toEqual(['demo.orders.1.received']);
+    expect(resolveScopeAsTables(sql, known)).toEqual(['demo_orders_1_received']);
+  });
+
+  it('laisse passer un nom inconnu du catalogue, normalisé', () => {
+    expect(resolveScopeAsTables('SELECT * FROM some.topic-name', [])).toEqual(['some_topic_name']);
+  });
+
+  it('rend une liste vide quand la requête ne cite rien', () => {
+    expect(resolveScopeAsTables('SELECT 1 + 1', ['demo.orders.1.received'])).toEqual([]);
   });
 });

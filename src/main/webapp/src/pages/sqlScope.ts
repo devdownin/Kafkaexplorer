@@ -66,3 +66,19 @@ export function resolveScope(sql: string, known: string[]): string[] {
   const index = new Map(known.map(k => [toTableName(k).toLowerCase(), k]));
   return tablesInScope(sql).map(name => index.get(toTableName(name).toLowerCase()) ?? name);
 }
+
+/**
+ * Les mêmes noms, mais sous la forme **table Flink** — celle qu'on écrit dans une requête.
+ *
+ * `resolveScope` rend la clé du *catalogue*, qui pour un topic est le nom pointé
+ * (`demo.orders.1.received`) : c'est ce qu'il faut pour aller chercher un schéma par nom de topic,
+ * et c'est faux dans une requête, où Flink lit les points comme des séparateurs d'identifiant
+ * (catalogue.base.table…) et ne résout rien. Chaque appelant devait donc se souvenir d'appliquer
+ * `toTableName` — trois le faisaient, un l'a oublié, et l'assistant de fenêtrage a produit
+ * pendant un moment des requêtes qui échouaient sur un nom d'apparence correcte. Une fonction qui
+ * demande qu'on se souvienne de quelque chose finit par être appelée sans, d'où celle-ci : la
+ * question « quelle table cite cette requête ? » a maintenant une réponse par forme voulue.
+ */
+export function resolveScopeAsTables(sql: string, known: string[]): string[] {
+  return resolveScope(sql, known).map(toTableName);
+}

@@ -32,10 +32,20 @@ class StartupSummaryTest {
 
     private ListAppender<ILoggingEvent> appender;
     private Logger logger;
+    private Level previousLevel;
 
     @BeforeEach
     void captureLog() {
         logger = (Logger) LoggerFactory.getLogger(StartupSummary.class);
+        // The level this test needs is pinned, not inherited. A @SpringBootTest anywhere in the
+        // same JVM applies `logging.level` from application.yml to the shared Logback context, and
+        // this application's own package ships at WARN — so whichever of the two classes happened
+        // to run first decided whether the INFO line below existed at all. That is a test failing
+        // on its neighbour rather than on its subject, and it is one reordering away at any time.
+        // What is under test is that the summary *says* the address, not what an operator's
+        // threshold lets through.
+        previousLevel = logger.getLevel();
+        logger.setLevel(Level.INFO);
         appender = new ListAppender<>();
         appender.start();
         logger.addAppender(appender);
@@ -44,6 +54,7 @@ class StartupSummaryTest {
     @AfterEach
     void releaseLog() {
         logger.detachAppender(appender);
+        logger.setLevel(previousLevel);
     }
 
     private String messages() {

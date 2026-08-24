@@ -367,3 +367,25 @@ logging:
     # in the same window) and by this application's own startup summary, which names the address
     # and the reason. What is removed is the retry-by-retry narration of a fact already stated.
     org.apache.kafka.clients.admin.internals.AdminMetadataManager: WARN
+
+    # The same rule, on the one class that writes a stack trace per query rather than per retry.
+    #
+    # Every bounded SELECT through the planner ends the same way: the collect iterator is closed,
+    # Flink asks the job for its status to decide whether to cancel it, and the per-job MiniCluster
+    # it would ask has already been torn down — because the job finished, which is why we are
+    # closing the iterator. `CollectResultFetcher` reports that as
+    #   "Failed to get job status so we assume that the job has terminated. Some data might be
+    #    lost." + java.lang.IllegalStateException: MiniCluster is not yet running or has already
+    #    been shut down.
+    # twice, at WARN, with the full trace. The warmup probe runs a SELECT at every boot, so a
+    # deployment that has answered no query at all already carries two of them — and the sentence
+    # is wrong here in the way that matters: nothing was lost, the rows were all collected, the
+    # job simply ended before the fetcher asked about it.
+    #
+    # ERROR rather than OFF, and on this class alone rather than on the package: whatever it has
+    # to say above WARN still comes through. The accepted cost is stated rather than hidden — a
+    # *genuine* "some data might be lost" from this fetcher is silenced too. It is accepted
+    # because that message cannot be acted upon as it stands (it does not say which rows, and it
+    # is emitted on the path where the loss is by construction impossible), and because a warning
+    # that is printed on every single query is one nobody reads by the second day.
+    org.apache.flink.streaming.api.operators.collect.CollectResultFetcher: ERROR

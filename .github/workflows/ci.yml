@@ -102,6 +102,18 @@ jobs:
       run: |
         echo "::warning::Docker Hub login was refused — Testcontainers will pull anonymously. The secrets are set (the guard let this step run), so the token itself is being rejected: a read-only or expired PAT, a DOCKERHUB_USERNAME that is not the login account, a password instead of a PAT on a 2FA account, or whitespace in the secret."
 
+    - name: Pull the Testcontainers broker image
+      # KafkaClusterIntegrationTest starts a broker through Testcontainers, and a launch that
+      # fails is not a test that failed — it takes the whole `verify` down with this class's
+      # assertions never having run, which has now happened three times on hosted runners. Pulling
+      # here separates the two failures that used to arrive as one: a registry that cannot be
+      # reached fails *this* step, named for what it is, while the suite below then starts from a
+      # local image. `continue-on-error` because it is a warm-up, not a gate — Testcontainers
+      # pulls for itself if this did not, and a build must not fail on a step whose only job is to
+      # make a later one faster.
+      continue-on-error: true
+      run: docker pull apache/kafka-native:4.3.1
+
     - name: Build & Test with Maven
       # verify runs the full lifecycle including tests — no separate `mvn test`
       # pass (the previous package + test combo ran the whole suite twice).
