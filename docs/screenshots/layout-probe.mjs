@@ -149,6 +149,33 @@ const MEASURE = () => {
     return 'none';
   };
 
+  /*
+   * Les panneaux d'infobulle **fermés** sont retirés de la mise en page le temps de la mesure.
+   *
+   * `Tooltip` garde son contenu monté en permanence — c'est délibéré, et documenté : sans ça
+   * `aria-describedby` pointerait par moments vers un élément absent. Fermé, le panneau est
+   * seulement transparent, donc son texte continue de compter dans le `scrollWidth` de ce qui
+   * l'entoure : la sonde le lisait comme du contenu tronqué et inatteignable. Elle a compté
+   * jusqu'à vingt « unreachable » sur le Topic Explorer, tous des infobulles fermées — c'est-à-dire
+   * du contenu qui s'affiche à la demande, l'exact contraire de ce que cette colonne prétend
+   * mesurer. Or c'est le nombre sur lequel W7 a conclu « rien ne cache de contenu inatteignable » :
+   * la conclusion tenait, le chiffre qui l'étayait non, et le prochain lecteur serait parti
+   * chercher vingt défauts qui n'existent pas.
+   *
+   * `display: none` plutôt qu'un filtre a posteriori : c'est le navigateur qui refait la mise en
+   * page, donc les `scrollWidth` obtenus sont ceux du contenu réel, y compris pour les ancêtres —
+   * qu'une règle « ignorer l'élément qui contient une infobulle » n'aurait pas nettoyés. Restauré
+   * juste après, même si la page est jetable : une mesure qui laisse la page dans un autre état
+   * que celui qu'elle décrit est une mesure qu'on ne peut pas enchaîner.
+   */
+  const hiddenTooltips = [...document.querySelectorAll('[role="tooltip"]')]
+    .filter(panel => getComputedStyle(panel).opacity === '0')
+    .map(panel => {
+      const previous = panel.style.display;
+      panel.style.display = 'none';
+      return { panel, previous };
+    });
+
   const clippedAll = [...document.querySelectorAll('*')]
     .filter(el => {
       if (el.clientWidth === 0 || el.scrollWidth <= el.clientWidth + 2) return false;
@@ -177,6 +204,10 @@ const MEASURE = () => {
   const unreachable = clippedAll.filter(el => reachability(el) === 'none');
   const clipped = unreachable.slice(0, 8).map(describe);
   const clippedSample = clippedAll.slice(0, 4).map(describe);
+
+  /* Restauré seulement ici : `reachability` et `describe` relisent la mise en page, donc rendre
+     les panneaux avant eux leur ferait décrire un écran différent de celui qui a été filtré. */
+  hiddenTooltips.forEach(({ panel, previous }) => { panel.style.display = previous; });
 
   const targets = [...document.querySelectorAll('button, [role="button"], a, input, select')]
     .map(el => {

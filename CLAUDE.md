@@ -856,6 +856,15 @@ without being a phone — turns out to be painful in practice. What is load-bear
   the opposite**: a metric card's name, description and SQL line all carried `truncate` with no
   `title` anywhere, and the Cluster page's property names overflowed a grid cell with neither
   ellipsis nor title. Those are fixed; what remains is W8.
+- **The `unreachable` column used to count closed tooltips.** `Tooltip` keeps its content mounted
+  so `aria-describedby` always resolves; closed, the panel is only transparent, so its text went on
+  counting in the `scrollWidth` of everything around it. The probe reported twenty such containers
+  on the Topic Explorer and sixteen on Metrics — every one a closed tooltip, which is content that
+  appears on demand rather than content cut off. It now takes those panels out of the layout for
+  the measurement (`display: none`, restored after) instead of filtering them afterwards, so the
+  browser recomputes and the ancestors come out right too. Measured: `topic-explorer` 20 → 2,
+  `metrics` 16 → 4, `stream-flow` 2 → 0, target counts unchanged. What is left is real and named in
+  the document; W7's answer holds in substance but no longer in the absolute form it was written in.
 - Re-run the probe before trusting any number in that document, and read a zero in its
   `unreachable` column as unconfirmed rather than proven: the pages that fetch asynchronously clip
   nothing while their cards are still arriving. Making those counts stable enough to gate a build
