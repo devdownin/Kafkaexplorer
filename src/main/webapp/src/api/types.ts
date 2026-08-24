@@ -712,6 +712,14 @@ export interface LlmModelCheck {
    * refusé ne tient certainement pas. `null` quand la fenêtre est inconnue.
    */
   promptBudgetFits: boolean | null;
+  /**
+   * Si cette clé peut réellement atteindre le modèle. Consulté seulement quand la recherche du
+   * modèle a échoué, parce que c'est le seul cas que ça départage : une clé d'organisation
+   * restreinte reçoit la même 404 qu'un slug mal tapé. `null` — la valeur ordinaire — veut dire
+   * que la question n'a pas été posée, ou n'a pas pu être tranchée : la liste par clé est paginée,
+   * donc un slug absent d'une page tronquée est un slug qu'on n'a pas regardé.
+   */
+  availableToKey: boolean | null;
   /** Pourquoi la consultation n'a rien donné, ou `null` quand elle a donné quelque chose. */
   error: string | null;
 }

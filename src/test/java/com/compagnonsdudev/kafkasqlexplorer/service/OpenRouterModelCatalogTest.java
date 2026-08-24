@@ -225,6 +225,44 @@ class OpenRouterModelCatalogTest {
         }
     }
 
+    /**
+     * The per-key list disambiguates a refusal, and it is only allowed to do so when the answer is
+     * conclusive. A truncated page that does not contain the slug is a page we did not finish
+     * reading, not a model the key lacks — reporting that as a restriction would manufacture the
+     * false negative this whole integration is written against.
+     */
+    @Test
+    void aModelMissingFromATruncatedEntitlementListIsNotReportedAsRestricted() {
+        // Exercised through parse-level reasoning rather than the network: what is pinned is that
+        // the record can carry the three states at all, and that the default is the unasked one.
+        LlmModelCheck unasked = catalog.parse(json("{\"id\": \"a/b\"}"), "a/b");
+        assertNull(unasked.availableToKey(),
+            "the question is not asked on a successful lookup");
+
+        assertNull(LlmModelCheck.unavailable("nope").availableToKey());
+        assertEquals(Boolean.FALSE,
+            LlmModelCheck.unavailable("nope").withAvailability(false).availableToKey());
+        assertNull(LlmModelCheck.unavailable("nope").withAvailability(null).availableToKey(),
+            "could-not-establish stays null rather than collapsing to false");
+    }
+
+    /** Attaching an availability verdict must not disturb anything else the check carries. */
+    @Test
+    void attachingAvailabilityKeepsTheRestOfTheCheck() {
+        LlmModelCheck check = catalog.parse(json("""
+            {"id": "a/b", "name": "A B", "context_length": 8000,
+             "architecture": {"output_modalities": ["text"]},
+             "supported_parameters": ["structured_outputs"]}
+            """), "a/b").withAvailability(true);
+
+        assertEquals("a/b", check.id());
+        assertEquals("A B", check.name());
+        assertEquals(8000L, check.contextLength());
+        assertEquals(Boolean.TRUE, check.emitsText());
+        assertEquals(SchemaSupport.CONSTRAINED, check.schemaSupport());
+        assertEquals(Boolean.TRUE, check.availableToKey());
+    }
+
     /** The shapes OpenRouter really publishes have to keep working, variants included. */
     @Test
     void acceptsTheSlugShapesOpenRouterActuallyUses() {

@@ -441,6 +441,32 @@ public class ClaudeConfig {
         return !java.util.Objects.equals(model, other.model);
     }
 
+    /**
+     * Whether two endpoint URLs name the same host — the test that decides whether a stored
+     * credential may follow a configuration change.
+     *
+     * <p>The <em>host</em> is compared and nothing else, so a changed port or path is not a
+     * different endpoint while a changed hostname is. A URL that will not parse counts as a
+     * different host: the safe answer to "may this key follow?" is no.
+     */
+    public static boolean sameEndpointHost(String a, String b) {
+        String hostA = hostOf(a);
+        String hostB = hostOf(b);
+        return hostA != null && hostA.equals(hostB);
+    }
+
+    private static String hostOf(String url) {
+        if (url == null || url.isBlank()) {
+            return null;
+        }
+        try {
+            String host = java.net.URI.create(url.strip()).getHost();
+            return host == null ? null : host.toLowerCase(java.util.Locale.ROOT);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
     private static String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value;
     }

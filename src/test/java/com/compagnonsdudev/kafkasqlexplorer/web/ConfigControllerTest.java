@@ -160,6 +160,96 @@ class ConfigControllerTest {
     }
 
     /**
+     * The credential does not follow the endpoint to a different host.
+     *
+     * <p>This endpoint accepts any base URL and guards the key with {@code containsKey}, so a body
+     * naming a new host and omitting {@code llmApiKey} used to repoint the deployment while leaving
+     * the stored key in place — and the next probe sent that key there, reflecting the answer back
+     * to the caller. Two unauthenticated calls, no key needed to begin with.
+     */
+    @Test
+    void movingTheEndpointToAnotherHostDoesNotCarryTheStoredKeyToIt() throws Exception {
+        claudeConfig.setProvider(ClaudeConfig.Provider.OPENROUTER);
+        claudeConfig.setBaseUrl("https://openrouter.ai/api/v1");
+        claudeConfig.setApiKey("sk-or-secret");
+
+        mockMvc.perform(post("/api/config").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"llmBaseUrl\":\"https://attacker.example/v1\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.llmApiKeyConfigured").value(false))
+            // Said, not done silently: the form's key field is blank either way, so without this
+            // the next call fails on a missing credential with nothing connecting the two.
+            .andExpect(jsonPath("$.credentialsCleared[0]").value("llmApiKey"));
+
+        assertEquals("", claudeConfig.getApiKey());
+    }
+
+    /** The ordinary case has to keep working: same host, different path or port. */
+    @Test
+    void movingTheEndpointOnTheSameHostKeepsTheKey() throws Exception {
+        claudeConfig.setProvider(ClaudeConfig.Provider.OPENAI_COMPATIBLE);
+        claudeConfig.setBaseUrl("https://gateway.internal/v1");
+        claudeConfig.setApiKey("sk-secret");
+
+        mockMvc.perform(post("/api/config").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"llmBaseUrl\":\"https://gateway.internal:8443/openai/v1\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.llmApiKeyConfigured").value(true))
+            .andExpect(jsonPath("$.credentialsCleared").isEmpty());
+
+        assertEquals("sk-secret", claudeConfig.getApiKey());
+    }
+
+    /** Bringing your own key to the new endpoint is the whole point — it must not be cleared. */
+    @Test
+    void aKeySuppliedWithTheNewEndpointIsKept() throws Exception {
+        claudeConfig.setProvider(ClaudeConfig.Provider.OPENROUTER);
+        claudeConfig.setBaseUrl("https://openrouter.ai/api/v1");
+        claudeConfig.setApiKey("sk-or-old");
+
+        mockMvc.perform(post("/api/config").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"llmBaseUrl\":\"https://gateway.example/v1\","
+                    + "\"llmApiKey\":\"sk-new\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.credentialsCleared").isEmpty());
+
+        assertEquals("sk-new", claudeConfig.getApiKey());
+    }
+
+    /**
+     * Switching provider moves the endpoint by deriving a new default base URL rather than by
+     * naming one, and the credential must not follow that either — it is the same journey.
+     */
+    @Test
+    void switchingProviderAlsoLeavesTheOldKeyBehind() throws Exception {
+        claudeConfig.setProvider(ClaudeConfig.Provider.OPENROUTER);
+        claudeConfig.setBaseUrl("");
+        claudeConfig.setApiKey("sk-or-secret");
+
+        mockMvc.perform(post("/api/config").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"llmProvider\":\"ANTHROPIC\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.credentialsCleared[0]").value("llmApiKey"));
+
+        assertEquals("", claudeConfig.getApiKey());
+    }
+
+    /** A save that does not move the endpoint at all leaves the credential entirely alone. */
+    @Test
+    void aSaveThatDoesNotMoveTheEndpointKeepsTheKey() throws Exception {
+        claudeConfig.setProvider(ClaudeConfig.Provider.OPENROUTER);
+        claudeConfig.setBaseUrl("https://openrouter.ai/api/v1");
+        claudeConfig.setApiKey("sk-or-secret");
+
+        mockMvc.perform(post("/api/config").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"llmModel\":\"openai/gpt-4o\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.credentialsCleared").isEmpty());
+
+        assertEquals("sk-or-secret", claudeConfig.getApiKey());
+    }
+
+    /**
      * The defaults the form used to restate.    /**
      * The defaults the form used to restate. Every provider is present, so the page cannot fall
      * back to a literal for the one that was forgotten.

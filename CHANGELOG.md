@@ -11,6 +11,52 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- **A stored API key no longer follows the LLM endpoint to a different host.** `POST /api/config`
+  accepts any base URL with no validation and guards the key with `containsKey`, so a body naming a
+  new host and omitting `llmApiKey` repointed the deployment while leaving the credential in place
+  — and the next `test-llm` sent it there, reflecting up to 300 bytes of the answer back to the
+  caller. Two unauthenticated calls, and the caller needed no key to begin with. It is the same
+  defect CodeQL called critical on the candidate probe, one door over, where the taint crosses a
+  persisted bean between requests and the scanner does not follow it. "An operator may repoint this
+  application" and "anyone may have its credentials" are different statements, and only the first
+  is what `SECURITY.md` accepts as a deployment constraint. The rule compares the **host** — a
+  changed port or path is the same endpoint — and covers a derived move too, since switching
+  provider fills in a new default base URL. What was cleared is named in `credentialsCleared`
+  rather than done silently.
+
+### Added
+
+- **`GET /v1/models/user` is consulted when a model lookup fails**, and only then. An org key
+  restricted to part of the catalogue is refused with the same 404 as a mistyped slug, and those
+  send an operator to two different places. The per-key list takes no filters, so one generous page
+  is read and a slug missing from a list that filled the page is reported as **inconclusive**
+  rather than absent: `null` means the question could not be answered, and only an exhaustive list
+  yields `false`. The UI shows the note on `false` alone.
+
+- **`docs/verify-openrouter-contract.py`** — checks the requests this application makes against the
+  live API. Deliberately not a `docs/check-*.py`, because those are discovered and run by CI and
+  this one needs the network and a key. It exists because the filter and sort parameter names came
+  from a published schema rather than an observed response: the parsing has unit tests, the request
+  had nothing, and a parameter the gateway does not recognise is ignored rather than refused — so
+  its first assertion is that the filters actually narrow the catalogue. Documented in
+  `CONTRIBUTING.md`.
+
+### Fixed
+
+- **The Settings page no longer draws a form over a response it never received.** The load effect
+  swallowed its failure in an empty `catch` — commented "Backend may not expose REST config yet",
+  which stopped being true long ago — set `loading` false, and rendered a complete-looking
+  configuration having read nothing. That is the unverified claim this codebase keeps removing,
+  left standing on the one screen whose whole purpose is data entry, where typing over an unknown
+  baseline produces a save nobody can predict. It is an error panel with a retry now.
+
+- **A model slug is refused when you save it, not at the first analysed window.** Syntactic and
+  OpenRouter-only: it checks the shape of an address the gateway can resolve, never that a model
+  exists — that is what Test is for. Elsewhere a model name is whatever the endpoint accepts.
+
+
 ### Added
 
 - **A model shortlist on the Settings page, cheapest first.** Choosing an OpenRouter model meant

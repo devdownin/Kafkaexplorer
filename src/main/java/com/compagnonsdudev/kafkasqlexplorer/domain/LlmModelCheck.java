@@ -49,6 +49,14 @@ package com.compagnonsdudev.kafkasqlexplorer.domain;
  *                           {@code docs/check-compose.py} uses, so a budget this passes may still
  *                           not fit while one it rejects certainly does not. {@code null} when the
  *                           window is unknown.
+ * @param availableToKey     whether this API key can actually reach the model. Consulted only
+ *                           when the model lookup itself failed, because that is the one case it
+ *                           disambiguates: an org key restricted to a subset of the catalogue gets
+ *                           the same 404 as a mistyped slug, and "your key cannot reach this
+ *                           model" and "there is no such model" send an operator to two different
+ *                           places. {@code null} — the ordinary value — means the question was not
+ *                           asked, or could not be answered: the per-key list is paged, so a slug
+ *                           missing from the part that was read is not a slug that is absent.
  * @param error              why the lookup produced nothing, or {@code null} when it produced
  *                           something
  */
@@ -61,10 +69,18 @@ public record LlmModelCheck(
         Boolean reasoningMandatory,
         Long promptBudgetTokens,
         Boolean promptBudgetFits,
+        Boolean availableToKey,
         String error
 ) {
     /** The lookup could not be made, or answered with something unusable. */
     public static LlmModelCheck unavailable(String error) {
-        return new LlmModelCheck(null, null, null, null, SchemaSupport.UNKNOWN, null, null, null, error);
+        return new LlmModelCheck(null, null, null, null, SchemaSupport.UNKNOWN, null, null, null,
+            null, error);
+    }
+
+    /** The same, plus what the per-key catalogue said about the slug. */
+    public LlmModelCheck withAvailability(Boolean available) {
+        return new LlmModelCheck(id, name, contextLength, emitsText, schemaSupport,
+            reasoningMandatory, promptBudgetTokens, promptBudgetFits, available, error);
     }
 }

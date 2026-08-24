@@ -14,6 +14,7 @@ const check = (over: Partial<LlmModelCheck> = {}): LlmModelCheck => ({
   reasoningMandatory: null,
   promptBudgetTokens: 34_096,
   promptBudgetFits: true,
+  availableToKey: null,
   error: null,
   ...over,
 });
@@ -32,6 +33,27 @@ describe('describeModelCheck', () => {
     expect(notes).toHaveLength(1);
     expect(notes[0].tone).toBe('unknown');
     expect(notes[0].text).toContain('404');
+  });
+
+  /*
+   * Le seul cas que la liste par clé départage : une clé d'organisation restreinte reçoit la même
+   * 404 qu'un slug mal tapé, et les deux envoient l'opérateur à deux endroits différents.
+   */
+  it('says a refusal is an entitlement when the key demonstrably cannot reach the model', () => {
+    const notes = describeModelCheck(check({
+      error: 'OpenRouter answered HTTP 404 for "x/y".',
+      availableToKey: false,
+    }));
+    expect(notes).toHaveLength(2);
+    expect(notes[1].tone).toBe('warning');
+    expect(notes[1].text).toContain('entitlement');
+  });
+
+  it('stays silent about entitlement when it could not be established', () => {
+    for (const availableToKey of [null, true] as const) {
+      const notes = describeModelCheck(check({ error: 'HTTP 404', availableToKey }));
+      expect(notes).toHaveLength(1);
+    }
   });
 
   /*

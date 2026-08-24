@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import axios from 'axios';
 import {
-  PageHeader, Button, CardSkeleton, Checkbox, Combobox, Field, Input, NumberInput, PasswordInput,
-  useConfirm, useUnsavedGuard,
+  PageHeader, Button, CardSkeleton, Checkbox, Combobox, ErrorPanel, Field, Input, NumberInput,
+  PasswordInput, useConfirm, useUnsavedGuard,
 } from '../components/ui';
 import { clearDraft, readDraft, useDraftConflict, writeDraft } from '../draftStore';
 import { draftableOnly, mergeDraft } from './configDraft';
@@ -16,7 +16,10 @@ import {
 import { describeDataPolicy, type LlmPolicyFacts } from './llmPolicy';
 import type { LlmModelShortlist, LlmTestResponse } from '../api/types';
 import { describeModelCheck, describeModelIdentity, hasModelWarning } from './llmModelCheck';
-import { PROJECTION_NOTE, describeOption, describeShortlist, optionSlugs } from './llmModelPicker';
+import { describeApiError, type QueryErrorInfo } from './queryError';
+import {
+  PROJECTION_NOTE, describeOption, describeShortlist, optionSlugs, validateModelSlug,
+} from './llmModelPicker';
 
 interface ClusterConfig {
   bootstrapServers: string;
@@ -183,6 +186,16 @@ const Config: React.FC = () => {
     llmSnapshotWindowTimeoutSeconds: 30,
   });
   const [loading, setLoading] = useState(true);
+  /*
+   * Pourquoi `GET /api/config` n'a pas répondu, quand il n'a pas répondu.
+   *
+   * L'effet de chargement avalait l'échec dans un `catch` vide et posait `loading` à faux, donc la
+   * page dessinait un formulaire complet sans avoir reçu la moindre valeur : l'affirmation non
+   * vérifiée que ce dépôt retire partout ailleurs — la pastille de connexion, `inForce`, le
+   * quatrième état de `describePersistence`. Un formulaire de réglages qui prétend montrer la
+   * configuration en vigueur alors qu'il ne l'a jamais reçue est le pire endroit pour ça.
+   */
+  const [loadError, setLoadError] = useState<QueryErrorInfo | null>(null);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -245,9 +258,9 @@ const Config: React.FC = () => {
    * calé sur la réponse du serveur : c'est ce qui fait que le formulaire restauré s'affiche
    * modifié, avec ses boutons actifs, plutôt que de se croire à jour.
    */
-  useEffect(() => {
-    const fetchConfig = async () => {
+  const fetchConfig = useCallback(async () => {
       let saved: ClusterConfig | null = null;
+      setLoadError(null);
       try {
         const res = await axios.get<ClusterConfig & SettingsPersistence
           & { llmProviderDefaults?: ProviderDefaults }>('/api/config');
@@ -264,8 +277,16 @@ const Config: React.FC = () => {
         const { llmProviderDefaults, ...settings } = split.settings;
         if (llmProviderDefaults) setProviderDefaults(llmProviderDefaults);
         saved = settings;
-      } catch {
-        // Backend may not expose REST config yet - use defaults
+      } catch (err: unknown) {
+        /*
+         * Le formulaire ne se dessine pas par-dessus une réponse qu'on n'a pas eue. Le
+         * commentaire d'origine disait « le backend n'expose peut-être pas encore la config », ce
+         * qui a cessé d'être vrai il y a longtemps ; ce qui restait, c'était une page affirmant
+         * montrer ce qui tourne sans l'avoir demandé avec succès.
+         */
+        setLoadError(describeApiError(err, 'The configuration could not be read.'));
+        setLoading(false);
+        return;
       }
       setConfig(prev => {
         const server = { ...prev, ...(saved ?? {}) };
@@ -281,9 +302,13 @@ const Config: React.FC = () => {
           llmDataRetentionRefused: saved.llmDataRetentionRefused,
         } : null);
       setLoading(false);
-    };
-    fetchConfig();
   }, []);
+
+  useEffect(() => {
+    // La lecture est ce qui produit l'état de la page, et seul un Suspense la sortirait de l'effet.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- chargement au montage
+    void fetchConfig();
+  }, [fetchConfig]);
 
   useEffect(() => {
     setDirty(savedRef.current !== '' && JSON.stringify(config) !== savedRef.current);
@@ -332,6 +357,13 @@ const Config: React.FC = () => {
     const res = await axios.post<ClusterConfig & SettingsPersistence>(
       '/api/config', force ? { ...config, force } : config);
     const { settings, persistence: kept } = splitPersistence(res.data);
+    /*
+     * Ce que l'enregistrement a retiré. Une clé ne suit pas le point d'accès vers un autre hôte —
+     * le serveur l'efface plutôt que de l'y envoyer — et le champ du formulaire est vide dans les
+     * deux cas, donc sans cette phrase le prochain appel échouerait sur un identifiant manquant
+     * avec rien qui relie les deux.
+     */
+    const cleared = (res.data as { credentialsCleared?: string[] }).credentialsCleared ?? [];
     setConfig(prev => {
       const next = { ...prev, ...settings };
       savedRef.current = JSON.stringify(next);
@@ -346,7 +378,10 @@ const Config: React.FC = () => {
     // Ce que l'enregistrement a réellement obtenu quand ce n'est pas ce qui était promis : un
     // magasin qu'on n'a pas pu écrire laisse des réglages qui marchent maintenant et disparaissent
     // au redémarrage. Ça ne peut pas rester sous un simple « Saved! ».
-    setSaveNote(describeSaveOutcome(kept));
+    setSaveNote(cleared.length > 0
+      ? 'The endpoint now points at a different host, so the stored API key was not carried over '
+        + 'to it. Enter the key for the new endpoint and save again.'
+      : describeSaveOutcome(kept));
     setSaveSuccess(true);
     setTimeout(() => setSaveSuccess(false), 3000);
   };
@@ -501,6 +536,11 @@ const Config: React.FC = () => {
     // SpectraLLM picks its own served model, so the model field is optional for it.
     if (config.llmProvider !== 'SPECTRA' && !config.llmModel?.trim()) {
       errors.llmModel = 'A model is required for process mining.';
+    } else {
+      // La forme du slug, refusée ici plutôt qu'à la première fenêtre analysée — où la passerelle
+      // répond la même 404 que pour un modèle inexistant, et l'opérateur va vérifier un nom.
+      const slugProblem = validateModelSlug(config.llmProvider, config.llmModel);
+      if (slugProblem) errors.llmModel = slugProblem;
     }
     if (config.llmProvider !== 'OLLAMA' && !config.llmBaseUrl?.trim()) {
       errors.llmBaseUrl = 'A base URL is required for every provider but Ollama, which defaults to the local one.';
@@ -588,6 +628,19 @@ const Config: React.FC = () => {
   };
 
   const errorCount = useMemo(() => Object.values(errors).filter(Boolean).length, [errors]);
+
+  /*
+   * Rien du formulaire tant qu'on ne sait pas ce qui tourne. Un panneau d'erreur avec un bouton
+   * Réessayer plutôt qu'une page qui prétend montrer la configuration en vigueur : le geste
+   * qu'offre cette page est la saisie, et laisser saisir par-dessus une base inconnue produirait un
+   * enregistrement dont personne ne sait ce qu'il écrase.
+   */
+  if (loadError) return (
+    <div className="p-4 md:p-6 max-w-3xl space-y-6">
+      <PageHeader title="Configuration" description="Manage Kafka cluster connection, security and process-mining LLM settings." />
+      <ErrorPanel error={loadError} onRetry={() => { setLoading(true); void fetchConfig(); }} />
+    </div>
+  );
 
   if (loading) return (
     <div className="p-4 md:p-6 max-w-3xl space-y-6">
