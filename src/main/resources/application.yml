@@ -29,9 +29,14 @@ kafka:
   schema-registry-url: http://localhost:8081
   mode: PLAIN # Possible values: PLAIN, SSL, CONFLUENT_CLOUD
   # Rebalance protocol for the group-managed (subscribe) consumer used by live
-  # Process Mining sessions. "classic" (default) works with any broker version;
-  # "consumer" opts into KIP-848 incremental rebalances — requires Kafka 4.x brokers.
-  consumer-group-protocol: classic
+  # Process Mining sessions. "consumer" is KIP-848 incremental rebalancing and is
+  # what every bundled stack already set explicitly, so this aligns the shipped
+  # configuration with the brokers this project runs (Kafka 4.3 in KRaft mode).
+  # It **requires a Kafka 4.x broker**: against an older one, set "classic" here
+  # or export KAFKA_CONSUMER_GROUP_PROTOCOL=classic — that protocol works with
+  # any broker version and is what `KafkaConfig` still falls back to when the
+  # property is absent altogether.
+  consumer-group-protocol: consumer
 
   # --- SSL Configuration Example ---
   # mode: SSL

@@ -232,7 +232,7 @@ can be overridden by an environment variable: uppercase it and turn `.` and `-` 
 | `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | Your brokers. Kafka **2.1+** on the classic protocol. |
 | `KAFKA_MODE` | `PLAIN` | `PLAIN`, `SSL` or `CONFLUENT_CLOUD`. |
 | `KAFKA_SCHEMA_REGISTRY_URL` | `http://localhost:8081` | Confluent Schema Registry, for Avro topics. |
-| `KAFKA_CONSUMER_GROUP_PROTOCOL` | `classic` | `consumer` opts the live consumer into KIP-848 (Kafka 4.x brokers). |
+| `KAFKA_CONSUMER_GROUP_PROTOCOL` | `consumer` | KIP-848 incremental rebalances for the live consumer — **needs a Kafka 4.x broker**. Set `classic` for older brokers. |
 | `KAFKA_TRUSTSTORE_PATH` / `_PASSWORD` | — | `SSL` mode. Mount the store into the container. |
 | `KAFKA_KEYSTORE_PATH` / `_PASSWORD`, `KAFKA_KEY_PASSWORD` | — | `SSL` mode, mutual TLS. |
 | `KAFKA_CONFLUENT_KEY` / `KAFKA_CONFLUENT_SECRET` | — | `CONFLUENT_CLOUD` mode. |

@@ -167,6 +167,72 @@ class FlinkSqlServiceJobRegistryTest {
         verify(client).cancel();
     }
 
+    /**
+     * Pressing Stop just as the query finishes.
+     *
+     * <p>The embedded runtime gives each job its own MiniCluster and shuts it down when the job
+     * ends, so `cancel()` on that JobClient throws Flink's own
+     * `IllegalStateException("MiniCluster is not yet running or has already been shut down")` —
+     * synchronously. Unguarded, that reached `POST /api/query/cancel/{id}` as a 500 with a stack
+     * trace about a MiniCluster the user does not know they are running.
+     */
+    @Test
+    void cancelQuerySaysNothingWasCancelledWhenTheJobHasAlreadyFinished() {
+        JobClient client = mock(JobClient.class);
+        when(client.getJobID()).thenReturn(new JobID());
+        when(client.getJobStatus()).thenThrow(
+            new IllegalStateException("MiniCluster is not yet running or has already been shut down."));
+        when(client.cancel()).thenThrow(
+            new IllegalStateException("MiniCluster is not yet running or has already been shut down."));
+
+        activeJobs.put("job-gone", new FlinkSqlService.JobInfo(
+            "job-gone", "SELECT 1", "SELECT", "SYNC_READ", client, 1_700_000_000_000L));
+
+        // Not CANCELLED: nothing was. Reporting otherwise is the exact claim CancelOutcome exists
+        // to prevent, one step further along than the case it was written for.
+        assertEquals(FlinkSqlService.CancelOutcome.NO_ACTIVE_JOB, service.cancelQuery("job-gone"));
+        assertTrue(service.getActiveJobsDetails().isEmpty(),
+            "a job whose runtime is gone must stop counting as active");
+    }
+
+    /**
+     * The same fact reached through the status poll rather than through Stop.
+     *
+     * <p>`buildJobSummary` caught every exception into "UNKNOWN" and left `endedAt` null, so a
+     * finished job never left `activeJobs` — and the three callers of `getActiveJobsDetails()` act
+     * on that answer: `POST /api/config` refuses a cluster repoint with 409, the lineage graph
+     * draws a node per job, the KPI suggestions derive an edge from each.
+     */
+    @Test
+    void aJobWhoseRuntimeIsGoneStopsBeingActive() {
+        JobClient client = mock(JobClient.class);
+        when(client.getJobID()).thenReturn(new JobID());
+        when(client.getJobStatus()).thenThrow(
+            new IllegalStateException("MiniCluster is not yet running or has already been shut down."));
+
+        activeJobs.put("job-vanished", new FlinkSqlService.JobInfo(
+            "job-vanished", "SELECT 1", "SELECT", "SYNC_READ", client, 1_700_000_000_000L));
+
+        assertTrue(service.getActiveJobsDetails().isEmpty());
+    }
+
+    /**
+     * The other half: a status call that merely times out says nothing about the job, so the job
+     * stays active. Marking it ended there would weaken the 409 guard on a slow runtime.
+     */
+    @Test
+    void aJobWhoseStatusTimesOutStaysActive() {
+        JobClient client = mock(JobClient.class);
+        when(client.getJobID()).thenReturn(new JobID());
+        when(client.getJobStatus()).thenReturn(new CompletableFuture<>()); // never completes
+
+        activeJobs.put("job-slow", new FlinkSqlService.JobInfo(
+            "job-slow", "INSERT INTO sink SELECT * FROM src", "INSERT", "FLINK_JOB", client,
+            1_700_000_000_000L));
+
+        assertEquals(1, service.getActiveJobsDetails().size());
+    }
+
     @Test
     void submitJobRegistersInsertIntoStatementWithoutSyncCollection() {
         // Mock TableResult to avoid Flink optimizer NPE (metadataHandlerProvider=null) in embedded environment

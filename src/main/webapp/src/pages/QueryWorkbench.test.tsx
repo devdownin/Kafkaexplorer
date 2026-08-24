@@ -838,6 +838,25 @@ describe('QueryWorkbench — the window assistant', () => {
     expect(screen.queryByText('Replace the editor content?')).not.toBeInTheDocument();
   });
 
+  it('names the Flink table, not the dotted topic', async () => {
+    // `resolveScope` résout vers la clé du catalogue — pour un topic, le nom pointé. Écrit tel
+    // quel dans la requête, `demo.orders.1.received` est lu par Flink comme un identifiant en
+    // quatre parties et ne résout rien : la table est enregistrée sous `demo_orders_1_received`.
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.type(editor(), 'SELECT * FROM demo_orders_1_received');
+
+    // Le panneau nomme la table qu'il va viser, et c'est la même que celle du SQL.
+    expect(screen.getByText('demo_orders_1_received')).toBeInTheDocument();
+
+    await userEvent.click(applyButton());
+    await userEvent.click(await screen.findByRole('button', { name: 'Replace' }));
+
+    await waitFor(() => expect(editor().value).toContain('TUMBLE'));
+    expect(editor().value).toContain('demo_orders_1_received');
+    expect(editor().value).not.toContain('demo.orders.1.received');
+  });
+
   it('asks before overwriting a tab that holds SQL, and keeps it when the answer is no', async () => {
     renderPage();
     await screen.findByText('demo.orders.1.received');

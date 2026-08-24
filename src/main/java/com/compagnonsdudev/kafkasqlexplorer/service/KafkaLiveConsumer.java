@@ -461,8 +461,10 @@ public class KafkaLiveConsumer {
             String.valueOf(processMiningConfig.getMaxPartitionFetchBytes()));
         props.put(ConsumerConfig.FETCH_MAX_BYTES_CONFIG,
             String.valueOf(processMiningConfig.getFetchMaxBytes()));
-        // KIP-848 incremental rebalance protocol, opt-in via kafka.consumer-group-protocol
-        // (requires a Kafka 4.x broker; the classic default keeps 3.x broker compatibility)
+        // KIP-848 incremental rebalance protocol, selected by kafka.consumer-group-protocol —
+        // shipped as "consumer" in application.yml, which requires a Kafka 4.x broker. A
+        // deployment on an older one sets "classic", which is also what KafkaConfig falls back
+        // to when the property is absent, so the code default remains the compatible one.
         if ("consumer".equalsIgnoreCase(kafkaConfig.getConsumerGroupProtocol())) {
             props.put(ConsumerConfig.GROUP_PROTOCOL_CONFIG, "consumer");
         }

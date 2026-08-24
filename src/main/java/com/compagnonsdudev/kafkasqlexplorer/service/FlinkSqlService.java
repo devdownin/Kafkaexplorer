@@ -459,6 +459,23 @@ public class FlinkSqlService {
             if (flinkStatus.isGloballyTerminalState() && info.endedAt() == null) {
                 info.markEnded(System.currentTimeMillis());
             }
+        } catch (IllegalStateException gone) {
+            // The embedded runtime gives each job its own MiniCluster and takes it down when the
+            // job reaches a terminal state, so every later call on that JobClient answers
+            // "MiniCluster is not yet running or has already been shut down". That is an answer
+            // about the *job*: it is over. Read as a mere unreadable status — which is what this
+            // catch did, all exceptions together — the job kept `endedAt == null` and therefore
+            // never left `activeJobs`, so `getActiveJobsDetails()` went on reporting a finished
+            // query as running: `POST /api/config` refused a cluster repoint with 409, the lineage
+            // graph drew a node for it, and the KPI suggestions derived an edge from it, for the
+            // rest of the process. What we do *not* know is how it ended, so the status stays
+            // UNKNOWN — which the job store already treats as terminal — rather than a FINISHED
+            // nobody observed.
+            if (info.endedAt() == null) {
+                info.markEnded(System.currentTimeMillis());
+            }
+            log.debug("[FlinkSQL] queryId={} is no longer held by the Flink runtime: {}",
+                info.queryId(), gone.getMessage());
         } catch (Exception e) {
             status = info.cancelRequested() ? "CANCEL_REQUESTED" : "UNKNOWN";
         }
@@ -1711,8 +1728,18 @@ public class FlinkSqlService {
         if (info != null) {
             info.markCancelRequested();
             persistJobSnapshot(info, buildJobSummary(info), "Cancellation requested by user", null);
-            info.client().cancel();
-            return CancelOutcome.CANCELLED;
+            if (requestCancel(info)) {
+                return CancelOutcome.CANCELLED;
+            }
+            // The job had already finished, taking its MiniCluster with it. Nothing was cancelled,
+            // so saying CANCELLED would be the very claim this enum exists to prevent — and the
+            // unguarded `cancel()` that used to sit here answered the Stop button with a 500
+            // instead, on the most ordinary race there is: pressing Stop as the query completes.
+            info.markEnded(System.currentTimeMillis());
+            activeJobs.remove(queryId);
+            persistJobSnapshot(info, buildJobSummary(info),
+                "Cancellation requested, but the Flink job had already finished", null);
+            return CancelOutcome.NO_ACTIVE_JOB;
         }
         flinkJobStore.update(
             queryId,
@@ -1810,9 +1837,44 @@ public class FlinkSqlService {
         return value.toString();
     }
 
+    /**
+     * Asks a job to stop, and says whether there was still a job to ask.
+     *
+     * <p>{@code JobClient.cancel()} is not safe to call on a job that has ended: the embedded
+     * runtime gives each job its own MiniCluster and shuts it down when the job reaches a terminal
+     * state, so the call throws {@code IllegalStateException("MiniCluster is not yet running or
+     * has already been shut down")} — Flink's own {@code Preconditions.checkState}, thrown
+     * synchronously rather than handed back in the future. That exception is not a failure to
+     * cancel; it is the runtime saying there is nothing left to cancel, which is a legitimate
+     * outcome of a well-formed request and is what {@link CancelOutcome#NO_ACTIVE_JOB} is for.
+     */
+    private boolean requestCancel(JobInfo info) {
+        try {
+            info.client().cancel();
+            return true;
+        } catch (IllegalStateException gone) {
+            log.debug("[FlinkSQL] queryId={} had nothing left to cancel: {}",
+                info.queryId(), gone.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Best-effort cancellation on the cleanup paths — a timeout, or a query that failed.
+     *
+     * <p>Everything is swallowed here, and that is the point: this runs from inside a {@code catch}
+     * and from the timeout branch, where the caller already holds the answer it owes the user. A
+     * job that has just failed has already taken its MiniCluster down, so the unguarded
+     * {@code cancel()} threw {@code IllegalStateException} <em>out of the catch block</em> — the
+     * real error, and the "query timed out" result with its remedy, were both replaced by a stack
+     * trace about a MiniCluster the user has no idea they are running.
+     */
     private void cancelJobInternal(TableResult result) {
-        if (result != null && result.getJobClient().isPresent()) {
+        if (result == null || result.getJobClient().isEmpty()) return;
+        try {
             result.getJobClient().get().cancel();
+        } catch (Exception e) {
+            log.debug("[FlinkSQL] nothing to cancel while cleaning up: {}", e.getMessage());
         }
     }
 }

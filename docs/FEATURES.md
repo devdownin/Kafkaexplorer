@@ -142,7 +142,7 @@ Seeding is batched — one producer per topic, not one per message — and topic
 - **Feature Versions** (Cluster page): finalized vs broker-supported version for each cluster feature (`metadata.version`, `group.version`, `share.version`, …) with an *Up to date / Lagging* badge.
 - **Incomplete-upgrade detection** (Audit page): if the finalized `metadata.version` lags what every broker supports (a rolling upgrade that was never finalized with `kafka-features.sh upgrade`), the audit report raises a dedicated warning banner.
 - **Prometheus quorum gauges** (`/actuator/prometheus`): `kafka_quorum_leader_id`, `kafka_quorum_leader_epoch`, `kafka_quorum_high_watermark` and `kafka_quorum_replica_lag{replicaId,role}` — alert on a lagging voter or a controller failover.
-- **KIP-848 rebalances (opt-in)**: set `kafka.consumer-group-protocol: consumer` (env `KAFKA_CONSUMER_GROUP_PROTOCOL=consumer`) to switch the live Process Mining consumer to the next-gen incremental rebalance protocol. Requires Kafka 4.x brokers; the default `classic` keeps compatibility with older brokers. The bundled Docker stacks enable it out of the box.
+- **KIP-848 rebalances**: the live Process Mining consumer uses the next-gen incremental rebalance protocol (`kafka.consumer-group-protocol: consumer`, env `KAFKA_CONSUMER_GROUP_PROTOCOL`), which every bundled Docker stack already set explicitly and which is now the shipped default. It **requires Kafka 4.x brokers** — against an older one, set `classic`, which works with any broker version.
 
 ## 14. Metrics & Contextual KPIs
 Any query the engine can run becomes a Prometheus series, scraped from `/actuator/prometheus`.

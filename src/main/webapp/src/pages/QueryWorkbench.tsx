@@ -1563,10 +1563,22 @@ const QueryWorkbench: React.FC = () => {
     [schema, executionMode, tableSchemas, internalPrefix],
   );
 
-  /** Table visée par l'assistant : celle que la requête cite, sinon la première du catalogue. */
+  /**
+   * Table visée par l'assistant : celle que la requête cite, sinon la première du catalogue.
+   *
+   * **Sous sa forme table Flink**, et c'est la correction d'un bug : `resolveScope` résout un nom
+   * cité vers la clé du *catalogue*, qui pour un topic est le nom pointé (`demo.orders.1.received`).
+   * L'assistant l'écrivait tel quel dans le SQL, alors que la table est enregistrée sous
+   * `demo_orders_1_received` — `toTableName` remplace points et tirets par des underscores. Flink
+   * lisait donc `demo.orders.1.received` comme un identifiant en quatre parties
+   * (catalogue.base.table…) et ne résolvait rien. C'est la règle que la barre latérale applique
+   * déjà quand elle pose `SELECT * FROM` sur un topic, et que le schéma consulté juste en dessous
+   * appliquait aussi — seul le nom écrit dans la requête restait brut. Le panneau affiche cette
+   * même forme, donc il nomme désormais la table que la requête ira réellement chercher.
+   */
   const windowTable = useMemo(
-    () => resolveScope(sql, [...(schema?.tables ?? []), ...(schema?.topics ?? [])])[0]
-      ?? schema?.tables[0] ?? 'source_table',
+    () => toTableName(resolveScope(sql, [...(schema?.tables ?? []), ...(schema?.topics ?? [])])[0]
+      ?? schema?.tables[0] ?? 'source_table'),
     [sql, schema],
   );
 
