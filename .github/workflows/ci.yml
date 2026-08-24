@@ -369,7 +369,16 @@ jobs:
         # scenario that produced them.
         run: |
           set -euo pipefail
-          docker run -d --name release-probe -p 127.0.0.1:8080:8080 kafka-explorer-release:ci
+          # The level these assertions need is asked for, not inherited. The application's own
+          # package ships at WARN, so the lines this job reads — the warmup probe's success,
+          # and any INFO the restores emit on their happy path — are not written on a default
+          # install, and the job below failed on exactly that. Forcing INFO here keeps the
+          # assertions about *behaviour* (a Flink job really submits in the packaged image)
+          # rather than about an operator's threshold. Note what it therefore no longer says:
+          # that an operator reading the default log sees any of this.
+          docker run -d --name release-probe -p 127.0.0.1:8080:8080 \
+            -e LOGGING_LEVEL_COM_COMPAGNONSDUDEV_KAFKASQLEXPLORER=INFO \
+            kafka-explorer-release:ci
           up=""
           for _ in $(seq 1 36); do
             if curl -fsS http://127.0.0.1:8080/actuator/health/liveness 2>/dev/null | grep -q '"status":"UP"'; then
