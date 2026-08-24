@@ -17,8 +17,11 @@ export interface WindowAssistantProps {
   open: boolean;
   onToggle: () => void;
   /** Reçoit le SQL généré ; la page décide où le poser (curseur, sélection, fin de l'onglet). */
-  /** Reçoit la requête générée ; elle remplace tout le contenu de l'éditeur. */
-  onApply: (sql: string) => void;
+  /**
+   * Reçoit la requête générée ; elle remplace tout le contenu de l'éditeur — après confirmation
+   * si l'onglet n'est pas vide, d'où la promesse.
+   */
+  onApply: (sql: string) => void | Promise<void>;
 }
 
 /**
@@ -147,7 +150,7 @@ export const WindowAssistant: React.FC<WindowAssistantProps> = ({
           </div>
         )}
         <Button variant="secondary" className="w-full" icon="bolt"
-          onClick={() => onApply(buildWindowSql(windowSpec))}>
+          onClick={() => { void onApply(buildWindowSql(windowSpec)); }}>
           Replace editor content
         </Button>
       </div>

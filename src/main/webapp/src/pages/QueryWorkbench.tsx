@@ -1578,14 +1578,30 @@ const QueryWorkbench: React.FC = () => {
    * qu'il produit est une requête entière et non un fragment, donc l'insertion laissait presque
    * toujours deux requêtes collées à corriger à la main. Le remplacement est annulable (voir
    * `replaceSql`), et le message le dit plutôt que de laisser la découverte à l'utilisateur.
+   *
+   * Un onglet qui contient déjà du SQL demande confirmation, comme partout ailleurs dans
+   * l'application (`useConfirm`) : l'annulation Monaco rattrape la perte, mais elle ne se
+   * découvre qu'après coup, et un clic ne doit pas effacer une requête en cours d'écriture sans
+   * le dire. Un onglet vide n'a rien à perdre et ne demande rien.
    */
-  const applyWindowLogic = useCallback((generated: string) => {
+  const applyWindowLogic = useCallback(async (generated: string) => {
+    if (sql.trim()) {
+      const ok = await confirm({
+        title: 'Replace the editor content?',
+        description: <>The window query replaces everything in “{activeTab.name}”. The overwritten
+          SQL stays one undo (⌘Z) away in the editor.</>,
+        confirmLabel: 'Replace',
+        tone: 'danger',
+        icon: 'bolt',
+      });
+      if (!ok) return;
+    }
     const where = replaceSql(generated);
     toast({
       filled: 'Window query written to the editor',
       replaced: 'Window query replaced the editor content — ⌘Z to undo',
     }[where], 'success');
-  }, [replaceSql, toast]);
+  }, [sql, activeTab.name, confirm, replaceSql, toast]);
 
 
   // ── Render ────────────────────────────────────────────────────────────────────
