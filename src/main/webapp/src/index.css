@@ -135,6 +135,18 @@
   background: rgba(11, 13, 16, 0.65);
   backdrop-filter: blur(12px);
 }
+/*
+ * Voile des confirmations, volontairement plus léger que `.glass-overlay`.
+ *
+ * Une confirmation porte sur ce qui est à l'écran — « remplacer le contenu de l'éditeur ? »
+ * parle de la requête en cours d'écriture, « supprimer cette table ? » de la ligne survolée —
+ * donc un voile à 65 % doublé d'un flou de 12 px efface précisément ce dont on demande le sort.
+ * On assombrit assez pour signaler la modalité et détacher la carte, jamais assez pour rendre
+ * l'application illisible : c'est une question, pas une modale plein écran.
+ */
+.confirm-overlay {
+  background: rgba(11, 13, 16, 0.32);
+}
 /* Alias hérité `.glass` (quelques pages). */
 .glass {
   @apply bg-surface/60 backdrop-blur-md border border-white/5 shadow-2xl;
