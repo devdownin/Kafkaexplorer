@@ -111,6 +111,30 @@ public class ClaudeConfig {
     private boolean openrouterRequireParameters = false;
 
     /**
+     * OPENROUTER only: the most this deployment will pay a provider, in USD per million tokens.
+     * {@code 0} — the default — means no ceiling.
+     *
+     * <p>This is the <em>enforceable</em> half of {@code session-cost-limit-usd}. That one is an
+     * accumulator: it adds up what has already been spent and stops the session afterwards, which
+     * is the right shape for a running total and the wrong one for a surprise — a model routed to
+     * an expensive provider has already been paid for by the time the cap notices. A price ceiling
+     * is refused at the routing layer, before the tokens exist, in the same way and for the same
+     * reason {@code data_collection} turns a privacy warning into a property. The two are
+     * complementary rather than alternatives: one bounds the rate, the other the total.
+     *
+     * <p>The ceiling applies to <em>both</em> published prices rather than taking a pair. Completion
+     * is almost always the dearer of the two, so that is what it binds on in practice, and a single
+     * number is a setting an operator can reason about — where a prompt ceiling and a completion
+     * ceiling invite one to be set and the other forgotten.
+     *
+     * <p>Off by default on the rule its two siblings follow: a model whose providers all charge
+     * more becomes <em>unroutable</em>, and that arrives as the same "no endpoints found" a
+     * restrictive data policy produces. Turning a working deployment into a failing one to gain a
+     * bound it may not need is not a default this application chooses on an operator's behalf.
+     */
+    private double openrouterMaxPriceUsdPerMillion = 0;
+
+    /**
      * Upper bound, in USD, on what one live Process Mining session may spend before it stops
      * itself. {@code 0} — the default — means no bound.
      *
@@ -255,6 +279,19 @@ public class ClaudeConfig {
 
     public void setOpenrouterRequireParameters(boolean openrouterRequireParameters) {
         this.openrouterRequireParameters = openrouterRequireParameters;
+    }
+
+    public double getOpenrouterMaxPriceUsdPerMillion() {
+        return openrouterMaxPriceUsdPerMillion;
+    }
+
+    public void setOpenrouterMaxPriceUsdPerMillion(double openrouterMaxPriceUsdPerMillion) {
+        this.openrouterMaxPriceUsdPerMillion = openrouterMaxPriceUsdPerMillion;
+    }
+
+    /** Whether a price ceiling is in force — a non-positive value is no ceiling, not a free one. */
+    public boolean hasOpenrouterPriceCeiling() {
+        return openrouterMaxPriceUsdPerMillion > 0;
     }
 
     /**
@@ -428,6 +465,7 @@ public class ClaudeConfig {
         copy.structuredOutput = structuredOutput;
         copy.openrouterDataCollection = openrouterDataCollection;
         copy.openrouterRequireParameters = openrouterRequireParameters;
+        copy.openrouterMaxPriceUsdPerMillion = openrouterMaxPriceUsdPerMillion;
         copy.sessionCostLimitUsd = sessionCostLimitUsd;
         return copy;
     }

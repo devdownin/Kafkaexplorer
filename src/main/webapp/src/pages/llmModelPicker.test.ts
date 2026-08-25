@@ -5,7 +5,7 @@ import { describe, it, expect } from 'vitest';
 import type { LlmModelOption, LlmModelShortlist } from '../api/types';
 import {
   PROJECTION_NOTE, describeOption, describeShortlist, formatContext, formatPricePerMillion,
-  formatProjectedCost, optionSlugs, validateModelSlug,
+  formatProjectedCost, isFreeOption, optionSlugs, validateModelSlug,
 } from './llmModelPicker';
 
 const option = (over: Partial<LlmModelOption> = {}): LlmModelOption => ({
@@ -49,6 +49,55 @@ describe('describeOption', () => {
       projectedCostUsd: null,
     }));
     expect(parts).toEqual([]);
+  });
+
+  /*
+   * La liste est triée du moins cher au plus cher, donc les modèles gratuits sont *en tête* — et ce
+   * sont précisément ceux que la politique par défaut (`DENY`) écarte le plus souvent, les
+   * endpoints gratuits étant ceux qui entraînent. Sans cette mention, les premières lignes
+   * proposées sont celles qui répondront 404.
+   */
+  it('warns that a free model is usually unroutable when the policy refuses data collection', () => {
+    const free = option({
+      id: 'meta-llama/llama-3.1-8b-instruct:free',
+      promptPriceUsdPerMillion: 0,
+      completionPriceUsdPerMillion: 0,
+      projectedCostUsd: 0,
+    });
+
+    expect(describeOption(free, true).join(' · ')).toContain('unroutable');
+  });
+
+  /** Sans cette politique il n'y a rien à avertir : le modèle est simplement gratuit. */
+  it('says nothing of the sort when data collection is allowed', () => {
+    const free = option({
+      promptPriceUsdPerMillion: 0,
+      completionPriceUsdPerMillion: 0,
+      projectedCostUsd: 0,
+    });
+
+    expect(describeOption(free, false).join(' · ')).not.toContain('unroutable');
+    expect(describeOption(free).join(' · ')).not.toContain('unroutable');
+  });
+
+  /** Et un modèle payant n'est jamais concerné, politique ou pas. */
+  it('leaves a priced model alone', () => {
+    expect(describeOption(option(), true).join(' · ')).not.toContain('unroutable');
+  });
+
+  /*
+   * Un prix absent n'est pas un prix nul : `null` veut dire « non publié », et le traiter comme
+   * gratuit inventerait l'avertissement sur un modèle dont on ne sait rien.
+   */
+  it('does not take an unpublished price for a free one', () => {
+    const unknown = option({
+      promptPriceUsdPerMillion: null,
+      completionPriceUsdPerMillion: null,
+      projectedCostUsd: null,
+    });
+
+    expect(isFreeOption(unknown)).toBe(false);
+    expect(describeOption(unknown, true).join(' · ')).not.toContain('unroutable');
   });
 
   it('shows a free model as a real zero, not as an absent price', () => {

@@ -16,6 +16,9 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.time.Duration;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 
 /**
  * Shared HTTP plumbing for the plain-HTTP LLM clients (OpenAI-compatible, Ollama, SpectraLLM).
@@ -28,12 +31,30 @@ import java.time.Duration;
  *       (I/O errors, timeouts, HTTP 5xx and 429) and fails fast on 4xx, which
  *       almost always mean a misconfiguration (bad URL, model, or auth).</li>
  * </ul>
+ *
+ * <p>A 429 is retried on the <em>server's</em> schedule rather than on the backoff, because it is
+ * the one transient status that says when it stops being true — see {@link #retryAfterMillis}.
  */
 final class LlmHttpSupport {
 
     private static final Logger log = LoggerFactory.getLogger(LlmHttpSupport.class);
     private static final int MAX_ATTEMPTS = 3;
     private static final long BASE_BACKOFF_MS = 500L;
+    /**
+     * The longest rate-limit wait worth sitting through, whatever the header says.
+     *
+     * <p>Bounded twice over — by this and by the caller's own per-request timeout, whichever is
+     * smaller. A rate limit that reopens in four seconds is worth waiting for; one that reopens in
+     * ten minutes is not something to hold an HTTP thread on, and the honest answer there is a
+     * refusal that says when it reopens.
+     */
+    private static final long MAX_RATE_LIMIT_WAIT_MS = 30_000L;
+    /**
+     * Below this, an epoch stamp is in seconds; at or above it, in milliseconds. The same heuristic
+     * {@code setup-demo.sh} relies on for event times, and it is safe for the same reason: 10^10
+     * seconds is the year 2286, and 10^10 milliseconds is 1970.
+     */
+    private static final long EPOCH_MILLIS_THRESHOLD = 10_000_000_000L;
     /** Upper bound on the TCP/TLS handshake — see {@link #newClient}. */
     private static final int MAX_CONNECT_SECONDS = 10;
     /** Reads an error body only — see {@link #upstreamProviderOf}. */
@@ -148,6 +169,32 @@ final class LlmHttpSupport {
                 lastError = new RuntimeException(provider + " call failed with status " + status
                     + ": " + truncate(response.body()));
                 log.warn("{} transient failure (status {}), attempt {}/{}", provider, status, attempt, MAX_ATTEMPTS);
+
+                // A 429 is not a 5xx, and treating them alike is what made the retry budget
+                // useless against a rate limit. A 5xx may well pass half a second later; a rate
+                // limit states when it reopens, and every attempt made before that instant is an
+                // attempt spent being refused again. The default schedule — 500 ms then 1 s —
+                // exhausts all three inside a second and a half, which is shorter than any rate
+                // limit worth the name, so the caller was told "status 429" about a request that
+                // would have gone through a few seconds later.
+                if (status == 429) {
+                    long waitMs = retryAfterMillis(response, System.currentTimeMillis());
+                    long cap = rateLimitWaitCap(request);
+                    if (waitMs > cap) {
+                        // Naming the delay beats spending the remaining attempts to arrive at the
+                        // same refusal: nothing this application can do shortens it.
+                        throw new RuntimeException(provider + " is rate-limiting this key and says "
+                            + "it will not accept another request for " + (waitMs / 1000)
+                            + "s, which is longer than this call can wait. Try again later, or use "
+                            + "a model or a tier with a higher limit: " + truncate(response.body()));
+                    }
+                    if (waitMs >= 0 && attempt < MAX_ATTEMPTS) {
+                        log.warn("{} rate-limited; waiting {}ms as instructed before attempt {}/{}",
+                            provider, waitMs, attempt + 1, MAX_ATTEMPTS);
+                        sleep(waitMs);
+                        continue;   // the header replaces the backoff rather than adding to it
+                    }
+                }
             } catch (HttpConnectTimeoutException e) {
                 // Nothing was generated — the endpoint did not answer at all. Worth another try.
                 lastError = new RuntimeException(provider + " connection timed out after "
@@ -176,6 +223,83 @@ final class LlmHttpSupport {
             }
         }
         throw lastError != null ? lastError : new RuntimeException(provider + " call failed");
+    }
+
+    /**
+     * How long a rate-limited response says to wait, in milliseconds, or {@code -1} when it does
+     * not say.
+     *
+     * <p>Two headers, in the order of how much they promise. {@code Retry-After} is the standard
+     * one and is authoritative: RFC 9110 allows either a number of seconds or an HTTP date, and both
+     * are accepted here because both are served in the wild. {@code X-RateLimit-Reset} is the
+     * convention OpenRouter and several others follow — an instant rather than a delay — and is
+     * consulted only when the first is absent.
+     *
+     * <p>Everything unusable answers {@code -1} rather than a guess: a header that cannot be parsed,
+     * a negative delay, an instant already past. The caller then falls back to the ordinary backoff,
+     * which is exactly the behaviour this replaces — so a gateway that says nothing is no worse off
+     * than before.
+     *
+     * <p>Pure, and takes the clock as a parameter, so the parsing can be tested without a server and
+     * without waiting for anything.
+     */
+    static long retryAfterMillis(HttpResponse<?> response, long nowMillis) {
+        long fromRetryAfter = parseRetryAfter(header(response, "Retry-After"), nowMillis);
+        if (fromRetryAfter >= 0) {
+            return fromRetryAfter;
+        }
+        return parseResetInstant(header(response, "X-RateLimit-Reset"), nowMillis);
+    }
+
+    private static String header(HttpResponse<?> response, String name) {
+        return response.headers().firstValue(name).orElse(null);
+    }
+
+    /** {@code Retry-After}: delta-seconds, or an HTTP date. */
+    private static long parseRetryAfter(String value, long nowMillis) {
+        if (value == null || value.isBlank()) {
+            return -1;
+        }
+        String trimmed = value.strip();
+        try {
+            long seconds = Long.parseLong(trimmed);
+            return seconds >= 0 ? seconds * 1000L : -1;
+        } catch (NumberFormatException notANumber) {
+            // Fall through to the date form rather than giving up: both are legal here.
+        }
+        try {
+            long at = ZonedDateTime.parse(trimmed, DateTimeFormatter.RFC_1123_DATE_TIME)
+                .toInstant().toEpochMilli();
+            return Math.max(0, at - nowMillis);
+        } catch (DateTimeParseException e) {
+            return -1;
+        }
+    }
+
+    /** {@code X-RateLimit-Reset}: the instant the window reopens, in seconds or in milliseconds. */
+    private static long parseResetInstant(String value, long nowMillis) {
+        if (value == null || value.isBlank()) {
+            return -1;
+        }
+        try {
+            long stamp = Long.parseLong(value.strip());
+            if (stamp <= 0) {
+                return -1;
+            }
+            long atMillis = stamp < EPOCH_MILLIS_THRESHOLD ? stamp * 1000L : stamp;
+            long waitMs = atMillis - nowMillis;
+            // A reset already in the past is a stale header, not an instruction to retry now: the
+            // ordinary backoff is the better answer, and it is what returning -1 selects.
+            return waitMs > 0 ? waitMs : -1;
+        } catch (NumberFormatException e) {
+            return -1;
+        }
+    }
+
+    /** The longest wait this particular call may honour — see {@link #MAX_RATE_LIMIT_WAIT_MS}. */
+    private static long rateLimitWaitCap(HttpRequest request) {
+        long requestBudgetMs = request.timeout().map(Duration::toMillis).orElse(MAX_RATE_LIMIT_WAIT_MS);
+        return Math.min(MAX_RATE_LIMIT_WAIT_MS, requestBudgetMs);
     }
 
     /**

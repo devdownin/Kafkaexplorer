@@ -35,6 +35,30 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   rather than absent: `null` means the question could not be answered, and only an exhaustive list
   yields `false`. The UI shows the note on `false` alone.
 
+- **The Test button says what is left on the API key** (OpenRouter). The credit was consulted
+  nowhere: a key running out answers 402, read correctly by `remedyFor` but only *after* an analysis
+  has failed. It is published, so the press that already asks what the model can do asks this too,
+  under the same rules — best-effort, no retry, never on the analysis path. It is also the number
+  `claude.session-cost-limit-usd` was missing, that cap shipping disabled because any figure would be
+  arbitrary while nothing says what the budget is. Three states are kept apart, and the third is the
+  one that matters: a key with **no limit** has a known usage and no remainder, because "unlimited
+  minus what you spent" is not a number — rendering it as `0` would announce an exhausted key to
+  somebody who has an unlimited one.
+
+- **`claude.openrouter-max-price-usd-per-million`** — the most this deployment will pay a provider,
+  refused at the routing layer rather than counted afterwards. It is the enforceable half of
+  `session-cost-limit-usd`: that one accumulates and stops the session after the fact, so an
+  expensive route has already been paid for by the time it notices. One value against both published
+  prices, in the unit the catalogue publishes and the picker renders. `0` and off by default, on the
+  rule its two siblings follow — a model every provider prices above the ceiling becomes unroutable,
+  arriving as the same "no endpoints found" a restrictive data policy produces.
+
+- **A 404 from OpenRouter now names all three things it can mean** and points at the button that
+  tells them apart. It conflates a mistyped slug, a slug that no longer exists, a key not entitled to
+  the model, and — since the routing policy exists — a model no provider serves under it.
+  Deliberately *not* a catalogue lookup from the analysis path: that read is a considered gesture,
+  and a live session that had begun failing would otherwise make one request per window.
+
 - **`docs/verify-openrouter-contract.py`** — checks the requests this application makes against the
   live API. Deliberately not a `docs/check-*.py`, because those are discovered and run by CI and
   this one needs the network and a key. It exists because the filter and sort parameter names came
@@ -43,7 +67,43 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   its first assertion is that the filters actually narrow the catalogue. Documented in
   `CONTRIBUTING.md`.
 
+  It now covers the **completion** request too, behind `--chat` because those are real billed calls
+  (sixteen output tokens on a cheap model). That body is where the same exposure sits and where it
+  costs the most: `provider` and `usage` ride on the assumption that an unrecognised field is
+  refused rather than ignored, and it is the wrong way round — an ignored field costs nothing and
+  says nothing, so a privacy restriction that never applied and an accounting field that never came
+  back both look exactly like success. The assertion that can change what the client sends is
+  `usage.cost`: `LlmUsage.costUsd` reads it and `claude.session-cost-limit-usd` is enforced from it,
+  so if it has to be asked for, every cost shown on this application's own default provider is null
+  while the live session tells the operator *the provider reports none* — false about OpenRouter
+  rather than merely unknown. The script settles that question in one run; it has not been run from
+  the environment this was written in, where `openrouter.ai` is unreachable.
+
+  It also asserts that `provider.max_price` **binds** rather than merely being tolerated — a ceiling
+  below every published price must refuse the route, since a 200 there would mean the setting
+  promises a bound it does not deliver — and it reports what `/models/user` actually is relative to
+  `/models`. That last one is the question deciding whether the model shortlist may mark the rows a
+  key cannot reach; it does not mark them today, for exactly that reason, since labelling a usable
+  model unusable is a worse lie than the silence it would replace.
+
 ### Fixed
+
+- **A rate limit is now waited out on the server's schedule instead of the backoff.** A 429 was
+  handled like a 5xx — 500 ms, then 1 s, then give up — which spends all three attempts inside a
+  second and a half, shorter than any rate limit worth the name. The caller was told "call failed
+  with status 429" about a request that would have been accepted a few seconds later, having been
+  refused three times to get there. `Retry-After` is read in both its legal forms and OpenRouter's
+  `X-RateLimit-Reset` after it; the wait is bounded by 30 s and by the call's own timeout, and a
+  delay beyond that is refused immediately *naming the delay*, since nothing here can shorten it. A
+  gateway that sends no such header behaves exactly as before.
+
+- **The model shortlist no longer offers, at the top, the models the default policy cannot route.**
+  It is sorted cheapest-first, so free models come first — and under the shipped
+  `openrouter-data-collection: DENY` those are usually the unroutable ones, the free endpoints being
+  the ones that train. The first rows proposed were the ones that answer 404, explained only
+  afterwards by `explainRoutingRefusal`. They now carry the caveat, keyed on a published price of
+  zero (a real measurement) rather than on the `:free` suffix (a naming convention), and only when
+  that policy is the one actually running.
 
 - **The Settings page no longer draws a form over a response it never received.** The load effect
   swallowed its failure in an empty `catch` — commented "Backend may not expose REST config yet",

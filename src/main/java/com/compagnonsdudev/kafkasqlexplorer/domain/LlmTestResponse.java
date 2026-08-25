@@ -21,5 +21,14 @@ public record LlmTestResponse(
     String provider,
     String model,
     boolean candidate,
-    LlmModelCheck modelCheck
-) {}
+    LlmModelCheck modelCheck,
+    // Ce qu'il reste sur la clé, chez les fournisseurs qui le publient. Même règle que
+    // `modelCheck` : son absence ne dit rien de la clé, elle dit qu'on n'a pas demandé.
+    LlmKeyStatus keyStatus
+) {
+    /** La forme d'avant, pour les appelants qui n'ont rien à dire de la clé. */
+    public LlmTestResponse(boolean ok, String message, String provider, String model,
+                           boolean candidate, LlmModelCheck modelCheck) {
+        this(ok, message, provider, model, candidate, modelCheck, null);
+    }
+}

@@ -4,6 +4,7 @@ package com.compagnonsdudev.kafkasqlexplorer.service;
 
 import com.compagnonsdudev.kafkasqlexplorer.config.ClaudeConfig;
 import com.compagnonsdudev.kafkasqlexplorer.config.ProcessMiningConfig;
+import com.compagnonsdudev.kafkasqlexplorer.domain.LlmKeyStatus;
 import com.compagnonsdudev.kafkasqlexplorer.domain.LlmModelCheck;
 import com.compagnonsdudev.kafkasqlexplorer.domain.LlmModelOption;
 import com.compagnonsdudev.kafkasqlexplorer.domain.LlmModelShortlist;
@@ -102,9 +103,11 @@ public class OpenRouterModelCatalog {
     public OpenRouterModelCatalog(ClaudeConfig claudeConfig, ProcessMiningConfig processMiningConfig) {
         this.claudeConfig = claudeConfig;
         this.processMiningConfig = processMiningConfig;
-        this.httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(LOOKUP_TIMEOUT_SECONDS))
-            .build();
+        // The same client rule the LLM calls use, rather than a second copy of it: the reason a
+        // connect timeout is capped — "a wrong port must not take a full minute to say so" — is
+        // written once, in LlmHttpSupport.newClient, and applies to a catalogue read for exactly
+        // the same reason. Same argument that produced SecureXml, LogSafe and v1Url.
+        this.httpClient = LlmHttpSupport.newClient(claudeConfig);
     }
 
     /** Whether a lookup is possible at all — false for every provider but OpenRouter's own host. */
@@ -183,6 +186,71 @@ public class OpenRouterModelCatalog {
             return LlmModelCheck.unavailable("Could not read the model catalogue: "
                 + SqlErrorClassifier.explain(e));
         }
+    }
+
+    /**
+     * What is left on the configured key.
+     *
+     * <p>Same four rules as {@link #describeModel}: OpenRouter's own host only, best-effort,
+     * no retry, and never on the analysis path. A key with no credit is a 402 on the next window,
+     * and that is worth knowing on the press of a button rather than after a failed run.
+     *
+     * <p>Answers {@link LlmKeyStatus#unavailable} rather than throwing, and — this is the half
+     * worth being careful about — an <em>unlimited</em> key comes back with a usage and a null
+     * limit, which is a fact and not an absence.
+     */
+    public LlmKeyStatus describeKey(ClaudeConfig config) {
+        if (!isSupported(config)) {
+            return LlmKeyStatus.unavailable(
+                "Key credit is published by OpenRouter; this endpoint is "
+                    + config.getResolvedBaseUrl() + ".");
+        }
+        if (!config.isApiKeyConfigured()) {
+            return LlmKeyStatus.unavailable("No API key is configured.");
+        }
+        try {
+            HttpResponse<String> response = get(config, LlmHttpSupport.v1Url(config, "key"));
+            if (response.statusCode() / 100 != 2) {
+                return LlmKeyStatus.unavailable(
+                    "OpenRouter answered HTTP " + response.statusCode() + " for the key's status.");
+            }
+            return parseKey(objectMapper.readTree(response.body()));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return LlmKeyStatus.unavailable("Interrupted while reading the key's status.");
+        } catch (Exception e) {
+            log.debug("Key status lookup failed", e);
+            return LlmKeyStatus.unavailable("Could not read the key's status: "
+                + SqlErrorClassifier.explain(e));
+        }
+    }
+
+    /** Package-private like the other parsers: the wire shape is the risky half. */
+    LlmKeyStatus parseKey(JsonNode root) {
+        JsonNode data = root.has("data") ? root.path("data") : root;
+        if (!data.isObject()) {
+            return LlmKeyStatus.unavailable("OpenRouter returned no key entry.");
+        }
+        Double usage = doubleOrNull(data.path("usage"));
+        Double limit = doubleOrNull(data.path("limit"));
+        // Read where it is published rather than subtracted here: the gateway knows about credits
+        // this application does not model. Derived only as a fallback, and only when both halves
+        // are real numbers — "unlimited minus what you spent" is not one.
+        Double remaining = doubleOrNull(data.path("limit_remaining"));
+        if (remaining == null && limit != null && usage != null) {
+            remaining = limit - usage;
+        }
+        Boolean freeTier = data.path("is_free_tier").isBoolean()
+            ? data.path("is_free_tier").asBoolean()
+            : null;
+        if (usage == null && limit == null && remaining == null && freeTier == null) {
+            return LlmKeyStatus.unavailable("OpenRouter reported nothing about this key.");
+        }
+        return new LlmKeyStatus(usage, limit, remaining, freeTier, null);
+    }
+
+    private static Double doubleOrNull(JsonNode value) {
+        return value.isNumber() ? value.asDouble() : null;
     }
 
     /**

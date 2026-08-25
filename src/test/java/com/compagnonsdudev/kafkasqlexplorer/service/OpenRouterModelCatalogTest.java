@@ -4,6 +4,7 @@ package com.compagnonsdudev.kafkasqlexplorer.service;
 
 import com.compagnonsdudev.kafkasqlexplorer.config.ClaudeConfig;
 import com.compagnonsdudev.kafkasqlexplorer.config.ProcessMiningConfig;
+import com.compagnonsdudev.kafkasqlexplorer.domain.LlmKeyStatus;
 import com.compagnonsdudev.kafkasqlexplorer.domain.LlmModelCheck;
 import com.compagnonsdudev.kafkasqlexplorer.domain.LlmModelOption;
 import com.compagnonsdudev.kafkasqlexplorer.domain.LlmModelShortlist;
@@ -423,5 +424,77 @@ class OpenRouterModelCatalogTest {
     void isNotAttemptedForAnyOtherProvider() {
         claudeConfig.setProvider(ClaudeConfig.Provider.OLLAMA);
         assertFalse(catalog.isSupported());
+    }
+
+    // ── what is left on the key ───────────────────────────────────────────────────────────────
+
+    @Test
+    void readsWhatIsLeftOnTheKey() {
+        LlmKeyStatus status = catalog.parseKey(json("""
+            {"data": {"label": "sk-or-…", "usage": 3.5, "limit": 10.0,
+                      "limit_remaining": 6.5, "is_free_tier": false}}
+            """));
+
+        assertEquals(3.5, status.usageUsd());
+        assertEquals(10.0, status.limitUsd());
+        assertEquals(6.5, status.remainingUsd());
+        assertEquals(false, status.freeTier());
+        assertNull(status.error());
+        assertFalse(status.isExhausted());
+    }
+
+    /**
+     * A key with no spending limit: the usage is known and the remainder is not a number.
+     * "Unlimited minus what you spent" must not come back as a zero, which is the reading that
+     * would announce an exhausted key to somebody who has an unlimited one.
+     */
+    @Test
+    void anUnlimitedKeyHasAUsageAndNoRemainder() {
+        LlmKeyStatus status = catalog.parseKey(json(
+            "{\"data\": {\"usage\": 12.25, \"limit\": null, \"is_free_tier\": false}}"));
+
+        assertEquals(12.25, status.usageUsd());
+        assertNull(status.limitUsd());
+        assertNull(status.remainingUsd());
+        assertNull(status.error(), "an unlimited key is an answer, not a failure to read one");
+        assertFalse(status.isExhausted());
+    }
+
+    /** The remainder is derived only when both halves are real numbers, and only as a fallback. */
+    @Test
+    void derivesTheRemainderWhenTheGatewayDoesNotPublishIt() {
+        LlmKeyStatus status = catalog.parseKey(json(
+            "{\"data\": {\"usage\": 9.0, \"limit\": 10.0}}"));
+
+        assertEquals(1.0, status.remainingUsd());
+    }
+
+    @Test
+    void reportsAnExhaustedKeyAsExhausted() {
+        LlmKeyStatus status = catalog.parseKey(json(
+            "{\"data\": {\"usage\": 10.0, \"limit\": 10.0, \"limit_remaining\": 0}}"));
+
+        assertTrue(status.isExhausted(), "the next call answers 402; saying so beforehand is the point");
+    }
+
+    /** A body carrying nothing about the key is unavailable, not a key with nothing on it. */
+    @Test
+    void anEmptyAnswerIsUnavailableRatherThanAnEmptyKey() {
+        assertNotNull(catalog.parseKey(json("{\"data\": {}}")).error());
+        assertNotNull(catalog.parseKey(json("{\"data\": []}")).error());
+    }
+
+    @Test
+    void doesNotAskAboutAKeyForAProviderThatPublishesNone() {
+        claudeConfig.setProvider(ClaudeConfig.Provider.OLLAMA);
+        assertNotNull(catalog.describeKey(claudeConfig).error());
+    }
+
+    /** No key, no question — and the answer says which of the two it is. */
+    @Test
+    void saysWhenThereIsNoKeyToAskAbout() {
+        claudeConfig.setApiKey("");
+        LlmKeyStatus status = catalog.describeKey(claudeConfig);
+        assertTrue(status.error().contains("No API key"), status.error());
     }
 }
