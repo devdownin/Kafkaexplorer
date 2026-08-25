@@ -88,13 +88,32 @@ public class ProcessMiningController {
         return auditPromptCatalog.all();
     }
 
+    /**
+     * A request that names no topic is refused here rather than a model call later.
+     *
+     * <p>It used to reach {@code profile(null, …)}, where the read NPEs and the 500 that comes back
+     * says nothing about the missing field. The refusal is served in the record's own shape — with
+     * {@code error} set, which is exactly what the page already reads on both a 200 and a 4xx — so
+     * a validation failure and a provider failure reach the same panel with the same wiring.
+     */
+    private static boolean namesNoTopic(List<String> topics) {
+        return topics == null || topics.stream().noneMatch(t -> t != null && !t.isBlank());
+    }
+
+    private static final String NO_TOPIC = "Select at least one topic to analyse.";
+
     @PostMapping("/profiling/start")
-    public FieldProfileResult startProfiling(@RequestBody ProfilingRequest request) {
-        log.info("Starting field profiling for topics: {}", request.topics());
+    public ResponseEntity<FieldProfileResult> startProfiling(@RequestBody ProfilingRequest request) {
+        if (namesNoTopic(request.topics())) {
+            return ResponseEntity.badRequest().body(FieldProfileResult.failed(NO_TOPIC));
+        }
+        // Sanitised like every other topic name that reaches this log — a topic name arrives from
+        // the request body, and a %0A in one forges whatever line the caller likes.
+        log.info("Starting field profiling for topics: {}", LogSafe.names(request.topics()));
         SnapshotConfig depth = request.depth() != null
             ? request.depth()
             : SnapshotConfig.latestN(500);
-        return fieldProfilingService.profile(request.topics(), depth);
+        return ResponseEntity.ok(fieldProfilingService.profile(request.topics(), depth));
     }
 
     @PostMapping("/profiling/validate")
@@ -146,14 +165,20 @@ public class ProcessMiningController {
     }
 
     @PostMapping("/snapshot")
-    public ProcessMiningResult analyzeSnapshot(@RequestBody SnapshotRequest request) {
-        log.info("Starting snapshot analysis for topics: {}", request.topics());
+    public ResponseEntity<ProcessMiningResult> analyzeSnapshot(@RequestBody SnapshotRequest request) {
+        if (namesNoTopic(request.topics())) {
+            return ResponseEntity.badRequest().body(ProcessMiningResult.failed(NO_TOPIC));
+        }
+        log.info("Starting snapshot analysis for topics: {}", LogSafe.names(request.topics()));
 
         FieldMapping fieldMapping = null;
+        boolean mappingLost = false;
         if (request.fieldMappingId() != null) {
             fieldMapping = fieldMappingStore.find(request.fieldMappingId()).orElse(null);
-            if (fieldMapping == null) {
-                log.warn("FieldMapping not found for id: {}", request.fieldMappingId());
+            mappingLost = fieldMapping == null;
+            if (mappingLost) {
+                log.warn("FieldMapping not found for id: {}",
+                    LogSafe.name(request.fieldMappingId()));
             }
         }
 
@@ -163,7 +188,22 @@ public class ProcessMiningController {
 
         String auditFocus = buildAuditFocus(request.auditPromptIds(), request.customAuditPrompt());
 
-        return llmAnalysisService.analyzeSnapshot(request.topics(), depth, fieldMapping, auditFocus);
+        ProcessMiningResult result =
+            llmAnalysisService.analyzeSnapshot(request.topics(), depth, fieldMapping, auditFocus);
+
+        // The mapping is the whole point of the step before this one: it is what says which field
+        // correlates a record across topics. Losing it — the store is bounded, and it is restored
+        // from a topic that may not have been readable at boot — leaves the analysis running on
+        // whatever the model infers from the payloads instead. That was said to the log and to
+        // nobody else, so an operator who had just validated a mapping by hand had no way to know
+        // it had not been applied.
+        if (mappingLost) {
+            result = result.withCoverageWarning(
+                "The validated field mapping is no longer held by this server, so the analysis ran "
+                + "without it — correlation across topics is the model's own inference. Re-run the "
+                + "profiling step to rebuild it.");
+        }
+        return ResponseEntity.ok(result);
     }
 
     @GetMapping(value = "/live", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -187,10 +227,15 @@ public class ProcessMiningController {
         final String auditFocus = buildAuditFocus(auditPromptIds, customAuditPrompt);
         CompletableFuture.runAsync(() -> {
             try {
-                // Send initial connected event
+                // Send initial connected event. It carries whether the validated mapping was
+                // actually applied: the store is bounded and restored best-effort at boot, so a
+                // session can legitimately start without the mapping the operator validated — and
+                // that changes what "correlated across topics" means for every window it will
+                // produce. Said here rather than only to the log, which is where it used to stop.
                 sseEmitterManager.send(sessionId, "CONNECTED", Map.of(
                     "sessionId", sessionId,
-                    "topics", topics
+                    "topics", topics,
+                    "fieldMappingApplied", fm != null
                 ));
                 kafkaLiveConsumer.startSession(sessionId, topics, fm, auditFocus);
             } catch (Exception e) {

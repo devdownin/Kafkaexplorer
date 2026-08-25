@@ -680,6 +680,49 @@ export interface ProcessMiningResult {
   error: string | null;
   /** Ce que l'appel a coûté, ou `null` si le client ne l'a pas relevé. */
   usage: LlmUsage | null;
+  /**
+   * Ce que l'analyse a effectivement pu regarder. `null` en mode live, où la portée d'une fenêtre
+   * est déjà rapportée par `WINDOW_STATS`.
+   */
+  coverage: ProcessMiningCoverage | null;
+}
+
+/**
+ * Ce qu'un topic de l'exécution a réellement apporté.
+ *
+ * Deux nombres et non un : le prompt a un budget global de caractères, donc un topic peut être lu
+ * en entier et n'atteindre le modèle qu'en échantillon — ou, le budget épuisé, pas du tout. Un
+ * topic lu et non analysé est invisible dans la réponse, ce qui est précisément le sens qu'on
+ * prêterait au silence du modèle à son sujet.
+ *
+ * `readable` à faux veut dire qu'aucune partition n'a été décrite pour ce topic : un topic absent
+ * ou une faute de frappe, pas un topic vide.
+ *
+ * @java TopicCoverage
+ */
+export interface TopicCoverage {
+  topic: string;
+  messagesRead: number;
+  messagesAnalysed: number;
+  readable: boolean;
+}
+
+/**
+ * La portée d'une analyse Process Mining — voir `pages/processMiningCoverage.ts`, qui la met en
+ * phrases, et le record Java, qui explique pourquoi elle existe.
+ *
+ * @java ProcessMiningCoverage
+ */
+export interface ProcessMiningCoverage {
+  topics: TopicCoverage[];
+  messagesRead: number;
+  messagesAnalysed: number;
+  promptChars: number;
+  promptCharBudget: number;
+  /** La lecture s'est arrêtée sur son propre budget : les décomptes sont des planchers. */
+  readTruncated: boolean;
+  readError: string | null;
+  warnings: string[];
 }
 
 /**

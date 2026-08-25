@@ -69,6 +69,21 @@ def strip_comments(text: str) -> str:
     return re.sub(r'//[^\n]*', ' ', text)
 
 
+def strip_annotations(component: str) -> str:
+    """
+    Drop annotations from a record component, arguments included.
+
+    A component may legitimately carry one — `@JsonProperty(access = …)` marks the fields this
+    application attaches itself and refuses to read back from a model's JSON — and without this the
+    annotation was read as part of the type, so the component came back as "not in the mapping".
+    That is the failure mode this checker is written against: a report that argues against the
+    correct declaration. No annotation in this tree carries a nested parenthesis or a comma in its
+    arguments — the second would be split by `split_generics` before this ever sees it — and either
+    would surface as an unknown type or a mis-split component rather than pass silently.
+    """
+    return re.sub(r'@\w+(?:\s*\([^()]*\))?', ' ', component)
+
+
 def split_generics(args: str) -> list[str]:
     """Split on commas that are not inside <…>."""
     parts, depth, current = [], 0, ''
@@ -184,7 +199,7 @@ def parse_java() -> tuple[dict[str, list[tuple[str, str]]], set[str]]:
         for match in JAVA_RECORD.finditer(source):
             components = []
             for component in split_generics(match.group(2)):
-                parts = component.split()
+                parts = strip_annotations(component).split()
                 if len(parts) >= 2:
                     components.append((parts[-1], ' '.join(parts[:-1])))
             records[match.group(1)] = components

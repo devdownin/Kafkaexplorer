@@ -13,6 +13,7 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.LlmResponse;
 import com.compagnonsdudev.kafkasqlexplorer.domain.PayloadDigest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.PayloadShape;
 import com.compagnonsdudev.kafkasqlexplorer.domain.SnapshotConfig;
+import com.compagnonsdudev.kafkasqlexplorer.domain.SnapshotRead;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -80,15 +81,30 @@ public class FieldProfilingService {
         //    paths and example values, so a 1 MB document contributes its leaf paths and a
         //    bounded set of samples instead of a megabyte of prompt.
         SnapshotConfig samplingConfig = SnapshotConfig.latestN(50);
-        List<PayloadDigest> digests = snapshotReader.readDigested(
+        SnapshotRead read = snapshotReader.readSnapshot(
             topics, samplingConfig, null, processMiningConfig.getMaxShapePaths());
+
+        // A read that came back with nothing is not worth a model call: the prompt would be
+        // headings, and what comes back is a proposal about topics nobody showed it. Saying which
+        // of the three empties it was costs nothing and points somewhere.
+        //
+        // Which of the two shapes it takes follows the rule this record was written for: `error`
+        // means the profiling did not happen — an endpoint, a model, a key or, here, a broker to go
+        // and fix — while topics that simply hold nothing is a finding about the cluster, and the
+        // page already has a branch for it. Reported either way; only the destination differs.
+        if (read.isEmpty()) {
+            if (read.readError() != null) {
+                return FieldProfileResult.failed(read.emptyReadExplanation());
+            }
+            return new FieldProfileResult(List.of(), null, List.of(read.emptyReadExplanation()));
+        }
 
         // 2. Group by topic
         Map<String, List<PayloadDigest>> byTopic = new LinkedHashMap<>();
         for (String topic : topics) {
             byTopic.put(topic, new ArrayList<>());
         }
-        for (PayloadDigest digest : digests) {
+        for (PayloadDigest digest : read.digests()) {
             byTopic.computeIfAbsent(digest.topic(), k -> new ArrayList<>()).add(digest);
         }
 
@@ -122,7 +138,12 @@ public class FieldProfilingService {
         // 5. Parse response. The accounting is attached here rather than parsed: it describes the
         // call, not the answer, and the answer is the model's own JSON — which must never be able
         // to state what it cost.
-        return parseProfileResult(rawResponse).withUsage(usage);
+        //
+        // The scope notes are attached the same way and for a stronger reason: a topic that was
+        // never read produces no row in the validation panel, so it is indistinguishable there from
+        // a topic the model looked at and had nothing to say about. They go first, because they
+        // explain an absence the model's own warnings cannot know about.
+        return parseProfileResult(rawResponse).withUsage(usage).withScopeNotes(read.scopeNotes());
     }
 
     /**

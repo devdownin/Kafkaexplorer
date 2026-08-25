@@ -116,6 +116,43 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   OpenRouter-only: it checks the shape of an address the gateway can resolve, never that a model
   exists — that is what Test is for. Elsewhere a model name is whatever the endpoint accepts.
 
+- **One unknown topic no longer costs a whole Process Mining read.** `KafkaConsumer.partitionsFor`
+  answers `null` for a topic that does not exist, `.stream()` on it threw, and the catch around the
+  read returned an empty list *for every topic in the request*. So one deleted topic — or one typo
+  in a selection of eight — produced a profiling run and an analysis of nothing at all, logged as
+  an error nobody reads and rendered as a cluster with no messages in it. A topic with no metadata
+  now costs that topic, is named, and the read continues.
+
+- **A Process Mining analysis states what it was able to look at.** A flowchart and a list of
+  anomalies cannot say what they rest on, and three things silently reduced the scope: topics that
+  hold nothing, topics that do not resolve on the cluster, and — the invisible one — topics read in
+  full whose records never fit the prompt's character budget, which was written *into the prompt*
+  for the model and nowhere on screen. A run over eight topics where two never reached the model
+  rendered exactly like one over eight, so the model's silence about them read as a finding about
+  them rather than as the absence of a question. `ProcessMiningResult.coverage` now carries what
+  was read and what of it reached the model, per topic, and the page states it above the diagram —
+  on a failed analysis too, where "none of the selected topics held a message" and "the model did
+  not answer" send an operator to opposite places.
+
+- **A read that came back with nothing is no longer sent to the model.** Both steps of the pipeline
+  built a prompt of headings and paid for an answer about the absence of data — an invented
+  pipeline, or a mapping proposal about topics nobody had shown it, which the next step then
+  invites the operator to validate. The reason is stated instead, and it names which of the three
+  empties it was.
+
+- **The Process Mining page says when the validated field mapping was not applied.** The mapping is
+  what step 3 exists to produce — it is what says which field correlates a record across topics —
+  and the store that holds it is bounded and restored best-effort at boot, so it can legitimately
+  be gone by the time an analysis or a live session asks for it. That was said to the log and to
+  nobody else, so the analysis ran on whatever the model inferred while the screen looked exactly
+  like the one that had been configured.
+
+- **A Process Mining request that names no topic is refused where it arrives.** It used to reach
+  the read as `null` and come back as a 500 that said nothing about the missing field. The refusal
+  travels in the same record shape the page already reads on a 200, so a validation failure and a
+  provider failure land in the same panel. Topic names in that controller's logs are sanitised like
+  every other one, which two of its three endpoints were not doing.
+
 
 ### Added
 

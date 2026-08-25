@@ -2,6 +2,9 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.compagnonsdudev.kafkasqlexplorer.domain;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -23,6 +26,10 @@ public record FieldProfileResult(
     List<TopicProfile> topics,
     SchemaUnificationProposal unificationProposal,
     List<String> warnings,
+    // Serialized, never deserialized: this record is what the model's own JSON is parsed into, and
+    // a measurement of what the call cost is not the model's to state. The javadoc above said so
+    // before anything enforced it.
+    @JsonProperty(access = JsonProperty.Access.READ_ONLY)
     LlmUsage usage,
     String error
 ) {
@@ -65,5 +72,24 @@ public record FieldProfileResult(
     /** The parsed proposal with the accounting of the call that produced it. */
     public FieldProfileResult withUsage(LlmUsage usage) {
         return new FieldProfileResult(topics, unificationProposal, warnings, usage, error);
+    }
+
+    /**
+     * The same proposal, saying what the read behind it could not cover.
+     *
+     * <p>Prepended rather than appended: these notes explain an absence — a topic that resolves to
+     * nothing here, or that held no message — which the model's own warnings cannot know about,
+     * since it was never shown the topic in the first place. A failed run keeps its message alone;
+     * there is no proposal for scope notes to qualify.
+     */
+    public FieldProfileResult withScopeNotes(List<String> notes) {
+        if (notes == null || notes.isEmpty() || error != null) {
+            return this;
+        }
+        List<String> merged = new ArrayList<>(notes);
+        if (warnings != null) {
+            merged.addAll(warnings);
+        }
+        return new FieldProfileResult(topics, unificationProposal, List.copyOf(merged), usage, error);
     }
 }

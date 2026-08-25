@@ -16,11 +16,13 @@ import { clearDraft, readDraft, useDraftConflict, usePersistentState, writeDraft
 import { describeResume, resumableStep } from './processMiningDraft';
 import { describeUsage, formatCostUsd, totalCostUsd, totalTokens } from './llmUsage';
 import { describeDataPolicy } from './llmPolicy';
+import { describeCoverage } from './processMiningCoverage';
 import type { AnalysisMode, Step } from './processMiningDraft';
 import type {
   AnomalyReport,
   FieldMappingValidation,
   LlmUsage,
+  ProcessMiningCoverage,
   ProcessMiningResult,
   RagSource,
 } from '../api/types';
@@ -128,6 +130,52 @@ const errorMessage = (err: unknown, fallback: string): string => {
 const anomalyKey = (a: AnomalyReport): string =>
   a.id?.trim() || `${a.topic ?? ''}|${a.type ?? ''}|${a.description ?? ''}`;
 
+/**
+ * Ce que l'analyse a pu regarder, dit au-dessus de ce qu'elle a produit.
+ *
+ * Un diagramme ne dit pas de quoi il est tiré : sans ce bandeau, une analyse de huit topics dont
+ * deux n'ont jamais atteint le modèle se lit comme une analyse des huit, et le silence du modèle
+ * sur les deux passe pour un constat à leur sujet. Rendu même quand tout s'est bien passé — c'est
+ * ce qui fait qu'une portée réduite se remarque, plutôt qu'un bandeau qui n'apparaît que pour les
+ * mauvaises nouvelles et qu'on finit par ne plus lire.
+ */
+const CoverageNotice: React.FC<{ coverage: ProcessMiningCoverage | null | undefined }> = ({ coverage }) => {
+  const summary = describeCoverage(coverage);
+  if (!summary) return null;
+  const tone = summary.tone;
+  return (
+    <div className={`rounded-xl border p-3 flex items-start gap-3 ${
+      tone === 'failed'
+        ? 'border-error/30 bg-error/5'
+        : tone === 'partial'
+        ? 'border-warning/30 bg-warning/5'
+        : 'border-outline-variant/60 bg-surface-container/40'
+    }`}>
+      <span aria-hidden="true" className={`material-symbols-outlined text-lg flex-shrink-0 ${
+        tone === 'failed' ? 'text-error' : tone === 'partial' ? 'text-warning' : 'text-on-surface-variant'
+      }`}>
+        {tone === 'complete' ? 'fact_check' : 'rule'}
+      </span>
+      <div className="min-w-0">
+        <p className="text-xs font-semibold text-on-surface">Analysis scope</p>
+        <p className="text-xs text-on-surface-variant mt-0.5">{summary.headline}</p>
+        {summary.notes.length > 0 && (
+          <ul className="mt-1.5 space-y-1">
+            {summary.notes.map((note, i) => (
+              <li key={i} className="text-[11px] text-on-surface-variant leading-snug flex items-start gap-1.5">
+                <span aria-hidden="true" className="material-symbols-outlined text-[13px] mt-0.5 flex-shrink-0">
+                  arrow_right
+                </span>
+                <span className="break-words">{note}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const StepIndicator: React.FC<{ current: Step }> = ({ current }) => (
   <div className="flex items-center gap-0 mb-8">
     {STEPS.map((step, i) => {
@@ -198,6 +246,13 @@ const ProcessMining: React.FC = () => {
   const [snapshotResult, setSnapshotResult] = usePersistentState<ProcessMiningResult | null>(DRAFT.snapshot, null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /*
+   * La portée d'une analyse qui a échoué. Elle voyage sur la réponse comme sur un succès — un run
+   * qui a lu quatre cents messages avant de perdre le modèle sait ce qu'il a lu — et c'est là
+   * qu'elle sert le plus : elle dit si la prochaine tentative doit changer de modèle ou de
+   * sélection. Hors brouillon, à la différence de `snapshotResult` : un échec ne se rouvre pas.
+   */
+  const [failedCoverage, setFailedCoverage] = useState<ProcessMiningCoverage | null>(null);
   const [llmInfo, setLlmInfo] = useState<RuntimeLlmInfo | null>(null);
   const [auditTemplates, setAuditTemplates] = useState<AuditTemplate[]>([]);
   const [selectedAuditIds, setSelectedAuditIds] = usePersistentState<string[]>(DRAFT.audits, []);
@@ -240,6 +295,14 @@ const ProcessMining: React.FC = () => {
    * n'est pas une panne, et le peindre en rouge d'erreur enverrait chercher un problème.
    */
   const [liveBudgetNotice, setLiveBudgetNotice] = useState<string | null>(null);
+  /*
+   * Le serveur a-t-il retrouvé le mapping validé à l'étape 3 ? Le magasin est borné et restauré au
+   * mieux au démarrage, donc une session peut légitimement commencer sans lui — et cela change ce
+   * que « corrélé entre topics » veut dire pour chaque fenêtre qu'elle produira. `null` tant que
+   * `CONNECTED` n'a rien dit : un serveur plus ancien n'envoie pas le champ, et supposer « oui »
+   * serait affirmer ce qu'on n'a pas demandé.
+   */
+  const [liveMappingApplied, setLiveMappingApplied] = useState<boolean | null>(null);
   /*
    * Every window's cost, not just the last one. A live session calls the model on a timer, so what
    * decides whether a configuration is affordable is the running total — the last window's 900
@@ -398,6 +461,7 @@ const ProcessMining: React.FC = () => {
     if (analysisMode === 'SNAPSHOT') {
       setLoading(true);
       setError(null);
+      setFailedCoverage(null);
       try {
         const res = await axios.post<ProcessMiningResult>('/api/process-mining/snapshot', {
           topics: selectedTopics,
@@ -411,6 +475,9 @@ const ProcessMining: React.FC = () => {
         // landing on an empty Results page offers nothing to act on.
         if (res.data.error) {
           setError(res.data.error);
+          // Ce que la lecture avait tout de même ramené : c'est ce qui dit si l'échec vient du
+          // modèle ou d'une sélection qui ne contenait rien à analyser.
+          setFailedCoverage(res.data.coverage ?? null);
           return;
         }
         setSnapshotResult(res.data);
@@ -456,6 +523,9 @@ const ProcessMining: React.FC = () => {
         const payload = JSON.parse(e.data);
         if (payload && typeof payload.sessionId === 'string') {
           liveSessionIdRef.current = payload.sessionId;
+        }
+        if (payload && typeof payload.fieldMappingApplied === 'boolean') {
+          setLiveMappingApplied(payload.fieldMappingApplied);
         }
       } catch {
         // The stream is usable without it; Stop then falls back to closing the connection only.
@@ -629,6 +699,7 @@ const ProcessMining: React.FC = () => {
     setLiveUsage(null);
     setLiveUsageHistory([]);
     setLiveStarted(false);
+    setLiveMappingApplied(null);
   };
 
   const resetAll = () => {
@@ -648,6 +719,7 @@ const ProcessMining: React.FC = () => {
     setSelectedAuditIds([]);
     setCustomAuditPrompt('');
     setError(null);
+    setFailedCoverage(null);
   };
 
   // ---- Render ----
@@ -765,6 +837,11 @@ const ProcessMining: React.FC = () => {
           </button>
         </div>
       )}
+
+      {/* Une analyse qui a échoué sait quand même ce qu'elle avait lu — et c'est souvent la
+          réponse : « aucun des topics choisis n'a livré de message » n'envoie pas au même endroit
+          que « le modèle n'a pas répondu ». */}
+      {error && failedCoverage && <CoverageNotice coverage={failedCoverage} />}
 
       {/* Step content */}
       <div className="bg-white/3 dark:bg-surface-container/30 border border-outline-variant/60 rounded-2xl p-6">
@@ -955,9 +1032,30 @@ const ProcessMining: React.FC = () => {
         {/* STEP 5: RESULTS */}
         {step === 'RESULTS' && (
           <div className="space-y-6">
+            {/* Ce sur quoi le diagramme ci-dessous repose. En mode live, la portée d'une fenêtre
+                est déjà rapportée fenêtre par fenêtre par la barre d'état. */}
+            {analysisMode === 'SNAPSHOT' && <CoverageNotice coverage={snapshotResult?.coverage} />}
+
             {/* Live status bar (only in live mode) */}
             {analysisMode === 'LIVE' && (
               <>
+                {/* Le mapping validé à l'étape 3 n'a pas été retrouvé : la corrélation entre topics
+                    n'est plus que ce que le modèle en déduit. Dit ici, sinon la session tourne avec
+                    l'apparence de celle qui a été configurée. */}
+                {liveMappingApplied === false && (
+                  <div className="bg-warning/10 border border-warning/30 rounded-xl p-3 flex items-start gap-3">
+                    <span aria-hidden="true" className="material-symbols-outlined text-warning text-lg flex-shrink-0">link_off</span>
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-warning">Field mapping not applied</p>
+                      <p className="text-xs text-warning/90 mt-0.5">
+                        This server no longer holds the mapping validated at step 3, so correlation
+                        across topics is the model's own inference. Re-run the profiling step to
+                        rebuild it.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex items-center gap-3">
                   <div className="flex-1">
                     <LiveStatusBar
