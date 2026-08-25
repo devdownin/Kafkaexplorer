@@ -815,6 +815,23 @@ zero groups — which became a *critical* audit finding, a "caught up" Prometheu
 confident sentence in the UI. (The report itself, `CONSUMER-GROUPS-AUDIT.md`, was deleted from the
 tree in d643f23; its conclusions are the paragraphs in this file, not a separate document.)
 
+`PROCESS-MINING-LLM-SCOPE.md` reviews the half of Process Mining that **uses** the model, the
+ingestion half having been audited several times over and the prompt never. It implements nothing:
+every item is sized and ranked, and one dominates. The analysis prompt samples messages *per topic,
+independently* (`LlmAnalysisService.appendCommonSections`), while four of the five audit prompts ask
+questions about a **case** — ordering, orphans, latency, duplicates are all "per correlation id" —
+so the model is asked to correlate records it was never shown together, and what it can still do is
+infer a pipeline from the topic names. The budget narrows it further: `sample` is forty scalars of
+up to 160 characters *per message*, inlined verbatim, and it is by definition the values the mapping
+did **not** name — so roughly 2 % of a snapshot's records reach the model, a ratio the coverage
+panel has been displaying all along (`messagesAnalysed` against `messagesRead`) without anyone
+drawing the conclusion. The recommendation is to compute the event log in Java — `digest.fields()`
+already carries case id, timestamp and status per record — and send the directly-follows graph,
+the variants and the per-edge latencies, leaving the model the interpretation. The pattern already
+exists one file over: `FieldProfilingService` aggregates per path instead of inlining per record,
+which is why profiling behaves on small models and the analysis does not. Read it before touching
+`LlmAnalysisService`, `LlmSchemas` or `AuditPromptCatalog`.
+
 `SQL-EDITOR-AUDIT.md` is the review of the **SQL editor** (`QueryWorkbench.tsx` and its pure modules,
 plus `QueryController` / `SqlQueryValidator` / `FlinkSqlService.executeSync`) along the four axes it
 was asked for — reliability, ergonomics, optimisation, UI quality. All findings are fixed on this
