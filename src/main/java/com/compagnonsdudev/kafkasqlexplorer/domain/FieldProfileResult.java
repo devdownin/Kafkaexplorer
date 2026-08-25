@@ -19,8 +19,22 @@ import java.util.List;
  *
  * <p>It is null when the model was never reached — a failed profiling run still burned nothing —
  * and its own token and cost fields stay null on a provider that reports none, by
- * {@link LlmUsage}'s rule. The LLM's own JSON is deserialized into this record, so nothing here is
- * ever supplied by the model: the field is attached afterwards by the service.
+ * {@link LlmUsage}'s rule. The LLM's own JSON is deserialized into this record, so {@code usage} is
+ * never taken from it: the field is attached afterwards by the service, because an answer must not
+ * be able to state what it cost.
+ *
+ * <p><b>{@code error} carries the same annotation, for the same reason.</b> It is a component like
+ * any other and the mapper runs with {@code FAIL_ON_UNKNOWN_PROPERTIES} disabled, so a model
+ * volunteering an {@code "error"} key beside a perfectly good list of topics had its run reported
+ * to the operator as a hard failure and its profiles thrown away — the converse of the confusion
+ * this field was added to remove. Constrained decoding closes it where it is in force
+ * ({@code LlmSchemas.fieldProfileResult()} builds through the helper that sets
+ * {@code additionalProperties: false}), and that is precisely the guarantee this codebase declines
+ * to assume anywhere else: SpectraLLM has no notion of schemas at all,
+ * {@code structured-output: OFF} sends none, a model that has latched a refusal runs without one,
+ * and a provider listing {@code response_format} without {@code structured_outputs} accepts the
+ * field and ignores the schema. What the model wanted to say is not lost — it keeps whatever it put
+ * in {@code warnings}, which is the field the prompt asks it for by name.
  */
 public record FieldProfileResult(
     List<TopicProfile> topics,
@@ -31,6 +45,11 @@ public record FieldProfileResult(
     // before anything enforced it.
     @JsonProperty(access = JsonProperty.Access.READ_ONLY)
     LlmUsage usage,
+    // Same rule, same reason: `error` means "this run did not happen", which is a fact about the
+    // call and not the model's to assert about its own answer. Without this, a model volunteering
+    // the key beside twelve good profiles had the run reported as a hard failure and the profiles
+    // thrown away — the converse of the confusion the field was added to remove.
+    @JsonProperty(access = JsonProperty.Access.READ_ONLY)
     String error
 ) {
     public FieldProfileResult(List<TopicProfile> topics,

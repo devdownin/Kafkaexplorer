@@ -359,6 +359,33 @@ seeder is handed a directory instead of a script. `git clone` the repository and
 from inside it, as the snippet above does. Everything else in the stack still works: the
 Explorer, the broker and the SpectraLLM UI do not depend on the seeding.
 
+**The stack comes back up with every demo topic present and no records in any of them.**
+The seeder is a one-shot that Compose re-runs on every `up`, so it decides for itself
+whether there is anything to do — and it used to decide on the marker topic
+`internal.demo.seeded` alone. A topic never expires; the ~400 records it vouches for are
+deleted by retention, so a stack left down long enough came back with eighty topic names,
+nothing in any of them, and a seeder that skipped for ever. Nothing looks wrong from
+outside: the container is healthy, the dashboard lists the topics, and Process Mining
+profiles an empty cluster. The seeder now checks a canary topic for records as well as the
+marker, and seeds again when that topic is provably empty or gone — topics do not expire,
+records do. If the check itself cannot be made (a broker still settling, a missing CLI) it
+skips and says so rather than assuming the worst: that assumption is not paid once but at
+every `up`, and each replay adds a generation of duplicate records to a demo dataset whose
+audit findings are meant to be a known quantity. The message names the command below.
+
+Note where that fix lives: `seed-demo-once.sh` is bind-mounted from **this repository**, not
+baked into any image, so it arrives with a `git pull` and no tag to chase. On a checkout that
+predates it, delete the marker by hand and bring the seeder back up:
+
+```bash
+docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --delete --topic internal.demo.seeded
+docker compose up -d --force-recreate demo-setup
+```
+
+Reach for `docker compose down -v` only if you mean it: it removes **every** volume of the
+project, so it takes the Explorer's own `/app/data` with the broker's — and with it the
+settings entered on the Settings page.
+
 **The container exits at once with `Failed to mark memory page as executable — check if
 grsecurity/PaX is enabled`.** This is the host, not the image: the JVM asked the kernel to
 make its JIT code cache executable and was refused, during VM initialisation, before any of

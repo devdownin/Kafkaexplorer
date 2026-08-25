@@ -27,6 +27,7 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -52,6 +53,13 @@ public class KafkaSnapshotReader {
      * termination condition. Expressed as time rather than as a count of empty polls: what makes it
      * safe to stop is that nothing has arrived for a while, and a count only means that through
      * whatever the poll timeout happens to be.
+     *
+     * <p>What restarts the clock is a record this read <em>kept</em>, not merely one it was handed.
+     * A poll carrying nothing but records of a topic already at its quota is silence as far as the
+     * partitions still wanted are concerned, and treating it as activity is what made this net
+     * inapplicable in the one case it was written for: a busy topic beside a partition whose leader
+     * has gone away kept resetting the clock, so the read waited out the whole 30 s wall clock
+     * instead. Capped topics are paused as well, so that poll mostly stops happening.
      */
     private static final long SILENCE_BUDGET_MS = 5_000L;
 
@@ -255,6 +263,7 @@ public class KafkaSnapshotReader {
             long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(READ_BUDGET_MS);
             int maxMessagesPerTopic = config.maxMessages();
             long silentSince = System.nanoTime();
+            Set<TopicPartition> paused = new HashSet<>();
 
             while (!allTopicsReachedLimit(collectedByTopic, maxMessagesPerTopic)) {
                 if (!hasUnreadOffsets(partitions, endOffsets, nextOffsets,
@@ -268,17 +277,7 @@ public class KafkaSnapshotReader {
                     break;
                 }
                 ConsumerRecords<String, V> records = consumer.poll(POLL_TIMEOUT);
-                if (records.isEmpty()) {
-                    if (System.nanoTime() - silentSince
-                            >= TimeUnit.MILLISECONDS.toNanos(SILENCE_BUDGET_MS)) {
-                        log.debug("Snapshot read gave up after {}ms without a record for topics {}",
-                            SILENCE_BUDGET_MS, topics);
-                        budgetExhausted = true;
-                        break;
-                    }
-                    continue;
-                }
-                silentSince = System.nanoTime();
+                int kept = 0;
                 for (ConsumerRecord<String, V> record : records) {
                     // Advanced whether or not the record is kept: it was delivered either way, and
                     // a cursor that stalled on a topic which has reached its cap would keep the
@@ -291,6 +290,24 @@ public class KafkaSnapshotReader {
                     }
                     handler.accept(record);
                     collectedByTopic.put(record.topic(), currentCount + 1);
+                    kept++;
+                }
+                pauseTopicsAtTheirQuota(consumer, partitions, paused, collectedByTopic,
+                    maxMessagesPerTopic);
+                if (kept > 0) {
+                    silentSince = System.nanoTime();
+                    continue;
+                }
+                // An empty poll and a poll of nothing but records this read is discarding are the
+                // same event as far as the net is concerned: neither says the partitions still
+                // wanted are being served. Counting the second as activity is what let a busy topic
+                // hold the read open on behalf of a partition whose leader had gone away.
+                if (System.nanoTime() - silentSince
+                        >= TimeUnit.MILLISECONDS.toNanos(SILENCE_BUDGET_MS)) {
+                    log.debug("Snapshot read gave up after {}ms without a record for topics {}",
+                        SILENCE_BUDGET_MS, topics);
+                    budgetExhausted = true;
+                    break;
                 }
             }
             log.debug("Snapshot read collected {}", collectedByTopic);
@@ -418,15 +435,60 @@ public class KafkaSnapshotReader {
         Map<TopicPartition, Long> startOffsets = new HashMap<>();
         for (TopicPartition tp : partitions) {
             OffsetAndTimestamp oat = offsets.get(tp);
-            long start = oat != null ? oat.offset() : ends.getOrDefault(tp, 0L);
-            consumer.seek(tp, start);
-            startOffsets.put(tp, start);
+            if (oat != null) {
+                consumer.seek(tp, oat.offset());
+                startOffsets.put(tp, oat.offset());
+                continue;
+            }
+            Long end = ends.get(tp);
+            if (end != null) {
+                consumer.seek(tp, end);
+                startOffsets.put(tp, end);
+                continue;
+            }
+            // The end offset is what states "nothing to read here" as a number. Without one there
+            // is no number to state it with, and defaulting to 0 says the *opposite*: seek to the
+            // beginning and hand back the whole partition, every record of it older than the
+            // instant that was asked for — and in this mode auto.offset.reset is "earliest", so
+            // simply not seeking would arrive at the same place. seekToEnd is therefore the honest
+            // fallback, lazily resolved by the client at the next poll rather than read back here,
+            // and the partition is left out of the cursor: one with no entry can neither keep the
+            // loop alive nor be mistaken for holding unread records.
+            consumer.seekToEnd(List.of(tp));
         }
         return startOffsets;
     }
 
     private boolean allTopicsReachedLimit(Map<String, Integer> collectedByTopic, int maxMessagesPerTopic) {
         return collectedByTopic.values().stream().allMatch(count -> count >= maxMessagesPerTopic);
+    }
+
+    /**
+     * Stops fetching the partitions of a topic that already has its quota.
+     *
+     * <p>{@link #hasUnreadOffsets} stops such a topic from keeping the loop <em>alive</em>, which is
+     * a different thing from stopping the client fetching it: until it is paused, a busy topic goes
+     * on being read to its end offsets on the Process Mining hot path, and every one of those
+     * records is discarded a few lines above. It costs fetch bandwidth that belongs to the topics
+     * still wanted, and it made every such poll look like activity to the silence net.
+     *
+     * <p>Nothing is resumed: this consumer is closed at the end of the read, and a topic that has
+     * its quota does not stop having it.
+     */
+    private static <V> void pauseTopicsAtTheirQuota(Consumer<String, V> consumer,
+                                                    List<TopicPartition> partitions,
+                                                    Set<TopicPartition> paused,
+                                                    Map<String, Integer> collectedByTopic,
+                                                    int maxMessagesPerTopic) {
+        List<TopicPartition> filled = partitions.stream()
+            .filter(tp -> !paused.contains(tp))
+            .filter(tp -> collectedByTopic.getOrDefault(tp.topic(), 0) >= maxMessagesPerTopic)
+            .toList();
+        if (filled.isEmpty()) {
+            return;
+        }
+        consumer.pause(filled);
+        paused.addAll(filled);
     }
 
     /**

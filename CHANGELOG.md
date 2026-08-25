@@ -11,6 +11,107 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A Process Mining snapshot read no longer returns a random subset of the topics it was asked
+  for.** Three separate faults, each hiding the next, and one symptom: profiling reported one topic
+  of six as holding messages and the rest as empty, with the analysis then concluding exactly that.
+  `seekToLatestN` clamped to offset `0` instead of the partition's beginning offset — on a log
+  retention has trimmed, that position is out of range, `auto.offset.reset` (`latest`, in this
+  mode) applies and the read jumps to the end, so a full topic reads as an empty one. Termination
+  was then decided by an empty poll, which a fresh consumer very often returns while metadata
+  resolves: three runs of one identical request sampled 1 topic, then 0, then 6. And the offsets it
+  was made to steer by were `consumer.position(tp)`, which is the client's *fetch* position and
+  runs ahead of what has been delivered — one poll handed over two records while it reported the
+  log end for all eighteen partitions. The loop now keeps a per-partition cursor of its own,
+  advanced only by records it was actually given, and says at DEBUG what it is about to read and
+  what it collected: every one of the three ended at the one loop exit that logged nothing, which
+  is what made them indistinguishable.
+
+- **The audit's own record scan had the same defect.** `KafkaAdminService.drain()` compared
+  `position(tp)` against the end offsets, and both of its callers assign every partition of the
+  topic — which is how the audit samples one, for duplicate detection, poison detection, format
+  inference and schema inference alike. A topic with enough partitions truncated the sample and the
+  audit reported a confident number about records it never saw. Single-partition reads masked it.
+
+- **A snapshot read's silence budget applies in the case it was written for.** The 5 s net exists
+  for one topic being served normally beside a partition whose leader has gone away — but every
+  poll counted as activity, including the ones carrying nothing but records of a topic already at
+  its per-topic quota, which are discarded on arrival. The clock therefore never expired and the
+  read waited out the whole 30 s wall clock, on the Process Mining hot path, spending the rest of
+  its fetch bandwidth on records nobody would keep. The clock is now restarted by a record the read
+  *kept* rather than one it was handed, and the partitions of a topic that has its quota are
+  paused, so those polls mostly stop happening. Measured: 30 000 ms before, the silence budget
+  after.
+
+- **A missing end offset no longer inverts a timestamped read.** On the branch that means "every
+  record in this partition predates the instant asked for, so read nothing from it", the seek
+  target was `endOffsets.getOrDefault(tp, 0L)` — and a broker that answered partially therefore
+  sent the read to offset `0`, returning the whole partition, every record of it older than the
+  filter. The exact opposite of what the branch is for, from a measurement that was simply
+  missing. The partition is now seeked to its end lazily and left out of the read's cursor, so it
+  carries no bookkeeping entry rather than a wrong one. Both copies of the line are fixed —
+  `KafkaSnapshotReader.seekToTimestamp` and `KafkaAdminService.getRecentRecords` — and in the
+  reader's mode `auto.offset.reset` is `earliest`, so skipping the seek would have landed in the
+  same wrong place.
+
+- **A profiling run that did not happen is no longer reported as one that found nothing.** Every
+  failure path — no API key, an unreachable endpoint, an unparseable answer — answered 200 with an
+  empty topic list and the reason among the warnings, which is the same shape as a genuine
+  profiling of topics that hold no messages. The two send you to opposite places: one is a cluster
+  to go and look at, the other an endpoint, a model or a key to go and fix. `FieldProfileResult`
+  now carries `error`, the distinction `ProcessMiningResult.error` already drew for the analysis
+  half of the same pipeline, and the page acts on it.
+  The model does not get to set that field: it is a record component and the answer is bound with
+  unknown keys ignored, so a model volunteering an `"error"` beside twelve good profiles would have
+  had its run reported as a hard failure and the profiles thrown away. It is stripped on the way
+  out of the parser, the way the token accounting is attached rather than parsed — `error` is a
+  fact about the call, not something the answer may assert about itself — and whatever the model
+  wanted to say survives in `warnings`.
+
+- **An answer that never arrived says the model ran out of budget.** A small reasoning model that
+  spends its whole output allowance deliberating returns a 200, a well-formed body and no content;
+  the old wording — *"LLM response choice carried no message content"* — sent an operator to check
+  the endpoint, the model name and the key, all of which are correct. Three answers now, and the
+  difference is what may be asserted: `finish_reason: "length"` is the provider stating the cap was
+  hit, so the message says so and names `claude.max-tokens`; tokens generated with no content is
+  the same symptom without that confirmation, reported as the counts it is; neither, and the old
+  wording stands, because a gateway that omits the reason must not be paraphrased into one. Blank
+  content counts as absent — every caller parses the answer as JSON, so an empty string only moves
+  the failure one step on.
+
+- **A 4xx a routing gateway relayed from an upstream provider is named as such.** On OpenRouter one
+  model is served by several providers, the choice is made per call and is not announced, and that
+  provider's failure comes back under the gateway's status. Read as an ordinary 400 it produced
+  *"the endpoint rejected the request body"*, which sends you to audit a body that is provably
+  fine: the byte-identical request failed through one provider and succeeded through another
+  minutes later. The message now names the provider that failed and says another attempt may route
+  elsewhere — and, the half that costs more, such a refusal is **no longer remembered against the
+  model**, where it used to disable schema-constrained decoding for the client's whole lifetime on
+  the strength of one provider's bad afternoon.
+
+- **...and it no longer re-seeds on every start when it could not check.** The canary check reads
+  offsets, and a read can fail — a broker still settling, a CLI absent from a different image.
+  Counted as "the topic is empty", that looks like the safe direction and is not: it is paid at
+  every `up` rather than once, and each replay adds a generation of duplicate records to a dataset
+  the audit's duplicate detection and the Stream Flow traces are calibrated against — the exact
+  damage the marker exists to prevent. The check now has four answers instead of two: `populated`
+  and `empty` are measurements, `absent` means the topic itself is gone (topics do not expire,
+  records do), and `unknown` means the question could not be asked, in which case the marker — which
+  is evidence a seed once succeeded — stands, with the message naming the command that forces a
+  re-seed. The topic list is read once for both questions and retried; if it cannot be read at all
+  the script seeds nothing and says why, since it cannot see the marker either and a compose
+  one-shot runs again at the next `up`.
+
+- **The demo seeder no longer skips for ever once retention has emptied what it seeded.**
+  `internal.demo.seeded` is a topic, and a topic never expires; the records it vouches for do. A
+  stack brought back up past that point came back with eighty topic names, no records in any of
+  them, and a seeder that skipped every time — while the dashboard, the health probes and the topic
+  list all looked normal. The documented way out made it worse: `docker compose down -v` wipes
+  every volume of the project, the explorer's own data volume and the settings entered on the
+  Settings page included. The marker now answers "has this been seeded before" and a canary topic
+  answers "is the data still there", and only both together mean there is nothing to do.
+
 ### Security
 
 - **A stored API key no longer follows the LLM endpoint to a different host.** `POST /api/config`

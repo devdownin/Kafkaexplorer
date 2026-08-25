@@ -97,6 +97,33 @@ ce qu'on lui a donné, sans que rien ne dise laquelle.
 - **Vérification** : sur l'API native d'Ollama, `prompt_eval_count` dans la réponse dit combien
   de jetons ont *réellement* été lus.
 
+### Le modèle répond 200, sans réponse
+
+Un petit modèle de raisonnement peut dépenser toute son enveloppe de sortie à délibérer et
+n'arriver jamais à la réponse : il revient un 200, un corps bien formé et aucun contenu. Mesuré
+sur un modèle gratuit utilisé pendant une session ici : 3 562 des 7 089 jetons de sortie sont
+partis en raisonnement sur les exécutions qui ont, elles, **abouti**.
+
+L'application distingue désormais trois réponses plutôt qu'une, parce qu'elles n'autorisent pas
+la même affirmation :
+
+- `finish_reason: "length"` — le fournisseur dit que le plafond a été atteint. Le message le dit
+  et nomme `claude.max-tokens`.
+- des jetons générés sans contenu, sans que le fournisseur dise pourquoi — le même symptôme sans
+  la confirmation, rapporté comme le décompte qu'il est. Une passerelle qui omet la raison ne
+  doit pas être paraphrasée en une raison.
+- ni l'un ni l'autre — l'ancien libellé tient, et il faut aller regarder l'endpoint.
+
+- **Solution** : augmentez `CLAUDE_MAX_TOKENS` (4096 par défaut, et il plafonne la réponse JSON
+  entière), ou choisissez un modèle qui ne réfléchit pas avant de répondre. Le décompte des
+  jetons de raisonnement s'affiche à côté de chaque exécution : c'est lui qui montre le budget
+  se faire manger *avant* qu'une exécution échoue.
+
+Même distinction du côté du **profilage** : une exécution qui n'a pas eu lieu — clé absente,
+endpoint injoignable, réponse illisible — est désormais rapportée comme telle, avec sa cause, au
+lieu de revenir en « aucun topic profilé », qui est la réponse d'un profilage ayant bien tourné
+sur des topics vides. Les deux envoient à des endroits opposés : le cluster, ou le modèle.
+
 ---
 
 ## 🚀 Usages Spécialisés du LLM Local

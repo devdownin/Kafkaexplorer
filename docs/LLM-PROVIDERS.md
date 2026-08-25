@@ -184,6 +184,21 @@ withholds the lookup rather than posting a vendor-specific path at it. And a loo
 so: "we asked and the answer is no" and "we could not ask" are different answers, and only the
 first should change what you do next.
 
+### When the failure is not the gateway's, and not yours
+
+One model on OpenRouter is served by several upstream providers; the choice is made per call, it is
+not announced, and it varies. When one of them fails, its answer comes back under OpenRouter's own
+status — so a 400 can describe something that happened somewhere else entirely, on a request that
+was fine. Observed here on `liquid/lfm-2.5-2.6b:free`: the byte-identical body failed through one
+provider and succeeded through another minutes later.
+
+The error therefore names the provider it was relayed from and says another attempt may route
+elsewhere, rather than telling you to go and audit a request body that is correct. A model served
+by a single provider is the one worth replacing. The half of this you cannot see is the more
+important one: such a refusal is **not remembered against the model**, where a schema refusal the
+endpoint itself issues still is — one provider's bad afternoon must not leave every later analysis
+running with unconstrained decoding and nothing on screen saying why.
+
 ## Option B: Anthropic Claude
 Set the provider and your API key:
 ```bash
@@ -307,3 +322,26 @@ elsewhere with `SPECTRALLM_DIR=/path/to/SpectraLLM`. See the header of
 
 Whatever the size, check the two numbers above against each other: a 3B model with a 4k window
 sees less of your messages than a 7B with 16k, and neither of them says so.
+
+## When the model answers nothing
+
+A small reasoning model can spend its whole output allowance deliberating and never reach the
+answer. What comes back is a 200, a well-formed body and no content at all — a shape that reads
+like a broken endpoint and is not one. Measured on a free slug this application was run against:
+3 562 of 7 089 output tokens went on reasoning in the runs that *succeeded*.
+
+Both halves of the Process Mining pipeline now say which case it is rather than reporting the
+symptom:
+
+| What you see | What it means | What to change |
+|---|---|---|
+| *stopped at its output limit after N output token(s), M of them spent reasoning* | The provider stated the cap was hit (`finish_reason: length`). | Raise `CLAUDE_MAX_TOKENS`, or pick a model that does not think before answering. |
+| *generated N output token(s) but no answer, and did not say why it stopped* | Same symptom, no confirmation from the provider — so it is reported as the counts it is, not paraphrased into a verdict. | Usually the same fix; the reasoning-token figure beside each run says how close you are. |
+| *spent its whole output budget reasoning and never reached an answer* | The answer opened a `<think>` block and stopped inside it. | As above. |
+| *carried no message content* | None of the above could be established from the body. | Check the endpoint and the model, as before. |
+
+The **profiling** step reports its failures the same way, and that distinction is worth knowing
+before you go looking at Kafka: a profiling run that *did not happen* (no key, unreachable
+endpoint, unreadable answer) is now reported as a failure naming its cause, where it used to come
+back as "no topics profiled" — the same answer as a genuine run over topics that hold no messages,
+and the two send you to opposite places.
