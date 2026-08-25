@@ -279,6 +279,48 @@ class LlmStructuredOutputTest {
         assertNull(LlmHttpSupport.upstreamProviderOf(null));
     }
 
+    /**
+     * An answer that never arrived because the model spent its budget thinking says so, and names
+     * the setting that fixes it.
+     *
+     * <p>The observed shape on a small reasoning model: a 200, a well-formed body, no content, and
+     * `finish_reason: "length"`. The bare "carried no message content" sent an operator to check an
+     * endpoint, a model name and a key that were all correct.
+     */
+    @Test
+    void namesTheOutputLimitWhenTheModelRanOutBeforeAnswering() throws Exception {
+        ClaudeConfig config = startServer(List.of(new StubResponse(200,
+            "{\"choices\":[{\"finish_reason\":\"length\",\"message\":{\"content\":\"\"}}],"
+                + "\"usage\":{\"prompt_tokens\":900,\"completion_tokens\":8192,"
+                + "\"completion_tokens_details\":{\"reasoning_tokens\":8192}}}")));
+
+        RuntimeException e = assertThrows(RuntimeException.class,
+            () -> new OpenAiCompatibleLlmClient(config).generateWithMeta("SYS", "USR", null));
+
+        assertTrue(e.getMessage().contains("claude.max-tokens"), e.getMessage());
+        assertTrue(e.getMessage().contains("8192"), "the budget it actually spent is the evidence");
+        assertTrue(e.getMessage().contains("reasoning"), e.getMessage());
+    }
+
+    /**
+     * ...and a gateway that reports no reason is not paraphrased into one. The counts are stated,
+     * the cause is offered as the usual one, and the limit is not asserted.
+     */
+    @Test
+    void doesNotAssertALimitTheProviderDidNotReport() throws Exception {
+        ClaudeConfig config = startServer(List.of(new StubResponse(200,
+            "{\"choices\":[{\"message\":{\"content\":\"   \"}}],"
+                + "\"usage\":{\"prompt_tokens\":900,\"completion_tokens\":1200}}")));
+
+        RuntimeException e = assertThrows(RuntimeException.class,
+            () -> new OpenAiCompatibleLlmClient(config).generateWithMeta("SYS", "USR", null));
+
+        assertTrue(e.getMessage().contains("1200 output token(s)"), e.getMessage());
+        assertTrue(e.getMessage().contains("did not say why it stopped"), e.getMessage());
+        assertFalse(e.getMessage().contains("stopped at its output limit"),
+            "the provider did not report a limit, so this must not claim one");
+    }
+
     /** 422 is the other way a gateway says "I do not understand this field". */
     @Test
     void treatsUnprocessableEntityAsASchemaRefusalToo() throws Exception {

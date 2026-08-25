@@ -345,11 +345,58 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
         }
 
         JsonNode content = choice.path("message").path("content");
-        if (content.isMissingNode() || content.isNull()) {
-            throw new RuntimeException("LLM response choice carried no message content: "
-                + truncate(rawBody));
+        String text = content.isTextual() ? content.asText() : null;
+        if (text == null || text.isBlank()) {
+            // Blank counts as absent, deliberately: every caller here parses the answer as JSON, so
+            // an empty string only moves the failure one step on, to a parse error that says
+            // nothing about where the answer went.
+            throw new RuntimeException(noContentMessage(choice, root, rawBody));
         }
-        return content.asText();
+        return text;
+    }
+
+    /**
+     * Says <em>why</em> an answer came back empty, as far as the body actually says it.
+     *
+     * <p>A model that spends its whole output budget before writing anything returns exactly this —
+     * a well-formed response whose content is absent — and the bare wording sends an operator to
+     * check the endpoint, the model name and the key, all of which are fine. It is not a rare
+     * shape: this application is routinely pointed at small reasoning models, and one measured here
+     * spent 3 562 of its 7 089 output tokens deliberating on the runs that <em>succeeded</em>.
+     *
+     * <p>Three answers, not one, and the difference is what may be asserted.
+     * {@code finish_reason: "length"} is the provider stating the cap was hit, so the message says
+     * so and names the setting. Tokens generated with no content is the same symptom without that
+     * confirmation — reported as the count it is, since a gateway that omits the reason must not be
+     * paraphrased into one. Neither, and the old wording stands.
+     *
+     * <p>Same reasoning as {@code LlmJsonSupport.hasUnterminatedReasoning}, which already reports
+     * this for an answer that got as far as opening a reasoning block; this covers the one that
+     * never got that far.
+     */
+    private static String noContentMessage(JsonNode choice, JsonNode root, String rawBody) {
+        String finishReason = choice.path("finish_reason").asText(
+            choice.path("native_finish_reason").asText(""));
+        long completionTokens = root.path("usage").path("completion_tokens").asLong(-1);
+        long reasoningTokens = root.path("usage").path("completion_tokens_details")
+            .path("reasoning_tokens").asLong(-1);
+        String spent = completionTokens > 0
+            ? completionTokens + " output token(s)"
+                + (reasoningTokens > 0 ? ", " + reasoningTokens + " of them spent reasoning" : "")
+            : null;
+
+        if ("length".equals(finishReason)) {
+            return "The model produced no answer: it stopped at its output limit"
+                + (spent != null ? " after " + spent : "")
+                + ". Raise claude.max-tokens, or choose a model that does not reason before "
+                + "answering. Response: " + truncate(rawBody);
+        }
+        if (spent != null) {
+            return "The model generated " + spent + " but no answer, and did not say why it "
+                + "stopped. A reasoning model exhausting claude.max-tokens is the usual cause. "
+                + "Response: " + truncate(rawBody);
+        }
+        return "LLM response choice carried no message content: " + truncate(rawBody);
     }
 
     private static String truncate(String body) {
