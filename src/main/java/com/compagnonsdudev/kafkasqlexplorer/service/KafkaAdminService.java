@@ -1645,8 +1645,11 @@ public class KafkaAdminService {
             List<TopicPartition> partitions = desc.partitions().stream()
                     .map(p -> new TopicPartition(topicName, p.partition())).toList();
             consumer.assign(partitions);
-            consumer.seekToBeginning(partitions);
-            records.addAll(drain(consumer, partitions, maxMessages));
+            // Seeked explicitly rather than through seekToBeginning, because drain() needs to be
+            // told where the read starts — see the cursor it keeps. Same offsets either way.
+            Map<TopicPartition, Long> startOffsets = consumer.beginningOffsets(partitions);
+            startOffsets.forEach(consumer::seek);
+            records.addAll(drain(consumer, startOffsets, maxMessages));
         } catch (Exception e) {
             log.error("Error fetching earliest records for topic {}", LogSafe.name(topicName), e);
         }
@@ -1687,33 +1690,37 @@ public class KafkaAdminService {
 
             consumer.assign(partitions);
 
+            Map<TopicPartition, Long> endOffsets = consumer.endOffsets(partitions);
+            Map<TopicPartition, Long> startOffsets = new HashMap<>();
+
             if (timestampLimit != null) {
                 Map<TopicPartition, Long> timestampsToSearch = partitions.stream()
                         .collect(Collectors.toMap(tp -> tp, tp -> timestampLimit));
                 Map<TopicPartition, org.apache.kafka.clients.consumer.OffsetAndTimestamp> offsets = consumer.offsetsForTimes(timestampsToSearch);
                 for (TopicPartition tp : partitions) {
                     org.apache.kafka.clients.consumer.OffsetAndTimestamp oat = offsets.get(tp);
-                    if (oat != null) {
-                        consumer.seek(tp, oat.offset());
-                    } else {
-                        consumer.seekToEnd(Collections.singletonList(tp));
-                    }
+                    // No offset at or after the instant asked for means every record in this
+                    // partition predates it: there is nothing to read, which the end offset states
+                    // as a number drain() can compare rather than as a position it would read back.
+                    long startOffset = oat != null ? oat.offset() : endOffsets.getOrDefault(tp, 0L);
+                    consumer.seek(tp, startOffset);
+                    startOffsets.put(tp, startOffset);
                 }
             } else {
                 Map<TopicPartition, Long> beginningOffsets = consumer.beginningOffsets(partitions);
-                Map<TopicPartition, Long> endOffsets = consumer.endOffsets(partitions);
                 for (TopicPartition tp : partitions) {
-                    long endOffset = endOffsets.get(tp);
+                    long endOffset = endOffsets.getOrDefault(tp, 0L);
                     // Clamp to the beginning offset: on topics where retention has deleted old
                     // segments, seeking below it is an out-of-range position and the consumer
                     // resets to auto.offset.reset (default "latest"), silently returning nothing.
                     long beginningOffset = beginningOffsets.getOrDefault(tp, 0L);
                     long startOffset = Math.max(beginningOffset, endOffset - (maxMessages / partitions.size() + 1));
                     consumer.seek(tp, startOffset);
+                    startOffsets.put(tp, startOffset);
                 }
             }
 
-            records.addAll(drain(consumer, partitions, maxMessages));
+            records.addAll(drain(consumer, startOffsets, maxMessages));
         } catch (Exception e) {
             log.error("Error fetching records for topic {}", LogSafe.name(topicName), e);
         }
@@ -1747,17 +1754,31 @@ public class KafkaAdminService {
      * <p>A wall-clock budget and a cap on consecutive empty polls keep a slow or unhealthy broker
      * from pinning the calling thread. Callers see a short result and, in the audit's case, report
      * the count they actually scanned.
+     *
+     * <p><b>And the cursor is this method's own, never {@code consumer.position(tp)}.</b> That one
+     * is the client's <em>fetch</em> position: the consumer prefetches in the background, across
+     * every assigned partition, and advances it as responses are buffered rather than as records
+     * are returned. Measured on {@code KafkaSnapshotReader}, which had the same comparison, one
+     * poll delivered two records while {@code position()} reported the log end for all eighteen
+     * partitions — so the read stopped believing itself caught up with most of the records still
+     * undelivered. Single-topic reads mask it, which is why it survived here; a topic with enough
+     * partitions does not, and both callers of this method are how the audit samples a topic.
+     *
+     * @param startOffsets where each assigned partition was seeked to — the caller chose it, so
+     *                     nobody has to ask the client where the read begins
      */
     private List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> drain(
-            KafkaConsumer<byte[], byte[]> consumer, List<TopicPartition> partitions, int maxMessages) {
+            KafkaConsumer<byte[], byte[]> consumer, Map<TopicPartition, Long> startOffsets, int maxMessages) {
         List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records = new ArrayList<>();
+        List<TopicPartition> partitions = List.copyOf(startOffsets.keySet());
         Map<TopicPartition, Long> endOffsets = consumer.endOffsets(partitions);
+        Map<TopicPartition, Long> nextOffsets = new HashMap<>(startOffsets);
         long deadline = System.nanoTime()
                 + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(DRAIN_BUDGET_MS);
         int emptyPolls = 0;
 
         while (records.size() < maxMessages) {
-            if (!hasUnreadOffsets(consumer, partitions, endOffsets)) break; // caught up: really done
+            if (!hasUnreadOffsets(partitions, endOffsets, nextOffsets)) break; // caught up: really done
             if (System.nanoTime() >= deadline) {
                 log.debug("Record scan budget spent after {} record(s)", records.size());
                 break;
@@ -1769,6 +1790,8 @@ public class KafkaAdminService {
             }
             emptyPolls = 0;
             for (org.apache.kafka.clients.consumer.ConsumerRecord<byte[], byte[]> record : polled) {
+                nextOffsets.merge(new TopicPartition(record.topic(), record.partition()),
+                    record.offset() + 1, Math::max);
                 String value = deserializeValue(record.topic(), record.value());
                 String key = record.key() != null ? new String(record.key(), StandardCharsets.UTF_8) : null;
                 records.add(new org.apache.kafka.clients.consumer.ConsumerRecord<>(
@@ -1780,13 +1803,14 @@ public class KafkaAdminService {
         return records;
     }
 
-    /** True while at least one assigned partition still has records before its end offset. */
-    private static boolean hasUnreadOffsets(KafkaConsumer<byte[], byte[]> consumer,
-                                            List<TopicPartition> partitions,
-                                            Map<TopicPartition, Long> endOffsets) {
+    /** True while at least one assigned partition still holds records this read has not been handed. */
+    private static boolean hasUnreadOffsets(List<TopicPartition> partitions,
+                                            Map<TopicPartition, Long> endOffsets,
+                                            Map<TopicPartition, Long> nextOffsets) {
         for (TopicPartition tp : partitions) {
             Long end = endOffsets.get(tp);
-            if (end != null && consumer.position(tp) < end) return true;
+            Long next = nextOffsets.get(tp);
+            if (end != null && next != null && next < end) return true;
         }
         return false;
     }
