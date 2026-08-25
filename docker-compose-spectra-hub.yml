@@ -143,7 +143,7 @@ services:
   # ═══ Kafka Explorer ═════════════════════════════════════════════════════════
 
   explorer:
-    image: ${EXPLORER_IMAGE_NAMESPACE:-compagnonsdudev}/kafkaexplorer:${EXPLORER_IMAGE_TAG:-1.8.12}
+    image: ${EXPLORER_IMAGE_NAMESPACE:-compagnonsdudev}/kafkaexplorer:${EXPLORER_IMAGE_TAG:-1.9.0}
     ports:
       # Loopback only. This application has no authentication and `POST /api/config` can
       # repoint the Kafka cluster at runtime, so the Docker default of 0.0.0.0 would offer it
