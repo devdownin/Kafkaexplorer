@@ -146,7 +146,10 @@ fi
 # The script is bind-mounted from the host checkout, which on Windows may hold CRLF
 # line endings that the shell refuses. Strip them into a copy rather than editing the
 # mount (which would write back into the user's working tree).
-sed 's/\r$//' /data/setup-demo.sh > /tmp/setup-demo.sh
+# Overridable for the same reason KAFKA_BIN is: it is what lets seed-demo-once.test.sh assert
+# that a decision actually reached the seeder, instead of inferring it from a missing file.
+SETUP_SCRIPT="${SETUP_SCRIPT:-/data/setup-demo.sh}"
+sed 's/\r$//' "$SETUP_SCRIPT" > /tmp/setup-demo.sh
 # setup-demo.sh uses bash arrays, so it needs bash, not the busybox sh running this.
 bash /tmp/setup-demo.sh "$BOOTSTRAP"
 
