@@ -48,6 +48,15 @@ export interface FieldProfileResult {
    * d'une réponse écrite par une version antérieure, d'où l'optionnalité.
    */
   usage?: LlmUsage | null;
+  /**
+   * Renseigné quand le profilage n'a pas eu lieu — clé absente, endpoint injoignable, réponse
+   * illisible — par opposition à un profilage qui a bien tourné et n'a rien trouvé. Les deux
+   * arrivaient avec `topics: []` et la raison dans `warnings`, donc un modèle en panne et un
+   * cluster vide étaient indiscernables ; c'est la distinction que `ProcessMiningResult.error`
+   * fait déjà pour l'autre moitié du pipeline. Absent d'une réponse écrite par une version
+   * antérieure, d'où l'optionnalité.
+   */
+  error?: string | null;
 }
 
 interface SchemaValidationPanelProps {

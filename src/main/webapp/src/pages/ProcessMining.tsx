@@ -347,12 +347,19 @@ const ProcessMining: React.FC = () => {
         topics,
         depth: snapshotDepth,
       }, { timeout: PROFILING_TIMEOUT_MS });
-      // Profiling reports its failures as warnings on an otherwise empty result, so a model that
-      // could not be reached landed the operator on a validation step with nothing to validate.
-      // No topic profiled at all is a failure, not a schema with no fields.
+      // `error` renseigné : le profilage n'a pas eu lieu. C'est une autre réponse que « il a
+      // tourné et n'a rien trouvé », et elle envoie ailleurs — vers l'endpoint, le modèle ou la
+      // clé plutôt que vers le cluster. Le serveur les distinguait pas avant, et trois pannes de
+      // modèle ont été lues comme des lectures Kafka en échec.
+      if (res.data.error) {
+        setError(res.data.error);
+        setStep('SELECT');
+        return;
+      }
+      // Aucun topic profilé sans erreur : le profilage a bien eu lieu et n'a rien trouvé.
       if ((res.data.topics?.length ?? 0) === 0) {
         setError(res.data.warnings?.join(' · ')
-          || 'Profiling returned no topics. Check that the topics hold messages and that the LLM is reachable.');
+          || 'Profiling returned no topics. Check that the selected topics hold messages.');
         setStep('SELECT');
         return;
       }

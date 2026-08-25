@@ -43,6 +43,46 @@ class FieldProfilingServiceTest {
         // For testing we might want to mock the client, but it's created in constructor
     }
 
+    /**
+     * A profiling run that did not happen is not one that found nothing.
+     *
+     * <p>Both used to answer with an empty {@code topics} list and the reason in {@code warnings},
+     * so an unreachable model and a set of empty topics were the same response — and the two send
+     * an operator to opposite places. This is the distinction {@code ProcessMiningResult.error}
+     * already draws for the analysis half of the pipeline.
+     */
+    @Test
+    void reportsAnUnreachableModelAsAFailureRatherThanAnEmptyProfile() {
+        LlmClient client = mock(LlmClient.class);
+        when(client.generateWithMeta(anyString(), anyString(), any()))
+            .thenThrow(new RuntimeException("Connection refused"));
+        when(snapshotReader.readDigested(anyList(), any(), any(), anyInt()))
+            .thenReturn(List.of(digestOf("topic1", "k", "{\"id\":\"1\"}")));
+        fieldProfilingService = new FieldProfilingService(snapshotReader, claudeConfig, client);
+
+        FieldProfileResult result = fieldProfilingService.profile(List.of("topic1"), SnapshotConfig.latestN(10));
+
+        assertNotNull(result.error(), "an endpoint that could not be reached is a failure");
+        assertTrue(result.error().contains("Connection refused"), result.error());
+        assertTrue(result.topics().isEmpty());
+    }
+
+    /** ...and a run that really did profile empty topics carries no error. */
+    @Test
+    void aProfileThatFoundNothingIsNotAFailure() {
+        LlmClient client = mock(LlmClient.class);
+        when(client.generateWithMeta(anyString(), anyString(), any()))
+            .thenReturn(new LlmResponse("{\"topics\":[],\"warnings\":[\"No messages sampled\"]}",
+                List.of(), null));
+        when(snapshotReader.readDigested(anyList(), any(), any(), anyInt())).thenReturn(List.of());
+        fieldProfilingService = new FieldProfilingService(snapshotReader, claudeConfig, client);
+
+        FieldProfileResult result = fieldProfilingService.profile(List.of("topic1"), SnapshotConfig.latestN(10));
+
+        assertNull(result.error(),
+            "the model answered; that the cluster had nothing to profile is a finding, not a fault");
+    }
+
     @Test
     void testProfileWithMissingApiKeyAnthropic() {
         claudeConfig.setProvider(ClaudeConfig.Provider.ANTHROPIC);
