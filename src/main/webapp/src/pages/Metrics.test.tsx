@@ -157,4 +157,29 @@ describe('Metrics page', () => {
     // Rien n'a été créé : ouvrir l'éditeur n'est pas enregistrer.
     expect(mockedAxios.post).not.toHaveBeenCalledWith('/api/metrics', expect.anything());
   });
+
+  /*
+   * Le dialogue est la carte, pas le voile plein écran.
+   *
+   * `role="dialog"` portait sur le conteneur `fixed inset-0` : l'élément annoncé comme
+   * dialogue faisait la taille du viewport. Ici il porte aussi un nom accessible, que ce
+   * dialogue-là n'avait pas du tout — et il est sur une enveloppe plutôt que sur le
+   * <form>, ARIA n'admettant pas `dialog` sur un formulaire.
+   */
+  it('scopes the editor dialog to the card, names it, and keeps the form inside it', async () => {
+    const user = userEvent.setup();
+    stubApi([]);
+    await renderPage();
+
+    await waitFor(() => expect(screen.getByText('Duplicate keys in demo.orders.1.received')).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: /Review & add/ }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'New SQL Metric' });
+    expect(dialog.className).not.toMatch(/\bfixed\b/);
+    expect(dialog.className).not.toMatch(/\binset-0\b/);
+    expect(dialog.className).toMatch(/max-w-5xl/);
+    expect(dialog.parentElement!.className).toMatch(/fixed inset-0/);
+    // Le formulaire garde son propre rôle, à l'intérieur du dialogue.
+    expect(dialog.querySelector('form')).not.toBeNull();
+  });
 });

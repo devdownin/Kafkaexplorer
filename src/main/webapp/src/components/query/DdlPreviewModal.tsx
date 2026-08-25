@@ -37,9 +37,12 @@ export const DdlPreviewModal: React.FC<DdlPreviewModalProps> = ({
 
   return (
   <div className="fixed inset-0 glass-overlay z-50 flex items-center justify-center p-8"
-    role="dialog" aria-modal="true" aria-label="DDL preview"
     onClick={onClose}>
+    {/* Le dialogue est la carte, pas le voile : `role` sur le conteneur `fixed inset-0`
+        annonçait un dialogue de la taille du viewport, et rangeait le clic-pour-fermer
+        *dans* le dialogue au lieu de l'extérieur. Le voile ne garde que ce clic. */}
     <div onClick={e => e.stopPropagation()}
+      role="dialog" aria-modal="true" aria-label="DDL preview"
       className="bg-surface-container border border-outline-variant rounded-xl w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl">
       <div className="flex items-center justify-between p-4 border-b border-outline-variant">
         <div>

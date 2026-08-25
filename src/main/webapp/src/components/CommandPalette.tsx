@@ -132,13 +132,16 @@ const CommandPalette: FC<CommandPaletteProps> = ({ onClose, topics, tables }) =>
   return (
     <div
       className="fixed inset-0 z-[70] flex items-start justify-center pt-[12vh] px-4 glass-overlay animate-fade-in"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Command palette"
       onClick={onClose}
     >
+      {/* Le dialogue est la carte, pas le voile : `role` sur le conteneur `fixed inset-0`
+          annonçait un dialogue de la taille du viewport, et rangeait le clic-pour-fermer
+          *dans* le dialogue au lieu de l'extérieur. Le voile ne garde que ce clic. */}
       <div
         className="w-full max-w-xl bg-surface-container border border-outline-variant rounded-xl shadow-2xl overflow-hidden animate-slide-up"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Command palette"
         onClick={e => e.stopPropagation()}
         onKeyDown={onKeyDown}
       >
