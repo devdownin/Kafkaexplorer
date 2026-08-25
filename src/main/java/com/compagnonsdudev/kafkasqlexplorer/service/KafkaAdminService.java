@@ -1719,7 +1719,18 @@ public class KafkaAdminService {
             } else {
                 Map<TopicPartition, Long> beginningOffsets = consumer.beginningOffsets(partitions);
                 for (TopicPartition tp : partitions) {
-                    long endOffset = endOffsets.getOrDefault(tp, 0L);
+                    Long endOffset = endOffsets.get(tp);
+                    if (endOffset == null) {
+                        // "The last N records" is measured backwards from the end, so without an
+                        // end offset there is nothing to measure from. The default of 0 that used
+                        // to stand here made `max(beginning, 0 - n)` collapse to the beginning —
+                        // so a partition whose end could not be read answered a question about
+                        // the *newest* records with its oldest ones, which is a wrong answer
+                        // rather than a missing one. It contributes nothing instead, the same
+                        // rule as the timestamp branch above.
+                        consumer.seekToEnd(Collections.singletonList(tp));
+                        continue;
+                    }
                     // Clamp to the beginning offset: on topics where retention has deleted old
                     // segments, seeking below it is an out-of-range position and the consumer
                     // resets to auto.offset.reset (default "latest"), silently returning nothing.

@@ -54,6 +54,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `KafkaSnapshotReader.seekToTimestamp` and `KafkaAdminService.getRecentRecords` — and in the
   reader's mode `auto.offset.reset` is `earliest`, so skipping the seek would have landed in the
   same wrong place.
+  The same default sat on the `LATEST_N` branch beside it with a different symptom: that read is
+  measured backwards from the end, so an end offset of `0` made the clamp collapse to the
+  beginning and a partition answered a question about its *newest* records with its oldest —
+  a wrong answer rather than a missing one.
 
 - **A profiling run that did not happen is no longer reported as one that found nothing.** Every
   failure path — no API key, an unreachable endpoint, an unparseable answer — answered 200 with an
