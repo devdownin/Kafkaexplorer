@@ -160,7 +160,7 @@ public class LlmAnalysisService {
         }
 
         // 4. Build user prompt, keeping what of the read actually reached it
-        BuiltPrompt prompt = buildSnapshotPrompt(topics, byTopic, fieldMapping, auditFocus);
+        BuiltPrompt prompt = buildSnapshotPrompt(byTopic, fieldMapping, auditFocus);
 
         // 5. Call the configured LLM and parse. Coverage travels on the answer whatever it is —
         //    an analysis that failed still knows what it had read, and the next attempt is sized
@@ -223,7 +223,7 @@ public class LlmAnalysisService {
             .toList();
         Map<String, List<PayloadDigest>> byTopic = groupAndSort(topics, window);
 
-        String userPrompt = buildLivePrompt(topics, byTopic, fieldMapping, referenceFlowchart, auditFocus);
+        String userPrompt = buildLivePrompt(byTopic, fieldMapping, referenceFlowchart, auditFocus);
         return callLlmAndParse(userPrompt);
     }
 
@@ -248,19 +248,17 @@ public class LlmAnalysisService {
     private record BuiltPrompt(String text, Map<String, Integer> messagesInPrompt) {
     }
 
-    private BuiltPrompt buildSnapshotPrompt(List<String> topics,
-                                        Map<String, List<PayloadDigest>> byTopic,
+    private BuiltPrompt buildSnapshotPrompt(Map<String, List<PayloadDigest>> byTopic,
                                         FieldMapping fieldMapping,
                                         String auditFocus) {
         StringBuilder sb = new StringBuilder();
         sb.append("## MODE: ANALYSE SNAPSHOT\n\n");
         Map<String, Integer> written =
-            appendCommonSections(sb, topics, byTopic, fieldMapping, null, auditFocus);
+            appendCommonSections(sb, byTopic, fieldMapping, null, auditFocus);
         return new BuiltPrompt(sb.toString(), written);
     }
 
-    private String buildLivePrompt(List<String> topics,
-                                    Map<String, List<PayloadDigest>> byTopic,
+    private String buildLivePrompt(Map<String, List<PayloadDigest>> byTopic,
                                     FieldMapping fieldMapping,
                                     String referenceFlowchart,
                                     String auditFocus) {
@@ -268,11 +266,19 @@ public class LlmAnalysisService {
         sb.append("## MODE: ANALYSE LIVE\n\n");
         String ref = (referenceFlowchart == null || referenceFlowchart.isBlank())
             ? "INCONNU" : referenceFlowchart;
-        appendCommonSections(sb, topics, byTopic, fieldMapping, ref, auditFocus);
+        appendCommonSections(sb, byTopic, fieldMapping, ref, auditFocus);
         return sb.toString();
     }
 
-    private Map<String, Integer> appendCommonSections(StringBuilder sb, List<String> topics,
+    /**
+     * The requested topics are not a parameter here, and that is not an omission: {@code byTopic}
+     * is seeded by {@link #groupAndSort} with every requested topic, in the requested order, before
+     * any digest is filed under it. A topic that yielded nothing is therefore an entry with an
+     * empty list rather than a missing key — which is what lets this method say "0 message(s)"
+     * about it — so a second list of the same names could only ever disagree with the map. It was
+     * carried unused through three signatures until CodeQL said so.
+     */
+    private Map<String, Integer> appendCommonSections(StringBuilder sb,
                                        Map<String, List<PayloadDigest>> byTopic,
                                        FieldMapping fieldMapping,
                                        String referenceFlowchart,
