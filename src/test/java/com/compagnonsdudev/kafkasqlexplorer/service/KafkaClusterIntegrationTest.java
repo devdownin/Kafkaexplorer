@@ -3,12 +3,20 @@
 package com.compagnonsdudev.kafkasqlexplorer.service;
 
 import com.compagnonsdudev.kafkasqlexplorer.config.KafkaConfig;
+import com.compagnonsdudev.kafkasqlexplorer.config.ProcessMiningConfig;
+import com.compagnonsdudev.kafkasqlexplorer.domain.KafkaMessage;
+import com.compagnonsdudev.kafkasqlexplorer.domain.SnapshotConfig;
+import org.apache.kafka.clients.admin.Admin;
+import org.apache.kafka.clients.admin.AdminClientConfig;
+import org.apache.kafka.clients.admin.NewTopic;
+import org.apache.kafka.clients.admin.RecordsToDelete;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.jupiter.api.AfterAll;
@@ -23,6 +31,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -72,27 +81,64 @@ class KafkaClusterIntegrationTest {
         .withStartupTimeout(Duration.ofMinutes(3));
 
     private static final String TOPIC = "it.orders.json";
+    /** Three partitions, four records each, then everything below offset 2 deleted. */
+    private static final String TRIMMED_TOPIC = "it.trimmed.multipart";
+    private static final int TRIMMED_PARTITIONS = 3;
+    private static final int TRIMMED_PER_PARTITION = 4;
+    private static final int TRIMMED_DELETED_BELOW = 2;
 
     private static KafkaAdminService adminService;
+    private static KafkaConfig kafkaConfig;
 
     @BeforeAll
-    static void setUp() {
-        KafkaConfig config = new KafkaConfig();
-        config.setBootstrapServers(KAFKA.getBootstrapServers());
-        config.setSchemaRegistryUrl(null); // no registry in this stack
-        adminService = new KafkaAdminService(config);
+    static void setUp() throws Exception {
+        kafkaConfig = new KafkaConfig();
+        kafkaConfig.setBootstrapServers(KAFKA.getBootstrapServers());
+        kafkaConfig.setSchemaRegistryUrl(null); // no registry in this stack
+        adminService = new KafkaAdminService(kafkaConfig);
         adminService.init();
 
         Properties props = new Properties();
         props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA.getBootstrapServers());
         props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
         props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
-        try (KafkaProducer<String, String> producer = new KafkaProducer<>(props)) {
-            for (int i = 0; i < 3; i++) {
-                producer.send(new ProducerRecord<>(TOPIC, "key-" + i, "{\"id\": " + i + ", \"status\": \"NEW\"}"));
+
+        Properties adminProps = new Properties();
+        adminProps.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA.getBootstrapServers());
+        try (Admin admin = Admin.create(adminProps)) {
+            admin.createTopics(List.of(
+                new NewTopic(TRIMMED_TOPIC, TRIMMED_PARTITIONS, (short) 1))).all().get();
+
+            try (KafkaProducer<String, String> producer = new KafkaProducer<>(props)) {
+                for (int i = 0; i < 3; i++) {
+                    producer.send(new ProducerRecord<>(TOPIC, "key-" + i, "{\"id\": " + i + ", \"status\": \"NEW\"}"));
+                }
+                for (int partition = 0; partition < TRIMMED_PARTITIONS; partition++) {
+                    for (int i = 0; i < TRIMMED_PER_PARTITION; i++) {
+                        producer.send(new ProducerRecord<>(TRIMMED_TOPIC, partition,
+                            "key-" + partition + "-" + i,
+                            "{\"id\": \"" + partition + "-" + i + "\"}"));
+                    }
+                }
+                producer.flush();
             }
-            producer.flush();
+
+            // What retention does, done on purpose: the oldest records are deleted and the log
+            // start offset moves past 0. Nothing else in the suite produces this state, and it is
+            // the state in which seeking to 0 is out of range.
+            Map<TopicPartition, RecordsToDelete> toDelete = new java.util.HashMap<>();
+            for (int partition = 0; partition < TRIMMED_PARTITIONS; partition++) {
+                toDelete.put(new TopicPartition(TRIMMED_TOPIC, partition),
+                    RecordsToDelete.beforeOffset(TRIMMED_DELETED_BELOW));
+            }
+            admin.deleteRecords(toDelete).all().get();
         }
+    }
+
+    private static KafkaSnapshotReader snapshotReader() {
+        ProcessMiningConfig processMiningConfig = new ProcessMiningConfig();
+        return new KafkaSnapshotReader(kafkaConfig, adminService, processMiningConfig,
+            new PayloadDigestService(processMiningConfig));
     }
 
     @AfterAll
@@ -117,6 +163,63 @@ class KafkaClusterIntegrationTest {
         assertEquals(3, records.size());
         assertTrue(records.get(0).value().contains("\"status\""), "JSON payload should round-trip");
         assertNotNull(records.get(0).key());
+    }
+
+    /**
+     * A snapshot read of a topic retention has trimmed returns the records that are still there.
+     *
+     * <p>The seek used to clamp at {@code 0}, which on a trimmed log is below the first surviving
+     * record: the position is out of range, the consumer applies {@code auto.offset.reset} —
+     * {@code latest}, in this mode — and jumps to the end. Nothing is delivered and a topic full of
+     * records reads as an empty one, which is indistinguishable from a quiet cluster by anything
+     * downstream. No mocked consumer can catch this: {@code MockConsumer} emulates neither the
+     * out-of-range condition nor the reset, so the fault only exists against a real broker.
+     */
+    @Test
+    void readsATopicWhoseOldestRecordsRetentionHasDeleted() {
+        List<KafkaMessage> messages = snapshotReader()
+            .read(List.of(TRIMMED_TOPIC), SnapshotConfig.latestN(200));
+
+        int surviving = TRIMMED_PARTITIONS * (TRIMMED_PER_PARTITION - TRIMMED_DELETED_BELOW);
+        assertEquals(surviving, messages.size(),
+            "seeking below the log start resets to the end and delivers nothing");
+        assertTrue(messages.stream().allMatch(m -> TRIMMED_TOPIC.equals(m.topic())));
+    }
+
+    /**
+     * A snapshot read of several topics returns all of them, not whichever answered first.
+     *
+     * <p>Two faults produced the same symptom against a real broker and neither is reproducible
+     * against a mock: a loop that stopped at the first empty poll — which a fresh consumer very
+     * often returns while metadata resolves — and one that compared {@code consumer.position()},
+     * the client's prefetch position, which runs ahead of what has been delivered. Measured on the
+     * demo cluster, one poll delivered two records of one topic while position() reported the log
+     * end for all eighteen partitions.
+     */
+    @Test
+    void readsEveryTopicOfAMultiTopicSnapshot() {
+        List<KafkaMessage> messages = snapshotReader()
+            .read(List.of(TOPIC, TRIMMED_TOPIC), SnapshotConfig.latestN(200));
+
+        assertEquals(Set.of(TOPIC, TRIMMED_TOPIC),
+            messages.stream().map(KafkaMessage::topic).collect(java.util.stream.Collectors.toSet()),
+            "a topic whose records arrive after another's must still be sampled");
+        assertEquals(3 + TRIMMED_PARTITIONS * (TRIMMED_PER_PARTITION - TRIMMED_DELETED_BELOW),
+            messages.size(), "every surviving record of both topics");
+    }
+
+    /**
+     * And the audit's own sampling path, which shares the defect and the fix.
+     * {@code getEarliestRecords} reads through {@code drain()}, whose cursor used to be
+     * {@code position()} as well.
+     */
+    @Test
+    void samplesEveryPartitionOfATrimmedTopic() {
+        List<ConsumerRecord<String, String>> records =
+            adminService.getEarliestRecords(TRIMMED_TOPIC, 100);
+
+        assertEquals(TRIMMED_PARTITIONS * (TRIMMED_PER_PARTITION - TRIMMED_DELETED_BELOW),
+            records.size(), "the audit samples a trimmed, multi-partition topic in full");
     }
 
     @Test

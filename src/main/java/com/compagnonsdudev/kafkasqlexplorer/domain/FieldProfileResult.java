@@ -23,16 +23,47 @@ public record FieldProfileResult(
     List<TopicProfile> topics,
     SchemaUnificationProposal unificationProposal,
     List<String> warnings,
-    LlmUsage usage
+    LlmUsage usage,
+    String error
 ) {
     public FieldProfileResult(List<TopicProfile> topics,
                               SchemaUnificationProposal unificationProposal,
                               List<String> warnings) {
-        this(topics, unificationProposal, warnings, null);
+        this(topics, unificationProposal, warnings, null, null);
+    }
+
+    public FieldProfileResult(List<TopicProfile> topics,
+                              SchemaUnificationProposal unificationProposal,
+                              List<String> warnings,
+                              LlmUsage usage) {
+        this(topics, unificationProposal, warnings, usage, null);
+    }
+
+    /**
+     * A profiling run that did not happen, as opposed to one that found nothing.
+     *
+     * <p>Every failure path used to answer 200 with an empty {@code topics} list and the reason in
+     * {@code warnings} — the same shape as a genuine profiling of topics that hold no messages. The
+     * two call for opposite actions: one is a cluster to go and look at, the other an endpoint, a
+     * model or a key to go and fix. It is the distinction {@code ProcessMiningResult.error} already
+     * draws for the analysis half of this pipeline, and it was missing from the profiling half —
+     * which is how, in this session, three model failures were read as failed reads and chased
+     * through two rebuilds of the consumer.
+     *
+     * <p>When {@code error} is set nothing else in the record is a finding. The usage still travels
+     * where it is known: a run that burned tokens and then failed to parse is not a free one.
+     */
+    public static FieldProfileResult failed(String message) {
+        return new FieldProfileResult(List.of(), null, List.of(message), null, message);
+    }
+
+    /** As above, for a failure that reached the model and therefore cost something. */
+    public static FieldProfileResult failed(String message, LlmUsage usage) {
+        return new FieldProfileResult(List.of(), null, List.of(message), usage, message);
     }
 
     /** The parsed proposal with the accounting of the call that produced it. */
     public FieldProfileResult withUsage(LlmUsage usage) {
-        return new FieldProfileResult(topics, unificationProposal, warnings, usage);
+        return new FieldProfileResult(topics, unificationProposal, warnings, usage, error);
     }
 }

@@ -3,6 +3,9 @@
 package com.compagnonsdudev.kafkasqlexplorer.service;
 
 import com.compagnonsdudev.kafkasqlexplorer.config.ClaudeConfig;
+import com.compagnonsdudev.kafkasqlexplorer.util.LogSafe;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -33,6 +36,8 @@ final class LlmHttpSupport {
     private static final long BASE_BACKOFF_MS = 500L;
     /** Upper bound on the TCP/TLS handshake — see {@link #newClient}. */
     private static final int MAX_CONNECT_SECONDS = 10;
+    /** Reads an error body only — see {@link #upstreamProviderOf}. */
+    private static final ObjectMapper ERROR_MAPPER = new ObjectMapper();
 
     private LlmHttpSupport() {
     }
@@ -40,14 +45,35 @@ final class LlmHttpSupport {
     /** A 4xx other than 429: the request itself is wrong, so it is never retried as-is. */
     static final class ClientErrorException extends RuntimeException {
         private final int status;
+        private final String upstreamProvider;
 
         ClientErrorException(int status, String message) {
+            this(status, message, null);
+        }
+
+        ClientErrorException(int status, String message, String upstreamProvider) {
             super(message);
             this.status = status;
+            this.upstreamProvider = upstreamProvider;
         }
 
         int status() {
             return status;
+        }
+
+        /**
+         * The upstream provider a routing gateway blamed, or {@code null} when the status is the
+         * gateway's own verdict on this request.
+         *
+         * <p>The distinction is not cosmetic: on OpenRouter one model is served by several upstream
+         * providers, the routing is opaque and it varies from one call to the next — so a relayed
+         * failure is a fact about <em>that</em> provider at <em>that</em> moment, not about the
+         * model, the request or the configuration. Observed here: {@code liquid/lfm-2.5-2.6b:free}
+         * answered a 400 "Provider returned error" through AtlasCloud while the byte-identical body
+         * succeeded through Liquid minutes later.
+         */
+        String upstreamProvider() {
+            return upstreamProvider;
         }
     }
 
@@ -113,9 +139,10 @@ final class LlmHttpSupport {
                     // Client-side / configuration error — retrying will not help. Typed, because
                     // one caller can actually act on it: an endpoint that rejects a request field
                     // it does not implement answers this way, and the client can retry without it.
+                    String upstream = upstreamProviderOf(response.body());
                     throw new ClientErrorException(status, provider + " call failed with status "
-                        + status + " — " + remedyFor(status) + ": "
-                        + truncate(response.body()));
+                        + status + " — " + remedyFor(status, upstream) + ": "
+                        + truncate(response.body()), upstream);
                 }
                 // 5xx or 429 → transient.
                 lastError = new RuntimeException(provider + " call failed with status " + status
@@ -165,7 +192,19 @@ final class LlmHttpSupport {
      * shared by every plain-HTTP provider here, and a corporate gateway is free to use these codes
      * its own way.
      */
-    private static String remedyFor(int status) {
+    private static String remedyFor(int status, String upstreamProvider) {
+        if (upstreamProvider != null) {
+            // Said before anything else, because every other sentence here would name the wrong
+            // thing to go and change. The gateway accepted the request and passed it on; what
+            // failed is one provider behind it, chosen by a routing decision this application does
+            // not make and cannot repeat. "The endpoint rejected the request body" sent an operator
+            // to audit a body that was provably fine — the same bytes succeeded through another
+            // provider for the same model, minutes apart.
+            return "the upstream provider '" + upstreamProvider + "' failed and the gateway relayed "
+                + "its answer, so this is that provider's doing rather than a wrong request or a "
+                + "wrong setting here — trying again may route elsewhere, and a model served by a "
+                + "single provider is the one worth replacing";
+        }
         return switch (status) {
             case 400, 422 -> "the endpoint rejected the request body (a field it does not implement, "
                 + "or a malformed one)";
@@ -180,6 +219,34 @@ final class LlmHttpSupport {
                 + "claude.max-tokens";
             default -> "check base URL, model and API key";
         };
+    }
+
+    /**
+     * The provider a routing gateway is blaming, or {@code null} when the error is its own.
+     *
+     * <p>OpenRouter relays an upstream failure verbatim under
+     * {@code error.metadata.provider_name}, with that provider's own payload beside it in
+     * {@code metadata.raw} — the status then describes what happened somewhere else. Read
+     * defensively: this runs on an error body, which is exactly where nothing about the shape is
+     * guaranteed, and a body it cannot parse must leave the diagnosis as it was rather than replace
+     * one wrong answer with another.
+     */
+    static String upstreamProviderOf(String body) {
+        if (body == null || !body.contains("provider_name")) {
+            return null;
+        }
+        try {
+            JsonNode name = ERROR_MAPPER.readTree(body).path("error").path("metadata")
+                .path("provider_name");
+            if (!name.isTextual() || name.asText().isBlank()) {
+                return null;
+            }
+            // Neutralised here rather than at each place it comes back out: it lands in an
+            // exception message that is logged, and it is a string a remote host chose.
+            return LogSafe.slug(name.asText().strip());
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private static String timeoutSeconds(HttpRequest request) {

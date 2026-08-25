@@ -199,6 +199,128 @@ class LlmStructuredOutputTest {
             "structured output must survive a failure that was never about the schema");
     }
 
+    /**
+     * The body OpenRouter answers with when the failure happened one hop further on: its own status
+     * over the upstream provider's payload, under {@code error.metadata}.
+     */
+    private static String relayedFailureBody() {
+        return "{\"error\":{\"message\":\"Provider returned error\",\"code\":400,"
+            + "\"metadata\":{\"raw\":\"{\\\"code\\\":400,\\\"msg\\\":\\\"bad request\\\"}\","
+            + "\"provider_name\":\"AtlasCloud\",\"is_byok\":false}}}";
+    }
+
+    /**
+     * A relayed upstream failure must not be reported as "the endpoint rejected the request body".
+     *
+     * <p>It is the one 4xx here that says nothing about the request: the gateway accepted it and
+     * passed it on. Measured on a live account — {@code liquid/lfm-2.5-2.6b:free} answered 400
+     * through AtlasCloud while the byte-identical body succeeded through Liquid — so the old
+     * sentence sent an operator to audit a body that was provably fine, and named neither the
+     * provider that failed nor the fact that another attempt may route elsewhere.
+     */
+    @Test
+    void namesTheUpstreamProviderRatherThanBlamingTheRequest() throws Exception {
+        ClaudeConfig config = startServer(List.of(new StubResponse(400, relayedFailureBody())));
+        config.setProvider(ClaudeConfig.Provider.OPENROUTER);
+        config.setStructuredOutput(ClaudeConfig.StructuredOutput.OFF);
+
+        RuntimeException e = assertThrows(RuntimeException.class,
+            () -> new OpenAiCompatibleLlmClient(config).generateWithMeta("SYS", "USR", schema()));
+
+        assertTrue(e.getMessage().contains("AtlasCloud"),
+            "the provider that actually failed has to be named: " + e.getMessage());
+        assertFalse(e.getMessage().contains("rejected the request body"),
+            "the request was accepted by the gateway and forwarded — blaming it is a false cause: "
+                + e.getMessage());
+        assertEquals(1, requestBodies.size(), "an upstream failure is not retried by the transport");
+    }
+
+    /**
+     * ...and it must not be remembered as "this model cannot be constrained".
+     *
+     * <p>The latch keys on the model, which is right for a refusal the endpoint issued and wrong
+     * for one it relayed: a routing gateway picks a different upstream provider whenever it likes,
+     * so a provider's bad afternoon would otherwise disable structured output for that model for
+     * the client's whole lifetime — silently, and long after the provider recovered. The retry
+     * still happens (an upstream genuinely lacking {@code response_format} is a real case, and one
+     * extra request is cheap); only the durable conclusion is withheld.
+     */
+    @Test
+    void aRelayedUpstreamFailureIsNotRememberedAgainstTheModel() throws Exception {
+        ClaudeConfig config = startServer(List.of(
+            new StubResponse(400, relayedFailureBody()),
+            new StubResponse(200, okBody())));
+        config.setProvider(ClaudeConfig.Provider.OPENROUTER);
+        config.setModel("liquid/lfm-2.5-2.6b:free");
+
+        OpenAiCompatibleLlmClient client = new OpenAiCompatibleLlmClient(config);
+        client.generateWithMeta("SYS", "USR", schema());
+
+        assertEquals(2, requestBodies.size());
+        assertTrue(requestBodies.get(0).contains("response_format"));
+        assertFalse(requestBodies.get(1).contains("response_format"),
+            "one unconstrained retry is still worth it — the upstream may genuinely lack the field");
+
+        // The same model again: the schema must be sent, because nothing was established about it.
+        client.generateWithMeta("SYS", "USR", schema());
+        assertEquals(3, requestBodies.size());
+        assertTrue(requestBodies.get(2).contains("response_format"),
+            "one provider's failure is not evidence that the model cannot be constrained");
+    }
+
+    /** The detector only fires on the shape it was written for; anything else stays a plain 4xx. */
+    @Test
+    void readsTheRelayedProviderOnlyWhereTheGatewayReportsOne() {
+        assertEquals("AtlasCloud", LlmHttpSupport.upstreamProviderOf(relayedFailureBody()));
+        assertNull(LlmHttpSupport.upstreamProviderOf(
+            "{\"error\":{\"message\":\"response_format is not supported\"}}"));
+        assertNull(LlmHttpSupport.upstreamProviderOf("not json at all provider_name"),
+            "an unparseable body must leave the diagnosis where it was");
+        assertNull(LlmHttpSupport.upstreamProviderOf(null));
+    }
+
+    /**
+     * An answer that never arrived because the model spent its budget thinking says so, and names
+     * the setting that fixes it.
+     *
+     * <p>The observed shape on a small reasoning model: a 200, a well-formed body, no content, and
+     * `finish_reason: "length"`. The bare "carried no message content" sent an operator to check an
+     * endpoint, a model name and a key that were all correct.
+     */
+    @Test
+    void namesTheOutputLimitWhenTheModelRanOutBeforeAnswering() throws Exception {
+        ClaudeConfig config = startServer(List.of(new StubResponse(200,
+            "{\"choices\":[{\"finish_reason\":\"length\",\"message\":{\"content\":\"\"}}],"
+                + "\"usage\":{\"prompt_tokens\":900,\"completion_tokens\":8192,"
+                + "\"completion_tokens_details\":{\"reasoning_tokens\":8192}}}")));
+
+        RuntimeException e = assertThrows(RuntimeException.class,
+            () -> new OpenAiCompatibleLlmClient(config).generateWithMeta("SYS", "USR", null));
+
+        assertTrue(e.getMessage().contains("claude.max-tokens"), e.getMessage());
+        assertTrue(e.getMessage().contains("8192"), "the budget it actually spent is the evidence");
+        assertTrue(e.getMessage().contains("reasoning"), e.getMessage());
+    }
+
+    /**
+     * ...and a gateway that reports no reason is not paraphrased into one. The counts are stated,
+     * the cause is offered as the usual one, and the limit is not asserted.
+     */
+    @Test
+    void doesNotAssertALimitTheProviderDidNotReport() throws Exception {
+        ClaudeConfig config = startServer(List.of(new StubResponse(200,
+            "{\"choices\":[{\"message\":{\"content\":\"   \"}}],"
+                + "\"usage\":{\"prompt_tokens\":900,\"completion_tokens\":1200}}")));
+
+        RuntimeException e = assertThrows(RuntimeException.class,
+            () -> new OpenAiCompatibleLlmClient(config).generateWithMeta("SYS", "USR", null));
+
+        assertTrue(e.getMessage().contains("1200 output token(s)"), e.getMessage());
+        assertTrue(e.getMessage().contains("did not say why it stopped"), e.getMessage());
+        assertFalse(e.getMessage().contains("stopped at its output limit"),
+            "the provider did not report a limit, so this must not claim one");
+    }
+
     /** 422 is the other way a gateway says "I do not understand this field". */
     @Test
     void treatsUnprocessableEntityAsASchemaRefusalToo() throws Exception {

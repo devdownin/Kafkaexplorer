@@ -73,11 +73,7 @@ public class FieldProfilingService {
     public FieldProfileResult profile(List<String> topics, SnapshotConfig config) {
         if (isApiKeyMissing()) {
             log.warn("LLM API key not configured — returning empty profile");
-            return new FieldProfileResult(
-                List.of(),
-                null,
-                List.of("LLM API key not configured.")
-            );
+            return FieldProfileResult.failed("LLM API key not configured.");
         }
 
         // 1. Read samples — 50 messages per topic, digested on the fly. Profiling only needs
@@ -119,11 +115,8 @@ public class FieldProfilingService {
             rawResponse = response.text();
         } catch (Exception e) {
             log.error("LLM API call failed during profiling: {}", e.getMessage(), e);
-            return new FieldProfileResult(
-                List.of(),
-                null,
-                List.of("LLM API error: " + e.getMessage())
-            );
+            return FieldProfileResult.failed("LLM API error: "
+                + SqlErrorClassifier.explain(e));
         }
 
         // 5. Parse response. The accounting is attached here rather than parsed: it describes the
@@ -351,23 +344,19 @@ Réponds avec ce JSON exact (camelCase, sans markdown) :
 
     private FieldProfileResult parseProfileResult(String rawResponse) {
         if (rawResponse == null || rawResponse.isBlank()) {
-            return new FieldProfileResult(
-                List.of(),
-                null,
-                List.of("LLM returned an empty response.")
-            );
+            return FieldProfileResult.failed("LLM returned an empty response.");
         }
 
         String json = LlmJsonSupport.extractJsonPayload(rawResponse);
         if (json.isBlank()) {
             // A reasoning model that used its whole budget thinking answered nothing at all; the
             // parse error that used to follow described a malformed object that was never written.
-            return new FieldProfileResult(List.of(), null, List.of(
+            return FieldProfileResult.failed(
                 LlmJsonSupport.hasUnterminatedReasoning(rawResponse)
                     ? "The model spent its whole output budget reasoning and never reached an "
                         + "answer. Raise claude.max-tokens (currently " + claudeConfig.getMaxTokens()
                         + "), or use a model that does not think before answering."
-                    : "The model's answer contained no JSON object."));
+                    : "The model's answer contained no JSON object.");
         }
 
         try {
@@ -375,11 +364,8 @@ Réponds avec ce JSON exact (camelCase, sans markdown) :
         } catch (Exception e) {
             log.error("Failed to parse LLM profiling response as FieldProfileResult: {}", e.getMessage());
             log.debug("Raw response was: {}", rawResponse);
-            return new FieldProfileResult(
-                List.of(),
-                null,
-                List.of("Failed to parse LLM response: " + e.getMessage())
-            );
+            return FieldProfileResult.failed("Failed to parse LLM response: "
+                + SqlErrorClassifier.explain(e));
         }
     }
 }

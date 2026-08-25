@@ -84,11 +84,31 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
             // Retrying unconstrained is worth one attempt: the alternative is telling an operator
             // their gateway is broken when it merely does not implement response_format. If the
             // second call fails too, that error is the honest one to report.
+            //
+            // What is *remembered* is narrower than what is retried, and the difference is the
+            // whole point of the check below. A 400 a routing gateway relayed from an upstream
+            // provider says nothing about the model: OpenRouter serves one model through several
+            // providers, picks one per call, and does not say which until it has failed — observed
+            // here as a 400 "Provider returned error" from AtlasCloud on a body that succeeded
+            // through Liquid minutes later. Latching that would mark the model schema-incapable for
+            // this client's lifetime on the strength of one provider's bad afternoon, and every
+            // later window would run unconstrained with nothing on screen saying why. So the retry
+            // still happens — an upstream that genuinely lacks response_format is a real
+            // possibility, and one extra request is the cheap half — while the durable conclusion
+            // is drawn only from a refusal the endpoint itself issued.
+            boolean relayed = e.upstreamProvider() != null;
             log.warn("{} refused a schema-constrained request for model '{}' (status {}); retrying "
-                    + "without the constraint and not sending one again for that model. Set "
-                    + "claude.structured-output=OFF to skip this probe.",
-                config.getProviderLabel(), LogSafe.slug(model), e.status());
-            rememberSchemaRefusal(model);
+                    + "without the constraint{}. Set claude.structured-output=OFF to skip this "
+                    + "probe.",
+                config.getProviderLabel(), LogSafe.slug(model), e.status(),
+                relayed
+                    ? " — the refusal came from upstream provider '" + e.upstreamProvider()
+                        + "', which the gateway may not route to next time, so it is not being "
+                        + "remembered against this model"
+                    : " and not sending one again for that model");
+            if (!relayed) {
+                rememberSchemaRefusal(model);
+            }
             return call(systemPrompt, userPrompt, null);
         }
     }
@@ -149,11 +169,15 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
         if (e.status() != 404 || routing.isEmpty()) {
             return e;
         }
+        // The upstream provider is carried over: a rewrap that drops it turns a relayed failure
+        // back into one the endpoint is blamed for, which is the very confusion this field exists
+        // to remove. Harmless on a 404 today, and the kind of omission that stops being harmless
+        // the moment this method covers a second status.
         return new LlmHttpSupport.ClientErrorException(e.status(), e.getMessage()
             + " — note that provider routing is restricted (" + routing
             + "), so a model whose providers do not satisfy it is reported exactly like an unknown "
             + "one. Relax claude.openrouter-data-collection or claude.openrouter-require-parameters "
-            + "to tell the two apart.");
+            + "to tell the two apart.", e.upstreamProvider());
     }
 
     /** The configured model, normalised so a null or blank one still keys the map. */
@@ -321,11 +345,58 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
         }
 
         JsonNode content = choice.path("message").path("content");
-        if (content.isMissingNode() || content.isNull()) {
-            throw new RuntimeException("LLM response choice carried no message content: "
-                + truncate(rawBody));
+        String text = content.isTextual() ? content.asText() : null;
+        if (text == null || text.isBlank()) {
+            // Blank counts as absent, deliberately: every caller here parses the answer as JSON, so
+            // an empty string only moves the failure one step on, to a parse error that says
+            // nothing about where the answer went.
+            throw new RuntimeException(noContentMessage(choice, root, rawBody));
         }
-        return content.asText();
+        return text;
+    }
+
+    /**
+     * Says <em>why</em> an answer came back empty, as far as the body actually says it.
+     *
+     * <p>A model that spends its whole output budget before writing anything returns exactly this —
+     * a well-formed response whose content is absent — and the bare wording sends an operator to
+     * check the endpoint, the model name and the key, all of which are fine. It is not a rare
+     * shape: this application is routinely pointed at small reasoning models, and one measured here
+     * spent 3 562 of its 7 089 output tokens deliberating on the runs that <em>succeeded</em>.
+     *
+     * <p>Three answers, not one, and the difference is what may be asserted.
+     * {@code finish_reason: "length"} is the provider stating the cap was hit, so the message says
+     * so and names the setting. Tokens generated with no content is the same symptom without that
+     * confirmation — reported as the count it is, since a gateway that omits the reason must not be
+     * paraphrased into one. Neither, and the old wording stands.
+     *
+     * <p>Same reasoning as {@code LlmJsonSupport.hasUnterminatedReasoning}, which already reports
+     * this for an answer that got as far as opening a reasoning block; this covers the one that
+     * never got that far.
+     */
+    private static String noContentMessage(JsonNode choice, JsonNode root, String rawBody) {
+        String finishReason = choice.path("finish_reason").asText(
+            choice.path("native_finish_reason").asText(""));
+        long completionTokens = root.path("usage").path("completion_tokens").asLong(-1);
+        long reasoningTokens = root.path("usage").path("completion_tokens_details")
+            .path("reasoning_tokens").asLong(-1);
+        String spent = completionTokens > 0
+            ? completionTokens + " output token(s)"
+                + (reasoningTokens > 0 ? ", " + reasoningTokens + " of them spent reasoning" : "")
+            : null;
+
+        if ("length".equals(finishReason)) {
+            return "The model produced no answer: it stopped at its output limit"
+                + (spent != null ? " after " + spent : "")
+                + ". Raise claude.max-tokens, or choose a model that does not reason before "
+                + "answering. Response: " + truncate(rawBody);
+        }
+        if (spent != null) {
+            return "The model generated " + spent + " but no answer, and did not say why it "
+                + "stopped. A reasoning model exhausting claude.max-tokens is the usual cause. "
+                + "Response: " + truncate(rawBody);
+        }
+        return "LLM response choice carried no message content: " + truncate(rawBody);
     }
 
     private static String truncate(String body) {
