@@ -1303,473 +1303,483 @@ const Metrics: React.FC = () => {
       {/* ── Modal ──────────────────────────────────────────────────────────── */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 glass-overlay"
-          role="dialog" aria-modal="true" onClick={() => setIsModalOpen(false)}>
-          {/* Un vrai <form> : Entrée depuis les champs du panneau de gauche enregistre.
-              Tous les boutons internes déclarent type="button", seul « Save » soumet. */}
-          <form
-            noValidate
-            onSubmit={e => { e.preventDefault(); if (!hasBlockingErrors) void handleSave(); }}
+          onClick={() => setIsModalOpen(false)}>
+          {/* Le dialogue est la carte, pas le voile : `role` sur le conteneur `fixed inset-0`
+              annonçait un dialogue de la taille du viewport, et rangeait le clic-pour-fermer
+              *dans* le dialogue au lieu de l'extérieur. Le voile ne garde que ce clic.
+
+              Le rôle est porté par cette enveloppe et non par le <form> : ARIA n'admet pas
+              `dialog` sur un formulaire, et le formulaire garde le sien à l'intérieur. */}
+          <div
+            role="dialog" aria-modal="true" aria-labelledby="metric-editor-title"
             className="bg-surface-container border border-outline-variant rounded-2xl w-full max-w-5xl max-h-[92vh] overflow-hidden flex flex-col shadow-2xl"
             onClick={e => e.stopPropagation()}>
+            {/* Un vrai <form> : Entrée depuis les champs du panneau de gauche enregistre.
+                Tous les boutons internes déclarent type="button", seul « Save » soumet. */}
+            <form
+              noValidate
+              onSubmit={e => { e.preventDefault(); if (!hasBlockingErrors) void handleSave(); }}
+              className="flex flex-col flex-1 min-h-0">
 
-            {/* Modal header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-outline-variant/60">
-              <h2 className="text-[16px] font-semibold text-on-surface">
-                {editingMetric.id ? 'Edit Metric' : 'New SQL Metric'}
-              </h2>
-              <button type="button" onClick={() => setIsModalOpen(false)} aria-label="Close"
-                className="p-1.5 rounded-md text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors">
-                <span className="material-symbols-outlined text-[20px]">close</span>
-              </button>
-            </div>
-
-            {saveError && (
-              <div className="px-6 pt-4">
-                <ErrorPanel error={saveError} onDismiss={() => setSaveError(null)} />
+              {/* Modal header */}
+              <div className="flex items-center justify-between px-6 py-4 border-b border-outline-variant/60">
+                <h2 id="metric-editor-title" className="text-[16px] font-semibold text-on-surface">
+                  {editingMetric.id ? 'Edit Metric' : 'New SQL Metric'}
+                </h2>
+                <button type="button" onClick={() => setIsModalOpen(false)} aria-label="Close"
+                  className="p-1.5 rounded-md text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors">
+                  <span className="material-symbols-outlined text-[20px]">close</span>
+                </button>
               </div>
-            )}
 
-            {/* Modal body */}
-            <div className="flex flex-1 overflow-hidden">
+              {saveError && (
+                <div className="px-6 pt-4">
+                  <ErrorPanel error={saveError} onDismiss={() => setSaveError(null)} />
+                </div>
+              )}
 
-              {/* Left: form */}
-              <div className="w-72 border-r border-outline-variant/60 flex flex-col shrink-0 overflow-y-auto p-5 space-y-4">
+              {/* Modal body */}
+              <div className="flex flex-1 overflow-hidden">
 
-                {/* Name */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <label htmlFor="metric-name" className="block text-[12px] font-medium text-on-surface-variant">
-                      Metric Name<span aria-hidden="true" className="text-error ml-0.5">*</span>
-                    </label>
-                    {nameIsAuto ? (
-                      <span className="flex items-center gap-0.5 text-[9px] text-primary/70 font-bold uppercase tracking-wider">
-                        <span className="material-symbols-outlined text-[11px]">auto_awesome</span>auto
-                      </span>
-                    ) : (
-                      <button
-                        type="button"
-                        aria-label="Regenerate the name from the metric type and topic"
-                        onClick={() => {
-                          setNameIsAuto(true);
-                          setEditingMetric(m => ({ ...m, name: buildAutoName(m.type ?? 'GAUGE', selectedTopic) }));
-                        }}
-                        className="flex items-center gap-0.5 text-[9px] text-outline hover:text-primary transition-colors uppercase tracking-wider"
-                      >
-                        <span className="material-symbols-outlined text-[11px]">refresh</span>regenerate
-                      </button>
+                {/* Left: form */}
+                <div className="w-72 border-r border-outline-variant/60 flex flex-col shrink-0 overflow-y-auto p-5 space-y-4">
+
+                  {/* Name */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label htmlFor="metric-name" className="block text-[12px] font-medium text-on-surface-variant">
+                        Metric Name<span aria-hidden="true" className="text-error ml-0.5">*</span>
+                      </label>
+                      {nameIsAuto ? (
+                        <span className="flex items-center gap-0.5 text-[9px] text-primary/70 font-bold uppercase tracking-wider">
+                          <span className="material-symbols-outlined text-[11px]">auto_awesome</span>auto
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          aria-label="Regenerate the name from the metric type and topic"
+                          onClick={() => {
+                            setNameIsAuto(true);
+                            setEditingMetric(m => ({ ...m, name: buildAutoName(m.type ?? 'GAUGE', selectedTopic) }));
+                          }}
+                          className="flex items-center gap-0.5 text-[9px] text-outline hover:text-primary transition-colors uppercase tracking-wider"
+                        >
+                          <span className="material-symbols-outlined text-[11px]">refresh</span>regenerate
+                        </button>
+                      )}
+                    </div>
+                    <Input
+                      id="metric-name"
+                      value={editingMetric.name ?? ''}
+                      onChange={e => { setNameIsAuto(false); setEditingMetric(m => ({ ...m, name: e.target.value })); }}
+                      placeholder="e.g. gauge_orders_topic"
+                      autoComplete="off"
+                      spellCheck={false}
+                      invalid={nameValidation.some(v => v.level === 'error')}
+                      aria-describedby={nameValidation.length > 0 ? 'metric-name-hints' : undefined}
+                      className="bg-primary/5 font-mono"
+                    />
+                    {nameValidation.length > 0 && (
+                      <div id="metric-name-hints">
+                        {nameValidation.map((m, i) => (
+                          <p key={i}
+                            role={m.level === 'error' ? 'alert' : undefined}
+                            className={`text-[10px] flex items-start gap-1 ${HINT_COLORS[m.level]}`}>
+                            <span aria-hidden="true" className="material-symbols-outlined text-[11px] shrink-0 mt-px">{HINT_ICONS[m.level]}</span>
+                            {m.text}
+                          </p>
+                        ))}
+                      </div>
                     )}
                   </div>
-                  <Input
-                    id="metric-name"
-                    value={editingMetric.name ?? ''}
-                    onChange={e => { setNameIsAuto(false); setEditingMetric(m => ({ ...m, name: e.target.value })); }}
-                    placeholder="e.g. gauge_orders_topic"
-                    autoComplete="off"
-                    spellCheck={false}
-                    invalid={nameValidation.some(v => v.level === 'error')}
-                    aria-describedby={nameValidation.length > 0 ? 'metric-name-hints' : undefined}
-                    className="bg-primary/5 font-mono"
-                  />
-                  {nameValidation.length > 0 && (
-                    <div id="metric-name-hints">
-                      {nameValidation.map((m, i) => (
-                        <p key={i}
-                          role={m.level === 'error' ? 'alert' : undefined}
-                          className={`text-[10px] flex items-start gap-1 ${HINT_COLORS[m.level]}`}>
-                          <span aria-hidden="true" className="material-symbols-outlined text-[11px] shrink-0 mt-px">{HINT_ICONS[m.level]}</span>
-                          {m.text}
-                        </p>
-                      ))}
-                    </div>
+
+                  {/* Un sélecteur vide sans explication laisse croire qu'il n'y a pas de gabarit. */}
+                  {templates.length === 0 && templatesError && (
+                    <ErrorPanel error={templatesError} onDismiss={() => setTemplatesError(null)} />
                   )}
-                </div>
 
-                {/* Un sélecteur vide sans explication laisse croire qu'il n'y a pas de gabarit. */}
-                {templates.length === 0 && templatesError && (
-                  <ErrorPanel error={templatesError} onDismiss={() => setTemplatesError(null)} />
-                )}
+                  {/* Metric source / template */}
+                  {templates.length > 0 && (
+                    <Field
+                      label="Metric Source"
+                      description={isTemplate && currentDescriptor ? currentDescriptor.description : undefined}
+                    >
+                      {f => (
+                        <Select {...f} value={templateType} onChange={e => onTemplateTypeChange(e.target.value)}>
+                          <option value={RAW_SQL} className="bg-[#12151a] text-on-surface">Raw SQL</option>
+                          {templates.map(t => (
+                            <option key={t.type} value={t.type} className="bg-[#12151a] text-on-surface">{t.label}</option>
+                          ))}
+                        </Select>
+                      )}
+                    </Field>
+                  )}
 
-                {/* Metric source / template */}
-                {templates.length > 0 && (
+                  {/* Type */}
                   <Field
-                    label="Metric Source"
-                    description={isTemplate && currentDescriptor ? currentDescriptor.description : undefined}
+                    label="Type"
+                    description={{ GAUGE: '→ explorer_metric_gauge{…}', COUNTER: '→ explorer_metric_counter_total{…}',
+                      HISTOGRAM: '→ explorer_metric_histogram_bucket{le=…} — auto-bucketed over metric_value',
+                      SUMMARY: '→ explorer_metric_summary{quantile=0.95,…}',
+                    }[editingMetric.type ?? 'GAUGE']}
                   >
                     {f => (
-                      <Select {...f} value={templateType} onChange={e => onTemplateTypeChange(e.target.value)}>
-                        <option value={RAW_SQL} className="bg-[#12151a] text-on-surface">Raw SQL</option>
-                        {templates.map(t => (
-                          <option key={t.type} value={t.type} className="bg-[#12151a] text-on-surface">{t.label}</option>
+                      <Select
+                        {...f}
+                        value={editingMetric.type ?? 'GAUGE'}
+                        onChange={e => {
+                          const newType = e.target.value;
+                          setEditingMetric(m => ({
+                            ...m,
+                            type: newType,
+                            name: nameIsAuto ? buildAutoName(newType, selectedTopic) : m.name,
+                          }));
+                        }}
+                      >
+                        {[
+                          { value: 'GAUGE',     label: 'GAUGE — point-in-time value' },
+                          { value: 'COUNTER',   label: 'COUNTER — cumulative total' },
+                          { value: 'HISTOGRAM', label: 'HISTOGRAM — bucket distribution' },
+                          { value: 'SUMMARY',   label: 'SUMMARY — quantile observations' },
+                        ].filter(o => allowedTypes.includes(o.value)).map(o => (
+                          <option key={o.value} value={o.value} className="bg-[#12151a] text-on-surface">{o.label}</option>
                         ))}
                       </Select>
                     )}
                   </Field>
-                )}
 
-                {/* Type */}
-                <Field
-                  label="Type"
-                  description={{ GAUGE: '→ explorer_metric_gauge{…}', COUNTER: '→ explorer_metric_counter_total{…}',
-                    HISTOGRAM: '→ explorer_metric_histogram_bucket{le=…} — auto-bucketed over metric_value',
-                    SUMMARY: '→ explorer_metric_summary{quantile=0.95,…}',
-                  }[editingMetric.type ?? 'GAUGE']}
-                >
-                  {f => (
-                    <Select
-                      {...f}
-                      value={editingMetric.type ?? 'GAUGE'}
-                      onChange={e => {
-                        const newType = e.target.value;
-                        setEditingMetric(m => ({
-                          ...m,
-                          type: newType,
-                          name: nameIsAuto ? buildAutoName(newType, selectedTopic) : m.name,
-                        }));
-                      }}
-                    >
-                      {[
-                        { value: 'GAUGE',     label: 'GAUGE — point-in-time value' },
-                        { value: 'COUNTER',   label: 'COUNTER — cumulative total' },
-                        { value: 'HISTOGRAM', label: 'HISTOGRAM — bucket distribution' },
-                        { value: 'SUMMARY',   label: 'SUMMARY — quantile observations' },
-                      ].filter(o => allowedTypes.includes(o.value)).map(o => (
-                        <option key={o.value} value={o.value} className="bg-[#12151a] text-on-surface">{o.label}</option>
-                      ))}
-                    </Select>
-                  )}
-                </Field>
+                  {/* Topic selector — un combobox unique remplace le couple select/champ libre :
+                      la liste locale peut être vide alors que le catalogue partagé est rempli, et
+                      un <select> interdisait de saisir un topic créé à l'instant. */}
+                  <Field
+                    label={<>Kafka Topic <span className="text-outline font-normal">— used in SQL templates &amp; DDL</span></>}
+                    description={selectedTopic ? `Table: ${topicToTable(selectedTopic)}` : undefined}
+                  >
+                    {f => (
+                      <TopicInput
+                        {...f}
+                        value={selectedTopic}
+                        onChange={onTopicChange}
+                        placeholder="my_topic"
+                      />
+                    )}
+                  </Field>
 
-                {/* Topic selector — un combobox unique remplace le couple select/champ libre :
-                    la liste locale peut être vide alors que le catalogue partagé est rempli, et
-                    un <select> interdisait de saisir un topic créé à l'instant. */}
-                <Field
-                  label={<>Kafka Topic <span className="text-outline font-normal">— used in SQL templates &amp; DDL</span></>}
-                  description={selectedTopic ? `Table: ${topicToTable(selectedTopic)}` : undefined}
-                >
-                  {f => (
-                    <TopicInput
-                      {...f}
-                      value={selectedTopic}
-                      onChange={onTopicChange}
-                      placeholder="my_topic"
-                    />
-                  )}
-                </Field>
-
-                {/* Prometheus labels from latest Kafka message */}
-                <div className="space-y-2 rounded-xl border border-outline-variant/60 bg-primary/5 p-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <span className="block text-[12px] font-medium text-on-surface-variant">Prometheus Labels</span>
-                      <p className="text-[10px] text-outline mt-1 leading-relaxed">
-                        Select fields from the latest message on this topic. Their current values will be exported as labels on each metric refresh.
-                      </p>
+                  {/* Prometheus labels from latest Kafka message */}
+                  <div className="space-y-2 rounded-xl border border-outline-variant/60 bg-primary/5 p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <span className="block text-[12px] font-medium text-on-surface-variant">Prometheus Labels</span>
+                        <p className="text-[10px] text-outline mt-1 leading-relaxed">
+                          Select fields from the latest message on this topic. Their current values will be exported as labels on each metric refresh.
+                        </p>
+                      </div>
+                      {selectedTopic && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setLabelPreviewLoading(true);
+                            axios.get<MetricLabelPreview>(`/api/metrics/label-preview?topic=${encodeURIComponent(selectedTopic)}`)
+                              .then(response => setLabelPreview(response.data))
+                              .catch(() => toast('Failed to refresh latest message', 'error'))
+                              .finally(() => setLabelPreviewLoading(false));
+                          }}
+                          className="shrink-0 text-on-surface-variant hover:text-primary transition-colors"
+                          title="Refresh latest message" aria-label="Refresh the latest message"
+                        >
+                          <span className={`material-symbols-outlined text-base ${labelPreviewLoading ? 'animate-spin' : ''}`}>refresh</span>
+                        </button>
+                      )}
                     </div>
-                    {selectedTopic && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setLabelPreviewLoading(true);
-                          axios.get<MetricLabelPreview>(`/api/metrics/label-preview?topic=${encodeURIComponent(selectedTopic)}`)
-                            .then(response => setLabelPreview(response.data))
-                            .catch(() => toast('Failed to refresh latest message', 'error'))
-                            .finally(() => setLabelPreviewLoading(false));
-                        }}
-                        className="shrink-0 text-on-surface-variant hover:text-primary transition-colors"
-                        title="Refresh latest message" aria-label="Refresh the latest message"
-                      >
-                        <span className={`material-symbols-outlined text-base ${labelPreviewLoading ? 'animate-spin' : ''}`}>refresh</span>
-                      </button>
+
+                    {!selectedTopic ? (
+                      <p className="text-[11px] text-on-surface-variant">Select a topic to inspect its latest message.</p>
+                    ) : labelPreviewLoading ? (
+                      <div className="flex items-center gap-2 text-[11px] text-on-surface-variant">
+                        <span className="material-symbols-outlined text-sm animate-spin">progress_activity</span>
+                        Loading latest message…
+                      </div>
+                    ) : !labelPreview?.message ? (
+                      <p className="text-[11px] text-on-surface-variant">No recent message available on this topic.</p>
+                    ) : (
+                      <>
+                        <div className="flex items-center justify-between gap-2 text-[10px] text-outline">
+                          <span>Latest message at {formatPreviewTimestamp(labelPreview.timestamp)}</span>
+                          <span>{selectedLabelFields.length} selected</span>
+                        </div>
+
+                        {availableLabelFields.length > 0 ? (
+                          <div className="max-h-44 overflow-y-auto rounded-lg border border-outline-variant/60 bg-background-dark/40 divide-y divide-primary/5">
+                            {availableLabelFields.map(([field, value]) => {
+                              const checked = selectedLabelFields.includes(field);
+                              return (
+                                <label
+                                  key={field}
+                                  className={`flex items-start gap-2 px-3 py-2 cursor-pointer transition-colors ${
+                                    checked ? 'bg-primary/10' : 'hover:bg-primary/5'
+                                  }`}
+                                >
+                                  <Checkbox
+                                    checked={checked}
+                                    onChange={() => toggleLabelField(field)}
+                                    className="mt-0.5"
+                                  />
+                                  <div className="min-w-0">
+                                    <div className="font-mono text-[11px] text-on-surface break-all">{field}</div>
+                                    <div className="font-mono text-[10px] text-on-surface-variant break-all">{value || '""'}</div>
+                                  </div>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <p className="text-[11px] text-on-surface-variant">
+                            The latest message format does not expose selectable leaf fields.
+                          </p>
+                        )}
+
+                        <div className="rounded-lg border border-outline-variant/60 bg-background-dark/40 p-2">
+                          <p className="text-[10px] uppercase font-bold tracking-wider text-on-surface-variant mb-2">Latest Message</p>
+                          <pre className="max-h-36 overflow-auto whitespace-pre-wrap break-all text-[10px] font-mono text-on-surface-variant">
+                            {labelPreview.message}
+                          </pre>
+                        </div>
+                      </>
                     )}
                   </div>
 
-                  {!selectedTopic ? (
-                    <p className="text-[11px] text-on-surface-variant">Select a topic to inspect its latest message.</p>
-                  ) : labelPreviewLoading ? (
-                    <div className="flex items-center gap-2 text-[11px] text-on-surface-variant">
-                      <span className="material-symbols-outlined text-sm animate-spin">progress_activity</span>
-                      Loading latest message…
-                    </div>
-                  ) : !labelPreview?.message ? (
-                    <p className="text-[11px] text-on-surface-variant">No recent message available on this topic.</p>
-                  ) : (
-                    <>
-                      <div className="flex items-center justify-between gap-2 text-[10px] text-outline">
-                        <span>Latest message at {formatPreviewTimestamp(labelPreview.timestamp)}</span>
-                        <span>{selectedLabelFields.length} selected</span>
-                      </div>
-
-                      {availableLabelFields.length > 0 ? (
-                        <div className="max-h-44 overflow-y-auto rounded-lg border border-outline-variant/60 bg-background-dark/40 divide-y divide-primary/5">
-                          {availableLabelFields.map(([field, value]) => {
-                            const checked = selectedLabelFields.includes(field);
-                            return (
-                              <label
-                                key={field}
-                                className={`flex items-start gap-2 px-3 py-2 cursor-pointer transition-colors ${
-                                  checked ? 'bg-primary/10' : 'hover:bg-primary/5'
-                                }`}
-                              >
-                                <Checkbox
-                                  checked={checked}
-                                  onChange={() => toggleLabelField(field)}
-                                  className="mt-0.5"
-                                />
-                                <div className="min-w-0">
-                                  <div className="font-mono text-[11px] text-on-surface break-all">{field}</div>
-                                  <div className="font-mono text-[10px] text-on-surface-variant break-all">{value || '""'}</div>
-                                </div>
-                              </label>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <p className="text-[11px] text-on-surface-variant">
-                          The latest message format does not expose selectable leaf fields.
-                        </p>
-                      )}
-
-                      <div className="rounded-lg border border-outline-variant/60 bg-background-dark/40 p-2">
-                        <p className="text-[10px] uppercase font-bold tracking-wider text-on-surface-variant mb-2">Latest Message</p>
-                        <pre className="max-h-36 overflow-auto whitespace-pre-wrap break-all text-[10px] font-mono text-on-surface-variant">
-                          {labelPreview.message}
-                        </pre>
-                      </div>
-                    </>
-                  )}
-                </div>
-
-                {/* Description */}
-                <Field label="Description">
-                  {f => (
-                    <Textarea
-                      {...f}
-                      value={editingMetric.description ?? ''}
-                      onChange={e => setEditingMetric(m => ({ ...m, description: e.target.value }))}
-                      placeholder="What does this metric track?"
-                      rows={2}
-                      className="resize-none"
-                    />
-                  )}
-                </Field>
-
-                {/* Thresholds — vides par défaut : ce sont des seuils optionnels, pas des nombres
-                    avec une valeur de repli, d'où l'Input natif plutôt que NumberInput. */}
-                <div className="space-y-1.5">
-                  <div className="grid grid-cols-2 gap-3">
-                    <Field label="⚠ Warning">
-                      {f => (
-                        <Input {...f} type="number" inputMode="decimal"
-                          value={editingMetric.warningThreshold ?? ''}
-                          invalid={thresholdValidation.length > 0}
-                          aria-describedby={thresholdHints.length > 0 ? 'metric-threshold-hints' : undefined}
-                          onChange={e => setEditingMetric(m => ({ ...m, warningThreshold: e.target.value ? parseFloat(e.target.value) : null }))}
-                          className="bg-warning/5" />
-                      )}
-                    </Field>
-                    <Field label="🔴 Critical">
-                      {f => (
-                        <Input {...f} type="number" inputMode="decimal"
-                          value={editingMetric.criticalThreshold ?? ''}
-                          invalid={thresholdValidation.length > 0}
-                          aria-describedby={thresholdHints.length > 0 ? 'metric-threshold-hints' : undefined}
-                          onChange={e => setEditingMetric(m => ({ ...m, criticalThreshold: e.target.value ? parseFloat(e.target.value) : null }))}
-                          className="bg-error/5" />
-                      )}
-                    </Field>
-                  </div>
-                  {thresholdHints.length > 0 && (
-                    <div id="metric-threshold-hints">
-                      {thresholdHints.map((m, i) => (
-                        <p key={i}
-                          role={m.level === 'error' ? 'alert' : undefined}
-                          className={`text-[10px] flex items-start gap-1 ${HINT_COLORS[m.level]}`}>
-                          <span aria-hidden="true" className="material-symbols-outlined text-[11px] shrink-0 mt-px">{HINT_ICONS[m.level]}</span>
-                          {m.text}
-                        </p>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* SQL templates (raw SQL mode only) */}
-                {!isTemplate && (
-                <div className="border-t border-outline-variant/60 pt-4">
-                  <p className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider mb-3">SQL Templates</p>
-                  <div className="space-y-3">
-                    {sqlTemplates.map(group => (
-                      <div key={group.group}>
-                        <p className={`text-[10px] font-bold uppercase tracking-wider mb-1.5 ${group.color}`}>{group.group}</p>
-                        <div className="space-y-1">
-                          {group.items.map(t => (
-                            <button key={t.label} type="button"
-                              onClick={() => { setEditingMetric(m => ({ ...m, sql: t.sql })); setPreviewResult(null); setEditorTab('metric'); }}
-                              className="w-full text-left text-xs px-3 py-1.5 rounded-lg text-on-surface-variant hover:text-primary hover:bg-primary/10 transition-colors font-mono">
-                              {t.label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                )}
-              </div>
-
-              {/* Right: tabbed editors */}
-              <div className="flex-1 flex flex-col overflow-hidden">
-
-                {/* Tabs */}
-                <div className="flex items-center border-b border-outline-variant/60 bg-primary/5 px-4 gap-1">
-                  {(['metric', 'ddl'] as const).map(tab => (
-                    <button key={tab} type="button" onClick={() => setEditorTab(tab)}
-                      className={`px-4 py-2.5 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 ${
-                        editorTab === tab
-                          ? 'border-primary text-primary'
-                          : 'border-transparent text-on-surface-variant hover:text-on-surface'
-                      }`}>
-                      {tab === 'metric' ? (
-                        <span className="flex items-center gap-1.5">
-                          <span className="material-symbols-outlined text-sm">code</span>
-                          {isTemplate ? 'Parameters' : 'Metric SQL'}
-                        </span>
-                      ) : (
-                        <span className="flex items-center gap-1.5">
-                          <span className="material-symbols-outlined text-sm">table</span>
-                          Table DDL
-                          {editingMetric.createTableSql?.trim() && (
-                            <span className="w-1.5 h-1.5 rounded-full bg-success" />
-                          )}
-                        </span>
-                      )}
-                    </button>
-                  ))}
-
-                  {editorTab === 'metric' && (
-                    <div className="ml-auto">
-                      <Button variant="secondary" size="sm" icon={previewing ? undefined : 'play_arrow'} loading={previewing}
-                        onClick={handlePreview} disabled={previewing || (!isTemplate && !editingMetric.sql?.trim()) || hasBlockingErrors}>
-                        {previewing ? 'Running…' : 'Preview'}
-                      </Button>
-                    </div>
-                  )}
-
-                  {editorTab === 'ddl' && (
-                    <span className="ml-auto text-[10px] text-outline pr-1">
-                      Executed before metric SQL — <code className="text-on-surface-variant">IF NOT EXISTS</code> is auto-added
-                    </span>
-                  )}
-                </div>
-
-                {/* Editor area */}
-                <div className="flex-1 overflow-hidden">
-                  {editorTab === 'metric' ? (
-                    isTemplate ? (
-                      <TemplateParamsEditor
-                        templateType={templateType}
-                        params={templateParams}
-                        executionMode={editingMetric.executionMode ?? 'TEMPLATE_BOUNDED_SCAN'}
-                        table={tableName}
-                        setParam={(k, v) => { setParam(k, v); setPreviewResult(null); }}
-                        setExecutionMode={setExecutionMode}
+                  {/* Description */}
+                  <Field label="Description">
+                    {f => (
+                      <Textarea
+                        {...f}
+                        value={editingMetric.description ?? ''}
+                        onChange={e => setEditingMetric(m => ({ ...m, description: e.target.value }))}
+                        placeholder="What does this metric track?"
+                        rows={2}
+                        className="resize-none"
                       />
-                    ) : (
-                    <Editor height="100%" defaultLanguage="sql" theme="vs-dark"
-                      value={editingMetric.sql ?? ''}
-                      onChange={val => { setEditingMetric(m => ({ ...m, sql: val ?? '' })); setPreviewResult(null); }}
-                      options={{ minimap: { enabled: false }, fontSize: 13, fontFamily: 'JetBrains Mono, monospace',
-                        lineNumbers: 'on', scrollBeyondLastLine: false, padding: { top: 12, bottom: 12 },
-                        wordWrap: 'on', suggest: { showKeywords: true } }}
-                    />
-                    )
-                  ) : (
-                    <Editor height="100%" defaultLanguage="sql" theme="vs-dark"
-                      value={editingMetric.createTableSql ?? ''}
-                      onChange={val => setEditingMetric(m => ({ ...m, createTableSql: val ?? '' }))}
-                      options={{ minimap: { enabled: false }, fontSize: 13, fontFamily: 'JetBrains Mono, monospace',
-                        lineNumbers: 'on', scrollBeyondLastLine: false, padding: { top: 12, bottom: 12 },
-                        wordWrap: 'on' }}
-                    />
-                  )}
-                </div>
+                    )}
+                  </Field>
 
-                {/* SQL / template validation hints (metric tab only) */}
-                {editorTab === 'metric' && <ValidationHints messages={isTemplate ? templateValidation : sqlValidation} />}
-
-                {/* DDL validation hints */}
-                {editorTab === 'ddl' && <ValidationHints messages={ddlValidation} />}
-
-                {/* Preview result (metric tab only) */}
-                {editorTab === 'metric' && previewResult && (
-                  <div className={`border-t px-4 py-3 text-xs font-mono ${
-                    previewResult.error
-                      ? 'border-error/20 bg-error/5 text-error'
-                      : 'border-success/20 bg-success/5 text-success'
-                  }`}>
-                    {previewError ? (
-                      <InfoTooltip content={previewError.raw}>
-                      <div tabIndex={0} className="flex items-start gap-2 rounded">
-                        <span className="material-symbols-outlined text-sm mt-0.5 shrink-0">error</span>
-                        <span className="min-w-0">
-                          <span className="font-semibold">{previewError.title}</span>
-                          {previewError.hint && (
-                            <span className="block font-sans text-error/80 mt-0.5 leading-relaxed">{previewError.hint}</span>
-                          )}
-                        </span>
+                  {/* Thresholds — vides par défaut : ce sont des seuils optionnels, pas des nombres
+                      avec une valeur de repli, d'où l'Input natif plutôt que NumberInput. */}
+                  <div className="space-y-1.5">
+                    <div className="grid grid-cols-2 gap-3">
+                      <Field label="⚠ Warning">
+                        {f => (
+                          <Input {...f} type="number" inputMode="decimal"
+                            value={editingMetric.warningThreshold ?? ''}
+                            invalid={thresholdValidation.length > 0}
+                            aria-describedby={thresholdHints.length > 0 ? 'metric-threshold-hints' : undefined}
+                            onChange={e => setEditingMetric(m => ({ ...m, warningThreshold: e.target.value ? parseFloat(e.target.value) : null }))}
+                            className="bg-warning/5" />
+                        )}
+                      </Field>
+                      <Field label="🔴 Critical">
+                        {f => (
+                          <Input {...f} type="number" inputMode="decimal"
+                            value={editingMetric.criticalThreshold ?? ''}
+                            invalid={thresholdValidation.length > 0}
+                            aria-describedby={thresholdHints.length > 0 ? 'metric-threshold-hints' : undefined}
+                            onChange={e => setEditingMetric(m => ({ ...m, criticalThreshold: e.target.value ? parseFloat(e.target.value) : null }))}
+                            className="bg-error/5" />
+                        )}
+                      </Field>
+                    </div>
+                    {thresholdHints.length > 0 && (
+                      <div id="metric-threshold-hints">
+                        {thresholdHints.map((m, i) => (
+                          <p key={i}
+                            role={m.level === 'error' ? 'alert' : undefined}
+                            className={`text-[10px] flex items-start gap-1 ${HINT_COLORS[m.level]}`}>
+                            <span aria-hidden="true" className="material-symbols-outlined text-[11px] shrink-0 mt-px">{HINT_ICONS[m.level]}</span>
+                            {m.text}
+                          </p>
+                        ))}
                       </div>
-                      </InfoTooltip>
-                    ) : (
-                      <div className="space-y-1.5">
-                        <span className="flex items-center gap-2">
-                          <span className="material-symbols-outlined text-sm">check_circle</span>
-                          {isTemplate ? 'value' : 'metric_value'} = <strong>{String(previewResult.value)}</strong>
-                          {Array.isArray(previewResult.rows) && previewResult.rows.length > 1 && (
-                            <span className="text-success ml-2">({previewResult.rows.length} rows total)</span>
-                          )}
-                        </span>
-                        {previewResult.summary && Object.keys(previewResult.summary).length > 0 && (
-                          <div className="flex flex-wrap gap-1.5 pt-0.5">
-                            {Object.entries(previewResult.summary).map(([k, v]) => (
-                              <span key={k} className="px-2 py-0.5 rounded bg-success/10 text-success text-[10px]">
-                                {k}: <strong>{String(v)}</strong>
-                              </span>
+                    )}
+                  </div>
+
+                  {/* SQL templates (raw SQL mode only) */}
+                  {!isTemplate && (
+                  <div className="border-t border-outline-variant/60 pt-4">
+                    <p className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider mb-3">SQL Templates</p>
+                    <div className="space-y-3">
+                      {sqlTemplates.map(group => (
+                        <div key={group.group}>
+                          <p className={`text-[10px] font-bold uppercase tracking-wider mb-1.5 ${group.color}`}>{group.group}</p>
+                          <div className="space-y-1">
+                            {group.items.map(t => (
+                              <button key={t.label} type="button"
+                                onClick={() => { setEditingMetric(m => ({ ...m, sql: t.sql })); setPreviewResult(null); setEditorTab('metric'); }}
+                                className="w-full text-left text-xs px-3 py-1.5 rounded-lg text-on-surface-variant hover:text-primary hover:bg-primary/10 transition-colors font-mono">
+                                {t.label}
+                              </button>
                             ))}
                           </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  )}
+                </div>
+
+                {/* Right: tabbed editors */}
+                <div className="flex-1 flex flex-col overflow-hidden">
+
+                  {/* Tabs */}
+                  <div className="flex items-center border-b border-outline-variant/60 bg-primary/5 px-4 gap-1">
+                    {(['metric', 'ddl'] as const).map(tab => (
+                      <button key={tab} type="button" onClick={() => setEditorTab(tab)}
+                        className={`px-4 py-2.5 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 ${
+                          editorTab === tab
+                            ? 'border-primary text-primary'
+                            : 'border-transparent text-on-surface-variant hover:text-on-surface'
+                        }`}>
+                        {tab === 'metric' ? (
+                          <span className="flex items-center gap-1.5">
+                            <span className="material-symbols-outlined text-sm">code</span>
+                            {isTemplate ? 'Parameters' : 'Metric SQL'}
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-1.5">
+                            <span className="material-symbols-outlined text-sm">table</span>
+                            Table DDL
+                            {editingMetric.createTableSql?.trim() && (
+                              <span className="w-1.5 h-1.5 rounded-full bg-success" />
+                            )}
+                          </span>
                         )}
+                      </button>
+                    ))}
+
+                    {editorTab === 'metric' && (
+                      <div className="ml-auto">
+                        <Button variant="secondary" size="sm" icon={previewing ? undefined : 'play_arrow'} loading={previewing}
+                          onClick={handlePreview} disabled={previewing || (!isTemplate && !editingMetric.sql?.trim()) || hasBlockingErrors}>
+                          {previewing ? 'Running…' : 'Preview'}
+                        </Button>
                       </div>
                     )}
-                  </div>
-                )}
 
-                {/* DDL hint panel */}
-                {editorTab === 'ddl' && !editingMetric.createTableSql?.trim() && (
-                  <div className="border-t border-outline-variant/60 px-4 py-3 text-xs text-on-surface-variant bg-primary/5 space-y-1">
-                    <p className="font-bold text-on-surface-variant">No DDL defined</p>
-                    <p>The metric SQL will run against tables already registered in Flink.</p>
-                    <p>
-                      Select a <span className="text-primary">Kafka Topic</span> on the left to auto-generate a{' '}
-                      <code className="text-on-surface">CREATE TABLE IF NOT EXISTS</code> template.
-                    </p>
+                    {editorTab === 'ddl' && (
+                      <span className="ml-auto text-[10px] text-outline pr-1">
+                        Executed before metric SQL — <code className="text-on-surface-variant">IF NOT EXISTS</code> is auto-added
+                      </span>
+                    )}
                   </div>
-                )}
+
+                  {/* Editor area */}
+                  <div className="flex-1 overflow-hidden">
+                    {editorTab === 'metric' ? (
+                      isTemplate ? (
+                        <TemplateParamsEditor
+                          templateType={templateType}
+                          params={templateParams}
+                          executionMode={editingMetric.executionMode ?? 'TEMPLATE_BOUNDED_SCAN'}
+                          table={tableName}
+                          setParam={(k, v) => { setParam(k, v); setPreviewResult(null); }}
+                          setExecutionMode={setExecutionMode}
+                        />
+                      ) : (
+                      <Editor height="100%" defaultLanguage="sql" theme="vs-dark"
+                        value={editingMetric.sql ?? ''}
+                        onChange={val => { setEditingMetric(m => ({ ...m, sql: val ?? '' })); setPreviewResult(null); }}
+                        options={{ minimap: { enabled: false }, fontSize: 13, fontFamily: 'JetBrains Mono, monospace',
+                          lineNumbers: 'on', scrollBeyondLastLine: false, padding: { top: 12, bottom: 12 },
+                          wordWrap: 'on', suggest: { showKeywords: true } }}
+                      />
+                      )
+                    ) : (
+                      <Editor height="100%" defaultLanguage="sql" theme="vs-dark"
+                        value={editingMetric.createTableSql ?? ''}
+                        onChange={val => setEditingMetric(m => ({ ...m, createTableSql: val ?? '' }))}
+                        options={{ minimap: { enabled: false }, fontSize: 13, fontFamily: 'JetBrains Mono, monospace',
+                          lineNumbers: 'on', scrollBeyondLastLine: false, padding: { top: 12, bottom: 12 },
+                          wordWrap: 'on' }}
+                      />
+                    )}
+                  </div>
+
+                  {/* SQL / template validation hints (metric tab only) */}
+                  {editorTab === 'metric' && <ValidationHints messages={isTemplate ? templateValidation : sqlValidation} />}
+
+                  {/* DDL validation hints */}
+                  {editorTab === 'ddl' && <ValidationHints messages={ddlValidation} />}
+
+                  {/* Preview result (metric tab only) */}
+                  {editorTab === 'metric' && previewResult && (
+                    <div className={`border-t px-4 py-3 text-xs font-mono ${
+                      previewResult.error
+                        ? 'border-error/20 bg-error/5 text-error'
+                        : 'border-success/20 bg-success/5 text-success'
+                    }`}>
+                      {previewError ? (
+                        <InfoTooltip content={previewError.raw}>
+                        <div tabIndex={0} className="flex items-start gap-2 rounded">
+                          <span className="material-symbols-outlined text-sm mt-0.5 shrink-0">error</span>
+                          <span className="min-w-0">
+                            <span className="font-semibold">{previewError.title}</span>
+                            {previewError.hint && (
+                              <span className="block font-sans text-error/80 mt-0.5 leading-relaxed">{previewError.hint}</span>
+                            )}
+                          </span>
+                        </div>
+                        </InfoTooltip>
+                      ) : (
+                        <div className="space-y-1.5">
+                          <span className="flex items-center gap-2">
+                            <span className="material-symbols-outlined text-sm">check_circle</span>
+                            {isTemplate ? 'value' : 'metric_value'} = <strong>{String(previewResult.value)}</strong>
+                            {Array.isArray(previewResult.rows) && previewResult.rows.length > 1 && (
+                              <span className="text-success ml-2">({previewResult.rows.length} rows total)</span>
+                            )}
+                          </span>
+                          {previewResult.summary && Object.keys(previewResult.summary).length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 pt-0.5">
+                              {Object.entries(previewResult.summary).map(([k, v]) => (
+                                <span key={k} className="px-2 py-0.5 rounded bg-success/10 text-success text-[10px]">
+                                  {k}: <strong>{String(v)}</strong>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* DDL hint panel */}
+                  {editorTab === 'ddl' && !editingMetric.createTableSql?.trim() && (
+                    <div className="border-t border-outline-variant/60 px-4 py-3 text-xs text-on-surface-variant bg-primary/5 space-y-1">
+                      <p className="font-bold text-on-surface-variant">No DDL defined</p>
+                      <p>The metric SQL will run against tables already registered in Flink.</p>
+                      <p>
+                        Select a <span className="text-primary">Kafka Topic</span> on the left to auto-generate a{' '}
+                        <code className="text-on-surface">CREATE TABLE IF NOT EXISTS</code> template.
+                      </p>
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
 
-            {/* Modal footer */}
-            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-outline-variant/60 bg-surface-container-low/60">
-              {hasBlockingErrors && (
-                <span className="flex items-center gap-1 text-[12px] text-error mr-auto">
-                  <span className="material-symbols-outlined text-[16px]">error</span>
-                  Fix errors before saving
-                </span>
-              )}
-              <Button variant="ghost" onClick={() => setIsModalOpen(false)}>Cancel</Button>
-              <Button type="submit" variant="primary" icon={saving ? undefined : 'save'} loading={saving}
-                disabled={saving || hasBlockingErrors}>
-                {saving ? 'Saving…' : 'Save & Activate'}
-              </Button>
-            </div>
-          </form>
+              {/* Modal footer */}
+              <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-outline-variant/60 bg-surface-container-low/60">
+                {hasBlockingErrors && (
+                  <span className="flex items-center gap-1 text-[12px] text-error mr-auto">
+                    <span className="material-symbols-outlined text-[16px]">error</span>
+                    Fix errors before saving
+                  </span>
+                )}
+                <Button variant="ghost" onClick={() => setIsModalOpen(false)}>Cancel</Button>
+                <Button type="submit" variant="primary" icon={saving ? undefined : 'save'} loading={saving}
+                  disabled={saving || hasBlockingErrors}>
+                  {saving ? 'Saving…' : 'Save & Activate'}
+                </Button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>
