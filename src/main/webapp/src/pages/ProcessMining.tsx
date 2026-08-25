@@ -412,7 +412,7 @@ const ProcessMining: React.FC = () => {
       }, { timeout: PROFILING_TIMEOUT_MS });
       // `error` renseigné : le profilage n'a pas eu lieu. C'est une autre réponse que « il a
       // tourné et n'a rien trouvé », et elle envoie ailleurs — vers l'endpoint, le modèle ou la
-      // clé plutôt que vers le cluster. Le serveur les distinguait pas avant, et trois pannes de
+      // clé plutôt que vers le cluster. Le serveur ne les distinguait pas avant, et trois pannes de
       // modèle ont été lues comme des lectures Kafka en échec.
       if (res.data.error) {
         setError(res.data.error);

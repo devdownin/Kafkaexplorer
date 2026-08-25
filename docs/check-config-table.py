@@ -79,8 +79,11 @@ POM = ROOT / 'pom.xml'
 
 # Files whose prose states a dependency version. Wider than DOCS: these carry no
 # configuration table, but they do make version claims, and CLAUDE.md makes most of them.
+# docs/index.html is here for the reason this whole pass exists: it is the landing page, it
+# is rendered outside the repository by GitHub Pages, and its hero read "Powered by Flink 2.2"
+# for two minor versions of the embedded runtime. Nothing else in the tree looks at it.
 VERSION_DOCS = ['CLAUDE.md', 'CONTRIBUTING.md', 'README.md', 'README.fr.md',
-                'docs/DOCKERHUB.md', 'docs/architecture.md']
+                'docs/DOCKERHUB.md', 'docs/architecture.md', 'docs/index.html']
 
 # How a documented version relates to the pom's.
 EXACT = 'exact'    # the claim names a precise artifact version

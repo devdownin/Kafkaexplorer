@@ -139,6 +139,35 @@ class FieldProfilingServiceTest {
             "and the model's own warnings are kept");
     }
 
+    /**
+     * ...and the model does not get to declare its own run a failure.
+     *
+     * <p>{@code error} is a record component and the mapper is lenient about unknown keys, so the
+     * model's own JSON binds straight into the field the page reads to decide the run did not
+     * happen. A caveat volunteered beside a perfectly good list of topics — which every
+     * unconstrained path allows, SpectraLLM having no notion of schemas at all — would otherwise
+     * throw the profiles away and send the operator to check an endpoint that answered correctly.
+     */
+    @Test
+    void aModelCannotDeclareItsOwnRunAFailure() {
+        LlmClient client = mock(LlmClient.class);
+        when(client.generateWithMeta(anyString(), anyString(), any()))
+            .thenReturn(new LlmResponse(
+                "{\"topics\":[{\"name\":\"topic1\",\"format\":\"JSON\",\"fields\":[]}],"
+                    + "\"warnings\":[\"low confidence on the status field\"],"
+                    + "\"error\":\"low confidence\"}",
+                List.of(), null));
+        givenDigests(List.of(digestOf("topic1", "k", "{\"id\":\"1\"}")));
+        fieldProfilingService = new FieldProfilingService(snapshotReader, claudeConfig, client);
+
+        FieldProfileResult result = fieldProfilingService.profile(List.of("topic1"), SnapshotConfig.latestN(10));
+
+        assertNull(result.error(), "the run happened: only the service says otherwise");
+        assertEquals(1, result.topics().size(), "the profiles it did produce are kept");
+        assertTrue(result.warnings().contains("low confidence on the status field"),
+            "what the model wanted to say survives, in the field that is for saying it");
+    }
+
     @Test
     void testProfileWithMissingApiKeyAnthropic() {
         claudeConfig.setProvider(ClaudeConfig.Provider.ANTHROPIC);

@@ -107,7 +107,7 @@ Pick a set of topics and read them as a schema. Each topic becomes an entity car
 
 ## 11. Process Mining & AI Analysis (LLM)
 Kafka Explorer integrates AI to analyze message flows and detect anomalies:
-- **Automatic Field Profiling**: Detects `CORRELATION_ID`, `TIMESTAMP`, and `STATUS` fields across topics.
+- **Automatic Field Profiling**: Detects `CORRELATION_ID`, `TIMESTAMP`, and `STATUS` fields across topics. A run that **could not happen** — no API key, an endpoint that did not answer, an answer that would not parse — is reported as that, with its cause, rather than as a profiling that found nothing: the two look identical from outside and send you to opposite places, one to the cluster and the other to the model.
 - **Flow Reconstruction**: Generates Mermaid flowcharts of your business processes.
 - **Anomaly Detection**: Identifies sequence breaks, temporal delays, and structural inconsistencies.
 - **Audit checklist**: A built-in library of ready-to-use audit prompts (ordering, duplicates, orphan flows, latency/SLA, schema drift, missing required fields, invalid status transitions, error/retries, amount outliers, PII exposure, correlation integrity). Tick the checks — plus an optional free-form instruction — to focus the LLM on a specific audit, in both snapshot and live modes. Audits that need a field the profiling step didn't detect (e.g. amount outliers with no `AMOUNT` field) are greyed out automatically. Served from `GET /api/process-mining/audit-templates`.
@@ -115,7 +115,7 @@ Kafka Explorer integrates AI to analyze message flows and detect anomalies:
 - **It says what leaves your machine, and what it cost**: both pages that call a model state which of four cases applies — it stays on this host, no retention (enforced by OpenRouter's routing), retention allowed, or governed by the endpoint's own terms — and a policy is only asserted where this application can actually impose it. Beside it, the tokens and the **real price** the provider reported for the call and for the run — never an estimate, and the one projected figure that does exist, on the model picker, says so where it is shown; a live session can be given a spend cap (`CLAUDE_SESSION_COST_LIMIT_USD`) and stops itself when it is reached.
 
 ## 12. Demo & Sandbox Environment
-`setup-demo.sh` seeds **76 topics** automatically (78 with Schema Registry), so every feature on this page has a dataset to run against. Each stack runs it for you — `docker compose up -d` and it is there.
+`setup-demo.sh` seeds **76 topics** automatically (78 with Schema Registry), so every feature on this page has a dataset to run against. Each stack runs it for you — `docker compose up -d` and it is there. It seeds once and skips afterwards, but the skip is checked against the **data** and not only against the marker topic that records it: a topic never expires and the records it vouches for do, so a stack brought back up past their retention would otherwise come back with every topic name and nothing in any of them.
 
 Every business record carries a **record key** and **Kafka headers** (`correlation-id`, W3C `traceparent`, `source-system`, `event-type`, `produced-at`). Without them, exact-key tracing, key-partition narrowing, header search, log compaction and the audit's key-based duplicate detection would have nothing to run against.
 

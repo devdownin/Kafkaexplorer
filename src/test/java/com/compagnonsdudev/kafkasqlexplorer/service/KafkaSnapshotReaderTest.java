@@ -10,16 +10,20 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.SnapshotRead;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.MockConsumer;
+import org.apache.kafka.clients.consumer.OffsetAndTimestamp;
 import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -47,7 +51,43 @@ class KafkaSnapshotReaderTest {
      */
     private static final class ProbeConsumer extends MockConsumer<String, String> {
         private final Map<TopicPartition, Long> seeks = new HashMap<>();
+        private final Set<TopicPartition> endOffsetWithheld = new HashSet<>();
+        private final Set<TopicPartition> pauses = new HashSet<>();
+        private boolean noOffsetForTime;
         private boolean positionIsPoisoned;
+
+        /**
+         * Makes the broker fail to report this partition's end offset, the way a partial response
+         * does — the entry is simply absent from the map, which is not the same as a zero.
+         */
+        void withholdEndOffset(TopicPartition partition) {
+            endOffsetWithheld.add(partition);
+        }
+
+        /** Makes {@code offsetsForTimes} answer that no record sits at or after the instant. */
+        void answerNoOffsetForTime() {
+            noOffsetForTime = true;
+        }
+
+        @Override
+        public synchronized Map<TopicPartition, Long> endOffsets(Collection<TopicPartition> partitions) {
+            Map<TopicPartition, Long> ends = new HashMap<>(super.endOffsets(partitions));
+            endOffsetWithheld.forEach(ends::remove);
+            return ends;
+        }
+
+        @Override
+        public synchronized Map<TopicPartition, OffsetAndTimestamp> offsetsForTimes(
+                Map<TopicPartition, Long> timestampsToSearch) {
+            if (!noOffsetForTime) {
+                return super.offsetsForTimes(timestampsToSearch);
+            }
+            // A real client puts the partition in the map with a null value rather than leaving it
+            // out, which is the shape the reader has to survive.
+            Map<TopicPartition, OffsetAndTimestamp> answer = new HashMap<>();
+            timestampsToSearch.keySet().forEach(tp -> answer.put(tp, null));
+            return answer;
+        }
 
         ProbeConsumer() {
             super("earliest");
@@ -57,6 +97,12 @@ class KafkaSnapshotReaderTest {
         public synchronized void seek(TopicPartition partition, long offset) {
             seeks.put(partition, offset);
             super.seek(partition, offset);
+        }
+
+        @Override
+        public synchronized void pause(Collection<TopicPartition> partitions) {
+            pauses.addAll(partitions);
+            super.pause(partitions);
         }
 
         /**
@@ -327,5 +373,82 @@ class KafkaSnapshotReaderTest {
         assertEquals(List.of(TOPIC_A, TOPIC_B), read.unreadableTopics());
         assertTrue(read.emptyTopics().isEmpty());
         assertFalse(read.budgetExhausted(), "nothing was waited for, so nothing timed out");
+    }
+
+    /**
+     * A topic that has its quota cannot hold the read open on behalf of one that has stopped
+     * answering.
+     *
+     * <p>The silence net exists for exactly this shape: one topic being served normally, another
+     * whose partition has no leader and will never deliver. But every poll was counted as activity,
+     * including the ones carrying nothing but records of a topic already at its cap — which are
+     * discarded a few lines after they arrive. So the clock never expired, and the read waited out
+     * the whole 30 s wall clock instead of the 5 s it was given, on the Process Mining hot path.
+     *
+     * <p>Two things stop it, and the test names both: the busy topic's partitions are paused once
+     * it has its quota, so that poll mostly stops happening, and the clock is restarted by a record
+     * this read <em>kept</em> rather than by one it was handed. The flooding task reschedules
+     * itself, because a flood that runs out would end the test through the very silence it is
+     * supposed to prevent.
+     */
+    @Test
+    void aFloodOfRecordsItIsDiscardingDoesNotKeepTheReadAlive() {
+        seedTopology(Map.of(TOPIC_A, 500L, TOPIC_B, 10L));
+        TopicPartition busy = new TopicPartition(TOPIC_A, 0);
+        floodFrom(TOPIC_A);
+
+        long startedAt = System.nanoTime();
+        List<KafkaMessage> messages = reader.read(List.of(TOPIC_A, TOPIC_B), SnapshotConfig.earliest(2));
+        long elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L;
+
+        assertTrue(elapsedMs < 15_000L,
+            "the read must give up on its silence budget, not wait out the 30s wall clock: "
+                + elapsedMs + "ms");
+        assertTrue(mockConsumer.pauses.contains(busy),
+            "a topic that has its quota must stop being fetched, not go on costing bandwidth that "
+                + "belongs to the topics still wanted");
+        assertEquals(2, messages.size(), "the per-topic cap still holds");
+    }
+
+    /** Keeps handing the reader records of one topic, poll after poll, for as long as it asks. */
+    private void floodFrom(String topic) {
+        mockConsumer.schedulePollTask(new Runnable() {
+            private long offset;
+
+            @Override
+            public void run() {
+                mockConsumer.addRecord(record(topic, offset++));
+                mockConsumer.schedulePollTask(this);
+            }
+        });
+    }
+
+    /**
+     * A partition whose end offset the broker did not report is not read from the start of the log.
+     *
+     * <p>When {@code offsetsForTimes} answers nothing for a partition, every record it holds
+     * predates the instant asked for and the partition must contribute nothing. Saying so as a
+     * number means seeking it to its end — but the end offset is itself a measurement, and a
+     * missing one used to default to {@code 0}, which says the exact opposite: read the partition
+     * from the beginning and hand back records that are all older than the filter. In this mode
+     * {@code auto.offset.reset} is {@code earliest}, so leaving the partition unseeked lands in the
+     * same place; the end has to be asked for lazily instead.
+     *
+     * <p>The mock lies the way a real client lies — the entry is absent from the map rather than
+     * zero — because a broker answering partially is the only way this state arises.
+     */
+    @Test
+    void aPartitionWithNoKnownEndOffsetIsNotReadFromTheStartOfTheLog() {
+        seedTopology(Map.of(TOPIC_A, 5L));
+        TopicPartition tp = new TopicPartition(TOPIC_A, 0);
+        mockConsumer.withholdEndOffset(tp);
+        mockConsumer.answerNoOffsetForTime();
+
+        reader.read(List.of(TOPIC_A), new SnapshotConfig("TIMESTAMP", 100, null, 1_000L));
+
+        assertNotEquals(Long.valueOf(0L), mockConsumer.seeks.get(tp),
+            "a partition with nothing to contribute must not be seeked to the beginning of its log");
+        assertNull(mockConsumer.seeks.get(tp),
+            "with no end offset to name, the seek is left to the client rather than given a number");
     }
 }

@@ -676,6 +676,29 @@ jobs:
   # job SKIP, and a required check that skips blocks a merge for ever, whereas a job whose
   # `if:` is false reports success. Plain git rather than a filter action, because three lines
   # beat one more dependency to pin, review and update.
+  # The demo seeder is the entrypoint of `demo-setup` in every bundled stack, and it takes
+  # a real decision: seed, or skip, from two readings of the cluster. Nothing exercised it.
+  # The `docker` job below asserts that a second run skips — the one path that has always
+  # worked — while every branch that matters is a reading that FAILED, and those were
+  # reasoned about rather than run. Both defects found there were in that gap: a marker
+  # that made the seeder skip for ever once retention had emptied what it vouched for, and
+  # an unreadable offset query counted as "the topic is empty", which re-seeds at every
+  # `up` and adds a generation of duplicate records each time — quietly moving the numbers
+  # the cluster audit and the Stream Flow traces are calibrated against.
+  #
+  # It stubs the Kafka CLIs rather than starting a broker: what is under test is a decision
+  # taken from two command outputs, so a broker would cost minutes and prove nothing extra.
+  # It needs no daemon, no network and no toolchain, which is why it is its own job rather
+  # than a step inside one that does.
+  seeder-logic:
+    name: The demo seeder's decisions
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Run every decision of seed-demo-once.sh
+        run: ./seed-demo-once.test.sh
+
   hub-changes:
     name: Does this change touch the published-images stack?
     runs-on: ubuntu-latest

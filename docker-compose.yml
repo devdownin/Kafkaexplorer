@@ -121,9 +121,10 @@ services:
     volumes:
       - ./setup-demo.sh:/data/setup-demo.sh
       - ./seed-demo-once.sh:/data/seed-demo-once.sh
-    # See seed-demo-once.sh: it waits for the broker and seeds only if the marker topic is
-    # absent, so restarting the stack no longer replays ~400 records into topics that
-    # already hold them.
+    # See seed-demo-once.sh: it waits for the broker, then skips the seed only if the marker
+    # topic is present *and* the demo data is still there — so restarting the stack no longer
+    # replays ~400 records into topics that already hold them, and a stack brought back up
+    # past their retention is reseeded instead of coming back with eighty empty topics.
     entrypoint: [ "sh", "-c", "sed 's/\\r$//' /data/seed-demo-once.sh > /tmp/seed-demo-once.sh && sh /tmp/seed-demo-once.sh kafka:29092" ]
 
 volumes:

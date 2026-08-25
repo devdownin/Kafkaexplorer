@@ -69,3 +69,6 @@ __pycache__/
 
 # TypeScript incremental build info (tsc -b)
 src/main/webapp/tsconfig.tsbuildinfo
+
+# Node toolchain fetched by a local build (frontend-maven-plugin / npx).
+.node/
