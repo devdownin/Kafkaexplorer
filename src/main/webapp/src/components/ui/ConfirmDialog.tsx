@@ -33,6 +33,12 @@ export const useConfirm = (): ConfirmFn => useContext(ConfirmContext);
  * Un seul dialogue est rendu à la fois ; Échap et le fond annulent, le bouton
  * de confirmation reçoit le focus à l'ouverture, et le focus est restauré à la
  * fermeture (accessibilité clavier).
+ *
+ * Le dialogue est la *carte*, pas le voile : `role="dialog"` portait sur le conteneur
+ * `fixed inset-0`, donc l'élément annoncé comme dialogue faisait tout l'écran alors que
+ * la question tient en trois lignes. Le voile n'est plus qu'un fond cliquable, et il est
+ * léger (`.confirm-overlay`) — une confirmation parle de ce qui est derrière elle, la
+ * masquer est exactement ce qu'il ne faut pas faire.
  */
 export const ConfirmProvider: FC<{ children: ReactNode }> = ({ children }) => {
   const [options, setOptions] = useState<ConfirmOptions | null>(null);
@@ -72,14 +78,14 @@ export const ConfirmProvider: FC<{ children: ReactNode }> = ({ children }) => {
       {children}
       {options && (
         <div
-          className="fixed inset-0 z-[60] flex items-center justify-center p-4 glass-overlay animate-fade-in"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="confirm-title"
+          className="fixed inset-0 z-[60] flex items-center justify-center p-4 confirm-overlay animate-fade-in"
           onClick={() => settle(false)}
         >
           <div
             className="w-full max-w-sm bg-surface-container border border-outline-variant rounded-xl shadow-2xl p-5 animate-slide-up"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirm-title"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-start gap-3">
