@@ -6,6 +6,7 @@ import com.compagnonsdudev.kafkasqlexplorer.config.KafkaConfig;
 import com.compagnonsdudev.kafkasqlexplorer.config.ProcessMiningConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.KafkaMessage;
 import com.compagnonsdudev.kafkasqlexplorer.domain.SnapshotConfig;
+import com.compagnonsdudev.kafkasqlexplorer.domain.SnapshotRead;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.MockConsumer;
@@ -267,5 +268,64 @@ class KafkaSnapshotReaderTest {
         assertEquals("key-0", message.key());
         assertTrue(message.value().contains("ORD-0"),
             new String(message.value().getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8));
+    }
+
+    /**
+     * A topic the broker describes no partition for costs that topic, and nothing else.
+     *
+     * <p>It used to cost the whole read: {@code partitionsFor} answers null for a topic that does
+     * not exist, {@code .stream()} on it threw, and the catch returned an empty list for every
+     * topic in the request. So one deleted topic — or one typo in a selection of eight — produced
+     * an analysis of nothing at all, logged as an error nobody reads and rendered as a cluster
+     * holding no messages.
+     */
+    @Test
+    void anUnknownTopicCostsItselfAndNotTheWholeRead() {
+        seedTopology(Map.of(TOPIC_A, 2L));   // TOPIC_B is deliberately never declared
+        mockConsumer.schedulePollTask(() -> {
+            mockConsumer.addRecord(record(TOPIC_A, 0));
+            mockConsumer.addRecord(record(TOPIC_A, 1));
+        });
+
+        List<KafkaMessage> messages = reader.read(List.of(TOPIC_A, TOPIC_B),
+            SnapshotConfig.earliest(200));
+
+        assertEquals(2, messages.size(),
+            "a topic with no metadata must not take the topics that do have some down with it");
+        assertTrue(messages.stream().allMatch(m -> TOPIC_A.equals(m.topic())));
+    }
+
+    /**
+     * And it says so. "This topic does not resolve here" and "this topic is empty" are the same
+     * empty list to a caller, and they send the reader to two different places — a name to fix
+     * against a cluster to go and look at.
+     */
+    @Test
+    void theReadNamesTheTopicsItCouldNotResolve() {
+        seedTopology(Map.of(TOPIC_A, 0L));   // declared, and holding nothing
+
+        SnapshotRead read = reader.readSnapshot(List.of(TOPIC_A, TOPIC_B),
+            SnapshotConfig.earliest(200), null, 20);
+
+        assertEquals(List.of(TOPIC_B), read.unreadableTopics());
+        assertEquals(List.of(TOPIC_A), read.emptyTopics());
+        assertEquals(0, read.messagesByTopic().get(TOPIC_A),
+            "every requested topic is keyed, so a caller can tell an absent row from a zero");
+        assertNull(read.readError());
+    }
+
+    /**
+     * Every topic unknown is still a complete answer rather than a failure — and one that reaches
+     * it without spending the silence budget polling an empty assignment.
+     */
+    @Test
+    void aRequestNamingOnlyUnknownTopicsAnswersImmediately() {
+        SnapshotRead read = reader.readSnapshot(List.of(TOPIC_A, TOPIC_B),
+            SnapshotConfig.earliest(200), null, 20);
+
+        assertTrue(read.isEmpty());
+        assertEquals(List.of(TOPIC_A, TOPIC_B), read.unreadableTopics());
+        assertTrue(read.emptyTopics().isEmpty());
+        assertFalse(read.budgetExhausted(), "nothing was waited for, so nothing timed out");
     }
 }

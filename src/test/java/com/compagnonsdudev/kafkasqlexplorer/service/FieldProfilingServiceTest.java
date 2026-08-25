@@ -8,11 +8,13 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.FieldProfileResult;
 import com.compagnonsdudev.kafkasqlexplorer.domain.LlmResponse;
 import com.compagnonsdudev.kafkasqlexplorer.domain.PayloadDigest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.SnapshotConfig;
+import com.compagnonsdudev.kafkasqlexplorer.domain.SnapshotRead;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -43,6 +45,12 @@ class FieldProfilingServiceTest {
         // For testing we might want to mock the client, but it's created in constructor
     }
 
+    /** Stubs the snapshot read with these digests, as a read that ran to completion. */
+    private void givenDigests(List<PayloadDigest> digests) {
+        when(snapshotReader.readSnapshot(anyList(), any(), any(), anyInt()))
+            .thenReturn(SnapshotRead.of(digests));
+    }
+
     /**
      * A profiling run that did not happen is not one that found nothing.
      *
@@ -56,8 +64,7 @@ class FieldProfilingServiceTest {
         LlmClient client = mock(LlmClient.class);
         when(client.generateWithMeta(anyString(), anyString(), any()))
             .thenThrow(new RuntimeException("Connection refused"));
-        when(snapshotReader.readDigested(anyList(), any(), any(), anyInt()))
-            .thenReturn(List.of(digestOf("topic1", "k", "{\"id\":\"1\"}")));
+        givenDigests(List.of(digestOf("topic1", "k", "{\"id\":\"1\"}")));
         fieldProfilingService = new FieldProfilingService(snapshotReader, claudeConfig, client);
 
         FieldProfileResult result = fieldProfilingService.profile(List.of("topic1"), SnapshotConfig.latestN(10));
@@ -67,20 +74,69 @@ class FieldProfilingServiceTest {
         assertTrue(result.topics().isEmpty());
     }
 
-    /** ...and a run that really did profile empty topics carries no error. */
+    /**
+     * ...and topics that hold nothing carry no error either: that is a finding about the cluster,
+     * which is where the page sends the operator, not an endpoint to go and fix.
+     *
+     * <p>The model is not asked, though. The prompt would be headings, and what comes back is a
+     * proposal about topics nobody showed it — an invented mapping the next step invites the
+     * operator to validate. So the reason is stated instead, and the call is not paid for.
+     */
     @Test
-    void aProfileThatFoundNothingIsNotAFailure() {
+    void topicsThatHoldNothingAreReportedWithoutSpendingAModelCall() {
         LlmClient client = mock(LlmClient.class);
-        when(client.generateWithMeta(anyString(), anyString(), any()))
-            .thenReturn(new LlmResponse("{\"topics\":[],\"warnings\":[\"No messages sampled\"]}",
-                List.of(), null));
-        when(snapshotReader.readDigested(anyList(), any(), any(), anyInt())).thenReturn(List.of());
+        givenDigests(List.of());
         fieldProfilingService = new FieldProfilingService(snapshotReader, claudeConfig, client);
 
         FieldProfileResult result = fieldProfilingService.profile(List.of("topic1"), SnapshotConfig.latestN(10));
 
         assertNull(result.error(),
-            "the model answered; that the cluster had nothing to profile is a finding, not a fault");
+            "that the cluster had nothing to profile is a finding, not a fault");
+        assertTrue(result.topics().isEmpty());
+        assertTrue(result.warnings().stream().anyMatch(w -> w.contains("no message")),
+            result.warnings().toString());
+        verify(client, never()).generateWithMeta(anyString(), anyString(), any());
+    }
+
+    /** A read that failed is the other case: the profiling did not happen, and that is an error. */
+    @Test
+    void aBrokerThatCouldNotBeReadIsAFailureRatherThanAnEmptyProfile() {
+        LlmClient client = mock(LlmClient.class);
+        when(snapshotReader.readSnapshot(anyList(), any(), any(), anyInt())).thenReturn(
+            new SnapshotRead(List.of(), Map.of("topic1", 0), List.of(),
+                "Broker not available", false));
+        fieldProfilingService = new FieldProfilingService(snapshotReader, claudeConfig, client);
+
+        FieldProfileResult result = fieldProfilingService.profile(List.of("topic1"), SnapshotConfig.latestN(10));
+
+        assertNotNull(result.error());
+        assertTrue(result.error().contains("Broker not available"), result.error());
+        verify(client, never()).generateWithMeta(anyString(), anyString(), any());
+    }
+
+    /**
+     * A topic that was read and one that was never resolved both produce no row in the validation
+     * panel, so the second is indistinguishable there from a topic the model looked at and had
+     * nothing to say about. The scope note is what separates them.
+     */
+    @Test
+    void namesTheTopicsTheReadCouldNotCover() {
+        LlmClient client = mock(LlmClient.class);
+        when(client.generateWithMeta(anyString(), anyString(), any()))
+            .thenReturn(new LlmResponse("{\"topics\":[],\"warnings\":[\"model note\"]}",
+                List.of(), null));
+        when(snapshotReader.readSnapshot(anyList(), any(), any(), anyInt())).thenReturn(
+            new SnapshotRead(List.of(digestOf("topic1", "k", "{\"id\":\"1\"}")),
+                Map.of("topic1", 1, "typo", 0), List.of("typo"), null, false));
+        fieldProfilingService = new FieldProfilingService(snapshotReader, claudeConfig, client);
+
+        FieldProfileResult result = fieldProfilingService.profile(
+            List.of("topic1", "typo"), SnapshotConfig.latestN(10));
+
+        assertTrue(result.warnings().get(0).contains("typo"),
+            "the scope note comes first: it explains an absence the model cannot know about");
+        assertTrue(result.warnings().contains("model note"),
+            "and the model's own warnings are kept");
     }
 
     @Test
@@ -101,7 +157,7 @@ class FieldProfilingServiceTest {
         LlmClient llmClient = mock(LlmClient.class);
         fieldProfilingService = new FieldProfilingService(snapshotReader, claudeConfig, llmClient);
 
-        when(snapshotReader.readDigested(anyList(), any(), any(), anyInt())).thenReturn(List.of(
+        givenDigests(List.of(
             digestOf("topic1", "key1", "{\"id\":1}")
         ));
         when(llmClient.generateWithMeta(anyString(), anyString(), any()))
@@ -118,7 +174,7 @@ class FieldProfilingServiceTest {
         LlmClient llmClient = mock(LlmClient.class);
         fieldProfilingService = new FieldProfilingService(snapshotReader, claudeConfig, llmClient);
 
-        when(snapshotReader.readDigested(anyList(), any(), any(), anyInt())).thenReturn(List.of(
+        givenDigests(List.of(
             digestOf("topic1", "key1", "{\"id\":1}")
         ));
 
@@ -136,7 +192,7 @@ class FieldProfilingServiceTest {
         LlmClient llmClient = mock(LlmClient.class);
         fieldProfilingService = new FieldProfilingService(snapshotReader, claudeConfig, llmClient);
 
-        when(snapshotReader.readDigested(anyList(), any(), any(), anyInt())).thenReturn(List.of(
+        givenDigests(List.of(
             digestOf("topic1", "key1", "{\"id\":1}")
         ));
 
@@ -182,7 +238,7 @@ class FieldProfilingServiceTest {
             }
             digests.add(digestOf(topic, "k", payload.append('}').toString()));
         }
-        when(snapshotReader.readDigested(anyList(), any(), any(), anyInt())).thenReturn(digests);
+        givenDigests(digests);
         when(llmClient.generateWithMeta(anyString(), anyString(), any()))
             .thenReturn(new LlmResponse("{\"topics\": [], \"warnings\": []}", List.of()));
 
@@ -208,7 +264,7 @@ class FieldProfilingServiceTest {
         LlmClient llmClient = mock(LlmClient.class);
         fieldProfilingService = new FieldProfilingService(snapshotReader, claudeConfig, llmClient);
 
-        when(snapshotReader.readDigested(anyList(), any(), any(), anyInt())).thenReturn(List.of(
+        givenDigests(List.of(
             digestOf("topic1", "key1", "{\"id\":1}")
         ));
         when(llmClient.generateWithMeta(anyString(), anyString(), any())).thenReturn(new LlmResponse(
@@ -226,7 +282,7 @@ class FieldProfilingServiceTest {
         LlmClient llmClient = mock(LlmClient.class);
         fieldProfilingService = new FieldProfilingService(snapshotReader, claudeConfig, llmClient);
 
-        when(snapshotReader.readDigested(anyList(), any(), any(), anyInt())).thenReturn(List.of(
+        givenDigests(List.of(
             digestOf("topic1", "key1", "{\"id\":1}")
         ));
         when(llmClient.generateWithMeta(anyString(), anyString(), any())).thenReturn(new LlmResponse(

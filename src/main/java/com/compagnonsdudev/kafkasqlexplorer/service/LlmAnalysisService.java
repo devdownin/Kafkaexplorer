@@ -13,8 +13,11 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.KafkaMessage;
 import com.compagnonsdudev.kafkasqlexplorer.domain.LlmResponse;
 import com.compagnonsdudev.kafkasqlexplorer.domain.PayloadDigest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.PayloadShape;
+import com.compagnonsdudev.kafkasqlexplorer.domain.ProcessMiningCoverage;
 import com.compagnonsdudev.kafkasqlexplorer.domain.ProcessMiningResult;
 import com.compagnonsdudev.kafkasqlexplorer.domain.SnapshotConfig;
+import com.compagnonsdudev.kafkasqlexplorer.domain.SnapshotRead;
+import com.compagnonsdudev.kafkasqlexplorer.domain.TopicCoverage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -140,17 +143,51 @@ public class LlmAnalysisService {
         // 1. Read and digest in one pass — payloads are summarized as they arrive and never
         //    accumulate in memory nor reach the prompt verbatim (a snapshot of 500 messages per
         //    topic at 1 MB each would be gigabytes of context)
-        List<PayloadDigest> digests = snapshotReader.readDigested(
+        SnapshotRead read = snapshotReader.readSnapshot(
             topics, depth, fieldMapping, processMiningConfig.getMaxSampleFields());
 
         // 2. Group by topic, sort by timestamp
-        Map<String, List<PayloadDigest>> byTopic = groupAndSort(topics, digests);
+        Map<String, List<PayloadDigest>> byTopic = groupAndSort(topics, read.digests());
 
-        // 3. Build user prompt
-        String userPrompt = buildSnapshotPrompt(topics, byTopic, fieldMapping, auditFocus);
+        // 3. A read that yielded nothing is not a question worth asking. The model would be handed
+        //    a prompt of headings and would answer about it — inventing a plausible pipeline, or
+        //    reporting an empty cluster — and either way the operator pays for a call whose subject
+        //    is the absence of data. Saying so instead costs nothing and names the case: an absent
+        //    topic, an empty one, or a read that failed.
+        if (read.isEmpty()) {
+            ProcessMiningCoverage coverage = coverageOf(topics, read, Map.of(), 0);
+            return ProcessMiningResult.failed(read.emptyReadExplanation()).withCoverage(coverage);
+        }
 
-        // 4. Call the configured LLM and parse
-        return callLlmAndParse(userPrompt);
+        // 4. Build user prompt, keeping what of the read actually reached it
+        BuiltPrompt prompt = buildSnapshotPrompt(topics, byTopic, fieldMapping, auditFocus);
+
+        // 5. Call the configured LLM and parse. Coverage travels on the answer whatever it is —
+        //    an analysis that failed still knows what it had read, and the next attempt is sized
+        //    from that.
+        return callLlmAndParse(prompt.text())
+            .withCoverage(coverageOf(topics, read, prompt.messagesInPrompt(), prompt.text().length()));
+    }
+
+    /**
+     * What the run looked at, per topic: read on one side, carried into the prompt on the other.
+     *
+     * <p>Deliberately structured rather than a list of sentences — {@code pages/processMiningCoverage.ts}
+     * turns these rows into the wording, in one place. {@code warnings} is left for what the rows
+     * cannot express, such as a field mapping the controller could not resolve.
+     */
+    private ProcessMiningCoverage coverageOf(List<String> topics, SnapshotRead read,
+                                              Map<String, Integer> messagesInPrompt, int promptChars) {
+        List<TopicCoverage> rows = new ArrayList<>();
+        for (String topic : topics) {
+            rows.add(new TopicCoverage(
+                topic,
+                read.messagesByTopic().getOrDefault(topic, 0),
+                messagesInPrompt.getOrDefault(topic, 0),
+                !read.unreadableTopics().contains(topic)));
+        }
+        return ProcessMiningCoverage.of(rows, promptChars, processMiningConfig.getPromptCharBudget(),
+            read.budgetExhausted(), read.readError(), List.of());
     }
 
     public ProcessMiningResult analyzeLive(List<KafkaMessage> windowMessages,
@@ -203,14 +240,23 @@ public class LlmAnalysisService {
         return byTopic;
     }
 
-    private String buildSnapshotPrompt(List<String> topics,
+    /**
+     * A prompt and the accounting of what it carried: how many of each topic's digests really made
+     * it in. The second half is what lets the answer state its own scope — the character budget
+     * silently decides it, and until now it was told only to the model.
+     */
+    private record BuiltPrompt(String text, Map<String, Integer> messagesInPrompt) {
+    }
+
+    private BuiltPrompt buildSnapshotPrompt(List<String> topics,
                                         Map<String, List<PayloadDigest>> byTopic,
                                         FieldMapping fieldMapping,
                                         String auditFocus) {
         StringBuilder sb = new StringBuilder();
         sb.append("## MODE: ANALYSE SNAPSHOT\n\n");
-        appendCommonSections(sb, topics, byTopic, fieldMapping, null, auditFocus);
-        return sb.toString();
+        Map<String, Integer> written =
+            appendCommonSections(sb, topics, byTopic, fieldMapping, null, auditFocus);
+        return new BuiltPrompt(sb.toString(), written);
     }
 
     private String buildLivePrompt(List<String> topics,
@@ -226,7 +272,7 @@ public class LlmAnalysisService {
         return sb.toString();
     }
 
-    private void appendCommonSections(StringBuilder sb, List<String> topics,
+    private Map<String, Integer> appendCommonSections(StringBuilder sb, List<String> topics,
                                        Map<String, List<PayloadDigest>> byTopic,
                                        FieldMapping fieldMapping,
                                        String referenceFlowchart,
@@ -258,7 +304,7 @@ public class LlmAnalysisService {
         byTopic.forEach((topic, digests) -> sampled.put(topic, evenSample(digests, perTopicLimit)));
 
         appendShapes(sb, sampled);
-        appendMessages(sb, byTopic, sampled);
+        Map<String, Integer> written = appendMessages(sb, byTopic, sampled);
 
         sb.append("""
 
@@ -273,6 +319,7 @@ public class LlmAnalysisService {
 8. Les payloads sont résumés, pas complets : ne conclus jamais à l'absence d'un champ
    à partir de son absence dans "sample" — seul "shape" fait foi sur la structure
 """);
+        return written;
     }
 
     /**
@@ -305,9 +352,10 @@ public class LlmAnalysisService {
      * within a topic the messages are an evenly spaced sample (first and last always kept) so a
      * burst never crowds out the rest of the window.
      */
-    private void appendMessages(StringBuilder sb,
+    private Map<String, Integer> appendMessages(StringBuilder sb,
                                  Map<String, List<PayloadDigest>> byTopic,
                                  Map<String, List<PayloadDigest>> sampled) {
+        Map<String, Integer> written = new LinkedHashMap<>();
         sb.append("""
 ## FORMAT DES MESSAGES
 Chaque message est un résumé du payload d'origine :
@@ -339,6 +387,7 @@ Chaque message est un résumé du payload d'origine :
 
             if (globalRemaining <= 0) {
                 topicsOmitted++;
+                written.put(entry.getKey(), 0);
                 continue;
             }
             int topicBudget = Math.min(perTopicBudget, globalRemaining);
@@ -352,24 +401,25 @@ Chaque message est un résumé du payload d'origine :
               .append("payload max ").append(formatBytes(maxBytes)).append("\n");
 
             int budgetStart = sb.length();
-            int written = 0;
+            int inlined = 0;
             sb.append("[\n");
             for (PayloadDigest digest : selected) {
                 if (sb.length() - budgetStart > topicBudget) {
                     break;
                 }
-                if (written > 0) {
+                if (inlined > 0) {
                     sb.append(",\n");
                 }
                 appendDigest(sb, digest);
-                written++;
+                inlined++;
             }
             sb.append("\n]\n");
 
-            if (written < all.size()) {
-                sb.append("(").append(all.size() - written)
+            if (inlined < all.size()) {
+                sb.append("(").append(all.size() - inlined)
                   .append(" message(s) non inclus — échantillon régulier sur la fenêtre)\n");
             }
+            written.put(entry.getKey(), inlined);
             globalRemaining -= (sb.length() - budgetStart);
         }
 
@@ -378,6 +428,7 @@ Chaque message est un résumé du payload d'origine :
               .append(" topic(s) sans message inclus — budget global du prompt atteint. "
                   + "Leur absence ici ne signifie pas qu'ils sont vides.)\n");
         }
+        return written;
     }
 
     private void appendDigest(StringBuilder sb, PayloadDigest digest) {

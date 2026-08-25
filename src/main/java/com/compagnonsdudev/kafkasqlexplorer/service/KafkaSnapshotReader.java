@@ -8,12 +8,15 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.FieldMapping;
 import com.compagnonsdudev.kafkasqlexplorer.domain.KafkaMessage;
 import com.compagnonsdudev.kafkasqlexplorer.domain.PayloadDigest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.SnapshotConfig;
+import com.compagnonsdudev.kafkasqlexplorer.domain.SnapshotRead;
+import com.compagnonsdudev.kafkasqlexplorer.util.LogSafe;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.consumer.OffsetAndTimestamp;
+import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.apache.kafka.common.serialization.StringDeserializer;
@@ -55,6 +58,13 @@ public class KafkaSnapshotReader {
     /** Wall-clock budget for one snapshot read. */
     private static final long READ_BUDGET_MS = 30_000L;
 
+    /**
+     * How long the partition lookup of a single topic may take. Well under the client's own
+     * {@code default.api.timeout.ms} (a minute), because a topic that does not exist is exactly the
+     * case that spends the whole of it.
+     */
+    private static final Duration METADATA_TIMEOUT = Duration.ofSeconds(10);
+
     private final KafkaConfig kafkaConfig;
     private final KafkaAdminService kafkaAdminService;
     private final ProcessMiningConfig processMiningConfig;
@@ -91,36 +101,98 @@ public class KafkaSnapshotReader {
      */
     public List<PayloadDigest> readDigested(List<String> topics, SnapshotConfig config,
                                              FieldMapping fieldMapping, int sampleFieldLimit) {
+        return readSnapshot(topics, config, fieldMapping, sampleFieldLimit).digests();
+    }
+
+    /**
+     * The same read, saying what it could not do.
+     *
+     * <p>{@link #readDigested} answers with a list, and a short list has three meanings that call
+     * for three different actions — see {@link SnapshotRead}. Everything a caller needs to tell
+     * them apart is known here and was thrown away here.
+     */
+    public SnapshotRead readSnapshot(List<String> topics, SnapshotConfig config,
+                                      FieldMapping fieldMapping, int sampleFieldLimit) {
         List<PayloadDigest> digests = new ArrayList<>();
         Map<String, Set<String>> pathsByTopic = new LinkedHashMap<>();
 
-        consume(topics, config, ByteArrayDeserializer.class, (ConsumerRecord<String, byte[]> record) -> {
-            Set<String> mapped = pathsByTopic.computeIfAbsent(record.topic(),
-                topic -> payloadDigestService.mappedPaths(fieldMapping, topic));
-            digests.add(payloadDigestService.digest(
-                record.topic(), record.partition(), record.offset(), record.timestamp(),
-                record.key(), record.value(), mapped, sampleFieldLimit));
-        });
+        ConsumeOutcome outcome = consume(topics, config, ByteArrayDeserializer.class,
+            (ConsumerRecord<String, byte[]> record) -> {
+                Set<String> mapped = pathsByTopic.computeIfAbsent(record.topic(),
+                    topic -> payloadDigestService.mappedPaths(fieldMapping, topic));
+                digests.add(payloadDigestService.digest(
+                    record.topic(), record.partition(), record.offset(), record.timestamp(),
+                    record.key(), record.value(), mapped, sampleFieldLimit));
+            });
 
         digests.sort((a, b) -> Long.compare(a.timestamp(), b.timestamp()));
-        return digests;
+        return new SnapshotRead(digests, outcome.messagesByTopic(), outcome.unreadableTopics(),
+            outcome.error(), outcome.budgetExhausted());
     }
 
-    private <V> void consume(List<String> topics, SnapshotConfig config,
+    /**
+     * What one pass over the broker managed, beside the records it handed to its handler.
+     *
+     * @param messagesByTopic every requested topic, keyed even when it contributed nothing
+     * @param unreadableTopics topics the broker described no partition for
+     * @param error the read threw; whatever had been delivered is still the caller's
+     * @param budgetExhausted stopped on the wall-clock or silence budget, so the counts are floors
+     */
+    private record ConsumeOutcome(Map<String, Integer> messagesByTopic,
+                                  List<String> unreadableTopics,
+                                  String error,
+                                  boolean budgetExhausted) {
+    }
+
+    private <V> ConsumeOutcome consume(List<String> topics, SnapshotConfig config,
                               Class<?> valueDeserializer, java.util.function.Consumer<ConsumerRecord<String, V>> handler) {
         Properties props = buildConsumerProperties(config, valueDeserializer);
+
+        // Declared out here so a read that throws halfway still reports what it had collected —
+        // and which topics it had already given up on.
+        Map<String, Integer> collectedByTopic = new LinkedHashMap<>();
+        topics.forEach(topic -> collectedByTopic.put(topic, 0));
+        List<String> unreadableTopics = new ArrayList<>();
+        boolean budgetExhausted = false;
 
         Consumer<String, V> consumer = null;
         try {
             consumer = createConsumer(props);
 
-            // Assign all partitions for the given topics
+            // Assign all partitions for the given topics.
+            //
+            // A topic the broker describes no partition for costs *that topic*, and nothing else.
+            // It used to cost the whole read: `partitionsFor` answers null for a topic that does
+            // not exist, `.stream()` on it threw, and the catch below returned an empty list for
+            // every topic in the request — so one deleted topic, or one typo in a selection of
+            // eight, silently produced an analysis of nothing at all, logged as an error nobody
+            // reads and rendered as a cluster with no messages in it.
             List<TopicPartition> partitions = new ArrayList<>();
             for (String topic : topics) {
-                List<TopicPartition> tps = consumer.partitionsFor(topic).stream()
-                    .map(pi -> new TopicPartition(pi.topic(), pi.partition()))
-                    .toList();
-                partitions.addAll(tps);
+                List<PartitionInfo> infos;
+                try {
+                    // Bounded, because the lookup for a topic that does not exist is *not* quick:
+                    // an unknown topic is a retriable answer, so the client keeps asking until
+                    // `default.api.timeout.ms` — a minute by default, per topic. Waiting minutes to
+                    // establish that four names are wrong is worse than the wrong answer this
+                    // replaces. A lookup that gives up is the same outcome as one that came back
+                    // empty: this read cannot see that topic, and says so.
+                    infos = consumer.partitionsFor(topic, METADATA_TIMEOUT);
+                } catch (Exception e) {
+                    infos = null;
+                }
+                if (infos == null || infos.isEmpty()) {
+                    unreadableTopics.add(topic);
+                    log.warn("Snapshot read: no partition metadata for topic {} — skipping it",
+                        LogSafe.name(topic));
+                    continue;
+                }
+                infos.forEach(pi -> partitions.add(new TopicPartition(pi.topic(), pi.partition())));
+            }
+            if (partitions.isEmpty()) {
+                // Nothing to assign. Seeking and polling an empty assignment would only spend the
+                // silence budget to reach the same answer.
+                return new ConsumeOutcome(collectedByTopic, unreadableTopics, null, false);
             }
             consumer.assign(partitions);
 
@@ -181,8 +253,6 @@ public class KafkaSnapshotReader {
                         .toList());
             }
             long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(READ_BUDGET_MS);
-            Map<String, Integer> collectedByTopic = new HashMap<>();
-            topics.forEach(topic -> collectedByTopic.put(topic, 0));
             int maxMessagesPerTopic = config.maxMessages();
             long silentSince = System.nanoTime();
 
@@ -194,6 +264,7 @@ public class KafkaSnapshotReader {
                 if (System.nanoTime() >= deadline) {
                     log.debug("Snapshot read budget of {}ms spent for topics {}",
                         READ_BUDGET_MS, topics);
+                    budgetExhausted = true;
                     break;
                 }
                 ConsumerRecords<String, V> records = consumer.poll(POLL_TIMEOUT);
@@ -202,6 +273,7 @@ public class KafkaSnapshotReader {
                             >= TimeUnit.MILLISECONDS.toNanos(SILENCE_BUDGET_MS)) {
                         log.debug("Snapshot read gave up after {}ms without a record for topics {}",
                             SILENCE_BUDGET_MS, topics);
+                        budgetExhausted = true;
                         break;
                     }
                     continue;
@@ -224,7 +296,13 @@ public class KafkaSnapshotReader {
             log.debug("Snapshot read collected {}", collectedByTopic);
 
         } catch (Exception e) {
-            log.error("Error reading Kafka snapshot for topics {}: {}", topics, e.getMessage(), e);
+            log.error("Error reading Kafka snapshot for topics {}: {}",
+                LogSafe.names(topics), e.getMessage(), e);
+            // Reported, not swallowed: what follows is an analysis of whatever arrived before the
+            // failure, and it must not be presented as an analysis of the topics that were asked
+            // for.
+            return new ConsumeOutcome(collectedByTopic, unreadableTopics,
+                SqlErrorClassifier.explain(e), budgetExhausted);
         } finally {
             if (consumer != null) {
                 try {
@@ -234,6 +312,7 @@ public class KafkaSnapshotReader {
                 }
             }
         }
+        return new ConsumeOutcome(collectedByTopic, unreadableTopics, null, budgetExhausted);
     }
 
     private Properties buildConsumerProperties(SnapshotConfig config,
