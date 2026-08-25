@@ -321,6 +321,21 @@ claude:
   # whose providers lack schema support becomes *unroutable* instead of degrading, and that arrives
   # as "no endpoints found" rather than as the 400/422 the per-model latch can act on.
   openrouter-require-parameters: false
+  # OPENROUTER only — le plus que ce déploiement acceptera de payer un fournisseur, en USD par
+  # million de tokens. 0 = aucun plafond, et c'est le défaut.
+  #
+  # C'est la moitié *opposable* de session-cost-limit-usd : celle-là additionne ce qui a déjà été
+  # dépensé et arrête la session après coup, ce qui est la bonne forme pour un cumul et la mauvaise
+  # pour une surprise — un modèle routé vers un fournisseur cher est déjà payé quand le plafond s'en
+  # aperçoit. Un plafond de prix est refusé à l'étage du routage, avant que les tokens existent,
+  # exactement comme data_collection transforme un avertissement en propriété. Les deux se
+  # complètent : l'un borne le débit, l'autre le total.
+  #
+  # La valeur s'applique aux deux prix publiés (prompt et complétion) ; la complétion étant presque
+  # toujours la plus chère, c'est sur elle que le plafond mord en pratique. Désactivé par défaut
+  # pour la raison qui gouverne ses deux voisins : un modèle dont tous les fournisseurs dépassent le
+  # plafond devient *irroutable*, ce qui arrive sous la forme du même « no endpoints found ».
+  openrouter-max-price-usd-per-million: 0
   # Plafond, en USD, de ce qu'une session Process Mining en direct peut dépenser avant de s'arrêter
   # d'elle-même. 0 = aucun plafond, et c'est le défaut.
   #

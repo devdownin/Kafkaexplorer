@@ -2,8 +2,10 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 
 import { describe, it, expect } from 'vitest';
-import type { LlmModelCheck } from '../api/types';
-import { describeModelCheck, describeModelIdentity, hasModelWarning } from './llmModelCheck';
+import type { LlmKeyStatus, LlmModelCheck } from '../api/types';
+import {
+  describeKeyStatus, describeModelCheck, describeModelIdentity, hasModelWarning,
+} from './llmModelCheck';
 
 const check = (over: Partial<LlmModelCheck> = {}): LlmModelCheck => ({
   id: 'openai/gpt-4o-mini',
@@ -165,5 +167,60 @@ describe('hasModelWarning', () => {
 
   it('is true as soon as one note asks for a change', () => {
     expect(hasModelWarning(describeModelCheck(check({ emitsText: false })))).toBe(true);
+  });
+});
+
+const key = (over: Partial<LlmKeyStatus> = {}): LlmKeyStatus => ({
+  usageUsd: 3.5,
+  limitUsd: 10,
+  remainingUsd: 6.5,
+  freeTier: false,
+  error: null,
+  ...over,
+});
+
+describe('describeKeyStatus', () => {
+  it('says what is left, and what has been spent', () => {
+    const note = describeKeyStatus(key());
+    expect(note?.tone).toBe('ok');
+    expect(note?.text).toContain('$6.50');
+    expect(note?.text).toContain('$3.50');
+  });
+
+  /*
+   * Le cas qui justifie d'avoir demandé : une clé épuisée répond 402 à l'appel suivant, et jusqu'ici
+   * on ne l'apprenait qu'après l'échec d'une analyse.
+   */
+  it('warns before the 402 rather than after it', () => {
+    const note = describeKeyStatus(key({ remainingUsd: 0 }));
+    expect(note?.tone).toBe('warning');
+    expect(note?.text).toContain('402');
+  });
+
+  /*
+   * Une clé sans plafond a une consommation connue et pas de reste : « illimité moins ce que tu as
+   * dépensé » n'est pas un nombre, et surtout pas zéro — ce qui annoncerait une clé épuisée à
+   * quelqu'un qui n'a aucune limite.
+   */
+  it('does not turn an unlimited key into an exhausted one', () => {
+    const note = describeKeyStatus(key({ limitUsd: null, remainingUsd: null, usageUsd: 12.25 }));
+    expect(note?.tone).toBe('ok');
+    expect(note?.text).toContain('$12.25');
+    expect(note?.text).toContain('no spending limit');
+    expect(note?.text).not.toContain('402');
+  });
+
+  /* « On n'a pas pu demander » ne se rend pas comme une réponse. */
+  it('renders nothing at all when the question could not be asked', () => {
+    expect(describeKeyStatus(null)).toBeNull();
+    expect(describeKeyStatus(undefined)).toBeNull();
+    expect(describeKeyStatus(key({ error: 'HTTP 401' }))).toBeNull();
+    expect(describeKeyStatus(key({ usageUsd: null, limitUsd: null, remainingUsd: null })))
+      .toBeNull();
+  });
+
+  it('keeps a sub-cent amount legible instead of rounding it to zero', () => {
+    expect(describeKeyStatus(key({ remainingUsd: 0.004, usageUsd: null }))?.text)
+      .toContain('$0.004000');
   });
 });

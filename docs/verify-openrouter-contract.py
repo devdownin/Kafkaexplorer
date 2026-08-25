@@ -209,7 +209,30 @@ def verify_chat() -> list[str]:
                 "explainRoutingRefusal describes)")
     )
 
-    # 3 — the model that answered is named, which is what tells a relayed failure from our own.
+    # 3 — the price ceiling is accepted too. Same exposure as the policy above, and the same
+    #     consequence if it is ignored: a bound nobody is applying, which reads as one that holds.
+    status, capped = post("chat/completions", chat_body(
+        provider={"max_price": {"prompt": 1000, "completion": 1000}}))
+    if status not in (200, 404):
+        raise AssertionError(
+            f"provider.max_price was answered with HTTP {status}: {capped}. "
+            "claude.openrouter-max-price-usd-per-million sends it."
+        )
+    checks.append("provider.max_price is accepted (a ceiling far above any real price, so it routes)")
+
+    # 4 — and a ceiling below every price refuses the route rather than being ignored. This is the
+    #     assertion that separates "the field is read" from "the field is tolerated": a 200 here
+    #     would mean the ceiling never binds, whatever it is set to.
+    status, floored = post("chat/completions", chat_body(
+        provider={"max_price": {"prompt": 0.0000001, "completion": 0.0000001}}))
+    if status == 200:
+        raise AssertionError(
+            "a max_price below every published price still routed — the ceiling is being ignored, "
+            "so claude.openrouter-max-price-usd-per-million promises a bound it does not deliver"
+        )
+    checks.append(f"a max_price below every price refuses the route (HTTP {status}), so it binds")
+
+    # 5 — the model that answered is named, which is what tells a relayed failure from our own.
     if isinstance(plain.get("provider"), str):
         checks.append(f"the response names its upstream provider ({plain['provider']})")
 
@@ -287,11 +310,32 @@ def main() -> int:
                                  "supported_parameters")
         checks.append(f"single-model lookup resolves {KNOWN_SLUG}")
 
-        # 5 — the entitlement list the failure branch consults.
+        # 5 — the entitlement list the failure branch consults, and what it actually means.
+        #
+        # The code uses it on one failure branch only, to tell "your key cannot reach this model"
+        # from "no such model". Whether it could do more — mark every row of the shortlist — turns
+        # on a question nothing has asked: is it the models the key is *entitled to*, or some
+        # narrower list? Marking rows against the second would label usable models unusable, which
+        # is a worse lie than the silence it replaces, so this reports the relationship rather than
+        # assuming it.
         mine = rows(get("models/user?limit=1000"))
         if mine and not any("id" in m for m in mine):
             raise AssertionError("/models/user returned rows carrying no id")
-        checks.append(f"per-key model list answers with {len(mine)} models")
+        mine_ids = {m.get("id") for m in mine if m.get("id")}
+        every_ids = {m.get("id") for m in every if m.get("id")}
+        if not mine_ids <= every_ids:
+            raise AssertionError(
+                "/models/user lists models that are not in /models at all "
+                f"({sorted(mine_ids - every_ids)[:3]}…) — it is not the subset the code assumes"
+            )
+        shape = ("the whole catalogue" if mine_ids == every_ids
+                 else f"a subset ({len(mine_ids)} of {len(every_ids)})")
+        checks.append(f"per-key model list answers with {len(mine)} models — {shape}")
+        if mine_ids == every_ids:
+            checks.append(
+                "  → this key sees everything, so the shortlist has nothing to mark. Run this "
+                "again with a restricted org key before trusting a per-row entitlement marker."
+            )
 
         # 6 — the completion request itself. Opt-in: these are billed calls.
         if "--chat" in sys.argv:

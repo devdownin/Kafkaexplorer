@@ -486,6 +486,25 @@ export interface LlmTestResponse {
    */
   candidate: boolean;
   modelCheck?: LlmModelCheck;
+  keyStatus?: LlmKeyStatus;
+}
+
+/**
+ * Ce qu'il reste sur la clé, chez les fournisseurs qui le publient — voir le record Java.
+ *
+ * Tout est nullable et `null` veut dire « la passerelle ne l'a pas dit ». Un cas mérite attention
+ * plus que les autres : une clé sans plafond rapporte `limitUsd` à `null` alors que `usageUsd` est
+ * parfaitement connu. C'est un état réel — un crédit sans limite — qu'il ne faut ni rendre comme
+ * « 0 restant », ni confondre avec `error`, qui dit qu'on n'a pas pu demander.
+ *
+ * @java LlmKeyStatus
+ */
+export interface LlmKeyStatus {
+  usageUsd: number | null;
+  limitUsd: number | null;
+  remainingUsd: number | null;
+  freeTier: boolean | null;
+  error: string | null;
 }
 
 /**

@@ -92,6 +92,7 @@ Its sibling is deliberately **off**:
 ```yaml
 claude:
   openrouter-require-parameters: false   # the default
+  openrouter-max-price-usd-per-million: 0   # no ceiling; a ceiling is refused at routing time
 ```
 
 `true` routes only to providers implementing every parameter sent, which turns structured output

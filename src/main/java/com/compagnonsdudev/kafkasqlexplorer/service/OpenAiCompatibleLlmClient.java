@@ -150,6 +150,15 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
         if (config.isOpenrouterRequireParameters()) {
             routing.put("require_parameters", true);
         }
+        if (config.hasOpenrouterPriceCeiling()) {
+            // The enforceable half of claude.session-cost-limit-usd: that one adds up what has
+            // already been spent and stops afterwards, this one refuses the route before the
+            // tokens exist. Sent as USD per million tokens, the unit the catalogue publishes and
+            // the picker renders, so the number an operator writes here is the number they read on
+            // a row. One value against both prices — completion is the dearer in practice.
+            double ceiling = config.getOpenrouterMaxPriceUsdPerMillion();
+            routing.put("max_price", Map.of("prompt", ceiling, "completion", ceiling));
+        }
         return routing;
     }
 
@@ -165,19 +174,30 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
      */
     private LlmHttpSupport.ClientErrorException explainRoutingRefusal(
             LlmHttpSupport.ClientErrorException e) {
-        Map<String, Object> routing = routingPolicy();
-        if (e.status() != 404 || routing.isEmpty()) {
+        if (e.status() != 404 || config.getProvider() != ClaudeConfig.Provider.OPENROUTER) {
             return e;
         }
+        Map<String, Object> routing = routingPolicy();
+        StringBuilder note = new StringBuilder(e.getMessage());
+        if (!routing.isEmpty()) {
+            note.append(" — note that provider routing is restricted (").append(routing)
+                .append("), so a model whose providers do not satisfy it is reported exactly like ")
+                .append("an unknown one. Relax claude.openrouter-data-collection, ")
+                .append("claude.openrouter-require-parameters or ")
+                .append("claude.openrouter-max-price-usd-per-million to tell them apart.");
+        }
+        // The three causes a 404 conflates on this gateway, and the button that tells them apart.
+        // Deliberately *not* a lookup from here: the catalogue read is a deliberate gesture and
+        // never on the analysis path, and a live session that has begun failing would otherwise
+        // make one per window. Naming the gesture costs nothing and points somewhere.
+        note.append(" A 404 here also covers a slug that no longer exists and a key not entitled ")
+            .append("to the model; Test on the Settings page asks the catalogue and separates ")
+            .append("them.");
         // The upstream provider is carried over: a rewrap that drops it turns a relayed failure
         // back into one the endpoint is blamed for, which is the very confusion this field exists
-        // to remove. Harmless on a 404 today, and the kind of omission that stops being harmless
-        // the moment this method covers a second status.
-        return new LlmHttpSupport.ClientErrorException(e.status(), e.getMessage()
-            + " — note that provider routing is restricted (" + routing
-            + "), so a model whose providers do not satisfy it is reported exactly like an unknown "
-            + "one. Relax claude.openrouter-data-collection or claude.openrouter-require-parameters "
-            + "to tell the two apart.", e.upstreamProvider());
+        // to remove.
+        return new LlmHttpSupport.ClientErrorException(e.status(), note.toString(),
+            e.upstreamProvider());
     }
 
     /** The configured model, normalised so a null or blank one still keys the map. */

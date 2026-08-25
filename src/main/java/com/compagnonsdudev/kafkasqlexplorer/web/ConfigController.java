@@ -4,6 +4,7 @@ package com.compagnonsdudev.kafkasqlexplorer.web;
 
 import com.compagnonsdudev.kafkasqlexplorer.config.ClaudeConfig;
 import com.compagnonsdudev.kafkasqlexplorer.config.KafkaConfig;
+import com.compagnonsdudev.kafkasqlexplorer.domain.LlmKeyStatus;
 import com.compagnonsdudev.kafkasqlexplorer.domain.LlmModelCheck;
 import com.compagnonsdudev.kafkasqlexplorer.domain.LlmTestResponse;
 import com.compagnonsdudev.kafkasqlexplorer.domain.LlmModelShortlist;
@@ -512,8 +513,14 @@ public class ConfigController {
         // cannot be reached, not an endpoint that is down.
         LlmModelCheck modelCheck =
             modelCatalog.isSupported(target) ? modelCatalog.describeModel(target) : null;
+        // And what is left on the key, on the same press. A key out of credit answers 402 — which
+        // `LlmHttpSupport.remedyFor` reads correctly, but only after an analysis has failed. It is
+        // published, so this is the moment to say it. Same side-read rules: it never changes the
+        // verdict above, and a credit that could not be read is reported as unread.
+        LlmKeyStatus keyStatus =
+            modelCatalog.isSupported(target) ? modelCatalog.describeKey(target) : null;
         return new LlmTestResponse(ok, message,
-            target.getProviderLabel(), target.getModel(), candidate, modelCheck);
+            target.getProviderLabel(), target.getModel(), candidate, modelCheck, keyStatus);
     }
 
     /**

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 
-import type { LlmModelCheck } from '../api/types';
+import type { LlmKeyStatus, LlmModelCheck } from '../api/types';
 
 /**
  * Met en phrases ce que la passerelle a dit du modèle configuré.
@@ -166,3 +166,50 @@ const describeBudget = (check: LlmModelCheck): ModelNote | null => {
 /** Y a-t-il quelque chose à corriger ? Sert à choisir le ton du bloc, pas à décider à la place. */
 export const hasModelWarning = (notes: readonly ModelNote[]): boolean =>
   notes.some((note) => note.tone === 'warning');
+
+/** Un montant en USD, au centime — et à six décimales sous le centime, comme partout ailleurs. */
+const usd = (value: number): string =>
+  value !== 0 && Math.abs(value) < 0.01 ? `$${value.toFixed(6)}` : `$${value.toFixed(2)}`;
+
+/**
+ * Met en phrases ce qu'il reste sur la clé.
+ *
+ * Le crédit n'était consulté nulle part : une clé épuisée répond 402, que `remedyFor` lit
+ * correctement — mais seulement *après* qu'une analyse a échoué. Il est publié, donc le même appui
+ * sur Test peut le dire avant.
+ *
+ * Trois états à ne pas confondre, et c'est tout l'intérêt de ce module : une clé plafonnée dont il
+ * reste quelque chose, une clé plafonnée dont il ne reste rien (une 402 en attente), et une clé
+ * *sans plafond*, qui a une consommation connue et pas de reste — « illimité moins ce que tu as
+ * dépensé » n'est pas un nombre. Un quatrième cas n'en est pas un : `error` dit qu'on n'a pas pu
+ * demander, ce qui ne se rend pas comme une réponse.
+ */
+export const describeKeyStatus = (status: LlmKeyStatus | null | undefined): ModelNote | null => {
+  if (!status || status.error) return null;
+
+  if (status.remainingUsd != null) {
+    const spent = status.usageUsd != null ? ` (${usd(status.usageUsd)} spent)` : '';
+    if (status.remainingUsd <= 0) {
+      return {
+        tone: 'warning',
+        text: `This key has no credit left${spent}. The next call answers 402 — topping the `
+          + 'account up is the fix, not the configuration.',
+      };
+    }
+    return {
+      tone: 'ok',
+      text: `${usd(status.remainingUsd)} of credit left on this key${spent}.`,
+    };
+  }
+
+  // Pas de plafond : la consommation seule est un fait, et le dire vaut mieux que se taire — c'est
+  // le chiffre auquel se compare claude.session-cost-limit-usd, qui est livré désactivé faute
+  // justement de repère.
+  if (status.usageUsd != null) {
+    return {
+      tone: 'ok',
+      text: `${usd(status.usageUsd)} spent on this key, which has no spending limit set.`,
+    };
+  }
+  return null;
+};

@@ -35,6 +35,30 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   rather than absent: `null` means the question could not be answered, and only an exhaustive list
   yields `false`. The UI shows the note on `false` alone.
 
+- **The Test button says what is left on the API key** (OpenRouter). The credit was consulted
+  nowhere: a key running out answers 402, read correctly by `remedyFor` but only *after* an analysis
+  has failed. It is published, so the press that already asks what the model can do asks this too,
+  under the same rules — best-effort, no retry, never on the analysis path. It is also the number
+  `claude.session-cost-limit-usd` was missing, that cap shipping disabled because any figure would be
+  arbitrary while nothing says what the budget is. Three states are kept apart, and the third is the
+  one that matters: a key with **no limit** has a known usage and no remainder, because "unlimited
+  minus what you spent" is not a number — rendering it as `0` would announce an exhausted key to
+  somebody who has an unlimited one.
+
+- **`claude.openrouter-max-price-usd-per-million`** — the most this deployment will pay a provider,
+  refused at the routing layer rather than counted afterwards. It is the enforceable half of
+  `session-cost-limit-usd`: that one accumulates and stops the session after the fact, so an
+  expensive route has already been paid for by the time it notices. One value against both published
+  prices, in the unit the catalogue publishes and the picker renders. `0` and off by default, on the
+  rule its two siblings follow — a model every provider prices above the ceiling becomes unroutable,
+  arriving as the same "no endpoints found" a restrictive data policy produces.
+
+- **A 404 from OpenRouter now names all three things it can mean** and points at the button that
+  tells them apart. It conflates a mistyped slug, a slug that no longer exists, a key not entitled to
+  the model, and — since the routing policy exists — a model no provider serves under it.
+  Deliberately *not* a catalogue lookup from the analysis path: that read is a considered gesture,
+  and a live session that had begun failing would otherwise make one request per window.
+
 - **`docs/verify-openrouter-contract.py`** — checks the requests this application makes against the
   live API. Deliberately not a `docs/check-*.py`, because those are discovered and run by CI and
   this one needs the network and a key. It exists because the filter and sort parameter names came
@@ -54,6 +78,13 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   while the live session tells the operator *the provider reports none* — false about OpenRouter
   rather than merely unknown. The script settles that question in one run; it has not been run from
   the environment this was written in, where `openrouter.ai` is unreachable.
+
+  It also asserts that `provider.max_price` **binds** rather than merely being tolerated — a ceiling
+  below every published price must refuse the route, since a 200 there would mean the setting
+  promises a bound it does not deliver — and it reports what `/models/user` actually is relative to
+  `/models`. That last one is the question deciding whether the model shortlist may mark the rows a
+  key cannot reach; it does not mark them today, for exactly that reason, since labelling a usable
+  model unusable is a worse lie than the silence it would replace.
 
 ### Fixed
 

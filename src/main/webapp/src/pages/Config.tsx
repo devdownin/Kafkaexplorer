@@ -15,7 +15,9 @@ import {
 } from './settingsPersistence';
 import { describeDataPolicy, type LlmPolicyFacts } from './llmPolicy';
 import type { LlmModelShortlist, LlmTestResponse } from '../api/types';
-import { describeModelCheck, describeModelIdentity, hasModelWarning } from './llmModelCheck';
+import {
+  describeKeyStatus, describeModelCheck, describeModelIdentity, hasModelWarning,
+} from './llmModelCheck';
 import { describeApiError, type QueryErrorInfo } from './queryError';
 import {
   PROJECTION_NOTE, describeOption, describeShortlist, optionSlugs, validateModelSlug,
@@ -246,7 +248,17 @@ const Config: React.FC = () => {
   /* Un échec local n'a pas de `modelCheck` : rien n'a été sondé, donc rien n'a été décrit. */
   const modelCheck = llmTestResult && 'modelCheck' in llmTestResult
     ? llmTestResult.modelCheck : undefined;
-  const modelNotes = useMemo(() => describeModelCheck(modelCheck), [modelCheck]);
+  /* Idem pour la clé : un échec local n'en dit rien non plus. */
+  const keyStatus = llmTestResult && 'keyStatus' in llmTestResult
+    ? llmTestResult.keyStatus : undefined;
+  const modelNotes = useMemo(() => {
+    const notes = describeModelCheck(modelCheck);
+    // En dernier, et c'est l'ordre voulu : ce bloc va du plus bloquant au plus rassurant côté
+    // *modèle*, et le crédit ne parle pas du modèle. Une clé épuisée reste un avertissement, donc
+    // elle teinte le bloc comme les autres.
+    const key = describeKeyStatus(keyStatus);
+    return key ? [...notes, key] : notes;
+  }, [modelCheck, keyStatus]);
   const modelIdentity = modelCheck ? describeModelIdentity(modelCheck) : null;
   /*
    * La sonde et la liste n'essaient que le *modèle* : le point d'accès reste celui en vigueur, et
