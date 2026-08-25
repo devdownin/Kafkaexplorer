@@ -49,6 +49,34 @@ public class ProcessMiningConfig {
     /** Total characters the "messages" part of a prompt may occupy. ~4 chars/token. */
     private int promptCharBudget = 120_000;
 
+    /**
+     * Salient (non-mapped) scalars written per message <em>in the prompt</em>, as opposed to the
+     * {@link #maxSampleFields} the digest carries.
+     *
+     * <p>Two different questions, which is why they are two settings. The digest's forty feed
+     * profiling, which aggregates them per path across the sample and needs the breadth. The
+     * analysis prompt inlined the same forty <em>per message</em>, at up to
+     * {@link #maxValueChars} each — so one record could occupy several kilobytes of a topic's share
+     * on values that are, by definition, the ones the mapping did <em>not</em> name: not the case
+     * id, not the timestamp, not the status. The budget went to incidental payload and the cases
+     * were what got cut. A handful is enough to keep a record recognisable; the structure is
+     * already described once, in the shapes section.
+     */
+    private int maxSampleFieldsInPrompt = 6;
+
+    /** Whole case traces inlined as worked examples, one per selected variant. */
+    private int maxTraceCasesInPrompt = 12;
+    /** Distinct end-to-end paths reported, taken from both ends of the frequency distribution. */
+    private int maxVariantsInPrompt = 12;
+    /** Directly-follows edges (and activities) reported, most frequent first. */
+    private int maxEdgesInPrompt = 40;
+    /**
+     * Distinct status values a topic may carry before the status stops refining its activity.
+     * A field with more values than this is not the closed set a status is, and multiplying it
+     * into the graph turns a readable flowchart into a hairball.
+     */
+    private int maxStatusActivities = 25;
+
     public int getMaxPollRecords() {
         return maxPollRecords;
     }
@@ -175,5 +203,45 @@ public class ProcessMiningConfig {
 
     public void setPromptCharBudget(int promptCharBudget) {
         this.promptCharBudget = promptCharBudget;
+    }
+
+    public int getMaxSampleFieldsInPrompt() {
+        return maxSampleFieldsInPrompt;
+    }
+
+    public void setMaxSampleFieldsInPrompt(int maxSampleFieldsInPrompt) {
+        this.maxSampleFieldsInPrompt = maxSampleFieldsInPrompt;
+    }
+
+    public int getMaxTraceCasesInPrompt() {
+        return maxTraceCasesInPrompt;
+    }
+
+    public void setMaxTraceCasesInPrompt(int maxTraceCasesInPrompt) {
+        this.maxTraceCasesInPrompt = maxTraceCasesInPrompt;
+    }
+
+    public int getMaxVariantsInPrompt() {
+        return maxVariantsInPrompt;
+    }
+
+    public void setMaxVariantsInPrompt(int maxVariantsInPrompt) {
+        this.maxVariantsInPrompt = maxVariantsInPrompt;
+    }
+
+    public int getMaxEdgesInPrompt() {
+        return maxEdgesInPrompt;
+    }
+
+    public void setMaxEdgesInPrompt(int maxEdgesInPrompt) {
+        this.maxEdgesInPrompt = maxEdgesInPrompt;
+    }
+
+    public int getMaxStatusActivities() {
+        return maxStatusActivities;
+    }
+
+    public void setMaxStatusActivities(int maxStatusActivities) {
+        this.maxStatusActivities = maxStatusActivities;
     }
 }

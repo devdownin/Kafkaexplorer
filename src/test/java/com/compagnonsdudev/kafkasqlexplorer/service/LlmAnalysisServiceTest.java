@@ -76,7 +76,8 @@ class LlmAnalysisServiceTest {
         claudeConfig.setApiKey("test-key");
         llmClient = mock(LlmClient.class);
         llmAnalysisService = new LlmAnalysisService(snapshotReader, claudeConfig,
-            new ProcessMiningConfig(), DIGEST_SERVICE, () -> llmClient);
+            new ProcessMiningConfig(), DIGEST_SERVICE,
+            new ProcessModelBuilder(new ProcessMiningConfig()), () -> llmClient);
     }
 
     @Test
@@ -402,7 +403,8 @@ class LlmAnalysisServiceTest {
         ));
 
         LlmAnalysisService service = new LlmAnalysisService(snapshotReader, claudeConfig,
-            new ProcessMiningConfig(), DIGEST_SERVICE, () -> current.get(0));
+            new ProcessMiningConfig(), DIGEST_SERVICE,
+            new ProcessModelBuilder(new ProcessMiningConfig()), () -> current.get(0));
 
         service.analyzeSnapshot(List.of("topic1"), SnapshotConfig.latestN(10), null);
         current.set(0, second);
@@ -464,7 +466,7 @@ class LlmAnalysisServiceTest {
         ProcessMiningConfig tight = new ProcessMiningConfig();
         tight.setPromptCharBudget(1);
         LlmAnalysisService service = new LlmAnalysisService(snapshotReader, claudeConfig,
-            tight, DIGEST_SERVICE, () -> llmClient);
+            tight, DIGEST_SERVICE, new ProcessModelBuilder(tight), () -> llmClient);
 
         List<PayloadDigest> digests = new ArrayList<>();
         for (int i = 0; i < 40; i++) {
@@ -577,6 +579,171 @@ class LlmAnalysisServiceTest {
      * overwrites them afterwards, believed. The two fields are measurements *about* the call, made
      * on this side of it.
      */
+    // ────────────────────────────────────────────────────────────────────────────────────────
+    // What the model is given to reason from.
+    //
+    // The prompt used to sample messages per topic, independently, on offset order — while four of
+    // the five audit prompts ask questions about a *case*. Whether one case survived in two topics'
+    // samples at once was an accident of those topics carrying the same cases at comparable volume,
+    // so the questions were unanswerable and what the model answered from was the topic names.
+    // ────────────────────────────────────────────────────────────────────────────────────────
+
+    /** 2026-01-01T00:00:00Z; below 10^10 an "at" is read as epoch *seconds*, so fixtures start here. */
+    private static final long T0 = 1_767_225_600_000L;
+
+    /** {@code {"id": …, "at": …}} digested with the mapped paths resolved, as the reader does it. */
+    private static PayloadDigest event(String topic, long offset, String caseId, long afterT0) {
+        long at = T0 + afterT0;
+        return DIGEST_SERVICE.digest(topic, 0, offset, at, "k" + offset,
+            ("{\"id\":\"" + caseId + "\",\"at\":" + at + "}").getBytes(StandardCharsets.UTF_8),
+            Set.of("id", "at"));
+    }
+
+    private static FieldMapping mappingFor(String... topics) {
+        Map<String, String> ids = new java.util.LinkedHashMap<>();
+        Map<String, String> times = new java.util.LinkedHashMap<>();
+        for (String topic : topics) {
+            ids.put(topic, "$.id");
+            times.put(topic, "$.at");
+        }
+        return new FieldMapping("m1", ids, times, Map.of(), null);
+    }
+
+    private String promptFor(List<PayloadDigest> digests, FieldMapping mapping, String... topics) {
+        givenDigests(digests);
+        givenModelAnswers();
+        llmAnalysisService.analyzeSnapshot(List.of(topics), SnapshotConfig.latestN(500), mapping);
+        ArgumentCaptor<String> prompt = ArgumentCaptor.forClass(String.class);
+        verify(llmClient).generateWithMeta(anyString(), prompt.capture(), any());
+        return prompt.getValue();
+    }
+
+    /**
+     * The measured process reaches the prompt, and is labelled as covering everything read.
+     *
+     * <p>This is the inversion the whole change turns on: the aggregate is computed over every
+     * record, so it is the one part of the evidence the sampling below it cannot weaken.
+     */
+    @Test
+    void theMeasuredProcessIsInThePromptAndSaysItCoversEverythingRead() {
+        String prompt = promptFor(List.of(
+            event("received", 1, "ORD-1", 0L),
+            event("validated", 2, "ORD-1", 1_000L),
+            event("received", 3, "ORD-2", 100L),
+            event("validated", 4, "ORD-2", 2_100L)),
+            mappingFor("received", "validated"), "received", "validated");
+
+        assertTrue(prompt.contains("PROCESSUS MESURÉ"), prompt);
+        assertTrue(prompt.contains("received → validated"),
+            "the transition must be stated, not left to be inferred from the topic names");
+        assertTrue(prompt.contains("Cas : 2"), prompt);
+        assertTrue(prompt.contains("VARIANTES"));
+        assertTrue(prompt.contains("Ne les recalcule pas"),
+            "the model has to be told these are measurements rather than a sample");
+    }
+
+    /**
+     * A case's events reach the prompt together, across topics.
+     *
+     * <p>The assertion the old sampling could not make: {@code ORD-1} is inlined with both of its
+     * events, so the sequence it forms is observable rather than assumed.
+     */
+    @Test
+    void aCaseIsInlinedWholeRatherThanSampledPerTopic() {
+        String prompt = promptFor(List.of(
+            event("received", 1, "ORD-1", 0L),
+            event("validated", 2, "ORD-1", 1_000L)),
+            mappingFor("received", "validated"), "received", "validated");
+
+        assertTrue(prompt.contains("CAS DÉTAILLÉS"), prompt);
+        assertTrue(prompt.contains("### Cas ORD-1 — 2 événement(s)"), prompt);
+        assertFalse(prompt.contains("## MESSAGES PAR TOPIC"),
+            "the per-topic sample is what the case traces replace");
+    }
+
+    /**
+     * With no mapping there is no event log, and the prompt says so <em>and</em> forbids the
+     * inference. A prompt that merely omitted the flows is one the model fills in for itself from
+     * the topic names, which is the failure this change exists to remove.
+     */
+    @Test
+    void withoutAMappingThePromptRefusesTheInferenceInsteadOfFallingSilent() {
+        String prompt = promptFor(List.of(
+            event("received", 1, "ORD-1", 0L),
+            event("validated", 2, "ORD-1", 1_000L)),
+            null, "received", "validated");
+
+        assertTrue(prompt.contains("non calculé"), prompt);
+        assertTrue(prompt.contains("AUCUNE séquence"), prompt);
+        assertTrue(prompt.contains("## MESSAGES PAR TOPIC"),
+            "describing the topics is all that is on offer, and it still happens");
+    }
+
+    /**
+     * W3: the digest carries forty salient scalars because profiling aggregates them per path
+     * across a topic. Inlining that many <em>per message</em> spent a topic's whole share in a
+     * handful of records — on the values the mapping did not name.
+     */
+    @Test
+    void theSalientScalarsAreBoundedPerMessageInThePrompt() {
+        StringBuilder payload = new StringBuilder("{\"id\":\"ORD-1\",\"at\":" + T0);
+        for (int i = 0; i < 30; i++) {
+            payload.append(",\"filler").append(i).append("\":\"value-").append(i).append('"');
+        }
+        payload.append('}');
+        PayloadDigest wide = DIGEST_SERVICE.digest("received", 0, 1L, T0, "k",
+            payload.toString().getBytes(StandardCharsets.UTF_8), Set.of("id", "at"));
+        assertTrue(wide.sample().size() > 10, "the digest itself keeps the wide view");
+
+        String prompt = promptFor(List.of(wide), mappingFor("received"), "received");
+
+        int inlined = 0;
+        for (int i = 0; i < 30; i++) {
+            if (prompt.contains("\"filler" + i + "\"")) {
+                inlined++;
+            }
+        }
+        assertEquals(new ProcessMiningConfig().getMaxSampleFieldsInPrompt(), inlined,
+            "only a handful of salient scalars belong in the prompt");
+        assertTrue(prompt.contains("sampleOmitted"),
+            "and what was left out is stated rather than silently dropped");
+    }
+
+    /** A topic no worked example passes through is named, so its silence is not read as a finding. */
+    @Test
+    void aTopicNoSpotlightCaseTouchesIsNamedAsSuch() {
+        ProcessMiningConfig oneCase = new ProcessMiningConfig();
+        oneCase.setMaxTraceCasesInPrompt(1);
+        oneCase.setMaxVariantsInPrompt(1);
+        llmAnalysisService = new LlmAnalysisService(snapshotReader, claudeConfig, oneCase,
+            DIGEST_SERVICE, new ProcessModelBuilder(oneCase), () -> llmClient);
+
+        String prompt = promptFor(List.of(
+            event("received", 1, "ORD-1", 0L),
+            event("received", 2, "ORD-2", 10L),
+            event("validated", 3, "ORD-2", 1_000L),
+            event("late", 4, "ORD-2", 2_000L)),
+            mappingFor("received", "validated", "late"), "received", "validated", "late");
+
+        assertTrue(prompt.contains("Aucun cas détaillé ne passe par"), prompt);
+    }
+
+    /** The coverage still counts what really reached the model — now per case rather than per topic. */
+    @Test
+    void coverageCountsTheRecordsTheCaseTracesCarried() {
+        givenDigests(List.of(
+            event("received", 1, "ORD-1", 0L),
+            event("validated", 2, "ORD-1", 1_000L)));
+        givenModelAnswers();
+
+        ProcessMiningResult result = llmAnalysisService.analyzeSnapshot(
+            List.of("received", "validated"), SnapshotConfig.latestN(500),
+            mappingFor("received", "validated"));
+
+        assertEquals(2, result.coverage().messagesRead());
+        assertEquals(2, result.coverage().messagesAnalysed());
+    }
+
     @Test
     void theModelCannotSupplyItsOwnUsageOrCoverage() {
         when(llmClient.generateWithMeta(anyString(), anyString(), any())).thenReturn(new LlmResponse("""

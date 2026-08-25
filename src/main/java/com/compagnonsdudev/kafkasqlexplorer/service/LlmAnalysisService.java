@@ -15,6 +15,7 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.PayloadDigest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.PayloadShape;
 import com.compagnonsdudev.kafkasqlexplorer.domain.ProcessMiningCoverage;
 import com.compagnonsdudev.kafkasqlexplorer.domain.ProcessMiningResult;
+import com.compagnonsdudev.kafkasqlexplorer.domain.ProcessModel;
 import com.compagnonsdudev.kafkasqlexplorer.domain.SnapshotConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.SnapshotRead;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicCoverage;
@@ -22,11 +23,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Supplier;
@@ -40,6 +43,8 @@ public class LlmAnalysisService {
     private final ClaudeConfig claudeConfig;
     private final ProcessMiningConfig processMiningConfig;
     private final PayloadDigestService payloadDigestService;
+    /** Computes the event log's aggregate — the evidence the model reasons from. */
+    private final ProcessModelBuilder processModelBuilder;
     /**
      * Resolved per call, never cached in a field: {@code POST /api/config} can change the provider
      * and the API key at runtime, and a client captured at construction kept every analysis on the
@@ -104,28 +109,46 @@ public class LlmAnalysisService {
         - Anomaly flow: -.->
         """;
 
+    /** Read by both inlining paths, so the two cannot describe one record format differently. */
+    private static final String MESSAGE_FORMAT_LEGEND = """
+## FORMAT DES MESSAGES
+Chaque message est un résumé du payload d'origine :
+  shape  = identifiant de structure (section ci-dessus)
+  bytes  = taille réelle du payload d'origine
+  fields = valeurs aux chemins déclarés dans le mapping
+  sample = quelques autres valeurs scalaires, tronquées et volontairement peu nombreuses
+  arrays = chemin de tableau -> nombre d'éléments réels
+  partial = true quand le résumé est incomplet (payload plus grand que le budget d'analyse)
+
+""";
+
     @org.springframework.beans.factory.annotation.Autowired
     public LlmAnalysisService(KafkaSnapshotReader snapshotReader, ClaudeConfig claudeConfig,
                               ProcessMiningConfig processMiningConfig,
                               PayloadDigestService payloadDigestService,
+                              ProcessModelBuilder processModelBuilder,
                               LlmClientProvider llmClientProvider) {
         this(snapshotReader, claudeConfig, processMiningConfig, payloadDigestService,
-            llmClientProvider::get);
+            processModelBuilder, llmClientProvider::get);
     }
 
     /** Test seam: defaults the ingestion tuning so unit tests only have to supply an LlmClient. */
     public LlmAnalysisService(KafkaSnapshotReader snapshotReader, ClaudeConfig claudeConfig, LlmClient llmClient) {
         this(snapshotReader, claudeConfig, new ProcessMiningConfig(),
-            new PayloadDigestService(new ProcessMiningConfig()), () -> llmClient);
+            new PayloadDigestService(new ProcessMiningConfig()),
+            new ProcessModelBuilder(new ProcessMiningConfig()), () -> llmClient);
     }
 
     public LlmAnalysisService(KafkaSnapshotReader snapshotReader, ClaudeConfig claudeConfig,
                               ProcessMiningConfig processMiningConfig,
-                              PayloadDigestService payloadDigestService, Supplier<LlmClient> llmClient) {
+                              PayloadDigestService payloadDigestService,
+                              ProcessModelBuilder processModelBuilder,
+                              Supplier<LlmClient> llmClient) {
         this.snapshotReader = snapshotReader;
         this.claudeConfig = claudeConfig;
         this.processMiningConfig = processMiningConfig;
         this.payloadDigestService = payloadDigestService;
+        this.processModelBuilder = processModelBuilder;
         this.llmClient = llmClient;
     }
 
@@ -305,40 +328,58 @@ public class LlmAnalysisService {
             sb.append("Si aucun changement structurel détecté, retourne \"NO_CHANGE\" dans le champ flowchart.\n\n");
         }
 
-        Map<String, List<PayloadDigest>> sampled = new LinkedHashMap<>();
-        int perTopicLimit = Math.max(1, processMiningConfig.getMaxMessagesPerTopicInPrompt());
-        byTopic.forEach((topic, digests) -> sampled.put(topic, evenSample(digests, perTopicLimit)));
+        // The process is measured before it is described. Everything in this section is a count, a
+        // sort or a set difference over *every* record read — not over the handful that fit in the
+        // prompt — so it is the one part of the evidence the sampling below cannot weaken.
+        ProcessModel model = processModelBuilder.build(allDigests(byTopic), fieldMapping);
 
-        appendShapes(sb, sampled);
-        Map<String, Integer> written = appendMessages(sb, byTopic, sampled);
+        // What gets inlined is decided first, into a buffer, so the shapes section can describe
+        // exactly the records that follow it rather than a different sample of them.
+        StringBuilder body = new StringBuilder();
+        List<PayloadDigest> inlined = new ArrayList<>();
+        Map<String, Integer> written = model.available()
+            ? appendCaseTraces(body, byTopic, model, fieldMapping, inlined)
+            : appendTopicSamples(body, byTopic, inlined);
+
+        appendProcessModel(sb, model);
+        appendShapes(sb, inlined);
+        sb.append(body);
 
         sb.append("""
 
 ## INSTRUCTIONS
-1. Analyse les flux de messages entre les topics
-2. Identifie les patterns de processus (séquences, branchements, erreurs)
-3. Génère un flowchart Mermaid décrivant le flux nominal et les anomalies
-4. Liste les anomalies détectées avec leur sévérité
-5. Propose des hypothèses sur l'architecture sous-jacente
-6. Identifie les angles morts (données manquantes, topics non observés)
-7. Si une information est incertaine, préfère une liste vide à un texte hors format
+1. Pars du PROCESSUS MESURÉ : il est calculé sur tous les messages lus, pas sur un
+   échantillon. Ne recalcule pas ses chiffres et ne les contredis pas — explique-les.
+2. Génère le flowchart Mermaid à partir des TRANSITIONS listées, pas des noms de topics :
+   un arc que la mesure ne montre pas n'existe pas, même s'il paraît évident.
+3. Sers-toi des VARIANTES pour distinguer le flux nominal des déviations, et des CAS
+   DÉTAILLÉS comme preuves à citer (id de cas, offsets).
+4. Liste les anomalies avec leur sévérité, en t'appuyant sur les latences p95/max, les
+   répétitions et la distribution des fins de cas.
+5. Propose des hypothèses sur l'architecture sous-jacente, marquées comme telles.
+6. Identifie les angles morts, en tenant compte des LIMITES DE LA MESURE ci-dessus.
+7. Si une information est incertaine, préfère une liste vide à un texte hors format.
 8. Les payloads sont résumés, pas complets : ne conclus jamais à l'absence d'un champ
-   à partir de son absence dans "sample" — seul "shape" fait foi sur la structure
+   à partir de son absence dans "sample" — seul "shape" fait foi sur la structure.
 """);
         return written;
+    }
+
+    private static List<PayloadDigest> allDigests(Map<String, List<PayloadDigest>> byTopic) {
+        List<PayloadDigest> all = new ArrayList<>();
+        byTopic.values().forEach(all::addAll);
+        return all;
     }
 
     /**
      * Structures, deduplicated. A window of a thousand documents that share a schema costs one
      * shape block; without this the same ten-level skeleton would be repeated per message.
      */
-    private void appendShapes(StringBuilder sb, Map<String, List<PayloadDigest>> sampled) {
+    private void appendShapes(StringBuilder sb, List<PayloadDigest> inlined) {
         Set<String> shapeIds = new LinkedHashSet<>();
-        for (List<PayloadDigest> digests : sampled.values()) {
-            for (PayloadDigest digest : digests) {
-                if (digest.shapeId() != null) {
-                    shapeIds.add(digest.shapeId());
-                }
+        for (PayloadDigest digest : inlined) {
+            if (digest.shapeId() != null) {
+                shapeIds.add(digest.shapeId());
             }
         }
         List<PayloadShape> shapes = payloadDigestService.shapesFor(shapeIds);
@@ -354,26 +395,197 @@ public class LlmAnalysisService {
     }
 
     /**
-     * Message digests, inlined under a global character budget. Each topic gets an equal share;
-     * within a topic the messages are an evenly spaced sample (first and last always kept) so a
-     * burst never crowds out the rest of the window.
+     * The process, as measured — the section the model is meant to reason <em>from</em>.
+     *
+     * <p>Every figure is computed over each record read, so this part of the evidence is immune to
+     * the sampling that follows it. That inversion is the whole change: the model used to be handed
+     * a few dozen records drawn per topic and asked which correlation ids never reached a terminal
+     * state, a question that sample cannot answer — so what it answered from was the topic names.
+     *
+     * <p>When there is no mapping there is no event log, and the section says so and forbids the
+     * inference rather than falling silent. A prompt that simply omits the flows is one the model
+     * fills in for itself, which is the failure this exists to remove.
      */
-    private Map<String, Integer> appendMessages(StringBuilder sb,
-                                 Map<String, List<PayloadDigest>> byTopic,
-                                 Map<String, List<PayloadDigest>> sampled) {
-        Map<String, Integer> written = new LinkedHashMap<>();
-        sb.append("""
-## FORMAT DES MESSAGES
-Chaque message est un résumé du payload d'origine :
-  shape  = identifiant de structure (section ci-dessus)
-  bytes  = taille réelle du payload d'origine
-  fields = valeurs aux chemins déclarés dans le mapping
-  sample = autres valeurs scalaires, échantillon borné, tronquées au-delà de la limite
-  arrays = chemin de tableau -> nombre d'éléments réels
-  partial = true quand le résumé est incomplet (payload plus grand que le budget d'analyse)
+    private void appendProcessModel(StringBuilder sb, ProcessModel model) {
+        sb.append("## PROCESSUS MESURÉ\n");
+        if (!model.available()) {
+            sb.append("(non calculé — ").append(model.unavailableReason()).append(")\n")
+              .append("Décris les topics et leurs structures, mais n'affirme AUCUNE séquence, "
+                  + "latence ni corrélation entre topics : rien ici ne les a observées, et les "
+                  + "noms des topics ne sont pas une observation. Signale cette limite dans "
+                  + "blindSpots.\n\n");
+            return;
+        }
 
-## MESSAGES PAR TOPIC
+        sb.append("Chiffres calculés sur la totalité des messages lus, pas sur l'échantillon "
+            + "ci-dessous. Ne les recalcule pas : explique-les.\n");
+        sb.append("Cas : ").append(model.cases())
+          .append(" · Événements : ").append(model.events());
+        if (model.eventsWithoutCase() > 0) {
+            sb.append(" · Hors corrélation : ").append(model.eventsWithoutCase());
+        }
+        sb.append("\nFenêtre : ").append(Instant.ofEpochMilli(model.windowStartMs()))
+          .append(" → ").append(Instant.ofEpochMilli(model.windowEndMs()))
+          .append(" (horloge : ").append(timeSourceLabel(model.eventTimeSource())).append(")\n");
+
+        sb.append("\n### ACTIVITÉS — occurrences, cas concernés\n");
+        for (ProcessModel.Activity activity : model.activities()) {
+            sb.append("  ").append(activity.name())
+              .append(" : ").append(activity.occurrences()).append(" occ, ")
+              .append(activity.cases()).append(" cas\n");
+        }
+
+        sb.append("\n### TRANSITIONS OBSERVÉES — A → B, avec la latence entre les deux\n");
+        if (model.edges().isEmpty()) {
+            sb.append("  (aucune : aucun cas ne compte deux événements dans cette fenêtre)\n");
+        }
+        for (ProcessModel.Edge edge : model.edges()) {
+            sb.append("  ").append(edge.from()).append(" → ").append(edge.to())
+              .append(" : ").append(edge.occurrences()).append(" occ, ")
+              .append(edge.cases()).append(" cas, p50 ").append(formatMillis(edge.p50Ms()))
+              .append(", p95 ").append(formatMillis(edge.p95Ms()))
+              .append(", max ").append(formatMillis(edge.maxMs()));
+            if (edge.outOfOrderCount() > 0) {
+                sb.append(" — ").append(edge.outOfOrderCount())
+                  .append(" occurrence(s) produites dans l'ordre inverse de leur horodatage "
+                      + "métier (horloges désynchronisées ou événement antidaté)");
+            }
+            sb.append("\n");
+        }
+        if (model.edgesOmitted() > 0) {
+            sb.append("  (").append(model.edgesOmitted())
+              .append(" transition(s) plus rare(s) non listée(s))\n");
+        }
+
+        sb.append("\n### VARIANTES — chemins distincts de bout en bout\n");
+        for (ProcessModel.Variant variant : model.variants()) {
+            sb.append("  ").append(variant.cases()).append(" cas (")
+              .append(percent(variant.cases(), model.cases())).append(") : ")
+              .append(String.join(" → ", variant.path()))
+              .append("  [ex. ").append(variant.example()).append("]\n");
+        }
+        if (model.variantsOmitted() > 0) {
+            sb.append("  (").append(model.variantsOmitted())
+              .append(" variante(s) non listée(s) ; celles ci-dessus sont les plus fréquentes et "
+                  + "les plus rares)\n");
+        }
+
+        sb.append("\n### DÉBUTS DE CAS\n");
+        model.starts().forEach(e -> sb.append("  ").append(e.activity()).append(" : ")
+            .append(e.cases()).append(" cas\n"));
+        sb.append("### FINS DE CAS — dernière activité atteinte\n");
+        model.ends().forEach(e -> sb.append("  ").append(e.activity()).append(" : ")
+            .append(e.cases()).append(" cas (").append(percent(e.cases(), model.cases()))
+            .append(")\n"));
+
+        if (!model.repeats().isEmpty()) {
+            sb.append("\n### RÉPÉTITIONS — un même cas revu sur la même activité\n");
+            model.repeats().forEach(r -> sb.append("  ").append(r.activity()).append(" : ")
+                .append(r.casesAffected()).append(" cas, jusqu'à ")
+                .append(r.maxOccurrencesInOneCase()).append(" fois pour un seul cas\n"));
+        }
+
+        if (!model.notes().isEmpty()) {
+            sb.append("\n### LIMITES DE LA MESURE\n");
+            model.notes().forEach(note -> sb.append("  - ").append(note).append("\n"));
+        }
+        sb.append("\n");
+    }
+
+    /**
+     * Whole case traces, one per variant the model nominated — the worked examples.
+     *
+     * <p>This is what replaces sampling messages per topic. The old rule drew its sample from each
+     * topic independently, on offset order, so whether one case survived in two topics at once was
+     * an accident of those topics carrying the same cases at comparable volume; every question the
+     * audit prompts ask is about a case, and none of them was answerable from that. A trace is the
+     * unit the question is asked in, so it is the unit that goes in.
+     *
+     * <p>They are examples and are labelled as such: the proportions live in the VARIANTES section
+     * above, computed over everything. Presenting a dozen chosen traces as a representative sample
+     * would be the same category of claim this whole change removes.
+     */
+    private Map<String, Integer> appendCaseTraces(StringBuilder sb,
+                                   Map<String, List<PayloadDigest>> byTopic,
+                                   ProcessModel model,
+                                   FieldMapping fieldMapping,
+                                   List<PayloadDigest> inlined) {
+        Map<String, Integer> written = new LinkedHashMap<>();
+        byTopic.keySet().forEach(topic -> written.put(topic, 0));
+
+        Map<String, List<PayloadDigest>> byCase =
+            ProcessModelBuilder.groupByCase(allDigests(byTopic), fieldMapping);
+
+        sb.append(MESSAGE_FORMAT_LEGEND);
+        sb.append("""
+## CAS DÉTAILLÉS
+Traces complètes, un cas par variante ci-dessus : ce sont des exemples vérifiables
+(id de cas, partition, offset), PAS un échantillon représentatif — les proportions
+sont dans la section VARIANTES.
 """);
+
+        int budget = processMiningConfig.getPromptCharBudget();
+        int start = sb.length();
+        int casesWritten = 0;
+        for (String caseId : model.spotlightCases()) {
+            List<PayloadDigest> trace = byCase.get(caseId);
+            if (trace == null || trace.isEmpty()) {
+                continue;
+            }
+            if (sb.length() - start > budget) {
+                break;
+            }
+            sb.append("\n### Cas ").append(caseId).append(" — ")
+              .append(trace.size()).append(" événement(s)\n[\n");
+            for (int i = 0; i < trace.size(); i++) {
+                if (i > 0) {
+                    sb.append(",\n");
+                }
+                appendDigest(sb, trace.get(i));
+                inlined.add(trace.get(i));
+                written.merge(trace.get(i).topic(), 1, Integer::sum);
+            }
+            sb.append("\n]\n");
+            casesWritten++;
+        }
+
+        int remaining = model.cases() - casesWritten;
+        if (remaining > 0) {
+            sb.append("\n(").append(remaining)
+              .append(" autre(s) cas non détaillé(s) ici — ils sont comptés dans le PROCESSUS "
+                  + "MESURÉ ci-dessus, qui porte sur tous les messages lus.)\n");
+        }
+
+        List<String> silent = written.entrySet().stream()
+            .filter(e -> e.getValue() == 0 && !byTopic.get(e.getKey()).isEmpty())
+            .map(Map.Entry::getKey)
+            .toList();
+        if (!silent.isEmpty()) {
+            sb.append("(Aucun cas détaillé ne passe par : ").append(String.join(", ", silent))
+              .append(". Ces topics ont pourtant été lus — leur absence ici est un effet du choix "
+                  + "des exemples, pas une observation à leur sujet.)\n");
+        }
+        return written;
+    }
+
+    /**
+     * Message digests sampled per topic — the path taken when no event log could be built.
+     *
+     * <p>Each topic gets an equal share; within a topic the messages are an evenly spaced sample
+     * (first and last always kept) so a burst never crowds out the rest of the window. Kept for the
+     * unmapped case, where there is no case id to sample by and describing the topics is all that
+     * is on offer — {@link #appendProcessModel} is what stops the model turning that into a
+     * pipeline it never saw.
+     */
+    private Map<String, Integer> appendTopicSamples(StringBuilder sb,
+                                 Map<String, List<PayloadDigest>> byTopic,
+                                 List<PayloadDigest> inlined) {
+        Map<String, List<PayloadDigest>> sampled = new LinkedHashMap<>();
+        int perTopicLimit = Math.max(1, processMiningConfig.getMaxMessagesPerTopicInPrompt());
+        byTopic.forEach((topic, digests) -> sampled.put(topic, evenSample(digests, perTopicLimit)));
+        Map<String, Integer> written = new LinkedHashMap<>();
+        sb.append(MESSAGE_FORMAT_LEGEND);
+        sb.append("## MESSAGES PAR TOPIC\n");
 
         int topicCount = Math.max(1, byTopic.size());
         // The per-topic share has a floor, because a topic allotted 200 characters contributes
@@ -407,25 +619,26 @@ Chaque message est un résumé du payload d'origine :
               .append("payload max ").append(formatBytes(maxBytes)).append("\n");
 
             int budgetStart = sb.length();
-            int inlined = 0;
+            int count = 0;
             sb.append("[\n");
             for (PayloadDigest digest : selected) {
                 if (sb.length() - budgetStart > topicBudget) {
                     break;
                 }
-                if (inlined > 0) {
+                if (count > 0) {
                     sb.append(",\n");
                 }
                 appendDigest(sb, digest);
-                inlined++;
+                inlined.add(digest);
+                count++;
             }
             sb.append("\n]\n");
 
-            if (inlined < all.size()) {
-                sb.append("(").append(all.size() - inlined)
+            if (count < all.size()) {
+                sb.append("(").append(all.size() - count)
                   .append(" message(s) non inclus — échantillon régulier sur la fenêtre)\n");
             }
-            written.put(entry.getKey(), inlined);
+            written.put(entry.getKey(), count);
             globalRemaining -= (sb.length() - budgetStart);
         }
 
@@ -450,8 +663,14 @@ Chaque message est un résumé du payload d'origine :
             sb.append(", \"shape\": ");
             appendJsonString(sb, digest.shapeId());
         }
-        appendJsonMap(sb, "fields", digest.fields());
-        appendJsonMap(sb, "sample", digest.sample());
+        appendJsonMap(sb, "fields", digest.fields(), Integer.MAX_VALUE);
+        // W3: the digest carries up to `max-sample-fields` scalars because profiling aggregates
+        // them per path across a whole topic. Inlining that many *per message* is what spent a
+        // topic's share in a handful of records — and on values that are, by construction, the ones
+        // the mapping did not name. A few keep a record recognisable; the shape section already
+        // describes the structure once, for every record that shares it.
+        appendJsonMap(sb, "sample", digest.sample(),
+            Math.max(0, processMiningConfig.getMaxSampleFieldsInPrompt()));
         if (digest.arrayCounts() != null && !digest.arrayCounts().isEmpty()) {
             sb.append(", \"arrays\": {");
             boolean first = true;
@@ -477,20 +696,26 @@ Chaque message est un résumé du payload d'origine :
         sb.append("}");
     }
 
-    private void appendJsonMap(StringBuilder sb, String name, Map<String, String> values) {
-        if (values == null || values.isEmpty()) {
+    private void appendJsonMap(StringBuilder sb, String name, Map<String, String> values, int limit) {
+        if (values == null || values.isEmpty() || limit <= 0) {
             return;
         }
         sb.append(", \"").append(name).append("\": {");
-        boolean first = true;
+        int written = 0;
         for (Map.Entry<String, String> entry : values.entrySet()) {
-            if (!first) sb.append(", ");
+            if (written >= limit) {
+                break;
+            }
+            if (written > 0) sb.append(", ");
             appendJsonString(sb, entry.getKey());
             sb.append(": ");
             appendJsonString(sb, entry.getValue());
-            first = false;
+            written++;
         }
         sb.append("}");
+        if (values.size() > written) {
+            sb.append(", \"").append(name).append("Omitted\": ").append(values.size() - written);
+        }
     }
 
     /**
@@ -510,6 +735,35 @@ Chaque message est un résumé du payload d'origine :
             sampled.add(values.get((int) Math.round(i * step)));
         }
         return sampled;
+    }
+
+    /** A duration a reader can weigh: "812 ms", "3.2 s", "4.1 min" — never a bare millisecond count. */
+    static String formatMillis(long millis) {
+        long magnitude = Math.abs(millis);
+        String rendered;
+        if (magnitude < 1_000) {
+            rendered = magnitude + " ms";
+        } else if (magnitude < 60_000) {
+            rendered = String.format(Locale.ROOT, "%.1f s", magnitude / 1_000.0);
+        } else if (magnitude < 3_600_000) {
+            rendered = String.format(Locale.ROOT, "%.1f min", magnitude / 60_000.0);
+        } else {
+            rendered = String.format(Locale.ROOT, "%.1f h", magnitude / 3_600_000.0);
+        }
+        return millis < 0 ? "-" + rendered : rendered;
+    }
+
+    private static String percent(int part, int total) {
+        return total <= 0 ? "?" : String.format(Locale.ROOT, "%.1f%%", 100.0 * part / total);
+    }
+
+    /** Names the clock, because a latency measured on produce time is a different measurement. */
+    private static String timeSourceLabel(ProcessModel.TimeSource source) {
+        return switch (source) {
+            case MAPPED_FIELD -> "horodatage métier du mapping";
+            case MIXED -> "horodatage métier, avec repli partiel sur l'horodatage Kafka";
+            case RECORD_TIMESTAMP -> "horodatage Kafka (produce time), faute d'horodatage métier";
+        };
     }
 
     private static String formatBytes(long bytes) {

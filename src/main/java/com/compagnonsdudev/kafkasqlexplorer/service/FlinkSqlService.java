@@ -1550,36 +1550,13 @@ public class FlinkSqlService {
     }
 
     /**
-     * Resolves an event-time value (message field) to epoch millis, mirroring the metric engine:
-     * numbers and numeric strings below 10^10 are treated as epoch seconds, ISO-8601 and
-     * space-separated LocalDateTime strings are parsed, and anything else falls back to {@code fallback}.
+     * Resolves an event-time value (message field) to epoch millis, falling back to the Kafka
+     * record's own timestamp. The rule lives in {@link EventTime}: it was written here and again,
+     * identically, in {@code MetricService} — this copy even said so, "mirroring the metric
+     * engine" — and the process model needed a third caller.
      */
     private long parseEventTimeMillis(Object tsVal, long fallback) {
-        if (tsVal instanceof Number n) {
-            long ts = n.longValue();
-            return ts < 10_000_000_000L ? ts * 1000L : ts;
-        }
-        if (tsVal instanceof String s) {
-            String text = s.trim();
-            if (!text.isEmpty()) {
-                try {
-                    long ts = Long.parseLong(text);
-                    return ts < 10_000_000_000L ? ts * 1000L : ts;
-                } catch (NumberFormatException ignoredNumeric) {
-                    try {
-                        return java.time.Instant.parse(text).toEpochMilli();
-                    } catch (Exception ignoredIso) {
-                        try {
-                            return java.time.LocalDateTime.parse(text.replace(' ', 'T'))
-                                .toInstant(java.time.ZoneOffset.UTC).toEpochMilli();
-                        } catch (Exception ignoredLocal) {
-                            // fall through to the fallback
-                        }
-                    }
-                }
-            }
-        }
-        return fallback;
+        return EventTime.toEpochMillis(tsVal, fallback);
     }
 
     /** Evaluates a single aggregate function over a list of rows. */

@@ -6,9 +6,22 @@ taken now says so instead of coming back as a zero. What has never been reviewed
 *uses* the model — what the prompt carries, what the schema forces, what is recomputed on every
 call, and whether the model can see the thing it is being asked about.
 
-This document is that review. Nothing here is implemented; each item is sized and ranked, and the
-one that dominates the rest is stated first. The order of the sections is the order the work should
-be done in, because the later items get cheaper once the first one lands.
+This document is that review. Each item is sized and ranked, and the one that dominates the rest is
+stated first. The order of the sections is the order the work should be done in, because the later
+items get cheaper once the first one lands.
+
+> **Status.** It implemented nothing when it was written. **W1, W2 and W3 have since shipped**, as
+> one change — they share a diff, and the first two are meaningless apart. What sections 1 and 2
+> describe is therefore the state this work was done *from*; the code now computes the event log
+> (`ProcessModelBuilder`, `ProcessModel`) and sends the aggregate plus whole case traces, and
+> `sample` is bounded per message. **W4 through W8 are open**, and W8 in particular is what would
+> turn the argument below into a measurement.
+>
+> One thing was found while implementing rather than while reviewing, and it is recorded here
+> because it changes a claim in section 3: a resolver for event-time values already existed
+> **twice**, byte-equivalent, one copy admitting it in a comment ("mirroring the metric engine").
+> It is `EventTime` now, and both callers delegate — the same consolidation `SecureXml` and
+> `LogSafe` exist for.
 
 Everything below is derived from the code and the shipped configuration, and each derivation names
 the file it comes from. Where a number is arithmetic on the configured caps rather than a
@@ -116,7 +129,7 @@ values *per path* across the sample (`collectValues`, four distinct examples per
 structures once. That is why profiling behaves well on small models and the analysis does not. The
 analysis prompt is the only one in the tree still built per record.
 
-**W1 — Build the event log and its aggregates in Java; send those.** A new pure service
+**W1 — Build the event log and its aggregates in Java; send those. → shipped.** A new pure service
 (`ProcessMiningAggregator` or similar) taking `List<PayloadDigest>` plus the `FieldMapping` and
 returning a record: cases, variants, directly-follows edges with counts and latency quantiles,
 incomplete cases by stopping point, duplicates, per-topic throughput. Pure, so it is unit-testable
@@ -125,7 +138,7 @@ whose correctness can be pinned by tests rather than judged by reading an answer
 carries the aggregate, plus **a handful of complete case traces as evidence** (see W2). Medium
 effort, and it retires most of sections 3 and 4 on its own.
 
-**W2 — Sample by case, not by topic.** Whatever else happens, the raw examples that go in the prompt
+**W2 — Sample by case, not by topic. → shipped.** Whatever else happens, the raw examples that go in the prompt
 should be *complete traces*: pick N correlation ids and include every event of each, across every
 topic, in order. Ten complete cases teach a model more about a process than six hundred unrelated
 records, and cost a fraction of the budget. Cheap on its own, and the natural companion to W1 — the
@@ -173,7 +186,10 @@ because no client asks for a cache breakpoint. A live session calls the model ev
 are identical every time. That is the textbook case for caching, and it is currently paid in full on
 every window.
 
-**W3 — Stop spending the analysis budget on `sample`.** One-line change, large effect. Cheap.
+**W3 — Stop spending the analysis budget on `sample`. → shipped.** `max-sample-fields-in-prompt`
+(6) bounds what `appendDigest` writes, leaving `max-sample-fields` (40) to the digest, where
+profiling still needs the breadth. What it drops is counted in `sampleOmitted` rather than
+disappearing.
 
 **W4 — Reorder for a stable prefix, then set a cache breakpoint after it.** `cache_control` on the
 Anthropic path; on OpenRouter the reordering alone is enough, since its prefix caching is automatic
@@ -261,19 +277,47 @@ into a measurement.
 
 ## Recommendation
 
-Do **W1 + W2 + W3** together and treat them as one change: compute the event log, send the
-aggregate plus complete case traces, and stop inlining incidental scalars. They share a diff, they
-are pinned by the same tests, and together they turn the analysis from "guess the process from 2 %
-of the records" into "interpret a process that was measured".
+**W1 + W2 + W3 shipped together, as one change**, which is how they were recommended: they share a
+diff, they are pinned by the same tests, and the first two are meaningless apart. The analysis went
+from "guess the process from 2 % of the records" to "interpret a process that was measured".
 
-**W5** is cheap and independent — do it whenever. **W4** pays on live sessions and costs almost
-nothing once the prompt is reordered, which W1 does anyway. **W8** should follow immediately, while
-the reasoning is fresh. **W6** and **W7** are worth measuring before doing.
+What remains: **W5** is cheap and independent — do it whenever. **W4** pays on live sessions and
+costs almost nothing now that the prompt opens with a stable measured section. **W8** should follow
+immediately, while the reasoning is fresh; it is also the only thing that would settle the
+bilingual-prompt question below. **W6** and **W7** are worth measuring before doing.
+
+### What shipping W1–W3 actually changed
+
+- `ProcessModelBuilder` + `ProcessModel` — the event log's aggregate: directly-follows edges with
+  p50/p95/max latency, variants with case counts, start/end distributions, repeated
+  `(case, activity)` pairs. Pure, deterministic, and pinned by 18 cases rather than judged by
+  reading an answer.
+- The prompt opens with **PROCESSUS MESURÉ**, computed over *every* record read, and the
+  instructions tell the model to draw the flowchart from the listed transitions rather than from
+  the topic names.
+- **Whole case traces** replace the per-topic sample, one per selected variant — and the variant
+  selection takes from **both ends** of the frequency distribution, because a top-N cut drops
+  exactly the deviation an audit is looking for. A topic no example passes through is named, so its
+  silence is not read as a finding.
+- With no field mapping the section says so and **forbids the inference** instead of falling
+  silent, which is the failure mode this whole document is about: a prompt that merely omits the
+  flows is one the model fills in for itself.
+- Three things the measurement refuses to do, each recorded in the code: it does not decide which
+  activity is terminal (the end distribution is reported, the reading is the model's), it does not
+  hide the window boundary (a snapshot manufactures incomplete cases at both ends), and it does not
+  report "no process" when it means "no case id".
 
 ## Constaté, non traité
 
 Recorded rather than fixed, because each is a decision rather than a defect:
 
+- **The measured process is computed and only the model sees it.** W1 built it to feed the prompt,
+  and that is where it stops: `ProcessModel` never reaches `ProcessMiningResult`, so the operator
+  reads the model's *narrative* about a directly-follows graph they cannot see. The variants table
+  and the per-edge latencies are the most checkable thing this feature now produces, and surfacing
+  them beside the flowchart would let a reader verify the narrative instead of trusting it — which
+  is the rule the coverage notice and the audit's evidence table already follow. Deliberately left:
+  it is a UI change with its own design, and W1 was scoped as what the *model* is given.
 - **The prompts are bilingual.** The system prompt is English, the user prompt's headings and
   instructions are French, the enums are English. Small models are measurably worse at holding a
   format across a language switch, and this application is routinely pointed at a 3B model. Nobody
