@@ -42,13 +42,34 @@ export const formatContext = (tokens: number | null): string | null => {
 };
 
 /**
+ * Un modèle dont les deux prix publiés sont nuls.
+ *
+ * Le prix, pas le suffixe `:free` du slug : celui-ci est une convention de nommage, celui-là est
+ * un fait publié — et `0` est ici une vraie mesure, à la différence d'un prix absent, qui reste
+ * `null` et ne dit rien.
+ */
+export const isFreeOption = (option: LlmModelOption): boolean =>
+  option.promptPriceUsdPerMillion === 0 && option.completionPriceUsdPerMillion === 0;
+
+/**
  * La ligne secondaire d'une option : fenêtre, prix, coût projeté, avertissements.
  *
  * Ce qui est absent ne produit rien — un modèle sans prix publié n'affiche pas « gratuit », et un
  * modèle dont la fenêtre n'est pas publiée n'affiche pas « 0 ». C'est la même règle que le reste de
  * l'intégration : une mesure qu'on n'a pas prise ne se rend pas comme une mesure nulle.
+ *
+ * @param dataCollectionDenied la politique de routage *en vigueur* refuse les fournisseurs qui
+ *   conservent ou entraînent. La liste est triée du moins cher au plus cher, donc les modèles
+ *   gratuits arrivent en tête — et ce sont précisément ceux que cette politique écarte le plus
+ *   souvent, les endpoints gratuits étant ceux qui entraînent. Sans cette mention, les premières
+ *   lignes proposées sont celles qui répondront 404, qualifiées seulement après coup par
+ *   `explainRoutingRefusal`. On avertit, on ne tranche pas : cette application ne sait pas quels
+ *   fournisseurs servent ce modèle aujourd'hui, seul le routage le sait.
  */
-export const describeOption = (option: LlmModelOption): string[] => {
+export const describeOption = (
+  option: LlmModelOption,
+  dataCollectionDenied = false,
+): string[] => {
   const parts: string[] = [];
   const context = formatContext(option.contextLength);
   if (context) parts.push(context);
@@ -71,6 +92,9 @@ export const describeOption = (option: LlmModelOption): string[] => {
     parts.push('no schema support');
   }
   if (option.reasoningMandatory === true) parts.push('always reasons');
+  if (dataCollectionDenied && isFreeOption(option)) {
+    parts.push('free — usually unroutable under your data-collection policy');
+  }
   return parts;
 };
 

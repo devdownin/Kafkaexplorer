@@ -1110,7 +1110,12 @@ const Config: React.FC = () => {
                                 <span className="ml-2 text-on-surface-variant">{option.name}</span>
                               )}
                               <span className="block text-on-surface-variant">
-                                {describeOption(option).join(' · ')}
+                                {/* La politique lue est celle qui *tourne* (`inForce`), jamais
+                                    celle du formulaire : la liste décrit le point d'accès
+                                    enregistré, et mélanger les deux mettrait l'avertissement d'une
+                                    configuration sous les modèles d'une autre. */}
+                                {describeOption(option,
+                                  inForce?.llmDataRetentionRefused === true).join(' · ')}
                               </span>
                             </button>
                           </li>

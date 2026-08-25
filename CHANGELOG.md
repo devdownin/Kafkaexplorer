@@ -43,7 +43,36 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   its first assertion is that the filters actually narrow the catalogue. Documented in
   `CONTRIBUTING.md`.
 
+  It now covers the **completion** request too, behind `--chat` because those are real billed calls
+  (sixteen output tokens on a cheap model). That body is where the same exposure sits and where it
+  costs the most: `provider` and `usage` ride on the assumption that an unrecognised field is
+  refused rather than ignored, and it is the wrong way round — an ignored field costs nothing and
+  says nothing, so a privacy restriction that never applied and an accounting field that never came
+  back both look exactly like success. The assertion that can change what the client sends is
+  `usage.cost`: `LlmUsage.costUsd` reads it and `claude.session-cost-limit-usd` is enforced from it,
+  so if it has to be asked for, every cost shown on this application's own default provider is null
+  while the live session tells the operator *the provider reports none* — false about OpenRouter
+  rather than merely unknown. The script settles that question in one run; it has not been run from
+  the environment this was written in, where `openrouter.ai` is unreachable.
+
 ### Fixed
+
+- **A rate limit is now waited out on the server's schedule instead of the backoff.** A 429 was
+  handled like a 5xx — 500 ms, then 1 s, then give up — which spends all three attempts inside a
+  second and a half, shorter than any rate limit worth the name. The caller was told "call failed
+  with status 429" about a request that would have been accepted a few seconds later, having been
+  refused three times to get there. `Retry-After` is read in both its legal forms and OpenRouter's
+  `X-RateLimit-Reset` after it; the wait is bounded by 30 s and by the call's own timeout, and a
+  delay beyond that is refused immediately *naming the delay*, since nothing here can shorten it. A
+  gateway that sends no such header behaves exactly as before.
+
+- **The model shortlist no longer offers, at the top, the models the default policy cannot route.**
+  It is sorted cheapest-first, so free models come first — and under the shipped
+  `openrouter-data-collection: DENY` those are usually the unroutable ones, the free endpoints being
+  the ones that train. The first rows proposed were the ones that answer 404, explained only
+  afterwards by `explainRoutingRefusal`. They now carry the caveat, keyed on a published price of
+  zero (a real measurement) rather than on the `:free` suffix (a naming convention), and only when
+  that policy is the one actually running.
 
 - **The Settings page no longer draws a form over a response it never received.** The load effect
   swallowed its failure in an empty `catch` — commented "Backend may not expose REST config yet",
