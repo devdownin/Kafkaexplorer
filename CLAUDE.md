@@ -483,7 +483,9 @@ KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `
 
 ### Typical local dev workflow
 
-1. `docker compose -f docker-compose.yml -f compose/schema-registry.yml up kafka` — start Kafka only
+1. `docker compose up -d kafka` — the broker alone. The base file is enough: it carries the broker,
+   and layering `compose/schema-registry.yml` here changed nothing, since that overlay adds services
+   rather than touching `kafka`. Add `schema-registry` to the service list if you are working on Avro.
 2. `./mvnw spring-boot:run` — start backend on port 8080
 3. `cd src/main/webapp && npm run dev` — start frontend dev server (port 5173)
 

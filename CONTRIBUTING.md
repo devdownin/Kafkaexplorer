@@ -39,14 +39,53 @@ New source files carry the licence header — see [Licence headers](#licence-hea
 - Docker and Docker Compose
 - Maven — or just use the checked-in wrapper, `./mvnw`
 
+### The compose files
+
+One base at the repository root, everything else in `compose/`. The distinction matters
+before you type a command: **an overlay is not a stack.** It is a set of partial service
+definitions with no images of its own, so it must always follow a base — `docker compose -f
+compose/limits.yml up` fails, by construction.
+
+| File | Kind | Use |
+|---|---|---|
+| `docker-compose.yml` | **base** | `docker compose up -d` — Kafka 4.3 KRaft, the app, and the demo seeder. |
+| `compose/schema-registry.yml` | overlay | Adds Schema Registry and the Avro demo topics. |
+| `compose/ollama.yml` | overlay | Adds a local Ollama model and points Process Mining at it. |
+| `compose/image.yml` | overlay | Pulls the published image instead of building from source. |
+| `compose/limits.yml` | overlay | Opt-in `mem_limit` / `cpus`. |
+| `compose/ci.yml` | overlay | CI only; layered on `image.yml`. |
+| `compose/dev.yml` | standalone | Hot reload — see below. |
+| `compose/build.yml` | standalone | One-shot toolchain, always `run --rm`. |
+| `compose/spectra-hub.yml` (+ `.gpu` / `.ingest` / `.limits`) | standalone + overlays | The SpectraLLM pair, from published images. |
+
+Overlays **combine**, in any order after the base:
+
+```bash
+docker compose -f docker-compose.yml -f compose/schema-registry.yml -f compose/ollama.yml -f compose/limits.yml up -d
+```
+
+Set `COMPOSE_FILE=docker-compose.yml:compose/schema-registry.yml` in a root `.env` if you
+always want the same combination, and `docker compose up -d` then means that stack.
+
+**One rule about paths.** Compose takes the *project directory* from the **first `-f` file**,
+and every `./…` in *any* layered file resolves against it. So an overlay under `compose/`
+writes its paths from the repository root (the base always comes first), while a standalone
+file there writes them with `../` and must declare `name:` — without it, its volumes come back
+under a `compose_` prefix and a warm Maven cache is silently discarded. Paths inherited through
+`extends:` are the exception: they resolve against the *extended* file's directory.
+
+Every combination is parsed by the `compose-lint` job, which also **fails on a compose file
+that no combination names** — so a new stack cannot be added without being checked. Add it to
+the `OVERLAYS` declaration in `.github/workflows/ci.yml`.
+
 ### Running the project locally
 
 **1. Typical local dev workflow (hot reload on both sides)**
 
 ```bash
-docker compose -f docker-compose.yml -f compose/schema-registry.yml up kafka   # broker only
-./mvnw spring-boot:run                                 # backend on :8080
-cd src/main/webapp && npm run dev                      # frontend on :5173
+docker compose up -d kafka                     # the broker alone; the base file is enough
+./mvnw spring-boot:run                         # backend on :8080
+cd src/main/webapp && npm run dev              # frontend on :5173
 ```
 
 **2. Full dev stack in containers**

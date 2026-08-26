@@ -43,6 +43,18 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     carries it (two do), and `docs/check-doc-paths.py` gains a `RETIRED` list for a path the
     tree deliberately no longer has — it expires both when nothing cites it and when the file
     comes back, where `NOT_A_PATH` would have called a deleted file "not a path".
+  - `CONTRIBUTING.md` gains a map of the compose files — which are bases, which are overlays
+    (an overlay alone is not a stack and fails by construction), how they combine, and where
+    relative paths resolve.
+
+### Fixed (documentation)
+
+- **The "Build and Development" section of both READMEs appeared twice, verbatim** — 23
+  duplicated lines in each, unrelated to the change above and removed with it.
+- The hot-reload stack was invoked with `docker-compose` (the end-of-life v1 binary) in both
+  READMEs; `update.ps1` used it too. All now use `docker compose`.
+- The "start the broker only" step named a stack file that added services it then did not
+  start. It is `docker compose up -d kafka` — the base file carries the broker.
 
 ### Fixed
 
