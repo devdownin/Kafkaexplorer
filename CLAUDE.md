@@ -1001,6 +1001,18 @@ without being a phone — turns out to be painful in practice. What is load-bear
   catalogue's names truncate at no width the probe walks, so the row could not move, and
   lengthening one would mean inventing data `setup-demo.sh` does not seed. The rule it would have
   guarded is pinned by a unit test instead, which depends on no data at all.
+- **`unreachable` is gated, `clipped` is not, and the split was measured rather than argued.**
+  Both were excluded from `--check` on one argument: clipping turns on text metrics, so a ceiling
+  set on a developer machine would fail on a runner for a reason unrelated to the change. Reading
+  the CI job's own probe output against a local run of the same commit, over the 21 rows `--check`
+  walks, showed the argument covers one column and not the other — **`clipped` differed on 4 rows
+  (all four on the SQL editor, 2 against 3), `unreachable` on none**. That is what the two count:
+  where a string happens to wrap, versus whether any path to the rest of it exists — a `title`, a
+  scrollable ancestor — which is a fact about the markup. `UNREACHABLE_BUDGET` therefore gates the
+  second, with the same "no worse than today" ceilings and the same guard as `TARGET_BUDGET` (a
+  measured row with no entry fails). It is only worth gating because Monaco left the measurement
+  first: a ceiling over 18 findings of which 7 were the editor's own scroll layers would have
+  capped noise.
 - **Monaco's insides are out of the measurement.** The editor scrolls its own synthetic surface:
   `.monaco-scrollable-element` reports a `scrollWidth` of **16 777 216 px** and `.overflow-guard`
   clips by construction. The column claims to name "content cut off whose rest is reachable

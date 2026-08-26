@@ -171,19 +171,47 @@ const MEASURED = PAGES.flatMap(p => [p.name, ...(STATES[p.name] ?? []).map(s => 
  * Ceilings for `--check`, the mode CI runs. This is W6 from MOBILE-LAYOUT-SCOPE.md: without it,
  * every number in that document is a reading from whenever someone last remembered to take one.
  *
- * **What is gated, and what deliberately is not.** Two things are asserted hard: that no page
- * scrolls sideways at any width, and that no page carries more sub-24px targets than it does
- * today. Both come from element sizes set by utility classes, so they are the same on any
- * machine. Clipping and unreachability are *reported* and not gated, because they turn on text
- * metrics — the same string wraps differently under a different font stack, so a ceiling set
- * here would fail on a runner for a reason that has nothing to do with the change under test.
- * A gate with false positives is a gate people learn to re-run until it passes, which is worse
- * than no gate at all.
+ * **What is gated, and what deliberately is not.** Three things are asserted hard: that no page
+ * scrolls sideways at any width, that no page carries more sub-24px targets than it does today,
+ * and that none carries more *unreachable* clipping. The first two come from element sizes set
+ * by utility classes, so they are the same on any machine.
  *
- * The target ceilings are the measured maximum across the three viewports, so they are a "no
+ * The third used to be excluded with the other one, on the argument that clipping turns on text
+ * metrics — the same string wraps differently under a different font stack, so a ceiling set
+ * here would fail on a runner for a reason unrelated to the change under test, and a gate with
+ * false positives is one people learn to re-run until it passes. **That argument was measured
+ * and it splits the two columns rather than covering both.** Comparing this runner's output with
+ * a developer machine's, on the same commit, over the 21 rows `--check` walks:
+ *
+ *     clipped       4 rows of 21 differ   (all four on the SQL editor: 2 here, 3 there)
+ *     unreachable   0 rows of 21 differ
+ *
+ * Which is what the two columns *are*: `clipped` counts where a string happens to wrap, and
+ * `unreachable` answers whether any path to the rest of it exists — a `title`, a scrollable
+ * ancestor — which is a fact about the markup. So `clipped` stays reported and ungated, and
+ * `unreachable` is gated. It is worth gating only because Monaco left the measurement first:
+ * 7 of the 18 findings were the editor's own scroll layers, and a ceiling over that would have
+ * capped noise instead of defects.
+ *
+ * Both sets of ceilings are the measured maximum across the viewports walked, so they are a "no
  * worse than today" line rather than a target. Lower them when a page improves — the point is
  * that the number cannot drift upward unnoticed.
  */
+const UNREACHABLE_BUDGET = {
+  'dashboard': 0,
+  'dashboard·palette': 0,
+  'sql-editor': 3,
+  'sql-editor·confirm': 0,
+  'sql-editor·ddl': 0,
+  'topic-explorer': 2,
+  'stream-flow': 0,
+  'data-model': 0,
+  'audit': 0,
+  'metrics': 0,
+  'metrics·editor': 2,
+  'cluster': 2,
+};
+
 const TARGET_BUDGET = {
   'dashboard': 5,
   'dashboard·palette': 6,
@@ -468,6 +496,7 @@ if (mode === '--sweep') {
         checkResults.push({
           page: name, viewport: vp.name, failed: null,
           bodyOverflows: m.bodyOverflows, tooSmall: m.tooSmall,
+          unreachable: m.unreachableCount,
         });
       };
 
@@ -539,6 +568,9 @@ if (mode === '--check') {
     if (!(name in TARGET_BUDGET)) {
       failures.push(`${name}: no entry in TARGET_BUDGET — add one (see the comment above it)`);
     }
+    if (!(name in UNREACHABLE_BUDGET)) {
+      failures.push(`${name}: no entry in UNREACHABLE_BUDGET — add one (see the comment above it)`);
+    }
   }
 
   for (const r of checkResults) {
@@ -553,14 +585,20 @@ if (mode === '--check') {
     if (budget !== undefined && r.tooSmall > budget) {
       failures.push(`${r.page} @ ${r.viewport}: ${r.tooSmall} targets under 24x24, budget ${budget}`);
     }
+    const unreachableBudget = UNREACHABLE_BUDGET[r.page];
+    if (unreachableBudget !== undefined && r.unreachable > unreachableBudget) {
+      failures.push(`${r.page} @ ${r.viewport}: ${r.unreachable} clipped elements with no way to `
+        + `reach the rest, budget ${unreachableBudget} — run --detail to see which`);
+    }
   }
 
   if (failures.length > 0) {
     console.error('\nLayout check failed:');
     for (const f of failures) console.error(`  - ${f}`);
-    console.error('\nIf the change is deliberate, update TARGET_BUDGET in this file and the '
-      + 'tables in MOBILE-LAYOUT-SCOPE.md from a fresh run.');
+    console.error('\nIf the change is deliberate, update TARGET_BUDGET / UNREACHABLE_BUDGET in '
+      + 'this file and the tables in MOBILE-LAYOUT-SCOPE.md from a fresh run.');
     process.exit(1);
   }
-  console.log('\nLayout check passed: nothing scrolls sideways, no page exceeds its target budget.');
+  console.log('\nLayout check passed: nothing scrolls sideways, and no page exceeds its target '
+    + 'or unreachable budget.');
 }
