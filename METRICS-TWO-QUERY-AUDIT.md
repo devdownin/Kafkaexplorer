@@ -8,8 +8,24 @@ the KPI suggestion panel proposes most — `throughputGap`, `endToEndVolume` and
 running when they accept a card.
 
 Neither has been reviewed. This document is that review, in the shape the other scope documents
-here take: every item is derived from the code, names the file it comes from, and is ranked. It
-implements nothing.
+here take: every item is derived from the code, names the file it comes from, and is ranked.
+
+> **Status.** It implemented nothing when it was written. **D1, D2 and D3 have since shipped**, as
+> one change — they share a diff, and the second is meaningless without the first. What sections
+> D1–D3 describe below is therefore the state that work was done *from*; each now ends with what
+> replaced it. Three further items shipped with them because the fix could not be written without
+> them: **D5 in part** (the engine's own warnings now travel into the metric's summary, and both
+> templates report what their read covered and what it dropped), **D9 for the three scan
+> parameters** (refused when the metric is saved, and on the form at last), and **D11 in part**
+> (each of the three messages now names the side, the read and the alternative). **D4, D6, D7, D8,
+> D10 and D12 remain open**, and the worklist at the end says which item closes each.
+>
+> **One thing was found while implementing rather than while reviewing**, and it is recorded here
+> because D5 understated it: an aggregate on the direct reader dropped its `WHERE` caveats
+> altogether — the non-aggregate branch appended `whereWarnings` and this one returned without
+> them — so a `COUNT(*)` filtered by a predicate the reader could not apply came back as a
+> precise-looking number over unfiltered rows, with nothing anywhere to say so. Fixed in the same
+> diff, in `kafkaDirectSelect`.
 
 > **What this audit is derived from, and what it is not.** Everything below is read from the code
 > and the shipped configuration. **Nothing here is a live measurement**: this sandbox has no Docker
@@ -59,6 +75,14 @@ Three facts around it, each readable on its own:
 What follows from it is D2 and D3, which are different defects on the two templates because one
 runs an aggregate and the other a projection.
 
+**Shipped.** The hint now carries both options, and the javadoc describes what the code does. What
+the review could not settle — whether this deployment's connector knows `scan.bounded.mode` — is
+settled at runtime instead of asserted: a failure naming the option earns one retry without it and
+is then remembered for the life of the process, with a WARN naming what that costs. It is the
+degrade-once-and-remember shape `OpenAiCompatibleLlmClient` uses for a gateway that refuses
+`response_format`, and it is there precisely because this could not be run against a broker before
+being pushed.
+
 **The experiment that settles it**: register a demo topic, run
 `SELECT COUNT(*) AS metric_value FROM demo_orders_1_received` through `FlinkSqlService.executeSql`
 with the hint, and read `QueryResult.engine()` and the first row. `FLINK` with a small
@@ -101,6 +125,17 @@ collector blocks instead, the query times out, and the direct reader answers wit
 Note that no threshold catches this: `warning`/`critical` are set at 2× and 4× a measured gap
 (`MetricSuggestionService:395-397`), and 0.0 is under every one of them.
 
+**Shipped**, in three parts, because one alone would have moved the lie rather than removed it.
+The value of an aggregate side is now the **last** numeric row — the final aggregate of a complete
+changelog, and the only row of a single-row direct read, so one rule serves both engines. A result
+that *filled its row budget* is refused instead, since the last row of a truncated changelog is a
+partial count that looks exactly like a total. And the generated shape no longer produces a
+changelog at all: a single-table read is asked of the direct reader by name
+(`QueryRequest.directRead`, `MetricService.isSingleTableRead`), which answers a `COUNT(*)` with one
+row. That reader has a ceiling of its own — 100 000 records — and it now **says so in the result's
+warnings**, because two counts that both stopped there differ by nothing: a side that hit it is
+reported as a floor and the comparison is refused rather than published as "no gap".
+
 ---
 
 ## D3 — `TOPIC_TRANSIT_LATENCY` measures the oldest records it can find, for ever
@@ -133,6 +168,16 @@ recent messages, and on a topic with retention the oldest surviving records answ
 question"*). The rule exists in this codebase already; this template predates it and never got it.
 
 `maxRowsPerSide` would be the knob, and D9 covers why it is not reachable.
+
+**Shipped.** The latency template now reads from the recent end by default
+(`DEFAULT_LATENCY_READ_MODE`), which is what makes the figure move; `earliest-offset` restores the
+old behaviour for a metric that really is asking about the beginning of a topic, and the form warns
+when it is chosen. That default only means anything because `readMode` stopped being a knob that
+does nothing: it is honoured by the direct reader alone, so the template asks for that reader by
+name rather than letting the planner answer a question it has no syntax for — a Kafka scan starting
+at `latest-offset` and bounded at `latest-offset` reads nothing at all, which is why "the most
+recent N records" cannot be expressed as a scan option. `maxRowsPerSide`, `timeoutMs` and
+`readMode` are on the form (D9), and the summary states what the read covered.
 
 ---
 
@@ -371,9 +416,9 @@ the existing mock the moment the behaviour changes.
 
 | # | Work | Size | Closes |
 |---|---|---|---|
-| W1 | Make the hint bound the scan: `scan.bounded.mode='latest-offset'` beside the startup mode, verified against `flink-connector-kafka:5.0.0-2.2`, with the javadoc rewritten to describe what the code does. Add the integration assertions in `KafkaClusterIntegrationTest`. | M | D1, and most of D2 |
-| W2 | Take the last changelog row, not the first, when the engine is `FLINK` — or refuse the result outright and let the direct reader answer, which is what the count path effectively relies on today. | S–M | D2 |
-| W3 | Give both templates a scan window they can state: `maxRowsPerSide`, `timeoutMs` and `readMode` on the form, `latest-offset` as the default read mode for the latency template, and the coverage in the summary. | M | D3, D9 (form half) |
+| ~~W1~~ | **Shipped.** The hint carries `scan.bounded.mode='latest-offset'`, the javadoc describes the code, and a connector that refuses the option degrades once and says so rather than breaking every template metric. | M | D1, and part of D2 |
+| ~~W2~~ | **Shipped.** The last numeric row, a truncated changelog refused, the generated shape answered by the direct reader, and that reader's own ceiling reported as a floor rather than compared. | M | D2 |
+| ~~W3~~ | **Shipped.** `maxRowsPerSide`, `timeoutMs` and `readMode` on the form and validated at save; the recent end as the latency template's default; the coverage in the summary. | M | D3, D9 (scan half) |
 | W4 | Report the scope: rows read vs cap, rows dropped for a missing column, `QueryResult.warnings` propagated into the metric's summary and error. | S–M | D5 |
 | W5 | Export a match rate beside the latency, and `unmatchedTargetCount` and an out-of-order count beside `unmatchedSourceCount`. Render `lastSummary` on the metric card. | M | D6, minor 1 |
 | W6 | `explorer_metric_last_success_timestamp_seconds{metric_id}`. | S | D8 |
@@ -381,6 +426,12 @@ the existing mock the moment the behaviour changes.
 | W8 | Validate `operation`, `maxRowsPerSide`, `timeoutMs` and `readMode` at save time, in the same switch that already validates `aggregation`; mirror it in `validateTemplate`. | S | D9 |
 | W9 | Read the two sides in the order that errs toward *over*-reporting the gap, and say so in a comment — the `KafkaAdminService` rule. Separate the `right == 0` answer from a metric error. | S | D4, D11 |
 
-W1 and W2 are the ones that change what the numbers mean. W3 to W5 are what make the numbers
-readable as measurements rather than as assertions. Everything from W6 down is small and
-independent.
+W1 and W2 were the ones that changed what the numbers mean, and they have shipped. W4 and W5 are
+what would make the rest of them readable as measurements rather than as assertions; everything
+from W6 down is small and independent of the others.
+
+**The two experiments D1 and D2 name are still worth running**, and they are the reason W1 shipped
+with a runtime fallback rather than a promise: nothing in this repository has yet executed a
+template metric against a real broker. `KafkaClusterIntegrationTest` already runs one, and the two
+assertions to add there are that a `COUNT(*)` through the metric path returns the topic's real
+count, and that the query terminates rather than spending its timeout.

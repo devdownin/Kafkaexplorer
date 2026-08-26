@@ -8,6 +8,7 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.KafkaMessage;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricPreviewResult;
 import com.compagnonsdudev.kafkasqlexplorer.domain.PartitionTimeLag;
+import com.compagnonsdudev.kafkasqlexplorer.domain.QueryRequest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryResult;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicTimeLag;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -16,6 +17,7 @@ import org.apache.kafka.clients.consumer.MockConsumer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 import java.util.LinkedHashMap;
@@ -680,4 +682,239 @@ class MetricServiceTest {
 
         assertEquals(4, fresh.getAllMetrics().size());
     }
+
+    // ── The two templates that compare the results of two queries ────────────────
+    //
+    // See METRICS-TWO-QUERY-AUDIT.md. Every case below was checked against the code it
+    // describes: each fails on the revision before the fix and passes after it.
+
+    /** A metric shaped like the ones MetricSuggestionService proposes. */
+    private MetricConfig countDelta(Map<String, Object> extraParams) {
+        Map<String, Object> params = new LinkedHashMap<>(Map.of(
+            "leftSql", "SELECT COUNT(*) AS metric_value FROM topic_a",
+            "rightSql", "SELECT COUNT(*) AS metric_value FROM topic_b",
+            "operation", "LEFT_MINUS_RIGHT"
+        ));
+        params.putAll(extraParams);
+        return new MetricConfig(
+            null, "delta", "GAUGE", null, null, null, null, null, null, null, List.of(), Map.of(), null,
+            "TOPIC_COUNT_DELTA", params, null, null, List.of());
+    }
+
+    private MetricConfig transitLatency(Map<String, Object> extraParams) {
+        Map<String, Object> params = new LinkedHashMap<>(Map.of(
+            "sourceSql", "SELECT order_id AS match_key, event_time AS event_time FROM topic_a",
+            "targetSql", "SELECT order_id AS match_key, event_time AS event_time FROM topic_b"
+        ));
+        params.putAll(extraParams);
+        return new MetricConfig(
+            null, "latency", "GAUGE", null, null, null, null, null, null, null, List.of(), Map.of(), null,
+            "TOPIC_TRANSIT_LATENCY", params, null, null, List.of());
+    }
+
+    private static QueryResult flinkRows(List<Map<String, Object>> rows) {
+        return new QueryResult(List.of("metric_value"), rows, 10L, null, false, "FLINK");
+    }
+
+    private static QueryResult directCount(double value) {
+        return new QueryResult(List.of("metric_value"),
+            List.of(Map.of("metric_value", value)), 10L, null, false, "KAFKA_DIRECT");
+    }
+
+    private List<QueryRequest> capturedRequests() {
+        ArgumentCaptor<QueryRequest> captor = ArgumentCaptor.forClass(QueryRequest.class);
+        Mockito.verify(flinkSqlService, Mockito.atLeastOnce()).executeSql(captor.capture());
+        return captor.getAllValues();
+    }
+
+    @Test
+    void theScanIsBoundedAndTheStartupModeIsNotWhatBoundsIt() {
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(directCount(12.0), directCount(7.0));
+
+        service.previewMetric(countDelta(Map.of()));
+
+        // scan.startup.mode says where a scan begins; scan.bounded.mode is what ends it, and the
+        // environment is streaming, so without the second the source never terminates.
+        for (QueryRequest request : capturedRequests()) {
+            assertTrue(request.sql().contains("'scan.bounded.mode'='latest-offset'"),
+                "the bounded option must travel with every template read: " + request.sql());
+            assertTrue(request.sql().contains("'scan.startup.mode'='earliest-offset'"), request.sql());
+        }
+    }
+
+    @Test
+    void aCountIsTheLastChangelogRowNotTheFirst() {
+        // What a streaming COUNT(*) really returns: +I(1), then -U/+U per record. The kind is
+        // dropped by the collector, so the rows arrive as plain values in order.
+        QueryResult left = flinkRows(List.of(
+            Map.of("metric_value", 1.0), Map.of("metric_value", 1.0),
+            Map.of("metric_value", 2.0), Map.of("metric_value", 2.0),
+            Map.of("metric_value", 3.0)));
+        QueryResult right = flinkRows(List.of(Map.of("metric_value", 1.0), Map.of("metric_value", 1.0)));
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(left, right);
+
+        MetricPreviewResult preview = service.previewMetric(countDelta(Map.of()));
+
+        assertNull(preview.error());
+        assertEquals(3.0, preview.summary().get("leftValue"), "the final aggregate, not +I(1)");
+        assertEquals(1.0, preview.summary().get("rightValue"));
+        assertEquals(2.0, preview.value());
+    }
+
+    @Test
+    void aChangelogThatFilledItsRowBudgetIsRefusedRatherThanReadAsATotal() {
+        List<Map<String, Object>> rows = new java.util.ArrayList<>();
+        for (int i = 1; i <= 5; i++) rows.add(Map.of("metric_value", (double) i));
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(flinkRows(rows), directCount(2.0));
+
+        // A join is what the planner really answers here — the generated shape goes to the direct
+        // reader, which returns one row and cannot truncate a changelog it never produces.
+        MetricPreviewResult preview = service.previewMetric(countDelta(Map.of(
+            "maxRowsPerSide", "5",
+            "leftSql", "SELECT COUNT(*) AS metric_value FROM a JOIN b ON a.id = b.id")));
+
+        assertNotNull(preview.error());
+        assertTrue(preview.error().contains("maxRowsPerSide"), preview.error());
+        assertTrue(preview.error().contains("partial count"), preview.error());
+    }
+
+    @Test
+    void aCountThatStoppedOnTheReadersCeilingIsNeverComparedToAnother() {
+        QueryResult capped = directCount(100_000.0)
+            .withWarnings(List.of(FlinkSqlService.AGGREGATE_SCAN_CAPPED + " — the aggregate covers the first 100000 record(s)"));
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(capped, directCount(100_000.0));
+
+        MetricPreviewResult preview = service.previewMetric(countDelta(Map.of("operation", "PERCENT_GAP")));
+
+        // Two floors differ by nothing, and "no gap" is the one answer this alarm must not invent.
+        assertNotNull(preview.error());
+        assertTrue(preview.error().contains("floor"), preview.error());
+        assertNull(preview.value());
+    }
+
+    @Test
+    void aConnectorThatRefusesTheScanOptionsIsRetriedOnceWithoutThem() {
+        QueryResult refusal = new QueryResult(List.of(), List.of(), 5L,
+            "Unsupported options found for 'kafka'. Unsupported options: scan.bounded.mode");
+        Mockito.when(flinkSqlService.executeSql(Mockito.any()))
+            .thenReturn(refusal, directCount(12.0), directCount(7.0));
+
+        MetricPreviewResult preview = service.previewMetric(countDelta(Map.of()));
+
+        assertNull(preview.error(), "a connector that lacks the option must degrade, not break");
+        assertEquals(5.0, preview.value());
+        List<QueryRequest> requests = capturedRequests();
+        assertTrue(requests.get(0).sql().contains("scan.bounded.mode"));
+        assertFalse(requests.get(1).sql().contains("scan.bounded.mode"), "the retry drops the options");
+        // And it is remembered rather than re-derived on every refresh.
+        assertFalse(requests.get(2).sql().contains("scan.bounded.mode"));
+    }
+
+    @Test
+    void theLatencyTemplateReadsTheMostRecentRecordsAndTheCountReadsFromTheStart() {
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(
+            new QueryResult(List.of("match_key", "event_time"),
+                List.of(Map.of("match_key", "A", "event_time", "2026-03-24T10:00:00Z")), 5L, null, false, "KAFKA_DIRECT"),
+            new QueryResult(List.of("match_key", "event_time"),
+                List.of(Map.of("match_key", "A", "event_time", "2026-03-24T10:00:05Z")), 5L, null, false, "KAFKA_DIRECT"));
+
+        MetricPreviewResult preview = service.previewMetric(transitLatency(Map.of()));
+
+        assertNull(preview.error());
+        assertEquals(5000.0, preview.value());
+        for (QueryRequest request : capturedRequests()) {
+            assertEquals("latest-offset", request.readMode(),
+                "a latency is a question about now, so it reads the recent end");
+        }
+
+        Mockito.reset(flinkSqlService);
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(directCount(1.0), directCount(1.0));
+        service.previewMetric(countDelta(Map.of()));
+        for (QueryRequest request : capturedRequests()) {
+            assertEquals("earliest-offset", request.readMode(), "a count must see the whole topic");
+        }
+    }
+
+    @Test
+    void aSingleTableReadIsAskedOfTheDirectReaderAndAnythingElseIsNot() {
+        assertTrue(MetricService.isSingleTableRead("SELECT COUNT(*) AS metric_value FROM orders"));
+        assertTrue(MetricService.isSingleTableRead(
+            "SELECT id AS match_key, ts AS event_time\nFROM demo_orders WHERE status = 'OK'"));
+        // Shapes whose rows the direct reader would silently get wrong.
+        assertFalse(MetricService.isSingleTableRead("SELECT COUNT(*) AS metric_value FROM a JOIN b ON a.id = b.id"));
+        assertFalse(MetricService.isSingleTableRead("SELECT COUNT(*) AS metric_value FROM a, b"));
+        assertFalse(MetricService.isSingleTableRead(
+            "SELECT COUNT(*) AS metric_value FROM (SELECT id FROM orders)"));
+        assertFalse(MetricService.isSingleTableRead(
+            "WITH recent AS (SELECT * FROM orders) SELECT COUNT(*) AS metric_value FROM recent"));
+        assertFalse(MetricService.isSingleTableRead("SELECT 1 AS metric_value"));
+
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(directCount(2.0), flinkRows(List.of(Map.of("metric_value", 1.0))));
+        service.previewMetric(countDelta(Map.of(
+            "rightSql", "SELECT COUNT(*) AS metric_value FROM a JOIN b ON a.id = b.id")));
+
+        List<QueryRequest> requests = capturedRequests();
+        assertTrue(requests.get(0).wantsDirectRead(), "the generated shape goes to the direct reader");
+        assertFalse(requests.get(1).wantsDirectRead(), "a join needs the planner, whatever it costs");
+    }
+
+    @Test
+    void theLatencySummarySaysWhatTheTwoReadsCoveredAndWhatTheyDropped() {
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(
+            new QueryResult(List.of("match_key", "event_time"),
+                List.of(Map.of("match_key", "A", "event_time", "2026-03-24T10:00:00Z"),
+                        // A row the projection did not alias: dropped in silence before this.
+                        Map.of("other", "B")),
+                5L, null, false, "KAFKA_DIRECT"),
+            new QueryResult(List.of("match_key", "event_time"),
+                List.of(Map.of("match_key", "A", "event_time", "2026-03-24T10:00:02Z")), 5L, null, false, "KAFKA_DIRECT"));
+
+        MetricPreviewResult preview = service.previewMetric(transitLatency(Map.of()));
+
+        assertNull(preview.error());
+        assertEquals(2, preview.summary().get("sourceRowsRead"));
+        assertEquals(1, preview.summary().get("sourceEventsUsed"));
+        assertEquals("KAFKA_DIRECT", preview.summary().get("sourceEngine"));
+        assertTrue(String.valueOf(preview.summary().get("scopeNote")).contains("most recent"));
+    }
+
+    @Test
+    void anEmptySideNamesItselfAndTheReadItCameFrom() {
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(
+            new QueryResult(List.of("match_key", "event_time"),
+                List.of(Map.of("match_key", "A", "event_time", "2026-03-24T10:00:00Z")), 5L, null, false, "KAFKA_DIRECT"),
+            new QueryResult(List.of("match_key", "event_time"), List.of(), 5L, null, false, "KAFKA_DIRECT"));
+
+        MetricPreviewResult preview = service.previewMetric(transitLatency(Map.of()));
+
+        assertNotNull(preview.error());
+        assertTrue(preview.error().startsWith("The target query"), preview.error());
+        assertTrue(preview.error().contains("most recent"), preview.error());
+    }
+
+    @Test
+    void theScanParametersAreRefusedWhenTheMetricIsSavedRatherThanOnEveryRefresh() {
+        assertThrows(IllegalArgumentException.class,
+            () -> service.save(countDelta(Map.of("maxRowsPerSide", "10k"))));
+        assertThrows(IllegalArgumentException.class,
+            () -> service.save(countDelta(Map.of("maxRowsPerSide", "0"))));
+        assertThrows(IllegalArgumentException.class,
+            () -> service.save(countDelta(Map.of("timeoutMs", "10"))));
+        assertThrows(IllegalArgumentException.class,
+            () -> service.save(countDelta(Map.of("readMode", "group-offsets"))));
+        // And the ordinary ones still save.
+        service.save(countDelta(Map.of("maxRowsPerSide", "50000", "readMode", "latest-offset")));
+    }
+
+    @Test
+    void aRightSideOfZeroSaysWhatToUseInstead() {
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(directCount(41.0), directCount(0.0));
+
+        MetricPreviewResult preview = service.previewMetric(countDelta(Map.of("operation", "PERCENT_GAP")));
+
+        assertNotNull(preview.error());
+        assertTrue(preview.error().contains("LEFT_MINUS_RIGHT"), preview.error());
+        assertTrue(preview.error().contains("41"), preview.error());
+    }
+
 }

@@ -908,21 +908,60 @@ exists one file over: `FieldProfilingService` aggregates per path instead of inl
 which is why profiling behaves on small models and the analysis does not. Read it before touching
 `LlmAnalysisService`, `LlmSchemas` or `AuditPromptCatalog`.
 
-`METRICS-TWO-QUERY-AUDIT.md` reviews the two metric templates that answer their question by running
-**two queries and comparing the results** — `TOPIC_COUNT_DELTA` and `TOPIC_TRANSIT_LATENCY`, which
-are also the two the KPI suggestion panel proposes most. It implements nothing: every item is
-derived from the code, names the file it comes from, and is ranked, with a worklist at the end.
-The one that dominates is that `MetricService.BOUNDED_HINT` **bounds nothing** — its javadoc
-describes `scan.bounded.mode` while the constant writes `scan.startup.mode`, which says where a
-scan starts, and the environment is `inStreamingMode()`, so the Kafka source stays unbounded and
-the option merely restates the value `DdlGeneratorService` already puts in every generated table.
-What follows from it differs per template because one runs an aggregate and the other a
-projection: a `COUNT(*)` becomes a retract changelog whose **first** row is what
-`extractPrimaryMetricValue` keeps, and a correlation query returns the oldest records the scan can
-reach, republished as a current gauge for ever. Read it before touching either compute method, or
-before assuming the two figures a delta is built from were measured at the same instant — they are
-one whole query apart, in the direction that under-reports the gap. Two items need the real broker
-to settle and name the assertions to add to `KafkaClusterIntegrationTest`; the rest are unit-testable against the mock that is already there.
+**The two metric templates that compare the results of two queries** — `TOPIC_COUNT_DELTA` and
+`TOPIC_TRANSIT_LATENCY`, which are also the two the KPI suggestion panel proposes most — are
+reviewed in `METRICS-TWO-QUERY-AUDIT.md`, twelve items ranked, of which the first three have
+shipped. What they were is worth knowing before touching either compute method, because each fix
+is load-bearing and none of it is obvious from the code that remains.
+
+**`BOUNDED_HINT` bounded nothing.** Its javadoc described `scan.bounded.mode` ("reads all data that
+exists at query start, then terminates") while the constant wrote `scan.startup.mode`, which says
+where a scan *begins*; the environment is `inStreamingMode()`, so the source never ended, and the
+option merely restated what `DdlGeneratorService` already writes into every generated table. Both
+options travel now. Whether *this* deployment's connector knows the second one is settled at
+runtime rather than asserted — a failure naming it earns one retry without it, remembered for the
+life of the process with a WARN naming the cost, the same degrade-once-and-remember shape
+`OpenAiCompatibleLlmClient` uses for a gateway that refuses `response_format`.
+
+**A streaming `COUNT(*)` is a retract changelog, and the value is its *last* row.** The collector
+drops `RowKind` and `extractPrimaryMetricValue` kept the first, which is `+I(1)`, so above roughly
+five thousand records a `PERCENT_GAP` silent-drop alarm published `0.0` — no loss, on the alarm
+whose purpose is to report loss, and precisely on the topics worth alarming about. Three things
+together fix it and one alone would only have moved it: the last numeric row (the final aggregate
+of a complete changelog, and the only row of a single-row direct read, so one rule serves both
+engines); a result that **filled its row budget** refused rather than read as a total; and the
+generated shape asked of the direct reader by name, which answers a count with one row and no
+changelog at all. That reader has a ceiling of its own — `AGGREGATE_SCAN_RECORDS`, 100 000 — and
+now **says so in the result's warnings**, because two counts that both stopped there differ by
+nothing: a side that hit it is a floor, and the comparison is refused rather than published as
+"no gap".
+
+**A latency now reads the recent end** (`DEFAULT_LATENCY_READ_MODE`), where it read the oldest
+records the row cap allowed and therefore never moved again on a topic older than that cap — the
+rule `explorer.audit-duplicate-scan-from` already states for the audit's duplicate scan.
+`earliest-offset` restores the old behaviour and the form warns when it is chosen. That default
+only means anything because `readMode` stopped being a knob that does nothing: it is honoured by
+the **direct reader alone**, so the template asks for that reader by name
+(`QueryRequest.directRead`, `MetricService.isSingleTableRead`, which fails closed — a join, a
+subquery or a table list goes to the planner) rather than letting the planner answer a question it
+has no syntax for. There is no scan option for "the most recent N records": a Kafka scan starting
+at `latest-offset` and bounded at `latest-offset` reads nothing.
+
+Three smaller rules came with them. `maxRowsPerSide`, `timeoutMs` and `readMode` decide what the
+metric measures and were reachable only by a hand-written POST — they are on the form and refused
+at **save** time, like `CONSUMER_TIME_LAG`'s `aggregation` three lines above them, instead of
+throwing from inside the refresh loop once every thirty seconds. `QueryResult.warnings` is read at
+last, on the path whose output feeds an alert (and an aggregate on the direct reader had been
+dropping its `WHERE` caveats outright, where the non-aggregate branch kept them). And every
+refusal names the side, the read it came from and what to use instead: "the right query counts
+zero" now says that `LEFT_MINUS_RIGHT` reports that as a number.
+
+What is deliberately still open is listed in that document with the item that closes each: the two
+sides are one whole query apart and the order errs toward under-reporting the gap (D4); an
+unmatched source makes the latency look *better*, so the metric improves as the pipeline breaks
+(D6); the positional dedup for `HISTOGRAM`/`SUMMARY` runs over rows sorted by match key, so an
+unordered key biases the published p95 (D7); and a failed refresh freezes the gauge with nothing
+dating it, which `ConsumerLagMetrics` was fixed for (D8).
 
 `SQL-EDITOR-AUDIT.md` is the review of the **SQL editor** (`QueryWorkbench.tsx` and its pure modules,
 plus `QueryController` / `SqlQueryValidator` / `FlinkSqlService.executeSync`) along the four axes it

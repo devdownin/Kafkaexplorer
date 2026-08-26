@@ -15,7 +15,7 @@ import {
   // le fichier dise lequel des deux il utilise à chaque endroit.
   Tooltip as InfoTooltip,
   PageHeader, Button, Checkbox, Stat, Select, EmptyState, CardSkeleton, TopicInput,
-  Field, Input, Textarea, useConfirm,
+  Field, Input, Textarea, NumberInput, useConfirm,
   ErrorPanel,
 } from '../components/ui';
 import { describeQueryError } from './queryError';
@@ -192,6 +192,37 @@ function paramStr(params: Record<string, unknown>, key: string): string {
   return v == null ? '' : String(v);
 }
 
+/** Le mode de lecture par défaut d'un gabarit — miroir de MetricService.DEFAULT_*_READ_MODE. */
+export const defaultReadMode = (templateType: string): string =>
+  templateType === 'TOPIC_TRANSIT_LATENCY' ? 'latest-offset' : 'earliest-offset';
+
+export const SCAN_MAX_ROWS_DEFAULT = 10_000;
+export const SCAN_TIMEOUT_MS_DEFAULT = 30_000;
+
+/** Miroir de MetricService.validateScanParams : refusé à l'enregistrement, pas au rafraîchissement. */
+export function validateScanParams(templateType: string, params: Record<string, unknown>): ValidationMsg[] {
+  const msgs: ValidationMsg[] = [];
+  const raw = (key: string) => paramStr(params, key).trim();
+
+  const rows = raw('maxRowsPerSide');
+  if (rows && (!/^\d+$/.test(rows) || Number(rows) < 1 || Number(rows) > 1_000_000))
+    msgs.push({ level: 'error', text: 'Max rows / side must be a whole number between 1 and 1,000,000.' });
+
+  const timeout = raw('timeoutMs');
+  if (timeout && (!/^\d+$/.test(timeout) || Number(timeout) < 1_000 || Number(timeout) > 600_000))
+    msgs.push({ level: 'error', text: 'Timeout / side must be a whole number between 1,000 and 600,000 ms.' });
+
+  const readMode = raw('readMode');
+  if (readMode && !['earliest-offset', 'latest-offset'].includes(readMode))
+    msgs.push({ level: 'error', text: 'Read from must be either the most recent records or the earliest offset.' });
+
+  const effective = readMode || defaultReadMode(templateType);
+  if (templateType === 'TOPIC_TRANSIT_LATENCY' && effective === 'earliest-offset')
+    msgs.push({ level: 'warning', text: 'Read from the earliest offset, this reports the latency of the oldest records the row cap allows — a figure that stops moving once the topic outgrows the cap.' });
+
+  return msgs;
+}
+
 // Front-end mirror of the backend template validation (MetricService.validateMetric).
 function validateTemplate(templateType: string, metricType: string,
                           params: Record<string, unknown>): ValidationMsg[] {
@@ -200,12 +231,16 @@ function validateTemplate(templateType: string, metricType: string,
     if (!paramStr(params, 'leftSql').trim())  msgs.push({ level: 'error', text: 'Left query (leftSql) is required.' });
     if (!paramStr(params, 'rightSql').trim()) msgs.push({ level: 'error', text: 'Right query (rightSql) is required.' });
     if (metricType !== 'GAUGE')               msgs.push({ level: 'error', text: 'Topic Count Delta supports GAUGE metrics only.' });
+    msgs.push(...validateScanParams(templateType, params));
+    msgs.push({ level: 'warning', text: 'The two counts are taken one after the other, not at one instant: whatever the pipeline produced in between is in the second and not in the first.' });
   } else if (templateType === 'TOPIC_TRANSIT_LATENCY') {
     if (!paramStr(params, 'sourceSql').trim()) msgs.push({ level: 'error', text: 'Source query (sourceSql) is required.' });
     if (!paramStr(params, 'targetSql').trim()) msgs.push({ level: 'error', text: 'Target query (targetSql) is required.' });
     if (!['GAUGE', 'HISTOGRAM', 'SUMMARY'].includes(metricType))
       msgs.push({ level: 'error', text: 'Topic Transit Latency supports GAUGE, HISTOGRAM or SUMMARY.' });
     msgs.push({ level: 'info', text: 'Both queries must return match_key and event_time columns (event_time as ISO-8601 or epoch).' });
+    msgs.push(...validateScanParams(templateType, params));
+    msgs.push({ level: 'info', text: 'A source event whose target the read did not cover is counted as unmatched, never averaged in — the summary reports how many.' });
   } else if (templateType === 'CONSUMER_TIME_LAG') {
     if (!paramStr(params, 'topic').trim()) msgs.push({ level: 'error', text: 'A topic is required.' });
     // Le groupe est exigé, pas déduit : « le groupe le plus en retard » changerait d'une mesure à
@@ -595,6 +630,62 @@ const ParamTopic: React.FC<{
   </Field>
 );
 
+/**
+ * Ce que chaque côté lit, pour les deux gabarits qui lancent deux requêtes.
+ *
+ * Ces trois réglages décidaient déjà ce que la métrique mesure — quelle part de chaque topic est
+ * lue, par quel bout, et combien de temps un côté peut prendre — et n'étaient sur aucun
+ * formulaire : seul un POST écrit à la main pouvait les changer. Le gabarit CONSUMER_TIME_LAG,
+ * juste au-dessus, énonce son budget depuis toujours.
+ */
+const ScanParams: React.FC<{
+  templateType: string;
+  params: Record<string, unknown>;
+  setParam: (key: string, value: string) => void;
+}> = ({ templateType, params, setParam }) => {
+  const p = (k: string) => paramStr(params, k);
+  const readMode = p('readMode') || defaultReadMode(templateType);
+  const maxRows = Number(p('maxRowsPerSide')) || SCAN_MAX_ROWS_DEFAULT;
+  const timeoutMs = Number(p('timeoutMs')) || SCAN_TIMEOUT_MS_DEFAULT;
+  return (
+    <div className="border-t border-outline-variant/60 pt-4 space-y-3">
+      <p className="text-[11px] text-on-surface-variant leading-snug">
+        What each side reads. The two queries run one after the other, so the two figures are a
+        query apart rather than one instant.
+      </p>
+      <Field
+        label="Read from"
+        description={
+          templateType === 'TOPIC_TRANSIT_LATENCY'
+            ? 'A latency is a question about now: read from the earliest offset it reports the average of the oldest records the row cap allowed, and never moves again.'
+            : 'A count must see the whole topic, so this normally starts at the earliest offset.'
+        }
+      >
+        {f => (
+          <Select {...f} value={readMode} onChange={e => setParam('readMode', e.target.value)}>
+            <option value="latest-offset" className="bg-[#12151a] text-on-surface">The most recent records</option>
+            <option value="earliest-offset" className="bg-[#12151a] text-on-surface">The earliest offset onwards</option>
+          </Select>
+        )}
+      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Max rows / side" description="Read no further; the summary says what was covered.">
+          {f => (
+            <NumberInput {...f} value={maxRows} fallback={SCAN_MAX_ROWS_DEFAULT} min={1} max={1_000_000}
+              onChange={v => setParam('maxRowsPerSide', String(v))} />
+          )}
+        </Field>
+        <Field label="Timeout / side (ms)" description="Each side has its own, so a refresh can cost twice it.">
+          {f => (
+            <NumberInput {...f} value={timeoutMs} fallback={SCAN_TIMEOUT_MS_DEFAULT} min={1_000} max={600_000}
+              onChange={v => setParam('timeoutMs', String(v))} />
+          )}
+        </Field>
+      </div>
+    </div>
+  );
+};
+
 const TemplateParamsEditor: React.FC<{
   templateType: string;
   params: Record<string, unknown>;
@@ -651,6 +742,7 @@ const TemplateParamsEditor: React.FC<{
             <ParamTopic label="Left topic (label)"  value={p('leftTopic')}  onChange={v => setParam('leftTopic', v)}  placeholder="optional" />
             <ParamTopic label="Right topic (label)" value={p('rightTopic')} onChange={v => setParam('rightTopic', v)} placeholder="optional" />
           </div>
+          <ScanParams templateType={templateType} params={params} setParam={setParam} />
         </>
       ) : (
         <>
@@ -664,6 +756,7 @@ const TemplateParamsEditor: React.FC<{
             <ParamTopic label="Source topic (label)" value={p('sourceTopic')} onChange={v => setParam('sourceTopic', v)} placeholder="optional" />
             <ParamTopic label="Target topic (label)" value={p('targetTopic')} onChange={v => setParam('targetTopic', v)} placeholder="optional" />
           </div>
+          <ScanParams templateType={templateType} params={params} setParam={setParam} />
         </>
       )}
 
