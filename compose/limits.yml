@@ -1,7 +1,7 @@
 # Opt-in resource limits, layered over any of the bundled stacks:
 #
-#   docker compose -f docker-compose.yml -f docker-compose.limits.yml up -d
-#   docker compose -f docker-compose-kafka4.yml -f docker-compose.limits.yml up -d
+#   docker compose -f docker-compose.yml -f compose/limits.yml up -d
+#   docker compose -f docker-compose.yml -f compose/ollama.yml -f compose/limits.yml up -d
 #
 # Why this is not in the stacks themselves. A limit that is too low is worse than none:
 # the JVM is OOM-killed rather than running a GC, and on a demo stack that reads a
@@ -19,12 +19,19 @@
 #
 # If the app is killed with exit code 137 under load, raise EXPLORER_MEM_LIMIT rather than
 # dropping this file: 137 here means the limit was hit, which is information.
-# Applies to the stacks whose services are named `explorer` and `kafka`:
-# docker-compose.yml, -kafka4, -llm and .release. Not to docker-compose-dev.yml (its
-# backend is a `spring-boot:run` under Maven, where a memory cap only produces confusing
-# build failures) nor to -spectra (its broker is `explorer-kafka`). A service listed here
-# but absent from the base file would be created as a new, imageless one and fail the
-# whole `up`, which is why this file names exactly two.
+# WHAT IT APPLIES TO is now one answer instead of four. It bounds the services named
+# `explorer` and `kafka`, and since docker-compose.yml is the only base carrying those, this
+# layers onto that base and onto anything layered with it — `compose/schema-registry.yml`,
+# `compose/ollama.yml`, `compose/image.yml`, in any combination. It used to have to name
+# four separate base files, which is the maintenance this reduction removed: a fifth stack
+# meant a fifth line here, and forgetting it was silent.
+#
+# Not `compose/dev.yml`, whose backend is a `spring-boot:run` under Maven where a memory cap
+# only produces confusing build failures. The SpectraLLM stack has its own
+# (`compose/spectra-hub.limits.yml`) rather than sharing this one, and that is forced rather
+# than chosen: a service NAMED in an overlay but ABSENT from the base file is created as a
+# new, imageless service and fails the whole `up`, so an overlay can only ever name services
+# its base actually has. That is also why this file names exactly two.
 services:
   # The app: an embedded Flink runtime, the Kafka clients, and a heap sized at 75% of
   # whatever is set here. 2g leaves ~1.5g of heap, which covers an audit of a few hundred

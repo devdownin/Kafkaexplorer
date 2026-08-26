@@ -11,6 +11,73 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **The compose tree went from sixteen files to twelve, and from five ways of starting the app
+  to one.** `docker-compose.yml`, `-kafka4`, `-llm`, `-spectra` and `.release` were all *base*
+  files, each carrying its own copy of the explorer service, and being separate bases cost more
+  than duplication: Schema Registry and Ollama **could never run together**, because two bases
+  cannot be layered. There is now one base at the repository root and everything else in
+  `compose/`, as overlays that combine freely.
+  - `docker-compose-kafka4.yml` → `compose/schema-registry.yml`. The old name advertised a
+    choice that had stopped existing — every stack here runs Kafka 4.3 in KRaft, the base file
+    included — on the stack the README recommends. What it adds is a Schema Registry.
+  - `docker-compose-llm.yml` → `compose/ollama.yml`; `docker-compose.release.yml` →
+    `compose/image.yml`, which now *pulls* the published image rather than rebuilding it
+    locally from a downloaded JAR. That image is already published for both architectures,
+    keylessly signed, with an SBOM and SLSA provenance, so `update.ps1` pulls it too.
+  - `docker-compose-spectra.yml` is **deleted**; `compose/spectra-hub.yml` is the SpectraLLM
+    stack. The deleted one needed a sibling SpectraLLM checkout, a Maven build and an npm
+    build, and was the only file in the tree whose syntax CI could not resolve without
+    fabricating a stub of somebody else's repository.
+  - `docker-compose-spectra-hub.small.yml` is **deleted** in favour of four `.env` lines: every
+    value it set already had an interpolated default in the stack file, so it expressed nothing
+    a variable could not.
+  - `compose/dev.yml` was the last verbatim copy of the broker — sixty lines of KRaft settings
+    duplicated so that one thing could differ, the name of the data volume. It `extends:` the
+    base now, with `volumes: !override` replacing the mount, and keeps its existing volume.
+  - `docker compose config` is **unchanged** for every stack, with one deliberate exception:
+    the explorer no longer waits on `schema-registry: service_healthy`, which contradicted the
+    rule that the app depends on the broker and nothing else.
+  - `docs/check-image-pins.py` now asserts the Explorer pin is the **same** in every file that
+    carries it (two do), and `docs/check-doc-paths.py` gains a `RETIRED` list for a path the
+    tree deliberately no longer has — it expires both when nothing cites it and when the file
+    comes back, where `NOT_A_PATH` would have called a deleted file "not a path".
+  - `CONTRIBUTING.md` gains a map of the compose files — which are bases, which are overlays
+    (an overlay alone is not a stack and fails by construction), how they combine, and where
+    relative paths resolve.
+
+### Added
+
+- **`docs/check-readme-parity.py`** — README.md against README.fr.md. It compares the four
+  things a translation must not change and a one-sided edit always does: the sequence of
+  heading levels, the number of fenced code blocks and the lines in each, the set of URLs,
+  and the set of paths named inside backticks. Never the words — a shorter French paragraph
+  is a better translation, not a defect. It exists because the duplicated section below sat
+  in **both** files for an unknown length of time with nothing reading either. All four
+  comparisons were verified to fail against a deliberately broken tree.
+- **`docs/check-doc-paths.py` now reads five documents instead of two.** `README.md`,
+  `README.fr.md` and `docs/DOCKERHUB.md` join the two maintainer files: 99 paths resolved
+  where 80 were, and the Docker Hub page in particular is rendered *outside* the repository,
+  so a wrong path there is invisible to anyone reading the repo. The seven references this
+  surfaced were all legitimate non-paths (build platforms, an OpenRouter model shape, files
+  the app creates at runtime under its gitignored `data/` volume) and are named in
+  `NOT_A_PATH`, which expires its own entries.
+- **`COMPOSE_FILE` is documented in `.env.example`** and pointed at from both READMEs, so the
+  two-`-f` commands the reorganisation introduces cost nothing to anyone who wants a bare
+  `docker compose up -d`. Written as an indented example rather than a knob to uncomment,
+  deliberately: no compose file reads it — the CLI does — and its separator is `:` on Linux
+  and macOS but `;` on Windows.
+
+### Fixed (documentation)
+
+- **The "Build and Development" section of both READMEs appeared twice, verbatim** — 23
+  duplicated lines in each, unrelated to the change above and removed with it.
+- The hot-reload stack was invoked with `docker-compose` (the end-of-life v1 binary) in both
+  READMEs; `update.ps1` used it too. All now use `docker compose`.
+- The "start the broker only" step named a stack file that added services it then did not
+  start. It is `docker compose up -d kafka` — the base file carries the broker.
+
 ### Fixed
 
 - **A Process Mining snapshot read no longer returns a random subset of the topics it was asked

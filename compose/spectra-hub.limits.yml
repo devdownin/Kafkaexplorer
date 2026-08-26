@@ -1,8 +1,8 @@
 # Overlay: resource limits for the whole pair.
 #
-#   docker compose -f docker-compose-spectra-hub.yml -f docker-compose-spectra-hub.limits.yml up -d
+#   docker compose -f compose/spectra-hub.yml -f compose/spectra-hub.limits.yml up -d
 #
-# WHY A SECOND LIMITS FILE, AND NOT docker-compose.limits.yml
+# WHY A SECOND LIMITS FILE, AND NOT compose/limits.yml
 # That one names `explorer` and `kafka` — the only two services the stacks it was written for
 # have. A service named in an overlay but ABSENT from the base file does not merge: compose
 # treats it as a new service, with no image, and fails the whole `up`. So the overlay for a

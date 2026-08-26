@@ -1,0 +1,27 @@
+# Run the stack from the PUBLISHED image instead of building it from source.
+#
+#   docker compose -f docker-compose.yml -f compose/image.yml pull
+#   docker compose -f docker-compose.yml -f compose/image.yml up -d
+#
+# This replaces `docker-compose.release.yml`, which was a whole base file — a second copy
+# of the broker, the explorer and the volumes — whose only substance was `dockerfile:
+# Dockerfile.release`, i.e. building an image locally out of a JAR downloaded from a
+# GitHub Release. That produced, from that same JAR, an image the release workflow
+# already publishes for both architectures, keylessly signed, with an SBOM and SLSA
+# provenance behind it. Pulling it is strictly better than rebuilding it, and it is
+# seventy lines shorter.
+#
+# `!reset` is what makes this an overlay rather than a base: without it the base file's
+# `build: .` survives the merge and `up` would build the source tree and tag the result
+# with the name below, which is the opposite of the point. It needs Compose 2.24+.
+#
+# The tag is PINNED, like every other image reference in this tree — `latest` serves
+# whatever was published the day of the pull, and `docs/check-image-pins.py` refuses it.
+# It is also the same pin `compose/spectra-hub.yml` carries, and that script now checks
+# the two agree: two hand-written copies of one version is exactly the drift the release
+# workflow's bump PR exists to prevent, so the invariant is asserted rather than trusted.
+# Override it for a one-off: `EXPLORER_IMAGE_TAG=1.9.0 docker compose … up -d`.
+services:
+  explorer:
+    build: !reset null
+    image: ${EXPLORER_IMAGE_NAMESPACE:-compagnonsdudev}/kafkaexplorer:${EXPLORER_IMAGE_TAG:-1.9.1}

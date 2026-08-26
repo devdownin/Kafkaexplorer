@@ -64,14 +64,14 @@ Two things to know: Avro / Schema Registry paths run against the stubs, not the 
 
 ### Building without a local toolchain
 
-`docker-compose-build.yml` runs the same commands inside containers, so a machine with only Docker
+`compose/build.yml` runs the same commands inside containers, so a machine with only Docker
 can build, test and package. Always `run --rm` — these are one-shot services, never `up`.
 
 ```bash
-docker compose -f docker-compose-build.yml run --rm verify    # the full gate (= mvn verify)
-docker compose -f docker-compose-build.yml run --rm package   # JAR into ./target, no tests
-docker compose -f docker-compose-build.yml run --rm frontend  # ESLint + Vitest only, no JVM
-docker compose -f docker-compose-build.yml run --rm shell     # interactive toolchain
+docker compose -f compose/build.yml run --rm verify    # the full gate (= mvn verify)
+docker compose -f compose/build.yml run --rm package   # JAR into ./target, no tests
+docker compose -f compose/build.yml run --rm frontend  # ESLint + Vitest only, no JVM
+docker compose -f compose/build.yml run --rm shell     # interactive toolchain
 ```
 
 Everything downloaded (Maven repository, npm cache, the Node toolchain frontend-maven-plugin
@@ -79,7 +79,7 @@ fetches) lands in the `build_cache` named volume, so the second run is fast; `do
 The source tree is bind-mounted, so `target/` appears in the checkout — root-owned on Linux, same
 as the dev stack.
 
-`docker-compose-dev.yml` is the hot-reload stack (Kafka + `spring-boot:run` + Vite). Three things
+`compose/dev.yml` is the hot-reload stack (Kafka + `spring-boot:run` + Vite). Three things
 about it are load-bearing: the backend runs with `-P '!build-frontend'` (the profile is
 `activeByDefault`, so a plain `spring-boot:run` downloaded a whole Node toolchain into `target/` and
 rebuilt the SPA on every container start); `node_modules` and `target/` are **named volumes
@@ -115,11 +115,11 @@ npm test             # Vitest (jsdom + @testing-library/react); test:watch for w
 
 ### Docker
 
-All bundled compose stacks run **Kafka 4.3 in KRaft mode** (`apache/kafka:4.3.1`, single combined broker+controller node — no Zookeeper anywhere, `docker-compose.release.yml` included). CI runs no broker of its own: `KafkaClusterIntegrationTest` starts one through Testcontainers (`apache/kafka-native:4.3.1`), which is also why it works on a developer machine. Prefer that over a workflow-level `services:` block if a new test needs a broker.
+All bundled compose stacks run **Kafka 4.3 in KRaft mode** (`apache/kafka:4.3.1`, single combined broker+controller node — no Zookeeper anywhere, `compose/image.yml` included). CI runs no broker of its own: `KafkaClusterIntegrationTest` starts one through Testcontainers (`apache/kafka-native:4.3.1`), which is also why it works on a developer machine. Prefer that over a workflow-level `services:` block if a new test needs a broker.
 
 ```bash
 # Kafka 4.3 (KRaft) + Schema Registry + app + demo topics (recommended)
-docker compose -f docker-compose-kafka4.yml up -d
+docker compose -f docker-compose.yml -f compose/schema-registry.yml up -d
 
 # Kafka 4.3 (KRaft) + app + demo topics, without Schema Registry
 docker compose up -d
@@ -128,7 +128,7 @@ docker compose up -d
 ./setup-demo.sh localhost:9092
 
 # Avro topics — needs Schema Registry and the Confluent CLI, so it is a separate
-# script wired only into docker-compose-kafka4.yml
+# script wired only into compose/schema-registry.yml
 ./setup-demo-avro.sh localhost:9092 http://localhost:8081
 ```
 
@@ -147,7 +147,7 @@ changes in silence: Ollama gives a model
 `model` / `messages` / `max_tokens` / `temperature` / `stream` and **never `num_ctx`** (which
 that endpoint would not read from the body anyway), and Ollama does not refuse the excess — it
 drops the oldest messages until the prompt fits and logs it at DEBUG, i.e. nowhere on a default
-install. Every Process Mining analysis on `docker-compose-llm.yml` was therefore reasoning on a
+install. Every Process Mining analysis on `compose/ollama.yml` was therefore reasoning on a
 fraction of what it had been handed, with nothing on screen or in the log naming the fraction.
 The bundled stacks now set both halves together (`OLLAMA_CONTEXT_LENGTH` / `LLM_CONTEXT` against
 `PROCESS_MINING_PROMPT_CHAR_BUDGET`) and say so where they set them; the default in
@@ -155,31 +155,32 @@ The bundled stacks now set both halves together (`OLLAMA_CONTEXT_LENGTH` / `LLM_
 carries the rule beside it. Raising one without the other buys nothing or truncates again — and the KV cache is what a
 wider window costs (~2 GB for a 7B at 16k).
 
-#### The two SpectraLLM stacks
+#### The SpectraLLM stack
 
 Process Mining can be answered by a **local SpectraLLM** instance rather than Ollama or Anthropic
-(`CLAUDE_PROVIDER=SPECTRA`, whose client posts to Spectra's single-turn `POST /api/query`). Two
-files wire the pair, and they are not variants of one another:
+(`CLAUDE_PROVIDER=SPECTRA`, whose client posts to Spectra's single-turn `POST /api/query`). One
+file wires the pair. There were two, and the deletion of the other is the point:
 
-- **`docker-compose-spectra.yml`** `include:`s SpectraLLM's own compose from a sibling checkout
-  (`SPECTRALLM_DIR`, default `../SpectraLLM`) and **builds** the explorer from source. It is the
-  developer stack: it follows whatever is in that checkout, profiles included. It used to hold
-  the explorer behind `spectra-api: service_healthy` — the rule the other stacks are written
-  against, since this application needs no model to boot, only when somebody opens Process
-  Mining — and it carried neither the prompt budget nor the timeout the local model needs; both
-  are aligned with the hub stack now, one pairing described in two files being the way they
-  drift. Its broker is **`extends`ed from `docker-compose.yml`, not copied**: the two resolved
-  services differed in exactly the two variables that carry the service name, so sixty lines of
-  KRaft settings — each with a reason written beside it — were being maintained twice. The
-  service keeps the name **`explorer-kafka`**, and that is load-bearing rather than cosmetic:
-  the `include:` carries SpectraLLM's own profile-gated `kafka`, a same-named service **merges
-  with it and inherits its profile**, so the broker then does not exist unless that profile is
-  activated — `depends_on` stops resolving and the whole project is rejected as invalid, and
-  `profiles: []` does not clear it. `extends` is what reuses a definition under a *different*
-  name, which a second `-f` cannot do. Anything added to the base broker that embeds the service
-  name has to be overridden there too. The hub stack deliberately does **not** do this: it is
-  the file you download on its own, so it can extend nothing.
-- **`docker-compose-spectra-hub.yml`** builds nothing. Both projects publish their images under
+- **The developer stack is gone.** It `include:`d SpectraLLM's own compose from a sibling
+  checkout (`SPECTRALLM_DIR`, default `../SpectraLLM`) and **built** the explorer from source,
+  so running it needed that checkout on disk, a Maven build and an npm build — and it was the
+  only file in the tree whose syntax could not be resolved without CI **fabricating a stub of
+  somebody else's repository**, which is a check that tests the stub as much as the file. It was
+  also never booted end to end by anything, where the hub stack has its own CI job. What it
+  bought was following a live SpectraLLM checkout as you edit it; the replacement is to point
+  the pins at what you built (`SPECTRA_IMAGE_TAG`, `EXPLORER_IMAGE_TAG` — already how every
+  image in that stack is chosen), which is one variable rather than a second stack to maintain.
+  Two things it taught are worth keeping, because they are traps rather than history. A service
+  named identically to one carried by an `include:` **merges with it and inherits its profile**,
+  so a profile-gated upstream `kafka` makes your broker vanish unless that profile is on —
+  `depends_on` then stops resolving and the whole project is rejected as invalid, and
+  `profiles: []` does not clear it; `extends` is what reuses a definition under a *different*
+  name, which a second `-f` cannot do. And a broker renamed that way needs every setting that
+  embeds the service name overridden with it (`KAFKA_CONTROLLER_QUORUM_VOTERS`,
+  `KAFKA_ADVERTISED_LISTENERS`) — a broker advertising a name nothing can resolve does not
+  refuse the connection, it accepts it and hands the client an address it cannot reach, which
+  surfaces as a timeout somewhere else entirely.
+- **`compose/spectra-hub.yml`** builds nothing. Both projects publish their images under
   `compagnonsdudev` on Docker Hub (`kafkaexplorer`, `spectrallm`, `spectrallm-frontend`), so a
   machine with only Docker runs the pair — no Maven, no npm, no SpectraLLM checkout, and
   nothing built. It does need **this** repository checked out, which the page it is
@@ -190,8 +191,8 @@ files wire the pair, and they are not variants of one another:
   clone` where it said `curl`:
 
   ```bash
-  docker compose -f docker-compose-spectra-hub.yml pull
-  docker compose -f docker-compose-spectra-hub.yml up -d
+  docker compose -f compose/spectra-hub.yml pull
+  docker compose -f compose/spectra-hub.yml up -d
   ```
 
   **The three services that run a shell take it from `scripts/spectra-hub/`**, not from a YAML
@@ -239,29 +240,31 @@ files wire the pair, and they are not variants of one another:
   looking healthy while every Process Mining call answers 401. Neither application authenticates:
   what protects the stack is `BIND_ADDR` on the loopback.
 
-  **Three overlays sit beside it**, and each exists because what it changes cannot be a default.
-  `docker-compose-spectra-hub.gpu.yml` swaps both llama.cpp servers for the CUDA image *pinned to
+  **Three overlays sit beside it**, and each survives for one reason: what it changes cannot be expressed as a variable, which is the test the fourth failed.
+  `compose/spectra-hub.gpu.yml` swaps both llama.cpp servers for the CUDA image *pinned to
   the same build number* (`server-cuda-b9828` against `server-b9828` — a floating `server-cuda`
   would put a different engine revision under a stack that pins everything else) and requests the
   devices; it is not safe to leave on where there is no GPU, which is precisely why it is an
-  overlay. `docker-compose-spectra-hub.limits.yml` is this stack's own limits file rather than a
-  few lines added to `docker-compose.limits.yml`: that one names `explorer` and `kafka`, and a
+  overlay. `compose/spectra-hub.limits.yml` is this stack's own limits file rather than a
+  few lines added to `compose/limits.yml`: that one names `explorer` and `kafka`, and a
   service named in an overlay but absent from the base file becomes a new imageless service and
   fails the whole `up` — so this stack needs its own, and it bounds the **seven long-running
   services of its eleven** (the four it leaves out are one-shots that exit) instead of leaving the
   four heaviest unbounded. It deliberately sets **no `cpus` on the llama.cpp
   servers**: on CPU inference throughput *is* the core count.
 
-  `docker-compose-spectra-hub.small.yml` is the fourth, and the one an ordinary laptop wants:
-  a 3B chat model instead of the default 7B — ~2 GB of weights instead of 4.7, half the memory,
-  and an answer in a fraction of the time, which is what makes the 300 s timeouts stop being
-  load-bearing. It is also the reason `spectra-models` fetches *two* models: `spectra-api`
-  installs the default chat model itself and **only** that one, so serving another means naming
-  its URL (`SPECTRA_CHAT_MODEL_URL`) and turning the auto-install off, which the overlay does
-  together with the file name and the alias — the three have to agree, and are set in one place
-  for that reason.
+  **A 3B chat model instead of the default 7B** — ~2 GB of weights rather than 4.7, half the
+  memory, and an answer in a fraction of the time, which is what stops the 300 s timeouts
+  being load-bearing — used to be a fourth overlay and is now **four lines of `.env`**. That
+  is all it ever was: every value it set already had an interpolated default in the stack
+  file, so the overlay expressed nothing a variable could not, which is exactly the test for
+  whether something deserves to be a file. It is also why `spectra-models` fetches *two*
+  models: `spectra-api` installs the default chat model itself and **only** that one, so
+  serving another means naming its URL (`SPECTRA_CHAT_MODEL_URL`) and turning the
+  auto-install off, together with the file name and the alias — the four have to agree, and
+  `.env.example` sets them in one block for that reason.
 
-  `docker-compose-spectra-hub.ingest.yml` is the one that makes the pair more than a shared
+  `compose/spectra-hub.ingest.yml` is the one that makes the pair more than a shared
   model — SpectraLLM consumes the topics and indexes what is *in* the messages, so the corpus
   answers questions with cited sources and the Explorer's audits can read it (`EXPLORER_USE_RAG`,
   whose collection defaults to the one the ingestion writes to, so one variable lines both halves
@@ -327,33 +330,78 @@ KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `
 - **The app writes under `/app` and both paths are volumes**: `logs/` (`logging.file.name`) and `data/` (`explorer.flink-job-store-path` — Flink job history was lost on every recreate). They are named volumes, never a bind-mounted *file*: `./Kafkaexplorer.log:/app/logs/kafkaexplorer.log` pointed at a path absent from the checkout, so Docker created a directory there and Logback could not open its log at all. That broken mount was also the stated reason the runtime image stayed root; both images now run as `USER 10001:10001`, owning `/app/logs` and `/app/data`, and a named volume inherits that ownership where a host bind mount would not.
 - **Both runtime images ship the JAR as Spring Boot's four layers**, most stable first (`dependencies` → `spring-boot-loader` → `snapshot-dependencies` → `application`), extracted with `-Djarmode=tools … extract --layers --launcher` (the Boot 3.3+ entry point; `layertools` is gone). There is no fat JAR in the image any more, so the entrypoint is `java org.springframework.boot.loader.launch.JarLauncher`, and a patch release re-pushes only the small application layer instead of a few hundred megabytes that are ~95% identical to the previous version's. Keep the four COPY lines in that order — a COPY invalidates every layer after it. **A Class Data Sharing archive is built on top of them**, by a training run in the runtime stage (`-XX:ArchiveClassesAtExit` with `-Dspring.context.exit=onRefresh`, which refreshes the context and exits without opening a port). Measured against this exact layout — the extracted layers behind `JarLauncher`, with no broker listening: **7.74 s without it, 6.39 s with**, and 12 911 of the 24 343 classes loaded are served from the archive, application classes included. Three things about it are load-bearing. It is dumped in the **runtime** stage rather than a `--platform=$BUILDPLATFORM` one like the extractor, because a CDS archive is architecture-specific — so the arm64 variant produces its own under emulation, which is the real cost of this alongside ~90 MB of image. The flag goes on the **ENTRYPOINT, not into `JAVA_TOOL_OPTIONS`**: that variable is documented as replaced wholesale when an operator sets one, so a container started with a tuned `-XX:MaxRAMPercentage` would have silently dropped the archive and paid the 90 MB anyway. And it stays on the JVM default `-Xshare:auto`, so a JVM that cannot map the archive starts normally instead of refusing to boot over an optimisation — which is exactly why `ci.yml` runs `-Xshare:on` against it once in the `release-image` job: that leniency is also what would let a mis-wiring ship 90 MB buying nothing, in silence.
 - `release.yml` publishes `linux/amd64,linux/arm64` (free here — a JRE base plus architecture-independent bytecode, and the extraction stage is pinned to `--platform=$BUILDPLATFORM` so it is not replayed under QEMU) and gates `latest` on the absence of a `-` in the tag, so a `v1.3.0-rc1` no longer becomes what `docker run …/kafkaexplorer` pulls.
-- **The broker is defined once and `extends`ed, not copied into every stack.** `kafka`,
-  `kafka-data-init` and `demo-setup` were restated verbatim in `docker-compose-kafka4.yml`,
-  `docker-compose-llm.yml` and `docker-compose.release.yml` — 235 lines whose resolved
-  services `docker compose config` reported **byte-identical** to `docker-compose.yml`'s, each
-  carrying its own copy of the reasoning (what a 5s probe interval costs, what a flushing KRaft
-  node needs before SIGKILL, why `__consumer_offsets` has one partition). They now `extends:`
-  that file, which changes no command — `extends` reuses one service and does **not** make the
-  file an overlay, so `-f docker-compose-kafka4.yml up -d` is what it was. Two things are
-  measured rather than assumed: `depends_on` **is** carried through `extends` by Compose v5
-  while earlier specifications excluded it, so it is restated; and top-level `volumes:` are
-  **not** inherited, which is why every one of those files still declares `kafka_data`. The
-  transform is verifiable exactly as it was made — the `config` output is unchanged. Two files
-  deliberately stay out: `docker-compose-dev.yml`, whose named volumes shadow the bind mounts
-  on purpose, and `docker-compose-spectra-hub.yml`, which is the one stack meant to be
-  downloaded on its own and can therefore extend nothing.
+- **One base, and everything else is an overlay of it.** The tree carried **sixteen** compose
+  files, of which *five* answered the same question — "how do I run this?" — by restating each
+  other: `docker-compose.yml`, `-kafka4`, `-llm`, `-spectra` and `.release` were all **bases**,
+  each with its own copy of the explorer service, and the first refactor had already reduced
+  their brokers to `extends:` after `docker compose config` reported the copies byte-identical.
+  Being separate *bases* was the remaining cost, and it was not only duplication: Schema
+  Registry and Ollama **could never run together**, because two bases cannot be layered.
+  There is now **one base file at the repository root** and everything else in `compose/`:
+
+  | File | Kind | What it is |
+  |---|---|---|
+  | `docker-compose.yml` | base | Kafka 4.3 KRaft + explorer + demo seeder. The one everything layers onto. |
+  | `compose/schema-registry.yml` | overlay | Schema Registry + the Avro seeder. Was `docker-compose-kafka4.yml`. |
+  | `compose/ollama.yml` | overlay | A local Ollama model for Process Mining. Was `docker-compose-llm.yml`. |
+  | `compose/image.yml` | overlay | Run the published image instead of building. Was `docker-compose.release.yml`. |
+  | `compose/limits.yml` | overlay | Opt-in `mem_limit` / `cpus`. |
+  | `compose/ci.yml` | overlay | CI-only, layered on `image.yml`. |
+  | `compose/dev.yml` | standalone | Hot reload: broker + `spring-boot:run` + Vite. |
+  | `compose/build.yml` | standalone | One-shot toolchain (`run --rm`), not a stack. |
+  | `compose/spectra-hub.yml` + `.gpu` / `.ingest` / `.limits` | standalone + overlays | The SpectraLLM pair, from published images. |
+
+  **The `kafka4` name was a lie worth removing.** Every stack here runs Kafka 4.3 in KRaft —
+  `docker-compose.yml` included — so a file named for that advertised a choice that had stopped
+  existing, on the stack the README recommends, which is the first thing a newcomer reads. What
+  it adds is a Schema Registry, and it is named for that now.
+
+  **Where relative paths resolve is the one rule to know**, and it was measured rather than
+  assumed. Compose sets the *project directory* to the directory of the **first `-f` file**, and
+  every `./…` in *any* of the layered files resolves against that — so an overlay under
+  `compose/` mounting `./setup-demo-avro.sh` gets the repository root, because the base always
+  comes first. A **standalone** file under `compose/` is its own project directory, so its paths
+  carry `../` and it must declare `name:` explicitly, or its volumes would come back under a
+  `compose_` prefix and a warm Maven cache would be silently discarded. Paths inherited through
+  **`extends`** are the exception: they resolve against the *extended* file's directory, which
+  is why `compose/dev.yml` inherits the base broker without a single `../`.
+
+  **`compose/dev.yml` no longer restates the broker either** — it was the last verbatim copy in
+  the tree, sixty lines of KRaft settings duplicated so that *one* thing could differ, the name
+  of the data volume. `extends` merges sequences, so the base's `kafka_data` mount and this
+  file's `kafka_data_dev` would both land on `/var/lib/kafka/data`; **`volumes: !override`** is
+  what replaces the list outright, and it works with `extends` (verified, not assumed). The dev
+  broker keeps its existing volume name, so nobody loses a broker to the refactor.
+
+  **`compose/image.yml` needs `build: !reset null`**, and that is what makes it an overlay
+  rather than a base: without it the base's `build: .` survives the merge and `up` compiles the
+  source tree and tags the result with the published image's name — the opposite of the point.
+  `compose/ci.yml` now layers on top of it, so the file real deployments use is exercised on
+  every CI run instead of only by `compose-lint`.
+
+  **Two files were deleted outright.** `docker-compose-spectra.yml` — see the SpectraLLM
+  section above. And `docker-compose-spectra-hub.small.yml`, which set four values that already
+  had interpolated defaults in the stack file: it expressed **nothing a variable could not**,
+  which is the test for whether something deserves to be a file at all. It is four lines of
+  `.env.example` now.
+
+  The whole transform is verifiable the way the previous one was: `docker compose config` over
+  every stack is **unchanged**, with one deliberate exception — the explorer no longer waits on
+  `schema-registry: service_healthy`, which contradicted this file's own rule that the app
+  depends on the broker and nothing else.
 - **No `container_name`, and the app service is `explorer` in every stack.** `container_name` is daemon-global, so the shared `kafka` / `kafka-sql-explorer` names meant two stacks could never coexist and switching files without a `down` first collided; compose derives `<project>-<service>-<n>` instead, and `docker compose -p other … up` gives a second independent stack. The project name still defaults to the directory, so `kafka_data` keeps its name and already-seeded topics survive. Address services by service name (`docker compose logs kafka`). The `app` → `explorer` rename removes an inconsistency and is what lets an overlay target the service at all — a name present in an overlay but absent from the base file becomes a new, imageless service and fails the whole `up`.
-- **Resource limits are an opt-in overlay** (`docker-compose.limits.yml`, layered onto `docker-compose.yml` / `-kafka4` / `-llm` / `.release`). Not in the stacks themselves, because a limit set too low is worse than none — the JVM is OOM-killed instead of running a GC. But without *any* limit, `-XX:MaxRAMPercentage=75.0` reads the host's memory, so on a 32 GB workstation the JVM believes it may take 24 GB: `mem_limit` is what gives that flag a meaning. Use `mem_limit`/`cpus`, never a `deploy:` block — that is Swarm syntax, silently ignored by `docker compose up`.
+- **Resource limits are an opt-in overlay** (`compose/limits.yml`, layered onto `docker-compose.yml` and anything layered with it — it used to have to name four separate bases, and forgetting a fifth was silent). Not in the stacks themselves, because a limit set too low is worse than none — the JVM is OOM-killed instead of running a GC. But without *any* limit, `-XX:MaxRAMPercentage=75.0` reads the host's memory, so on a 32 GB workstation the JVM believes it may take 24 GB: `mem_limit` is what gives that flag a meaning. Use `mem_limit`/`cpus`, never a `deploy:` block — that is Swarm syntax, silently ignored by `docker compose up`.
 - **Every compose file is parsed by CI** (`compose-lint` in `ci.yml`), each overlay layered onto
   its base rather than alone — an overlay on its own is a set of services with no image. Twelve
-  files shipped here and the build parsed none of them; the job found `docker-compose-kafka4.yml`,
-  the stack this file recommends, refusing to start at all since the day two volume mounts were
+  files shipped here and the build parsed none of them; the job found what was then
+  `docker-compose-kafka4.yml`, the stack this file recommends, refusing to start at all since
+  the day two volume mounts were
   added without their top-level declarations (`service "explorer" refers to undefined volume
   explorer_logs: invalid compose project`). It takes seconds, needs no daemon and pulls nothing,
   and it **fails on a compose file that no combination names**, so a new stack cannot be added
-  without being checked. `docker-compose-spectra.yml`'s `include:` is resolved against a
-  three-line stub: what is under test is that file's own syntax, not the availability of another
-  repository.
+  without being checked. It also no longer fabricates a stub of SpectraLLM's own compose, that
+  having been needed by exactly one file which no longer exists — a check whose fixture is an
+  invention of somebody else's repository is partly testing the invention.
 - **The images the stacks pull are checked too** (`docs/check-image-pins.py`, in the
   `docs-links` job): nothing floats (`curlimages/curl:latest` sat two services below the comment
   claiming Ollama was "the only floating tag left in the tree"), the llama.cpp CPU and CUDA tags
@@ -431,11 +479,13 @@ KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `
   Process Mining call really travelling explorer → spectra-api → llm-chat and coming back, which
   is what would have caught the `X-API-Key` / `Bearer` mismatch this stack documents instead of
   leaving it a paragraph nobody executes.
-- **CI runs the stack, it does not merely build it.** The `docker` job starts `docker-compose.yml` over the image it just built (`docker-compose.ci.yml` supplies it) and asserts the deployment contract: the container reaches `healthy`, both probes answer UP, `/api/dashboard` responds, the process runs as uid 10001, `/app/logs/kafkaexplorer.log` is non-empty, a second seeding run skips, and the app's exit code after `stop` is not 137 (SIGKILL). Each assertion corresponds to a bug that lived here for months precisely because nothing ever ran these files. A second job, `release-image`, builds `Dockerfile.release` from the `build` job's JAR and boots it with no broker — that file used to be exercised for the first time by the release itself. **That job is also where the startup audit's findings are guarded**, because it is the one place in CI that runs the app with *no broker* — the `docker` job's stack has a healthy one, so the failure mode measured there cannot occur in it. After liveness it holds the container for a fixed 30 s window and asserts three things: the log stays under **5 000 lines** (the flood was ~2 300 lines a second from a single class, so a return of it is ~70 000 in that window — the ceiling sits more than tenfold from both, deliberately, because a gate that flakes is a gate people learn to ignore); the startup summary names the broker that did not answer; and each of the two state restores reports itself, naming its topic, since both used to fail at DEBUG and therefore silently.
+- **CI runs the stack, it does not merely build it.** The `docker` job starts `docker-compose.yml` over the image it just built (`compose/ci.yml` supplies it) and asserts the deployment contract: the container reaches `healthy`, both probes answer UP, `/api/dashboard` responds, the process runs as uid 10001, `/app/logs/kafkaexplorer.log` is non-empty, a second seeding run skips, and the app's exit code after `stop` is not 137 (SIGKILL). Each assertion corresponds to a bug that lived here for months precisely because nothing ever ran these files. A second job, `release-image`, builds `Dockerfile.release` from the `build` job's JAR and boots it with no broker — that file used to be exercised for the first time by the release itself. **That job is also where the startup audit's findings are guarded**, because it is the one place in CI that runs the app with *no broker* — the `docker` job's stack has a healthy one, so the failure mode measured there cannot occur in it. After liveness it holds the container for a fixed 30 s window and asserts three things: the log stays under **5 000 lines** (the flood was ~2 300 lines a second from a single class, so a return of it is ~70 000 in that window — the ceiling sits more than tenfold from both, deliberately, because a gate that flakes is a gate people learn to ignore); the startup summary names the broker that did not answer; and each of the two state restores reports itself, naming its topic, since both used to fail at DEBUG and therefore silently.
 
 ### Typical local dev workflow
 
-1. `docker compose -f docker-compose-kafka4.yml up kafka` — start Kafka only
+1. `docker compose up -d kafka` — the broker alone. The base file is enough: it carries the broker,
+   and layering `compose/schema-registry.yml` here changed nothing, since that overlay adds services
+   rather than touching `kafka`. Add `schema-registry` to the service list if you are working on Avro.
 2. `./mvnw spring-boot:run` — start backend on port 8080
 3. `cd src/main/webapp && npm run dev` — start frontend dev server (port 5173)
 
@@ -536,7 +586,7 @@ Heavy metadata calls are Caffeine-cached (30s TTL): `listTopics` (`kafkaTopics`)
 - `StreamFlowController` — `/api/stream-flow` (whole result) and `/api/stream-flow/stream` (SSE: `progress` / `flow` / `result` / `failed`). The SSE traces run on their own 4-thread pool, never the service's topic workers — a driver waits on those tasks, so drivers occupying those threads would starve the work they wait for. A failed `send` means the client is gone: it raises the same cancel flag the trace polls, so hanging up really stops the scan. Do **not** add a `GET /stream-flow` mapping — `/stream-flow` is a client-side route and a controller mapping on it shadows `SpaController`, producing a circular-view-path 500 on a page refresh (there is no template engine); same rule as `/audit`.
 - `SqlQueryValidator` — cross-join and system-table guard, **not** the statement whitelist. It checks the two `ExplorerConfig` switches and returns silently for anything that is not a `SELECT` or an `EXPLAIN` — which is what lets `INSERT INTO` reach Flink Job mode at all. The whitelist ("Only SELECT, EXPLAIN and CREATE TABLE statements are allowed.") is enforced by `FlinkSqlService.executeSql`, and this file described the wrong class for it. Its `EXPLAIN` probe still swallows unresolved-table errors (it runs before auto-registration, so those are expected), but a **parse** error is rethrown as `IllegalArgumentException`: syntax never depends on the catalog, so `POST /api/query/validate` can reject a typo with its line/column before the query touches Kafka.
 - `PayloadDigestService` — the Process Mining pipeline never handles a raw payload past ingestion. Each record is turned into a `PayloadDigest` (mapped fields, a bounded sample of other scalars, array cardinalities, a `PayloadShape` reference, original size) by a **streaming** parser: Jackson `JsonParser` for JSON, StAX `XMLStreamReader` for XML — no tree, and on the live path not even a `String`, since the value arrives as `byte[]`. Subtrees past `max-depth` and array elements past `array-sample-size` are `skipChildren()`-ed rather than walked, so a 1 MB / 10-level document costs a bounded walk and yields a ~1 KB digest. Structures are deduplicated by hashing the leaf-path set (array indices collapsed to `[]`) into a shape id, kept in an LRU registry, so a window of identical documents contributes one skeleton to the prompt. Non-JSON/XML payloads keep a bounded preview; unparseable ones carry `parseError` + preview.
-- **OpenRouter is the default provider** (`ClaudeConfig.Provider.OPENROUTER`), and it replaced `OLLAMA` at `http://localhost:11434/v1` — a default that only ever worked in one situation, a developer running this application *outside* a container with Ollama installed on the same machine. Inside every image published here `localhost` is the container, where no Ollama runs, so the shipped default answered a connection refused to itself; a default is what the largest number of people meet first, and this one needs a key and nothing else. What it costs is stated rather than implied, in `application.yml`, on the Docker Hub page, in the README and on the Settings banner: it is a **hosted** endpoint, so the message digests Process Mining builds leave the host. `docker-compose-llm.yml` and the SpectraLLM stacks name their provider explicitly and are untouched by the change, which is the point — a deployment that must keep everything in-house says so, and every stack that has to already did. One consequence worth knowing: the 120 000-character prompt budget and the default provider now agree by construction (see the window section above), where before the shipped budget was sized for a hosted API the shipped provider was not. Two knock-on changes were forced by the move rather than chosen alongside it. `SettingsStore.Field.envAliases` is a **list**: `claude.api-key` is bound through a placeholder, so `StoredSettingsInitializer` has to be told which environment variables name it, and with OpenRouter as the default the variable an operator actually exports is `OPENROUTER_API_KEY` — a key set there being outranked by a stored one would be the identical defect the single alias was added to fix, on the identical field. The chain is `${OPENROUTER_API_KEY:${ANTHROPIC_API_KEY:}}`, with `CLAUDE_API_KEY` (the property's own relaxed name, and therefore a higher-precedence property source) outranking both on a machine that exports several. And `ConfigControllerTest`'s "whole form" fixtures now read the running configuration instead of spelling the shipped defaults out: those two tests are about the difference between a field *carried* and a field *changed*, and hardcoding the defaults made them fail the day one moved, on a rule that has nothing to say about which provider ships.
+- **OpenRouter is the default provider** (`ClaudeConfig.Provider.OPENROUTER`), and it replaced `OLLAMA` at `http://localhost:11434/v1` — a default that only ever worked in one situation, a developer running this application *outside* a container with Ollama installed on the same machine. Inside every image published here `localhost` is the container, where no Ollama runs, so the shipped default answered a connection refused to itself; a default is what the largest number of people meet first, and this one needs a key and nothing else. What it costs is stated rather than implied, in `application.yml`, on the Docker Hub page, in the README and on the Settings banner: it is a **hosted** endpoint, so the message digests Process Mining builds leave the host. `compose/ollama.yml` and the SpectraLLM stacks name their provider explicitly and are untouched by the change, which is the point — a deployment that must keep everything in-house says so, and every stack that has to already did. One consequence worth knowing: the 120 000-character prompt budget and the default provider now agree by construction (see the window section above), where before the shipped budget was sized for a hosted API the shipped provider was not. Two knock-on changes were forced by the move rather than chosen alongside it. `SettingsStore.Field.envAliases` is a **list**: `claude.api-key` is bound through a placeholder, so `StoredSettingsInitializer` has to be told which environment variables name it, and with OpenRouter as the default the variable an operator actually exports is `OPENROUTER_API_KEY` — a key set there being outranked by a stored one would be the identical defect the single alias was added to fix, on the identical field. The chain is `${OPENROUTER_API_KEY:${ANTHROPIC_API_KEY:}}`, with `CLAUDE_API_KEY` (the property's own relaxed name, and therefore a higher-precedence property source) outranking both on a machine that exports several. And `ConfigControllerTest`'s "whole form" fixtures now read the running configuration instead of spelling the shipped defaults out: those two tests are about the difference between a field *carried* and a field *changed*, and hardcoding the defaults made them fail the day one moved, on a rule that has nothing to say about which provider ships.
 - **What becomes of the message content is stated on both pages that send it** (`pages/llmPolicy.ts`, pure + tested, rendered by `Config` and `ProcessMining`). The question was answered by halves: Settings spoke **only when the news was good** — `DENY` showed its restriction while `ALLOW` fell back to the generic "remote inference" line, so the one setting that *widens* exposure was the one that displayed nothing — and Process Mining, the page where the content actually leaves, said nothing at all beyond "digests are sent to this endpoint". `describeDataPolicy` returns one of four tones (`local` / `restricted` / `open` / `unenforceable`) from the facts `GET /api/config` already carries, and two rules hold it: a policy is asserted only where it is **enforceable** — OpenRouter imposes it at the routing layer, so it can be spoken about, while on Anthropic, an arbitrary gateway or a remote Ollama this application can neither impose nor observe one and says so — and the unknown is **stated rather than omitted**, which is also OpenRouter's own stance (it assumes retention *and* training where a provider's policy cannot be established). It describes what the deployment **enforces**, never what a model **declares**: the second would be a third-party claim rendered as our verdict. Settings reads it off a `inForce` state held apart from the form, like `persistence` — `llmDataRetentionRefused` is computed server-side and does not follow a provider changed in the form, so mixing the two would print one provider's policy under another's name, and a `policyIsStale` line says when the form has moved ahead of what is running.
 - **The routing policy is where a privacy claim stops being a warning** (`routingPolicy()` in `OpenAiCompatibleLlmClient`, `claude.openrouter-data-collection`, default **`DENY`**). Everywhere else this application can only read *its own* address and say "remote"; what the upstream vendor then does with a Kafka message digest is unobservable from here. OpenRouter enforces it at the routing layer, so the request carries `provider: {data_collection: "deny"}` and the Settings banner states the property instead of the risk — `isDataRetentionRefused()` is what it reads, and that is false for every provider where the question cannot be enforced, so the sentence is never stronger than the mechanism. The accepted cost is stated where it is paid: a model served only by data-collecting providers stops being routable, and the gateway reports that with **the same 404 it uses for a mistyped slug** — hence `explainRoutingRefusal()`, which appends the policy and names the setting, because an unqualified "no such model" sends an operator to check a name that was correct all along. It keeps the exception's status, since `looksLikeSchemaRefusal` reads it. `claude.openrouter-require-parameters` is the sibling and is **off** by default on the `structured-output: AUTO` reasoning: it would make schema support a routing guarantee, but a model whose providers lack it becomes *unroutable* rather than degrading, and the per-model latch cannot rescue that — the refusal arrives as "no endpoints found", not as the 400/422 the latch keys on. **`claude.openrouter-max-price-usd-per-million` is the third, and it is the enforceable half of `session-cost-limit-usd`**: that one accumulates what has already been spent and stops the session afterwards, which is the right shape for a running total and the wrong one for a surprise — the expensive route has been paid for by the time the cap notices. A price ceiling is refused before the tokens exist. One value against both published prices (completion is the dearer in practice), in the unit the catalogue publishes and the picker renders, so the number written here is the number read on a row; **0** and off by default, on the same rule as its two siblings — every provider over the ceiling makes the model unroutable, arriving as that same "no endpoints found". And since a 404 on this gateway now conflates three causes, `explainRoutingRefusal` names all three and points at the Test button, which is the one place that asks the catalogue: doing that lookup from the analysis path is refused deliberately, or a live session that has begun failing would make one request per window.
 - **A failure the gateway only relayed is not this application's to answer for** (`LlmHttpSupport.upstreamProviderOf`). On a routing gateway one model is served by several upstream providers, the choice is made per call and is not announced, and a provider's own failure comes back with OpenRouter's status over that provider's payload — `{"error":{"message":"Provider returned error","code":400,"metadata":{"provider_name":"AtlasCloud",…}}}`. Read as an ordinary 400, that produced the sentence *"the endpoint rejected the request body (a field it does not implement, or a malformed one)"*, which sends an operator to audit a body that is provably fine: measured on `liquid/lfm-2.5-2.6b:free`, the byte-identical request failed through AtlasCloud and succeeded through Liquid minutes later. `error.metadata.provider_name` is therefore read off the error body — defensively, since an error body is exactly where no shape is guaranteed, and a body that will not parse leaves the diagnosis as it was — carried on `ClientErrorException.upstreamProvider()`, and the message names the provider that failed and says another attempt may route elsewhere. **The second half is what it costs elsewhere**: `looksLikeSchemaRefusal` fires on 400/422, so an upstream failure used to latch the model into `modelsRefusingSchema` — for the client's whole lifetime, on the strength of one provider's bad afternoon, with every later Process Mining window running unconstrained and nothing saying so. The unconstrained retry still happens (an upstream that genuinely lacks `response_format` is a real case, and one extra request is the cheap half); only the durable conclusion is withheld, since a relayed refusal is a fact about a provider, not about the model. Note what this does **not** fix, because it cannot be fixed here: a `:free` slug is usually unroutable under `claude.openrouter-data-collection: DENY` — the free endpoints are the ones that train — and the gateway reports that as the same 404 as a mistyped model, which is what `explainRoutingRefusal` exists to qualify.
@@ -1084,7 +1134,7 @@ classic `bad interpreter: /bin/sh^M` — inside a container, where it is awkward
 - **`Dockerfile.release.dockerignore`** réduit le contexte à `app.jar`, le seul fichier que ce Dockerfile copie. BuildKit lit `<dockerfile>.dockerignore` **à la place** du `.dockerignore` racine (il ne s'y ajoute pas), d'où le `*` + `!app.jar` plutôt qu'une liste d'exclusions. Ça corrige surtout un doublon : CI et `release.yml` téléchargent l'artefact dans `dist/` puis le copient en `app.jar`, donc les mêmes centaines de mégaoctets voyageaient deux fois dans chaque contexte (`dist/` est aussi entré dans le `.dockerignore` racine, pour un Docker antérieur à cette fonctionnalité — où la dégradation est simplement l'absence de gain, pas une casse).
 - Coût assumé, pas un oubli : le job `docker` de `ci.yml` recompile tout depuis les sources alors que le job `build` vient de le faire via `mvn verify`. C'est ce qui garantit que le `Dockerfile` multi-stage ne pourrit pas — la rupture `"/app/dist": not found` a vécu jusqu'à un tag précisément parce que rien ne construisait cette image.
 - **`release.yml` valide le tag avant de construire quoi que ce soit** (job `guard`). Trois échecs muets sont sortis de ce seul mécanisme : un tag en majuscule (`V1.3`) ne correspond à aucun filtre — ils sont sensibles à la casse — donc il ne déclenche *rien*, en silence ; un tag à deux composantes (`v1.1`, `v1.2`) n'est pas du semver, donc `metadata-action` n'émet aucun tag de version et l'image ne sort qu'en `latest`, ce qu'on découvre des mois plus tard en tirant `:1.2` ; et l'historique a dérivé (`0.0.1`, `0.0.2`, `v0.0.3`, `v0.1.0`, `v1.1`, `v1.2`, `V1.3`). Le déclencheur inclut donc `V*` **pour que le garde puisse refuser** un tag majuscule au lieu de l'ignorer, et le message d'erreur nomme lequel des trois cas s'applique.
-- **La release ouvre la PR qui remet le pin de la stack hub à jour.** `docker-compose-spectra-hub.yml` nomme l'image de l'Explorer à la main (`${EXPLORER_IMAGE_TAG:-…}`), Dependabot ne sait pas lire cette forme, et le pin devient périmé à l'instant précis où le job `docker` publie — le seul endroit du dépôt qui sache qu'une version vient d'exister. Laissé à la main, ce n'est pas la release qui s'en aperçoit : c'est **la pull request suivante qui touche un fichier surveillé par `hub-changes`** et qui échoue sur `check-image-pins.py --published`, à propos de quelque chose qu'elle n'a pas changé — arrivé deux fois en une journée, sur deux branches sans rapport. L'étape ouvre donc une **pull request**, jamais un push sur `main` : toutes les entrées de `main` sont des merge commits relus, et cette PR touche les fichiers de la stack, donc `hub-changes` déclenche `spectra-hub-stack` et la nouvelle valeur est vérifiée **contre le registre** avant d'être fusionnée — le mécanisme qui signale le problème est celui qui valide la correction. Trois garde-fous : elle ne s'exécute que sur un tag **stable** (même règle que `latest` — une pré-version ne déplace pas le pin de la stack que les gens exécutent), elle est **best-effort** (`continue-on-error` : l'image est déjà publiée, une release ne doit pas être déclarée en échec parce qu'un suivi n'a pas pu s'ouvrir), et elle est écrite avec `git` et `gh` plutôt qu'une action tierce — c'est le chemin de release, qui porte déjà `contents: write` et un login registre. Elle a besoin de `pull-requests: write` sur le job et du réglage « Allow GitHub Actions to create and approve pull requests » ; s'il manque, la branche est poussée et un `::warning::` nomme le réglage.
+- **La release ouvre la PR qui remet le pin de la stack hub à jour.** `compose/spectra-hub.yml` nomme l'image de l'Explorer à la main (`${EXPLORER_IMAGE_TAG:-…}`), Dependabot ne sait pas lire cette forme, et le pin devient périmé à l'instant précis où le job `docker` publie — le seul endroit du dépôt qui sache qu'une version vient d'exister. Laissé à la main, ce n'est pas la release qui s'en aperçoit : c'est **la pull request suivante qui touche un fichier surveillé par `hub-changes`** et qui échoue sur `check-image-pins.py --published`, à propos de quelque chose qu'elle n'a pas changé — arrivé deux fois en une journée, sur deux branches sans rapport. L'étape ouvre donc une **pull request**, jamais un push sur `main` : toutes les entrées de `main` sont des merge commits relus, et cette PR touche les fichiers de la stack, donc `hub-changes` déclenche `spectra-hub-stack` et la nouvelle valeur est vérifiée **contre le registre** avant d'être fusionnée — le mécanisme qui signale le problème est celui qui valide la correction. Trois garde-fous : elle ne s'exécute que sur un tag **stable** (même règle que `latest` — une pré-version ne déplace pas le pin de la stack que les gens exécutent), elle est **best-effort** (`continue-on-error` : l'image est déjà publiée, une release ne doit pas être déclarée en échec parce qu'un suivi n'a pas pu s'ouvrir), et elle est écrite avec `git` et `gh` plutôt qu'une action tierce — c'est le chemin de release, qui porte déjà `contents: write` et un login registre. Elle a besoin de `pull-requests: write` sur le job et du réglage « Allow GitHub Actions to create and approve pull requests » ; s'il manque, la branche est poussée et un `::warning::` nomme le réglage.
 - **Le JAR publié porte la version du tag**, pas celle du pom : `versions:set -DgenerateBackupPoms=false` réécrit la version dans la copie du runner avant le `verify`, sans commit. Le pom du dépôt reste en `0.0.1-SNAPSHOT` — c'est la version de développement et couper une release ne doit pas demander de la bousculer — mais une Release taguée `v1.1` attachait `kafka-sql-explorer-0.0.1-SNAPSHOT.jar` : le seul fichier que l'utilisateur télécharge n'avait aucun rapport avec la version sur laquelle il venait de cliquer.
 - **`docs/check-links.py` résout tous les liens de la doc qui pointent vers le dépôt** (job `docs-links` de `ci.yml`, sans `needs` et sans réseau). `docs/DOCKERHUB.md` est rendu **hors du dépôt** : ses liens sont tous absolus, aucun n'est vérifiable en lisant la page, et un lien pourri reste invisible jusqu'à ce qu'un visiteur clique et tombe sur un 404 — sur la page censée vendre l'image. Le script résout les trois formes (chemin relatif, `github.com/…/blob/main/…`, et une URL Pages vers `docs/…`) et **ignore les commentaires HTML** : les notes de maintenance de `DOCKERHUB.md` explicitent la forme des URLs Pages en `…/img/…`, dont l'ellipse était signalée comme image cassée.
 - **`docs/check-api-types.py` fait pour le contrat d'API ce que les deux précédents font pour les liens et la configuration** (même job `docs-links`, même absence de réseau). Le front affirmait ses types au point d'appel — `axios.get<{ samples: string[] }>(…)` — et TypeScript croit une annotation écrite à la main : le jour où `GET /api/topic/{name}` a cessé de renvoyer des chaînes pour renvoyer des `TopicMessage`, rien n'a échoué à la compilation et la page Compare est morte en production sur l'erreur React #31, des mois plus tard. Les formes de réponse vivent donc dans **`src/main/webapp/src/api/types.ts`**, une par record Java, chacune marquée `@java <Record>` ; le script les résout contre `domain/*.java` — noms de champs **dans les deux sens** (un champ que le back a et que le front ignore, un champ que le front lit et qui n'existe pas) et types via une correspondance explicite (`String`→`string`, `List<X>`→`X[]`, `Map<K,V>`→`Record<…>`, un record→son interface, une enum→son alias d'union). La nullabilité est laissée au front **à toute profondeur** — toute référence Java est nullable, et `Record<string, string | null>` pour les headers Kafka est le type juste, pas un relâchement — sauf sur un primitif, où `null` décrit un cas qui ne peut pas se produire. Un type Java inconnu de la correspondance est **signalé**, jamais ignoré : c'est ainsi que ce contrôle-là pourrirait à son tour. La résolution consulte d'abord **les correspondances que les marqueurs `@java` déclarent déjà**, et l'identité de nom seulement ensuite : sans cela un record imbriqué devait garder son nom simple côté front — `ProcessModel.Activity` imposait une interface `Activity` dans un fichier de types partagé, à côté de `Edge`, `Variant` et `Endpoint`, des noms assez généraux pour entrer en collision avec la fonctionnalité suivante. L'ordre compte : l'ensemble comparé mêle noms d'interfaces TS et noms d'enums Java, donc une enum Java se résolvait sur son propre nom et le marqueur qui la renommait n'était jamais atteint. Un nom simple revendiqué par deux déclarations sous deux noms TS différents est **abandonné** plutôt que résolu au dernier arrivé — un contrôle qui tranche en silence est pire qu'un contrôle qui dit qu'il ne sait pas. Une interface sans marqueur `@java` reste non vérifiée, ce qui est permis mais visible. La couverture est ce qui compte : elle est passée de 9 interfaces à 20 records vérifiés (`TopicSearchResponse`, `QueryInitResponse`, `MetricConfig`, puis toute la famille `AuditReport` — `TopicAudit`, `TopicIssue`, `FlowAudit`, `StepInfo`, `HealthStatus`, `AuditStatus`), et les formes anonymes déclarées au point d'appel — le motif exact qui a tué Compare — ont été rassemblées dans ce fichier. Trois d'entre elles étaient des copies littérales sous un autre nom (`SchemaInfo` = `QueryInitResponse`, la `TopicSearchResponse` de `topicSearch.ts`, le `MetricConfig` de `Metrics.tsx`) : elles sont maintenant des alias ou des imports, une seule forme par endpoint. Une union de littéraux de chaîne est acceptée là où Java déclare `String` — le serveur n'émet que cinq `stopReason` et l'UI branche dessus ; élargir le front à `string` pour satisfaire le script supprimerait de la sûreté de type au nom d'un contrôle qui existe pour en apporter. L'inverse reste une erreur : `string` en face d'une *enum* Java, où l'ensemble fermé existe des deux côtés. Le script lisait aussi **un seul record par fichier** (`search`, pas `finditer`), ce qui rendait invisible un record imbriqué : `FlowAudit.StepInfo` est déclaré dans `FlowAudit`, donc marquer une interface `StepInfo` répondait « matches no record in domain/ » — une erreur qu'on ne distingue pas d'une faute de frappe, sur un type qui est là. Un angle mort dans un contrôle est pire qu'un trou de couverture : il ne se contente pas de rater la dérive, il plaide contre la déclaration correcte.

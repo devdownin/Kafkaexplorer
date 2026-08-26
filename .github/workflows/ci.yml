@@ -163,9 +163,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      # Read by every `docker compose` invocation in this job, so the overlay does not
-      # have to be repeated on each line.
-      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml
+      # Read by every `docker compose` invocation in this job, so the chain does not have
+      # to be repeated on each line. `compose/image.yml` sits in the middle deliberately:
+      # it is the overlay a user runs to start the stack from the published image, and it
+      # carries the `build: !reset null` that makes an `up` pull rather than compile. CI
+      # then overrides only the image name (a tag that exists in this runner's daemon).
+      # Before, that reset lived nowhere and the job leaned on `--no-build`; now the file
+      # real deployments use is exercised on every run instead of only by compose-lint.
+      COMPOSE_FILE: docker-compose.yml:compose/image.yml:compose/ci.yml
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Set up Buildx
@@ -595,15 +600,11 @@ jobs:
       - name: Resolve every stack and overlay combination
         run: |
           set -euo pipefail
-          # docker-compose-spectra.yml `include:`s SpectraLLM's own compose from a sibling
-          # checkout, which is not here. A stub carrying the one service our file names in a
-          # `depends_on` is enough to resolve it — what is under test is OUR file's syntax and
-          # wiring, not upstream's shape, and cloning another repository to parse a YAML file
-          # would make this check depend on somebody else's availability.
-          mkdir -p /tmp/spectrallm-stub/deploy/docker
-          printf 'services:\n  spectra-api:\n    image: busybox\n' \
-            > /tmp/spectrallm-stub/deploy/docker/docker-compose.yml
-          export SPECTRALLM_DIR=/tmp/spectrallm-stub
+          # The SpectraLLM stub this step used to fabricate is gone with the file that
+          # needed it: `docker-compose-spectra.yml` `include:`d upstream's own compose from a
+          # sibling checkout, so parsing it here meant inventing a fake of somebody else's
+          # repository. `compose/spectra-hub.yml` includes nothing and pulls published
+          # images, so every file below now resolves from this checkout alone.
 
           # One declaration — every base, and the overlays it accepts. The combinations are
           # GENERATED from it: each base alone, each base with each of its overlays, and each
@@ -611,22 +612,23 @@ jobs:
           # hand-written combinations this replaces: docker-compose.yml's two overlays had
           # never been layered together, so nineteen combinations now come out of less data.
           #
-          # A declaration rather than a rule read off the file names, and that is the whole
-          # point: the names do not carry what matters. docker-compose.limits.yml serves FOUR
-          # bases while its name mentions one, and docker-compose.release.yml has an overlay's
-          # name and is a base — deriving from the convention would silently drop three
-          # combinations and misclassify a stack. What the generation does buy is the guard
-          # below: a file is checked because it is NAMED here, so the omission is structural
-          # rather than a string search over a list of command lines.
+          # A declaration rather than a rule read off the file names or off the directory,
+          # and that is still the whole point: `compose/` holds bases and overlays alike, and
+          # nothing about a path says which is which. It is now a much shorter list, because
+          # the tree has ONE base that carries a broker instead of four near-copies of it —
+          # docker-compose.yml, with schema-registry / ollama / image / limits layering onto
+          # it in any combination. That is also what makes the coverage real rather than
+          # nominal: `docker-compose.yml + all four` is a stack nobody could run before,
+          # since -kafka4 and -llm were separate bases and could never be combined.
+          #
+          # What the generation buys is the guard below: a file is checked because it is
+          # NAMED here, so an omission is structural rather than a string search over a list
+          # of command lines.
           declare -A OVERLAYS=(
-            [docker-compose.yml]="docker-compose.ci.yml docker-compose.limits.yml"
-            [docker-compose-kafka4.yml]="docker-compose.limits.yml"
-            [docker-compose-llm.yml]="docker-compose.limits.yml"
-            [docker-compose.release.yml]="docker-compose.limits.yml"
-            [docker-compose-build.yml]=""
-            [docker-compose-dev.yml]=""
-            [docker-compose-spectra.yml]=""
-            [docker-compose-spectra-hub.yml]="docker-compose-spectra-hub.ingest.yml docker-compose-spectra-hub.gpu.yml docker-compose-spectra-hub.limits.yml docker-compose-spectra-hub.small.yml"
+            [docker-compose.yml]="compose/schema-registry.yml compose/ollama.yml compose/image.yml compose/limits.yml compose/ci.yml"
+            [compose/dev.yml]=""
+            [compose/build.yml]=""
+            [compose/spectra-hub.yml]="compose/spectra-hub.ingest.yml compose/spectra-hub.gpu.yml compose/spectra-hub.limits.yml"
           )
 
           named=""
@@ -658,7 +660,11 @@ jobs:
           # situation this job exists to end — so the omission fails rather than passing
           # quietly. The reverse is covered by the loop itself: a file named here and absent
           # from disk fails at `config`.
-          for f in docker-compose*.yml; do
+          # The root base plus everything under compose/. This used to be a bare
+          # `docker-compose*.yml` glob, which found all sixteen files while they all sat at
+          # the root; unchanged, it would now find exactly one and go on passing — a guard
+          # that silently stops guarding, which is what this job exists to prevent.
+          for f in docker-compose.yml compose/*.yml; do
             case " $named " in
               *" $f "*) ;;
               *) echo "::error file=$f::$f is named as neither a base nor an overlay in the declaration above — add it to compose-lint"; exit 1 ;;
@@ -725,7 +731,7 @@ jobs:
           # ci.yml is in the list because this job is DEFINED there: editing the workflow can
           # edit the stack's own assertions. setup-demo.sh / seed-demo-once.sh and
           # .env.example are in it because the stack mounts and reads them.
-          if grep -qE '^(docker-compose-spectra-hub|scripts/spectra-hub/|setup-demo\.sh$|seed-demo-once\.sh$|\.env\.example$|docs/check-image-pins\.py$|\.github/workflows/ci\.yml$)' changed.txt; then
+          if grep -qE '^(compose/spectra-hub|scripts/spectra-hub/|setup-demo\.sh$|seed-demo-once\.sh$|\.env\.example$|docs/check-image-pins\.py$|\.github/workflows/ci\.yml$)' changed.txt; then
             echo "touched=true" >> "$GITHUB_OUTPUT"
             echo "· the published-images stack is affected — booting it"
           else
@@ -733,7 +739,7 @@ jobs:
             echo "· nothing the published-images stack depends on changed — not booting it"
           fi
 
-  # docker-compose-spectra-hub.yml is the one stack made entirely of published images, so what
+  # compose/spectra-hub.yml is the one stack made entirely of published images, so what
   # it can break is not the code but the WIRING: a service renamed out from under nginx's
   # hardcoded upstream, an ownership fix that stops covering the volume, an entrypoint that
   # crash-loops instead of waiting for its model. None of that is visible in `config`, and all
@@ -753,7 +759,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      COMPOSE_FILE: docker-compose-spectra-hub.yml
+      COMPOSE_FILE: compose/spectra-hub.yml
       # Not the 4.7 GB default: see above. The stack is booted with no chat model at all, so
       # that the "it waits rather than crash-looping" assertion is about a real absence — and a
       # tiny one is then dropped in, which is what lets the last step prove the chain answers.
@@ -1024,6 +1030,11 @@ jobs:
       #                     it claims to be. A fixture that has drifted does not fail — it
       #                     evaluates the wrong thing, confidently, which is what the eval exists
       #                     to remove.
+      #   check-readme-parity README.md against README.fr.md — the shape, the commands, the
+      #                     links and the paths, never the words. The two drift together when
+      #                     edited together and silently apart when they are not, and nothing
+      #                     read the READMEs at all: the whole "Build and Development" section
+      #                     sat in both files TWICE, verbatim, for an unknown length of time.
       - name: Resolve every documentation check
         run: |
           set -euo pipefail

@@ -42,7 +42,15 @@ EXTERNAL: set[str] = set()
 
 
 def compose_files() -> list[Path]:
-    return sorted(ROOT.glob('docker-compose*.yml'))
+    """The canonical base at the root, plus every stack and overlay under `compose/`.
+
+    This was a single `ROOT.glob("docker-compose*.yml")`, which was right while sixteen
+    compose files sat at the repository root. The tree is now one base file there and the
+    rest in `compose/`, and that glob would have gone on passing while checking exactly one
+    file — a check that quietly stops covering things is the failure mode this script
+    exists to prevent, so the move had to be made here in the same change.
+    """
+    return [ROOT / 'docker-compose.yml', *sorted((ROOT / 'compose').glob('*.yml'))]
 
 
 def interpolations(text: str) -> list[tuple[str, str | None]]:

@@ -1,10 +1,10 @@
 # Build, test and package the project with nothing installed locally but Docker —
 # no JDK, no Maven, no Node.
 #
-#   docker compose -f docker-compose-build.yml run --rm verify    # the full CI gate
-#   docker compose -f docker-compose-build.yml run --rm package   # JAR into ./target
-#   docker compose -f docker-compose-build.yml run --rm frontend  # ESLint + Vitest only
-#   docker compose -f docker-compose-build.yml run --rm shell     # interactive toolchain
+#   docker compose -f compose/build.yml run --rm verify    # the full CI gate
+#   docker compose -f compose/build.yml run --rm package   # JAR into ./target
+#   docker compose -f compose/build.yml run --rm frontend  # ESLint + Vitest only
+#   docker compose -f compose/build.yml run --rm shell     # interactive toolchain
 #
 # `verify` is the one that matches CI: `mvn verify` is the only command that runs
 # everything — Java tests, then ESLint and Vitest through the `build-frontend` profile
@@ -18,6 +18,13 @@
 # your checkout and, on Linux, owned by root — same as the existing dev stack; remove
 # it with the `shell` service if it gets in the way. And these services are one-shot:
 # always `run --rm`, never `up`.
+#
+# `name:` is explicit, and it is not decoration. Compose derives the project name from
+# the PROJECT directory, which is the directory of the first `-f` file — `compose/` now
+# that this file lives here. Left to the default, every volume below would be recreated
+# under a `compose_` prefix and a warm Maven repository would be silently thrown away on
+# the first run after the move. The name is the one this stack has always had.
+name: kafkaexplorer
 
 x-maven: &maven
   image: maven:3.9-eclipse-temurin-25
@@ -30,7 +37,7 @@ x-maven: &maven
     HOME: /cache
     npm_config_cache: /cache/npm
   volumes:
-    - .:/app
+    - ..:/app
     - build_cache:/cache
     # `mvn verify` runs `npm install` through frontend-maven-plugin. Without this the
     # install would land in the bind-mounted checkout, and its Linux-native
@@ -58,7 +65,7 @@ services:
     environment:
       npm_config_cache: /cache/npm
     volumes:
-      - ./src/main/webapp:/app
+      - ../src/main/webapp:/app
       - frontend_node_modules:/app/node_modules
       - build_cache:/cache
     command: sh -c "npm ci --no-audit --no-fund && npm run lint && npm test"

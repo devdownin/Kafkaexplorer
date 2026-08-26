@@ -76,17 +76,18 @@ Ouvrez ensuite **http://localhost:8080** et commencez à cliquer. C'est tout.
 <details>
 <summary>Autres façons de lancer</summary>
 
-- **Avec Confluent Schema Registry** (topics Avro) : `docker compose -f docker-compose-kafka4.yml up -d`
-- **Avec un LLM local pré-câblé** (Ollama) : `docker compose -f docker-compose-llm.yml up -d`
-- **Avec une IA privée à côté** (SpectraLLM, images seules — rien n'est construit, aucun checkout de SpectraLLM) : `docker compose -f docker-compose-spectra-hub.yml up -d` — l'explorateur sur 8080, l'interface SpectraLLM sur 8088. Le premier démarrage télécharge ~4,8 Go de poids en arrière-plan, et rien ne l'attend. Des overlays voisins ajoutent le GPU (`.gpu.yml`), les limites mémoire (`.limits.yml`), un modèle 3B pour un portable (`.small.yml`), ou font indexer les topics eux-mêmes par SpectraLLM (`.ingest.yml`).
+- **Avec Confluent Schema Registry** (topics Avro) : `docker compose -f docker-compose.yml -f compose/schema-registry.yml up -d`
+- **Avec un LLM local pré-câblé** (Ollama) : `docker compose -f docker-compose.yml -f compose/ollama.yml up -d`
+- **Avec une IA privée à côté** (SpectraLLM, images seules — rien n'est construit, aucun checkout de SpectraLLM) : `docker compose -f compose/spectra-hub.yml up -d` — l'explorateur sur 8080, l'interface SpectraLLM sur 8088. Le premier démarrage télécharge ~4,8 Go de poids en arrière-plan, et rien ne l'attend. Des overlays voisins ajoutent le GPU (`.gpu.yml`), les limites mémoire (`.limits.yml`), ou font indexer les topics eux-mêmes par SpectraLLM (`.ingest.yml`). Pour un portable, quatre lignes de `.env` remplacent le modèle 7B par un 3B — voir `.env.example`.
+- **La même stack, mais en tirant l'image publiée au lieu de la construire** : `docker compose -f docker-compose.yml -f compose/image.yml up -d`
 - **Depuis les sources** (JDK 25) : lancez Kafka avec `docker compose up -d kafka`, puis `./mvnw spring-boot:run`
 - **Builder sans rien installer d'autre que Docker** — ni JDK, ni Maven, ni Node :
   ```bash
-  docker compose -f docker-compose-build.yml run --rm verify    # le gate complet, comme la CI
-  docker compose -f docker-compose-build.yml run --rm package   # le JAR dans ./target
-  docker compose -f docker-compose-build.yml run --rm frontend  # ESLint + Vitest seuls
+  docker compose -f compose/build.yml run --rm verify    # le gate complet, comme la CI
+  docker compose -f compose/build.yml run --rm package   # le JAR dans ./target
+  docker compose -f compose/build.yml run --rm frontend  # ESLint + Vitest seuls
   ```
-- **Stack de dev avec rechargement à chaud** (backend + Vite + Kafka, toujours sans installation locale) : `docker compose -f docker-compose-dev.yml up`
+- **Stack de dev avec rechargement à chaud** (backend + Vite + Kafka, toujours sans installation locale) : `docker compose -f compose/dev.yml up`
 - **Image précompilée** (Docker Hub ou GHCR, même image, `linux/amd64` + `linux/arm64`) :
   ```bash
   docker run -p 127.0.0.1:8080:8080 -e KAFKA_BOOTSTRAP_SERVERS=votre-broker:9092 compagnonsdudev/kafkaexplorer:latest
@@ -94,6 +95,8 @@ Ouvrez ensuite **http://localhost:8080** et commencez à cliquer. C'est tout.
   ```
   Tags, variables d'environnement, volumes et sondes : **[docs/DOCKERHUB.md](docs/DOCKERHUB.md)** — la page publiée comme [présentation Docker Hub](https://hub.docker.com/r/compagnonsdudev/kafkaexplorer).
 - **Sur votre propre cluster** : pointez `kafka.bootstrap-servers` vers n'importe quel broker Kafka 2.1+ (PLAIN, SSL ou Confluent Cloud) — rien à installer côté cluster.
+
+Les stacks ci-dessus sont une base plus des overlays, donc plusieurs portent deux `-f`. Posez `COMPOSE_FILE=docker-compose.yml:compose/schema-registry.yml` dans un `.env` à la racine et un simple `docker compose up -d` désigne cette combinaison — voir `.env.example`.
 
 </details>
 
@@ -142,30 +145,7 @@ docker build -t kafka-sql-explorer:latest .
 ### 2. Environnement de Développement (Hot-Reload)
 Pour développer avec rechargement à chaud (Hot Module Replacement pour le frontend via Vite et rechargement de classe pour le backend via Spring Boot DevTools) :
 ```bash
-docker-compose -f docker-compose-dev.yml up --build
-```
-- Le **frontend** sera accessible sur `http://localhost:5173`
-- Le **backend** API sera sur `http://localhost:8080` (proxyfié automatiquement par le front)
-
-### 3. Build standard (localement)
-Si vous souhaitez compiler l'intégralité du projet localement (sans Docker pour la compilation), Maven s'occupera de tout via un profil activé par défaut (téléchargement de Node, build du React, et packaging Spring Boot) :
-```bash
-./mvnw clean package
-```
-## 🏗️ Build et Développement
-
-Il y a plusieurs façons de builder et de travailler sur le projet, selon vos besoins.
-
-### 1. Build de production Docker (Recommandé)
-Le projet utilise un build Docker "multi-stage" optimisé qui sépare le front et le back pour une meilleure mise en cache, puis package le tout dans un JRE ultra-léger :
-```bash
-docker build -t kafka-sql-explorer:latest .
-```
-
-### 2. Environnement de Développement (Hot-Reload)
-Pour développer avec rechargement à chaud (Hot Module Replacement pour le frontend via Vite et rechargement de classe pour le backend via Spring Boot DevTools) :
-```bash
-docker-compose -f docker-compose-dev.yml up --build
+docker compose -f compose/dev.yml up --build
 ```
 - Le **frontend** sera accessible sur `http://localhost:5173`
 - Le **backend** API sera sur `http://localhost:8080` (proxyfié automatiquement par le front)

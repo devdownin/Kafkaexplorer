@@ -1,7 +1,7 @@
 #!/bin/sh
-# Entrypoint for the `spectra-models` service of docker-compose-spectra-hub.yml.
+# Entrypoint for the `spectra-models` service of compose/spectra-hub.yml.
 #
-# It lives here rather than inline in docker-compose-spectra-hub.yml because compose
+# It lives here rather than inline in compose/spectra-hub.yml because compose
 # interpolates `${…}` inside a YAML entrypoint, so every shell variable had to be written
 # `$${…}` — around forty escapes across the three entrypoints, each one a chance to write a
 # single `$` and get an empty string at runtime rather than an error. `.gitattributes` pins

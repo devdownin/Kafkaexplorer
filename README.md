@@ -76,17 +76,18 @@ Then open **http://localhost:8080** and start clicking. That's it.
 <details>
 <summary>Other ways to run it</summary>
 
-- **With Confluent Schema Registry** (Avro topics): `docker compose -f docker-compose-kafka4.yml up -d`
-- **With a local LLM pre-wired** (Ollama): `docker compose -f docker-compose-llm.yml up -d`
-- **With a private AI stack beside it** (SpectraLLM, images only — nothing built, no SpectraLLM checkout): `docker compose -f docker-compose-spectra-hub.yml up -d` — Explorer on 8080, SpectraLLM UI on 8088. The first boot downloads ~4.8 GB of model weights in the background and nothing waits for it. Overlays next to it add a GPU (`.gpu.yml`), memory limits (`.limits.yml`), a smaller 3B model for a laptop (`.small.yml`), or have SpectraLLM index the topics themselves (`.ingest.yml`).
+- **With Confluent Schema Registry** (Avro topics): `docker compose -f docker-compose.yml -f compose/schema-registry.yml up -d`
+- **With a local LLM pre-wired** (Ollama): `docker compose -f docker-compose.yml -f compose/ollama.yml up -d`
+- **With a private AI stack beside it** (SpectraLLM, images only — nothing built, no SpectraLLM checkout): `docker compose -f compose/spectra-hub.yml up -d` — Explorer on 8080, SpectraLLM UI on 8088. The first boot downloads ~4.8 GB of model weights in the background and nothing waits for it. Overlays next to it add a GPU (`.gpu.yml`), memory limits (`.limits.yml`), or have SpectraLLM index the topics themselves (`.ingest.yml`). For a laptop, four `.env` lines swap the 7B chat model for a 3B — see `.env.example`.
+- **The same stack, but pulling the published image instead of building it**: `docker compose -f docker-compose.yml -f compose/image.yml up -d`
 - **From source** (JDK 25): start Kafka with `docker compose up -d kafka`, then `./mvnw spring-boot:run`
 - **Build with nothing installed but Docker** — no JDK, no Maven, no Node:
   ```bash
-  docker compose -f docker-compose-build.yml run --rm verify    # the full CI gate
-  docker compose -f docker-compose-build.yml run --rm package   # JAR into ./target
-  docker compose -f docker-compose-build.yml run --rm frontend  # ESLint + Vitest only
+  docker compose -f compose/build.yml run --rm verify    # the full CI gate
+  docker compose -f compose/build.yml run --rm package   # JAR into ./target
+  docker compose -f compose/build.yml run --rm frontend  # ESLint + Vitest only
   ```
-- **Hot-reload dev stack** (backend + Vite + Kafka, still nothing installed locally): `docker compose -f docker-compose-dev.yml up`
+- **Hot-reload dev stack** (backend + Vite + Kafka, still nothing installed locally): `docker compose -f compose/dev.yml up`
 - **Prebuilt image** (Docker Hub or GHCR, same image, `linux/amd64` + `linux/arm64`):
   ```bash
   docker run -p 127.0.0.1:8080:8080 -e KAFKA_BOOTSTRAP_SERVERS=your-broker:9092 compagnonsdudev/kafkaexplorer:latest
@@ -94,6 +95,8 @@ Then open **http://localhost:8080** and start clicking. That's it.
   ```
   Tags, environment variables, volumes and probes: **[docs/DOCKERHUB.md](docs/DOCKERHUB.md)** — the page published as the [Docker Hub overview](https://hub.docker.com/r/compagnonsdudev/kafkaexplorer).
 - **Against your own cluster**: point `kafka.bootstrap-servers` at any Kafka 2.1+ broker (PLAIN, SSL or Confluent Cloud) — nothing to install cluster-side.
+
+The stacks above are a base plus overlays, so several carry two `-f`. Set `COMPOSE_FILE=docker-compose.yml:compose/schema-registry.yml` in a root `.env` and a bare `docker compose up -d` means that combination — see `.env.example`.
 
 </details>
 
@@ -142,30 +145,7 @@ docker build -t kafka-sql-explorer:latest .
 ### 2. Development Environment (Hot-Reload)
 To develop with live-reloading (Hot Module Replacement for the Vite frontend and class reloading for the Spring Boot backend):
 ```bash
-docker-compose -f docker-compose-dev.yml up --build
-```
-- The **frontend** is available at `http://localhost:5173`
-- The **backend** API runs on `http://localhost:8080` (automatically proxied by the frontend)
-
-### 3. Standard Local Build
-If you prefer to compile the entire project locally without Docker, Maven handles everything via a default-activated profile (downloading Node.js, building the React app, and packaging the Spring Boot executable):
-```bash
-./mvnw clean package
-```
-## 🏗️ Build and Development
-
-There are several ways to build and work on the project depending on your needs.
-
-### 1. Docker Production Build (Recommended)
-The project uses an optimized multi-stage Docker build that separates frontend and backend compilation for better caching, then packages everything into a lightweight JRE image:
-```bash
-docker build -t kafka-sql-explorer:latest .
-```
-
-### 2. Development Environment (Hot-Reload)
-To develop with live-reloading (Hot Module Replacement for the Vite frontend and class reloading for the Spring Boot backend):
-```bash
-docker-compose -f docker-compose-dev.yml up --build
+docker compose -f compose/dev.yml up --build
 ```
 - The **frontend** is available at `http://localhost:5173`
 - The **backend** API runs on `http://localhost:8080` (automatically proxied by the frontend)

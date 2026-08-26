@@ -41,3 +41,9 @@ deploy/
 .mvn/
 mvnw
 mvnw.cmd
+
+# The compose tree. Nothing an image build reads, and the root `docker-compose.yml` was
+# already travelling in every context; `compose/` would simply have joined it. Deployment
+# files describe how to RUN the image and can never be needed to build it.
+compose/
+docker-compose*.yml

@@ -8,7 +8,7 @@
 #
 # Why this is a separate script: `kafka-avro-console-producer` ships with the
 # Confluent distribution, not with apache/kafka, and Schema Registry only runs in
-# the `docker-compose-kafka4.yml` stack. The main `setup-demo.sh` must stay
+# the `compose/schema-registry.yml` stack. The main `setup-demo.sh` must stay
 # runnable against a bare Apache broker, so the Avro part lives here and is wired
 # only into that stack.
 #
@@ -34,7 +34,7 @@ elif [ -x "/usr/bin/kafka-avro-console-producer" ]; then
   AVRO_PRODUCER="/usr/bin/kafka-avro-console-producer"
 else
   echo "! kafka-avro-console-producer not found — skipping the Avro topics."
-  echo "  (they only seed from the Confluent image, in docker-compose-kafka4.yml)"
+  echo "  (they only seed from the Confluent image, in compose/schema-registry.yml)"
   exit 0
 fi
 

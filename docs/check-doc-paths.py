@@ -2,7 +2,7 @@
 """Resolve every repository path named in prose in CLAUDE.md and CONTRIBUTING.md.
 
 `check-links.py` resolves markdown *links*. These two files barely use any: they refer to
-the codebase in backticks, in running prose — `pages/streamFlow.ts`, `docker-compose.ci.yml`,
+the codebase in backticks, in running prose — `pages/streamFlow.ts`, `compose/ci.yml`,
 `AUDIT.md` — and nothing ever checked that those still exist. They did not. CLAUDE.md
 described `AUDIT.md` and `CONSUMER-GROUPS-AUDIT.md` as documents to read before refactoring,
 and pointed at `deploy/kraft-platform/` in a rule about container names; all three had been
@@ -21,7 +21,9 @@ thing worth catching is a path that resolves *nowhere*.
 Anything that is not a repository path (a container image, an action reference, a build
 directory that is generated rather than committed) must be listed in NOT_A_PATH by name, so
 that it is a decision and not a hole — the same rule `check-config-table.py` applies to its
-EXTERNAL list.
+EXTERNAL list. A path the tree deliberately no longer HAS, named by prose explaining why it
+went, belongs in RETIRED instead: both expire, but on opposite conditions, and calling a
+deleted file "not a path" would be false about a file that was one.
 
 Exit code 1 and a list of what is unresolved, or 0 and a count.
 """
@@ -34,7 +36,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-DOCS = ['CLAUDE.md', 'CONTRIBUTING.md']
+# CLAUDE.md and CONTRIBUTING.md are read by maintainers; the three below are what a
+# stranger reads first, and until now NOTHING checked a path in them. Measured before
+# adding them: seventy-seven backticked path-shaped tokens across the public docs, zero
+# verified — which is the gap that let a stale command and a duplicated section survive
+# in the README long enough that nobody could date them.
+#
+# docs/DOCKERHUB.md is the strongest case of the three: it is rendered OUTSIDE the
+# repository, as the Docker Hub overview, so a wrong path there is invisible to anyone
+# reading the repo and is the first thing a newcomer sees.
+DOCS = ['CLAUDE.md', 'CONTRIBUTING.md', 'README.md', 'README.fr.md', 'docs/DOCKERHUB.md']
 
 # Where a path named in prose may be rooted. Ordered widest first for no reason but reading.
 BASES = [
@@ -64,9 +75,20 @@ NOT_A_PATH = {
     # Container images and registry references.
     'apache/kafka', 'compagnonsdudev/kafkaexplorer', 'docker.io/compagnonsdudev/kafkaexplorer',
     'ghcr.io/devdownin/kafkaexplorer', 'unknown/unknown',
-    # A build platform. Only the arm64 form survives here: the others are written with a
-    # comma or alongside amd64, which NOT_PATH_CHARS already rejects.
-    'linux/arm64',
+    # Build platforms. `linux/arm64` alone was enough while only CLAUDE.md and
+    # CONTRIBUTING.md were read — the note that used to sit here said the amd64 form was
+    # always written with a comma and therefore already rejected. That stopped being true
+    # the moment the READMEs and the Docker Hub page joined DOCS: all three name it on its
+    # own. A comment asserting why an entry is unnecessary is exactly the kind that decays.
+    'linux/amd64', 'linux/arm64',
+    # An OpenRouter model identifier written as a shape rather than a name, beside the
+    # `openai/gpt-4o-mini` example below.
+    'vendor/model',
+    # Files this application CREATES at runtime under its `data/` volume, which is
+    # gitignored — so they are real paths on a running deployment and never in a checkout.
+    # The Docker Hub page documents them because an operator has to know what the volume
+    # holds; resolving them against the repository would require running the app first.
+    'data/settings.json', 'data/flink-tables.json', 'flink-jobs.json',
     # An OpenRouter model identifier, which that gateway writes `vendor/model`. Le seul jeton
     # de cette forme que la prose nomme hors d'un bloc clôturé.
     'openai/gpt-4o-mini',
@@ -86,7 +108,7 @@ NOT_A_PATH = {
     # Shipped inside the Kafka image, not in this repository.
     'kafka-broker-api-versions.sh', 'kafka-consumer-groups.sh',
     # A file of the *SpectraLLM* repository, named because its absence here is the reason
-    # docker-compose-spectra-hub.yml starts llama-server from arguments instead of mounting it.
+    # compose/spectra-hub.yml starts llama-server from arguments instead of mounting it.
     'scripts/llm-chat-entrypoint.sh',
     # A path *inside* a built Spring Boot jar, which is the whole point of naming it: it is
     # where the dependencies sit once packaged, and therefore where the system class loader
@@ -98,6 +120,20 @@ NOT_A_PATH = {
     'AUDIT.md',                   # deleted in 31767bd
     'CONSUMER-GROUPS-AUDIT.md',   # deleted in d643f23
     'deploy/kraft-platform/',     # deleted in 5b090df
+}
+
+# A path this tree DELIBERATELY no longer has, named by prose that explains why it went.
+# Distinct from NOT_A_PATH, which says "this token is not a repository path at all" — that
+# would be a lie about a file which was one until it was deleted, and the lie matters: the
+# two lists expire on opposite conditions. A NOT_A_PATH entry goes stale when nothing cites
+# it; a RETIRED entry goes stale when nothing cites it *or* when the file comes back, at
+# which point the prose is describing a deletion that was undone. Written as (path, why).
+RETIRED = {
+    'docker-compose-kafka4.yml': 'was renamed to compose/schema-registry.yml (every stack is Kafka 4)',
+    'docker-compose-llm.yml': 'was renamed to compose/ollama.yml',
+    'docker-compose.release.yml': 'was replaced by compose/image.yml',
+    'docker-compose-spectra.yml': 'was deleted: it needed a sibling SpectraLLM checkout',
+    'docker-compose-spectra-hub.small.yml': 'was deleted: it is four .env lines, not a file',
 }
 
 TOKEN = re.compile(r'`([^`\n]+)`')
@@ -138,6 +174,15 @@ def unused_exemptions(cited: set[str]) -> list[str]:
     a developer's tree, which is the one thing a check must never be.
     """
     stale: list[str] = []
+    for token, why in sorted(RETIRED.items()):
+        if token not in cited:
+            stale.append(
+                f'RETIRED: `{token}` is cited by no checked document any more — '
+                f'remove it, the prose that explained its removal ({why}) is gone')
+        elif any((ROOT / base / token.rstrip('/')).exists() for base in BASES):
+            stale.append(
+                f'RETIRED: `{token}` exists again — the entry records that it {why}, so either '
+                f'the prose describing its removal is now wrong or the entry is')
     for token in sorted(NOT_A_PATH):
         if token not in cited:
             stale.append(
@@ -165,7 +210,7 @@ def check() -> list[str]:
         text = FENCE.sub('', path.read_text(encoding='utf-8'))
         for token in sorted({t.strip() for t in TOKEN.findall(text)}):
             cited.add(token)
-            if not looks_like_path(token) or token in NOT_A_PATH:
+            if not looks_like_path(token) or token in NOT_A_PATH or token in RETIRED:
                 continue
             checked += 1
             bare = token.rstrip('/')

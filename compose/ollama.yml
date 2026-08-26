@@ -1,0 +1,79 @@
+# A local Ollama model for Process Mining, as an OVERLAY on docker-compose.yml.
+#
+#   docker compose -f docker-compose.yml -f compose/ollama.yml up -d
+#
+# This was `docker-compose-llm.yml`, a base file that restated the broker, the explorer
+# and the seeder in order to add two services and five environment variables. As an
+# overlay it states only those, and it composes with the others — `-f docker-compose.yml
+# -f compose/schema-registry.yml -f compose/ollama.yml` is a stack that could not exist
+# while these were separate bases.
+services:
+  ollama:
+    # A pinned version, not `latest`: a floating tag would silently change the model runtime
+    # under a stack meant to be reproducible.
+    image: ollama/ollama:0.32.6
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      # THE PROMPT HAS TO FIT, and nothing was making it. Ollama's context window defaults to
+      # 4 096 tokens unless the machine has the VRAM for more (`OLLAMA_CONTEXT_LENGTH`, whose
+      # own help text reads "4k/32k/256k based on VRAM"), the app's OpenAI-compatible client
+      # sends `model`, `messages`, `max_tokens`, `temperature` and `stream` — never `num_ctx`,
+      # which that endpoint would not read from the body anyway — and `process-mining`'s prompt
+      # budget is 120 000 characters, about 30 000 tokens. Ollama does not refuse the excess: it
+      # drops the oldest messages until the prompt fits and logs it at DEBUG, i.e. nowhere on a
+      # default install. So a Process Mining analysis here was reasoning on a fraction of what
+      # it had been given, with nothing on screen or in the log saying which fraction.
+      #
+      # 16 384 total, against a prompt budget lowered to match below. Raise the two together or
+      # neither: a wider window without a wider budget buys nothing, and the reverse silently
+      # truncates again. The cost is the KV cache — roughly 2 GB at this size for a 7B model, on
+      # a stack that ships no memory limit.
+      - OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-16384}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:11434/api/tags || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    # A model load can take a while to unwind; and like the broker, it should come back
+    # with the app after a daemon restart.
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  ollama-pull-model:
+    # Pinned like everything else in this tree. `latest` here served whatever curl was
+    # published the day of the pull, in a one-shot whose entire job is a single HTTP request.
+    image: curlimages/curl:8.21.0
+    depends_on:
+      ollama:
+        condition: service_healthy
+    entrypoint: [ "sh", "-c", "curl -X POST http://ollama:11434/api/pull -d '{\"name\": \"qwen2.5-coder:7b\"}'" ]
+
+  explorer:
+    # `ollama` only, never `ollama-pull-model`: waiting on the pull held the UI back for the
+    # whole multi-gigabyte download of qwen2.5-coder:7b, for a model that is not reached until
+    # somebody opens Process Mining. The broker dependency comes from the base file.
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      - CLAUDE_PROVIDER=OPENAI_COMPATIBLE
+      - CLAUDE_BASE_URL=http://ollama:11434/v1
+      - CLAUDE_MODEL=qwen2.5-coder:7b
+      # The other half of OLLAMA_CONTEXT_LENGTH above: ~16 000 characters is ~4 000 tokens,
+      # which fits the window with room left for the JSON answer. The shipped default of
+      # 120 000 does not fit, and what a model cannot see it does not report as missing.
+      - PROCESS_MINING_PROMPT_CHAR_BUDGET=${EXPLORER_PROMPT_CHAR_BUDGET:-16000}
+      # 60 s is the shipped default and it is sized for a hosted API. A 7B model quantised to Q4
+      # on CPU takes minutes on a prompt this size, and a request timeout is TERMINAL on this
+      # path — retrying replays the whole prompt on a model that has already shown it needs
+      # longer, tripling the load and the wait for the same outcome.
+      - CLAUDE_REQUEST_TIMEOUT_SECONDS=${EXPLORER_LLM_TIMEOUT:-300}
+
+# Merged with the base file's declarations rather than replacing them: `kafka_data`,
+# `explorer_logs` and `explorer_data` are declared there and stay.
+volumes:
+  ollama_data:

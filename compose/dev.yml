@@ -1,0 +1,109 @@
+# Hot-reload development stack: Kafka + `spring-boot:run` + the Vite dev server.
+#
+#   docker compose -f compose/dev.yml up -d
+#   docker compose -f compose/dev.yml down -v      # also resets the caches below
+#
+# `name:` is explicit, and it is not decoration. Compose derives the project name from
+# the PROJECT directory — the directory of the first `-f` file, which is `compose/` now
+# that this file lives here. Left to the default, every volume below would come back
+# under a `compose_` prefix: a cold Maven repository, a cold npm cache, and a dev broker
+# with nothing in it. The name is the one this stack has always had, so nothing moves.
+name: kafkaexplorer
+
+services:
+  # ── Kafka broker (KRaft, single node) ─────────────────────────────────────
+  # `extends`, not a copy. This was the last verbatim duplicate of the broker in the
+  # tree — sixty lines of KRaft settings, each with a reason written beside it, restated
+  # here so that ONE of them could differ: the name of the data volume. Everything the
+  # base file reasons about (what a 5s healthcheck interval costs for the life of the
+  # stack, what a flushing KRaft node needs before SIGKILL, why __consumer_offsets has a
+  # single partition, why CLUSTER_ID is fixed) is now read and maintained in one place.
+  #
+  # `!override` on `volumes` is what makes that possible. `extends` MERGES sequences, so
+  # without it the base's `kafka_data` mount and this file's `kafka_data_dev` would both
+  # land on /var/lib/kafka/data — two sources, one target. The tag replaces the list
+  # outright, which is the whole intent: a development broker is deliberately separate
+  # from the one the demo stacks seed, and keeping its existing volume name means nobody
+  # loses their broker to this refactor.
+  #
+  # Note that paths inherited through `extends` resolve against the EXTENDED file's
+  # directory, not the project directory — so nothing here needs a `../`.
+  kafka:
+    extends:
+      file: ../docker-compose.yml
+      service: kafka
+    volumes: !override
+      - kafka_data_dev:/var/lib/kafka/data
+    depends_on:
+      kafka-data-init:
+        condition: service_completed_successfully
+
+  # The apache/kafka image runs as the non-root `appuser` while Docker creates a fresh
+  # named volume owned by root — chown it once before the broker starts. Same override,
+  # same reason.
+  kafka-data-init:
+    extends:
+      file: ../docker-compose.yml
+      service: kafka-data-init
+    volumes: !override
+      - kafka_data_dev:/var/lib/kafka/data
+
+  backend:
+    build:
+      context: ..
+      dockerfile: Dockerfile.dev-backend
+    ports:
+      # Published on the loopback interface only. This application has no authentication
+      # and `POST /api/config` can repoint the Kafka cluster at runtime, so binding it to
+      # 0.0.0.0 — the Docker default — offered it to the whole LAN. Set BIND_ADDR to expose
+      # it deliberately: `BIND_ADDR=0.0.0.0 docker compose up -d`.
+      - "${BIND_ADDR:-127.0.0.1}:${EXPLORER_PORT:-8080}:8080"
+    volumes:
+      - ..:/app
+      # `~/.m2` was bind-mounted from the host — the one thing this stack exists to
+      # avoid. It required (or silently created, root-owned) a Maven directory on a
+      # machine that may have no Maven at all. A named volume caches just as well and
+      # belongs to the stack: `docker compose -f compose/dev.yml down -v` resets it.
+      - m2_cache:/root/.m2
+      # Keeps target/ out of the bind mount: no root-owned build output in the host
+      # checkout, and no bind-mount I/O on the thousands of files Maven writes there
+      # (which is most of the compile time on macOS and Windows).
+      - backend_target:/app/target
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - KAFKA_CONSUMER_GROUP_PROTOCOL=consumer
+    # Same reason as the packaged app: the JVM's bean destruction plus the graceful web
+    # shutdown outlast Docker's default 10s. No restart policy on purpose — a backend that
+    # fails to compile should stay down and say so, not loop.
+    stop_grace_period: 35s
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: Dockerfile.dev-frontend
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${VITE_PORT:-5173}:5173"
+    volumes:
+      - ../src/main/webapp:/app
+      # Shadows the bind mount: the container's Linux-native dependencies stay in the
+      # container, and the host checkout keeps no node_modules of its own.
+      - frontend_node_modules:/app/node_modules
+      - npm_cache:/npm-cache
+    environment:
+      # Read by vite.config.ts. Vite's proxy targeted `localhost:8080`, which inside
+      # this container is the frontend itself — every /api call in the dev stack was
+      # proxied into the void. VITE_API_URL, which used to be set here, is read by
+      # nothing in the codebase.
+      - VITE_PROXY_TARGET=http://backend:8080
+    depends_on:
+      - backend
+
+volumes:
+  kafka_data_dev:
+  m2_cache:
+  backend_target:
+  frontend_node_modules:
+  npm_cache:
