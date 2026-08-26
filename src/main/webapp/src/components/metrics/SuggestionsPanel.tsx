@@ -111,7 +111,12 @@ const SuggestionCard: React.FC<{
       {suggestion.alreadyConfigured && (
         <p className="text-[11px] text-success flex items-center gap-1.5">
           <span aria-hidden="true" className="material-symbols-outlined text-[14px]">check_circle</span>
-          Already measured by <span className="font-mono">{suggestion.existingMetricName}</span>
+          {/* Le nom porte le `title` plutôt que la ligne : c'est *lui* que l'on va chercher
+              ensuite, et la sonde le signalait coupé (`p 334>320`) sans rien qui le porte. */}
+          Already measured by{' '}
+          <span className="font-mono truncate" title={suggestion.existingMetricName ?? undefined}>
+            {suggestion.existingMetricName}
+          </span>
         </p>
       )}
 
@@ -250,7 +255,7 @@ export const SuggestionsPanel: React.FC<Props> = ({ response, loading, error, ne
             <ul className="mt-2 space-y-1">
               {hidden.map(suggestion => (
                 <li key={suggestion.id} className="flex items-center gap-2 text-[11px] text-on-surface-variant">
-                  <span className="truncate">{suggestion.title}</span>
+                  <span className="truncate" title={suggestion.title}>{suggestion.title}</span>
                   <button
                     type="button"
                     className="text-primary hover:underline shrink-0"

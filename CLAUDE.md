@@ -1001,6 +1001,17 @@ without being a phone — turns out to be painful in practice. What is load-bear
   catalogue's names truncate at no width the probe walks, so the row could not move, and
   lengthening one would mean inventing data `setup-demo.sh` does not seed. The rule it would have
   guarded is pinned by a unit test instead, which depends on no data at all.
+- **Monaco's insides are out of the measurement.** The editor scrolls its own synthetic surface:
+  `.monaco-scrollable-element` reports a `scrollWidth` of **16 777 216 px** and `.overflow-guard`
+  clips by construction. The column claims to name "content cut off whose rest is reachable
+  nowhere", and a text editor that scrolls is the opposite of that — measured on `main`, **7 of
+  the 18 `unreachable` findings were those layers**, which is what made the column unsafe to gate:
+  a ceiling would have capped noise. The rule excludes the whole editor rather than one class,
+  since Monaco stacks several and a clipping inside its own rendering is Monaco's defect, not this
+  application's. With them gone, and with the one real finding they were crowding out fixed
+  (`SuggestionsPanel` truncated the name of the metric a proposal is already covered by, with
+  nothing carrying it), **every page and state reports zero unreachable at desktop width**, which
+  is the precondition for ever gating that column.
 - **`--detail` reports the innermost clipped element, not the pile above it.** A container is
   usually cut off only because its child is, so one defect surfaced three or four times under the
   class names of a stack of layout `div`s — and since the sample is capped at eight in DOM order,

@@ -291,10 +291,26 @@ const MEASURE = () => {
       return { panel, previous };
     });
 
+  /*
+   * L'intérieur de Monaco est hors mesure.
+   *
+   * L'éditeur gère son propre défilement sur une surface synthétique : `.monaco-scrollable-element`
+   * annonce un `scrollWidth` de **16 777 216** px, et `.overflow-guard` rogne par construction.
+   * La colonne prétend nommer « du contenu coupé dont le reste n'est atteignable nulle part » ;
+   * un éditeur de texte qui défile est l'exact contraire. Mesuré sur `main` : **7 des 18
+   * `unreachable` de la sonde étaient ces couches-là**, soit 40 % d'un nombre dont la moitié du
+   * reste est du vrai. C'est ce qui interdisait de verrouiller cette colonne — on aurait plafonné
+   * du bruit. La règle porte sur l'éditeur entier plutôt que sur une classe : Monaco empile
+   * plusieurs couches, et un rognage à l'intérieur de son rendu est un défaut de Monaco, pas
+   * du code de cette application.
+   */
+  const isEditorInternal = el => el.closest('.monaco-editor') !== null;
+
   const clippedAll = [...document.querySelectorAll('*')]
     .filter(el => {
       if (el.clientWidth === 0 || el.scrollWidth <= el.clientWidth + 2) return false;
       if (isScreenReaderOnly(el)) return false;
+      if (isEditorInternal(el)) return false;
       const overflowX = getComputedStyle(el).overflowX;
       return overflowX === 'visible' || overflowX === 'hidden';
     });

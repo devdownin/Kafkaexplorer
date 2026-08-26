@@ -140,6 +140,9 @@ describe('SuggestionsPanel', () => {
 
     expect(screen.getByText('orders_latency')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Open a variant/ })).toBeInTheDocument();
+    /* Le nom de la métrique existante est ce que l'on va chercher ensuite, et la ligne le
+       tronque : la sonde le signalait coupé (`p 334>320`) sans rien qui le porte. */
+    expect(screen.getByText('orders_latency')).toHaveAttribute('title', 'orders_latency');
   });
 
   it('dismisses on this browser only, and offers the card back', async () => {
