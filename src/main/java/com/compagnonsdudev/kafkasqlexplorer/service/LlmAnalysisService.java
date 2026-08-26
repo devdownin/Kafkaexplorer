@@ -178,7 +178,8 @@ Chaque message est un résumé du payload d'origine :
         //    is the absence of data. Saying so instead costs nothing and names the case: an absent
         //    topic, an empty one, or a read that failed.
         if (read.isEmpty()) {
-            ProcessMiningCoverage coverage = coverageOf(topics, read, Map.of(), 0);
+            ProcessMiningCoverage coverage =
+                coverageOf(topics, read, new PromptScope(Map.of(), Map.of()), 0);
             return ProcessMiningResult.failed(read.emptyReadExplanation()).withCoverage(coverage);
         }
 
@@ -189,7 +190,7 @@ Chaque message est un résumé du payload d'origine :
         //    an analysis that failed still knows what it had read, and the next attempt is sized
         //    from that.
         return callLlmAndParse(prompt.text())
-            .withCoverage(coverageOf(topics, read, prompt.messagesInPrompt(), prompt.text().length()));
+            .withCoverage(coverageOf(topics, read, prompt.scope(), prompt.text().length()));
     }
 
     /**
@@ -200,13 +201,14 @@ Chaque message est un résumé du payload d'origine :
      * cannot express, such as a field mapping the controller could not resolve.
      */
     private ProcessMiningCoverage coverageOf(List<String> topics, SnapshotRead read,
-                                              Map<String, Integer> messagesInPrompt, int promptChars) {
+                                              PromptScope scope, int promptChars) {
         List<TopicCoverage> rows = new ArrayList<>();
         for (String topic : topics) {
             rows.add(new TopicCoverage(
                 topic,
                 read.messagesByTopic().getOrDefault(topic, 0),
-                messagesInPrompt.getOrDefault(topic, 0),
+                scope.measured().getOrDefault(topic, 0),
+                scope.detailed().getOrDefault(topic, 0),
                 !read.unreadableTopics().contains(topic)));
         }
         return ProcessMiningCoverage.of(rows, promptChars, processMiningConfig.getPromptCharBudget(),
@@ -268,7 +270,19 @@ Chaque message est un résumé du payload d'origine :
      * it in. The second half is what lets the answer state its own scope — the character budget
      * silently decides it, and until now it was told only to the model.
      */
-    private record BuiltPrompt(String text, Map<String, Integer> messagesInPrompt) {
+    private record BuiltPrompt(String text, PromptScope scope) {
+    }
+
+    /**
+     * What of the read the prompt carried, in its two forms.
+     *
+     * <p>They are counted apart because they are different claims. {@code measured} is every record
+     * that entered the event log, and the aggregate built from it opens the prompt — so those
+     * records bear on the answer whether or not any of them is shown. {@code detailed} is what was
+     * inlined verbatim. Folding the two into one number reported "6 of 3,000" about a run that had
+     * measured all three thousand.
+     */
+    private record PromptScope(Map<String, Integer> measured, Map<String, Integer> detailed) {
     }
 
     private BuiltPrompt buildSnapshotPrompt(Map<String, List<PayloadDigest>> byTopic,
@@ -276,9 +290,8 @@ Chaque message est un résumé du payload d'origine :
                                         String auditFocus) {
         StringBuilder sb = new StringBuilder();
         sb.append("## MODE: ANALYSE SNAPSHOT\n\n");
-        Map<String, Integer> written =
-            appendCommonSections(sb, byTopic, fieldMapping, null, auditFocus);
-        return new BuiltPrompt(sb.toString(), written);
+        PromptScope scope = appendCommonSections(sb, byTopic, fieldMapping, null, auditFocus);
+        return new BuiltPrompt(sb.toString(), scope);
     }
 
     private String buildLivePrompt(Map<String, List<PayloadDigest>> byTopic,
@@ -301,7 +314,7 @@ Chaque message est un résumé du payload d'origine :
      * about it — so a second list of the same names could only ever disagree with the map. It was
      * carried unused through three signatures until CodeQL said so.
      */
-    private Map<String, Integer> appendCommonSections(StringBuilder sb,
+    private PromptScope appendCommonSections(StringBuilder sb,
                                        Map<String, List<PayloadDigest>> byTopic,
                                        FieldMapping fieldMapping,
                                        String referenceFlowchart,
@@ -337,7 +350,7 @@ Chaque message est un résumé du payload d'origine :
         // exactly the records that follow it rather than a different sample of them.
         StringBuilder body = new StringBuilder();
         List<PayloadDigest> inlined = new ArrayList<>();
-        Map<String, Integer> written = model.available()
+        Map<String, Integer> detailed = model.available()
             ? appendCaseTraces(body, byTopic, model, fieldMapping, inlined)
             : appendTopicSamples(body, byTopic, inlined);
 
@@ -362,7 +375,32 @@ Chaque message est un résumé du payload d'origine :
 8. Les payloads sont résumés, pas complets : ne conclus jamais à l'absence d'un champ
    à partir de son absence dans "sample" — seul "shape" fait foi sur la structure.
 """);
-        return written;
+        return new PromptScope(measuredByTopic(byTopic, fieldMapping, model), detailed);
+    }
+
+    /**
+     * Records that entered the event log, per topic.
+     *
+     * <p>These are what the measured process is computed over, so they bear on the answer whether or
+     * not any of them is inlined below. A record carrying no value at the mapped correlation path is
+     * not one of them — it was read and digested, and the prompt says how many there were, but it is
+     * in no transition, variant or latency.
+     *
+     * <p>All zeroes when no event log could be built, which is not a shortfall but the other path:
+     * there the per-topic sample is the whole of what reached the model, and the totals say so
+     * without a second flag that could drift from this one.
+     */
+    private static Map<String, Integer> measuredByTopic(Map<String, List<PayloadDigest>> byTopic,
+                                                         FieldMapping mapping, ProcessModel model) {
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        byTopic.keySet().forEach(topic -> counts.put(topic, 0));
+        if (!model.available()) {
+            return counts;
+        }
+        byTopic.forEach((topic, digests) -> counts.put(topic, (int) digests.stream()
+            .filter(digest -> ProcessModelBuilder.caseIdOf(digest, mapping) != null)
+            .count()));
+        return counts;
     }
 
     private static List<PayloadDigest> allDigests(Map<String, List<PayloadDigest>> byTopic) {

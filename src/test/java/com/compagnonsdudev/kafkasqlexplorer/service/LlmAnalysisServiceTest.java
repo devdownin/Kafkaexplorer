@@ -447,7 +447,9 @@ class LlmAnalysisServiceTest {
         ProcessMiningCoverage coverage = result.coverage();
         assertNotNull(coverage, "an analysis has to be able to say what it looked at");
         assertEquals(3, coverage.messagesRead());
-        assertEquals(3, coverage.messagesAnalysed());
+        assertEquals(3, coverage.messagesDetailed());
+        assertEquals(0, coverage.messagesMeasured(),
+            "no mapping, so no event log — the per-topic sample is all that reached the model");
         assertEquals(2, coverage.topics().size());
         assertTrue(coverage.topics().stream().allMatch(TopicCoverage::readable));
         assertTrue(coverage.promptChars() > 0);
@@ -482,12 +484,12 @@ class LlmAnalysisServiceTest {
 
         ProcessMiningCoverage coverage = result.coverage();
         assertEquals(41, coverage.messagesRead());
-        assertTrue(coverage.messagesAnalysed() < coverage.messagesRead(),
+        assertTrue(coverage.messagesDetailed() < coverage.messagesRead(),
             "the budget dropped messages, and the answer has to say so");
         TopicCoverage second = coverage.topics().stream()
             .filter(t -> t.topic().equals("topic2")).findFirst().orElseThrow();
         assertEquals(1, second.messagesRead());
-        assertEquals(0, second.messagesAnalysed(),
+        assertEquals(0, second.messagesDetailed(),
             "a topic read but never shown to the model is the one this exists to name");
         assertTrue(second.readable(), "it resolved perfectly well — it just never reached the prompt");
     }
@@ -741,7 +743,61 @@ class LlmAnalysisServiceTest {
             mappingFor("received", "validated"));
 
         assertEquals(2, result.coverage().messagesRead());
-        assertEquals(2, result.coverage().messagesAnalysed());
+        assertEquals(2, result.coverage().messagesMeasured());
+        assertEquals(2, result.coverage().messagesDetailed());
+    }
+
+    /**
+     * The defect the measured process introduced, and the reason {@code messagesMeasured} exists.
+     *
+     * <p>The prompt now opens with an aggregate computed over <em>every</em> record read and inlines
+     * only a handful of whole case traces. Counting the traces alone and calling them the analysed
+     * messages reported "6 of 3,000" about a run whose aggregate covered all three thousand — and
+     * the browser then blamed a prompt budget that was 6 % spent. Here {@code payments} is measured
+     * in full and carries no worked example, which must read as complete rather than as a topic the
+     * answer never saw.
+     */
+    @Test
+    void aTopicNoWorkedExampleCrossesIsStillMeasuredInFull() {
+        ProcessMiningConfig oneCase = new ProcessMiningConfig();
+        oneCase.setMaxTraceCasesInPrompt(1);
+        oneCase.setMaxVariantsInPrompt(1);
+        llmAnalysisService = new LlmAnalysisService(snapshotReader, claudeConfig, oneCase,
+            DIGEST_SERVICE, new ProcessModelBuilder(oneCase), () -> llmClient);
+
+        givenDigests(List.of(
+            event("orders", 1, "ORD-1", 0L),
+            event("orders", 2, "ORD-2", 10L),
+            event("payments", 3, "ORD-2", 1_000L)));
+        givenModelAnswers();
+
+        ProcessMiningResult result = llmAnalysisService.analyzeSnapshot(
+            List.of("orders", "payments"), SnapshotConfig.latestN(500),
+            mappingFor("orders", "payments"));
+
+        ProcessMiningCoverage coverage = result.coverage();
+        assertEquals(3, coverage.messagesRead());
+        assertEquals(3, coverage.messagesMeasured(),
+            "every record carried a case id, so every record is in the measured process");
+        assertTrue(coverage.messagesDetailed() < coverage.messagesRead(),
+            "only the worked examples are inlined verbatim");
+        TopicCoverage payments = coverage.topics().stream()
+            .filter(t -> t.topic().equals("payments")).findFirst().orElseThrow();
+        assertEquals(1, payments.messagesMeasured(),
+            "measured in full even when no worked example passes through it");
+    }
+
+    /** With no correlation id resolvable, there is no event log and nothing is measured. */
+    @Test
+    void aRunThatCouldNotBuildAnEventLogMeasuresNothing() {
+        givenDigests(List.of(digestOf("topic1", "k", "{\"val\":1}")));
+        givenModelAnswers();
+
+        ProcessMiningResult result = llmAnalysisService.analyzeSnapshot(
+            List.of("topic1"), SnapshotConfig.latestN(10), null);
+
+        assertEquals(0, result.coverage().messagesMeasured());
+        assertEquals(1, result.coverage().messagesDetailed());
     }
 
     @Test
@@ -750,7 +806,7 @@ class LlmAnalysisServiceTest {
             {"flowchart":"x","comments":"c","hypotheses":[],"blindSpots":[],"anomalies":[],
              "usage":{"inputTokens":1,"outputTokens":1,"costUsd":0.0,"durationMs":1,
                       "provider":"free","model":"free"},
-             "coverage":{"topics":[],"messagesRead":9999,"messagesAnalysed":9999,"promptChars":0,
+             "coverage":{"topics":[],"messagesRead":9999,"messagesMeasured":9999,"promptChars":0,
                          "promptCharBudget":0,"readTruncated":false,"readError":null,"warnings":[]}}
             """, List.of()));
 

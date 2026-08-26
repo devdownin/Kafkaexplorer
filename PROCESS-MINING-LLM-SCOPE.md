@@ -17,6 +17,14 @@ items get cheaper once the first one lands.
 > `sample` is bounded per message. **W4 through W8 are open**, and W8 in particular is what would
 > turn the argument below into a measurement.
 >
+> **A defect W1–W3 introduced, found by measuring rather than by reading, and fixed.** With the
+> aggregate carrying the scope, `messagesAnalysed` counted only the inlined worked examples — so a
+> measured six-topic run over 3 000 records reported *"6 of 3,000 analysed"* and the panel blamed a
+> prompt budget that was **6.5 % spent** (7 840 characters of 120 000, measured). `TopicCoverage`
+> now counts `messagesMeasured` apart from `messagesDetailed`, and the browser names the right
+> cause on each path. It is the same rule this document is about, turned on the fix itself: a number
+> that means one thing and reads as another.
+>
 > One thing was found while implementing rather than while reviewing, and it is recorded here
 > because it changes a claim in section 3: a resolver for event-time values already existed
 > **twice**, byte-equivalent, one copy admitting it in a comment ("mirroring the metric engine").
@@ -74,7 +82,7 @@ digests**, against the sixty it was configured to inline. Read against a default
 topic.
 
 That ratio is not a claim needing new instrumentation: it is already on screen. `appendMessages`
-returns the per-topic count, it becomes `TopicCoverage.messagesAnalysed` beside `messagesRead`, and
+returns the per-topic count, it becomes `TopicCoverage.messagesDetailed` beside `messagesRead`, and
 `CoverageNotice` renders both. The number has been displayed all along; nothing had drawn the
 conclusion from it.
 

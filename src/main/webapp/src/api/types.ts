@@ -690,10 +690,15 @@ export interface ProcessMiningResult {
 /**
  * Ce qu'un topic de l'exécution a réellement apporté.
  *
- * Deux nombres et non un : le prompt a un budget global de caractères, donc un topic peut être lu
- * en entier et n'atteindre le modèle qu'en échantillon — ou, le budget épuisé, pas du tout. Un
- * topic lu et non analysé est invisible dans la réponse, ce qui est précisément le sens qu'on
- * prêterait au silence du modèle à son sujet.
+ * Trois nombres et non deux. `messagesMeasured` sont les enregistrements entrés dans le log
+ * d'événements : ils comptent dans chaque transition, variante et latence sur lesquelles repose la
+ * réponse, qu'aucun d'eux ne soit montré ou non. `messagesDetailed` sont ceux inlinés verbatim —
+ * une trace de cas témoin, ou, faute de log d'événements, l'échantillon par topic.
+ *
+ * Les confondre disait « 6 sur 3 000 » d'une exécution qui en avait mesuré trois mille, et envoyait
+ * le lecteur augmenter un budget de prompt consommé à 6 %. Un `messagesMeasured` total à zéro veut
+ * dire qu'aucun log n'a pu être construit et que l'échantillonnage par topic a tourné : c'est ce qui
+ * permet de distinguer les deux chemins sans un second drapeau qui dériverait.
  *
  * `readable` à faux veut dire qu'aucune partition n'a été décrite pour ce topic : un topic absent
  * ou une faute de frappe, pas un topic vide.
@@ -703,7 +708,8 @@ export interface ProcessMiningResult {
 export interface TopicCoverage {
   topic: string;
   messagesRead: number;
-  messagesAnalysed: number;
+  messagesMeasured: number;
+  messagesDetailed: number;
   readable: boolean;
 }
 
@@ -716,7 +722,8 @@ export interface TopicCoverage {
 export interface ProcessMiningCoverage {
   topics: TopicCoverage[];
   messagesRead: number;
-  messagesAnalysed: number;
+  messagesMeasured: number;
+  messagesDetailed: number;
   promptChars: number;
   promptCharBudget: number;
   /** La lecture s'est arrêtée sur son propre budget : les décomptes sont des planchers. */
