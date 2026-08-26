@@ -63,8 +63,13 @@ all. And a state has to be able to *report* something: an opened topic list was 
 and removed on that rule, because the demo catalogue's names do not truncate at any width the
 probe walks, and lengthening one would mean inventing data `setup-demo.sh` does not seed.
 
-`--check` is W6: it asserts that no page scrolls sideways, and that no page carries more
-sub-24px targets than the budget recorded beside `TARGET_BUDGET`. It walks **phone and desktop
+`--check` is W6: it asserts that no page scrolls sideways, that no page carries more sub-24px
+targets than the budget recorded beside `TARGET_BUDGET`, and that none carries more *unreachable*
+clipping than `UNREACHABLE_BUDGET`. That third one was excluded for a long time on the argument
+that clipping turns on text metrics; comparing a CI run against a developer machine on the same
+commit measured the argument, and it splits the two columns rather than covering both —
+`clipped` differed on 4 of the 21 rows, `unreachable` on none. Which is what they are: one counts
+where a string happens to wrap, the other whether any path to the rest exists. It walks **phone and desktop
 only** — the gate runs on every pull request and each viewport is eight page loads waited out to
 `networkidle`, which put the job past its timeout the first time all three ran. The extremes are
 the ones that matter: overflow appears at the narrow end, and the peak target count is at one end
