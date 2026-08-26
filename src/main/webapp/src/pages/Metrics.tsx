@@ -28,6 +28,7 @@ import { SuggestionsPanel } from '../components/metrics/SuggestionsPanel';
 import { readFlowChains } from './flowChains';
 import { latestProcessModel } from './processModelEvidence';
 import { newerAuditNote, suggestionToDraft } from './metricSuggestions';
+import { describeMetricScope, scopeNoteOf } from './metricScope';
 
 interface MetricTemplateDescriptor {
   type: string;
@@ -416,6 +417,7 @@ const MetricCard: React.FC<{
   const status = getStatus(metric);
   const st = STATUS_STYLES[status];
   const tm = TYPE_META[metric.type] ?? TYPE_META.GAUGE;
+  const scopeChips = describeMetricScope(metric.lastSummary);
 
   const chartData = (metric.history?.length === 1
     ? [metric.history[0], metric.history[0]]
@@ -563,6 +565,32 @@ const MetricCard: React.FC<{
           </div>
         )}
       </div>
+
+      {/* Ce que la mesure a couvert.
+
+          `lastSummary` était calculé, persisté, et rendu nulle part hors de l'aperçu du modal :
+          une métrique en service ne disait rien de sa portée. Pour la latence de transit c'est ce
+          qui empêche de lire la moyenne comme un verdict — voir METRICS-TWO-QUERY-AUDIT.md, D6. */}
+      {scopeChips.length > 0 && (
+        <div
+          className="border-t border-outline-variant/60 px-4 py-2 flex flex-wrap gap-1.5"
+          title={scopeNoteOf(metric.lastSummary) ?? undefined}
+        >
+          {scopeChips.map(chip => (
+            <span
+              key={chip.label}
+              title={chip.detail}
+              className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${
+                chip.tone === 'warning'
+                  ? 'text-warning border-warning/30 bg-warning/5'
+                  : 'text-on-surface-variant border-outline-variant/60'
+              }`}
+            >
+              {chip.label}
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* SQL footer — ou ce qui en tient lieu.
 

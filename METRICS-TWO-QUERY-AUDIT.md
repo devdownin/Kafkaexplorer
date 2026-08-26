@@ -10,15 +10,16 @@ running when they accept a card.
 Neither has been reviewed. This document is that review, in the shape the other scope documents
 here take: every item is derived from the code, names the file it comes from, and is ranked.
 
-> **Status.** It implemented nothing when it was written. **D1, D2 and D3 have since shipped**, as
-> one change — they share a diff, and the second is meaningless without the first. What sections
-> D1–D3 describe below is therefore the state that work was done *from*; each now ends with what
-> replaced it. Three further items shipped with them because the fix could not be written without
-> them: **D5 in part** (the engine's own warnings now travel into the metric's summary, and both
-> templates report what their read covered and what it dropped), **D9 for the three scan
-> parameters** (refused when the metric is saved, and on the form at last), and **D11 in part**
-> (each of the three messages now names the side, the read and the alternative). **D4, D6, D7, D8,
-> D10 and D12 remain open**, and the worklist at the end says which item closes each.
+> **Status.** It implemented nothing when it was written. **D1, D2, D3, D4, D6, D7 and D8 have
+> since shipped**, in two changes: D1–D3 first (they share a diff, and the second is meaningless
+> without the first), then D4, D6, D7 and D8. What each section describes below is therefore the
+> state that work was done *from*; each now ends with what replaced it. Three further items
+> shipped alongside because the fixes could not be written without them: **D5 in part** (the
+> engine's own warnings now travel into the metric's summary, and both templates report what their
+> read covered and what it dropped), **D9 for the three scan parameters** (refused when the metric
+> is saved, and on the form at last), and **D11 in part** (each of the three messages names the
+> side, the read and the alternative). **D10 and D12 remain open**, and the worklist at the end
+> says what closes each.
 >
 > **One thing was found while implementing rather than while reviewing**, and it is recorded here
 > because D5 understated it: an aggregate on the direct reader dropped its `WHERE` caveats
@@ -205,6 +206,15 @@ source query ran, but before the target query, appear in neither — while sourc
 just before the source read have their target counted, so the *most recent* pairs are the ones
 systematically dropped. That compounds D6.
 
+**Shipped.** The right side is read first and the left second, so the interval's traffic lands in
+the side every operation here grows with — a gap that survives that is a real one, where the
+previous order let the same traffic inflate the denominator and hide it. The scope note states the
+direction in as many words, and `readGapMs` reports how much room the interval actually left: a
+number rather than a reassurance, since four seconds on a topic doing a thousand records a second
+is four thousand records in one count and not the other. `ABS_DIFF` is the one operation no
+ordering helps — it is symmetric — and its note says so instead of claiming a guarantee it does
+not have.
+
 ---
 
 ## D5 — Neither template says what it could not read
@@ -255,6 +265,20 @@ and discarded (`:718-720`) rather than counted: clock skew between two producers
 `ProcessModelBuilder.outOfOrderCount` and Stream Flow's dashed-red edge report as a finding, and
 here it is silently absorbed.
 
+**Shipped.** `matchRate`, `unmatchedTargetCount` and `outOfOrderCount` are measured and reported,
+and the rate is **exported as a series of its own** —
+`explorer_metric_correlation_match_rate{metric_id,metric_name,metric_type}` — because a figure
+that exists only in a summary nobody alerts on cannot correct the figure that is alerted on. It
+carries the metric's identity and none of its row labels, so a companion cannot multiply with the
+series it describes. Both counts and the rate now reach the operator too: `lastSummary` was
+computed, persisted to `internal.metrics.config` and rendered nowhere outside the preview modal, so
+a metric *in service* said nothing about its own scope — it is a chip row on the card now
+(`pages/metricScope.ts`, pure and tested), with the rate shown even at 100 % on the rule this
+codebase applies to the coverage notice: an indicator seen only on bad news is one people stop
+reading. A run that paired nothing no longer reports a bare "no correlated messages" either: it
+says how many events each side yielded and, when a clock disagreement is what stopped them
+pairing, that this is what happened.
+
 ---
 
 ## D7 — The `HISTOGRAM` / `SUMMARY` dedup is biased by the key ordering
@@ -278,6 +302,17 @@ the measurement. Sorting the emitted rows by `event_time` instead of by key woul
 make the positional assumption true again — the correlation itself needs the key ordering, the
 *output* does not.
 
+**Shipped, and it had to go further than that**, because D3 broke the positional scheme outright:
+a latency now reads the most recent records, so each cycle drops observations off the front and
+gains others at the back while the count stays the same — which positional dedup reads as "nothing
+new" for ever, freezing the distribution after its first window. Rows are ordered by event time
+now *and* each carries when it was observed, in a reserved column (`__observed_at`) that is
+excluded from the tags and from the label key exactly as `metric_value` is; without that exclusion
+a timestamp would become a Prometheus label and mint one series per observation. The dedup keys on
+that watermark for any series whose rows all carry one, and stays positional for those that do not,
+so nothing changes for a raw-SQL metric. Two observations sharing a millisecond across two cycles
+are recorded once, which is the safe direction for a summary that must never be inflated.
+
 ---
 
 ## D8 — A failed refresh freezes the gauge, and nothing dates it
@@ -298,6 +333,13 @@ with a companion series, for reasons that apply verbatim here:
 
 A two-query metric has twice the failure surface of a one-query metric, so it is the family where
 this matters most. An `explorer_metric_last_success_timestamp_seconds{metric_id}` is the same fix.
+
+**Shipped**, as exactly that series, set only on a cycle that produced a value — so a failed
+refresh leaves it where it was, which is the whole point. The alert becomes
+`explorer_metric_gauge > N and time() - explorer_metric_last_success_timestamp_seconds < 120`. A
+timestamp rather than a boolean, on `ConsumerLagMetrics`' own reasoning: same cardinality, and it
+carries *how* stale. Freezing the value stays the behaviour — a broker blip must not read as "the
+condition cleared" — and it is now a frozen value somebody can date rather than one nobody can.
 
 ---
 
@@ -419,16 +461,19 @@ the existing mock the moment the behaviour changes.
 | ~~W1~~ | **Shipped.** The hint carries `scan.bounded.mode='latest-offset'`, the javadoc describes the code, and a connector that refuses the option degrades once and says so rather than breaking every template metric. | M | D1, and part of D2 |
 | ~~W2~~ | **Shipped.** The last numeric row, a truncated changelog refused, the generated shape answered by the direct reader, and that reader's own ceiling reported as a floor rather than compared. | M | D2 |
 | ~~W3~~ | **Shipped.** `maxRowsPerSide`, `timeoutMs` and `readMode` on the form and validated at save; the recent end as the latency template's default; the coverage in the summary. | M | D3, D9 (scan half) |
-| W4 | Report the scope: rows read vs cap, rows dropped for a missing column, `QueryResult.warnings` propagated into the metric's summary and error. | S–M | D5 |
-| W5 | Export a match rate beside the latency, and `unmatchedTargetCount` and an out-of-order count beside `unmatchedSourceCount`. Render `lastSummary` on the metric card. | M | D6, minor 1 |
-| W6 | `explorer_metric_last_success_timestamp_seconds{metric_id}`. | S | D8 |
-| W7 | Emit latency rows in `event_time` order so the positional dedup's assumption holds. | S | D7 |
+| W4 | Report the scope: rows read vs cap, rows dropped for a missing column, `QueryResult.warnings` propagated into the metric's summary and error. | S–M | D5 (mostly shipped with W1–W3) |
+| ~~W5~~ | **Shipped.** `matchRate` exported as a series of its own, `unmatchedTargetCount` and `outOfOrderCount` measured, and `lastSummary` rendered on the card. | M | D6, minor 1 |
+| ~~W6~~ | **Shipped.** `explorer_metric_last_success_timestamp_seconds{metric_id}`, set only on a cycle that produced a value. | S | D8 |
+| ~~W7~~ | **Shipped**, and further: event-time order *and* a reserved observation column, because a sliding window breaks positional dedup outright. | M | D7 |
 | W8 | Validate `operation`, `maxRowsPerSide`, `timeoutMs` and `readMode` at save time, in the same switch that already validates `aggregation`; mirror it in `validateTemplate`. | S | D9 |
-| W9 | Read the two sides in the order that errs toward *over*-reporting the gap, and say so in a comment — the `KafkaAdminService` rule. Separate the `right == 0` answer from a metric error. | S | D4, D11 |
+| ~~W9~~ | **Shipped.** The right side first, the direction stated in the scope note, and `readGapMs` reported. | S | D4, D11 |
 
-W1 and W2 were the ones that changed what the numbers mean, and they have shipped. W4 and W5 are
-what would make the rest of them readable as measurements rather than as assertions; everything
-from W6 down is small and independent of the others.
+W1 and W2 were the ones that changed what the numbers mean; W4 to W7 and W9 are what made them
+readable as measurements rather than as assertions. All of those have shipped. What is left is
+**W8** (validate `operation` at save time, the one scan parameter still checked only at refresh)
+and the two items no work order closes because they are properties of the design rather than
+defects in it — **D10**, the cost of a two-query metric on a single-threaded refresh loop, and
+**D12**, which is this document's own note that the suite could not have caught any of it.
 
 **The two experiments D1 and D2 name are still worth running**, and they are the reason W1 shipped
 with a runtime fallback rather than a promise: nothing in this repository has yet executed a

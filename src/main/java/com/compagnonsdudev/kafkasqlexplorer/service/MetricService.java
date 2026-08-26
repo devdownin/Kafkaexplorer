@@ -138,9 +138,37 @@ public class MetricService {
 
     private record CorrelationEvent(String matchKey, long eventTime) {}
 
+    /** One matched pair: the latency, and when the source event happened. */
+    private record LatencyObservation(long sourceEventTime, double latencyMs) {}
+
+    /**
+     * A row column that is a measurement about the row rather than a label of it.
+     *
+     * <p>Every non-{@code metric_value} column becomes a Prometheus label, which is right for a
+     * GROUP BY value and catastrophic for a timestamp — one series per observation. This one is
+     * excluded from the tags and from the label key, exactly as {@code metric_value} is, and read
+     * only by the distribution dedup below.
+     */
+    private static final String OBSERVED_AT_COLUMN = "__observed_at";
+
+    /** Columns that are never labels. */
+    private static boolean isReservedColumn(String column) {
+        return "metric_value".equalsIgnoreCase(column) || OBSERVED_AT_COLUMN.equalsIgnoreCase(column);
+    }
+
+    /** Companion series: one gauge per (metric, name), carrying no row labels. */
+    private static final String LAST_SUCCESS_SERIES = "explorer_metric_last_success_timestamp_seconds";
+    private static final String MATCH_RATE_SERIES = "explorer_metric_correlation_match_rate";
+    private static final List<String> COMPANION_SERIES = List.of(LAST_SUCCESS_SERIES, MATCH_RATE_SERIES);
+
     // ── metric state ─────────────────────────────────────────────────────────
     private final Map<String, MetricConfig>              metrics           = new ConcurrentHashMap<>();
     private final Map<String, LinkedList<Double>>        historyMap        = new ConcurrentHashMap<>();
+    /** metricId → (series name → holder), for the gauges that describe the metric rather than its rows. */
+    private final Map<String, Map<String, AtomicReference<Double>>> companionHolders = new ConcurrentHashMap<>();
+    private final Map<String, Map<String, Gauge>>                   companionMeters  = new ConcurrentHashMap<>();
+    /** metricId → (labelKey → newest observation already recorded), for a sliding-window distribution. */
+    private final Map<String, Map<String, Long>> distributionWatermarks = new ConcurrentHashMap<>();
 
     // ── Micrometer instruments per type ──────────────────────────────────────
     /** GAUGE:     metricId → (labelKey → holder)  */
@@ -412,10 +440,15 @@ public class MetricService {
         counterMeters.remove(id);
         distributionMeters.remove(id);
         distributionRecordedCounts.remove(id);
+        distributionWatermarks.remove(id);
+        companionHolders.remove(id);
+        companionMeters.remove(id);
         meterRegistry.find("explorer_metric_gauge").tag("metric_id", id).meters().forEach(meterRegistry::remove);
         meterRegistry.find("explorer_metric_counter").tag("metric_id", id).meters().forEach(meterRegistry::remove);
         meterRegistry.find("explorer_metric_histogram").tag("metric_id", id).meters().forEach(meterRegistry::remove);
         meterRegistry.find("explorer_metric_summary").tag("metric_id", id).meters().forEach(meterRegistry::remove);
+        COMPANION_SERIES.forEach(name ->
+            meterRegistry.find(name).tag("metric_id", id).meters().forEach(meterRegistry::remove));
     }
 
     /** True when a re-saved metric differs in any field that affects its Micrometer series. */
@@ -762,16 +795,39 @@ public class MetricService {
 
         String leftSql = requireParam(params, "leftSql");
         String rightSql = requireParam(params, "rightSql");
-        QueryResult leftResult =
-            executeMetricQuery(leftSql, maxRows, timeoutMs, readMode, isSingleTableRead(leftSql));
-        if (leftResult.error() != null) {
-            return MetricComputationResult.error("Left query: " + leftResult.error());
-        }
+        /*
+         * The right side is read first, and the order is the measurement's, not the form's.
+         *
+         * Two counts cannot be taken at one instant — a whole query separates them, and on the
+         * shipped defaults that can be a 30 s timeout plus a hundred-thousand-record scan. So the
+         * arithmetic leans, and the only choice is which way. Every operation here grows with the
+         * left side (LEFT_MINUS_RIGHT, RATIO and PERCENT_GAP all do), and the panel proposes the
+         * upstream topic on the left with a threshold that fires when the value is high — so
+         * reading the left side *last* lets the traffic of the interval land in it, and a gap that
+         * survives that is a real one. Read the other way round, the same traffic lands in the
+         * denominator and the gap is understated: the metric under-reports exactly the loss it
+         * exists to report, which is the failure this ordering exists to prevent.
+         *
+         * It is the rule KafkaAdminService already follows for consumer lag — committed offsets
+         * first, log end offsets last, "so a consumer committing between the two calls can only
+         * make the lag look larger". ABS_DIFF is the one operation this cannot help: it is
+         * symmetric, so no ordering is conservative for it, and readGapMs below is what says how
+         * much room the interval left.
+         */
+        long readStartedAt = System.currentTimeMillis();
         QueryResult rightResult =
             executeMetricQuery(rightSql, maxRows, timeoutMs, readMode, isSingleTableRead(rightSql));
         if (rightResult.error() != null) {
             return MetricComputationResult.error("Right query: " + rightResult.error());
         }
+        long rightReadAt = System.currentTimeMillis();
+        QueryResult leftResult =
+            executeMetricQuery(leftSql, maxRows, timeoutMs, readMode, isSingleTableRead(leftSql));
+        if (leftResult.error() != null) {
+            return MetricComputationResult.error("Left query: " + leftResult.error());
+        }
+        long readGapMs = System.currentTimeMillis() - rightReadAt;
+        long totalReadMs = System.currentTimeMillis() - readStartedAt;
 
         SideRead left = aggregateValue(leftResult, maxRows, "left");
         if (left.error() != null) return MetricComputationResult.error(left.error());
@@ -822,13 +878,21 @@ public class MetricService {
         summary.put("operation", operation);
         summary.put("leftEngine", leftResult.engine());
         summary.put("rightEngine", rightResult.engine());
+        // How much room the interval between the two reads left. A number rather than a
+        // reassurance: on a topic doing a thousand records a second, four seconds here is four
+        // thousand records that are in one count and not the other.
+        summary.put("readGapMs", readGapMs);
+        summary.put("readDurationMs", totalReadMs);
         // Accurate per engine rather than in one clause: the row cap bounds what the planner
         // returns, while the direct reader ignores it for an aggregate and stops on its own
         // record ceiling — two different bounds, and a note naming the wrong one is worse than none.
-        summary.put("scopeNote", "The two sides are counted one after the other rather than at one "
-            + "instant, read " + describeReadEnd(readMode) + ". A side the direct reader answered "
-            + "covers at most " + FlinkSqlService.AGGREGATE_SCAN_RECORDS + " record(s); a side the "
-            + "planner answered covers at most " + maxRows + " row(s).");
+        summary.put("scopeNote", "The right side is counted first and the left "
+            + readGapMs + " ms later, so traffic in between lands in the left count and this "
+            + ("ABS_DIFF".equals(operation) ? "difference can move either way" : "value can only be overstated")
+            + ", never understated. Read " + describeReadEnd(readMode)
+            + ". A side the direct reader answered covers at most "
+            + FlinkSqlService.AGGREGATE_SCAN_RECORDS + " record(s); a side the planner answered "
+            + "covers at most " + maxRows + " row(s).");
         addScanWarnings(summary, leftResult, rightResult);
 
         return new MetricComputationResult(List.of(row), metricValue, null, summary);
@@ -908,8 +972,9 @@ public class MetricService {
                 .addLast(event.eventTime());
         }
 
-        List<Double> latencies = new ArrayList<>();
+        List<LatencyObservation> observations = new ArrayList<>();
         int unmatchedSourceCount = 0;
+        int outOfOrderCount = 0;
         sourceEvents.sort(Comparator.comparing(CorrelationEvent::matchKey).thenComparingLong(CorrelationEvent::eventTime));
         targetsByKey.values().forEach(queue -> {
             List<Long> sorted = new ArrayList<>(queue);
@@ -925,19 +990,38 @@ public class MetricService {
                 continue;
             }
             while (!candidates.isEmpty() && candidates.peekFirst() < sourceEvent.eventTime()) {
+                // A target stamped before its own source: two producers' clocks disagreeing, or
+                // an event back-dated on the way. It is dropped either way — a negative latency is
+                // not a latency — but it is a finding about the estate, so it is counted rather
+                // than absorbed. ProcessModelBuilder reports the same thing as outOfOrderCount and
+                // Stream Flow draws it as a dashed red edge.
                 candidates.removeFirst();
+                outOfOrderCount++;
             }
             if (candidates.isEmpty()) {
                 unmatchedSourceCount++;
                 continue;
             }
             long targetTs = candidates.removeFirst();
-            latencies.add((double) (targetTs - sourceEvent.eventTime()));
+            observations.add(new LatencyObservation(sourceEvent.eventTime(), targetTs - sourceEvent.eventTime()));
+        }
+        int unmatchedTargetCount = targetsByKey.values().stream().mapToInt(Deque::size).sum();
+
+        if (observations.isEmpty()) {
+            return MetricComputationResult.error("No correlated messages found between the source and "
+                + "target queries: " + sourceEvents.size() + " source event(s) and " + targetEvents.size()
+                + " target event(s) were read and none share a match_key with a later timestamp"
+                + (outOfOrderCount > 0
+                    ? ", though " + outOfOrderCount + " target(s) did match a key while being stamped "
+                      + "*before* their source, which is a clock disagreement rather than a miss."
+                    : "."));
         }
 
-        if (latencies.isEmpty()) {
-            return MetricComputationResult.error("No correlated messages found between source and target queries");
-        }
+        // In event-time order for what follows: the distribution dedup below is positional unless
+        // a row says when it was observed, and a list re-sorted by match key on every cycle is the
+        // one thing that assumption cannot survive.
+        observations.sort(Comparator.comparingLong(LatencyObservation::sourceEventTime));
+        List<Double> latencies = observations.stream().map(LatencyObservation::latencyMs).toList();
 
         double avgLatencyMs = latencies.stream().mapToDouble(Double::doubleValue).average().orElse(0.0);
         Map<String, Object> sharedLabels = new LinkedHashMap<>();
@@ -950,9 +1034,12 @@ public class MetricService {
             row.put("metric_value", avgLatencyMs);
             rows.add(row);
         } else {
-            for (Double latency : latencies) {
+            for (LatencyObservation observation : observations) {
                 Map<String, Object> row = new LinkedHashMap<>(sharedLabels);
-                row.put("metric_value", latency);
+                row.put("metric_value", observation.latencyMs());
+                // Not a label — see OBSERVED_AT_COLUMN. It is what lets the distribution record
+                // each observation once across refreshes whose window slides.
+                row.put(OBSERVED_AT_COLUMN, observation.sourceEventTime());
                 rows.add(row);
             }
         }
@@ -960,6 +1047,19 @@ public class MetricService {
         Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("matchedCount", latencies.size());
         summary.put("unmatchedSourceCount", unmatchedSourceCount);
+        /*
+         * The rate is what stops the average being read as a verdict on the pipeline.
+         *
+         * A source event whose target never arrived contributes nothing to the value, so when a
+         * downstream stage stalls the slow pairs stop being pairs and the published latency is
+         * that of whatever still completes: the metric *improves* as the pipeline breaks. At the
+         * limit one message getting through fast reads as a perfectly healthy hop. The rate is
+         * also exported as a series of its own (MATCH_RATE_SERIES), because a figure that only
+         * exists in a summary nobody alerts on cannot correct the figure that is alerted on.
+         */
+        summary.put("unmatchedTargetCount", unmatchedTargetCount);
+        summary.put("outOfOrderCount", outOfOrderCount);
+        summary.put("matchRate", latencies.size() / (double) (latencies.size() + unmatchedSourceCount));
         summary.put("avgLatencyMs", avgLatencyMs);
         summary.put("p95LatencyMs", percentile(latencies, 0.95));
         summary.put("maxLatencyMs", latencies.stream().mapToDouble(Double::doubleValue).max().orElse(avgLatencyMs));
@@ -1274,7 +1374,56 @@ public class MetricService {
         if (primaryValue != null) {
             updateHistory(metricId, primaryValue);
             updateMetricState(metricId, primaryValue, null, summary);
+            publishCompanions(metricId, config, summary);
         }
+    }
+
+    /**
+     * The two gauges that describe the metric rather than its rows.
+     *
+     * <p>{@link #LAST_SUCCESS_SERIES} is what makes every other gauge here readable. A refresh
+     * that fails keeps the previous value — deliberately, since a broker blip must not read as
+     * "the backlog cleared" — but a frozen gauge and a fresh one are indistinguishable from
+     * outside, so an alert on {@code value > N} fires the same way whether the condition is real
+     * and stuck or simply no longer measured. Set only on a cycle that actually produced a value,
+     * it lets the alert require both:
+     * {@code explorer_metric_gauge > N and time() - explorer_metric_last_success_timestamp_seconds < 120}.
+     * A timestamp rather than a boolean: same cardinality, and it carries <em>how</em> stale.
+     * {@code ConsumerLagMetrics} carries the same series for the same reason.
+     *
+     * <p>{@link #MATCH_RATE_SERIES} is published for any metric whose summary reports one, which
+     * today is the transit latency — see the note beside {@code matchRate}.
+     */
+    private void publishCompanions(String metricId, MetricConfig config, Map<String, Object> summary) {
+        publishCompanionGauge(metricId, config, LAST_SUCCESS_SERIES,
+            "Epoch seconds of the last refresh that produced a value for this metric",
+            System.currentTimeMillis() / 1000.0);
+        if (summary != null && summary.get("matchRate") instanceof Number rate) {
+            publishCompanionGauge(metricId, config, MATCH_RATE_SERIES,
+                "Share of source events this metric could pair with a target event (0..1)",
+                rate.doubleValue());
+        }
+    }
+
+    private void publishCompanionGauge(String metricId, MetricConfig config, String name,
+                                       String description, double value) {
+        companionHolders
+            .computeIfAbsent(metricId, k -> new ConcurrentHashMap<>())
+            .computeIfAbsent(name, k -> {
+                AtomicReference<Double> ref = new AtomicReference<>(value);
+                Gauge gauge = Gauge.builder(name, ref, AtomicReference::get)
+                    .description(description)
+                    // The metric's own identity and nothing from its rows: a companion describes
+                    // the measurement, so it must not multiply with the label series.
+                    .tags(List.of(
+                        Tag.of("metric_id", metricId),
+                        Tag.of("metric_name", config.name() == null ? "" : config.name()),
+                        Tag.of("metric_type", config.type() == null ? "GAUGE" : config.type())))
+                    .register(meterRegistry);
+                companionMeters.computeIfAbsent(metricId, x -> new ConcurrentHashMap<>()).put(name, gauge);
+                return ref;
+            })
+            .set(value);
     }
 
     /** The set of label series produced by this cycle's rows (rows without a numeric value are ignored). */
@@ -1305,6 +1454,7 @@ public class MetricService {
 
         removeStaleMeters(distributionMeters.get(metricId), liveKeys);
         retainLiveKeys(distributionRecordedCounts.get(metricId), liveKeys);
+        retainLiveKeys(distributionWatermarks.get(metricId), liveKeys);
     }
 
     private void removeStaleMeters(Map<String, ? extends Meter> series, Set<String> liveKeys) {
@@ -1375,20 +1525,28 @@ public class MetricService {
 
     /**
      * HISTOGRAM / SUMMARY: record only observations not already recorded in earlier refresh
-     * cycles. Because the scheduled refresh re-scans the whole bounded (earliest-offset)
-     * backlog every cycle, recording every returned row unconditionally would re-count the
-     * entire history each cycle — inflating _count/_sum and skewing the distribution toward
-     * older data (B2).
+     * cycles. Because the scheduled refresh re-scans a bounded slice of the topic every cycle,
+     * recording every returned row unconditionally would re-count the same messages each time —
+     * inflating _count/_sum and skewing the distribution toward whatever the window holds (B2).
      *
-     * Dedup is positional per label series: an earliest-offset scan yields an append-only
-     * stream in a stable order, so only the suffix beyond the previously recorded count is
-     * new. A series that shrinks (retention trim / stream reset) resets its watermark to the
-     * current size without re-recording, so the accumulated summary is never inflated.
+     * <p>There are two schemes, and which one applies is decided by the rows themselves.
      *
-     * <p>Note: templates whose output is re-sorted each cycle rather than strictly appended
-     * (e.g. TOPIC_TRANSIT_LATENCY sorts by match key) get approximate positional dedup — the
-     * observation <em>count</em> stays bounded/correct, but the exact boundary values may
-     * shift slightly. Strictly-correct continuous distributions require FLINK_MANAGED_JOB.
+     * <p><b>By observation time</b>, when every row of a label series carries
+     * {@link #OBSERVED_AT_COLUMN}: record those newer than the newest already recorded, then
+     * advance the watermark. This is the only scheme that survives a <em>sliding</em> window —
+     * a latency metric now reads the most recent records, so each cycle drops observations off
+     * the front and gains others at the back while the count stays the same, which the positional
+     * scheme reads as "nothing new" for ever. It is also what removes the bias the positional
+     * scheme had here: the rows used to be ordered by match key, so the suffix beyond the recorded
+     * count was the observations whose key sorted highest — a sample selected by an attribute
+     * unrelated to the measurement, published as a p95. Two observations sharing a millisecond
+     * across two cycles are recorded once, which is the safe direction for a distribution that
+     * must never be inflated.
+     *
+     * <p><b>By position</b> otherwise, unchanged: an earliest-offset scan yields an append-only
+     * stream in a stable order, so only the suffix beyond the previously recorded count is new. A
+     * series that shrinks (retention trim / stream reset) resets its watermark to the current size
+     * without re-recording, so the accumulated summary is never inflated.
      *
      * @return the first observed value (for display / history), or the override when provided.
      */
@@ -1398,10 +1556,13 @@ public class MetricService {
                                           boolean histogram, Double displayValueOverride) {
         Map<String, Integer> recordedCounts =
             distributionRecordedCounts.computeIfAbsent(metricId, k -> new ConcurrentHashMap<>());
+        Map<String, Long> watermarks =
+            distributionWatermarks.computeIfAbsent(metricId, k -> new ConcurrentHashMap<>());
 
         // Group ordered values (and a representative tag set) per label series for this cycle.
         // Same labelKey ⟺ same tag set by construction, so the first row's tags are canonical.
         Map<String, List<Double>> valuesByLabel = new LinkedHashMap<>();
+        Map<String, List<Long>>   stampsByLabel = new LinkedHashMap<>();
         Map<String, List<Tag>>    tagsByLabel   = new LinkedHashMap<>();
         Double primaryValue = displayValueOverride;
 
@@ -1410,16 +1571,32 @@ public class MetricService {
             if (value == null) continue;
             String labelKey = buildLabelKey(row, configuredLabels);
             valuesByLabel.computeIfAbsent(labelKey, k -> new ArrayList<>()).add(value);
+            stampsByLabel.computeIfAbsent(labelKey, k -> new ArrayList<>()).add(observedAt(row));
             tagsByLabel.computeIfAbsent(labelKey, k -> buildTags(metricId, config, row, configuredLabels));
             if (primaryValue == null) primaryValue = value;
         }
 
         valuesByLabel.forEach((labelKey, values) -> {
+            List<Tag> tags = tagsByLabel.get(labelKey);
+            List<Long> stamps = stampsByLabel.get(labelKey);
+
+            if (!stamps.contains(null)) {
+                long watermark = watermarks.getOrDefault(labelKey, Long.MIN_VALUE);
+                long newest = watermark;
+                for (int i = 0; i < values.size(); i++) {
+                    if (stamps.get(i) <= watermark) continue;
+                    if (histogram) processHistogram(metricId, labelKey, tags, values.get(i));
+                    else           processSummary(metricId, labelKey, tags, values.get(i));
+                    newest = Math.max(newest, stamps.get(i));
+                }
+                watermarks.put(labelKey, newest);
+                return;
+            }
+
             int alreadyRecorded = recordedCounts.getOrDefault(labelKey, 0);
             // On a shrink, skip recording (startIndex == size) and just reset the watermark —
             // never re-record the surviving prefix, which would inflate the accumulated summary.
             int startIndex = values.size() < alreadyRecorded ? values.size() : alreadyRecorded;
-            List<Tag> tags = tagsByLabel.get(labelKey);
             for (int i = startIndex; i < values.size(); i++) {
                 if (histogram) processHistogram(metricId, labelKey, tags, values.get(i));
                 else           processSummary(metricId, labelKey, tags, values.get(i));
@@ -1428,6 +1605,18 @@ public class MetricService {
         });
 
         return primaryValue;
+    }
+
+    /** When the row says it was observed, or null when it does not say. */
+    private Long observedAt(Map<String, Object> row) {
+        Object value = row.get(OBSERVED_AT_COLUMN);
+        if (value instanceof Number n) return n.longValue();
+        if (value == null) return null;
+        try {
+            return Long.parseLong(String.valueOf(value).trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     // GAUGE → Gauge (current point-in-time value)
@@ -1512,7 +1701,7 @@ public class MetricService {
         tagValues.put("metric_type", config.type());
         configuredLabels.forEach(tagValues::putIfAbsent);
         for (Map.Entry<String, Object> e : row.entrySet()) {
-            if (!"metric_value".equalsIgnoreCase(e.getKey())) {
+            if (!isReservedColumn(e.getKey())) {
                 tagValues.put(messageFieldExtractorService.sanitizeLabelKey(e.getKey()), String.valueOf(e.getValue()));
             }
         }
@@ -1525,7 +1714,7 @@ public class MetricService {
         StringBuilder sb = new StringBuilder();
         configuredLabels.forEach((key, value) -> sb.append(key).append('=').append(value).append('|'));
         for (Map.Entry<String, Object> e : row.entrySet()) {
-            if (!"metric_value".equalsIgnoreCase(e.getKey())) {
+            if (!isReservedColumn(e.getKey())) {
                 sb.append(messageFieldExtractorService.sanitizeLabelKey(e.getKey()))
                     .append('=').append(e.getValue()).append('|');
             }

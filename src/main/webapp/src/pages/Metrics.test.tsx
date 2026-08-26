@@ -216,6 +216,34 @@ describe('Metrics page', () => {
    * `maxRowsPerSide`, `timeoutMs` et `readMode` décidaient déjà ce que la métrique mesure et
    * n'étaient atteignables que par un POST écrit à la main.
    */
+  /*
+   * Ce que la mesure a couvert, sur la carte d'une métrique en service — voir D6. Le taux
+   * d'appariement était calculé, persisté, et visible seulement dans l'aperçu du modal.
+   */
+  it('shows on the card what the measurement covered', async () => {
+    stubApi([{
+      ...templateMetric,
+      lastSummary: {
+        matchRate: 0.25, matchedCount: 1, unmatchedSourceCount: 3, outOfOrderCount: 2,
+        scopeNote: 'Correlated over at most 10000 row(s) per side.',
+      },
+    }]);
+    await renderPage();
+
+    await waitFor(() => expect(screen.getByText('gauge_latency_a_to_b')).toBeInTheDocument());
+    // La moyenne ne décrit qu'un quart des événements lus, et la carte le dit à côté d'elle.
+    expect(screen.getByText('25% paired')).toBeInTheDocument();
+    expect(screen.getByText('2 before source')).toBeInTheDocument();
+  });
+
+  it('says nothing about scope when the metric reported none', async () => {
+    stubApi([{ ...templateMetric, lastSummary: null }]);
+    await renderPage();
+
+    await waitFor(() => expect(screen.getByText('gauge_latency_a_to_b')).toBeInTheDocument());
+    expect(screen.queryByText(/paired/)).toBeNull();
+  });
+
   it('puts the scan window of a two-query template on the form', async () => {
     const user = userEvent.setup();
     stubApi([], [latencySuggestion]);

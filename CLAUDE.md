@@ -956,12 +956,37 @@ dropping its `WHERE` caveats outright, where the non-aggregate branch kept them)
 refusal names the side, the read it came from and what to use instead: "the right query counts
 zero" now says that `LEFT_MINUS_RIGHT` reports that as a number.
 
-What is deliberately still open is listed in that document with the item that closes each: the two
-sides are one whole query apart and the order errs toward under-reporting the gap (D4); an
-unmatched source makes the latency look *better*, so the metric improves as the pipeline breaks
-(D6); the positional dedup for `HISTOGRAM`/`SUMMARY` runs over rows sorted by match key, so an
-unordered key biases the published p95 (D7); and a failed refresh freezes the gauge with nothing
-dating it, which `ConsumerLagMetrics` was fixed for (D8).
+**Four more shipped after them, and each is a measurement the metric was hiding.** *The right side
+is counted first* — two counts cannot be taken at one instant, so the arithmetic leans and the only
+choice is which way: every operation here grows with the left side, so reading it **last** lets the
+interval's traffic inflate the numerator and a gap that survives is real, where the previous order
+let the same traffic inflate the denominator and hide the loss the metric exists to report. It is
+`KafkaAdminService`' own rule (committed offsets first, log end offsets last) and `readGapMs` says
+how much room the interval left; `ABS_DIFF` is symmetric, so its note says the error can go either
+way rather than claiming a guarantee. *The latency reports what it could not pair*: `matchRate`,
+`unmatchedTargetCount` and `outOfOrderCount`, the rate **exported as a series of its own**
+(`explorer_metric_correlation_match_rate`) because a figure that lives only in a summary nobody
+alerts on cannot correct the figure that is alerted on — an unmatched source contributes nothing to
+the average, so the metric *improves* as the pipeline breaks. *A distribution records each
+observation once*: rows are ordered by event time and carry a reserved `__observed_at` column,
+excluded from the tags and the label key exactly as `metric_value` is (without which a timestamp
+becomes a label and mints one series per observation), and the dedup keys on that watermark rather
+than on position — which the sliding window D3 introduced had broken outright, freezing the
+distribution after its first cycle, and which was biased before that by rows ordered on the match
+key. And *a successful refresh dates itself*
+(`explorer_metric_last_success_timestamp_seconds{metric_id}`, set only on a cycle that produced a
+value): the value still freezes on a failure, deliberately, but a frozen gauge and a fresh one are
+no longer indistinguishable — the alert is `value > N and time() - …last_success… < 120`, the same
+series and the same reasoning as `ConsumerLagMetrics`. All of it reaches the operator as well as
+Prometheus: `lastSummary` was computed, persisted and rendered nowhere outside the preview modal,
+so a metric in service said nothing about its own scope; it is a chip row on the card now
+(`pages/metricScope.ts`, pure and tested), with the match rate shown even at 100 % on the rule the
+coverage notice already follows — an indicator seen only on bad news is one people stop reading.
+
+What is deliberately still open is listed in that document with what closes each: validating
+`operation` at save time like the three scan parameters beside it, the cost of a two-query metric
+on a single-threaded refresh loop (D10), and the note that the suite could not have caught any of
+this (D12).
 
 `SQL-EDITOR-AUDIT.md` is the review of the **SQL editor** (`QueryWorkbench.tsx` and its pure modules,
 plus `QueryController` / `SqlQueryValidator` / `FlinkSqlService.executeSync`) along the four axes it

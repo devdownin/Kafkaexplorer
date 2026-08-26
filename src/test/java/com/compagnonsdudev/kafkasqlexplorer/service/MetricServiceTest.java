@@ -11,6 +11,8 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.PartitionTimeLag;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryRequest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryResult;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicTimeLag;
+import io.micrometer.core.instrument.DistributionSummary;
+import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.MockConsumer;
@@ -712,6 +714,15 @@ class MetricServiceTest {
             "TOPIC_TRANSIT_LATENCY", params, null, null, List.of());
     }
 
+    /** The same metric under a known id and Prometheus type, so a meter can be looked up. */
+    private MetricConfig withIdAndType(MetricConfig metric, String id, String type) {
+        return new MetricConfig(
+            id, metric.name(), type, metric.sql(), metric.description(),
+            metric.warningThreshold(), metric.criticalThreshold(), null, null, null,
+            List.of(), Map.of(), metric.createTableSql(), metric.templateType(),
+            metric.templateParams(), metric.executionMode(), metric.labelTopic(), List.of());
+    }
+
     private static QueryResult flinkRows(List<Map<String, Object>> rows) {
         return new QueryResult(List.of("metric_value"), rows, 10L, null, false, "FLINK");
     }
@@ -915,6 +926,154 @@ class MetricServiceTest {
         assertNotNull(preview.error());
         assertTrue(preview.error().contains("LEFT_MINUS_RIGHT"), preview.error());
         assertTrue(preview.error().contains("41"), preview.error());
+    }
+
+
+    // ── D4, D6, D7, D8 ───────────────────────────────────────────────────────────
+
+    private QueryResult correlationRows(List<Map<String, Object>> rows) {
+        return new QueryResult(List.of("match_key", "event_time"), rows, 5L, null, false, "KAFKA_DIRECT");
+    }
+
+    private static Map<String, Object> event(String key, String time) {
+        return Map.of("match_key", key, "event_time", time);
+    }
+
+    @Test
+    void theRightSideIsCountedFirstSoTheGapCanOnlyBeOverstated() {
+        List<String> order = new java.util.ArrayList<>();
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenAnswer(invocation -> {
+            QueryRequest request = invocation.getArgument(0);
+            order.add(request.sql().contains("topic_a") ? "left" : "right");
+            return directCount(order.size() == 1 ? 7.0 : 12.0);
+        });
+
+        MetricPreviewResult preview = service.previewMetric(countDelta(Map.of("operation", "PERCENT_GAP")));
+
+        // Reading the left side last lets the interval's traffic land in the numerator, so a gap
+        // that survives is real. The other order hides the loss the metric exists to report.
+        assertEquals(List.of("right", "left"), order);
+        assertNull(preview.error());
+        assertEquals(12.0, preview.summary().get("leftValue"));
+        assertEquals(7.0, preview.summary().get("rightValue"));
+        assertNotNull(preview.summary().get("readGapMs"));
+        assertTrue(String.valueOf(preview.summary().get("scopeNote")).contains("only be overstated"),
+            String.valueOf(preview.summary().get("scopeNote")));
+    }
+
+    @Test
+    void anAbsDiffSaysItsErrorCanGoEitherWayBecauseNoOrderingHelpsIt() {
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(directCount(7.0), directCount(12.0));
+
+        MetricPreviewResult preview = service.previewMetric(countDelta(Map.of("operation", "ABS_DIFF")));
+
+        assertTrue(String.valueOf(preview.summary().get("scopeNote")).contains("either way"),
+            String.valueOf(preview.summary().get("scopeNote")));
+    }
+
+    @Test
+    void aLatencyReportsWhatItCouldNotPairRatherThanAveragingWhatItCould() {
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(
+            correlationRows(List.of(
+                event("A", "2026-03-24T10:00:00Z"),
+                event("B", "2026-03-24T10:00:00Z"),
+                event("C", "2026-03-24T10:00:00Z"),
+                event("D", "2026-03-24T10:00:10Z"))),
+            correlationRows(List.of(
+                event("A", "2026-03-24T10:00:01Z"),
+                // Stamped before its source: a clock disagreement, counted rather than absorbed.
+                event("D", "2026-03-24T10:00:05Z"),
+                // Claimed by no source at all.
+                event("Z", "2026-03-24T10:00:09Z"))));
+
+        MetricPreviewResult preview = service.previewMetric(transitLatency(Map.of()));
+
+        assertNull(preview.error());
+        assertEquals(1000.0, preview.value(), "only A paired, and the average is of A alone");
+        assertEquals(1, preview.summary().get("matchedCount"));
+        assertEquals(3, preview.summary().get("unmatchedSourceCount"));
+        assertEquals(1, preview.summary().get("outOfOrderCount"));
+        assertEquals(1, preview.summary().get("unmatchedTargetCount"));
+        // The rate is what stops 1 000 ms being read as a verdict on the pipeline.
+        assertEquals(0.25, (Double) preview.summary().get("matchRate"), 1e-9);
+    }
+
+    @Test
+    void aLatencyThatPairedNothingSaysWhatItReadAndWhetherAClockDisagreed() {
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(
+            correlationRows(List.of(event("A", "2026-03-24T10:00:10Z"))),
+            correlationRows(List.of(event("A", "2026-03-24T10:00:00Z"))));
+
+        MetricPreviewResult preview = service.previewMetric(transitLatency(Map.of()));
+
+        assertNotNull(preview.error());
+        assertTrue(preview.error().contains("clock disagreement"), preview.error());
+    }
+
+    @Test
+    void aDistributionRecordsEachObservationOnceEvenWhenTheWindowSlides() {
+        service.save(withIdAndType(transitLatency(Map.of()), "latency-1", "SUMMARY"));
+
+        // Two refreshes of a window that slides: the first observation falls off the front, a new
+        // one arrives at the back, and the count never changes — which positional dedup reads as
+        // "nothing new" for ever.
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(
+            correlationRows(List.of(event("A", "2026-03-24T10:00:00Z"), event("B", "2026-03-24T10:00:10Z"))),
+            correlationRows(List.of(event("A", "2026-03-24T10:00:01Z"), event("B", "2026-03-24T10:00:12Z"))),
+            correlationRows(List.of(event("B", "2026-03-24T10:00:10Z"), event("C", "2026-03-24T10:00:20Z"))),
+            correlationRows(List.of(event("B", "2026-03-24T10:00:12Z"), event("C", "2026-03-24T10:00:23Z"))));
+
+        service.refreshMetric("latency-1");
+        service.refreshMetric("latency-1");
+
+        DistributionSummary summary = meterRegistry.find("explorer_metric_summary")
+            .tag("metric_id", "latency-1").summary();
+        assertNotNull(summary);
+        // A (1 s), B (2 s) and C (3 s): three observations, B recorded once across both cycles.
+        assertEquals(3, summary.count());
+        assertEquals(6000.0, summary.totalAmount(), 1.0);
+    }
+
+    @Test
+    void aSuccessfulRefreshDatesItselfSoAFrozenGaugeCanBeToldFromAFreshOne() {
+        service.save(withIdAndType(countDelta(Map.of()), "delta-1", "GAUGE"));
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(directCount(7.0), directCount(12.0));
+        service.refreshMetric("delta-1");
+
+        Gauge lastSuccess = meterRegistry.find("explorer_metric_last_success_timestamp_seconds")
+            .tag("metric_id", "delta-1").gauge();
+        assertNotNull(lastSuccess, "an alert cannot date a gauge nothing dates");
+        double firstSeen = lastSuccess.value();
+        assertTrue(firstSeen > 1_700_000_000.0, "epoch seconds, not millis: " + firstSeen);
+
+        // A refresh that fails keeps the previous value — deliberately — and must not move the
+        // timestamp, or the staleness the series exists to expose would be papered over.
+        Mockito.reset(flinkSqlService);
+        Mockito.when(flinkSqlService.executeSql(Mockito.any()))
+            .thenReturn(new QueryResult(List.of(), List.of(), 1L, "Broker unreachable"));
+        service.refreshMetric("delta-1");
+
+        assertEquals(firstSeen, lastSuccess.value());
+        assertEquals(2.0, meterRegistry.find("explorer_metric_gauge").tag("metric_id", "delta-1").gauge().value(),
+            "the value stays frozen, which is why it has to be dated");
+    }
+
+    @Test
+    void theMatchRateIsExportedBesideTheLatencyRatherThanOnlySummarised() {
+        service.save(withIdAndType(transitLatency(Map.of()), "latency-2", "GAUGE"));
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(
+            correlationRows(List.of(event("A", "2026-03-24T10:00:00Z"), event("B", "2026-03-24T10:00:00Z"))),
+            correlationRows(List.of(event("A", "2026-03-24T10:00:01Z"))));
+
+        service.refreshMetric("latency-2");
+
+        Gauge rate = meterRegistry.find("explorer_metric_correlation_match_rate")
+            .tag("metric_id", "latency-2").gauge();
+        assertNotNull(rate);
+        assertEquals(0.5, rate.value(), 1e-9);
+        // And it carries the metric's identity only — a companion must not multiply with the
+        // label series it describes.
+        assertEquals(3, rate.getId().getTags().size());
     }
 
 }
