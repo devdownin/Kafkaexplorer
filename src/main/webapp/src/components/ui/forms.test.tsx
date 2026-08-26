@@ -112,6 +112,21 @@ describe('Combobox', () => {
     expect(input).toHaveValue('orders.created');
   });
 
+  /*
+   * La liste fait la largeur du champ et tronque. L'éditeur de métrique la rend dans un volet
+   * de 288 px — et c'est là qu'on choisit le topic de la métrique — donc un nom un peu long
+   * n'était lisible nulle part. Même convention que les autres listes de topics (`DataModel`).
+   */
+  it('keeps a truncated topic name reachable in the suggestion list', () => {
+    const long = 'acme.production.orders.shipped.enriched.consolidated.v2';
+    render(<ComboHarness options={[...options, long]} value="" />);
+    fireEvent.focus(screen.getByLabelText('Topic'));
+    for (const option of screen.getAllByRole('option')) {
+      expect(option).toHaveAttribute('title', option.textContent);
+    }
+    expect(screen.getByRole('option', { name: long })).toHaveAttribute('title', long);
+  });
+
   it('returns to filtering as soon as the user types', () => {
     render(<ComboHarness options={options} value="payments.done" />);
     const input = screen.getByLabelText('Topic');

@@ -39,6 +39,20 @@ export const useConfirm = (): ConfirmFn => useContext(ConfirmContext);
  * la question tient en trois lignes. Le voile n'est plus qu'un fond cliquable, et il est
  * léger (`.confirm-overlay`) — une confirmation parle de ce qui est derrière elle, la
  * masquer est exactement ce qu'il ne faut pas faire.
+ *
+ * Le titre et la description portent une **donnée de longueur inconnue** : un nom d'onglet
+ * (« Replace the editor content? » cite celui qu'elle va écraser) ou un nom de table
+ * (`Drop <table>?`), donc un identifiant Kafka, que rien ne borne. Sans `break-words` un tel
+ * nom n'offre aucune césure — les points n'en sont pas une — et il sortait de la carte par
+ * la droite, par-dessus la bordure : mesuré à 374 px de texte dans une boîte de 294 px sur
+ * `acme.production.orders.shipped.enriched.consolidated.v2`.
+ *
+ * La largeur suit, et elle est choisie sur la mesure plutôt qu'au jugé : à `max-w-sm` ce nom
+ * débordait, à `max-w-md` il tenait mais se coupait après `.v`, à **`max-w-lg`** il tient
+ * d'un bloc, guillemet fermant compris. `break-words` reste le filet pour plus long encore —
+ * une largeur ne borne pas une donnée dont rien ne borne la longueur — mais le cas courant
+ * ne doit pas dépendre du filet. La carte fait alors 512 px sur 1440, soit 6 % de l'écran :
+ * on reste très loin de la modale plein écran que la confirmation ne doit pas être.
  */
 export const ConfirmProvider: FC<{ children: ReactNode }> = ({ children }) => {
   const [options, setOptions] = useState<ConfirmOptions | null>(null);
@@ -82,7 +96,7 @@ export const ConfirmProvider: FC<{ children: ReactNode }> = ({ children }) => {
           onClick={() => settle(false)}
         >
           <div
-            className="w-full max-w-sm bg-surface-container border border-outline-variant rounded-xl shadow-2xl p-5 animate-slide-up"
+            className="w-full max-w-lg bg-surface-container border border-outline-variant rounded-xl shadow-2xl p-5 animate-slide-up"
             role="dialog"
             aria-modal="true"
             aria-labelledby="confirm-title"
@@ -93,9 +107,9 @@ export const ConfirmProvider: FC<{ children: ReactNode }> = ({ children }) => {
                 <span aria-hidden="true" className="material-symbols-outlined text-[20px]">{options.icon ?? (danger ? 'warning' : 'help')}</span>
               </div>
               <div className="min-w-0">
-                <h2 id="confirm-title" className="text-[15px] font-semibold text-on-surface">{options.title}</h2>
+                <h2 id="confirm-title" className="text-[15px] font-semibold text-on-surface break-words">{options.title}</h2>
                 {options.description && (
-                  <p className="text-[13px] text-on-surface-variant mt-1 leading-relaxed">{options.description}</p>
+                  <p className="text-[13px] text-on-surface-variant mt-1 leading-relaxed break-words">{options.description}</p>
                 )}
               </div>
             </div>
