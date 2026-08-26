@@ -62,6 +62,7 @@ function response(overrides: Partial<MetricSuggestions> = {}): MetricSuggestions
     auditSource: 'CURRENT_RUN',
     auditTopics: 12,
     flowChainsSubmitted: 0,
+    processMeasured: false,
     notes: [],
     ...overrides,
   };
@@ -119,7 +120,8 @@ describe('describeEvidence', () => {
     }));
 
     expect(state.waiting).toBe(true);
-    expect(state.unlocks.map(u => u.to)).toEqual(['/audit', '/stream-flow']);
+    expect(state.unlocks.map(u => u.to))
+      .toEqual(['/audit', '/stream-flow', '/process-mining']);
     expect(state.summary).toContain('Nothing has been measured');
   });
 
@@ -131,12 +133,24 @@ describe('describeEvidence', () => {
     expect(state.summary).toContain('12 topics');
   });
 
-  it('names both evidence families when both are present', () => {
-    const state = describeEvidence(response({ flowChainsSubmitted: 2 }));
+  it('names every evidence family that is present, and offers nothing left to unlock', () => {
+    const state = describeEvidence(response({ flowChainsSubmitted: 2, processMeasured: true }));
 
     expect(state.summary).toContain('1 KPI derived');
     expect(state.summary).toContain('2 Stream Flow traces');
+    expect(state.summary).toContain('a measured process');
     expect(state.unlocks).toEqual([]);
+  });
+
+  /*
+   * Une mesure qui n'a suggéré aucune carte reste une mesure : la déduire des propositions
+   * effacerait cet état, et le panneau proposerait d'aller mesurer un processus déjà mesuré.
+   */
+  it('counts a measured process even when it produced no card', () => {
+    const state = describeEvidence(response({ suggestions: [], processMeasured: true }));
+
+    expect(state.summary).toContain('a measured process');
+    expect(state.unlocks.map(u => u.to)).not.toContain('/process-mining');
   });
 
   it('says when the audit was read back from the history topic', () => {

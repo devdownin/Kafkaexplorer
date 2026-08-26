@@ -14,8 +14,10 @@ items get cheaper once the first one lands.
 > one change — they share a diff, and the first two are meaningless apart. What sections 1 and 2
 > describe is therefore the state this work was done *from*; the code now computes the event log
 > (`ProcessModelBuilder`, `ProcessModel`) and sends the aggregate plus whole case traces, and
-> `sample` is bounded per message. **W4 through W8 are open**, and W8 in particular is what would
-> turn the argument below into a measurement.
+> `sample` is bounded per message. **W4 is closed by a measurement** (the stable prefix is ~648
+> tokens, below the 1 024-token minimum a cacheable prefix needs, so there is nothing to cache) and
+> **W5 has shipped**. **W6, W7 and W8 are open**, and W8 in particular is what would turn the
+> argument below into a measurement.
 >
 > **A defect W1–W3 introduced, found by measuring rather than by reading, and fixed.** With the
 > aggregate carrying the scope, `messagesAnalysed` counted only the inlined worked examples — so a
@@ -337,13 +339,15 @@ bilingual-prompt question below. **W6** and **W7** are worth measuring before do
 
 Recorded rather than fixed, because each is a decision rather than a defect:
 
-- **The measured process is computed and only the model sees it.** W1 built it to feed the prompt,
-  and that is where it stops: `ProcessModel` never reaches `ProcessMiningResult`, so the operator
-  reads the model's *narrative* about a directly-follows graph they cannot see. The variants table
-  and the per-edge latencies are the most checkable thing this feature now produces, and surfacing
-  them beside the flowchart would let a reader verify the narrative instead of trusting it — which
-  is the rule the coverage notice and the audit's evidence table already follow. Deliberately left:
-  it is a UI change with its own design, and W1 was scoped as what the *model* is given.
+- ~~**The measured process is computed and only the model sees it.**~~ **Fixed.** `ProcessModel`
+  travels on `ProcessMiningResult` and `ProcessModelPanel` renders it — on a failed analysis and
+  with no LLM configured at all, since the transitions, the variants and the latencies are counting
+  and only their reading needed a model. It is then **read a second time, by the Metrics page**:
+  `pages/processModelEvidence.ts` keeps the measurement the way `flowChains.ts` keeps a trace, and
+  `MetricSuggestionService` derives a hop-latency KPI whose thresholds are 2×/4× a **p95 over every
+  case in the window** — where the audit had one average over a flow reconstructed from topic names.
+  That reversed the panel's dedupe precedence, which is stated in `CLAUDE.md` rather than left to be
+  discovered: the measured process now wins over the audit on a hop both describe.
 - **The prompts are bilingual.** The system prompt is English, the user prompt's headings and
   instructions are French, the enums are English. Small models are measurably worse at holding a
   format across a language switch, and this application is routinely pointed at a 3B model. Nobody

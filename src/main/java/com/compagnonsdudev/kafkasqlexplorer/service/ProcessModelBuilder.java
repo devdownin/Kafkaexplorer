@@ -362,6 +362,16 @@ public class ProcessModelBuilder {
         };
     }
 
+    /**
+     * What separates a topic from the status that refines it, in an activity label.
+     *
+     * <p>Public because the label travels: an activity reaches the Metrics page and comes back as
+     * evidence for a KPI, which needs the topic rather than the label. Reading it apart there would
+     * be a second copy of this rule, and a second copy is how the two come to disagree — the same
+     * argument that produced {@code SecureXml} and {@code EventTime}.
+     */
+    public static final String ACTIVITY_SEPARATOR = " \u00b7 ";
+
     /** The graph node this record lands on — see the class comment for why a status may refine it. */
     private static String activityOf(PayloadDigest digest, FieldMapping mapping,
                                      Set<String> statusTopics) {
@@ -370,7 +380,20 @@ public class ProcessModelBuilder {
         }
         String status = canonicalStatus(mappedValue(digest, mapping.statusPaths()),
             digest.topic(), mapping);
-        return status == null ? digest.topic() : digest.topic() + " \u00b7 " + status;
+        return status == null ? digest.topic() : digest.topic() + ACTIVITY_SEPARATOR + status;
+    }
+
+    /**
+     * The topic an activity label names.
+     *
+     * <p>A topic name cannot contain the separator (Kafka accepts {@code [a-zA-Z0-9._-]} only), so
+     * the split is unambiguous in the direction that matters. A label with no separator is already
+     * a topic and is returned as it is.
+     */
+    public static String topicOf(String activity) {
+        if (activity == null) return null;
+        int at = activity.indexOf(ACTIVITY_SEPARATOR);
+        return at < 0 ? activity : activity.substring(0, at);
     }
 
     /** The value this record carries at the path the mapping declares for its topic. */

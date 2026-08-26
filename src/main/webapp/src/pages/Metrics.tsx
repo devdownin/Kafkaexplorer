@@ -26,6 +26,7 @@ import { copyText } from '../clipboard';
 import type { AuditHistory, MetricConfig, MetricSuggestion, MetricSuggestions, MetricTestResponse, TableMetadata } from '../api/types';
 import { SuggestionsPanel } from '../components/metrics/SuggestionsPanel';
 import { readFlowChains } from './flowChains';
+import { latestProcessModel } from './processModelEvidence';
 import { newerAuditNote, suggestionToDraft } from './metricSuggestions';
 
 interface MetricTemplateDescriptor {
@@ -794,6 +795,11 @@ const Metrics: React.FC = () => {
         // Le mapping validé par Process Mining vit dans le brouillon de cette page-là ; c'est lui
         // qui connaît la vraie clé de corrélation et le champ de statut de chaque topic.
         fieldMappingId: readDraft<string | null>('pm:mapping', null),
+        // La mesure la plus fine dont dispose cette application sur un pipeline : un graphe de
+        // successions avec des quantiles par transition, compté sur tous les enregistrements lus.
+        // Une seule — deux fenêtres décriraient deux fois le même saut, et la déduplication
+        // trancherait sur l'ordre d'arrivée plutôt que sur la qualité de la mesure.
+        processModel: latestProcessModel(),
       });
       setSuggestions(res.data);
     } catch (err) {

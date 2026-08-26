@@ -22,6 +22,10 @@ import java.util.List;
  * @param auditTopics         topics that run actually audited, so the reader can see the scope the
  *                            proposals rest on
  * @param flowChainsSubmitted Stream Flow traces the caller carried back from the browser
+ * @param processMeasured     whether a measured process was carried back too. Counted separately
+ *                            from the proposals it produces: a run that measured a pipeline and
+ *                            suggested nothing is a different state from one that never ran, and
+ *                            only this field can tell the panel which it is looking at
  * @param notes               what was found but not turned into a metric, and what would unlock
  *                            more — never silence
  */
@@ -33,5 +37,6 @@ public record MetricSuggestions(
     String auditSource,
     int auditTopics,
     int flowChainsSubmitted,
+    boolean processMeasured,
     List<String> notes
 ) {}

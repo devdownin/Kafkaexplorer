@@ -52,7 +52,7 @@ function response(overrides: Partial<MetricSuggestions> = {}): MetricSuggestions
   return {
     suggestions: [suggestion()],
     auditAvailable: true, auditId: 'run-1', auditTimestamp: NOW, auditSource: 'CURRENT_RUN',
-    auditTopics: 12, flowChainsSubmitted: 1, notes: [],
+    auditTopics: 12, flowChainsSubmitted: 1, processMeasured: false, notes: [],
     ...overrides,
   };
 }

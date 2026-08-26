@@ -13,14 +13,25 @@ import java.util.List;
  * <em>real</em> business key — the mapping an operator validated, rather than the {@code id}
  * convention everything else falls back to.
  *
+ * <p>{@code processModel} is the third, and the strongest of them: the directly-follows graph a
+ * Process Mining run measured, with per-transition quantiles over every record it read. It lives in
+ * the browser for the same reason the traces do — nothing keeps it server-side once the analysis has
+ * answered.
+ *
  * <p>The whole body is optional — {@code POST /api/metrics/suggestions} with no body answers with
  * the audit- and lineage-derived proposals alone.
  */
-public record MetricSuggestionRequest(List<FlowChainEvidence> flowChains, String fieldMappingId) {
+public record MetricSuggestionRequest(List<FlowChainEvidence> flowChains, String fieldMappingId,
+                                      ProcessModelEvidence processModel) {
 
     /** Backwards-compatible: a body carrying only the traces still binds. */
     public MetricSuggestionRequest(List<FlowChainEvidence> flowChains) {
-        this(flowChains, null);
+        this(flowChains, null, null);
+    }
+
+    /** Backwards-compatible: a body from before the measured process was carried back. */
+    public MetricSuggestionRequest(List<FlowChainEvidence> flowChains, String fieldMappingId) {
+        this(flowChains, fieldMappingId, null);
     }
 
     public List<FlowChainEvidence> chains() {

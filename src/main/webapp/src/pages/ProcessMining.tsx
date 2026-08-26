@@ -13,6 +13,7 @@ import LiveStatusBar, { LiveWindowStats } from '../components/processmining/Live
 import AnomalyFeed, { LiveAnomaly } from '../components/processmining/AnomalyFeed';
 import { PageHeader, Button, Field, Textarea } from '../components/ui';
 import { clearDraft, readDraft, useDraftConflict, usePersistentState, writeDraft } from '../draftStore';
+import { recordMeasuredProcess } from './processModelEvidence';
 import { describeResume, resumableStep } from './processMiningDraft';
 import { describeUsage, formatCostUsd, totalCostUsd, totalTokens } from './llmUsage';
 import { describeDataPolicy } from './llmPolicy';
@@ -481,6 +482,13 @@ const ProcessMining: React.FC = () => {
           auditPromptIds: selectedAuditIds,
           customAuditPrompt: customAuditPrompt.trim() || null,
         }, { timeout: SNAPSHOT_TIMEOUT_MS });
+        /*
+         * Gardé avant même de regarder si l'analyse a abouti, et c'est délibéré : le processus est
+         * *mesuré* ici, pas raconté par un modèle, donc un modèle perdu ne l'invalide pas. C'est ce
+         * que la page Métriques relira pour proposer un KPI de latence fondé sur une distribution
+         * plutôt que sur une moyenne déduite des noms de topics.
+         */
+        recordMeasuredProcess(res.data.processModel);
         // A failure answers 200 with `error` set. Staying on this step is the point: the operator
         // is one click from re-running with a different model or a narrower selection, where
         // landing on an empty Results page offers nothing to act on.

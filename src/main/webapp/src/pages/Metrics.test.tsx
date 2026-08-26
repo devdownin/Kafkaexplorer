@@ -80,7 +80,8 @@ const suggestion: MetricSuggestion = {
 const suggestions: MetricSuggestions = {
   suggestions: [suggestion],
   auditAvailable: true, auditId: 'run-1', auditTimestamp: Date.now(),
-  auditSource: 'CURRENT_RUN', auditTopics: 12, flowChainsSubmitted: 0, notes: [],
+  auditSource: 'CURRENT_RUN', auditTopics: 12, flowChainsSubmitted: 0, processMeasured: false,
+  notes: [],
 };
 
 function stubApi(metrics: MetricConfig[]) {

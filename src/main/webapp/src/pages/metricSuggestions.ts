@@ -128,6 +128,7 @@ export function describeEvidence(response: MetricSuggestions | null): EvidenceSt
   const unlocks: Array<{ label: string; to: string }> = [];
   if (!response.auditAvailable) unlocks.push({ label: 'Run a cluster audit', to: '/audit' });
   if (response.flowChainsSubmitted === 0) unlocks.push({ label: 'Trace a message key', to: '/stream-flow' });
+  if (!response.processMeasured) unlocks.push({ label: 'Measure a process', to: '/process-mining' });
 
   const parts: string[] = [];
   if (response.auditAvailable) {
@@ -146,13 +147,21 @@ export function describeEvidence(response: MetricSuggestions | null): EvidenceSt
    */
   const running = response.suggestions.filter(s => s.source === 'LINEAGE').length;
   if (running > 0) parts.push(`${running} running Flink job edge${running === 1 ? '' : 's'}`);
-  const profiled = response.suggestions.filter(s => s.source === 'PROCESS_MINING').length;
-  if (profiled > 0) parts.push('a validated Process Mining field mapping');
+  /*
+   * Deux observations distinctes portent la même source, et les confondre dirait faux : un mapping
+   * validé est quelqu'un qui a nommé la clé, un processus mesuré est un graphe de successions
+   * compté sur la fenêtre. `processMeasured` vient du serveur — une mesure qui n'a suggéré aucune
+   * carte reste une mesure, et la déduire des propositions l'effacerait.
+   */
+  const mapped = response.suggestions.filter(s => s.id.startsWith('pm:status:')).length;
+  if (mapped > 0) parts.push('a validated Process Mining field mapping');
+  if (response.processMeasured) parts.push('a measured process');
 
   if (parts.length === 0) {
     return {
       summary: 'Nothing has been measured on this cluster yet, so there is nothing to derive a KPI '
-        + 'from. Run an audit, or trace a key across topics, and the proposals appear here.',
+        + 'from. Run an audit, trace a key across topics, or measure a process, and the proposals '
+        + 'appear here.',
       unlocks,
       waiting: true,
     };

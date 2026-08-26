@@ -395,6 +395,8 @@ export interface MetricSuggestions {
   auditSource: string | null;
   auditTopics: number;
   flowChainsSubmitted: number;
+  /** Un processus mesuré a-t-il été renvoyé ? Compté à part des cartes qu'il produit. */
+  processMeasured: boolean;
   notes: string[];
 }
 
@@ -417,6 +419,51 @@ export interface FlowChainHop {
   firstTimestamp: number | null;
   latencyFromPreviousMs: number | null;
   occurrences: number | null;
+}
+
+/**
+ * Le processus mesuré tel que le navigateur l'a gardé, renvoyé pour qu'un KPI puisse en être
+ * dérivé. Délibérément plus étroit que `ProcessModel` : seules les transitions et les reprises
+ * sont lues côté serveur, et renvoyer les variantes reviendrait à faire traverser une frontière à
+ * des données que personne n'utilise.
+ *
+ * @java ProcessModelEvidence
+ */
+export interface ProcessModelEvidence {
+  measuredAt: number | null;
+  cases: number | null;
+  windowStartMs: number | null;
+  windowEndMs: number | null;
+  eventTimeSource: string | null;
+  transitions: MeasuredTransition[];
+  repeats: MeasuredRepeat[];
+}
+
+/**
+ * Une succession directe et ce qu'elle a coûté. `from` et `to` sont des libellés d'activité — des
+ * noms de topics, sauf sur un topic dont le statut a été mappé ; les ramener à un topic est la
+ * règle de `ProcessModelBuilder` et s'applique côté serveur.
+ *
+ * @java MeasuredTransition
+ */
+export interface MeasuredTransition {
+  from: string;
+  to: string;
+  occurrences: number | null;
+  cases: number | null;
+  p50Ms: number | null;
+  p95Ms: number | null;
+  maxMs: number | null;
+}
+
+/** Une étape qu'un même cas a repassée — redélivrance, reprise ou boucle métier.
+ *
+ * @java MeasuredRepeat
+ */
+export interface MeasuredRepeat {
+  activity: string;
+  casesAffected: number | null;
+  maxOccurrencesInOneCase: number | null;
 }
 
 /*
