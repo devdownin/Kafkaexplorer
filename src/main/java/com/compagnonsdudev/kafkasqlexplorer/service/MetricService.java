@@ -14,6 +14,7 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.MetricTemplateType;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryRequest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryResult;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicTimeLag;
+import com.compagnonsdudev.kafkasqlexplorer.util.LogSafe;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.DistributionSummary;
 import io.micrometer.core.instrument.Gauge;
@@ -43,6 +44,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -81,6 +83,22 @@ public class MetricService {
     private static final int DEFAULT_TEMPLATE_MAX_ROWS = 10_000;
     private static final long DEFAULT_TEMPLATE_TIMEOUT_MS = 30_000L;
     private static final String DEFAULT_TEMPLATE_READ_MODE = "earliest-offset";
+    /**
+     * The read mode a latency template takes unless it says otherwise, and it is deliberately not
+     * the one every other template takes.
+     *
+     * <p>A transit latency answers "how long is this hop taking", which is a question about now.
+     * Read from the earliest offset it answered a different one: the average over the oldest
+     * records the row cap allowed, recomputed every thirty seconds and therefore never moving on
+     * a topic older than that cap — a pipeline that degrades today changed nothing on the chart.
+     * The audit's duplicate scan was turned round for the same reason and states the same rule
+     * ({@code explorer.audit-duplicate-scan-from}); {@code earliest-offset} restores the old
+     * behaviour for a metric that really is asking about the beginning of a topic.
+     */
+    private static final String DEFAULT_LATENCY_READ_MODE = "latest-offset";
+    private static final Set<String> READ_MODES = Set.of("earliest-offset", "latest-offset");
+    private static final int MAX_TEMPLATE_MAX_ROWS = 1_000_000;
+    private static final long MAX_TEMPLATE_TIMEOUT_MS = 600_000L;
 
     private static final List<MetricTemplateDescriptor> TEMPLATE_DESCRIPTORS = List.of(
         new MetricTemplateDescriptor(
@@ -120,9 +138,37 @@ public class MetricService {
 
     private record CorrelationEvent(String matchKey, long eventTime) {}
 
+    /** One matched pair: the latency, and when the source event happened. */
+    private record LatencyObservation(long sourceEventTime, double latencyMs) {}
+
+    /**
+     * A row column that is a measurement about the row rather than a label of it.
+     *
+     * <p>Every non-{@code metric_value} column becomes a Prometheus label, which is right for a
+     * GROUP BY value and catastrophic for a timestamp — one series per observation. This one is
+     * excluded from the tags and from the label key, exactly as {@code metric_value} is, and read
+     * only by the distribution dedup below.
+     */
+    private static final String OBSERVED_AT_COLUMN = "__observed_at";
+
+    /** Columns that are never labels. */
+    private static boolean isReservedColumn(String column) {
+        return "metric_value".equalsIgnoreCase(column) || OBSERVED_AT_COLUMN.equalsIgnoreCase(column);
+    }
+
+    /** Companion series: one gauge per (metric, name), carrying no row labels. */
+    private static final String LAST_SUCCESS_SERIES = "explorer_metric_last_success_timestamp_seconds";
+    private static final String MATCH_RATE_SERIES = "explorer_metric_correlation_match_rate";
+    private static final List<String> COMPANION_SERIES = List.of(LAST_SUCCESS_SERIES, MATCH_RATE_SERIES);
+
     // ── metric state ─────────────────────────────────────────────────────────
     private final Map<String, MetricConfig>              metrics           = new ConcurrentHashMap<>();
     private final Map<String, LinkedList<Double>>        historyMap        = new ConcurrentHashMap<>();
+    /** metricId → (series name → holder), for the gauges that describe the metric rather than its rows. */
+    private final Map<String, Map<String, AtomicReference<Double>>> companionHolders = new ConcurrentHashMap<>();
+    private final Map<String, Map<String, Gauge>>                   companionMeters  = new ConcurrentHashMap<>();
+    /** metricId → (labelKey → newest observation already recorded), for a sliding-window distribution. */
+    private final Map<String, Map<String, Long>> distributionWatermarks = new ConcurrentHashMap<>();
 
     // ── Micrometer instruments per type ──────────────────────────────────────
     /** GAUGE:     metricId → (labelKey → holder)  */
@@ -394,10 +440,15 @@ public class MetricService {
         counterMeters.remove(id);
         distributionMeters.remove(id);
         distributionRecordedCounts.remove(id);
+        distributionWatermarks.remove(id);
+        companionHolders.remove(id);
+        companionMeters.remove(id);
         meterRegistry.find("explorer_metric_gauge").tag("metric_id", id).meters().forEach(meterRegistry::remove);
         meterRegistry.find("explorer_metric_counter").tag("metric_id", id).meters().forEach(meterRegistry::remove);
         meterRegistry.find("explorer_metric_histogram").tag("metric_id", id).meters().forEach(meterRegistry::remove);
         meterRegistry.find("explorer_metric_summary").tag("metric_id", id).meters().forEach(meterRegistry::remove);
+        COMPANION_SERIES.forEach(name ->
+            meterRegistry.find(name).tag("metric_id", id).meters().forEach(meterRegistry::remove));
     }
 
     /** True when a re-saved metric differs in any field that affects its Micrometer series. */
@@ -415,26 +466,99 @@ public class MetricService {
     // ── Scheduled refresh ─────────────────────────────────────────────────────
 
     /**
-     * Bounded-scan hint: reads all data that exists in Kafka at query start time, then
-     * terminates (no indefinite streaming). This is essential for aggregate metrics:
-     * without it, COUNT(*) with latest-offset sees 0 messages and times out.
+     * What "bounded" actually takes, which is two options rather than one.
+     *
+     * <p>This was a lone {@code scan.startup.mode='earliest-offset'} under a comment promising the
+     * query "reads all data that exists in Kafka at query start time, then terminates (no
+     * indefinite streaming)". That sentence is the contract of {@code scan.bounded.mode};
+     * {@code scan.startup.mode} says where a scan <em>begins</em>. The two are not alternatives
+     * and the missing one is the one that ends the scan.
+     *
+     * <p>Nothing bounded anything, therefore, and the option that was there changed nothing
+     * either: {@code DdlGeneratorService} already writes {@code earliest-offset} into every table
+     * it generates, which is every table these metrics read. The environment is built
+     * {@code inStreamingMode()} ({@code FlinkConfig}), so the source stayed unbounded and each
+     * side of a two-query metric either blocked until its own timeout — 30 s, twice, on a 30 s
+     * schedule — or came back with the first rows an endless scan happened to yield: for a
+     * projection the oldest records, and for {@code COUNT(*)} the head of a retract changelog,
+     * whose first row is {@code +I(1)}.
      */
-    private static final String BOUNDED_HINT =
-        "/*+ OPTIONS('scan.startup.mode'='earliest-offset') */";
+    private static final String SCAN_BOUNDED_OPTION = "'scan.bounded.mode'='latest-offset'";
+    private static final String SCAN_STARTUP_EARLIEST = "'scan.startup.mode'='earliest-offset'";
+
+    /** Option names, used to recognise a connector that will not take them — see the latch below. */
+    private static final List<String> SCAN_OPTION_NAMES = List.of("scan.bounded.mode");
+
+    private static final Pattern FROM_TABLE = Pattern.compile("(?i)\\bFROM\\b\\s+(\\w[\\w.]*)");
+
+    private static final Pattern JOIN_KEYWORD = Pattern.compile("(?i)\\bJOIN\\b");
 
     /**
-     * Inject the bounded-scan hint after the first table reference in a FROM clause,
-     * unless the SQL already carries a hint or an OPTIONS(...) clause.
+     * Raised once, for the life of the process, when a query fails on the scan options themselves.
+     *
+     * <p>The options above are the connector's, not ours, and a deployment can be pointed at a
+     * Kafka connector that predates {@code scan.bounded.mode} — on which asking for it turns every
+     * template metric from slow into broken. So a failure that names the option earns one retry
+     * without it, and the answer is remembered rather than re-derived on every refresh: the same
+     * degrade-once-and-remember shape {@code OpenAiCompatibleLlmClient} uses for a gateway that
+     * refuses {@code response_format}. What it costs when it latches is stated in the metric's
+     * own summary, never inferred from silence.
      */
-    private String injectBoundedHint(String sql) {
-        if (sql == null) return null;
-        if (sql.contains("/*+") || sql.toUpperCase().contains("OPTIONS(")) return sql;
+    private final AtomicBoolean scanOptionsRefused = new AtomicBoolean(false);
+
+    /** The scan bounds a template asks for, or null once the connector has refused them. */
+    private String scanHint() {
+        if (scanOptionsRefused.get()) return null;
+        return "/*+ OPTIONS(" + SCAN_STARTUP_EARLIEST + "," + SCAN_BOUNDED_OPTION + ") */";
+    }
+
+    /**
+     * Inject the scan hint after the first table reference in a FROM clause, unless the SQL
+     * already carries a hint or an OPTIONS(...) clause.
+     */
+    private String injectScanHint(String sql, String hint) {
+        if (sql == null || hint == null) return sql;
+        if (sql.contains("/*+") || sql.toUpperCase(Locale.ROOT).contains("OPTIONS(")) return sql;
         // Match FROM <word> — skip subqueries (followed by '(')
-        Matcher m = Pattern.compile("(?i)\\bFROM\\b\\s+(\\w[\\w.]*)").matcher(sql);
+        Matcher m = FROM_TABLE.matcher(sql);
         if (m.find()) {
-            return sql.substring(0, m.end(1)) + " " + BOUNDED_HINT + sql.substring(m.end(1));
+            return sql.substring(0, m.end(1)) + " " + hint + sql.substring(m.end(1));
         }
         return sql;
+    }
+
+    /**
+     * A single-table read: the one shape the direct Kafka reader can answer without lying.
+     *
+     * <p>That reader regex-matches one name out of {@code FROM} and knows neither JOIN nor
+     * subqueries, so asking it for anything else returns rows that quietly ignore half the
+     * statement — the exact reason a user error stopped falling back to it. The templates
+     * generate this shape and nothing else ({@code MetricSuggestionService.countSql} and
+     * {@code correlationSql}); anything an operator has since made more complex goes to the
+     * planner instead, and the summary names the engine that answered.
+     *
+     * <p>It fails closed by construction: every branch that is not certain answers false, which
+     * costs the planner's slower path and never a wrong row.
+     */
+    static boolean isSingleTableRead(String sql) {
+        if (sql == null || sql.isBlank()) return false;
+        String body = sql.trim();
+        if (!body.toUpperCase(Locale.ROOT).startsWith("SELECT")) return false;
+        if (JOIN_KEYWORD.matcher(body).find()) return false;
+        if (body.replaceAll("\\s+", "").toUpperCase(Locale.ROOT).contains("(SELECT")) return false;
+        Matcher m = FROM_TABLE.matcher(body);
+        if (!m.find()) return false;
+        // A comma straight after the table name is a table list, i.e. a join written the old way.
+        if (body.substring(m.end(1)).stripLeading().startsWith(",")) return false;
+        // A second FROM is a shape this reader cannot honour either.
+        return !m.find();
+    }
+
+    /** Did this failure come from the scan options rather than from the query? */
+    private boolean refusesScanOptions(QueryResult result) {
+        if (result == null || result.error() == null) return false;
+        String error = result.error().toLowerCase(Locale.ROOT);
+        return SCAN_OPTION_NAMES.stream().anyMatch(error::contains);
     }
 
     private MetricConfig normalizeMetric(MetricConfig metric) {
@@ -499,6 +623,7 @@ public class MetricService {
             case TOPIC_COUNT_DELTA -> {
                 requireParam(params, "leftSql");
                 requireParam(params, "rightSql");
+                validateScanParams(params, DEFAULT_TEMPLATE_READ_MODE);
                 if (!"GAUGE".equals(metricType)) {
                     throw new IllegalArgumentException("TOPIC_COUNT_DELTA supports GAUGE metrics only");
                 }
@@ -506,6 +631,7 @@ public class MetricService {
             case TOPIC_TRANSIT_LATENCY -> {
                 requireParam(params, "sourceSql");
                 requireParam(params, "targetSql");
+                validateScanParams(params, DEFAULT_LATENCY_READ_MODE);
                 if (!Set.of("GAUGE", "HISTOGRAM", "SUMMARY").contains(metricType)) {
                     throw new IllegalArgumentException("TOPIC_TRANSIT_LATENCY supports GAUGE, HISTOGRAM or SUMMARY");
                 }
@@ -524,6 +650,33 @@ public class MetricService {
                     throw new IllegalArgumentException("CONSUMER_TIME_LAG aggregation must be MAX or AVG");
                 }
             }
+        }
+    }
+
+    /**
+     * The scan a two-query template will run, checked when it is saved rather than on every
+     * refresh for ever.
+     *
+     * <p>These three decide what the metric actually measures — how much of each topic is read,
+     * from which end, and how long a side may take — and all three were taken on trust: a
+     * mistyped {@code maxRowsPerSide} threw {@code NumberFormatException} from inside the refresh
+     * loop, once every thirty seconds, on a metric the API had accepted with a 200. The sibling
+     * template three lines below has always checked its own {@code aggregation} here.
+     */
+    private void validateScanParams(Map<String, Object> params, String defaultReadMode) {
+        int maxRows = getIntParam(params, "maxRowsPerSide", DEFAULT_TEMPLATE_MAX_ROWS);
+        if (maxRows < 1 || maxRows > MAX_TEMPLATE_MAX_ROWS) {
+            throw new IllegalArgumentException(
+                "maxRowsPerSide must be between 1 and " + MAX_TEMPLATE_MAX_ROWS + " (was " + maxRows + ")");
+        }
+        long timeoutMs = getLongParam(params, "timeoutMs", DEFAULT_TEMPLATE_TIMEOUT_MS);
+        if (timeoutMs < 1_000L || timeoutMs > MAX_TEMPLATE_TIMEOUT_MS) {
+            throw new IllegalArgumentException(
+                "timeoutMs must be between 1000 and " + MAX_TEMPLATE_TIMEOUT_MS + " (was " + timeoutMs + ")");
+        }
+        String readMode = getStringParam(params, "readMode", defaultReadMode);
+        if (!READ_MODES.contains(readMode)) {
+            throw new IllegalArgumentException("readMode must be one of " + READ_MODES + " (was '" + readMode + "')");
         }
     }
 
@@ -614,7 +767,9 @@ public class MetricService {
             config.sql(),
             DEFAULT_TEMPLATE_MAX_ROWS,
             DEFAULT_TEMPLATE_TIMEOUT_MS,
-            DEFAULT_TEMPLATE_READ_MODE
+            DEFAULT_TEMPLATE_READ_MODE,
+            // Never the direct reader: raw SQL is the operator's own, and may need the planner.
+            false
         );
         if (result.error() != null) return MetricComputationResult.error(result.error());
         if (result.rows().isEmpty()) {
@@ -634,19 +789,66 @@ public class MetricService {
         Map<String, Object> params = config.templateParams() != null ? config.templateParams() : Map.of();
         int maxRows = getIntParam(params, "maxRowsPerSide", DEFAULT_TEMPLATE_MAX_ROWS);
         long timeoutMs = getLongParam(params, "timeoutMs", DEFAULT_TEMPLATE_TIMEOUT_MS);
+        // A count must see the whole topic, so this side is read from the beginning whatever the
+        // latency template does — the two templates ask different questions of the same broker.
         String readMode = getStringParam(params, "readMode", DEFAULT_TEMPLATE_READ_MODE);
 
-        QueryResult leftResult = executeMetricQuery(requireParam(params, "leftSql"), maxRows, timeoutMs, readMode);
-        if (leftResult.error() != null) return MetricComputationResult.error(leftResult.error());
-        QueryResult rightResult = executeMetricQuery(requireParam(params, "rightSql"), maxRows, timeoutMs, readMode);
-        if (rightResult.error() != null) return MetricComputationResult.error(rightResult.error());
+        String leftSql = requireParam(params, "leftSql");
+        String rightSql = requireParam(params, "rightSql");
+        /*
+         * The right side is read first, and the order is the measurement's, not the form's.
+         *
+         * Two counts cannot be taken at one instant — a whole query separates them, and on the
+         * shipped defaults that can be a 30 s timeout plus a hundred-thousand-record scan. So the
+         * arithmetic leans, and the only choice is which way. Every operation here grows with the
+         * left side (LEFT_MINUS_RIGHT, RATIO and PERCENT_GAP all do), and the panel proposes the
+         * upstream topic on the left with a threshold that fires when the value is high — so
+         * reading the left side *last* lets the traffic of the interval land in it, and a gap that
+         * survives that is a real one. Read the other way round, the same traffic lands in the
+         * denominator and the gap is understated: the metric under-reports exactly the loss it
+         * exists to report, which is the failure this ordering exists to prevent.
+         *
+         * It is the rule KafkaAdminService already follows for consumer lag — committed offsets
+         * first, log end offsets last, "so a consumer committing between the two calls can only
+         * make the lag look larger". ABS_DIFF is the one operation this cannot help: it is
+         * symmetric, so no ordering is conservative for it, and readGapMs below is what says how
+         * much room the interval left.
+         */
+        long readStartedAt = System.currentTimeMillis();
+        QueryResult rightResult =
+            executeMetricQuery(rightSql, maxRows, timeoutMs, readMode, isSingleTableRead(rightSql));
+        if (rightResult.error() != null) {
+            return MetricComputationResult.error("Right query: " + rightResult.error());
+        }
+        long rightReadAt = System.currentTimeMillis();
+        QueryResult leftResult =
+            executeMetricQuery(leftSql, maxRows, timeoutMs, readMode, isSingleTableRead(leftSql));
+        if (leftResult.error() != null) {
+            return MetricComputationResult.error("Left query: " + leftResult.error());
+        }
+        long readGapMs = System.currentTimeMillis() - rightReadAt;
+        long totalReadMs = System.currentTimeMillis() - readStartedAt;
 
-        Double leftValue = extractPrimaryMetricValue(leftResult.rows());
-        Double rightValue = extractPrimaryMetricValue(rightResult.rows());
-        if (leftValue == null || rightValue == null) {
-            return MetricComputationResult.error("Both queries must return a numeric metric_value");
+        SideRead left = aggregateValue(leftResult, maxRows, "left");
+        if (left.error() != null) return MetricComputationResult.error(left.error());
+        SideRead right = aggregateValue(rightResult, maxRows, "right");
+        if (right.error() != null) return MetricComputationResult.error(right.error());
+
+        // A floor is not a count, and two floors compared read as no gap at all — which is the
+        // one answer this metric must never give by accident.
+        if (left.capped() || right.capped()) {
+            boolean both = left.capped() && right.capped();
+            return MetricComputationResult.error(
+                (both ? "Both counts stopped" : (left.capped() ? "The left count stopped" : "The right count stopped"))
+                + " on the direct reader's " + FlinkSqlService.AGGREGATE_SCAN_RECORDS
+                + "-record ceiling, so " + (both ? "they are floors" : "it is a floor")
+                + " rather than a total. A gap measured between floors reads as no gap, so nothing "
+                + "is published: count topics this reader can read in full, or measure the drop "
+                + "another way.");
         }
 
+        double leftValue = left.value();
+        double rightValue = right.value();
         String operation = getStringParam(params, "operation", "LEFT_MINUS_RIGHT").toUpperCase(Locale.ROOT);
         Double metricValue = switch (operation) {
             case "LEFT_MINUS_RIGHT" -> leftValue - rightValue;
@@ -656,7 +858,10 @@ public class MetricService {
             default -> throw new IllegalArgumentException("Unsupported count delta operation: " + operation);
         };
         if (metricValue == null) {
-            return MetricComputationResult.error("Cannot compute " + operation + " when right metric value is zero");
+            return MetricComputationResult.error("Cannot compute " + operation
+                + " when the right query counts zero: " + operation + " divides by it. The left "
+                + "query counted " + formatCount(leftValue) + ", so if the right topic really is "
+                + "empty that is the finding — LEFT_MINUS_RIGHT or ABS_DIFF report it as a number.");
         }
 
         Map<String, Object> row = new LinkedHashMap<>();
@@ -671,25 +876,93 @@ public class MetricService {
         summary.put("leftValue", leftValue);
         summary.put("rightValue", rightValue);
         summary.put("operation", operation);
+        summary.put("leftEngine", leftResult.engine());
+        summary.put("rightEngine", rightResult.engine());
+        // How much room the interval between the two reads left. A number rather than a
+        // reassurance: on a topic doing a thousand records a second, four seconds here is four
+        // thousand records that are in one count and not the other.
+        summary.put("readGapMs", readGapMs);
+        summary.put("readDurationMs", totalReadMs);
+        // Accurate per engine rather than in one clause: the row cap bounds what the planner
+        // returns, while the direct reader ignores it for an aggregate and stops on its own
+        // record ceiling — two different bounds, and a note naming the wrong one is worse than none.
+        summary.put("scopeNote", "The right side is counted first and the left "
+            + readGapMs + " ms later, so traffic in between lands in the left count and this "
+            + ("ABS_DIFF".equals(operation) ? "difference can move either way" : "value can only be overstated")
+            + ", never understated. Read " + describeReadEnd(readMode)
+            + ". A side the direct reader answered covers at most "
+            + FlinkSqlService.AGGREGATE_SCAN_RECORDS + " record(s); a side the planner answered "
+            + "covers at most " + maxRows + " row(s).");
+        addScanWarnings(summary, leftResult, rightResult);
 
         return new MetricComputationResult(List.of(row), metricValue, null, summary);
+    }
+
+    /** Which end of the topic a read entered by, in the words the summary uses. */
+    private String describeReadEnd(String readMode) {
+        return DEFAULT_LATENCY_READ_MODE.equals(readMode)
+            ? "from the most recent records backwards"
+            : "from the earliest offset";
+    }
+
+    private String formatCount(double value) {
+        return value == Math.rint(value) ? String.valueOf((long) value) : String.valueOf(value);
+    }
+
+    /**
+     * Carry the engine's own caveats into the metric's summary.
+     *
+     * <p>{@code QueryResult.warnings} exists to say which predicates the direct reader could not
+     * apply — "silently returning unfiltered rows for a WHERE it does not understand makes the
+     * result look precise when it is not", as its own javadoc puts it. The metric engine read it
+     * nowhere, on the path whose output feeds an alert, so a metric filtered by a predicate the
+     * reader had dropped published a number computed over everything.
+     */
+    private void addScanWarnings(Map<String, Object> summary, QueryResult... results) {
+        List<String> warnings = new ArrayList<>();
+        for (QueryResult result : results) {
+            if (result != null && result.warnings() != null) {
+                for (String warning : result.warnings()) {
+                    if (warning != null && !warning.isBlank() && !warnings.contains(warning)) {
+                        warnings.add(warning);
+                    }
+                }
+            }
+        }
+        if (!warnings.isEmpty()) summary.put("warnings", warnings);
     }
 
     private MetricComputationResult computeTransitLatencyMetric(MetricConfig config) {
         Map<String, Object> params = config.templateParams() != null ? config.templateParams() : Map.of();
         int maxRows = getIntParam(params, "maxRowsPerSide", DEFAULT_TEMPLATE_MAX_ROWS);
         long timeoutMs = getLongParam(params, "timeoutMs", DEFAULT_TEMPLATE_TIMEOUT_MS);
-        String readMode = getStringParam(params, "readMode", DEFAULT_TEMPLATE_READ_MODE);
+        // The most recent records, not the oldest — see DEFAULT_LATENCY_READ_MODE.
+        String readMode = getStringParam(params, "readMode", DEFAULT_LATENCY_READ_MODE);
 
-        QueryResult sourceResult = executeMetricQuery(requireParam(params, "sourceSql"), maxRows, timeoutMs, readMode);
-        if (sourceResult.error() != null) return MetricComputationResult.error(sourceResult.error());
-        QueryResult targetResult = executeMetricQuery(requireParam(params, "targetSql"), maxRows, timeoutMs, readMode);
-        if (targetResult.error() != null) return MetricComputationResult.error(targetResult.error());
+        String sourceSql = requireParam(params, "sourceSql");
+        String targetSql = requireParam(params, "targetSql");
+        QueryResult sourceResult =
+            executeMetricQuery(sourceSql, maxRows, timeoutMs, readMode, isSingleTableRead(sourceSql));
+        if (sourceResult.error() != null) {
+            return MetricComputationResult.error("Source query: " + sourceResult.error());
+        }
+        QueryResult targetResult =
+            executeMetricQuery(targetSql, maxRows, timeoutMs, readMode, isSingleTableRead(targetSql));
+        if (targetResult.error() != null) {
+            return MetricComputationResult.error("Target query: " + targetResult.error());
+        }
 
         List<CorrelationEvent> sourceEvents = extractCorrelationEvents(sourceResult.rows(), "sourceSql");
         List<CorrelationEvent> targetEvents = extractCorrelationEvents(targetResult.rows(), "targetSql");
         if (sourceEvents.isEmpty() || targetEvents.isEmpty()) {
-            return MetricComputationResult.error("Transit latency requires match_key and event_time rows on both queries");
+            // Which side, and over what — an empty topic, a read that covered none of it and a
+            // projection missing its two columns are three states, and one message named none.
+            String which = sourceEvents.isEmpty() && targetEvents.isEmpty() ? "Neither query"
+                : sourceEvents.isEmpty() ? "The source query" : "The target query";
+            return MetricComputationResult.error(which + " yielded a row carrying both match_key and "
+                + "event_time, over at most " + maxRows + " row(s) read " + describeReadEnd(readMode)
+                + ". Either the read covered no message, or the projection does not alias those two "
+                + "columns.");
         }
 
         Map<String, Deque<Long>> targetsByKey = new HashMap<>();
@@ -699,8 +972,9 @@ public class MetricService {
                 .addLast(event.eventTime());
         }
 
-        List<Double> latencies = new ArrayList<>();
+        List<LatencyObservation> observations = new ArrayList<>();
         int unmatchedSourceCount = 0;
+        int outOfOrderCount = 0;
         sourceEvents.sort(Comparator.comparing(CorrelationEvent::matchKey).thenComparingLong(CorrelationEvent::eventTime));
         targetsByKey.values().forEach(queue -> {
             List<Long> sorted = new ArrayList<>(queue);
@@ -716,19 +990,38 @@ public class MetricService {
                 continue;
             }
             while (!candidates.isEmpty() && candidates.peekFirst() < sourceEvent.eventTime()) {
+                // A target stamped before its own source: two producers' clocks disagreeing, or
+                // an event back-dated on the way. It is dropped either way — a negative latency is
+                // not a latency — but it is a finding about the estate, so it is counted rather
+                // than absorbed. ProcessModelBuilder reports the same thing as outOfOrderCount and
+                // Stream Flow draws it as a dashed red edge.
                 candidates.removeFirst();
+                outOfOrderCount++;
             }
             if (candidates.isEmpty()) {
                 unmatchedSourceCount++;
                 continue;
             }
             long targetTs = candidates.removeFirst();
-            latencies.add((double) (targetTs - sourceEvent.eventTime()));
+            observations.add(new LatencyObservation(sourceEvent.eventTime(), targetTs - sourceEvent.eventTime()));
+        }
+        int unmatchedTargetCount = targetsByKey.values().stream().mapToInt(Deque::size).sum();
+
+        if (observations.isEmpty()) {
+            return MetricComputationResult.error("No correlated messages found between the source and "
+                + "target queries: " + sourceEvents.size() + " source event(s) and " + targetEvents.size()
+                + " target event(s) were read and none share a match_key with a later timestamp"
+                + (outOfOrderCount > 0
+                    ? ", though " + outOfOrderCount + " target(s) did match a key while being stamped "
+                      + "*before* their source, which is a clock disagreement rather than a miss."
+                    : "."));
         }
 
-        if (latencies.isEmpty()) {
-            return MetricComputationResult.error("No correlated messages found between source and target queries");
-        }
+        // In event-time order for what follows: the distribution dedup below is positional unless
+        // a row says when it was observed, and a list re-sorted by match key on every cycle is the
+        // one thing that assumption cannot survive.
+        observations.sort(Comparator.comparingLong(LatencyObservation::sourceEventTime));
+        List<Double> latencies = observations.stream().map(LatencyObservation::latencyMs).toList();
 
         double avgLatencyMs = latencies.stream().mapToDouble(Double::doubleValue).average().orElse(0.0);
         Map<String, Object> sharedLabels = new LinkedHashMap<>();
@@ -741,9 +1034,12 @@ public class MetricService {
             row.put("metric_value", avgLatencyMs);
             rows.add(row);
         } else {
-            for (Double latency : latencies) {
+            for (LatencyObservation observation : observations) {
                 Map<String, Object> row = new LinkedHashMap<>(sharedLabels);
-                row.put("metric_value", latency);
+                row.put("metric_value", observation.latencyMs());
+                // Not a label — see OBSERVED_AT_COLUMN. It is what lets the distribution record
+                // each observation once across refreshes whose window slides.
+                row.put(OBSERVED_AT_COLUMN, observation.sourceEventTime());
                 rows.add(row);
             }
         }
@@ -751,21 +1047,129 @@ public class MetricService {
         Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("matchedCount", latencies.size());
         summary.put("unmatchedSourceCount", unmatchedSourceCount);
+        /*
+         * The rate is what stops the average being read as a verdict on the pipeline.
+         *
+         * A source event whose target never arrived contributes nothing to the value, so when a
+         * downstream stage stalls the slow pairs stop being pairs and the published latency is
+         * that of whatever still completes: the metric *improves* as the pipeline breaks. At the
+         * limit one message getting through fast reads as a perfectly healthy hop. The rate is
+         * also exported as a series of its own (MATCH_RATE_SERIES), because a figure that only
+         * exists in a summary nobody alerts on cannot correct the figure that is alerted on.
+         */
+        summary.put("unmatchedTargetCount", unmatchedTargetCount);
+        summary.put("outOfOrderCount", outOfOrderCount);
+        summary.put("matchRate", latencies.size() / (double) (latencies.size() + unmatchedSourceCount));
         summary.put("avgLatencyMs", avgLatencyMs);
         summary.put("p95LatencyMs", percentile(latencies, 0.95));
         summary.put("maxLatencyMs", latencies.stream().mapToDouble(Double::doubleValue).max().orElse(avgLatencyMs));
+        // What the two reads covered, and what they dropped on the way: a row without both
+        // columns is skipped in silence, so a projection that half works looks like a healthy run.
+        summary.put("sourceRowsRead", sourceResult.rows().size());
+        summary.put("sourceEventsUsed", sourceEvents.size());
+        summary.put("targetRowsRead", targetResult.rows().size());
+        summary.put("targetEventsUsed", targetEvents.size());
+        summary.put("sourceEngine", sourceResult.engine());
+        summary.put("targetEngine", targetResult.engine());
+        summary.put("scopeNote", "Correlated over at most " + maxRows + " row(s) per side, read "
+            + describeReadEnd(readMode) + ".");
+        addScanWarnings(summary, sourceResult, targetResult);
 
         return new MetricComputationResult(rows, avgLatencyMs, null, summary);
     }
 
-    private QueryResult executeMetricQuery(String sql, int maxRows, long timeoutMs, String readMode) {
-        Map<String, QueryResult> cycleCache = refreshCycleQueryCache.get();
-        if (cycleCache == null) {
-            return flinkSqlService.executeSql(QueryRequest.sql(injectBoundedHint(sql), maxRows, timeoutMs, readMode));
+    /**
+     * One template read: the scan bounds asked for, and one retry without them if the connector
+     * turns out not to know them (see {@link #scanOptionsRefused}).
+     */
+    private QueryResult executeMetricQuery(String sql, int maxRows, long timeoutMs, String readMode,
+                                           boolean directRead) {
+        String hint = scanHint();
+        QueryResult result = runMetricQuery(injectScanHint(sql, hint), maxRows, timeoutMs, readMode, directRead);
+        if (hint == null || !refusesScanOptions(result)) return result;
+        if (scanOptionsRefused.compareAndSet(false, true)) {
+            log.warn("This Kafka connector refused {} — template scans are unbounded for the rest of "
+                    + "this process, so a read stops on its row cap or its timeout instead of at the "
+                    + "end of the topic. Cause: {}",
+                SCAN_OPTION_NAMES, LogSafe.text(result.error()));
         }
-        String key = sql + '|' + maxRows + '|' + timeoutMs + '|' + readMode;
-        return cycleCache.computeIfAbsent(key, k ->
-            flinkSqlService.executeSql(QueryRequest.sql(injectBoundedHint(sql), maxRows, timeoutMs, readMode)));
+        return runMetricQuery(sql, maxRows, timeoutMs, readMode, directRead);
+    }
+
+    private QueryResult runMetricQuery(String sql, int maxRows, long timeoutMs, String readMode,
+                                       boolean directRead) {
+        Map<String, QueryResult> cycleCache = refreshCycleQueryCache.get();
+        if (cycleCache == null) return submitMetricQuery(sql, maxRows, timeoutMs, readMode, directRead);
+        String key = sql + '|' + maxRows + '|' + timeoutMs + '|' + readMode + '|' + directRead;
+        return cycleCache.computeIfAbsent(key,
+            k -> submitMetricQuery(sql, maxRows, timeoutMs, readMode, directRead));
+    }
+
+    private QueryResult submitMetricQuery(String sql, int maxRows, long timeoutMs, String readMode,
+                                          boolean directRead) {
+        return flinkSqlService.executeSql(directRead
+            ? QueryRequest.directSql(sql, maxRows, timeoutMs, readMode)
+            : QueryRequest.sql(sql, maxRows, timeoutMs, readMode));
+    }
+
+    /**
+     * One side of a two-query metric: the value, or the reason there is none.
+     *
+     * @param capped the read stopped on the direct reader's aggregate ceiling, so the value is a
+     *               floor rather than a total — which a comparison must refuse rather than publish.
+     */
+    private record SideRead(Double value, String error, boolean capped) {
+        static SideRead failed(String error) { return new SideRead(null, error, false); }
+    }
+
+    /**
+     * The value of an aggregate side, and it is the <b>last</b> numeric row rather than the first.
+     *
+     * <p>On the direct reader an aggregate is one row, so the two are the same. On the Flink
+     * planner they are not: the environment is streaming, so {@code COUNT(*)} is a retract
+     * changelog — {@code +I(1)}, {@code -U(1) +U(2)}, {@code -U(2) +U(3)} … — whose rows arrive in
+     * order and whose {@code RowKind} the collector drops. Taking the first numeric value read
+     * {@code 1} off any topic large enough to fill the row budget before the scan ended, so a
+     * {@code PERCENT_GAP} between two such topics published {@code 0.0}: no loss, on the alarm
+     * whose whole purpose is to report loss, and precisely on the topics worth alarming about.
+     *
+     * <p>The last row is the final aggregate only if the changelog is <em>complete</em>, which is
+     * why a result that filled the row budget is refused instead: the last row of a truncated
+     * changelog is a partial count that looks exactly like a total.
+     */
+    private SideRead aggregateValue(QueryResult result, int maxRows, String side) {
+        if (result.rows().isEmpty()) {
+            return SideRead.failed("The " + side + " query returned no row — the topic may hold "
+                + "nothing, or its table may not resolve on this cluster.");
+        }
+        if ("FLINK".equals(result.engine()) && result.rows().size() >= maxRows) {
+            return SideRead.failed("The " + side + " query filled its row budget (" + maxRows
+                + " rows), so the aggregate it returned is a partial count taken mid-changelog "
+                + "rather than a total. Raise maxRowsPerSide, or write a query the direct reader "
+                + "can answer (a single table, no join and no subquery).");
+        }
+        Double value = lastNumericMetricValue(result.rows());
+        if (value == null) {
+            return SideRead.failed("The " + side + " query returned rows but no numeric "
+                + "metric_value — alias the aggregate, as in COUNT(*) AS metric_value.");
+        }
+        return new SideRead(value, null, isAggregateScanCapped(result));
+    }
+
+    /** The direct reader says so in its warnings when an aggregate stopped on its own ceiling. */
+    private boolean isAggregateScanCapped(QueryResult result) {
+        return result.warnings() != null && result.warnings().stream()
+            .anyMatch(w -> w != null && w.startsWith(FlinkSqlService.AGGREGATE_SCAN_CAPPED));
+    }
+
+    /** The final value of a changelog, and the only value of a single-row aggregate. */
+    private Double lastNumericMetricValue(List<Map<String, Object>> rows) {
+        Double last = null;
+        for (Map<String, Object> row : rows) {
+            Double value = extractValue(row);
+            if (value != null) last = value;
+        }
+        return last;
     }
 
     private List<CorrelationEvent> extractCorrelationEvents(List<Map<String, Object>> rows, String queryName) {
@@ -830,13 +1234,25 @@ public class MetricService {
     private int getIntParam(Map<String, Object> params, String key, int defaultValue) {
         Object value = params.get(key);
         if (value == null || String.valueOf(value).isBlank()) return defaultValue;
-        return Integer.parseInt(String.valueOf(value));
+        try {
+            return Integer.parseInt(String.valueOf(value).trim());
+        } catch (NumberFormatException e) {
+            // "For input string: 10k" names the string and not the setting, and reached the
+            // operator as the metric's error rather than as a refused save.
+            throw new IllegalArgumentException(
+                "Template parameter " + key + " must be a whole number, not '" + value + "'");
+        }
     }
 
     private long getLongParam(Map<String, Object> params, String key, long defaultValue) {
         Object value = params.get(key);
         if (value == null || String.valueOf(value).isBlank()) return defaultValue;
-        return Long.parseLong(String.valueOf(value));
+        try {
+            return Long.parseLong(String.valueOf(value).trim());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(
+                "Template parameter " + key + " must be a whole number, not '" + value + "'");
+        }
     }
 
     private void addIfPresent(Map<String, Object> target, String key, Object value) {
@@ -958,7 +1374,56 @@ public class MetricService {
         if (primaryValue != null) {
             updateHistory(metricId, primaryValue);
             updateMetricState(metricId, primaryValue, null, summary);
+            publishCompanions(metricId, config, summary);
         }
+    }
+
+    /**
+     * The two gauges that describe the metric rather than its rows.
+     *
+     * <p>{@link #LAST_SUCCESS_SERIES} is what makes every other gauge here readable. A refresh
+     * that fails keeps the previous value — deliberately, since a broker blip must not read as
+     * "the backlog cleared" — but a frozen gauge and a fresh one are indistinguishable from
+     * outside, so an alert on {@code value > N} fires the same way whether the condition is real
+     * and stuck or simply no longer measured. Set only on a cycle that actually produced a value,
+     * it lets the alert require both:
+     * {@code explorer_metric_gauge > N and time() - explorer_metric_last_success_timestamp_seconds < 120}.
+     * A timestamp rather than a boolean: same cardinality, and it carries <em>how</em> stale.
+     * {@code ConsumerLagMetrics} carries the same series for the same reason.
+     *
+     * <p>{@link #MATCH_RATE_SERIES} is published for any metric whose summary reports one, which
+     * today is the transit latency — see the note beside {@code matchRate}.
+     */
+    private void publishCompanions(String metricId, MetricConfig config, Map<String, Object> summary) {
+        publishCompanionGauge(metricId, config, LAST_SUCCESS_SERIES,
+            "Epoch seconds of the last refresh that produced a value for this metric",
+            System.currentTimeMillis() / 1000.0);
+        if (summary != null && summary.get("matchRate") instanceof Number rate) {
+            publishCompanionGauge(metricId, config, MATCH_RATE_SERIES,
+                "Share of source events this metric could pair with a target event (0..1)",
+                rate.doubleValue());
+        }
+    }
+
+    private void publishCompanionGauge(String metricId, MetricConfig config, String name,
+                                       String description, double value) {
+        companionHolders
+            .computeIfAbsent(metricId, k -> new ConcurrentHashMap<>())
+            .computeIfAbsent(name, k -> {
+                AtomicReference<Double> ref = new AtomicReference<>(value);
+                Gauge gauge = Gauge.builder(name, ref, AtomicReference::get)
+                    .description(description)
+                    // The metric's own identity and nothing from its rows: a companion describes
+                    // the measurement, so it must not multiply with the label series.
+                    .tags(List.of(
+                        Tag.of("metric_id", metricId),
+                        Tag.of("metric_name", config.name() == null ? "" : config.name()),
+                        Tag.of("metric_type", config.type() == null ? "GAUGE" : config.type())))
+                    .register(meterRegistry);
+                companionMeters.computeIfAbsent(metricId, x -> new ConcurrentHashMap<>()).put(name, gauge);
+                return ref;
+            })
+            .set(value);
     }
 
     /** The set of label series produced by this cycle's rows (rows without a numeric value are ignored). */
@@ -989,6 +1454,7 @@ public class MetricService {
 
         removeStaleMeters(distributionMeters.get(metricId), liveKeys);
         retainLiveKeys(distributionRecordedCounts.get(metricId), liveKeys);
+        retainLiveKeys(distributionWatermarks.get(metricId), liveKeys);
     }
 
     private void removeStaleMeters(Map<String, ? extends Meter> series, Set<String> liveKeys) {
@@ -1059,20 +1525,28 @@ public class MetricService {
 
     /**
      * HISTOGRAM / SUMMARY: record only observations not already recorded in earlier refresh
-     * cycles. Because the scheduled refresh re-scans the whole bounded (earliest-offset)
-     * backlog every cycle, recording every returned row unconditionally would re-count the
-     * entire history each cycle — inflating _count/_sum and skewing the distribution toward
-     * older data (B2).
+     * cycles. Because the scheduled refresh re-scans a bounded slice of the topic every cycle,
+     * recording every returned row unconditionally would re-count the same messages each time —
+     * inflating _count/_sum and skewing the distribution toward whatever the window holds (B2).
      *
-     * Dedup is positional per label series: an earliest-offset scan yields an append-only
-     * stream in a stable order, so only the suffix beyond the previously recorded count is
-     * new. A series that shrinks (retention trim / stream reset) resets its watermark to the
-     * current size without re-recording, so the accumulated summary is never inflated.
+     * <p>There are two schemes, and which one applies is decided by the rows themselves.
      *
-     * <p>Note: templates whose output is re-sorted each cycle rather than strictly appended
-     * (e.g. TOPIC_TRANSIT_LATENCY sorts by match key) get approximate positional dedup — the
-     * observation <em>count</em> stays bounded/correct, but the exact boundary values may
-     * shift slightly. Strictly-correct continuous distributions require FLINK_MANAGED_JOB.
+     * <p><b>By observation time</b>, when every row of a label series carries
+     * {@link #OBSERVED_AT_COLUMN}: record those newer than the newest already recorded, then
+     * advance the watermark. This is the only scheme that survives a <em>sliding</em> window —
+     * a latency metric now reads the most recent records, so each cycle drops observations off
+     * the front and gains others at the back while the count stays the same, which the positional
+     * scheme reads as "nothing new" for ever. It is also what removes the bias the positional
+     * scheme had here: the rows used to be ordered by match key, so the suffix beyond the recorded
+     * count was the observations whose key sorted highest — a sample selected by an attribute
+     * unrelated to the measurement, published as a p95. Two observations sharing a millisecond
+     * across two cycles are recorded once, which is the safe direction for a distribution that
+     * must never be inflated.
+     *
+     * <p><b>By position</b> otherwise, unchanged: an earliest-offset scan yields an append-only
+     * stream in a stable order, so only the suffix beyond the previously recorded count is new. A
+     * series that shrinks (retention trim / stream reset) resets its watermark to the current size
+     * without re-recording, so the accumulated summary is never inflated.
      *
      * @return the first observed value (for display / history), or the override when provided.
      */
@@ -1082,10 +1556,13 @@ public class MetricService {
                                           boolean histogram, Double displayValueOverride) {
         Map<String, Integer> recordedCounts =
             distributionRecordedCounts.computeIfAbsent(metricId, k -> new ConcurrentHashMap<>());
+        Map<String, Long> watermarks =
+            distributionWatermarks.computeIfAbsent(metricId, k -> new ConcurrentHashMap<>());
 
         // Group ordered values (and a representative tag set) per label series for this cycle.
         // Same labelKey ⟺ same tag set by construction, so the first row's tags are canonical.
         Map<String, List<Double>> valuesByLabel = new LinkedHashMap<>();
+        Map<String, List<Long>>   stampsByLabel = new LinkedHashMap<>();
         Map<String, List<Tag>>    tagsByLabel   = new LinkedHashMap<>();
         Double primaryValue = displayValueOverride;
 
@@ -1094,16 +1571,32 @@ public class MetricService {
             if (value == null) continue;
             String labelKey = buildLabelKey(row, configuredLabels);
             valuesByLabel.computeIfAbsent(labelKey, k -> new ArrayList<>()).add(value);
+            stampsByLabel.computeIfAbsent(labelKey, k -> new ArrayList<>()).add(observedAt(row));
             tagsByLabel.computeIfAbsent(labelKey, k -> buildTags(metricId, config, row, configuredLabels));
             if (primaryValue == null) primaryValue = value;
         }
 
         valuesByLabel.forEach((labelKey, values) -> {
+            List<Tag> tags = tagsByLabel.get(labelKey);
+            List<Long> stamps = stampsByLabel.get(labelKey);
+
+            if (!stamps.contains(null)) {
+                long watermark = watermarks.getOrDefault(labelKey, Long.MIN_VALUE);
+                long newest = watermark;
+                for (int i = 0; i < values.size(); i++) {
+                    if (stamps.get(i) <= watermark) continue;
+                    if (histogram) processHistogram(metricId, labelKey, tags, values.get(i));
+                    else           processSummary(metricId, labelKey, tags, values.get(i));
+                    newest = Math.max(newest, stamps.get(i));
+                }
+                watermarks.put(labelKey, newest);
+                return;
+            }
+
             int alreadyRecorded = recordedCounts.getOrDefault(labelKey, 0);
             // On a shrink, skip recording (startIndex == size) and just reset the watermark —
             // never re-record the surviving prefix, which would inflate the accumulated summary.
             int startIndex = values.size() < alreadyRecorded ? values.size() : alreadyRecorded;
-            List<Tag> tags = tagsByLabel.get(labelKey);
             for (int i = startIndex; i < values.size(); i++) {
                 if (histogram) processHistogram(metricId, labelKey, tags, values.get(i));
                 else           processSummary(metricId, labelKey, tags, values.get(i));
@@ -1112,6 +1605,18 @@ public class MetricService {
         });
 
         return primaryValue;
+    }
+
+    /** When the row says it was observed, or null when it does not say. */
+    private Long observedAt(Map<String, Object> row) {
+        Object value = row.get(OBSERVED_AT_COLUMN);
+        if (value instanceof Number n) return n.longValue();
+        if (value == null) return null;
+        try {
+            return Long.parseLong(String.valueOf(value).trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     // GAUGE → Gauge (current point-in-time value)
@@ -1196,7 +1701,7 @@ public class MetricService {
         tagValues.put("metric_type", config.type());
         configuredLabels.forEach(tagValues::putIfAbsent);
         for (Map.Entry<String, Object> e : row.entrySet()) {
-            if (!"metric_value".equalsIgnoreCase(e.getKey())) {
+            if (!isReservedColumn(e.getKey())) {
                 tagValues.put(messageFieldExtractorService.sanitizeLabelKey(e.getKey()), String.valueOf(e.getValue()));
             }
         }
@@ -1209,7 +1714,7 @@ public class MetricService {
         StringBuilder sb = new StringBuilder();
         configuredLabels.forEach((key, value) -> sb.append(key).append('=').append(value).append('|'));
         for (Map.Entry<String, Object> e : row.entrySet()) {
-            if (!"metric_value".equalsIgnoreCase(e.getKey())) {
+            if (!isReservedColumn(e.getKey())) {
                 sb.append(messageFieldExtractorService.sanitizeLabelKey(e.getKey()))
                     .append('=').append(e.getValue()).append('|');
             }

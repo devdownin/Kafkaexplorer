@@ -908,6 +908,86 @@ exists one file over: `FieldProfilingService` aggregates per path instead of inl
 which is why profiling behaves on small models and the analysis does not. Read it before touching
 `LlmAnalysisService`, `LlmSchemas` or `AuditPromptCatalog`.
 
+**The two metric templates that compare the results of two queries** — `TOPIC_COUNT_DELTA` and
+`TOPIC_TRANSIT_LATENCY`, which are also the two the KPI suggestion panel proposes most — are
+reviewed in `METRICS-TWO-QUERY-AUDIT.md`, twelve items ranked, of which the first three have
+shipped. What they were is worth knowing before touching either compute method, because each fix
+is load-bearing and none of it is obvious from the code that remains.
+
+**`BOUNDED_HINT` bounded nothing.** Its javadoc described `scan.bounded.mode` ("reads all data that
+exists at query start, then terminates") while the constant wrote `scan.startup.mode`, which says
+where a scan *begins*; the environment is `inStreamingMode()`, so the source never ended, and the
+option merely restated what `DdlGeneratorService` already writes into every generated table. Both
+options travel now. Whether *this* deployment's connector knows the second one is settled at
+runtime rather than asserted — a failure naming it earns one retry without it, remembered for the
+life of the process with a WARN naming the cost, the same degrade-once-and-remember shape
+`OpenAiCompatibleLlmClient` uses for a gateway that refuses `response_format`.
+
+**A streaming `COUNT(*)` is a retract changelog, and the value is its *last* row.** The collector
+drops `RowKind` and `extractPrimaryMetricValue` kept the first, which is `+I(1)`, so above roughly
+five thousand records a `PERCENT_GAP` silent-drop alarm published `0.0` — no loss, on the alarm
+whose purpose is to report loss, and precisely on the topics worth alarming about. Three things
+together fix it and one alone would only have moved it: the last numeric row (the final aggregate
+of a complete changelog, and the only row of a single-row direct read, so one rule serves both
+engines); a result that **filled its row budget** refused rather than read as a total; and the
+generated shape asked of the direct reader by name, which answers a count with one row and no
+changelog at all. That reader has a ceiling of its own — `AGGREGATE_SCAN_RECORDS`, 100 000 — and
+now **says so in the result's warnings**, because two counts that both stopped there differ by
+nothing: a side that hit it is a floor, and the comparison is refused rather than published as
+"no gap".
+
+**A latency now reads the recent end** (`DEFAULT_LATENCY_READ_MODE`), where it read the oldest
+records the row cap allowed and therefore never moved again on a topic older than that cap — the
+rule `explorer.audit-duplicate-scan-from` already states for the audit's duplicate scan.
+`earliest-offset` restores the old behaviour and the form warns when it is chosen. That default
+only means anything because `readMode` stopped being a knob that does nothing: it is honoured by
+the **direct reader alone**, so the template asks for that reader by name
+(`QueryRequest.directRead`, `MetricService.isSingleTableRead`, which fails closed — a join, a
+subquery or a table list goes to the planner) rather than letting the planner answer a question it
+has no syntax for. There is no scan option for "the most recent N records": a Kafka scan starting
+at `latest-offset` and bounded at `latest-offset` reads nothing.
+
+Three smaller rules came with them. `maxRowsPerSide`, `timeoutMs` and `readMode` decide what the
+metric measures and were reachable only by a hand-written POST — they are on the form and refused
+at **save** time, like `CONSUMER_TIME_LAG`'s `aggregation` three lines above them, instead of
+throwing from inside the refresh loop once every thirty seconds. `QueryResult.warnings` is read at
+last, on the path whose output feeds an alert (and an aggregate on the direct reader had been
+dropping its `WHERE` caveats outright, where the non-aggregate branch kept them). And every
+refusal names the side, the read it came from and what to use instead: "the right query counts
+zero" now says that `LEFT_MINUS_RIGHT` reports that as a number.
+
+**Four more shipped after them, and each is a measurement the metric was hiding.** *The right side
+is counted first* — two counts cannot be taken at one instant, so the arithmetic leans and the only
+choice is which way: every operation here grows with the left side, so reading it **last** lets the
+interval's traffic inflate the numerator and a gap that survives is real, where the previous order
+let the same traffic inflate the denominator and hide the loss the metric exists to report. It is
+`KafkaAdminService`' own rule (committed offsets first, log end offsets last) and `readGapMs` says
+how much room the interval left; `ABS_DIFF` is symmetric, so its note says the error can go either
+way rather than claiming a guarantee. *The latency reports what it could not pair*: `matchRate`,
+`unmatchedTargetCount` and `outOfOrderCount`, the rate **exported as a series of its own**
+(`explorer_metric_correlation_match_rate`) because a figure that lives only in a summary nobody
+alerts on cannot correct the figure that is alerted on — an unmatched source contributes nothing to
+the average, so the metric *improves* as the pipeline breaks. *A distribution records each
+observation once*: rows are ordered by event time and carry a reserved `__observed_at` column,
+excluded from the tags and the label key exactly as `metric_value` is (without which a timestamp
+becomes a label and mints one series per observation), and the dedup keys on that watermark rather
+than on position — which the sliding window D3 introduced had broken outright, freezing the
+distribution after its first cycle, and which was biased before that by rows ordered on the match
+key. And *a successful refresh dates itself*
+(`explorer_metric_last_success_timestamp_seconds{metric_id}`, set only on a cycle that produced a
+value): the value still freezes on a failure, deliberately, but a frozen gauge and a fresh one are
+no longer indistinguishable — the alert is `value > N and time() - …last_success… < 120`, the same
+series and the same reasoning as `ConsumerLagMetrics`. All of it reaches the operator as well as
+Prometheus: `lastSummary` was computed, persisted and rendered nowhere outside the preview modal,
+so a metric in service said nothing about its own scope; it is a chip row on the card now
+(`pages/metricScope.ts`, pure and tested), with the match rate shown even at 100 % on the rule the
+coverage notice already follows — an indicator seen only on bad news is one people stop reading.
+
+What is deliberately still open is listed in that document with what closes each: validating
+`operation` at save time like the three scan parameters beside it, the cost of a two-query metric
+on a single-threaded refresh loop (D10), and the note that the suite could not have caught any of
+this (D12).
+
 `SQL-EDITOR-AUDIT.md` is the review of the **SQL editor** (`QueryWorkbench.tsx` and its pure modules,
 plus `QueryController` / `SqlQueryValidator` / `FlinkSqlService.executeSync`) along the four axes it
 was asked for — reliability, ergonomics, optimisation, UI quality. All findings are fixed on this

@@ -22,6 +22,7 @@ import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import axios from 'axios';
 import type { MetricConfig, MetricSuggestion, MetricSuggestions } from '../api/types';
+import { defaultReadMode, validateScanParams } from './Metrics';
 
 vi.mock('axios');
 const mockedAxios = vi.mocked(axios, true);
@@ -77,6 +78,29 @@ const suggestion: MetricSuggestion = {
   },
 };
 
+/*
+ * Une proposition de latence, qui est le gabarit à deux requêtes le plus proposé par le panneau.
+ * Ouvrir son éditeur est la seule façon de voir la fenêtre de lecture, qui n'était sur aucun
+ * formulaire — voir METRICS-TWO-QUERY-AUDIT.md, D3.
+ */
+const latencySuggestion: MetricSuggestion = {
+  ...suggestion,
+  id: 'audit:latency:a>b',
+  title: 'Latency between a and b',
+  metric: {
+    ...suggestion.metric,
+    id: 'server-side-latency-id',
+    name: 'gauge_latency_a_to_b',
+    sql: null,
+    templateType: 'TOPIC_TRANSIT_LATENCY',
+    templateParams: {
+      sourceSql: 'SELECT id AS match_key, event_time AS event_time\nFROM a',
+      targetSql: 'SELECT id AS match_key, event_time AS event_time\nFROM b',
+    },
+    executionMode: 'TEMPLATE_BOUNDED_SCAN',
+  },
+};
+
 const suggestions: MetricSuggestions = {
   suggestions: [suggestion],
   auditAvailable: true, auditId: 'run-1', auditTimestamp: Date.now(),
@@ -84,7 +108,7 @@ const suggestions: MetricSuggestions = {
   notes: [],
 };
 
-function stubApi(metrics: MetricConfig[]) {
+function stubApi(metrics: MetricConfig[], proposals: MetricSuggestion[] = [suggestion]) {
   mockedAxios.get.mockImplementation((url: string) => {
     if (url === '/api/metrics') return Promise.resolve({ data: metrics });
     if (url === '/api/metrics/metadata') return Promise.resolve({ data: {} });
@@ -93,7 +117,9 @@ function stubApi(metrics: MetricConfig[]) {
     return Promise.resolve({ data: {} });
   });
   mockedAxios.post.mockImplementation((url: string) => {
-    if (url === '/api/metrics/suggestions') return Promise.resolve({ data: suggestions });
+    if (url === '/api/metrics/suggestions') {
+      return Promise.resolve({ data: { ...suggestions, suggestions: proposals } });
+    }
     return Promise.resolve({ data: {} });
   });
 }
@@ -182,5 +208,94 @@ describe('Metrics page', () => {
     expect(dialog.parentElement!.className).toMatch(/fixed inset-0/);
     // Le formulaire garde son propre rôle, à l'intérieur du dialogue.
     expect(dialog.querySelector('form')).not.toBeNull();
+  });
+
+  /*
+   * Les deux gabarits qui lancent deux requêtes — voir METRICS-TWO-QUERY-AUDIT.md.
+   *
+   * `maxRowsPerSide`, `timeoutMs` et `readMode` décidaient déjà ce que la métrique mesure et
+   * n'étaient atteignables que par un POST écrit à la main.
+   */
+  /*
+   * Ce que la mesure a couvert, sur la carte d'une métrique en service — voir D6. Le taux
+   * d'appariement était calculé, persisté, et visible seulement dans l'aperçu du modal.
+   */
+  it('shows on the card what the measurement covered', async () => {
+    stubApi([{
+      ...templateMetric,
+      lastSummary: {
+        matchRate: 0.25, matchedCount: 1, unmatchedSourceCount: 3, outOfOrderCount: 2,
+        scopeNote: 'Correlated over at most 10000 row(s) per side.',
+      },
+    }]);
+    await renderPage();
+
+    await waitFor(() => expect(screen.getByText('gauge_latency_a_to_b')).toBeInTheDocument());
+    // La moyenne ne décrit qu'un quart des événements lus, et la carte le dit à côté d'elle.
+    expect(screen.getByText('25% paired')).toBeInTheDocument();
+    expect(screen.getByText('2 before source')).toBeInTheDocument();
+  });
+
+  it('says nothing about scope when the metric reported none', async () => {
+    stubApi([{ ...templateMetric, lastSummary: null }]);
+    await renderPage();
+
+    await waitFor(() => expect(screen.getByText('gauge_latency_a_to_b')).toBeInTheDocument());
+    expect(screen.queryByText(/paired/)).toBeNull();
+  });
+
+  it('puts the scan window of a two-query template on the form', async () => {
+    const user = userEvent.setup();
+    stubApi([], [latencySuggestion]);
+    await renderPage();
+
+    await waitFor(() => expect(screen.getByText('Latency between a and b')).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: /Review & add/ }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByLabelText(/Read from/)).toHaveValue('latest-offset');
+    expect(within(dialog).getByLabelText(/Max rows \/ side/)).toHaveValue(10000);
+    expect(within(dialog).getByLabelText(/Timeout \/ side/)).toHaveValue(30000);
+  });
+
+  it('warns on the form when a latency metric is pointed at the oldest records', async () => {
+    const user = userEvent.setup();
+    stubApi([], [latencySuggestion]);
+    await renderPage();
+
+    await waitFor(() => expect(screen.getByText('Latency between a and b')).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: /Review & add/ }));
+
+    const dialog = await screen.findByRole('dialog');
+    await user.selectOptions(within(dialog).getByLabelText(/Read from/), 'earliest-offset');
+    expect(await within(dialog).findByText(/stops moving once the topic outgrows the cap/)).toBeInTheDocument();
+  });
+});
+
+describe('the scan window of a two-query template', () => {
+  it('reads the recent end for a latency and the whole topic for a count', () => {
+    expect(defaultReadMode('TOPIC_TRANSIT_LATENCY')).toBe('latest-offset');
+    expect(defaultReadMode('TOPIC_COUNT_DELTA')).toBe('earliest-offset');
+  });
+
+  it('refuses what the server would refuse, and says nothing about what it accepts', () => {
+    const errors = (params: Record<string, unknown>) =>
+      validateScanParams('TOPIC_COUNT_DELTA', params).filter(m => m.level === 'error');
+
+    expect(errors({})).toEqual([]);
+    expect(errors({ maxRowsPerSide: '50000', timeoutMs: '5000', readMode: 'latest-offset' })).toEqual([]);
+    expect(errors({ maxRowsPerSide: '10k' })).toHaveLength(1);
+    expect(errors({ maxRowsPerSide: '0' })).toHaveLength(1);
+    expect(errors({ maxRowsPerSide: '2000000' })).toHaveLength(1);
+    expect(errors({ timeoutMs: '10' })).toHaveLength(1);
+    expect(errors({ readMode: 'group-offsets' })).toHaveLength(1);
+  });
+
+  it('warns rather than refuses a latency read from the earliest offset', () => {
+    const msgs = validateScanParams('TOPIC_TRANSIT_LATENCY', { readMode: 'earliest-offset' });
+    expect(msgs.filter(m => m.level === 'error')).toEqual([]);
+    expect(msgs.some(m => m.level === 'warning')).toBe(true);
+    // Le défaut d'un compte est ce même bout du topic, et n'a rien à signaler.
+    expect(validateScanParams('TOPIC_COUNT_DELTA', { readMode: 'earliest-offset' })).toEqual([]);
   });
 });

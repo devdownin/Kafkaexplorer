@@ -100,6 +100,8 @@ NOT_A_PATH = {
     'target/', 'target/surefire-reports/', 'dist/', 'data/', 'logs/', 'node_modules/',
     # The log file itself, written at runtime under the `logs/` entry above.
     'logs/kafkaexplorer.log',
+    # Figures the prose writes with a slash — a ratio and a rate, not paths.
+    '0/0', '620/h',
     # CodeQL query ids — `language/query-name`, which looks exactly like a path. Only the ones
     # CLAUDE.md still names in prose: this list expires its own unused entries.
     'java/sensitive-log',
@@ -137,7 +139,13 @@ RETIRED = {
 }
 
 TOKEN = re.compile(r'`([^`\n]+)`')
-FENCE = re.compile(r'```.*?```', re.DOTALL)
+# Anchored at the start of a line, and that is the whole point rather than tidiness: CLAUDE.md
+# names a Markdown fence *in prose* ("whatever prose or ``` fence came around it"), which makes
+# the count of ``` odd, so an unanchored non-greedy pair matched from that mention to the next
+# real fence and stripped 225 266 characters — everything from the LLM section to the audit
+# references. The file was 419 KB and this check was reading a third of it, silently, including
+# the paragraph naming SQL-EDITOR-AUDIT.md. Coverage went 99 → 202 tokens when this was fixed.
+FENCE = re.compile(r'^```.*?^```', re.DOTALL | re.MULTILINE)
 
 
 def basename_index() -> set[str]:
@@ -218,6 +226,12 @@ def check() -> list[str]:
                 continue
             # No directory component: accept it if the tree holds a file so named.
             if '/' not in bare and bare in names:
+                continue
+            # A citation that names the module rather than the file — `components/ui/Switch`
+            # for `Switch.tsx`. The prose refers to code by import path throughout, and a
+            # check that reports a file which is plainly there is one people learn to ignore.
+            if any((ROOT / base / (bare + suffix)).exists()
+                   for base in BASES for suffix in SOURCE_SUFFIXES):
                 continue
             unresolved.append(
                 f'{doc}: `{token}` resolves to nothing — fix the reference, or add it to '

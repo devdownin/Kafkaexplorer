@@ -673,6 +673,19 @@ public class FlinkSqlService {
                 // caller was told whatever the *direct reader* complained about, which describes a
                 // different query engine's opinion of a statement it was never meant to run.
                 String engineFailure = null;
+                /*
+                 * One caller asks for the direct reader by name, and the planner is not consulted
+                 * at all for it: `readMode` is honoured by that reader alone, so "the most recent
+                 * N records" has no expression here — a Kafka scan starting at latest-offset and
+                 * bounded at latest-offset reads nothing — and a caller whose question is "recent"
+                 * must not be answered with the oldest rows the cap allowed. The metric templates
+                 * ask it only for a single-table read, which is the shape this reader can answer;
+                 * see QueryRequest.directRead().
+                 */
+                if (request.wantsDirectRead() && extractPrimaryTable(sqlToExecute) != null) {
+                    QueryResult direct = kafkaDirectSelect(sqlToExecute, readMode, limit, startTime);
+                    return autoReg.registered() ? withRegisteredFlag(direct) : direct;
+                }
                 if (explorerConfig.isFlinkSelectEnabled() && !flinkSelectDisabled) {
                     try {
                         QueryResult flinkResult = executeViaFlinkPlanner(queryId, sqlToExecute, "SELECT", limit, timeout, startTime);
@@ -1192,6 +1205,12 @@ public class FlinkSqlService {
         return current;
     }
 
+    /** How many records an in-process aggregate may read before it stops and says it stopped. */
+    public static final int AGGREGATE_SCAN_RECORDS = 100_000;
+
+    /** The head of the caveat an aggregate carries when it stopped on that ceiling. */
+    public static final String AGGREGATE_SCAN_CAPPED = "Aggregate scan ceiling reached";
+
     private QueryResult kafkaDirectSelect(String sql, String readMode, int limit, long startTime) {
         // Extract table name from FROM clause
         Pattern fromPattern = Pattern.compile("(?i)\\bFROM\\s+`?([\\w.\\-]+)`?");
@@ -1247,7 +1266,7 @@ public class FlinkSqlService {
         // (the row loop still stops as soon as `limit` matches are collected).
         int fetch;
         if (isAggregate) {
-            fetch = 100_000;
+            fetch = AGGREGATE_SCAN_RECORDS;
         } else if (whereConds.isEmpty()) {
             fetch = limit + 20;
         } else {
@@ -1292,7 +1311,28 @@ public class FlinkSqlService {
         }
 
         if (isAggregate) {
-            return kafkaAggregateSelect(sql, rows, startTime);
+            QueryResult aggregate = kafkaAggregateSelect(sql, rows, startTime);
+            // The caveats of the WHERE clause were dropped on this branch and kept on the other,
+            // so an aggregate filtered by a predicate this reader could not apply came back as a
+            // precise-looking number over unfiltered rows.
+            for (String warning : whereWarnings) {
+                aggregate = withExtraWarning(aggregate, warning);
+            }
+            /*
+             * An aggregate that filled its own ceiling is a floor, and it has to say so.
+             *
+             * The scan stops at AGGREGATE_SCAN_RECORDS, so a COUNT(*) over a larger topic returns
+             * that number and looks exactly like a total. Two such counts compared — which is what
+             * a TOPIC_COUNT_DELTA metric does — then differ by nothing, and "no gap" is the one
+             * answer a silent-drop alarm must never give by accident. The caveat travels with the
+             * result rather than being left for whoever reads it to infer.
+             */
+            if (records.size() >= fetch) {
+                aggregate = withExtraWarning(aggregate, AGGREGATE_SCAN_CAPPED
+                    + " — the aggregate covers the first " + fetch + " record(s) read from '"
+                    + topic + "', not the whole topic, so a count is a floor rather than a total.");
+            }
+            return aggregate;
         }
 
         List<String> columns = requestedCols.isEmpty()
