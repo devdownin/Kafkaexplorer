@@ -30,6 +30,13 @@
 			property there would reach the plugin as the literal string.
 		-->
 		<skipTests>false</skipTests>
+		<!--
+			The JUnit tag filter surefire reads. Declared here so both halves always resolve to
+			something (an undefined property reaches the plugin as its literal `${...}` text), and
+			so the `llm-eval` profile has one place to flip them.
+		-->
+		<test.excluded.groups>llm-eval</test.excluded.groups>
+		<test.groups />
 	</properties>
 	<repositories>
 		<repository>
@@ -185,6 +192,28 @@
 			</plugin>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<configuration>
+					<!--
+					  The Process Mining eval has two halves. The deterministic one (the aggregate
+					  over the seeded demo pipeline) is an ordinary unit test and runs here. The
+					  loose one calls a real model: it costs money, needs the network, and its
+					  verdict depends on which model is configured — none of which belongs in a
+					  build that has to be reproducible and free. It is tagged and excluded, and
+					  the `llm-eval` profile below is how it is run deliberately.
+
+					  Both directions were measured against surefire 3.5.6 rather than assumed,
+					  because the failure mode of getting it wrong is a build that runs *no* test
+					  and stays green: an empty `groups` is ignored (default = every untagged
+					  test), and the profile's empty `excludedGroups` plus `groups=llm-eval` runs
+					  the tagged one alone.
+					-->
+					<excludedGroups>${test.excluded.groups}</excludedGroups>
+					<groups>${test.groups}</groups>
+				</configuration>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-enforcer-plugin</artifactId>
 				<version>3.6.3</version>
 				<executions>
@@ -224,6 +253,19 @@
 		<url>https://github.com/devdownin/Kafkaexplorer/tree/main</url>
 	</scm>
 	<profiles>
+		<!--
+		  Runs the LLM half of the Process Mining eval, and only it: `-P llm-eval` flips the tag
+		  filter from "exclude" to "select", so the build does not also replay 890 unit tests to
+		  reach three that call an endpoint. The test skips itself, rather than failing, when no
+		  provider and key are configured — see LlmAnalysisEvalTest.
+		-->
+		<profile>
+			<id>llm-eval</id>
+			<properties>
+				<test.excluded.groups />
+				<test.groups>llm-eval</test.groups>
+			</properties>
+		</profile>
 		<profile>
 			<id>build-frontend</id>
 			<activation>

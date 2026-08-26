@@ -46,7 +46,7 @@ class MetricControllerTest {
     private MockMvc mockMvc;
 
     private static final MetricSuggestions EMPTY =
-        new MetricSuggestions(List.of(), false, null, null, null, 0, 0, List.of("nothing measured yet"));
+        new MetricSuggestions(List.of(), false, null, null, null, 0, 0, false, List.of("nothing measured yet"));
 
     @BeforeEach
     void setUp() {

@@ -793,32 +793,9 @@ public class MetricService {
         return null;
     }
 
+    /** Epoch seconds/millis, ISO-8601 or a space-separated local date-time — see {@link EventTime}. */
     private Long toEpochMillis(Object value) {
-        if (value instanceof Number n) {
-            long timestamp = n.longValue();
-            return timestamp < 10_000_000_000L ? timestamp * 1000L : timestamp;
-        }
-        if (value instanceof String s) {
-            String text = s.trim();
-            if (text.isEmpty()) return null;
-            try {
-                long timestamp = Long.parseLong(text);
-                return timestamp < 10_000_000_000L ? timestamp * 1000L : timestamp;
-            } catch (NumberFormatException ignored) {
-                try {
-                    return Instant.parse(text).toEpochMilli();
-                } catch (Exception ignoredIso) {
-                    try {
-                        return java.time.LocalDateTime.parse(text.replace(' ', 'T'))
-                            .toInstant(java.time.ZoneOffset.UTC)
-                            .toEpochMilli();
-                    } catch (Exception ignoredLocal) {
-                        return null;
-                    }
-                }
-            }
-        }
-        return null;
+        return EventTime.toEpochMillis(value);
     }
 
     private double percentile(List<Double> values, double quantile) {

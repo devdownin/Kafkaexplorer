@@ -663,4 +663,49 @@ class LlmStructuredOutputTest {
             assertNotNull(schema.get("required"));
         }
     }
+
+    /**
+     * The two fields an operator is most likely to act on must be declinable.
+     *
+     * <p>Every property was required, and under strict decoding required means the model
+     * <em>cannot</em> omit it — so the schema compelled a small model to invent a probable cause and
+     * a SQL statement for every anomaly it reported. Nullable rather than dropped from
+     * {@code required}: strict mode refuses a schema that declares a property and does not require
+     * it, and that refusal is the 400 the per-model latch reads as "no response_format here",
+     * which would leave the deployment decoding unconstrained for good.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void anAnomalyMayDeclineACauseAndAQueryWithoutLeavingStrictMode() {
+        Map<String, Object> anomaly = (Map<String, Object>) ((Map<String, Object>)
+            ((Map<String, Object>) LlmSchemas.processMiningResult().get("properties"))
+                .get("anomalies")).get("items");
+        Map<String, Object> properties = (Map<String, Object>) anomaly.get("properties");
+        List<String> required = (List<String>) anomaly.get("required");
+
+        for (String field : List.of("probableCause", "sqlSuggestion")) {
+            assertTrue(required.contains(field),
+                field + " stays required — strict mode refuses a declared-but-optional property");
+            Object type = ((Map<String, Object>) properties.get(field)).get("type");
+            assertEquals(List.of("string", "null"), type,
+                field + " must be nullable, so the model can decline rather than invent");
+        }
+        assertFalse(properties.containsKey("ksqlSuggestion"),
+            "the engine is Flink SQL; ksqlDB is a dialect it refuses");
+    }
+
+    /** The prompt must not teach a statement this application's own whitelist rejects. */
+    @Test
+    void theSchemaNamesFlinkSqlAndNotKsqlDb() {
+        Map<String, Object> anomaly = (Map<String, Object>) ((Map<String, Object>)
+            ((Map<String, Object>) LlmSchemas.processMiningResult().get("properties"))
+                .get("anomalies")).get("items");
+        Map<String, Object> properties = (Map<String, Object>) anomaly.get("properties");
+        String description = String.valueOf(
+            ((Map<String, Object>) properties.get("sqlSuggestion")).get("description"));
+
+        assertTrue(description.contains("Flink SQL"), description);
+        assertTrue(description.contains("CREATE STREAM"),
+            "naming the syntax that does NOT run here is what stops it being emitted");
+    }
 }

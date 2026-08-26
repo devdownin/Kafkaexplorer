@@ -395,6 +395,8 @@ export interface MetricSuggestions {
   auditSource: string | null;
   auditTopics: number;
   flowChainsSubmitted: number;
+  /** Un processus mesuré a-t-il été renvoyé ? Compté à part des cartes qu'il produit. */
+  processMeasured: boolean;
   notes: string[];
 }
 
@@ -417,6 +419,51 @@ export interface FlowChainHop {
   firstTimestamp: number | null;
   latencyFromPreviousMs: number | null;
   occurrences: number | null;
+}
+
+/**
+ * Le processus mesuré tel que le navigateur l'a gardé, renvoyé pour qu'un KPI puisse en être
+ * dérivé. Délibérément plus étroit que `ProcessModel` : seules les transitions et les reprises
+ * sont lues côté serveur, et renvoyer les variantes reviendrait à faire traverser une frontière à
+ * des données que personne n'utilise.
+ *
+ * @java ProcessModelEvidence
+ */
+export interface ProcessModelEvidence {
+  measuredAt: number | null;
+  cases: number | null;
+  windowStartMs: number | null;
+  windowEndMs: number | null;
+  eventTimeSource: string | null;
+  transitions: MeasuredTransition[];
+  repeats: MeasuredRepeat[];
+}
+
+/**
+ * Une succession directe et ce qu'elle a coûté. `from` et `to` sont des libellés d'activité — des
+ * noms de topics, sauf sur un topic dont le statut a été mappé ; les ramener à un topic est la
+ * règle de `ProcessModelBuilder` et s'applique côté serveur.
+ *
+ * @java MeasuredTransition
+ */
+export interface MeasuredTransition {
+  from: string;
+  to: string;
+  occurrences: number | null;
+  cases: number | null;
+  p50Ms: number | null;
+  p95Ms: number | null;
+  maxMs: number | null;
+}
+
+/** Une étape qu'un même cas a repassée — redélivrance, reprise ou boucle métier.
+ *
+ * @java MeasuredRepeat
+ */
+export interface MeasuredRepeat {
+  activity: string;
+  casesAffected: number | null;
+  maxOccurrencesInOneCase: number | null;
 }
 
 /*
@@ -641,8 +688,10 @@ export interface AnomalyReport {
   severity: 'CRITICAL' | 'MAJOR' | 'MINOR';
   fields: string[];
   description: string;
-  probableCause: string;
-  ksqlSuggestion: string;
+  /** Peut être null, même raison. */
+  probableCause: string | null;
+  /** Peut être null : le modèle n'a pas à inventer une requête faute d'en avoir une. */
+  sqlSuggestion: string | null;
 }
 
 /**
@@ -685,15 +734,135 @@ export interface ProcessMiningResult {
    * est déjà rapportée par `WINDOW_STATS`.
    */
   coverage: ProcessMiningCoverage | null;
+  /**
+   * Le processus mesuré. Calculé ici, jamais affirmé par le modèle — et c'est ce qui permet une
+   * exécution sans LLM du tout : les transitions, les variantes et les latences sont du comptage,
+   * seule leur lecture demandait un modèle. `null` quand aucun log d'événements n'a pu être bâti
+   * *et* que rien ne l'a demandé (une réponse d'un serveur antérieur, par exemple).
+   */
+  processModel: ProcessModel | null;
+}
+
+/**
+ * Quelle horloge a ordonné le log d'événements — `ProcessModel.TimeSource`.
+ *
+ * @java TimeSource
+ */
+export type ProcessModelTimeSource = 'MAPPED_FIELD' | 'MIXED' | 'RECORD_TIMESTAMP';
+
+/**
+ * Un nœud du graphe : une étape du pipeline, éventuellement affinée par son statut —
+ * `ProcessModel.Activity`.
+ *
+ * @java Activity
+ */
+export interface ProcessActivity {
+  name: string;
+  occurrences: number;
+  cases: number;
+}
+
+/**
+ * Une relation de succession directe, et ce qu'elle a coûté.
+ *
+ * `outOfOrderCount` compte les occurrences que le broker a vues dans l'ordre inverse de leur
+ * horodatage métier : le log étant trié par temps d'événement, une latence ne peut pas être
+ * négative, et c'est ce désaccord entre deux horloges qui trahit un producteur désynchronisé.
+ *
+ * @java Edge
+ */
+export interface ProcessEdge {
+  from: string;
+  to: string;
+  occurrences: number;
+  cases: number;
+  p50Ms: number;
+  p95Ms: number;
+  maxMs: number;
+  outOfOrderCount: number;
+}
+
+/**
+ * Un chemin distinct de bout en bout, et combien de cas l'ont emprunté — `ProcessModel.Variant`.
+ *
+ * @java Variant
+ */
+export interface ProcessVariant {
+  path: string[];
+  cases: number;
+  /** Un id de cas qui l'a emprunté, pour que l'affirmation soit vérifiable sur le cluster. */
+  example: string;
+}
+
+/**
+ * Une activité qui a commencé ou terminé des cas — `ProcessModel.Endpoint`.
+ *
+ * @java Endpoint
+ */
+export interface ProcessEndpoint {
+  activity: string;
+  cases: number;
+}
+
+/**
+ * Une activité qu'un même cas a visitée plus d'une fois — redélivrance, reprise ou boucle
+ * légitime. Nommée pour ce qui a été observé, pas pour ce que ça veut dire : lequel des trois
+ * c'est dépend du métier, et c'est la part du modèle.
+ *
+ * @java Repeat
+ */
+export interface ProcessRepeat {
+  activity: string;
+  casesAffected: number;
+  maxOccurrencesInOneCase: number;
+}
+
+/**
+ * Le processus, mesuré — l'agrégat d'un log d'événements, calculé à partir des digests plutôt
+ * qu'inféré par un modèle.
+ *
+ * `available` à faux n'est pas un processus vide : sans id de corrélation il n'y a pas de log du
+ * tout, et `unavailableReason` dit lequel des deux c'est. Même règle que `SnapshotRead` — une
+ * mesure qu'on n'a pas pu prendre ne doit pas ressembler à une mesure valant zéro.
+ *
+ * @java ProcessModel
+ */
+export interface ProcessModel {
+  available: boolean;
+  unavailableReason: string | null;
+  cases: number;
+  events: number;
+  /** Enregistrements lus qui ne portaient pas d'id de corrélation : hors du log. */
+  eventsWithoutCase: number;
+  windowStartMs: number;
+  windowEndMs: number;
+  eventTimeSource: ProcessModelTimeSource;
+  activities: ProcessActivity[];
+  edges: ProcessEdge[];
+  variants: ProcessVariant[];
+  starts: ProcessEndpoint[];
+  ends: ProcessEndpoint[];
+  repeats: ProcessRepeat[];
+  /** Les cas retenus comme exemples travaillés dans le prompt. */
+  spotlightCases: string[];
+  variantsOmitted: number;
+  edgesOmitted: number;
+  /** Ce qu'il ne faut pas sur-lire : effets de bord de fenêtre, replis d'horloge, plafonds. */
+  notes: string[];
 }
 
 /**
  * Ce qu'un topic de l'exécution a réellement apporté.
  *
- * Deux nombres et non un : le prompt a un budget global de caractères, donc un topic peut être lu
- * en entier et n'atteindre le modèle qu'en échantillon — ou, le budget épuisé, pas du tout. Un
- * topic lu et non analysé est invisible dans la réponse, ce qui est précisément le sens qu'on
- * prêterait au silence du modèle à son sujet.
+ * Trois nombres et non deux. `messagesMeasured` sont les enregistrements entrés dans le log
+ * d'événements : ils comptent dans chaque transition, variante et latence sur lesquelles repose la
+ * réponse, qu'aucun d'eux ne soit montré ou non. `messagesDetailed` sont ceux inlinés verbatim —
+ * une trace de cas témoin, ou, faute de log d'événements, l'échantillon par topic.
+ *
+ * Les confondre disait « 6 sur 3 000 » d'une exécution qui en avait mesuré trois mille, et envoyait
+ * le lecteur augmenter un budget de prompt consommé à 6 %. Un `messagesMeasured` total à zéro veut
+ * dire qu'aucun log n'a pu être construit et que l'échantillonnage par topic a tourné : c'est ce qui
+ * permet de distinguer les deux chemins sans un second drapeau qui dériverait.
  *
  * `readable` à faux veut dire qu'aucune partition n'a été décrite pour ce topic : un topic absent
  * ou une faute de frappe, pas un topic vide.
@@ -703,7 +872,8 @@ export interface ProcessMiningResult {
 export interface TopicCoverage {
   topic: string;
   messagesRead: number;
-  messagesAnalysed: number;
+  messagesMeasured: number;
+  messagesDetailed: number;
   readable: boolean;
 }
 
@@ -716,7 +886,8 @@ export interface TopicCoverage {
 export interface ProcessMiningCoverage {
   topics: TopicCoverage[];
   messagesRead: number;
-  messagesAnalysed: number;
+  messagesMeasured: number;
+  messagesDetailed: number;
   promptChars: number;
   promptCharBudget: number;
   /** La lecture s'est arrêtée sur son propre budget : les décomptes sont des planchers. */

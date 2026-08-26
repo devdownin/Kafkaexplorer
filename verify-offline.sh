@@ -124,9 +124,15 @@ fi
 # never `java -jar`. With -jar the system classpath holds only the launcher, and Flink's
 # job-graph deserialization then cannot see flink-table-runtime: every SELECT fails to
 # submit, the planner circuit breaker trips, and a dozen tests fail for no real reason.
+# The LLM half of the Process Mining eval is excluded here for the same reason surefire excludes
+# it: it calls a real endpoint, so it costs money and needs the network, and this harness exists
+# precisely for a machine that cannot reach one. It skips itself without a configured provider,
+# but a skip still builds the prompt and a filter says so up front. Pass
+# `--include-tag=llm-eval` after `--` to run it deliberately; a later --include-tag wins.
 echo "==> Running tests"
 java -cp "$CONSOLE:$WORK/classes:$WORK/testclasses:src/main/resources:src/test/resources:$CP" \
   org.junit.platform.console.ConsoleLauncher execute \
   --scan-classpath="$WORK/testclasses" \
+  --exclude-tag=llm-eval \
   --details=summary \
   "$@"

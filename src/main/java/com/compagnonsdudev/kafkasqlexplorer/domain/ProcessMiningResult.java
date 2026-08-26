@@ -16,10 +16,16 @@ import java.util.List;
  * narrative. A refusal that reads like an answer is worse than no answer at all; when this field is
  * set, nothing else in the record is a finding.
  *
- * <p>{@code coverage} is what the answer rests on, and like {@code usage} it is attached by the
- * service after the model's JSON has been parsed — never supplied by the model, which is in no
- * position to say what it was shown. It stays null on the live path, where the window's scope is
- * already reported per window by {@code WINDOW_STATS}.
+ * <p>{@code coverage}, {@code usage} and {@code processModel} are the exception to that, and they
+ * are not findings the model made: all three are measurements taken on <em>this</em> side of the
+ * call — what it was shown, what it cost, and what the records themselves say — attached by the
+ * service after the answer is parsed. That is why they survive a failure. A run that read four
+ * hundred messages and then lost the model still knows what it read, and a run with no LLM
+ * configured at all has still measured the process: the flowchart, the narrative and the anomalies
+ * are what needed a model, and the directly-follows graph never did.
+ *
+ * <p>{@code coverage} stays null on the live path, where the window's scope is already reported per
+ * window by {@code WINDOW_STATS}.
  */
 public record ProcessMiningResult(
     String flowchart,
@@ -37,24 +43,32 @@ public record ProcessMiningResult(
     @JsonProperty(access = JsonProperty.Access.READ_ONLY)
     LlmUsage usage,
     @JsonProperty(access = JsonProperty.Access.READ_ONLY)
-    ProcessMiningCoverage coverage
+    ProcessMiningCoverage coverage,
+    /**
+     * The event log's aggregate — computed here, never asserted by the model, which is why it is
+     * read-only like the two above. It is also what makes an analysis possible without an LLM at
+     * all: the transitions, the variants and the latencies are counting, and only the reading of
+     * them needs a model.
+     */
+    @JsonProperty(access = JsonProperty.Access.READ_ONLY)
+    ProcessModel processModel
 ) {
     /** Backwards-compatible constructor without RAG sources (the LLM JSON never carries them). */
     public ProcessMiningResult(String flowchart, String comments, List<String> hypotheses,
                                List<String> blindSpots, List<AnomalyReport> anomalies) {
-        this(flowchart, comments, hypotheses, blindSpots, anomalies, List.of(), null, null, null);
+        this(flowchart, comments, hypotheses, blindSpots, anomalies, List.of(), null, null, null, null);
     }
 
     public ProcessMiningResult(String flowchart, String comments, List<String> hypotheses,
                                List<String> blindSpots, List<AnomalyReport> anomalies,
                                List<RagSource> ragSources) {
-        this(flowchart, comments, hypotheses, blindSpots, anomalies, ragSources, null, null, null);
+        this(flowchart, comments, hypotheses, blindSpots, anomalies, ragSources, null, null, null, null);
     }
 
     /** A failed analysis: the reason, and nothing that could be mistaken for a finding. */
     public static ProcessMiningResult failed(String message) {
         return new ProcessMiningResult(null, null, List.of(), List.of(), List.of(), List.of(),
-            message, null, null);
+            message, null, null, null);
     }
 
     /**
@@ -64,19 +78,19 @@ public record ProcessMiningResult(
      */
     public static ProcessMiningResult failed(String message, LlmUsage usage) {
         return new ProcessMiningResult(null, null, List.of(), List.of(), List.of(), List.of(),
-            message, usage, null);
+            message, usage, null, null);
     }
 
     /** Returns a copy of this result with the given RAG sources attached. */
     public ProcessMiningResult withRagSources(List<RagSource> sources) {
         return new ProcessMiningResult(flowchart, comments, hypotheses, blindSpots, anomalies,
-            sources == null ? List.of() : sources, error, usage, coverage);
+            sources == null ? List.of() : sources, error, usage, coverage, processModel);
     }
 
     /** Returns a copy of this result with the measured cost of the call attached. */
     public ProcessMiningResult withUsage(LlmUsage measured) {
         return new ProcessMiningResult(flowchart, comments, hypotheses, blindSpots, anomalies,
-            ragSources, error, measured, coverage);
+            ragSources, error, measured, coverage, processModel);
     }
 
     /**
@@ -87,7 +101,19 @@ public record ProcessMiningResult(
      */
     public ProcessMiningResult withCoverage(ProcessMiningCoverage measured) {
         return new ProcessMiningResult(flowchart, comments, hypotheses, blindSpots, anomalies,
-            ragSources, error, usage, measured);
+            ragSources, error, usage, measured, processModel);
+    }
+
+    /**
+     * Returns a copy carrying the measured process.
+     *
+     * <p>Attached on a failed analysis too, and on a run with no LLM configured: those are exactly
+     * the cases where it is the only thing the operator gets, and it is a measurement rather than
+     * an answer, so a lost model cannot invalidate it.
+     */
+    public ProcessMiningResult withProcessModel(ProcessModel measured) {
+        return new ProcessMiningResult(flowchart, comments, hypotheses, blindSpots, anomalies,
+            ragSources, error, usage, coverage, measured);
     }
 
     /**

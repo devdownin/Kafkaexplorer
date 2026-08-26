@@ -20,6 +20,13 @@ import java.util.List;
  * {@code coveredFromMs}): what was read, what of it reached the model, and what could not be
  * measured — never a zero standing in for a measurement nobody took.
  *
+ * <p>{@code messagesMeasured} and {@code messagesDetailed} are two answers because the prompt now
+ * carries two kinds of evidence: a process measured over every record read, and a few whole case
+ * traces inlined as worked examples. Reporting only the second — as a single {@code
+ * messagesAnalysed} once did — said "6 of 3,000" about a run that had measured all three thousand.
+ * See {@link TopicCoverage}. A run where {@code messagesMeasured} is zero built no event log, and
+ * the per-topic sampling ran instead; that is the signal a reader uses to tell the two apart.
+ *
  * @param promptChars      the size of the prompt actually sent, against
  * @param promptCharBudget {@code process-mining.prompt-char-budget}. Two numbers rather than a
  *                         flag: whether the budget bound the run is a question of how close they
@@ -33,7 +40,8 @@ import java.util.List;
 public record ProcessMiningCoverage(
     List<TopicCoverage> topics,
     int messagesRead,
-    int messagesAnalysed,
+    int messagesMeasured,
+    int messagesDetailed,
     int promptChars,
     int promptCharBudget,
     boolean readTruncated,
@@ -50,9 +58,10 @@ public record ProcessMiningCoverage(
                                            int promptCharBudget, boolean readTruncated,
                                            String readError, List<String> warnings) {
         int read = topics.stream().mapToInt(TopicCoverage::messagesRead).sum();
-        int analysed = topics.stream().mapToInt(TopicCoverage::messagesAnalysed).sum();
-        return new ProcessMiningCoverage(topics, read, analysed, promptChars, promptCharBudget,
-            readTruncated, readError, warnings);
+        int measured = topics.stream().mapToInt(TopicCoverage::messagesMeasured).sum();
+        int detailed = topics.stream().mapToInt(TopicCoverage::messagesDetailed).sum();
+        return new ProcessMiningCoverage(topics, read, measured, detailed, promptChars,
+            promptCharBudget, readTruncated, readError, warnings);
     }
 
     /** Returns a copy carrying one more scope note. */
@@ -62,7 +71,7 @@ public record ProcessMiningCoverage(
         }
         List<String> merged = new ArrayList<>(warnings);
         merged.add(warning);
-        return new ProcessMiningCoverage(topics, messagesRead, messagesAnalysed, promptChars,
-            promptCharBudget, readTruncated, readError, merged);
+        return new ProcessMiningCoverage(topics, messagesRead, messagesMeasured, messagesDetailed,
+            promptChars, promptCharBudget, readTruncated, readError, merged);
     }
 }

@@ -18,6 +18,7 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.MetricSuggestionRequest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricSuggestionSource;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricSuggestions;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricTemplateType;
+import com.compagnonsdudev.kafkasqlexplorer.domain.ProcessModelEvidence;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicAudit;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicConsumers;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicIssue;
@@ -94,6 +95,22 @@ public class MetricSuggestionService {
      * jobs that got read would vary between two calls.
      */
     private static final int MAX_LINEAGE_JOBS = 12;
+    /**
+     * Hop-latency KPIs proposed from one measured process. A directly-follows graph can carry
+     * dozens of transitions; a panel of dozens of latency cards is a panel nobody reads.
+     */
+    private static final int MAX_MEASURED_TRANSITIONS = 6;
+    /** Rework KPIs proposed from one measured process, worst first. */
+    private static final int MAX_MEASURED_REPEATS = 3;
+    /**
+     * Below this many observations, the 95th percentile of a sample <em>is</em> its maximum.
+     *
+     * <p>Arithmetic rather than taste, which is why there is a constant here at all where this
+     * class refuses round numbers everywhere else: with fewer than twenty values there is no
+     * value strictly above the 95th percentile, so calling the figure a p95 would present the
+     * worst hop observed as a tail estimate. The figure is used either way; only its name changes.
+     */
+    private static final int P95_MIN_OBSERVATIONS = 20;
     /** Column names that carry a business key, best first. */
     private static final List<String> KEY_COLUMN_CANDIDATES =
         List.of("id", "order_id", "event_id", "correlation_id", "transaction_id", "key", "uuid");
@@ -141,6 +158,16 @@ public class MetricSuggestionService {
         // adding its own.
         FieldMapping mapping = resolveFieldMapping(request, notes);
 
+        // The measured process goes first, and that ordering is the whole of the decision below:
+        // `deduplicate` keeps the first proposal for a given (kind, topics), so whichever source
+        // is built first wins a pair two sources both describe. It used to be the audit, on the
+        // reasoning that its evidence was the broader of the two available. A directly-follows
+        // graph is broader still — a p95 over every case the window held, grouped on a correlation
+        // id an operator validated by hand, against one average over a flow reconstructed from
+        // topic names. Where both have something to say about the same hop, the distribution is
+        // the better card; where only the audit does, nothing changes.
+        suggestions.addAll(fromMeasuredProcess(request, mapping, notes));
+
         AuditSnapshot audit = readAudit(notes);
         if (audit.report() != null) {
             suggestions.addAll(fromAudit(audit, mapping, notes));
@@ -179,6 +206,8 @@ public class MetricSuggestionService {
             audit.source(),
             audit.report() != null ? (int) audit.report().totalTopics() : 0,
             chains.size(),
+            request != null && request.processModel() != null
+                && !request.processModel().measuredTransitions().isEmpty(),
             notes
         );
     }
@@ -336,6 +365,21 @@ public class MetricSuggestionService {
                                             String sourceTopic, String targetTopic,
                                             long measuredMs, FieldMapping mapping, String title,
                                             String rationale, List<String> evidence) {
+        return transitLatency(id, source, sourceTopic, targetTopic, measuredMs,
+            "that was measured", mapping, title, rationale, evidence);
+    }
+
+    /**
+     * @param measuredLabel what the figure the thresholds are multiples of actually is. An average
+     *                      over a reconstructed flow and a p95 over four hundred cases are both
+     *                      "measured", and a threshold that does not say which of the two it rests
+     *                      on is a threshold nobody can argue with.
+     */
+    private MetricSuggestion transitLatency(String id, MetricSuggestionSource source,
+                                            String sourceTopic, String targetTopic,
+                                            long measuredMs, String measuredLabel,
+                                            FieldMapping mapping, String title,
+                                            String rationale, List<String> evidence) {
         KeyColumn sourceKey = keyColumn(sourceTopic, mapping);
         KeyColumn targetKey = keyColumn(targetTopic, mapping);
 
@@ -351,7 +395,7 @@ public class MetricSuggestionService {
         Double critical = measuredMs > 0 ? Math.ceil(measuredMs * 4.0) : null;
         String basis = measuredMs > 0
             ? "Warning at 2× and critical at 4× the " + formatMillis(measuredMs)
-              + " that was measured — a multiple of an observation, not a round number."
+              + " " + measuredLabel + " — a multiple of an observation, not a round number."
             : null;
 
         List<String> caveats = new ArrayList<>();
@@ -372,7 +416,11 @@ public class MetricSuggestionService {
             null,
             "Average latency between " + sourceTopic + " and " + targetTopic
                 + ", correlated on " + sourceKey.column() + ". Proposed from "
-                + (source == MetricSuggestionSource.AUDIT ? "a cluster audit." : "a Stream Flow trace."),
+                + switch (source) {
+                    case AUDIT -> "a cluster audit.";
+                    case PROCESS_MINING -> "a measured process.";
+                    case STREAM_FLOW, LINEAGE -> "a Stream Flow trace.";
+                },
             warning, critical, null, null, null,
             List.of(), Map.of(), null,
             MetricTemplateType.TOPIC_TRANSIT_LATENCY.name(), params,
@@ -681,6 +729,239 @@ public class MetricSuggestionService {
         return Optional.of(topics + " topic(s) carry unparseable payloads. No KPI is proposed for "
             + "that: a parse failure is not something SQL can count — the query engine skips or "
             + "fails on the record rather than reporting it. The audit is the measurement here.");
+    }
+
+    // ── Measured-process proposals ────────────────────────────────────────────
+
+    /**
+     * KPIs derived from the directly-follows graph a Process Mining run measured.
+     *
+     * <p>This is the best evidence the application has about a pipeline, and until now nothing
+     * read it. The audit groups topics by their names; a trace follows one key; here every record
+     * of the window was grouped by a correlation id an operator validated, and each transition
+     * carries a distribution rather than a single figure. A latency threshold wants exactly that.
+     *
+     * <p>Two families come out of it, and only two. A transition between two <em>topics</em>
+     * becomes a hop-latency KPI; a transition inside one topic (which is what a mapped status
+     * produces) has no pair to correlate and is counted in a note instead of being turned into a
+     * query that would compare a topic with itself. An activity a case visited twice becomes a
+     * rework KPI — deliberately with no threshold, see {@link #reworkKpi}.
+     */
+    private List<MetricSuggestion> fromMeasuredProcess(MetricSuggestionRequest request,
+                                                       FieldMapping mapping,
+                                                       List<String> notes) {
+        ProcessModelEvidence measured = request == null ? null : request.processModel();
+        if (measured == null || measured.measuredTransitions().isEmpty()) {
+            notes.add("No measured process was recorded in this browser — run a Process Mining "
+                + "analysis to unlock the KPIs derived from the transitions it counts, which are "
+                + "the only ones here whose thresholds rest on a distribution rather than on a "
+                + "single observation.");
+            return List.of();
+        }
+
+        List<MetricSuggestion> suggestions = new ArrayList<>();
+        List<ProcessModelEvidence.MeasuredTransition> crossingTopics = new ArrayList<>();
+        int withinTopic = 0;
+        for (ProcessModelEvidence.MeasuredTransition edge : measured.measuredTransitions()) {
+            if (edge == null || edge.from() == null || edge.to() == null) continue;
+            String from = ProcessModelBuilder.topicOf(edge.from());
+            String to = ProcessModelBuilder.topicOf(edge.to());
+            if (from == null || from.isBlank() || to == null || to.isBlank()) continue;
+            if (from.equals(to)) {
+                withinTopic++;
+                continue;
+            }
+            if (edge.p95Ms() == null || edge.cases() == null || edge.cases() < 1) continue;
+            crossingTopics.add(edge);
+        }
+
+        // Cut by what is worst rather than by what is most frequent: the transitions arrive most
+        // frequent first, which is the right order for reading a graph and the wrong one for
+        // choosing what to watch. Ties fall back to the case count and then to the labels, so two
+        // identical measurements produce the same cards in the same order — a browser-side
+        // dismissal is keyed on the id.
+        crossingTopics.sort(Comparator
+            .comparingLong((ProcessModelEvidence.MeasuredTransition e) -> e.p95Ms()).reversed()
+            .thenComparing(Comparator.comparingInt(
+                (ProcessModelEvidence.MeasuredTransition e) -> e.cases()).reversed())
+            .thenComparing(ProcessModelEvidence.MeasuredTransition::from)
+            .thenComparing(ProcessModelEvidence.MeasuredTransition::to));
+
+        if (crossingTopics.size() > MAX_MEASURED_TRANSITIONS) {
+            notes.add("The measured process has " + crossingTopics.size() + " transitions between "
+                + "topics; the " + MAX_MEASURED_TRANSITIONS + " slowest are proposed here. The rest "
+                + "are on the Process Mining page, with their latencies.");
+            crossingTopics = new ArrayList<>(crossingTopics.subList(0, MAX_MEASURED_TRANSITIONS));
+        }
+        for (ProcessModelEvidence.MeasuredTransition edge : crossingTopics) {
+            suggestions.add(measuredHopLatency(measured, edge, mapping));
+        }
+        if (withinTopic > 0) {
+            notes.add(withinTopic + " measured transition(s) stay inside one topic — a status "
+                + "moving, rather than a record travelling. No KPI is proposed for those: the "
+                + "latency template correlates two topics, and pointing it at one would compare a "
+                + "topic with itself.");
+        }
+
+        suggestions.addAll(fromMeasuredRepeats(measured, mapping));
+        return suggestions;
+    }
+
+    /** One hop of the measured process, with thresholds taken from its own distribution. */
+    private MetricSuggestion measuredHopLatency(ProcessModelEvidence measured,
+                                                ProcessModelEvidence.MeasuredTransition edge,
+                                                FieldMapping mapping) {
+        String from = ProcessModelBuilder.topicOf(edge.from());
+        String to = ProcessModelBuilder.topicOf(edge.to());
+        int cases = edge.cases();
+
+        // Below twenty observations the 95th percentile *is* the maximum — that is arithmetic, not
+        // a judgement, and it is the one line that stops "p95" being read as a tail estimate when
+        // it is the worst of nine hops. The figure is unchanged; only what it is called.
+        boolean quantile = cases >= P95_MIN_OBSERVATIONS;
+        String measuredLabel = quantile
+            ? "measured at the 95th percentile of " + cases + " cases"
+            : "which is the worst of the " + cases + " case(s) observed rather than a percentile — "
+              + "below " + P95_MIN_OBSERVATIONS + " observations the two are the same number";
+
+        StringBuilder evidence = new StringBuilder("A Process Mining run");
+        if (measured.measuredAt() != null) {
+            evidence.append(" on ").append(formatDate(measured.measuredAt()));
+        }
+        evidence.append(" counted ").append(cases).append(" case(s) through ")
+            .append(edge.from()).append(" → ").append(edge.to()).append(": ");
+        if (edge.p50Ms() != null) evidence.append("median ").append(formatMillis(edge.p50Ms())).append(", ");
+        evidence.append(quantile ? "p95 " : "worst ").append(formatMillis(edge.p95Ms()));
+        if (edge.maxMs() != null && quantile) {
+            evidence.append(", worst ").append(formatMillis(edge.maxMs()));
+        }
+        evidence.append(" — counted over every record the window held, not over a sample.");
+
+        List<String> lines = new ArrayList<>();
+        lines.add(evidence.toString());
+        String clock = describeMeasuredClock(measured);
+        if (clock != null) lines.add(clock);
+
+        return transitLatency(
+            "pm:hop-latency:" + from + ">" + to,
+            MetricSuggestionSource.PROCESS_MINING,
+            from, to, edge.p95Ms(), measuredLabel, mapping,
+            "Processing latency " + from + " → " + to,
+            "This transition was measured across every case in the window, so the threshold below "
+                + "rests on a distribution rather than on one observation — which is what makes it "
+                + "arguable rather than merely plausible.",
+            lines);
+    }
+
+    /**
+     * What the latencies were measured on. A business timestamp says when the process happened; the
+     * Kafka record timestamp says when the message was produced, and they differ by exactly what
+     * makes a latency finding interesting or meaningless. Stated, never assumed — the same rule the
+     * Process Mining panel follows.
+     */
+    private String describeMeasuredClock(ProcessModelEvidence measured) {
+        String source = measured.eventTimeSource();
+        if (source == null) return null;
+        return switch (source) {
+            case "MAPPED_FIELD" -> null;   // the nominal case says nothing worth a line
+            case "MIXED" -> "Some events had no resolvable business timestamp and fell back to the "
+                + "Kafka record timestamp, so a few of the measured latencies mix event time with "
+                + "produce time.";
+            case "RECORD_TIMESTAMP" -> "The log was ordered by the Kafka record timestamp rather "
+                + "than a business one, so what was measured is transport delay between stages and "
+                + "not necessarily the process's own duration.";
+            default -> null;
+        };
+    }
+
+    /** One rework KPI per topic a case was seen visiting twice, worst first. */
+    private List<MetricSuggestion> fromMeasuredRepeats(ProcessModelEvidence measured,
+                                                       FieldMapping mapping) {
+        // A topic with several mapped statuses can repeat on more than one of them; they describe
+        // one topic, and the query below is per topic, so the worst of them is what is carried.
+        Map<String, ProcessModelEvidence.MeasuredRepeat> worstByTopic = new LinkedHashMap<>();
+        for (ProcessModelEvidence.MeasuredRepeat repeat : measured.measuredRepeats()) {
+            if (repeat == null || repeat.activity() == null) continue;
+            if (repeat.casesAffected() == null || repeat.casesAffected() < 1) continue;
+            String topic = ProcessModelBuilder.topicOf(repeat.activity());
+            if (topic == null || topic.isBlank()) continue;
+            worstByTopic.merge(topic, repeat,
+                (a, b) -> a.casesAffected() >= b.casesAffected() ? a : b);
+        }
+
+        return worstByTopic.entrySet().stream()
+            .sorted(Comparator
+                .comparingInt((Map.Entry<String, ProcessModelEvidence.MeasuredRepeat> e)
+                    -> e.getValue().casesAffected()).reversed()
+                .thenComparing(Map.Entry::getKey))
+            .limit(MAX_MEASURED_REPEATS)
+            .map(e -> reworkKpi(measured, e.getKey(), e.getValue(), mapping))
+            .toList();
+    }
+
+    /**
+     * A case that visited one activity twice: a redelivery, a producer retry that is not
+     * idempotent, or a legitimate rework loop. Which of the three it is depends on the business,
+     * so the card measures it rather than naming it.
+     *
+     * <p><b>Deliberately without a threshold</b>, and that is the only interesting decision here.
+     * The measurement counts <em>cases</em> that revisited an activity inside one window; the query
+     * counts <em>keys</em> sharing the topic over a bounded scan. The two are related and are not
+     * the same number, so a warning derived from one and applied to the other would be a figure
+     * that looks derived and is not — which is exactly what this panel refuses to print.
+     */
+    private MetricSuggestion reworkKpi(ProcessModelEvidence measured, String topic,
+                                       ProcessModelEvidence.MeasuredRepeat repeat,
+                                       FieldMapping mapping) {
+        KeyColumn key = keyColumn(topic, mapping);
+        String table = DdlGeneratorService.toTableName(topic);
+        String sql = "SELECT COUNT(*) - COUNT(DISTINCT `" + key.column() + "`) AS metric_value\n"
+            + "FROM " + table;
+
+        MetricConfig metric = new MetricConfig(
+            null,
+            "gauge_measured_rework_" + table,
+            "GAUGE",
+            sql,
+            "Records of " + topic + " sharing a " + key.column() + " with another record. Proposed "
+                + "from a measured process, where " + repeat.casesAffected()
+                + " case(s) passed through this step more than once.",
+            null, null, null, null, null,
+            List.of(), Map.of(), null,
+            MetricTemplateType.RAW_SQL.name(), Map.of(),
+            "SQL", topic, List.of());
+
+        StringBuilder evidence = new StringBuilder("A Process Mining run");
+        if (measured.measuredAt() != null) {
+            evidence.append(" on ").append(formatDate(measured.measuredAt()));
+        }
+        evidence.append(" saw ").append(repeat.casesAffected())
+            .append(" case(s) visit ").append(repeat.activity()).append(" more than once");
+        if (repeat.maxOccurrencesInOneCase() != null && repeat.maxOccurrencesInOneCase() > 1) {
+            evidence.append(", up to ").append(repeat.maxOccurrencesInOneCase())
+                .append(" times for a single case");
+        }
+        evidence.append(", out of ")
+            .append(measured.cases() == null ? "the cases it read" : measured.cases() + " cases")
+            .append(".");
+
+        return new MetricSuggestion(
+            "pm:duplicates:" + topic,
+            MetricSuggestionSource.PROCESS_MINING,
+            "Repeated records in " + topic,
+            "A case came back through this step. Whether that is a redelivery, a retry without "
+                + "idempotence or a rework loop the business expects is a question only a "
+                + "continuous measurement answers — the run saw it once.",
+            List.of(evidence.toString()),
+            null,   // see the javadoc: the two counts have different scopes
+            List.of("No threshold is proposed. The run counted cases revisiting a step inside its "
+                + "window; this query counts keys sharing the topic over a bounded scan — the two "
+                + "move together but are not the same number, so a threshold taken from one would "
+                + "only look derived. Set it from what the metric reports.",
+                    "COUNT(DISTINCT …) needs the Flink planner; if the query falls back to the "
+                + "direct engine the metric reports the engine's own error rather than a number.",
+                    "Correlation uses " + key.describe(topic) + " — check it in the preview."),
+            false, null, metric);
     }
 
     // ── Stream-Flow-derived proposals ─────────────────────────────────────────
@@ -1064,8 +1345,17 @@ public class MetricSuggestionService {
         return "SELECT COUNT(*) AS metric_value\nFROM " + DdlGeneratorService.toTableName(topic);
     }
 
+    /**
+     * The Prometheus series name. The prefix says where the proposal came from, which matters on a
+     * dashboard: two metrics on one pair of topics, one derived from a measured distribution and
+     * one from a single traced key, are not the same measurement and must not collide.
+     */
     private String metricName(MetricSuggestionSource source, String kind, String from, String to) {
-        String prefix = source == MetricSuggestionSource.AUDIT ? "gauge" : "gauge_traced";
+        String prefix = switch (source) {
+            case AUDIT -> "gauge";
+            case PROCESS_MINING -> "gauge_measured";
+            case STREAM_FLOW, LINEAGE -> "gauge_traced";
+        };
         return prefix + "_" + kind + "_" + DdlGeneratorService.toTableName(from)
             + "_to_" + DdlGeneratorService.toTableName(to);
     }

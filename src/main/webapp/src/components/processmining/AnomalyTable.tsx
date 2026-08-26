@@ -90,20 +90,22 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies }) => {
                   </div>
                 )}
 
-                <div>
-                  <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider mb-1">
-                    Probable Cause
-                  </p>
-                  <p className="text-xs text-on-surface">{anomaly.probableCause}</p>
-                </div>
-
-                {anomaly.ksqlSuggestion && (
+                {anomaly.probableCause && (
                   <div>
                     <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider mb-1">
-                      KSQL / Flink SQL Suggestion
+                      Probable Cause
+                    </p>
+                    <p className="text-xs text-on-surface">{anomaly.probableCause}</p>
+                  </div>
+                )}
+
+                {anomaly.sqlSuggestion && (
+                  <div>
+                    <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider mb-1">
+                      Flink SQL suggestion
                     </p>
                     <pre className="text-xs font-mono text-success bg-surface-container-low/60 rounded-lg p-3 overflow-auto whitespace-pre-wrap">
-                      {anomaly.ksqlSuggestion}
+                      {anomaly.sqlSuggestion}
                     </pre>
                   </div>
                 )}

@@ -1020,6 +1020,10 @@ jobs:
       #                     spectra-hub-stack, where the network is already a dependency.
       #   check-compose     the stacks against .env.example and against themselves, the prompt
       #                     budget against the window each one serves included.
+      #   check-eval-fixture the Process Mining eval fixture against setup-demo.sh, whose dataset
+      #                     it claims to be. A fixture that has drifted does not fail — it
+      #                     evaluates the wrong thing, confidently, which is what the eval exists
+      #                     to remove.
       - name: Resolve every documentation check
         run: |
           set -euo pipefail

@@ -5,12 +5,29 @@ import { describe, it, expect } from 'vitest';
 import { describeCoverage } from './processMiningCoverage';
 import type { ProcessMiningCoverage, TopicCoverage } from '../api/types';
 
+/**
+ * Un topic du chemin *sans* log d'événements : `messagesMeasured` y vaut zéro par construction, ce
+ * qui est exactement ce que le serveur produit quand aucun mapping ne permet de grouper en cas.
+ */
 const topic = (
   name: string,
   read: number,
-  analysed: number,
+  detailed: number,
   readable = true,
-): TopicCoverage => ({ topic: name, messagesRead: read, messagesAnalysed: analysed, readable });
+): TopicCoverage => ({
+  topic: name, messagesRead: read, messagesMeasured: 0, messagesDetailed: detailed, readable,
+});
+
+/** Un topic du chemin mesuré : l'agrégat porte sur `measured`, les exemples sur `detailed`. */
+const measuredTopic = (
+  name: string,
+  read: number,
+  measured: number,
+  detailed: number,
+  readable = true,
+): TopicCoverage => ({
+  topic: name, messagesRead: read, messagesMeasured: measured, messagesDetailed: detailed, readable,
+});
 
 const coverage = (
   topics: TopicCoverage[],
@@ -18,7 +35,8 @@ const coverage = (
 ): ProcessMiningCoverage => ({
   topics,
   messagesRead: topics.reduce((n, t) => n + t.messagesRead, 0),
-  messagesAnalysed: topics.reduce((n, t) => n + t.messagesAnalysed, 0),
+  messagesMeasured: topics.reduce((n, t) => n + t.messagesMeasured, 0),
+  messagesDetailed: topics.reduce((n, t) => n + t.messagesDetailed, 0),
   promptChars: 5_000,
   promptCharBudget: 120_000,
   readTruncated: false,
@@ -53,6 +71,58 @@ describe('describeCoverage', () => {
     expect(summary?.omitted).toEqual(['audit']);
     expect(summary?.notes.join(' ')).toContain('did not fit the prompt budget');
     expect(summary?.notes.join(' ')).toContain('audit');
+  });
+
+  /*
+   * Le défaut que le processus mesuré a introduit, et la raison de `messagesMeasured`.
+   *
+   * Le prompt s'ouvre désormais sur un agrégat calculé sur *tous* les enregistrements lus et
+   * n'inline qu'une poignée de traces témoins. Compter les seules traces disait « 6 sur 3 000 »
+   * d'une exécution qui avait tout mesuré, et renvoyait vers un budget consommé à 6 %.
+   */
+  it('counts what the measured process covers, not just the worked examples', () => {
+    const summary = describeCoverage(coverage([
+      measuredTopic('orders', 1_500, 1_500, 3),
+      measuredTopic('payments', 1_500, 1_488, 3),
+    ]));
+
+    expect(summary?.tone).toBe('complete');
+    expect(summary?.headline).toContain('2/2 topics measured');
+    expect(summary?.headline).toContain('2,988 of 3,000 messages read entered the measured process');
+    expect(summary?.headline).toContain('6 shown as worked examples');
+    expect(summary?.notes).toHaveLength(0);
+  });
+
+  /*
+   * Un topic mesuré qu'aucun cas témoin ne traverse n'est pas écarté : il pèse sur chaque
+   * transition et chaque latence. L'annoncer comme perdu était l'effondrement de périmètre que
+   * cette page existe pour ne pas inventer.
+   */
+  it('does not call a measured topic omitted just because no worked example crosses it', () => {
+    const summary = describeCoverage(coverage([
+      measuredTopic('orders', 500, 500, 6),
+      measuredTopic('shipments', 500, 500, 0),
+    ]));
+
+    expect(summary?.omitted).toEqual([]);
+    expect(summary?.tone).toBe('complete');
+    expect(summary?.notes.join(' ')).not.toContain('prompt budget');
+  });
+
+  /*
+   * Sur le chemin mesuré, un topic qui n'a rien apporté a une autre cause — et une autre
+   * réparation. Envoyer l'opérateur augmenter le budget ne changerait rien : ce qui manque est
+   * l'id de corrélation.
+   */
+  it('blames the field mapping, not the budget, when a measured run leaves a topic out', () => {
+    const summary = describeCoverage(coverage([
+      measuredTopic('orders', 500, 500, 6),
+      measuredTopic('legacy', 300, 0, 0),
+    ]));
+
+    expect(summary?.omitted).toEqual(['legacy']);
+    expect(summary?.notes.join(' ')).toContain('carried the mapped correlation id');
+    expect(summary?.notes.join(' ')).not.toContain('prompt-char-budget');
   });
 
   /* Un topic absent du cluster et un topic vide ne s'adressent pas au même problème. */

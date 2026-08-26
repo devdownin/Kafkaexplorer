@@ -42,11 +42,20 @@ final class LlmSchemas {
                 "severity", enumeration("CRITICAL", "MAJOR", "MINOR"),
                 "fields", array(string("JSONPath of an involved field")),
                 "description", string("What was observed"),
-                "probableCause", string("Most likely cause"),
-                "ksqlSuggestion", string("A Flink/KSQL statement that would surface it")
+                // Nullable rather than absent from `required`, which is not the same thing here:
+                // the OpenAI-compatible strict mode demands that every declared property be
+                // required, so a field left out of the list makes the whole schema a 400 — and a
+                // 400 is exactly what `looksLikeSchemaRefusal` latches on, degrading the model to
+                // unconstrained decoding for good. A nullable type is how "the model may have
+                // nothing to say here" is expressed under strict decoding.
+                "probableCause", nullableString("Most likely cause, or null when there is no "
+                    + "reasonable one to give"),
+                "sqlSuggestion", nullableString("A Flink SQL SELECT that would surface it, or "
+                    + "null. Flink SQL only — ksqlDB syntax such as CREATE STREAM does not run "
+                    + "here")
             ),
             List.of("id", "topic", "type", "severity", "fields", "description",
-                "probableCause", "ksqlSuggestion"));
+                "probableCause", "sqlSuggestion"));
 
         return object(
             Map.of(
@@ -134,6 +143,23 @@ final class LlmSchemas {
     private static Map<String, Object> string(String description) {
         Map<String, Object> schema = new LinkedHashMap<>();
         schema.put("type", "string");
+        schema.put("description", description);
+        return schema;
+    }
+
+    /**
+     * A string the model may decline to fill in.
+     *
+     * <p>Required-and-nullable, never optional: strict decoding on the OpenAI-compatible path
+     * refuses a schema whose {@code required} omits a declared property, and that refusal arrives
+     * as the 400 the per-model latch reads as "this model does not implement response_format".
+     * Marking every field required and forcing a value is what made the schema compel a small model
+     * to invent a probable cause and a SQL statement for every anomaly — in the two fields an
+     * operator is most likely to copy.
+     */
+    private static Map<String, Object> nullableString(String description) {
+        Map<String, Object> schema = new LinkedHashMap<>();
+        schema.put("type", List.of("string", "null"));
         schema.put("description", description);
         return schema;
     }

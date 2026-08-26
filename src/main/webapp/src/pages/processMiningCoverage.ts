@@ -26,7 +26,7 @@ export interface CoverageSummary {
   headline: string;
   /** Ce qui manque, nommé. Vide quand tout ce qui a été demandé a été analysé. */
   notes: string[];
-  /** Topics lus mais absents du prompt : ils n'ont pas pu peser sur la réponse. */
+  /** Topics lus qui n'ont pesé sur la réponse sous aucune forme — ni mesurés, ni détaillés. */
   omitted: string[];
   /** Topics dont aucune partition n'a été décrite : un nom qui ne désigne rien ici. */
   unreadable: string[];
@@ -41,11 +41,32 @@ const list = (topics: string[], max = 4): string =>
     ? topics.join(', ')
     : `${topics.slice(0, max).join(', ')} +${topics.length - max}`;
 
-/** Topics lus mais dont aucun message n'a été inliné : le budget de prompt les a écartés. */
+/**
+ * Topics lus qui n'ont atteint le modèle sous aucune forme.
+ *
+ * « Aucune forme » et non « pas inliné » : le prompt s'ouvre désormais sur un processus mesuré sur
+ * *tous* les enregistrements lus, et n'inline qu'une poignée de traces témoins. Un topic mesuré mais
+ * dont aucun cas témoin ne traverse le chemin pèse pleinement sur la réponse — le compter comme
+ * écarté annonçait un effondrement de périmètre là où il n'y en avait aucun.
+ *
+ * La règle est la même pour les deux chemins : sur celui sans log d'événements `messagesMeasured`
+ * vaut toujours zéro, donc elle se réduit exactement à ce qu'elle était.
+ */
 export function omittedTopics(topics: TopicCoverage[]): string[] {
   return topics
-    .filter(t => t.readable && t.messagesRead > 0 && t.messagesAnalysed === 0)
+    .filter(t => t.readable && t.messagesRead > 0
+      && t.messagesMeasured === 0 && t.messagesDetailed === 0)
     .map(t => t.topic);
+}
+
+/**
+ * Le processus a-t-il pu être mesuré ? Lu sur le total, jamais sur une ligne : un topic dont aucun
+ * enregistrement ne portait l'id de corrélation a bien `messagesMeasured` à zéro alors que le log
+ * d'événements existe. C'est un dérivé exact du chemin pris côté serveur, donc pas un drapeau de
+ * plus à tenir en accord avec celui-ci.
+ */
+export function isMeasuredRun(coverage: ProcessMiningCoverage): boolean {
+  return coverage.messagesMeasured > 0;
 }
 
 export function unreadableTopics(topics: TopicCoverage[]): string[] {
@@ -68,13 +89,26 @@ export function describeCoverage(coverage: ProcessMiningCoverage | null | undefi
   const omitted = omittedTopics(topics);
   const unreadable = unreadableTopics(topics);
   const empty = emptyTopics(topics);
-  const analysedTopics = topics.filter(t => t.messagesAnalysed > 0).length;
+  const measuredRun = isMeasuredRun(coverage);
+  // Un topic « contribue » s'il a été mesuré ou détaillé. Compter les seuls détaillés faisait
+  // basculer au ton d'échec une exécution parfaitement mesurée dont les exemples tenaient dans un
+  // seul topic — l'ordinaire sur un pipeline homogène.
+  const contributingTopics = topics.filter(
+    t => t.messagesMeasured > 0 || t.messagesDetailed > 0).length;
 
   const headline = topics.length === 0
     ? `${coverage.messagesRead.toLocaleString()} ${plural(coverage.messagesRead, 'message')} read`
-    : `${analysedTopics}/${topics.length} ${plural(topics.length, 'topic')} analysed · `
-      + `${coverage.messagesAnalysed.toLocaleString()} of ${coverage.messagesRead.toLocaleString()} `
-      + `${plural(coverage.messagesRead, 'message')} read reached the model`;
+    : measuredRun
+      ? `${contributingTopics}/${topics.length} ${plural(topics.length, 'topic')} measured · `
+        + `${coverage.messagesMeasured.toLocaleString()} of `
+        + `${coverage.messagesRead.toLocaleString()} `
+        + `${plural(coverage.messagesRead, 'message')} read entered the measured process · `
+        + `${coverage.messagesDetailed.toLocaleString()} shown as worked `
+        + `${plural(coverage.messagesDetailed, 'example')}`
+      : `${contributingTopics}/${topics.length} ${plural(topics.length, 'topic')} analysed · `
+        + `${coverage.messagesDetailed.toLocaleString()} of `
+        + `${coverage.messagesRead.toLocaleString()} `
+        + `${plural(coverage.messagesRead, 'message')} read reached the model`;
 
   const notes: string[] = [];
 
@@ -92,7 +126,16 @@ export function describeCoverage(coverage: ProcessMiningCoverage | null | undefi
       + `(${list(empty)}). The analysis says nothing about ${empty.length === 1 ? 'it' : 'them'} `
       + `because nothing was shown of ${empty.length === 1 ? 'it' : 'them'}.`);
   }
-  if (omitted.length > 0) {
+  // Deux causes, deux phrases. Le budget n'est la bonne que sur le chemin sans log d'événements :
+  // là où le processus est mesuré, un topic qui n'a rien apporté est un topic dont aucun
+  // enregistrement ne portait l'id de corrélation, et augmenter le budget n'y changerait rien.
+  if (omitted.length > 0 && measuredRun) {
+    notes.push(`${omitted.length} ${plural(omitted.length, 'topic')} were read but no record of `
+      + `theirs carried the mapped correlation id (${list(omitted)}), so `
+      + `${omitted.length === 1 ? 'it is' : 'they are'} outside the measured process — check the `
+      + `field mapping for ${omitted.length === 1 ? 'it' : 'them'}.`);
+  }
+  if (omitted.length > 0 && !measuredRun) {
     notes.push(`${omitted.length} ${plural(omitted.length, 'topic')} were read but did not fit the `
       + `prompt budget (${list(omitted)}) — raise process-mining.prompt-char-budget, or analyse `
       + `fewer topics at once.`);
@@ -107,7 +150,7 @@ export function describeCoverage(coverage: ProcessMiningCoverage | null | undefi
     notes.push(warning);
   }
 
-  const tone: CoverageTone = coverage.readError || (topics.length > 0 && analysedTopics === 0)
+  const tone: CoverageTone = coverage.readError || (topics.length > 0 && contributingTopics === 0)
     ? 'failed'
     : notes.length > 0 ? 'partial' : 'complete';
 

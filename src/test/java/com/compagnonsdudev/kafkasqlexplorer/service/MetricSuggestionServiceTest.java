@@ -19,6 +19,7 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.MetricSuggestionSource;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricSuggestions;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricTemplateType;
 import com.compagnonsdudev.kafkasqlexplorer.domain.PartitionLag;
+import com.compagnonsdudev.kafkasqlexplorer.domain.ProcessModelEvidence;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicAudit;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicConsumers;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicIssue;
@@ -322,6 +323,155 @@ class MetricSuggestionServiceTest {
         assertEquals(1, latencyCards, "one hop, one card: " + result.suggestions());
         assertEquals(MetricSuggestionSource.AUDIT,
             find(result, "audit:hop-latency:demo.orders.in>demo.orders.out").source());
+    }
+
+    // ── Measured-process-derived ─────────────────────────────────────────────
+
+    /*
+     * Le point de toute cette famille : jusqu'ici, un KPI de latence reposait soit sur une moyenne
+     * calculée par l'audit sur un flux reconstruit à partir des noms de topics, soit sur une clé
+     * unique tracée à la main. Un graphe de successions porte une distribution.
+     */
+    @Test
+    void aMeasuredTransitionCarriesThresholdsTakenFromItsOwnDistribution() {
+        MetricSuggestions result = service.suggest(
+            new MetricSuggestionRequest(List.of(), null, measuredProcess()));
+
+        MetricSuggestion hop = find(result, "pm:hop-latency:orders.received>orders.enriched");
+        assertEquals(MetricSuggestionSource.PROCESS_MINING, hop.source());
+        assertEquals(9_000.0, hop.metric().warningThreshold(), "2× the measured p95");
+        assertEquals(18_000.0, hop.metric().criticalThreshold(), "4× the measured p95");
+        assertTrue(hop.thresholdBasis().contains("95th percentile of 120 cases"),
+            hop.thresholdBasis());
+        assertTrue(hop.evidence().get(0).contains("120 case(s)"), hop.evidence().toString());
+        assertTrue(hop.evidence().get(0).contains("not over a sample"), hop.evidence().toString());
+    }
+
+    /*
+     * Avec moins de vingt observations, le 95e centile *est* le maximum — c'est de l'arithmétique,
+     * pas un avis. Le chiffre reste le même ; ce qui ne doit pas rester, c'est de l'appeler p95.
+     */
+    @Test
+    void belowTwentyObservationsTheFigureIsNotCalledAPercentile() {
+        ProcessModelEvidence measured = new ProcessModelEvidence(
+            1_700_000_000_000L, 9, 0L, 60_000L, "MAPPED_FIELD",
+            List.of(new ProcessModelEvidence.MeasuredTransition(
+                "orders.received", "orders.enriched", 9, 9, 500L, 2_000L, 2_000L)),
+            List.of());
+
+        MetricSuggestion hop = find(service.suggest(new MetricSuggestionRequest(List.of(), null, measured)),
+            "pm:hop-latency:orders.received>orders.enriched");
+
+        assertFalse(hop.thresholdBasis().contains("percentile of"), hop.thresholdBasis());
+        assertTrue(hop.thresholdBasis().contains("worst of the 9 case(s)"), hop.thresholdBasis());
+        // Le seuil est bien dérivé quand même : ce qui change est le nom du chiffre, pas son usage.
+        assertEquals(4_000.0, hop.metric().warningThreshold());
+    }
+
+    /*
+     * Le renversement de préséance, énoncé plutôt que subi : l'audit gagnait sur tout le monde
+     * parce qu'il était construit en premier. Une distribution sur 120 cas est une meilleure
+     * preuve qu'une moyenne sur un flux déduit des noms de topics.
+     */
+    @Test
+    void theMeasuredProcessWinsOverTheAuditOnTheSameHop() {
+        when(auditService.getLastAuditReport()).thenReturn(reportWithFlow());
+        ProcessModelEvidence measured = new ProcessModelEvidence(
+            1_700_000_000_000L, 120, 0L, 3_600_000L, "MAPPED_FIELD",
+            List.of(new ProcessModelEvidence.MeasuredTransition(
+                "demo.orders.in", "demo.orders.out", 300, 120, 900L, 4_500L, 41_000L)),
+            List.of());
+
+        MetricSuggestions result = service.suggest(
+            new MetricSuggestionRequest(List.of(), null, measured));
+
+        long latencyCards = result.suggestions().stream()
+            .filter(s -> s.id().contains("hop-latency:demo.orders.in>demo.orders.out"))
+            .count();
+        assertEquals(1, latencyCards, "one hop, one card: " + result.suggestions());
+        assertEquals(MetricSuggestionSource.PROCESS_MINING,
+            find(result, "pm:hop-latency:demo.orders.in>demo.orders.out").source());
+    }
+
+    /*
+     * Une transition entre deux statuts d'un même topic est une vraie latence et n'a pas de paire à
+     * corréler : le template compare deux topics, et le pointer sur un seul comparerait un topic
+     * avec lui-même. Compté dans une note, jamais transformé en requête.
+     */
+    @Test
+    void aTransitionInsideOneTopicIsCountedInANoteRatherThanComparedWithItself() {
+        ProcessModelEvidence measured = new ProcessModelEvidence(
+            1_700_000_000_000L, 40, 0L, 60_000L, "MAPPED_FIELD",
+            List.of(new ProcessModelEvidence.MeasuredTransition(
+                "orders.events \u00b7 RECEIVED", "orders.events \u00b7 SHIPPED",
+                40, 40, 500L, 2_000L, 3_000L)),
+            List.of());
+
+        MetricSuggestions result = service.suggest(
+            new MetricSuggestionRequest(List.of(), null, measured));
+
+        assertTrue(result.suggestions().stream().noneMatch(s -> s.id().startsWith("pm:hop-latency:")),
+            result.suggestions().toString());
+        assertTrue(result.notes().stream().anyMatch(n -> n.contains("stay inside one topic")),
+            result.notes().toString());
+    }
+
+    /*
+     * La carte de reprise est la seule de ce fichier proposée *sans* seuil, et c'est délibéré : la
+     * mesure compte des cas repassés par une étape dans la fenêtre, la requête compte des clés
+     * partagées sur un scan borné. Un seuil pris sur l'une pour l'autre aurait l'air dérivé.
+     */
+    @Test
+    void aRepeatedStepBecomesAReworkKpiWithNoThreshold() {
+        MetricSuggestion rework = find(
+            service.suggest(new MetricSuggestionRequest(List.of(), null, measuredProcess())),
+            "pm:duplicates:orders.received");
+
+        assertNull(rework.thresholdBasis());
+        assertNull(rework.metric().warningThreshold());
+        assertNull(rework.metric().criticalThreshold());
+        assertTrue(rework.evidence().get(0).contains("7 case(s) visit"), rework.evidence().toString());
+        assertTrue(rework.caveats().stream().anyMatch(c -> c.contains("not the same number")),
+            rework.caveats().toString());
+    }
+
+    /* « Rien n'a été mesuré » et « la mesure ne suggère rien » sont deux états différents. */
+    @Test
+    void noMeasuredProcessSaysWhatWouldUnlockThoseKpis() {
+        MetricSuggestions result = service.suggest(null);
+
+        assertFalse(result.processMeasured());
+        assertTrue(result.notes().stream().anyMatch(n -> n.contains("No measured process")),
+            result.notes().toString());
+        assertTrue(service.suggest(new MetricSuggestionRequest(List.of(), null, measuredProcess()))
+            .processMeasured());
+    }
+
+    /*
+     * À énoncer, jamais à supposer : une latence mesurée sur l'horloge du broker est une autre
+     * mesure que la même latence sur l'horodatage métier.
+     */
+    @Test
+    void aLogOrderedByTheBrokersClockSaysSoOnTheCard() {
+        ProcessModelEvidence measured = new ProcessModelEvidence(
+            1_700_000_000_000L, 30, 0L, 60_000L, "RECORD_TIMESTAMP",
+            List.of(new ProcessModelEvidence.MeasuredTransition(
+                "orders.received", "orders.enriched", 30, 30, 500L, 2_000L, 3_000L)),
+            List.of());
+
+        MetricSuggestion hop = find(service.suggest(new MetricSuggestionRequest(List.of(), null, measured)),
+            "pm:hop-latency:orders.received>orders.enriched");
+
+        assertTrue(hop.evidence().stream().anyMatch(e -> e.contains("transport delay")),
+            hop.evidence().toString());
+    }
+
+    private static ProcessModelEvidence measuredProcess() {
+        return new ProcessModelEvidence(
+            1_700_000_000_000L, 120, 1_700_000_000_000L, 1_700_000_060_000L, "MAPPED_FIELD",
+            List.of(new ProcessModelEvidence.MeasuredTransition(
+                "orders.received", "orders.enriched", 300, 120, 900L, 4_500L, 41_000L)),
+            List.of(new ProcessModelEvidence.MeasuredRepeat("orders.received", 7, 3)));
     }
 
     // ── Lineage-derived ──────────────────────────────────────────────────────

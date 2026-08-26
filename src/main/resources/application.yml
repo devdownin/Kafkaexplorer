@@ -233,6 +233,22 @@ process-mining:
   # on a default install). Raise the window (`OLLAMA_CONTEXT_LENGTH`, llama.cpp's `-c`) or lower
   # this budget so the two agree — the bundled stacks set both together and say so.
   prompt-char-budget: 120000
+  # What the analysis prompt inlines per message, as opposed to what the digest carries.
+  # `max-sample-fields` above is 40 because field profiling aggregates those values per path
+  # across a whole topic and needs the breadth; inlining forty *per message* at up to
+  # `max-value-chars` each is what let one record take several kilobytes of a topic's share —
+  # on values that are, by definition, the ones the mapping did NOT name. A handful keeps a
+  # record recognisable, and the structure is already described once in the shapes section.
+  max-sample-fields-in-prompt: 6
+  # The measured process (ProcessModelBuilder): the event log's aggregate is computed over every
+  # record read and sent instead of a per-topic sample of messages, so sequences, latencies and
+  # incomplete flows are counted rather than inferred. These bound what of it is reported.
+  max-trace-cases-in-prompt: 12         # whole case traces inlined as worked examples
+  max-variants-in-prompt: 12            # distinct paths, taken from both ends of the distribution
+  max-edges-in-prompt: 40               # directly-follows transitions (and activities) listed
+  # Past this many distinct values a mapped status is not the closed set a status is, so it stops
+  # refining the activity and the topic becomes one node again — the model is told when it happens.
+  max-status-activities: 25
 
 management:
   endpoints:
