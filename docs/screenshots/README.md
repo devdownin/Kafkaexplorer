@@ -43,10 +43,25 @@ interactive targets fall below the 24 x 24 CSS px of WCAG 2.5.8, and — on the 
 the question is sharpest — the width actually left to the Monaco editor.
 
 ```bash
-node layout-probe.mjs http://127.0.0.1:4173            # eight pages x three viewports
+node layout-probe.mjs http://127.0.0.1:4173            # eight pages, four opened states, three viewports
 node layout-probe.mjs http://127.0.0.1:4173 --sweep    # editor width against viewport width
 node layout-probe.mjs http://127.0.0.1:4173 --check    # what CI gates on; non-zero on a regression
 ```
+
+**It opens things, and that is not a detail.** For a long time it photographed eight pages at
+rest, and two truncation defects were reported by hand from surfaces no URL brings up: a
+confirmation card whose text ran past its own border, and a suggestion list whose options carried
+their full value nowhere. The `unreachable` column names exactly that class — it was not looking
+there. The states are declared in `STATES` beside the pages, reported as `metrics·editor` or
+`sql-editor·confirm`, and gated by `--check` like any page, so a state that stops opening at a
+width it declares is a failure rather than a silence.
+
+Two decisions are worth knowing before adding one. A state is measured **on the page already
+loaded**, since a gesture costs a few hundred milliseconds where a navigation costs two to four
+thousand — the four of them add ~8 s to a 52 s `--check`, which is what makes them affordable at
+all. And a state has to be able to *report* something: an opened topic list was written, measured,
+and removed on that rule, because the demo catalogue's names do not truncate at any width the
+probe walks, and lengthening one would mean inventing data `setup-demo.sh` does not seed.
 
 `--check` is W6: it asserts that no page scrolls sideways, and that no page carries more
 sub-24px targets than the budget recorded beside `TARGET_BUDGET`. It walks **phone and desktop
