@@ -80,6 +80,8 @@ public class LlmAnalysisService {
         Messages arrive as bounded digests (structure + selected values), never as raw payloads:
         reason about flows and shapes, and treat missing values as unobserved, not absent.
         Return ONLY valid JSON (camelCase). NO markdown, NO prose outside JSON.
+        probableCause and sqlSuggestion may be null: say nothing rather than inventing one.
+        sqlSuggestion is Flink SQL (SELECT / EXPLAIN / CREATE TABLE) — never ksqlDB.
 
         JSON structure:
         {
@@ -95,8 +97,8 @@ public class LlmAnalysisService {
               "severity": "CRITICAL|MAJOR|MINOR",
               "fields": ["$.field"],
               "description": "...",
-              "probableCause": "...",
-              "ksqlSuggestion": "CREATE STREAM ..."
+              "probableCause": "... or null",
+              "sqlSuggestion": "SELECT ... FROM ... WHERE ...  (Flink SQL, or null)"
             }
           ]
         }

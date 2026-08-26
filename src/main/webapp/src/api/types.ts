@@ -641,8 +641,10 @@ export interface AnomalyReport {
   severity: 'CRITICAL' | 'MAJOR' | 'MINOR';
   fields: string[];
   description: string;
-  probableCause: string;
-  ksqlSuggestion: string;
+  /** Peut être null, même raison. */
+  probableCause: string | null;
+  /** Peut être null : le modèle n'a pas à inventer une requête faute d'en avoir une. */
+  sqlSuggestion: string | null;
 }
 
 /**

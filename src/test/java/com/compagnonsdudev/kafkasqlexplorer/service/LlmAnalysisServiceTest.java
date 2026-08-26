@@ -326,7 +326,7 @@ class LlmAnalysisServiceTest {
               "blindSpots": [],
               "anomalies": [
                 {"id": "ANO-001", "topic": "topic1", "type": "SEQUENCE", "severity": "MINOR",
-                 "fields": [], "description": "d", "probableCause": "c", "ksqlSuggestion": "s",
+                 "fields": [], "description": "d", "probableCause": "c", "sqlSuggestion": "s",
                  "confidence": 0.8}
               ]
             }
