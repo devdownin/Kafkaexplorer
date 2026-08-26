@@ -196,6 +196,14 @@ export const Combobox: FC<ComboboxProps> = ({
               // pointerdown, pas click : le blur de l'input refermerait la liste avant le clic.
               onPointerDown={e => { e.preventDefault(); commit(option); }}
               onMouseEnter={() => setActive(index)}
+              // La liste est aussi large que le champ et tronque : sans ceci, un nom de topic
+              // un peu long n'est lisible nulle part — l'éditeur de métrique la rend dans un
+              // volet de 288 px, et c'est là qu'on choisit le topic de la métrique. C'est la
+              // convention des autres listes de topics (`DataModel`), et le seul usage de
+              // `title` que ce dépôt garde : révéler une valeur tronquée, jamais expliquer.
+              // Élargir la liste ne servirait à rien ici, le volet défile verticalement, donc
+              // il rogne aussi ce qui dépasse à droite.
+              title={option}
               className={cn(
                 'px-3 py-1.5 text-[12px] font-mono cursor-pointer truncate',
                 index === active ? 'bg-primary/15 text-on-surface' : 'text-on-surface-variant',
