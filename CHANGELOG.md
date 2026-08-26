@@ -11,6 +11,39 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **The compose tree went from sixteen files to twelve, and from five ways of starting the app
+  to one.** `docker-compose.yml`, `-kafka4`, `-llm`, `-spectra` and `.release` were all *base*
+  files, each carrying its own copy of the explorer service, and being separate bases cost more
+  than duplication: Schema Registry and Ollama **could never run together**, because two bases
+  cannot be layered. There is now one base at the repository root and everything else in
+  `compose/`, as overlays that combine freely.
+  - `docker-compose-kafka4.yml` → `compose/schema-registry.yml`. The old name advertised a
+    choice that had stopped existing — every stack here runs Kafka 4.3 in KRaft, the base file
+    included — on the stack the README recommends. What it adds is a Schema Registry.
+  - `docker-compose-llm.yml` → `compose/ollama.yml`; `docker-compose.release.yml` →
+    `compose/image.yml`, which now *pulls* the published image rather than rebuilding it
+    locally from a downloaded JAR. That image is already published for both architectures,
+    keylessly signed, with an SBOM and SLSA provenance, so `update.ps1` pulls it too.
+  - `docker-compose-spectra.yml` is **deleted**; `compose/spectra-hub.yml` is the SpectraLLM
+    stack. The deleted one needed a sibling SpectraLLM checkout, a Maven build and an npm
+    build, and was the only file in the tree whose syntax CI could not resolve without
+    fabricating a stub of somebody else's repository.
+  - `docker-compose-spectra-hub.small.yml` is **deleted** in favour of four `.env` lines: every
+    value it set already had an interpolated default in the stack file, so it expressed nothing
+    a variable could not.
+  - `compose/dev.yml` was the last verbatim copy of the broker — sixty lines of KRaft settings
+    duplicated so that one thing could differ, the name of the data volume. It `extends:` the
+    base now, with `volumes: !override` replacing the mount, and keeps its existing volume.
+  - `docker compose config` is **unchanged** for every stack, with one deliberate exception:
+    the explorer no longer waits on `schema-registry: service_healthy`, which contradicted the
+    rule that the app depends on the broker and nothing else.
+  - `docs/check-image-pins.py` now asserts the Explorer pin is the **same** in every file that
+    carries it (two do), and `docs/check-doc-paths.py` gains a `RETIRED` list for a path the
+    tree deliberately no longer has — it expires both when nothing cites it and when the file
+    comes back, where `NOT_A_PATH` would have called a deleted file "not a path".
+
 ### Fixed
 
 - **A Process Mining snapshot read no longer returns a random subset of the topics it was asked

@@ -15,12 +15,12 @@ Three checks, all offline, all on facts already in the repository.
    `curlimages/curl:latest` sat two services below it. A claim about pinning is exactly the
    kind that decays unread.
 
-2. **The llama.cpp CPU and CUDA images are the same build.** `docker-compose-spectra-hub.gpu.yml`
+2. **The llama.cpp CPU and CUDA images are the same build.** `compose/spectra-hub.gpu.yml`
    swaps `server-bNNNN` for `server-cuda-bNNNN`; if the two build numbers drift apart, turning
    on the GPU overlay quietly changes the inference engine's revision underneath a stack that
    pins everything else — which is the whole reason that tag is pinned at all.
 
-3. **The Explorer pin names an image that can exist.** `EXPLORER_IMAGE_TAG`'s default is
+3. **The Explorer pin names an image that can exist, and says the same thing everywhere.** `EXPLORER_IMAGE_TAG`'s default is
    written by hand, and Dependabot cannot read a `${VAR:-1.8.8}` form, so nothing moves it on
    its own. Offline, all that can be decided is that the pin is not *ahead* of the newest `v*`
    git tag — an image nobody has published yet.
@@ -73,8 +73,17 @@ def expand(ref: str) -> str:
 
 
 def image_refs() -> list[tuple[pathlib.Path, str, str]]:
+    """Every image reference in the compose tree: the canonical base at the root, plus every stack and overlay under `compose/`.
+
+    This was a single `ROOT.glob("docker-compose*.yml")`, which was right while sixteen
+    compose files sat at the repository root. The tree is now one base file there and the
+    rest in `compose/`, and that glob would have gone on passing while checking exactly one
+    file — a check that quietly stops covering things is the failure mode this script
+    exists to prevent, so the move had to be made here in the same change.
+    """
+    files = [ROOT / "docker-compose.yml", *sorted((ROOT / "compose").glob("*.yml"))]
     found = []
-    for path in sorted(ROOT.glob("docker-compose*.yml")):
+    for path in files:
         for raw in IMAGE_LINE.findall(path.read_text(encoding="utf-8")):
             found.append((path, raw, expand(raw)))
     return found
@@ -179,12 +188,27 @@ def main() -> int:
             + " — the GPU overlay must not change the engine's revision"
         )
 
-    # 3. The Explorer pin must not name an image nobody has published (offline).
-    pinned = None
-    for _, raw, resolved in refs:
-        if "kafkaexplorer" in resolved:
-            pinned = tag_of(resolved)
-            break
+    # 3. The Explorer pin must not name an image nobody has published (offline), and every
+    #    file that carries it must carry the SAME one. Two files do now — `compose/image.yml`
+    #    (run the stack from the published image instead of building it) and
+    #    `compose/spectra-hub.yml` — where there used to be one, and a hand-written version
+    #    duplicated across two files with nothing comparing them is precisely the drift the
+    #    release workflow's bump pull request exists to prevent. It bumps every occurrence;
+    #    this asserts that it did, so a half-applied bump fails here rather than pairing an
+    #    old Explorer with a current everything-else on whichever stack was missed.
+    explorer_pins: dict[str, set[str]] = {}
+    for path, _, resolved in refs:
+        if "kafkaexplorer" in resolved and resolved not in LOCAL_ONLY:
+            explorer_pins.setdefault(tag_of(resolved) or "", set()).add(
+                str(path.relative_to(ROOT)))
+    pinned = min(explorer_pins) if explorer_pins else None
+    if len(explorer_pins) > 1:
+        listed = ", ".join(f"{tag} ({', '.join(sorted(files))})"
+                           for tag, files in sorted(explorer_pins.items()))
+        problems.append(
+            "the Explorer image is pinned to different versions in different files: "
+            + listed + " — EXPLORER_IMAGE_TAG's default must be one value across the tree"
+        )
     release = newest_release()
     if pinned is None:
         problems.append("no compose file pulls a kafkaexplorer image — has it been renamed?")
@@ -195,7 +219,7 @@ def main() -> int:
         )
     elif version_of(pinned) and version_of(pinned) > version_of(release):
         problems.append(
-            f"the hub stack pulls kafkaexplorer:{pinned}, which is ahead of the newest release "
+            f"the stacks pull kafkaexplorer:{pinned}, which is ahead of the newest release "
             f"v{release} — no such image has been published"
         )
 
@@ -207,9 +231,9 @@ def main() -> int:
                   f"the Explorer pin (kafkaexplorer:{pinned}) was not checked for staleness")
         elif version_of(pinned) and version_of(newest) > version_of(pinned):
             problems.append(
-                f"the hub stack pulls kafkaexplorer:{pinned} while Docker Hub serves "
+                f"the stacks pull kafkaexplorer:{pinned} while Docker Hub serves "
                 f"{newest} — bump EXPLORER_IMAGE_TAG's default in "
-                "docker-compose-spectra-hub.yml (and in .env.example)"
+                "compose/spectra-hub.yml, compose/image.yml and .env.example"
             )
         else:
             print(f"Docker Hub serves kafkaexplorer:{newest}; the pin is current.")

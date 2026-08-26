@@ -8,8 +8,8 @@ REM   build.bat            -> full build (frontend + backend), runs tests
 REM   build.bat skiptests   -> full build, skips backend tests
 REM
 REM Requires a JDK 25, Maven and Node.js on the machine. If you would rather not
-REM install them, docker-compose-build.yml runs the same build in containers:
-REM   docker compose -f docker-compose-build.yml run --rm package
+REM install them, compose/build.yml runs the same build in containers:
+REM   docker compose -f compose/build.yml run --rm package
 REM ============================================================
 
 set "ROOT_DIR=%~dp0"
@@ -41,10 +41,10 @@ if not "!MISSING!"=="" (
     echo.
     echo You do not have to install them. Docker alone can build this project:
     echo.
-    echo    docker compose -f docker-compose-build.yml run --rm package
+    echo    docker compose -f compose/build.yml run --rm package
     echo        builds the JAR into .\target
     echo.
-    echo    docker compose -f docker-compose-build.yml run --rm verify
+    echo    docker compose -f compose/build.yml run --rm verify
     echo        runs the full gate: Java tests, frontend ESLint and Vitest
     echo.
     echo Otherwise install what is listed above and run this script again.

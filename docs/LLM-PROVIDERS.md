@@ -226,7 +226,7 @@ claude:
 
 A one-command stack with Ollama pre-wired is available:
 ```bash
-docker compose -f docker-compose-llm.yml up -d
+docker compose -f docker-compose.yml -f compose/ollama.yml up -d
 ```
 
 Going further on this option — which engine, which model at which quantisation, how small models
@@ -281,8 +281,8 @@ SpectraLLM checkout, no Maven, no npm. It does need **this** repository, whose d
 three service entrypoints the stack mounts:
 
 ```bash
-docker compose -f docker-compose-spectra-hub.yml pull
-docker compose -f docker-compose-spectra-hub.yml up -d
+docker compose -f compose/spectra-hub.yml pull
+docker compose -f compose/spectra-hub.yml up -d
 ```
 
 Explorer UI → http://localhost:8080 · SpectraLLM UI → http://localhost:8088 · SpectraLLM API →
@@ -290,30 +290,39 @@ http://localhost:8081. The first boot downloads ~4.8 GB of model weights in the 
 **nothing waits for it**, so both interfaces answer in seconds and Process Mining starts working
 once the weights land. Plan for ~16 GB of RAM.
 
-Four overlays sit beside it, each layered onto that file:
+Three overlays sit beside it, each layered onto that file:
 
 | Overlay | What it changes |
 |---|---|
-| [`…gpu.yml`](../docker-compose-spectra-hub.gpu.yml) | Both llama.cpp servers on CUDA — minutes per analysis become seconds. |
-| [`…small.yml`](../docker-compose-spectra-hub.small.yml) | A 3B chat model instead of the 7B: ~2 GB, half the memory, far faster. |
-| [`…limits.yml`](../docker-compose-spectra-hub.limits.yml) | Memory limits on the seven long-running services. The four it leaves out are one-shots that exit. |
-| [`…ingest.yml`](../docker-compose-spectra-hub.ingest.yml) | SpectraLLM indexes the topics themselves, so the corpus answers questions about what is *in* your messages — and `CLAUDE_USE_RAG=true` lets the audits read it. |
+| [`…gpu.yml`](../compose/spectra-hub.gpu.yml) | Both llama.cpp servers on CUDA — minutes per analysis become seconds. |
+| [`…limits.yml`](../compose/spectra-hub.limits.yml) | Memory limits on the seven long-running services. The four it leaves out are one-shots that exit. |
+| [`…ingest.yml`](../compose/spectra-hub.ingest.yml) | SpectraLLM indexes the topics themselves, so the corpus answers questions about what is *in* your messages — and `CLAUDE_USE_RAG=true` lets the audits read it. |
+
+**A 3B chat model instead of the 7B** — ~2 GB of weights rather than 4.7, half the memory and an
+answer in a fraction of the time — used to be a fourth overlay and is now four lines of `.env`.
+That is all it ever was: every value it set already had an interpolated default in the stack
+file, so the overlay expressed nothing a variable could not. The four have to be set together.
+
+```dotenv
+LLM_CHAT_MODEL_NAME=qwen2.5-3b-instruct
+LLM_CHAT_MODEL_FILE=Qwen2.5-3B-Instruct-Q4_K_M.gguf
+SPECTRA_CHAT_MODEL_URL=https://huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF/resolve/main/Qwen2.5-3B-Instruct-Q4_K_M.gguf
+SPECTRA_AUTO_INSTALL_MODELS=false
+```
 
 **Do not set `SPECTRA_API_KEY` on that stack**: SpectraLLM's filter reads `X-API-Key` while this
 application sends `Authorization: Bearer`, so a key there leaves everything looking healthy while
 every Process Mining call answers 401. Neither application authenticates — keep the ports on the
 loopback (`BIND_ADDR`, the default) or put something authenticating in front.
 
-**The developer variant** builds the Explorer from source and follows a SpectraLLM checkout
-beside this repository, profiles included:
-```bash
-# SpectraLLM checked out next to this repo; download its models once:
-#   cd ../SpectraLLM && ./scripts/start.sh --first-run
-docker compose -f docker-compose-spectra.yml up -d --build
-```
-Explorer UI → http://localhost:8090 · SpectraLLM UI → http://localhost. Point at a SpectraLLM
-elsewhere with `SPECTRALLM_DIR=/path/to/SpectraLLM`. See the header of
-[`docker-compose-spectra.yml`](../docker-compose-spectra.yml) for details.
+**There used to be a second, developer variant** (`docker-compose-spectra.yml`) that built the
+Explorer from source and `include:`d SpectraLLM's own compose from a checkout beside this
+repository. It is gone. Running it required that checkout on disk, a Maven build and an npm
+build, and it was the only file in the tree whose syntax CI could not check without fabricating
+a stub of somebody else's project — while the stack above is the one CI actually boots end to
+end. If you are developing SpectraLLM itself, point the pins at the image you just built rather
+than at a second stack: `SPECTRA_IMAGE_TAG` and `EXPLORER_IMAGE_TAG` are already how every image
+here is chosen.
 
 ## Recommended Lightweight Models
 - **Qwen 2.5-Coder 7B**: Best for JSON extraction and logic.

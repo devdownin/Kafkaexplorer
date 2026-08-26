@@ -65,7 +65,7 @@ public class ClaudeConfig {
      * leave the host, and both the Settings banner and the Process Mining page read that off the
      * resolved address (see {@link #isLocalDeployment()}) rather than off this constant. A
      * deployment that must keep everything in-house sets {@code claude.provider} to {@code OLLAMA}
-     * or {@code SPECTRA} — {@code docker-compose-llm.yml} and the SpectraLLM stacks name their
+     * or {@code SPECTRA} — {@code compose/ollama.yml} and the SpectraLLM stacks name their
      * provider explicitly and are untouched by this.
      */
     private Provider provider = Provider.OPENROUTER;

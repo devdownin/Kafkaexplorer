@@ -94,7 +94,7 @@ window, plus duplicates and poison records for the audit to find.
 Process Mining can be answered by [SpectraLLM](https://hub.docker.com/r/compagnonsdudev/spectrallm)
 — a local RAG stack published under this same namespace — so the flowcharts and the anomaly
 hunt run on your machine, with no API key and nothing leaving your network.
-[`docker-compose-spectra-hub.yml`](https://github.com/devdownin/Kafkaexplorer/blob/main/docker-compose-spectra-hub.yml)
+[`compose/spectra-hub.yml`](https://github.com/devdownin/Kafkaexplorer/blob/main/compose/spectra-hub.yml)
 wires the pair from published images only — **no Maven, no npm, no SpectraLLM checkout, and
 nothing built**. It does need this repository, for the demo seeder and the three entrypoints it
 mounts:
@@ -102,19 +102,19 @@ mounts:
 ```bash
 git clone --depth 1 https://github.com/devdownin/Kafkaexplorer.git
 cd Kafkaexplorer
-docker compose -f docker-compose-spectra-hub.yml pull
-docker compose -f docker-compose-spectra-hub.yml up -d
+docker compose -f compose/spectra-hub.yml pull
+docker compose -f compose/spectra-hub.yml up -d
 ```
 
 Kafka Explorer on **http://localhost:8080**, the SpectraLLM UI on **http://localhost:8088**.
 The first boot downloads ~4.8 GB of model weights in the background — nothing waits for it,
 so both interfaces are up in seconds and Process Mining starts answering once the weights
 land. Plan for ~16 GB of RAM; a GPU turns minutes per analysis into seconds, through the
-[`.gpu.yml` overlay](https://github.com/devdownin/Kafkaexplorer/blob/main/docker-compose-spectra-hub.gpu.yml)
+[`.gpu.yml` overlay](https://github.com/devdownin/Kafkaexplorer/blob/main/compose/spectra-hub.gpu.yml)
 next to it.
 
 One overlay goes further than sharing a model:
-[`.ingest.yml`](https://github.com/devdownin/Kafkaexplorer/blob/main/docker-compose-spectra-hub.ingest.yml)
+[`.ingest.yml`](https://github.com/devdownin/Kafkaexplorer/blob/main/compose/spectra-hub.ingest.yml)
 has SpectraLLM index the topics themselves, so the corpus answers questions about what is
 *in* your messages, with cited sources — and the Explorer's own audits can read it. Every
 variable is documented in
@@ -284,7 +284,7 @@ budget above is roughly 30 000 tokens. Ollama does not refuse the excess — it 
 messages until the prompt fits, and logs that at debug level. The analysis then reasons on a
 fraction of what it was given, with nothing saying which fraction. Raise the window
 (`OLLAMA_CONTEXT_LENGTH` on the Ollama server, `-c` on llama.cpp) or lower the budget so the
-two agree; the [bundled stacks](https://github.com/devdownin/Kafkaexplorer/blob/main/docker-compose-llm.yml)
+two agree; the [bundled stacks](https://github.com/devdownin/Kafkaexplorer/blob/main/compose/ollama.yml)
 set both together.
 
 ### Runtime
@@ -293,7 +293,7 @@ set both together.
 Kubernetes memory limit). The image embeds a Flink runtime, and the JVM sizes its heap
 from the memory it can *see*: with no limit set that is the host's, so on a 32 GB machine
 it believes it may take 24 GB. 2 GB is what the project's own
-[limits overlay](https://github.com/devdownin/Kafkaexplorer/blob/main/docker-compose.limits.yml)
+[limits overlay](https://github.com/devdownin/Kafkaexplorer/blob/main/compose/limits.yml)
 allocates; a cluster audit over thousands of topics is the workload that wants more.
 
 | Variable | Default | Meaning |

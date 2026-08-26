@@ -1,7 +1,7 @@
 # Kafka Explorer + SpectraLLM — the whole stack from Docker Hub, nothing built locally.
 #
-#     docker compose -f docker-compose-spectra-hub.yml pull
-#     docker compose -f docker-compose-spectra-hub.yml up -d
+#     docker compose -f compose/spectra-hub.yml pull
+#     docker compose -f compose/spectra-hub.yml up -d
 #
 # Endpoints (loopback only by default — see BIND_ADDR)
 #   Kafka Explorer .......... http://localhost:8080
@@ -9,13 +9,21 @@
 #   SpectraLLM API .......... http://localhost:8081   (POST /api/query, Swagger on /swagger-ui)
 #   Kafka (from the host) ... localhost:9092
 #
-# WHY THIS FILE EXISTS BESIDE docker-compose-spectra.yml
-# That one `include:`s SpectraLLM's own compose from a sibling checkout and `build: .`s the
-# explorer: it needs the SpectraLLM repository on disk, a Maven build and an npm build. Both
-# projects publish their images (compagnonsdudev on Docker Hub, one workflow per release), so
-# a machine with only Docker can run the pair — which is what this file does. Nothing is
-# compiled here, no checkout of SpectraLLM is required, and the two llama.cpp servers are
-# started from arguments rather than from the supervisor scripts that live in that checkout.
+# THIS IS THE SPECTRALLM STACK. There used to be two.
+# The other one (`docker-compose-spectra.yml`) `include:`d SpectraLLM's own compose from a
+# SIBLING CHECKOUT and `build: .`d the explorer, so running it required the SpectraLLM
+# repository on disk, a Maven build and an npm build — and it was the only file in the tree
+# whose syntax could not be checked without CI fabricating a stub of somebody else's project.
+# Both projects publish their images (compagnonsdudev on Docker Hub, one workflow per
+# release), so a machine with only Docker runs the pair from here: nothing is compiled, no
+# checkout of SpectraLLM is required, and the two llama.cpp servers are started from
+# arguments rather than from the supervisor scripts that live in that checkout. It is also
+# the only one of the two CI ever booted end to end (the `spectra-hub-stack` job).
+#
+# What the deleted file gave that this does not: following a local SpectraLLM checkout as you
+# edit it. Point the pins at what you built instead — `SPECTRA_IMAGE_TAG` and
+# `EXPLORER_IMAGE_TAG` are already the way every image here is chosen, so a locally built and
+# tagged image needs one variable, not a second stack.
 #
 # WHAT IS DELIBERATELY DIFFERENT FROM UPSTREAM'S OWN STACK, AND WHAT IT COSTS
 #   * The models live in a NAMED VOLUME (`spectra_data`), not in `./data`. There is no
@@ -30,7 +38,7 @@
 #     mounts scripts/llm-chat-entrypoint.sh, which polls the pointer and reloads llama-server
 #     when the active model changes. That script is not in this repository and reimplementing it
 #     inline would be a copy that drifts. Consequence, stated rather than discovered: after
-#     activating another model in the Spectra UI, run `docker compose -f docker-compose-spectra-hub.yml
+#     activating another model in the Spectra UI, run `docker compose -f compose/spectra-hub.yml
 #     restart llm-chat`. The sizing hints the API writes to active-chat-params are ignored the
 #     same way — LLM_CONTEXT / LLM_PARALLEL / LLM_CHAT_EXTRA_ARGS below are what applies.
 #   * Only the three ports anyone uses are published. chromadb (8000) and the two llama-server
@@ -44,8 +52,23 @@
 #     does": without it a service ready at t=8s is only declared healthy at the next `interval`,
 #     and those granularities stack up along a chain of `service_healthy` dependencies.
 #   * ~16 GB of RAM for the default 7B chat model, and ~6 GB of disk for the GGUF weights.
-#     A smaller model: set LLM_CHAT_MODEL_FILE + LLM_CHAT_MODEL_NAME and drop the GGUF into the
-#     volume yourself, or install it from the Spectra UI's Model Hub.
+#     A LAPTOP WANTS THE 3B INSTEAD — half the memory, ~2 GB of weights, and an answer in a
+#     fraction of the time, which is what stops the 300 s timeouts below being load-bearing.
+#     This used to be a fifth compose file (`docker-compose-spectra-hub.small.yml`) and is now
+#     four lines of `.env`, because that is all it ever was: every value it set already has an
+#     interpolated default in this file, so the overlay expressed nothing a variable could not.
+#     (Written without the interpolation syntax on purpose — docs/check-compose.py scans this
+#     file as text, comments included, and would report the example as a variable nobody sets.)
+#
+#         LLM_CHAT_MODEL_NAME=qwen2.5-3b-instruct
+#         LLM_CHAT_MODEL_FILE=Qwen2.5-3B-Instruct-Q4_K_M.gguf
+#         SPECTRA_CHAT_MODEL_URL=https://huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF/resolve/main/Qwen2.5-3B-Instruct-Q4_K_M.gguf
+#         SPECTRA_AUTO_INSTALL_MODELS=false
+#
+#     The four have to agree and are set together for that reason: the file is what
+#     `spectra-models` fetches and what llama-server serves, the name is the alias
+#     `spectra-api` records in its registry, the URL is where the file comes from, and the
+#     auto-install must be off or the API installs the 7B alongside it. See `.env.example`.
 #   * THE FIRST BOOT DOWNLOADS ~4.8 GB OF MODEL WEIGHTS and the chat is silent until it lands.
 #     spectra-api installs the default chat model itself (spectra.startup.auto-install-models),
 #     `spectra-models` fetches the embedding GGUF (~81 MB) beside it, and the two
@@ -65,7 +88,7 @@ services:
   # ═══ Kafka ══════════════════════════════════════════════════════════════════
   # No `container_name` anywhere: it is a daemon-global name, so two stacks could never run
   # side by side. Compose derives `<project>-<service>-<n>`; address services by service name
-  # (`docker compose -f docker-compose-spectra-hub.yml logs kafka`).
+  # (`docker compose -f compose/spectra-hub.yml logs kafka`).
 
   # The apache/kafka image runs as the non-root `appuser`, but Docker creates a fresh named
   # volume owned by root — chown it once before the broker starts.
@@ -135,8 +158,8 @@ services:
       kafka:
         condition: service_healthy
     volumes:
-      - ./setup-demo.sh:/data/setup-demo.sh
-      - ./seed-demo-once.sh:/data/seed-demo-once.sh
+      - ../setup-demo.sh:/data/setup-demo.sh
+      - ../seed-demo-once.sh:/data/seed-demo-once.sh
     # `$$` escapes the `$` for compose interpolation, which this file needs.
     entrypoint: ["sh", "-c", "sed 's/\\r$$//' /data/seed-demo-once.sh > /tmp/seed-demo-once.sh && sh /tmp/seed-demo-once.sh kafka:29092"]
 
@@ -277,7 +300,7 @@ services:
       # retried three times a second apart and then published to `<topic>.DLT` — a new topic,
       # on the cluster you were exploring.
       #
-      # TURN IT ON WITH THE OVERLAY, not with this variable: `docker-compose-spectra-hub.ingest.yml`
+      # TURN IT ON WITH THE OVERLAY, not with this variable: `compose/spectra-hub.ingest.yml`
       # sets the same flag *and* adds the two dependencies that make it safe on a cold stack —
       # wait for the seeding (a consumer subscribing to a topic that does not exist yet creates
       # it, with one partition instead of three) and wait for llm-embed to serve (or the whole
@@ -327,7 +350,7 @@ services:
       spectra-data-init:
         condition: service_completed_successfully
     volumes:
-      - ./scripts/spectra-hub/llm-chat.sh:/opt/hub/llm-chat.sh:ro
+      - ../scripts/spectra-hub/llm-chat.sh:/opt/hub/llm-chat.sh:ro
       # Read-only: this container serves weights, it never writes any. The API and the Model
       # Hub own what lands in there.
       - spectra_data:/app/data:ro
@@ -365,7 +388,7 @@ services:
         condition: service_completed_successfully
     volumes:
       - spectra_data:/app/data:ro
-      - ./scripts/spectra-hub/llm-embed.sh:/opt/hub/llm-embed.sh:ro
+      - ../scripts/spectra-hub/llm-embed.sh:/opt/hub/llm-embed.sh:ro
     environment:
       - LLM_EMBED_MODEL_FILE=${LLM_EMBED_MODEL_FILE:-embed.gguf}
       - LLM_EMBED_PARALLEL=${LLM_EMBED_PARALLEL:-4}
@@ -390,8 +413,8 @@ services:
   #
   # The CHAT model is fetched only when SPECTRA_CHAT_MODEL_URL is set, because for the DEFAULT
   # model spectra-api installs it itself, through the Model Hub, which lands it *registered*
-  # rather than merely present. Naming a URL is how a smaller model gets served instead — see
-  # docker-compose-spectra-hub.small.yml, which is that path made into one flag.
+  # rather than merely present. Naming a URL is how a smaller model gets served instead — set
+  # SPECTRA_CHAT_MODEL_URL with the three variables that go with it, per the header above.
   #
   # It runs as the image's own `spectra` user, so what it writes is owned by the process that
   # will read it. Nothing depends on it: without the embedding model the Explorer's audits still
@@ -404,7 +427,7 @@ services:
         condition: service_completed_successfully
     volumes:
       - spectra_data:/app/data
-      - ./scripts/spectra-hub/fetch-models.sh:/opt/hub/fetch-models.sh:ro
+      - ../scripts/spectra-hub/fetch-models.sh:/opt/hub/fetch-models.sh:ro
     environment:
       - LLM_EMBED_MODEL_FILE=${LLM_EMBED_MODEL_FILE:-embed.gguf}
       - SPECTRA_EMBED_MODEL_URL=${SPECTRA_EMBED_MODEL_URL:-https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q4_K_M.gguf}

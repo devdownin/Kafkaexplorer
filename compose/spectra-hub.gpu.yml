@@ -1,6 +1,6 @@
 # Overlay: run both llama.cpp servers on an NVIDIA GPU.
 #
-#   docker compose -f docker-compose-spectra-hub.yml -f docker-compose-spectra-hub.gpu.yml up -d
+#   docker compose -f compose/spectra-hub.yml -f compose/spectra-hub.gpu.yml up -d
 #
 # This is the change that decides whether the stack is usable day to day: the same 7B model
 # answers a Process Mining prompt in seconds instead of minutes, which also means the 300 s

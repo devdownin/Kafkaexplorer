@@ -44,7 +44,7 @@ New source files carry the licence header — see [Licence headers](#licence-hea
 **1. Typical local dev workflow (hot reload on both sides)**
 
 ```bash
-docker compose -f docker-compose-kafka4.yml up kafka   # broker only
+docker compose -f docker-compose.yml -f compose/schema-registry.yml up kafka   # broker only
 ./mvnw spring-boot:run                                 # backend on :8080
 cd src/main/webapp && npm run dev                      # frontend on :5173
 ```
@@ -52,17 +52,17 @@ cd src/main/webapp && npm run dev                      # frontend on :5173
 **2. Full dev stack in containers**
 
 ```bash
-docker compose -f docker-compose-dev.yml up --build
+docker compose -f compose/dev.yml up --build
 ```
 
 - Frontend UI: `http://localhost:5173`
 - Backend API: `http://localhost:8080`
 
-**3. No local toolchain?** `docker-compose-build.yml` runs the same commands in containers — always with `run --rm`, these are one-shot services:
+**3. No local toolchain?** `compose/build.yml` runs the same commands in containers — always with `run --rm`, these are one-shot services:
 
 ```bash
-docker compose -f docker-compose-build.yml run --rm verify    # the full gate
-docker compose -f docker-compose-build.yml run --rm frontend  # ESLint + Vitest only
+docker compose -f compose/build.yml run --rm verify    # the full gate
+docker compose -f compose/build.yml run --rm frontend  # ESLint + Vitest only
 ```
 
 **4. Production image**
@@ -133,7 +133,7 @@ python3 docs/check-eval-fixture.py # the Process Mining eval fixture still match
 ```bash
 # Every stack and every overlay layered onto its base — an overlay alone is invalid by design.
 docker compose -f docker-compose.yml config -q
-docker compose -f docker-compose.yml -f docker-compose.limits.yml config -q
+docker compose -f docker-compose.yml -f compose/limits.yml config -q
 ```
 
 The combinations are **generated** in the `compose-lint` job of `.github/workflows/ci.yml`,

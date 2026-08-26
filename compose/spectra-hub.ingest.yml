@@ -1,14 +1,14 @@
 # Overlay: let SpectraLLM index the broker's own topics.
 #
-#   docker compose -f docker-compose-spectra-hub.yml -f docker-compose-spectra-hub.ingest.yml up -d
+#   docker compose -f compose/spectra-hub.yml -f compose/spectra-hub.ingest.yml up -d
 #
 # Without it the two applications share a model and nothing else: Kafka Explorer explores the
 # cluster, Spectra knows nothing about it. With it, Spectra consumes the topics named by
 # SPECTRA_INGEST_TOPICS and indexes what is *in* the messages — so the corpus answers questions
 # in plain language with cited sources, and the Explorer's audits can read it too:
 #
-#   EXPLORER_USE_RAG=true docker compose -f docker-compose-spectra-hub.yml \
-#     -f docker-compose-spectra-hub.ingest.yml up -d
+#   EXPLORER_USE_RAG=true docker compose -f compose/spectra-hub.yml \
+#     -f compose/spectra-hub.ingest.yml up -d
 #
 # WHY THIS IS AN OVERLAY AND NOT JUST `SPECTRA_INGEST_KAFKA=true`
 # The flag alone is enough to turn the feature on, and it is enough to get two things wrong on

@@ -1,7 +1,13 @@
 # Overlay used by the `docker` job of ci.yml to run the default stack against the image
 # it has just built, instead of rebuilding it through `build: .`.
 #
-#   docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --no-build
+#   docker compose -f docker-compose.yml -f compose/image.yml -f compose/ci.yml up -d
+#
+# It layers on `compose/image.yml` rather than repeating its work: that overlay already
+# does the `build: !reset null` which is what makes an `up` pull instead of compile, so CI
+# exercises the file real users run rather than a CI-only imitation of it. What stays here
+# is only what is true of CI — a tag that exists in the runner's local daemon and must never
+# be pulled, and two settings that make the smoke test faster and louder.
 #
 # It is deliberately thin: the point of the smoke test is to exercise
 # docker-compose.yml as a user gets it, so nothing here changes the deployment's shape —

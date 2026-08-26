@@ -414,7 +414,7 @@ jobs:
       # The pin of the hub stack goes stale the instant this job publishes, and this is the
       # only place that knows a new version exists.
       #
-      # `docker-compose-spectra-hub.yml` names the Explorer image by hand
+      # `compose/spectra-hub.yml` and `compose/image.yml` name the Explorer image by hand
       # (`${EXPLORER_IMAGE_TAG:-<version>}`), because that stack builds nothing and exists to
       # run what is published. Dependabot cannot read a `${VAR:-…}` default, so nothing moves
       # it except a person remembering to — and what happens when nobody does is not that the
@@ -458,11 +458,25 @@ jobs:
           python3 - <<'PY'
           import os, pathlib, re
           version = os.environ["VERSION"]
-          compose = pathlib.Path("docker-compose-spectra-hub.yml")
-          compose.write_text(re.sub(
-              r"(kafkaexplorer:\$\{EXPLORER_IMAGE_TAG:-)[^}]+(\})",
-              lambda m: m.group(1) + version + m.group(2),
-              compose.read_text()))
+          # Every compose file that carries the pin, not one named by hand. Two do now —
+          # compose/spectra-hub.yml and compose/image.yml — and docs/check-image-pins.py
+          # asserts they agree, so a bump applied to only one fails the next pull request
+          # instead of quietly pairing an old Explorer with a current everything-else.
+          # Discovered rather than listed, so a third file needs no edit here.
+          bumped = []
+          for compose in [pathlib.Path("docker-compose.yml"),
+                          *sorted(pathlib.Path("compose").glob("*.yml"))]:
+              before = compose.read_text()
+              after = re.sub(
+                  r"(kafkaexplorer:\$\{EXPLORER_IMAGE_TAG:-)[^}]+(\})",
+                  lambda m: m.group(1) + version + m.group(2),
+                  before)
+              if after != before:
+                  compose.write_text(after)
+                  bumped.append(str(compose))
+          if not bumped:
+              raise SystemExit("no compose file carries the Explorer pin — has it been renamed?")
+          print("bumped: " + ", ".join(bumped))
           env = pathlib.Path(".env.example")
           env.write_text(re.sub(
               r"(?m)^EXPLORER_IMAGE_TAG=.*$", f"EXPLORER_IMAGE_TAG={version}", env.read_text()))
@@ -482,7 +496,7 @@ jobs:
             --base "$DEFAULT_BRANCH" \
             --title "Bump the hub stack's Explorer pin to ${VERSION}" \
             --body "$(printf '%s\n' \
-              "\`v${VERSION}\` is published, so \`docker-compose-spectra-hub.yml\` and \`.env.example\` now name a release behind it — the hub stack builds nothing and pulls what is published, so it would pair an old Explorer with a current SpectraLLM." \
+              "\`v${VERSION}\` is published, so \`compose/spectra-hub.yml\`, \`compose/image.yml\` and \`.env.example\` now name a release behind it — the hub stack builds nothing and pulls what is published, so it would pair an old Explorer with a current SpectraLLM." \
               "" \
               "Opened by \`release.yml\` at publication time, because that is the only moment anything knows a new version exists: the hand-written \`\${EXPLORER_IMAGE_TAG:-…}\` default is invisible to Dependabot, and left alone it is discovered by the next unrelated pull request failing \`check-image-pins.py --published\`." \
               "" \

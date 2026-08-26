@@ -13,11 +13,20 @@ et où c'est la solution envisagée, non le constat, qui posait problème (voir 
 
 ---
 
+> **Note de lecture (réorganisation ultérieure).** Cet audit décrit l'arborescence Compose
+> telle qu'elle était : seize fichiers `docker-compose*.yml` à la racine. Elle a depuis été
+> réduite à **une base à la racine et onze fichiers dans `compose/`**. Les correspondances :
+> `docker-compose-kafka4.yml` → `compose/schema-registry.yml`, `docker-compose-llm.yml` →
+> `compose/ollama.yml`, `docker-compose.release.yml` → `compose/image.yml`,
+> `docker-compose-spectra.yml` → supprimé (il exigeait un checkout SpectraLLM voisin),
+> `docker-compose-spectra-hub.small.yml` → supprimé (quatre lignes de `.env`). Les constats et
+> les corrections ci-dessous restent valables ; seuls les noms de fichiers ont bougé.
+
 ## 1. Démarrage
 
 ### D1 — L'application attendait la fin du seeding pour démarrer ✅
 
-`docker-compose.yml`, `docker-compose-kafka4.yml`, `docker-compose-llm.yml` et
+`docker-compose.yml`, `compose/schema-registry.yml`, `compose/ollama.yml` et
 `docker-compose-spectra.yml` faisaient tous dépendre le service applicatif de :
 
 ```yaml
@@ -35,7 +44,7 @@ Le seeding tourne désormais **à côté** de l'application, plus devant elle. S
 broker (`service_healthy`) est conservée, qui est réelle : `MetricService.restoreFromKafka()` lit
 `internal.metrics.config` au démarrage.
 
-Cas le plus spectaculaire, `docker-compose-llm.yml` : l'application attendait aussi
+Cas le plus spectaculaire, `compose/ollama.yml` : l'application attendait aussi
 `ollama-pull-model: service_completed_successfully`, c'est-à-dire le téléchargement complet de
 `qwen2.5-coder:7b` — plusieurs gigaoctets — avant d'afficher une page. Le LLM n'est sollicité que
 lorsqu'on ouvre Process Mining.
@@ -95,12 +104,12 @@ application), ce qui est aussi ce qu'utilise `deploy/kraft-platform/docker-compo
 de `always` à `unless-stopped` côté application est volontaire : après un `docker compose stop`
 explicite, un `always` fait revenir le conteneur au redémarrage du démon, ce que personne n'attend.
 
-Le stack de dev (`docker-compose-dev.yml`) reste sans politique de redémarrage sur `backend` : un
+Le stack de dev (`compose/dev.yml`) reste sans politique de redémarrage sur `backend` : un
 backend qui ne compile pas doit rester à terre et le dire, pas boucler.
 
 ### D5 — `schema-registry` était attendu « créé », pas « prêt » ✅
 
-`docker-compose-kafka4.yml` faisait dépendre l'app de `schema-registry: condition: service_started`,
+`compose/schema-registry.yml` faisait dépendre l'app de `schema-registry: condition: service_started`,
 qui est satisfait dès que le conteneur démarre. Les premières inférences de schéma Avro pouvaient
 donc courir contre le démarrage du registre. Un healthcheck HTTP (`GET /subjects`, le motif utilisé
 par les exemples Confluent eux-mêmes) et `service_healthy` remplacent cette approximation.
@@ -186,7 +195,7 @@ plutôt que comme un serveur qui s'arrête. `complete()` est ajouté dans cette 
 
 ### I1 — Le montage du fichier de log était cassé, et maintenait l'image en root ✅
 
-`docker-compose.yml` et `docker-compose-llm.yml` portaient :
+`docker-compose.yml` et `compose/ollama.yml` portaient :
 
 ```yaml
 volumes:
@@ -250,7 +259,7 @@ C'est le manque structurant, et l'explication commune des trois bugs les plus b�
 délai de grâce plus court que l'arrêt qu'il doit couvrir : rien de tout cela n'apparaît à la
 construction.
 
-Le job `docker` démarre désormais la stack (`docker-compose.ci.yml` fournit l'image construite au lieu
+Le job `docker` démarre désormais la stack (`compose/ci.yml` fournit l'image construite au lieu
 de la reconstruire) et vérifie, chaque assertion correspondant à un bug de la section 1 :
 
 | Assertion | Régression couverte |
@@ -426,7 +435,7 @@ réserver à un réseau fermé ». C'est une décision d'exploitation, pas un d�
 
 `container_name` est un nom **global au démon** : les stacks racine posaient toutes
 `kafka` et `kafka-sql-explorer`, donc deux d'entre elles ne pouvaient jamais tourner
-ensemble, et passer de `docker-compose.yml` à `docker-compose-kafka4.yml` sans `down`
+ensemble, et passer de `docker-compose.yml` à `compose/schema-registry.yml` sans `down`
 préalable échouait sur une collision de nom.
 
 L'objection que j'avais formulée contre ce point tenait à la solution envisagée, pas au
@@ -456,10 +465,10 @@ trop basse est pire que pas de limite du tout — la JVM est tuée par l'OOM kil
 de déclencher un GC — et personne ne peut choisir le bon chiffre d'avance pour une stack
 de démonstration qui lit le cluster d'un inconnu.
 
-`docker-compose.limits.yml` est donc un overlay explicite :
+`compose/limits.yml` est donc un overlay explicite :
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.limits.yml up -d
+docker compose -f docker-compose.yml -f compose/limits.yml up -d
 ```
 
 Ce qu'il corrige réellement : les deux images posent
@@ -490,14 +499,15 @@ pourrissement que ce dépôt a déjà payée deux fois (une stack que personne n
 personne ne construit), et le contrôle est le moins cher qui soit : quelques secondes, pas de
 démon, pas de réseau, aucune image tirée.
 
-Le job `compose-lint` résout les 18 combinaisons — chaque stack, chaque overlay **superposé à sa
-base** puisqu'un overlay seul est un ensemble de services sans image, donc invalide par
-construction. Il **échoue aussi sur un fichier Compose qu'aucune combinaison ne nomme** : une
-stack ajoutée demain ne peut pas échapper à la relecture. L'`include:` de
-`docker-compose-spectra.yml` est résolu contre un stub de trois lignes — ce qui est sous test,
-c'est la syntaxe de *notre* fichier, pas la disponibilité d'un autre dépôt.
+Le job `compose-lint` résout **toutes** les combinaisons — chaque stack, chaque overlay
+**superposé à sa base** puisqu'un overlay seul est un ensemble de services sans image, donc
+invalide par construction. Il **échoue aussi sur un fichier Compose qu'aucune combinaison ne
+nomme** : une stack ajoutée demain ne peut pas échapper à la relecture. Il ne fabrique plus de
+stub du compose de SpectraLLM : ce stub n'était nécessaire qu'à un seul fichier, aujourd'hui
+supprimé — un contrôle dont la fixture est une invention du dépôt d'autrui teste en partie
+l'invention.
 
-### V2 — `docker-compose-kafka4.yml` ne démarrait plus du tout ✅
+### V2 — `compose/schema-registry.yml` ne démarrait plus du tout ✅
 
 Trouvé par V1, au premier essai. La stack que le dépôt **recommande** refusait de démarrer depuis
 le 13 août (`c0aaf41`) : deux montages de volumes ajoutés au service `explorer` sans leurs
@@ -512,7 +522,7 @@ documentation, sans que rien ne le signale — parce que rien n'analysait ces fi
 
 ### V3 — Un tag flottant, sous le commentaire qui affirmait le contraire ✅
 
-`docker-compose-llm.yml` épinglait `ollama/ollama` avec ce commentaire : « le seul tag flottant
+`compose/ollama.yml` épinglait `ollama/ollama` avec ce commentaire : « le seul tag flottant
 restant dans l'arbre ». Deux services plus bas, `ollama-pull-model` tournait sur
 `curlimages/curl:latest`. Une affirmation sur l'épinglage est précisément le genre d'affirmation
 qui se périme sans être relue.
@@ -538,7 +548,7 @@ pouvant se le permettre, et porte la règle à côté de lui.
 
 ### V5 — La paire Explorer + SpectraLLM démarrable sans rien construire ✅
 
-`docker-compose-spectra-hub.yml` et ses quatre overlays (`gpu`, `small`, `limits`, `ingest`).
+`compose/spectra-hub.yml` et ses quatre overlays (`gpu`, `small`, `limits`, `ingest`).
 Trois décisions y sont structurantes et sont documentées dans l'en-tête du fichier : les modèles
 vivent dans un **volume nommé** avec un one-shot d'initialisation de propriété (même idiome que
 `kafka-data-init`, et pour la même raison — l'image llama.cpp ne porte aucun `/app/data`) ;

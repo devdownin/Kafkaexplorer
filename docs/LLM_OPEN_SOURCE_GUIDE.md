@@ -89,7 +89,7 @@ le corps de toute façon — et `process-mining.prompt-char-budget` vaut 120 000
 ce que le prompt entre, et le journalise en DEBUG. L'analyse répond donc depuis une fraction de
 ce qu'on lui a donné, sans que rien ne dise laquelle.
 
-- **Solution** : posez les deux moitiés ensemble, comme le fait `docker-compose-llm.yml` —
+- **Solution** : posez les deux moitiés ensemble, comme le fait `compose/ollama.yml` —
   `OLLAMA_CONTEXT_LENGTH=16384` côté serveur (llama.cpp : `-c 16384`, vLLM : `--max-model-len`)
   et `PROCESS_MINING_PROMPT_CHAR_BUDGET=16000` côté application. En élargir une seule n'apporte
   rien, ou tronque de nouveau. Le coût d'une fenêtre plus large est le cache KV : ~2 Go pour un

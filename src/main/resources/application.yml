@@ -285,7 +285,7 @@ claude:
   #
   # What it costs is stated rather than implied: this is a hosted endpoint, so the message digests
   # Process Mining builds leave the host. Keep everything in-house with provider: OLLAMA (see
-  # docker-compose-llm.yml) or provider: SPECTRA (docker-compose-spectra-hub.yml) — both of those
+  # compose/ollama.yml) or provider: SPECTRA (compose/spectra-hub.yml) — both of those
   # stacks name their provider explicitly and are unaffected by this default.
   provider: OPENROUTER
   # The key for whichever provider is configured — the variable names are historical, and both are

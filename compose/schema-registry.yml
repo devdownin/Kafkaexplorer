@@ -1,0 +1,68 @@
+# Schema Registry + the Avro demo topics, as an OVERLAY on docker-compose.yml.
+#
+#   docker compose -f docker-compose.yml -f compose/schema-registry.yml up -d
+#
+# This was `docker-compose-kafka4.yml`, a base file of its own, and the rename is the
+# point rather than tidiness. Every stack in this repository runs Kafka 4.3 in KRaft —
+# `docker-compose.yml` included — so a file called "kafka4" advertised a choice that had
+# stopped existing, on the stack the README recommends, which is the first thing a
+# newcomer reads. What it actually adds is a Schema Registry and the seeder that needs
+# one. It is named for that now.
+#
+# Being an overlay rather than a base also removes a restriction nobody chose: as
+# separate bases, Schema Registry and Ollama could never run together. Layered, they can
+# (`-f docker-compose.yml -f compose/schema-registry.yml -f compose/ollama.yml`), and so
+# can compose/limits.yml on top of any of them.
+#
+# Relative paths here resolve against the PROJECT directory, which is the directory of
+# the FIRST `-f` file — the repository root, since docker-compose.yml always comes first.
+# That is why `./setup-demo-avro.sh` below is written from the root and not from here.
+services:
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.6.0
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${SCHEMA_REGISTRY_PORT:-8081}:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'kafka:29092'
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+    # Its own readiness, so `demo-setup-avro` waits for a registry that answers rather
+    # than for a container that has merely been created.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8081/subjects || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  explorer:
+    environment:
+      - KAFKA_SCHEMA_REGISTRY_URL=http://schema-registry:8081
+    # NOTE what is deliberately absent: the `depends_on: schema-registry:
+    # service_healthy` this stack used to carry. The rule everywhere else in this
+    # repository is that the app waits for the broker and for nothing else — the UI must
+    # not be unreachable while something it does not need to boot is starting. Avro
+    # schema lookups happen when a topic is opened, long after that, and a registry still
+    # starting reports itself as unreachable rather than corrupting anything. Holding the
+    # whole application behind it bought a race that does not exist.
+
+  # ── Avro demo topics ──────────────────────────────────────────────────────
+  # `kafka-avro-console-producer` ships with the Confluent distribution rather than with
+  # apache/kafka, which is why this seeder is separate from `demo-setup` and why it is
+  # here rather than in the base file. Nothing depends on it: the topics show up in the
+  # UI once it finishes, and the script exits 0 when the registry is unreachable, so a
+  # hiccup here never blocks the stack.
+  demo-setup-avro:
+    image: confluentinc/cp-schema-registry:7.6.0
+    depends_on:
+      schema-registry:
+        condition: service_started
+      demo-setup:
+        condition: service_completed_successfully
+    volumes:
+      - ./setup-demo-avro.sh:/data/setup-demo-avro.sh
+    entrypoint: [ "sh", "-c", "cp /data/setup-demo-avro.sh /tmp/setup-demo-avro.sh && sed -i 's/\\r$//' /tmp/setup-demo-avro.sh && bash /tmp/setup-demo-avro.sh kafka:29092 http://schema-registry:8081" ]
