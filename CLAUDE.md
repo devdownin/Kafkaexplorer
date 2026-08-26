@@ -908,6 +908,22 @@ exists one file over: `FieldProfilingService` aggregates per path instead of inl
 which is why profiling behaves on small models and the analysis does not. Read it before touching
 `LlmAnalysisService`, `LlmSchemas` or `AuditPromptCatalog`.
 
+`METRICS-TWO-QUERY-AUDIT.md` reviews the two metric templates that answer their question by running
+**two queries and comparing the results** — `TOPIC_COUNT_DELTA` and `TOPIC_TRANSIT_LATENCY`, which
+are also the two the KPI suggestion panel proposes most. It implements nothing: every item is
+derived from the code, names the file it comes from, and is ranked, with a worklist at the end.
+The one that dominates is that `MetricService.BOUNDED_HINT` **bounds nothing** — its javadoc
+describes `scan.bounded.mode` while the constant writes `scan.startup.mode`, which says where a
+scan starts, and the environment is `inStreamingMode()`, so the Kafka source stays unbounded and
+the option merely restates the value `DdlGeneratorService` already puts in every generated table.
+What follows from it differs per template because one runs an aggregate and the other a
+projection: a `COUNT(*)` becomes a retract changelog whose **first** row is what
+`extractPrimaryMetricValue` keeps, and a correlation query returns the oldest records the scan can
+reach, republished as a current gauge for ever. Read it before touching either compute method, or
+before assuming the two figures a delta is built from were measured at the same instant — they are
+one whole query apart, in the direction that under-reports the gap. Two items need the real broker
+to settle and name the assertions to add to `KafkaClusterIntegrationTest`; the rest are unit-testable against the mock that is already there.
+
 `SQL-EDITOR-AUDIT.md` is the review of the **SQL editor** (`QueryWorkbench.tsx` and its pure modules,
 plus `QueryController` / `SqlQueryValidator` / `FlinkSqlService.executeSync`) along the four axes it
 was asked for — reliability, ergonomics, optimisation, UI quality. All findings are fixed on this
