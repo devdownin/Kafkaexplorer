@@ -95,6 +95,30 @@ public class ProcessModelBuilder {
     }
 
     /**
+     * Whether this record's payload broke off before it was read.
+     *
+     * <p>A truncated payload can still yield a correlation id: the streaming parser reads the
+     * fields it reaches, and {@code id} is usually the first of them — so
+     * <code>{"id":"ORD-666","state":"ENRICHED","metadata":{"warehouse":</code> digests with a case
+     * id and nothing dependable after it. Left in, such a record becomes a one-event case, and the
+     * eval on the seeded demo cluster is what showed what that costs: the two corrupt records
+     * {@code setup-demo.sh} plants inside {@code demo.orders.3.enriched} were reported as two
+     * cases that <em>ended</em> at enrichment. That reads as a pipeline stalling at its third
+     * stage, when what happened is that a producer wrote two bad records — findings that send an
+     * operator to two different places, and the wrong one of the two was on screen.
+     *
+     * <p>So it is outside the log, and the exclusion is <b>counted and named</b> in the model's
+     * notes rather than done in silence: dropping records without saying so is the mirror defect
+     * of counting them, and this whole measurement is written against exactly that pair.
+     *
+     * <p>The audit is where a corrupt payload is a finding in its own right, and it already reports
+     * one; this only keeps it out of a process it says nothing about.
+     */
+    private static boolean isUnparseable(PayloadDigest digest) {
+        return digest.parseError() != null;
+    }
+
+    /**
      * The order the events of one case happened in — the single definition of it.
      *
      * <p>Partition and offset break a timestamp tie, so two runs over one window order the log
@@ -119,6 +143,9 @@ public class ProcessModelBuilder {
                                                                 FieldMapping mapping) {
         Map<String, List<PayloadDigest>> byCase = new LinkedHashMap<>();
         for (PayloadDigest digest : digests == null ? List.<PayloadDigest>of() : digests) {
+            if (isUnparseable(digest)) {
+                continue;
+            }
             String caseId = caseIdOf(digest, mapping);
             if (caseId != null) {
                 byCase.computeIfAbsent(caseId, c -> new ArrayList<>()).add(digest);
@@ -143,6 +170,10 @@ public class ProcessModelBuilder {
         Map<String, List<PayloadDigest>> byCase = groupByCase(records, mapping);
         int eventCount = byCase.values().stream().mapToInt(List::size).sum();
         int withoutCase = records.size() - eventCount;
+        int unparseableWithCaseId = (int) records.stream()
+            .filter(ProcessModelBuilder::isUnparseable)
+            .filter(d -> mappedValue(d, mapping.correlationIdPaths()) != null)
+            .count();
 
         Map<String, Set<String>> statusesByTopic = new LinkedHashMap<>();
         int mappedTimes = 0;
@@ -282,6 +313,16 @@ public class ProcessModelBuilder {
         if (withoutCase > 0) {
             notes.add(withoutCase + " record(s) carried no value at the mapped correlation path and "
                 + "are outside this log entirely — they are not counted anywhere above.");
+        }
+        // Named apart from the line above, because the two send an operator to different places: a
+        // record with no correlation id is usually a mapping that does not cover a topic, while a
+        // record that broke off mid-payload is a producer or a serializer. Counted rather than
+        // dropped in silence — see isUnparseable for what leaving them in cost.
+        if (unparseableWithCaseId > 0) {
+            notes.add(unparseableWithCaseId + " record(s) carried a correlation id inside a payload "
+                + "that then broke off, and are outside this log too — a truncated payload can "
+                + "still yield an id, and counting it would invent a case that ends where the "
+                + "corruption is. The cluster audit is where those are a finding.");
         }
 
         return new ProcessModel(true, null,

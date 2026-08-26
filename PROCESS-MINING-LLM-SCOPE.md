@@ -16,8 +16,9 @@ items get cheaper once the first one lands.
 > (`ProcessModelBuilder`, `ProcessModel`) and sends the aggregate plus whole case traces, and
 > `sample` is bounded per message. **W4 is closed by a measurement** (the stable prefix is ~648
 > tokens, below the 1 024-token minimum a cacheable prefix needs, so there is nothing to cache) and
-> **W5 has shipped**. **W6, W7 and W8 are open**, and W8 in particular is what would turn the
-> argument below into a measurement.
+> **W5 and W8 have shipped** — W8 is what turned the argument below into a measurement, and it
+> found a defect in the measured process while being written (see section 6). **W6 and W7 remain
+> open.**
 >
 > **A defect W1–W3 introduced, found by measuring rather than by reading, and fixed.** With the
 > aggregate carrying the scope, `messagesAnalysed` counted only the inlined worked examples — so a
@@ -293,13 +294,43 @@ pipeline — the order flow through `received → validated → enriched`, payme
 correlated by header, deliberate duplicates on `ORD-103`/`ORD-105`, poison records inside
 `demo.orders.3.enriched`. The right answer is known because the seeder writes it.
 
-**W8 — An offline eval on the demo dataset.** Digests captured once from the seeded cluster and
-committed as a fixture; the aggregate from W1 asserted exactly (it is deterministic, so this is an
-ordinary unit test); the model's answer asserted loosely — that the flowchart names the three order
-topics and the edges between them, that the known duplicates appear as a CARDINALITY anomaly. The
-loose half needs a model and therefore does not belong in `mvn verify`; a separate profile, run
-deliberately, is the shape. Medium effort, and it is what turns every item above from an argument
-into a measurement.
+**W8 — An offline eval on the demo dataset.** ~~Digests captured once from the seeded cluster and
+committed as a fixture~~ — **shipped, with one departure from the plan and one finding.**
+
+The fixture holds **records, not digests**: a digest is what this application computes, so
+committing one would let the fixture and the digester drift together and agree with each other
+about a payload neither had read. And it is not *captured* — a capture is a snapshot nobody can
+regenerate without a broker, and it rots in silence. It is written from `setup-demo.sh` and
+**checked against it** by `docs/check-eval-fixture.py`: every topic, every order id, every
+redelivery and the two corrupt payloads verbatim, plus the assertion that the payments and
+shipments still carry no order id in their bodies. A fixture that has drifted from the dataset it
+names does not fail — it evaluates the wrong thing, confidently.
+
+The two halves are as recommended. `ProcessModelEvalTest` asserts the aggregate exactly and runs in
+`mvn verify` (8 cases: the six seeded orders as cases, an edge per consecutive pair of the
+pipeline, the 3 → 4 hop as the slowest because `STEP_PAUSE` makes it 3×, ORD-102 ending at
+validation, the redeliveries as a repeated step, the header-correlated topics staying outside the
+log, and the clock reported as produce time). `LlmAnalysisEvalTest` is the loose half, tagged
+`llm-eval`, excluded by surefire *and* by `verify-offline.sh`, run with `./mvnw test -P llm-eval`,
+and it **skips rather than fails** when no provider is configured — a test that goes red for want
+of an API key is a test people learn to ignore.
+
+> **What it found, which is the whole argument for having it.** `setup-demo.sh` plants two
+> truncated records inside `demo.orders.3.enriched`. A streaming parser reads the fields it reaches
+> before the payload breaks off, and `id` is the first of them — so each corrupt record arrived
+> carrying a correlation id and **became a one-event case that *ended* at enrichment**. The
+> measurement reported a pipeline stalling at its third stage where a producer had written two bad
+> records: two findings, two different places to go, and the wrong one was on screen. `ORD-666` was
+> also nominated as a spotlight case and inlined into the prompt as a worked example. A record whose
+> payload broke off is now outside the log, and the exclusion is counted and named in the model's
+> notes rather than done in silence — dropping records without saying so is the mirror defect of
+> counting them. The audit remains where a corrupt payload is a finding in its own right.
+
+One thing the fixture makes explicit that nothing had stated: **on this dataset the clock is the
+broker's**. The seeder stamps every step of one order with the same `event_time`, so a mapped
+business timestamp would tie across all six hops; the hop timing comes from `DEMO_HOP_DELAY`, a real
+pause between produce calls. `TimeSource.RECORD_TIMESTAMP` is what reports that, and the eval
+asserts it is reported rather than passed off as event time.
 
 ---
 
@@ -309,10 +340,12 @@ into a measurement.
 diff, they are pinned by the same tests, and the first two are meaningless apart. The analysis went
 from "guess the process from 2 % of the records" to "interpret a process that was measured".
 
-What remains: **W5** is cheap and independent — do it whenever. **W4** pays on live sessions and
-costs almost nothing now that the prompt opens with a stable measured section. **W8** should follow
-immediately, while the reasoning is fresh; it is also the only thing that would settle the
-bilingual-prompt question below. **W6** and **W7** are worth measuring before doing.
+What remains: **W6** and **W7** are worth measuring before doing. **W4** was closed by a
+measurement (the stable prefix is ~648 tokens, below the 1 024-token minimum a cacheable prefix
+needs), **W5** shipped, and **W8** shipped and earned its keep — writing it found the
+truncated-record defect above, which no test written from the code would have thought to look for.
+It is also what can now settle the bilingual-prompt question below: the harness exists, only the
+runs are missing.
 
 ### What shipping W1–W3 actually changed
 

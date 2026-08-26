@@ -91,6 +91,22 @@ npm run lint    # ESLint, flat config, --max-warnings 0
 npm test        # Vitest; npm run test:watch to iterate
 ```
 
+### The one test `mvn verify` deliberately skips
+
+`LlmAnalysisEvalTest` calls a real model: it costs money, needs the network, and its verdict
+depends on which model is configured. It carries `@Tag("llm-eval")`, which surefire excludes and
+`verify-offline.sh` excludes too. Run it deliberately when you have changed the prompt, the schema
+or the measured process:
+
+```bash
+CLAUDE_PROVIDER=OPENROUTER OPENROUTER_API_KEY=sk-... CLAUDE_MODEL=openai/gpt-4o-mini \
+  ./mvnw test -P llm-eval
+```
+
+It **skips rather than fails** with nothing configured, so running it without a key tells you it
+did not run instead of going red. Its deterministic half, `ProcessModelEvalTest`, needs no model
+and runs in the ordinary gate.
+
 ### The checks `mvn verify` does not run
 
 CI runs a family of documentation and compose checks that the Maven build knows nothing about,
@@ -111,6 +127,7 @@ python3 docs/check-config-table.py # documented variables and defaults match the
 python3 docs/check-api-types.py    # api/types.ts still matches the Java records it mirrors
 python3 docs/check-image-pins.py   # compose images: pinned, consistent, and the current release
 python3 docs/check-compose.py      # compose vars documented in .env.example; prompt budget fits the window
+python3 docs/check-eval-fixture.py # the Process Mining eval fixture still matches setup-demo.sh
 ```
 
 ```bash
