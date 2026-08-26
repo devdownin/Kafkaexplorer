@@ -980,6 +980,33 @@ without being a phone — turns out to be painful in practice. What is load-bear
   browser recomputes and the ancestors come out right too. Measured: `topic-explorer` 20 → 2,
   `metrics` 16 → 4, `stream-flow` 2 → 0, target counts unchanged. What is left is real and named in
   the document; W7's answer holds in substance but no longer in the absolute form it was written in.
+- **The probe opens things now, and it did not before.** It walked eight pages *at rest*, so
+  every surface that exists only after a gesture — the four modals, a combobox's suggestion
+  list — was outside every number it produced. That is not a gap in coverage but a gap in the
+  one column that matters here: `unreachable` names precisely "this content is cut off and the
+  rest is reachable nowhere", which is the class both truncation defects of 2026-08 belonged to,
+  and it was not looking at them. `STATES` declares them beside `PAGES` (`sql-editor·confirm`,
+  `sql-editor·ddl`, `metrics·editor`, `dashboard·palette`), they are reported and **gated** like
+  a page — `MEASURED` feeds the `TARGET_BUDGET` guard, so a new state cannot be added without a
+  budget — and a state that fails to open at a width it declares is a *failure*, never a silence,
+  or a broken gesture would be indistinguishable from one nobody measures. Verified against the
+  build that carried the defect rather than asserted: `sql-editor·confirm` reported
+  `unreachable=5` against 1 for the page at rest, naming `p 374>294 "The window query replaces
+  everything in …"` — the same two numbers that had been taken by hand — and comes back to 1 on
+  the fixed build. Two things it taught. A state is measured **on the page already loaded**: a
+  gesture costs a few hundred milliseconds where a navigation costs two to four thousand, which
+  is why four of them add ~8 s to a 52 s `--check` instead of pushing the job past the timeout
+  that already cost this mode its tablet viewport. And **a state must be able to report
+  something**: an opened topic list was written, measured, and removed on that rule — the demo
+  catalogue's names truncate at no width the probe walks, so the row could not move, and
+  lengthening one would mean inventing data `setup-demo.sh` does not seed. The rule it would have
+  guarded is pinned by a unit test instead, which depends on no data at all.
+- **`--detail` reports the innermost clipped element, not the pile above it.** A container is
+  usually cut off only because its child is, so one defect surfaced three or four times under the
+  class names of a stack of layout `div`s — and since the sample is capped at eight in DOM order,
+  those duplicates crowded out the real findings, a modal (rendered last in the document) falling
+  past the cut every time. Same argument as `tooSmallGroups`: the count stays the whole set, the
+  sample says *which* element.
 - Re-run the probe before trusting any number in that document, and read a zero in its
   `unreachable` column as unconfirmed rather than proven: the pages that fetch asynchronously clip
   nothing while their cards are still arriving. Making those counts stable enough to gate a build

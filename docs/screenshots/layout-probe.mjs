@@ -57,6 +57,117 @@ const PAGES = [
 ];
 
 /*
+ * Les surfaces qui n'existent qu'après un geste, mesurées comme les pages.
+ *
+ * La sonde ne cliquait sur rien : elle photographiait huit pages au repos. Or les deux derniers
+ * défauts de troncature vivaient l'un dans la carte de confirmation, l'autre dans la liste de
+ * suggestions d'un combobox — deux surfaces qu'aucun chargement d'URL ne fait apparaître. La
+ * colonne `unreachable` les aurait nommés tous les deux le jour où ils sont nés ; elle ne
+ * regardait pas là. `MOBILE-LAYOUT-SCOPE.md` clôt d'ailleurs W8 sur « la sonde continue de
+ * mesurer, donc un vrai cas ressortirait » : vrai des pages, faux de tout ce qui s'ouvre.
+ *
+ * Un état est mesuré **sur la page déjà chargée**, pas sur une nouvelle : un geste coûte
+ * quelques centaines de millisecondes là où une navigation en coûte deux à quatre mille, et
+ * `--check` tourne à chaque pull request — c'est ce qui rend l'ajout gratuit plutôt que de le
+ * faire passer le budget de temps du job, la raison pour laquelle `CHECK_VIEWPORTS` a déjà dû
+ * abandonner la tablette.
+ *
+ * `viewports` dit où l'état est atteignable, et ce n'est pas une commodité : un état qui ne
+ * s'ouvre **pas** dans les largeurs qu'il déclare est un échec de `--check`, pas un silence.
+ * Sans ça, un geste qui cesse de fonctionner ne se distingue plus d'un état qu'on a renoncé à
+ * mesurer — exactement le trou muet que le garde de `TARGET_BUDGET` ferme pour les pages.
+ * `close` ramène la page au repos, car les états d'une même page s'enchaînent sans rechargement.
+ */
+const ESCAPE = async page => { await page.keyboard.press('Escape'); await page.waitForTimeout(200); };
+
+/* Un identifiant Kafka de longueur réaliste. Ni un cas limite ni une invention : c'est la forme
+   `<domaine>.<flux>.<étape>.<version>` qu'une convention d'entreprise produit, et la longueur à
+   partir de laquelle la carte de confirmation débordait. */
+const LONG_NAME = 'acme.production.orders.shipped.enriched.consolidated.v2';
+
+const STATES = {
+  'sql-editor': [
+    {
+      // La confirmation du Window Assistant : c'est elle qui laissait un nom d'onglet sortir
+      // de la carte. Sous `lg` l'éditeur affiche son avertissement de fenêtre étroite et le
+      // volet n'est pas là, donc l'état ne se déclare qu'au bureau.
+      name: 'confirm',
+      viewports: ['desktop'],
+      open: async page => {
+        /* L'onglet est renommé avec un vrai nom de topic, parce que c'est *la donnée* qui fait
+           le défaut : la confirmation cite le nom de l'onglet, et « Query 1 » ne débordera
+           jamais de rien. Semé plutôt qu'ajouté aux fixtures — celles-ci sont calquées sur ce
+           que `setup-demo.sh` sème, et les captures les partagent ; c'est le même procédé que
+           `--sweep`, qui sème déjà `kse:query-layout`. Le rechargement est le prix de ce
+           réalisme, et il n'est payé que par cet état. */
+        await page.evaluate(name => localStorage.setItem('kse:tabs', JSON.stringify({
+          tabs: [{ id: '1', name, sql: 'SELECT order_id FROM demo_orders_1_received LIMIT 50' }],
+          activeTabId: '1',
+        })), LONG_NAME);
+        await page.reload({ waitUntil: 'networkidle' });
+        await page.waitForTimeout(1500);
+        const rail = page.getByRole('button', { name: 'Open the Window Assistant' });
+        if (await rail.count()) await rail.first().click();
+        await page.getByRole('button', { name: 'Replace editor content' }).click();
+        await page.getByRole('dialog').waitFor({ timeout: 5000 });
+      },
+      close: ESCAPE,
+    },
+    {
+      // L'aperçu du DDL : une modale qui rend du SQL généré, donc du texte long par nature.
+      name: 'ddl',
+      viewports: ['desktop'],
+      open: async page => {
+        await page.getByRole('button', { name: /^Preview the generated DDL for / }).first().click();
+        await page.getByRole('dialog', { name: 'DDL preview' }).waitFor({ timeout: 5000 });
+      },
+      close: ESCAPE,
+    },
+  ],
+  'metrics': [
+    {
+      // L'éditeur de métrique, la plus grande modale de l'application.
+      name: 'editor',
+      viewports: ['phone', 'tablet', 'desktop'],
+      open: async page => {
+        await page.getByRole('button', { name: 'Add metric' }).first().click();
+        await page.getByRole('dialog').waitFor({ timeout: 5000 });
+      },
+      close: ESCAPE,
+    },
+    /*
+     * Il y avait ici un état « liste de topics dépliée ». Il est retiré, et le mesurer est ce
+     * qui l'a décidé : avec le catalogue de démo, ses options ne tronquent à aucune des trois
+     * largeurs — la ligne rendait des nombres identiques à `metrics·editor` partout, donc une
+     * ligne qui ne peut pas bouger. Allonger un nom de topic pour la faire parler supposerait
+     * d'inventer des données que `setup-demo.sh` ne sème pas, or les fixtures sont calquées sur
+     * lui et les captures les partagent. La règle qu'elle aurait gardée — une option tronquée
+     * porte son nom complet — est épinglée par un test unitaire (`forms.test.tsx`), qui lui ne
+     * dépend d'aucune donnée. Un état ne se justifie ici que s'il peut rapporter un défaut.
+     */
+  ],
+  'dashboard': [
+    {
+      // La palette de commandes : la seule surface que l'on ouvre au clavier, et une liste de
+      // noms de topics et de tables — le même contenu que celle du combobox.
+      name: 'palette',
+      viewports: ['desktop'],
+      open: async page => {
+        await page.keyboard.press('Control+k');
+        await page.getByRole('dialog', { name: 'Command palette' }).waitFor({ timeout: 5000 });
+      },
+      close: ESCAPE,
+    },
+  ],
+};
+
+/** Le nom sous lequel un état est rapporté et budgété : `metrics·topic-list`. */
+const stateName = (page, state) => `${page}\u00b7${state.name}`;
+
+/** Tout ce qui est mesuré, pages et états — ce sur quoi `--check` exige un budget. */
+const MEASURED = PAGES.flatMap(p => [p.name, ...(STATES[p.name] ?? []).map(s => stateName(p.name, s))]);
+
+/*
  * Ceilings for `--check`, the mode CI runs. This is W6 from MOBILE-LAYOUT-SCOPE.md: without it,
  * every number in that document is a reading from whenever someone last remembered to take one.
  *
@@ -75,12 +186,16 @@ const PAGES = [
  */
 const TARGET_BUDGET = {
   'dashboard': 5,
+  'dashboard·palette': 6,
   'sql-editor': 39,
+  'sql-editor·confirm': 36,
+  'sql-editor·ddl': 37,
   'topic-explorer': 3,
   'stream-flow': 19,
   'data-model': 7,
   'audit': 23,
   'metrics': 8,
+  'metrics·editor': 9,
   'cluster': 1,
 };
 
@@ -201,8 +316,20 @@ const MEASURE = () => {
     scrollW: el.scrollWidth,
     clientW: el.clientWidth,
   });
+  /*
+   * Seul le plus profond de chaque chaîne est retenu.
+   *
+   * Un conteneur ne « rogne » le plus souvent que parce que son enfant le fait : le même défaut
+   * ressortait trois ou quatre fois, sous les classes d'une pile de `div` de mise en page qui ne
+   * disent rien de ce qui est coupé. Comme l'échantillon est plafonné à huit et pris dans
+   * l'ordre du DOM, ces doublons chassaient les vraies trouvailles — et une modale, rendue en
+   * fin de document, tombait toujours après la coupe. C'est exactement le regroupement que
+   * `tooSmallGroups` fait pour les cibles trop petites : le compte dit qu'il y a un problème,
+   * l'élément le plus profond dit lequel. Le *compte*, lui, reste celui de l'ensemble.
+   */
   const unreachable = clippedAll.filter(el => reachability(el) === 'none');
-  const clipped = unreachable.slice(0, 8).map(describe);
+  const innermost = unreachable.filter(el => !unreachable.some(o => o !== el && el.contains(o)));
+  const clipped = innermost.slice(0, 8).map(describe);
   const clippedSample = clippedAll.slice(0, 4).map(describe);
 
   /* Restauré seulement ici : `reachability` et `describe` relisent la mise en page, donc rendre
@@ -311,28 +438,56 @@ if (mode === '--sweep') {
     console.log(`\n===== ${vp.name} (${vp.width}x${vp.height}) =====`);
     for (const p of PAGES) {
       const page = await newPage(browser, vp.width, vp.height, vp.name !== 'desktop');
-      let line;
-      let m = null;
-      try {
-        await page.goto(baseUrl + p.url, { waitUntil: 'networkidle', timeout: 30_000 });
-        await page.waitForTimeout(p.settleMs ?? 1200);
-        m = await page.evaluate(MEASURE);
-        line = `  ${p.name.padEnd(15)} overflows=${String(m.bodyOverflows).padEnd(5)}`
+      /* Une mesure, son compte rendu et sa ligne de `--check` : la page au repos et chacun de
+         ses états ouverts passent exactement par là, sinon un état serait mesuré autrement que
+         ce qu'il prétend comparer. */
+      const measured = [];
+      const record = async (name, m) => {
+        measured.push({ name, m });
+        console.log(`  ${name.padEnd(21)} overflows=${String(m.bodyOverflows).padEnd(5)}`
           + ` clipped=${String(m.clippedCount).padEnd(3)}`
           + ` unreachable=${String(m.unreachableCount).padEnd(2)}`
           + ` targets<24px=${m.tooSmall}/${m.targets}`
-          + (m.monacoW === null ? '' : `  monaco=${m.monacoW}px`);
+          + (m.monacoW === null ? '' : `  monaco=${m.monacoW}px`));
         checkResults.push({
-          page: p.name, viewport: vp.name, failed: null,
+          page: name, viewport: vp.name, failed: null,
           bodyOverflows: m.bodyOverflows, tooSmall: m.tooSmall,
         });
+      };
+
+      try {
+        await page.goto(baseUrl + p.url, { waitUntil: 'networkidle', timeout: 30_000 });
+        await page.waitForTimeout(p.settleMs ?? 1200);
+        await record(p.name, await page.evaluate(MEASURE));
+
+        /* Les états s'ouvrent sur cette page-ci, pas sur une nouvelle — voir STATES. Chacun se
+           referme derrière lui : ils s'enchaînent, et une modale restée ouverte ferait décrire
+           au suivant un écran qui n'est pas le sien. */
+        for (const state of (STATES[p.name] ?? [])) {
+          const name = stateName(p.name, state);
+          if (!state.viewports.includes(vp.name)) continue;
+          try {
+            await state.open(page);
+            await page.waitForTimeout(state.settleMs ?? 500);
+            await record(name, await page.evaluate(MEASURE));
+          } catch (e) {
+            /* Un état déclaré pour cette largeur et qui ne s'ouvre pas est un échec, pas un
+               silence : c'est ainsi qu'un geste cassé se distingue d'un état abandonné. */
+            const reason = String(e).split('\n')[0].slice(0, 90);
+            console.log(`  ${name.padEnd(21)} FAILED ${reason}`);
+            checkResults.push({ page: name, viewport: vp.name, failed: reason });
+          }
+          try { await state.close(page); } catch { /* la page est jetable */ }
+        }
       } catch (e) {
         const reason = String(e).split('\n')[0].slice(0, 90);
-        line = `  ${p.name.padEnd(15)} FAILED ${reason}`;
+        console.log(`  ${p.name.padEnd(21)} FAILED ${reason}`);
         checkResults.push({ page: p.name, viewport: vp.name, failed: reason });
       }
-      console.log(line);
+
+      for (const { name, m } of measured) {
       if (mode === '--detail' && m) {
+        console.log(`    — ${name}`);
         // Which control is undersized, and how many of it there are. W5 is a triage, and a
         // triage cannot be done against a count — see `tooSmallGroups` for why.
         for (const g of (m.tooSmallGroups || [])) {
@@ -351,6 +506,7 @@ if (mode === '--sweep') {
           console.log(`      ${c.reach.padEnd(19)} ${c.tag} ${c.scrollW}>${c.clientW} .${c.cls}`);
         }
       }
+      }
       await page.close();
     }
   }
@@ -363,9 +519,9 @@ if (mode === '--check') {
 
   // A page added to PAGES without a budget would be measured and never gated — the silent gap
   // this mode exists to close.
-  for (const p of PAGES) {
-    if (!(p.name in TARGET_BUDGET)) {
-      failures.push(`${p.name}: no entry in TARGET_BUDGET — add one (see the comment above it)`);
+  for (const name of MEASURED) {
+    if (!(name in TARGET_BUDGET)) {
+      failures.push(`${name}: no entry in TARGET_BUDGET — add one (see the comment above it)`);
     }
   }
 
