@@ -199,10 +199,28 @@ every window.
 profiling still needs the breadth. What it drops is counted in `sampleOmitted` rather than
 disappearing.
 
-**W4 — Reorder for a stable prefix, then set a cache breakpoint after it.** `cache_control` on the
-Anthropic path; on OpenRouter the reordering alone is enough, since its prefix caching is automatic
-and its accounting already lands in `cachedInputTokens`, which turns the saving into a number on
-screen rather than a claim. Cheap, and it pays per window rather than per session.
+**W4 — Reorder for a stable prefix, then set a cache breakpoint after it. → closed, measured, not
+done.** The stable prefix of this prompt is the system prompt, the mode header, the field mapping
+and the message-format legend. Measured on a six-topic mapping with all three roles filled in:
+
+```
+SYSTEM_PROMPT           1 420 chars
+mode + mapping block      701 chars
+MESSAGE_FORMAT_LEGEND     472 chars
+------------------------------------
+stable prefix           2 594 chars  ≈ 648 tokens
+```
+
+The minimum cacheable prefix is **1 024 tokens** — on Anthropic's explicit `cache_control` and on
+the automatic prefix caching of the OpenAI-compatible gateways alike — and a shorter prefix
+**silently does not cache**. So a breakpoint here would buy nothing and cost the machinery to place
+it: splitting the user message into blocks, and a `systemOfTextBlockParams` on the Java path.
+
+Everything after that prefix changes by construction — the measured process is recomputed per
+window, and the case traces with it — so there is no larger stable region to reach for. The item is
+closed rather than left open: it is not a matter of effort, the prompt is the wrong shape for it. It
+would reopen if the stable head grew past ~4 000 characters, which a much larger field mapping would
+do on its own.
 
 ---
 
