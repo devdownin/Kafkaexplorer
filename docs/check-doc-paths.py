@@ -36,7 +36,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-DOCS = ['CLAUDE.md', 'CONTRIBUTING.md']
+# CLAUDE.md and CONTRIBUTING.md are read by maintainers; the three below are what a
+# stranger reads first, and until now NOTHING checked a path in them. Measured before
+# adding them: seventy-seven backticked path-shaped tokens across the public docs, zero
+# verified — which is the gap that let a stale command and a duplicated section survive
+# in the README long enough that nobody could date them.
+#
+# docs/DOCKERHUB.md is the strongest case of the three: it is rendered OUTSIDE the
+# repository, as the Docker Hub overview, so a wrong path there is invisible to anyone
+# reading the repo and is the first thing a newcomer sees.
+DOCS = ['CLAUDE.md', 'CONTRIBUTING.md', 'README.md', 'README.fr.md', 'docs/DOCKERHUB.md']
 
 # Where a path named in prose may be rooted. Ordered widest first for no reason but reading.
 BASES = [
@@ -66,9 +75,20 @@ NOT_A_PATH = {
     # Container images and registry references.
     'apache/kafka', 'compagnonsdudev/kafkaexplorer', 'docker.io/compagnonsdudev/kafkaexplorer',
     'ghcr.io/devdownin/kafkaexplorer', 'unknown/unknown',
-    # A build platform. Only the arm64 form survives here: the others are written with a
-    # comma or alongside amd64, which NOT_PATH_CHARS already rejects.
-    'linux/arm64',
+    # Build platforms. `linux/arm64` alone was enough while only CLAUDE.md and
+    # CONTRIBUTING.md were read — the note that used to sit here said the amd64 form was
+    # always written with a comma and therefore already rejected. That stopped being true
+    # the moment the READMEs and the Docker Hub page joined DOCS: all three name it on its
+    # own. A comment asserting why an entry is unnecessary is exactly the kind that decays.
+    'linux/amd64', 'linux/arm64',
+    # An OpenRouter model identifier written as a shape rather than a name, beside the
+    # `openai/gpt-4o-mini` example below.
+    'vendor/model',
+    # Files this application CREATES at runtime under its `data/` volume, which is
+    # gitignored — so they are real paths on a running deployment and never in a checkout.
+    # The Docker Hub page documents them because an operator has to know what the volume
+    # holds; resolving them against the repository would require running the app first.
+    'data/settings.json', 'data/flink-tables.json', 'flink-jobs.json',
     # An OpenRouter model identifier, which that gateway writes `vendor/model`. Le seul jeton
     # de cette forme que la prose nomme hors d'un bloc clôturé.
     'openai/gpt-4o-mini',

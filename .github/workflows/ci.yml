@@ -1030,6 +1030,11 @@ jobs:
       #                     it claims to be. A fixture that has drifted does not fail — it
       #                     evaluates the wrong thing, confidently, which is what the eval exists
       #                     to remove.
+      #   check-readme-parity README.md against README.fr.md — the shape, the commands, the
+      #                     links and the paths, never the words. The two drift together when
+      #                     edited together and silently apart when they are not, and nothing
+      #                     read the READMEs at all: the whole "Build and Development" section
+      #                     sat in both files TWICE, verbatim, for an unknown length of time.
       - name: Resolve every documentation check
         run: |
           set -euo pipefail

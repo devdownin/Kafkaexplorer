@@ -47,6 +47,28 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     (an overlay alone is not a stack and fails by construction), how they combine, and where
     relative paths resolve.
 
+### Added
+
+- **`docs/check-readme-parity.py`** — README.md against README.fr.md. It compares the four
+  things a translation must not change and a one-sided edit always does: the sequence of
+  heading levels, the number of fenced code blocks and the lines in each, the set of URLs,
+  and the set of paths named inside backticks. Never the words — a shorter French paragraph
+  is a better translation, not a defect. It exists because the duplicated section below sat
+  in **both** files for an unknown length of time with nothing reading either. All four
+  comparisons were verified to fail against a deliberately broken tree.
+- **`docs/check-doc-paths.py` now reads five documents instead of two.** `README.md`,
+  `README.fr.md` and `docs/DOCKERHUB.md` join the two maintainer files: 99 paths resolved
+  where 80 were, and the Docker Hub page in particular is rendered *outside* the repository,
+  so a wrong path there is invisible to anyone reading the repo. The seven references this
+  surfaced were all legitimate non-paths (build platforms, an OpenRouter model shape, files
+  the app creates at runtime under its gitignored `data/` volume) and are named in
+  `NOT_A_PATH`, which expires its own entries.
+- **`COMPOSE_FILE` is documented in `.env.example`** and pointed at from both READMEs, so the
+  two-`-f` commands the reorganisation introduces cost nothing to anyone who wants a bare
+  `docker compose up -d`. Written as an indented example rather than a knob to uncomment,
+  deliberately: no compose file reads it — the CLI does — and its separator is `:` on Linux
+  and macOS but `;` on Windows.
+
 ### Fixed (documentation)
 
 - **The "Build and Development" section of both READMEs appeared twice, verbatim** — 23

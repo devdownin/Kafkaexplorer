@@ -96,6 +96,8 @@ Ouvrez ensuite **http://localhost:8080** et commencez à cliquer. C'est tout.
   Tags, variables d'environnement, volumes et sondes : **[docs/DOCKERHUB.md](docs/DOCKERHUB.md)** — la page publiée comme [présentation Docker Hub](https://hub.docker.com/r/compagnonsdudev/kafkaexplorer).
 - **Sur votre propre cluster** : pointez `kafka.bootstrap-servers` vers n'importe quel broker Kafka 2.1+ (PLAIN, SSL ou Confluent Cloud) — rien à installer côté cluster.
 
+Les stacks ci-dessus sont une base plus des overlays, donc plusieurs portent deux `-f`. Posez `COMPOSE_FILE=docker-compose.yml:compose/schema-registry.yml` dans un `.env` à la racine et un simple `docker compose up -d` désigne cette combinaison — voir `.env.example`.
+
 </details>
 
 ## 🧭 Le tour du propriétaire
