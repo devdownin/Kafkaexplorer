@@ -106,22 +106,39 @@ class Unknown(Exception):
     pass
 
 
-def java_to_ts(java_type: str, known: set[str]) -> str:
+def java_to_ts(java_type: str, known: set[str], renames: dict[str, str] | None = None) -> str:
+    """
+    `renames` carries the correspondences the `@java` markers already state.
+
+    Resolution used to be name identity alone, which forced a nested record to keep its Java simple
+    name on the frontend: `ProcessModel.Activity` had to be an interface called `Activity` in a
+    shared types file, beside `Edge`, `Variant` and `Endpoint` — names general enough to collide
+    with the next feature that needs one. The marker on each declaration already says which record
+    an interface stands for, so it is read rather than a second list being kept by hand.
+
+    Consulted *before* plain identity, because the set it is compared against mixes TS interface
+    names with Java enum names — so a Java enum resolved to its own name and the marker that renamed
+    it was never reached. Where an interface keeps its record's name the map is the identity anyway,
+    which is why moving it first changes nothing for every type that already resolved.
+    """
+    renames = renames or {}
     java_type = java_type.strip()
     if java_type in SCALARS:
         return SCALARS[java_type]
+    if java_type in renames:
+        return renames[java_type]
     if java_type in known:
         return java_type
     generic = re.fullmatch(r'(\w+)<(.+)>', java_type, re.DOTALL)
     if generic:
         outer, inner = generic.group(1), split_generics(generic.group(2))
         if outer in ('List', 'Set', 'Collection') and len(inner) == 1:
-            return f'{java_to_ts(inner[0], known)}[]'
+            return f'{java_to_ts(inner[0], known, renames)}[]'
         if outer == 'Map' and len(inner) == 2:
-            key = java_to_ts(inner[0], known)
+            key = java_to_ts(inner[0], known, renames)
             # A Java map key is a string or a number once it is JSON.
             key = key if key in ('string', 'number') else 'string'
-            return f'Record<{key}, {java_to_ts(inner[1], known)}>'
+            return f'Record<{key}, {java_to_ts(inner[1], known, renames)}>'
     raise Unknown(java_type)
 
 
@@ -237,6 +254,20 @@ def main() -> int:
         return 1
 
     known = {ts for _, ts, _, _ in declarations}
+    # The Java↔TS correspondences the markers declare, keyed by the record's simple name — which is
+    # how `parse_java` keys them. A simple name claimed by two declarations under different TS names
+    # is dropped rather than resolved to whichever came last: a checker that picks silently is worse
+    # than one that reports it cannot tell.
+    renames: dict[str, str] = {}
+    contested: set[str] = set()
+    for java_name, ts_name, _, _ in declarations:
+        simple = java_name.rsplit('.', 1)[-1]
+        if simple in renames and renames[simple] != ts_name:
+            contested.add(simple)
+        renames[simple] = ts_name
+    for simple in contested:
+        renames.pop(simple, None)
+
     problems: list[str] = []
     checked = 0
 
@@ -264,7 +295,7 @@ def main() -> int:
                 continue
             declared, _ = fields[name]
             try:
-                expected = java_to_ts(java_type, known | enums)
+                expected = java_to_ts(java_type, known | enums, renames)
             except Unknown as unknown:
                 problems.append(f'{ts_name}.{name}: Java type {unknown} is not in the mapping — '
                                 f'extend check-api-types.py rather than leaving it unchecked')

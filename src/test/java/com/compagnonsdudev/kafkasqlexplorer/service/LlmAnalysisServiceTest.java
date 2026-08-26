@@ -800,6 +800,105 @@ class LlmAnalysisServiceTest {
         assertEquals(1, result.coverage().messagesDetailed());
     }
 
+    // ────────────────────────────────────────────────────────────────────────────────────────
+    // What is measured needs no model.
+    //
+    // The API key used to be checked before the read, so a deployment with no LLM configured got
+    // nothing at all from Process Mining — while the transitions, the variants and the latencies
+    // are counting over records this side already holds. Only the reading of them needs a model.
+    // ────────────────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    void withoutAnApiKeyTheProcessIsStillMeasured() {
+        claudeConfig.setApiKey("");
+        givenDigests(List.of(
+            event("received", 1, "ORD-1", 0L),
+            event("validated", 2, "ORD-1", 1_000L),
+            event("received", 3, "ORD-2", 100L),
+            event("validated", 4, "ORD-2", 2_100L)));
+
+        ProcessMiningResult result = llmAnalysisService.analyzeSnapshot(
+            List.of("received", "validated"), SnapshotConfig.latestN(500),
+            mappingFor("received", "validated"));
+
+        verify(llmClient, never()).generateWithMeta(anyString(), anyString(), any());
+        assertNotNull(result.processModel(), "the measurement does not depend on the model");
+        assertTrue(result.processModel().available());
+        assertEquals(2, result.processModel().cases());
+        assertEquals(1, result.processModel().edges().size());
+        assertNull(result.flowchart(), "the flowchart is the half that needed a model");
+        assertNotNull(result.error());
+        assertTrue(result.error().contains("No LLM is configured"), result.error());
+        assertTrue(result.error().contains("measured process below needed none"), result.error());
+    }
+
+    /** And the coverage still says what was measured, so the panel is not left guessing. */
+    @Test
+    void aRunWithNoApiKeyStillReportsWhatItMeasured() {
+        claudeConfig.setApiKey("");
+        givenDigests(List.of(
+            event("received", 1, "ORD-1", 0L),
+            event("validated", 2, "ORD-1", 1_000L)));
+
+        ProcessMiningResult result = llmAnalysisService.analyzeSnapshot(
+            List.of("received", "validated"), SnapshotConfig.latestN(500),
+            mappingFor("received", "validated"));
+
+        assertEquals(2, result.coverage().messagesRead());
+        assertEquals(2, result.coverage().messagesMeasured());
+        assertEquals(0, result.coverage().messagesDetailed(),
+            "nothing was inlined because no prompt was built");
+    }
+
+    /**
+     * With no mapping there is nothing on either side, and the reason names the mapping rather than
+     * the key alone — those send an operator to two different screens.
+     */
+    @Test
+    void withNoKeyAndNoMappingTheReasonNamesBoth() {
+        claudeConfig.setApiKey("");
+        givenDigests(List.of(digestOf("topic1", "k", "{\"val\":1}")));
+
+        ProcessMiningResult result = llmAnalysisService.analyzeSnapshot(
+            List.of("topic1"), SnapshotConfig.latestN(10), null);
+
+        assertFalse(result.processModel().available());
+        assertTrue(result.error().contains("No LLM is configured"), result.error());
+        assertTrue(result.error().contains("correlation id"), result.error());
+    }
+
+    /** The live path measures too, and says the same thing. */
+    @Test
+    void theLivePathAlsoMeasuresWithoutAModel() {
+        claudeConfig.setApiKey("");
+
+        ProcessMiningResult result = llmAnalysisService.analyzeLiveDigests(
+            List.of(event("received", 1, "ORD-1", 0L), event("validated", 2, "ORD-1", 500L)),
+            mappingFor("received", "validated"), null, null);
+
+        verify(llmClient, never()).generateWithMeta(anyString(), anyString(), any());
+        assertNotNull(result.processModel());
+        assertEquals(1, result.processModel().cases());
+    }
+
+    /** A successful analysis carries the measurement beside the narrative, not instead of it. */
+    @Test
+    void theMeasuredProcessTravelsOnASuccessfulAnalysisToo() {
+        givenDigests(List.of(
+            event("received", 1, "ORD-1", 0L),
+            event("validated", 2, "ORD-1", 1_000L)));
+        givenModelAnswers();
+
+        ProcessMiningResult result = llmAnalysisService.analyzeSnapshot(
+            List.of("received", "validated"), SnapshotConfig.latestN(500),
+            mappingFor("received", "validated"));
+
+        assertNull(result.error());
+        assertNotNull(result.flowchart());
+        assertNotNull(result.processModel(), "the operator can check the narrative against it");
+        assertEquals(1, result.processModel().cases());
+    }
+
     @Test
     void theModelCannotSupplyItsOwnUsageOrCoverage() {
         when(llmClient.generateWithMeta(anyString(), anyString(), any())).thenReturn(new LlmResponse("""

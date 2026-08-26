@@ -161,9 +161,10 @@ Chaque message est un résumé du payload d'origine :
 
     public ProcessMiningResult analyzeSnapshot(List<String> topics, SnapshotConfig depth,
                                                 FieldMapping fieldMapping, String auditFocus) {
-        if (isApiKeyMissing()) {
-            return errorResult("LLM API key not configured.");
-        }
+        // The API key is checked *after* the read and the measurement, not before. The
+        // directly-follows graph, the variants and the latencies are counting over records this
+        // side already holds — only the reading of them needs a model — and refusing the whole
+        // gesture for want of a key withheld the half that was free. See step 3b.
 
         // 1. Read and digest in one pass — payloads are summarized as they arrive and never
         //    accumulate in memory nor reach the prompt verbatim (a snapshot of 500 messages per
@@ -185,13 +186,29 @@ Chaque message est un résumé du payload d'origine :
             return ProcessMiningResult.failed(read.emptyReadExplanation()).withCoverage(coverage);
         }
 
-        // 4. Build user prompt, keeping what of the read actually reached it
-        BuiltPrompt prompt = buildSnapshotPrompt(byTopic, fieldMapping, auditFocus);
+        // 3a. Measure the process. Computed over every record read, so it is the one part of the
+        //     evidence no sampling below can weaken — and the one part no model is needed for.
+        ProcessModel model = processModelBuilder.build(allDigests(byTopic), fieldMapping);
 
-        // 5. Call the configured LLM and parse. Coverage travels on the answer whatever it is —
-        //    an analysis that failed still knows what it had read, and the next attempt is sized
-        //    from that.
+        // 3b. Without a model there is no flowchart, no narrative and no anomalies — and the
+        //     measurement is untouched by that. Reporting the refusal *with* what was measured is
+        //     the same rule coverage already follows on a failed analysis: these are measurements
+        //     taken on this side of the call, so losing the call cannot invalidate them.
+        if (isApiKeyMissing()) {
+            return ProcessMiningResult.failed(noLlmExplanation(model))
+                .withProcessModel(model)
+                .withCoverage(coverageOf(topics, read,
+                    new PromptScope(measuredByTopic(byTopic, fieldMapping, model), Map.of()), 0));
+        }
+
+        // 4. Build user prompt, keeping what of the read actually reached it
+        BuiltPrompt prompt = buildSnapshotPrompt(byTopic, fieldMapping, auditFocus, model);
+
+        // 5. Call the configured LLM and parse. The measurement and the coverage travel on the
+        //    answer whatever it is — an analysis that failed still knows what it read and what the
+        //    records said, and the next attempt is sized from that.
         return callLlmAndParse(prompt.text())
+            .withProcessModel(model)
             .withCoverage(coverageOf(topics, read, prompt.scope(), prompt.text().length()));
     }
 
@@ -239,19 +256,36 @@ Chaque message est un résumé du payload d'origine :
                                                    FieldMapping fieldMapping,
                                                    String referenceFlowchart,
                                                    String auditFocus) {
-        if (isApiKeyMissing()) {
-            return errorResult("LLM API key not configured.");
-        }
-
         List<String> topics = window.stream()
             .map(PayloadDigest::topic)
             .distinct()
             .sorted()
             .toList();
         Map<String, List<PayloadDigest>> byTopic = groupAndSort(topics, window);
+        ProcessModel model = processModelBuilder.build(window, fieldMapping);
 
-        String userPrompt = buildLivePrompt(byTopic, fieldMapping, referenceFlowchart, auditFocus);
-        return callLlmAndParse(userPrompt);
+        if (isApiKeyMissing()) {
+            return ProcessMiningResult.failed(noLlmExplanation(model)).withProcessModel(model);
+        }
+
+        String userPrompt =
+            buildLivePrompt(byTopic, fieldMapping, referenceFlowchart, auditFocus, model);
+        return callLlmAndParse(userPrompt).withProcessModel(model);
+    }
+
+    /**
+     * Why there is no narrative, and what there is instead.
+     *
+     * <p>Two different sentences, because the operator's next move differs: with a measured process
+     * in hand the missing half is the interpretation, and the page has something to show; without a
+     * field mapping there is nothing on either side and the mapping is the thing to go and fix.
+     */
+    private static String noLlmExplanation(ProcessModel model) {
+        String base = "No LLM is configured, so nothing interpreted the run: the flowchart, the "
+            + "narrative and the anomalies all need a model. Set an API key in Settings to get them.";
+        return model.available()
+            ? base + " The measured process below needed none and is complete."
+            : base + " " + model.unavailableReason();
     }
 
     private Map<String, List<PayloadDigest>> groupAndSort(List<String> topics,
@@ -289,22 +323,24 @@ Chaque message est un résumé du payload d'origine :
 
     private BuiltPrompt buildSnapshotPrompt(Map<String, List<PayloadDigest>> byTopic,
                                         FieldMapping fieldMapping,
-                                        String auditFocus) {
+                                        String auditFocus,
+                                        ProcessModel model) {
         StringBuilder sb = new StringBuilder();
         sb.append("## MODE: ANALYSE SNAPSHOT\n\n");
-        PromptScope scope = appendCommonSections(sb, byTopic, fieldMapping, null, auditFocus);
+        PromptScope scope = appendCommonSections(sb, byTopic, fieldMapping, null, auditFocus, model);
         return new BuiltPrompt(sb.toString(), scope);
     }
 
     private String buildLivePrompt(Map<String, List<PayloadDigest>> byTopic,
                                     FieldMapping fieldMapping,
                                     String referenceFlowchart,
-                                    String auditFocus) {
+                                    String auditFocus,
+                                    ProcessModel model) {
         StringBuilder sb = new StringBuilder();
         sb.append("## MODE: ANALYSE LIVE\n\n");
         String ref = (referenceFlowchart == null || referenceFlowchart.isBlank())
             ? "INCONNU" : referenceFlowchart;
-        appendCommonSections(sb, byTopic, fieldMapping, ref, auditFocus);
+        appendCommonSections(sb, byTopic, fieldMapping, ref, auditFocus, model);
         return sb.toString();
     }
 
@@ -320,7 +356,8 @@ Chaque message est un résumé du payload d'origine :
                                        Map<String, List<PayloadDigest>> byTopic,
                                        FieldMapping fieldMapping,
                                        String referenceFlowchart,
-                                       String auditFocus) {
+                                       String auditFocus,
+                                       ProcessModel model) {
         sb.append("## MAPPING DES CHAMPS\n");
         if (fieldMapping != null) {
             sb.append(fieldMapping.toPromptBlock());
@@ -342,11 +379,6 @@ Chaque message est un résumé du payload d'origine :
             sb.append(referenceFlowchart).append("\n\n");
             sb.append("Si aucun changement structurel détecté, retourne \"NO_CHANGE\" dans le champ flowchart.\n\n");
         }
-
-        // The process is measured before it is described. Everything in this section is a count, a
-        // sort or a set difference over *every* record read — not over the handful that fit in the
-        // prompt — so it is the one part of the evidence the sampling below cannot weaken.
-        ProcessModel model = processModelBuilder.build(allDigests(byTopic), fieldMapping);
 
         // What gets inlined is decided first, into a buffer, so the shapes section can describe
         // exactly the records that follow it rather than a different sample of them.

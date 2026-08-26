@@ -17,6 +17,7 @@ import { describeResume, resumableStep } from './processMiningDraft';
 import { describeUsage, formatCostUsd, totalCostUsd, totalTokens } from './llmUsage';
 import { describeDataPolicy } from './llmPolicy';
 import { describeCoverage } from './processMiningCoverage';
+import ProcessModelPanel from '../components/processmining/ProcessModelPanel';
 import type { AnalysisMode, Step } from './processMiningDraft';
 import type {
   AnomalyReport,
@@ -24,6 +25,7 @@ import type {
   LlmUsage,
   ProcessMiningCoverage,
   ProcessMiningResult,
+  ProcessModel,
   RagSource,
 } from '../api/types';
 
@@ -253,6 +255,14 @@ const ProcessMining: React.FC = () => {
    * sélection. Hors brouillon, à la différence de `snapshotResult` : un échec ne se rouvre pas.
    */
   const [failedCoverage, setFailedCoverage] = useState<ProcessMiningCoverage | null>(null);
+  /**
+   * Ce qui a été mesuré alors même que l'analyse a échoué.
+   *
+   * Hors brouillon comme `failedCoverage`, et pour la même raison : un échec ne se rouvre pas. Mais
+   * il se lit — c'est le cas « aucun LLM configuré », où la mesure est la totalité de ce que
+   * l'exécution a produit, et où la refuser avec le reste retirerait la moitié qui était gratuite.
+   */
+  const [failedProcessModel, setFailedProcessModel] = useState<ProcessModel | null>(null);
   const [llmInfo, setLlmInfo] = useState<RuntimeLlmInfo | null>(null);
   const [auditTemplates, setAuditTemplates] = useState<AuditTemplate[]>([]);
   const [selectedAuditIds, setSelectedAuditIds] = usePersistentState<string[]>(DRAFT.audits, []);
@@ -462,6 +472,7 @@ const ProcessMining: React.FC = () => {
       setLoading(true);
       setError(null);
       setFailedCoverage(null);
+      setFailedProcessModel(null);
       try {
         const res = await axios.post<ProcessMiningResult>('/api/process-mining/snapshot', {
           topics: selectedTopics,
@@ -478,6 +489,7 @@ const ProcessMining: React.FC = () => {
           // Ce que la lecture avait tout de même ramené : c'est ce qui dit si l'échec vient du
           // modèle ou d'une sélection qui ne contenait rien à analyser.
           setFailedCoverage(res.data.coverage ?? null);
+          setFailedProcessModel(res.data.processModel ?? null);
           return;
         }
         setSnapshotResult(res.data);
@@ -720,6 +732,7 @@ const ProcessMining: React.FC = () => {
     setCustomAuditPrompt('');
     setError(null);
     setFailedCoverage(null);
+    setFailedProcessModel(null);
   };
 
   // ---- Render ----
@@ -842,6 +855,15 @@ const ProcessMining: React.FC = () => {
           réponse : « aucun des topics choisis n'a livré de message » n'envoie pas au même endroit
           que « le modèle n'a pas répondu ». */}
       {error && failedCoverage && <CoverageNotice coverage={failedCoverage} />}
+
+      {/* Et ce qu'elle a mesuré. Sans LLM configuré c'est la totalité de ce que l'exécution a
+          produit : les transitions, les variantes et les latences sont du comptage, seule leur
+          lecture demandait un modèle. */}
+      {error && failedProcessModel && (
+        <div className="mt-3">
+          <ProcessModelPanel model={failedProcessModel} />
+        </div>
+      )}
 
       {/* Step content */}
       <div className="bg-white/3 dark:bg-surface-container/30 border border-outline-variant/60 rounded-2xl p-6">
@@ -1035,6 +1057,12 @@ const ProcessMining: React.FC = () => {
             {/* Ce sur quoi le diagramme ci-dessous repose. En mode live, la portée d'une fenêtre
                 est déjà rapportée fenêtre par fenêtre par la barre d'état. */}
             {analysisMode === 'SNAPSHOT' && <CoverageNotice coverage={snapshotResult?.coverage} />}
+
+            {/* Le processus mesuré, à côté du récit qu'on en a tiré — pour qu'il soit vérifiable
+                plutôt que cru. Même règle que le tableau de preuves de Stream Flow. */}
+            {analysisMode === 'SNAPSHOT' && (
+              <ProcessModelPanel model={snapshotResult?.processModel} />
+            )}
 
             {/* Live status bar (only in live mode) */}
             {analysisMode === 'LIVE' && (
