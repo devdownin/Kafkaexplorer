@@ -59,12 +59,38 @@ describe('ConfirmDialog / useConfirm', () => {
     const dialog = await screen.findByRole('dialog');
     expect(dialog.className).not.toMatch(/\bfixed\b/);
     expect(dialog.className).not.toMatch(/\binset-0\b/);
-    expect(dialog.className).toMatch(/max-w-sm/);
+    expect(dialog.className).toMatch(/max-w-lg/);
 
     // Le fond reste un voile léger : il assombrit sans flouter l'application.
     const backdrop = dialog.parentElement!;
     expect(backdrop.className).toMatch(/confirm-overlay/);
     expect(backdrop.className).not.toMatch(/glass-overlay/);
+  });
+
+  /*
+   * Le titre et la description portent une donnée dont rien ne borne la longueur : un nom
+   * d'onglet, un nom de table — donc un identifiant Kafka. Sans césure autorisée, un tel nom
+   * n'en offre aucune (les points n'en sont pas) et sortait de la carte par la droite.
+   *
+   * jsdom n'a pas de mise en page : ce qui est vérifié ici est le mécanisme, pas le débordement.
+   * La mesure, elle, a été prise dans Chromium et est consignée dans le commit.
+   */
+  it('lets an unbreakable name wrap instead of escaping the card', async () => {
+    const Long = () => {
+      const confirm = useConfirm();
+      return (
+        <button onClick={() => void confirm({
+          title: 'Drop acme.production.orders.shipped.enriched.consolidated.v2?',
+          description: 'The window query replaces everything in it.',
+        })}>trigger</button>
+      );
+    };
+    render(<ConfirmProvider><Long /></ConfirmProvider>);
+    await userEvent.click(screen.getByRole('button', { name: 'trigger' }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog.querySelector('h2')!.className).toMatch(/break-words/);
+    expect(dialog.querySelector('p')!.className).toMatch(/break-words/);
   });
 
   it('still cancels when the backdrop is clicked', async () => {
