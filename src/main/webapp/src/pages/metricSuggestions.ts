@@ -175,7 +175,19 @@ export function describeEvidence(response: MetricSuggestions | null): EvidenceSt
   return { summary: `${derived}: ${parts.join(', ')}.`, unlocks, waiting: false };
 }
 
-/** L'âge de l'observation, quand il commence à compter — un audit d'il y a trois semaines. */
+/**
+ * L'âge de l'observation, quand il commence à compter — un audit d'il y a trois semaines.
+ *
+ * La phrase disait « topics may have changed since ». Ce n'est plus à elle de le dire : le serveur
+ * vérifie maintenant, à chaque dérivation, que les topics existent encore et s'ils contiennent
+ * quelque chose — une proposition dont un topic a disparu est écartée, une dont un topic est vide
+ * est marquée. Répéter l'avertissement ici, c'est envoyer relancer un audit pour une question déjà
+ * tranchée, et affaiblir celle qui reste ouverte.
+ *
+ * Ce que l'âge seul dit encore, et que rien d'autre ne peut dire : **les seuils** sont des
+ * multiples d'un débit, d'une latence, d'un volume mesurés ce jour-là. Un topic qui existe et qui
+ * est plein peut avoir triplé de trafic depuis, et aucune vérification de présence ne le verra.
+ */
 export function stalenessNote(
   response: MetricSuggestions | null,
   now: number = Date.now(),
@@ -185,8 +197,9 @@ export function stalenessNote(
   const age = now - response.auditTimestamp;
   if (age < thresholdMs) return null;
   const days = Math.floor(age / (24 * 60 * 60 * 1000));
-  return `The audit these proposals rest on is ${days} day${days === 1 ? '' : 's'} old — topics may `
-    + 'have changed since. Re-run it before trusting the thresholds it suggested.';
+  return `The audit these proposals rest on is ${days} day${days === 1 ? '' : 's'} old. Whether its `
+    + 'topics still exist was checked just now; what was not is the traffic they carry, and every '
+    + 'threshold below is a multiple of a rate measured that day. Re-run it before trusting them.';
 }
 
 // ── Un audit plus récent ─────────────────────────────────────────────────────

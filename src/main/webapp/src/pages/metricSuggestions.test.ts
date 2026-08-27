@@ -207,6 +207,17 @@ describe('stalenessNote', () => {
   it('claims nothing when the run carries no timestamp', () => {
     expect(stalenessNote(response({ auditTimestamp: null }), NOW)).toBeNull();
   });
+
+  it('points at the thresholds, not at whether the topics are still there', () => {
+    // Le serveur vérifie la présence et le vide à chaque dérivation, écarte ce qui a disparu et
+    // marque ce qui est vide. Redire ici « les topics ont pu changer » enverrait relancer un audit
+    // pour une question déjà tranchée, en affaiblissant celle qui reste ouverte : les seuils sont
+    // des multiples d'un débit mesuré ce jour-là, et aucune vérification de présence ne le voit.
+    const note = stalenessNote(response(), NOW + 10 * 24 * 60 * 60 * 1000) ?? '';
+
+    expect(note).toContain('threshold');
+    expect(note).not.toContain('topics may have changed');
+  });
 });
 
 describe('suggestionToDraft', () => {
