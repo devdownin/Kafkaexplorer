@@ -77,6 +77,16 @@ public class MetricSuggestionService {
 
     /** Enough to fill the panel; past this the reader stops reading and starts scrolling. */
     private static final int MAX_SUGGESTIONS = 24;
+
+    /**
+     * The window a proposed latency metric reads on both sides.
+     *
+     * <p>Fifteen minutes rather than an hour: the row cap is what actually bounds the read, and a
+     * wider window on a busy topic only means the cap cuts inside it, which puts the two sides back
+     * on two different stretches of time — the very thing the window is for. Wide enough that an
+     * ordinary hop's traffic fits, narrow enough that the trailing edge is a small share of it.
+     */
+    private static final long SUGGESTED_LATENCY_WINDOW_MS = 900_000L;
     /** Volume KPIs are proposed for the busiest audited topics only — one per topic is plenty. */
     private static final int MAX_VOLUME_SUGGESTIONS = 3;
     /**
@@ -388,6 +398,15 @@ public class MetricSuggestionService {
         params.put("targetSql", correlationSql(targetTopic, targetKey.column()));
         params.put("sourceTopic", sourceTopic);
         params.put("targetTopic", targetTopic);
+        /*
+         * Both sides over the same window, because the number this card carries is a match rate as
+         * much as a latency. Bounded by row count alone, two topics of different throughputs are
+         * read over two different stretches of time, and the rate is then depressed by that
+         * misalignment as much as by a real loss — which is the reading this panel exists to keep
+         * honest. The SQL is the explorer's own single-table shape, so the direct reader can honour
+         * it; a hand-edited join in the modal is refused at save with the reason.
+         */
+        params.put("windowMs", SUGGESTED_LATENCY_WINDOW_MS);
 
         // 2× / 4× of what was measured: high enough that ordinary variation does not page anyone,
         // low enough that a hop taking four times as long is not "normal". Both are stated.
@@ -408,6 +427,10 @@ public class MetricSuggestionService {
             caveats.add("No usable latency was measured for this hop, so no threshold is proposed — "
                 + "run the metric for a while and set one from what it reports.");
         }
+        caveats.add("Both sides are read over the same " + formatMillis(SUGGESTED_LATENCY_WINDOW_MS)
+            + ", so the match rate reports real losses rather than two topics read over two "
+            + "different stretches of time. A source produced near the end of that window has its "
+            + "target after it, so the rate understates by about one hop's worth of traffic.");
 
         MetricConfig metric = new MetricConfig(
             null,

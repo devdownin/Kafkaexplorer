@@ -512,6 +512,97 @@ class FlinkSqlServiceTest {
     // these fixes a typo came back as a page of rows and the query looked like it worked.
     // ──────────────────────────────────────────────────────────────────────────────
 
+    // ──────────────────────────────────────────────────────────────────────────────
+    // Two direct aggregates over one topic come out of one read
+    //
+    // Two counts under different WHERE clauses over the same topic — which is what a same-topic
+    // TOPIC_COUNT_DELTA is — each downloaded and parsed up to AGGREGATE_SCAN_RECORDS records,
+    // thirty seconds apart, and the per-cycle memoization one layer up keys on the SQL so it never
+    // brought them together. Sharing also makes the two counts describe the same instant.
+    // ──────────────────────────────────────────────────────────────────────────────
+
+    /** Three records on one topic, two of which carry status OK. */
+    private void stubCountableTopic(String topic) throws Exception {
+        String table = topic.replace('.', '_');
+        doReturn(List.of(topic)).when(kafkaAdminService).listTopics();
+        doReturn(MessageFormat.JSON).when(schemaInferenceService).detectFormat(anyString());
+        doReturn(Map.of("status", "STRING")).when(schemaInferenceService).inferSchema(anyString(), any());
+        doReturn("CREATE TABLE " + table + " (status STRING) "
+                + "WITH ('connector'='datagen','number-of-rows'='0')")
+                .when(ddlGeneratorService).generateDdl(anyString(), any(), any());
+        doReturn(List.of(
+                new org.apache.kafka.clients.consumer.ConsumerRecord<>(topic, 0, 0L, null, "{\"status\":\"OK\"}"),
+                new org.apache.kafka.clients.consumer.ConsumerRecord<>(topic, 0, 1L, null, "{\"status\":\"OK\"}"),
+                new org.apache.kafka.clients.consumer.ConsumerRecord<>(topic, 0, 2L, null, "{\"status\":\"KO\"}")
+        )).when(kafkaAdminService).getEarliestRecords(eq(topic), anyInt());
+    }
+
+    private QueryRequest directCount(String sql) {
+        return QueryRequest.directSql(sql, 50, 10_000L, "earliest-offset");
+    }
+
+    @Test
+    void twoDirectAggregatesOverOneTopicShareASingleRead() throws Exception {
+        stubCountableTopic("shared.count.topic");
+
+        FlinkSqlService.QueryPair pair = service.executeSqlPair(
+                directCount("SELECT COUNT(*) AS metric_value FROM shared_count_topic WHERE status = 'KO'"),
+                directCount("SELECT COUNT(*) AS metric_value FROM shared_count_topic WHERE status = 'OK'"));
+
+        assertNoError(pair.first());
+        assertNoError(pair.second());
+        assertEquals(1L, ((Number) pair.first().rows().get(0).get("metric_value")).longValue());
+        assertEquals(2L, ((Number) pair.second().rows().get(0).get("metric_value")).longValue());
+        assertTrue(pair.sharedScan(), "the second count must come out of the first one's records");
+        verify(kafkaAdminService, times(1)).getEarliestRecords(eq("shared.count.topic"), anyInt());
+    }
+
+    @Test
+    void twoAggregatesOverDifferentTopicsShareNothing() throws Exception {
+        doReturn(List.of("left.count.topic", "right.count.topic")).when(kafkaAdminService).listTopics();
+        doReturn(MessageFormat.JSON).when(schemaInferenceService).detectFormat(anyString());
+        doReturn(Map.of("status", "STRING")).when(schemaInferenceService).inferSchema(anyString(), any());
+        // One DDL per topic: a single table name would make the second registration fail with
+        // "already exists", and auto-registration returns before the direct read ever happens.
+        doAnswer(invocation -> "CREATE TABLE "
+                + invocation.getArgument(0).toString().replace('.', '_')
+                + " (status STRING) WITH ('connector'='datagen','number-of-rows'='0')")
+                .when(ddlGeneratorService).generateDdl(anyString(), any(), any());
+        doReturn(List.of(new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                "left.count.topic", 0, 0L, null, "{\"status\":\"OK\"}")))
+                .when(kafkaAdminService).getEarliestRecords(eq("left.count.topic"), anyInt());
+        doReturn(List.of()).when(kafkaAdminService).getEarliestRecords(eq("right.count.topic"), anyInt());
+
+        FlinkSqlService.QueryPair pair = service.executeSqlPair(
+                directCount("SELECT COUNT(*) AS metric_value FROM right_count_topic"),
+                directCount("SELECT COUNT(*) AS metric_value FROM left_count_topic"));
+
+        // A record read from one topic must never answer a question about another, and the flag
+        // is what lets the caller keep saying the two counts are a whole query apart.
+        assertFalse(pair.sharedScan());
+        verify(kafkaAdminService, times(1)).getEarliestRecords(eq("left.count.topic"), anyInt());
+        verify(kafkaAdminService, times(1)).getEarliestRecords(eq("right.count.topic"), anyInt());
+    }
+
+    @Test
+    void aSinceReadModeReadsForwardFromTheInstantItNames() throws Exception {
+        stubCountableTopic("windowed.count.topic");
+        doReturn(List.of(new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                "windowed.count.topic", 0, 9L, null, "{\"status\":\"OK\"}")))
+                .when(kafkaAdminService).getRecordsSinceTimestamp(eq("windowed.count.topic"), eq(1_700_000_000_000L), anyInt());
+
+        QueryResult result = service.executeSql(QueryRequest.directSql(
+                "SELECT COUNT(*) AS metric_value FROM windowed_count_topic", 50, 10_000L,
+                FlinkSqlService.sinceReadMode(1_700_000_000_000L)));
+
+        // The two offset modes say which end of the log to enter by; neither expresses "the last
+        // ten minutes", which is what two topics read over one window need.
+        assertNoError(result);
+        assertEquals(1L, ((Number) result.rows().get(0).get("metric_value")).longValue());
+        verify(kafkaAdminService, never()).getEarliestRecords(eq("windowed.count.topic"), anyInt());
+        verify(kafkaAdminService, never()).getRecentRecords(eq("windowed.count.topic"), anyInt());
+    }
+
     /** Registers 'strict.mode.topic' as a 2-row datagen table, with Kafka records behind it. */
     private void stubRegisteredTopicWithRecords() throws Exception {
         doReturn(List.of("strict.mode.topic")).when(kafkaAdminService).listTopics();

@@ -28,8 +28,8 @@ export interface ScopeChip {
 /** En dessous, la moyenne décrit une minorité des événements lus et le dit. */
 export const LOW_MATCH_RATE = 0.9;
 
-function num(summary: Record<string, unknown>, key: string): number | null {
-  const value = summary[key];
+function num(source: Record<string, unknown>, key: string): number | null {
+  const value = source[key];
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
@@ -48,9 +48,28 @@ export function formatDurationMs(ms: number): string {
  * ordinaire et donc muet. Le taux d'appariement fait exception et s'affiche même à 100 % : une
  * indication qui n'apparaît que sur mauvaise nouvelle est une indication qu'on cesse de lire.
  */
-export function describeMetricScope(lastSummary: Record<string, unknown> | null): ScopeChip[] {
-  if (!lastSummary) return [];
+export function describeMetricScope(
+  lastSummary: Record<string, unknown> | null,
+  templateParams: Record<string, unknown> | null = null,
+): ScopeChip[] {
   const chips: ScopeChip[] = [];
+
+  // La cadence vient des paramètres, pas du résumé : elle décrit ce que la métrique *va* faire,
+  // pas ce qu'elle a mesuré. Elle est affichée quand même, et seulement quand elle s'écarte du
+  // défaut — une métrique qui ne se rafraîchit qu'à l'heure et ne le dit pas se lit comme figée.
+  const interval = templateParams ? num(templateParams, 'refreshIntervalMs') : null;
+  if (interval !== null && interval > 0) {
+    chips.push({
+      label: `every ${formatDurationMs(interval)}`,
+      detail:
+        'This metric asks for its own cadence rather than running on every cycle. It can only be ' +
+        'slower than the loop\u2019s own tick, never faster, and the last-success timestamp is what ' +
+        'dates the value in between.',
+      tone: 'neutral',
+    });
+  }
+
+  if (!lastSummary) return chips;
 
   // Comment le compte a été obtenu, et sur quoi il porte : deux mesures différentes sous un même
   // nom de métrique, donc la carte le dit plutôt que de laisser deviner.
@@ -108,15 +127,55 @@ export function describeMetricScope(lastSummary: Record<string, unknown> | null)
     });
   }
 
-  const readGapMs = num(lastSummary, 'readGapMs');
-  if (readGapMs !== null) {
+  const windowMs = num(lastSummary, 'windowMs');
+  if (windowMs !== null && windowMs > 0) {
     chips.push({
-      label: `${formatDurationMs(readGapMs)} apart`,
+      label: `${formatDurationMs(windowMs)} window`,
       detail:
-        'The two sides were read this far apart, never at one instant. Traffic in between lands in ' +
-        'one of the two counts and not the other.',
+        'Both sides were read over the same stretch of time, from one instant computed once — so ' +
+        'the pairing is not an accident of the two topics\u2019 throughputs, which is what a row cap ' +
+        'makes it. A source produced near the end of the window has its target after it, outside ' +
+        'both reads: the trailing edge understates the rate above by about one hop\u2019s worth of traffic.',
       tone: 'neutral',
     });
+  }
+
+  if (lastSummary.totalLoss === true) {
+    chips.push({
+      label: 'total loss',
+      detail:
+        'The right side counted zero against a non-zero left side. The gap is reported as 100 % — a ' +
+        'definition for that case, not the formula\u2019s own answer, which divides by the right side.',
+      tone: 'warning',
+    });
+  }
+
+  const readGapMs = num(lastSummary, 'readGapMs');
+  if (readGapMs !== null) {
+    /*
+     * « Même instant » est une affirmation sur la façon dont les deux comptes ont été pris, pas
+     * une lecture du chiffre : deux requêtes séparées peuvent tomber dans la même milliseconde,
+     * et zéro dirait alors quelque chose de faux. Le serveur sait laquelle des deux — offsets, ou
+     * un scan partagé entre les deux côtés — et c'est ce drapeau qu'on lit.
+     */
+    const oneRead = lastSummary.sharedScan === true || lastSummary.countedBy === 'OFFSETS';
+    chips.push(
+      oneRead
+        ? {
+            label: 'same instant',
+            detail:
+              'Both sides came out of a single read, so no traffic falls between them and the ' +
+              'comparison leans neither way.',
+            tone: 'neutral',
+          }
+        : {
+            label: `${formatDurationMs(readGapMs)} apart`,
+            detail:
+              'The two sides were read this far apart, never at one instant. Traffic in between lands in ' +
+              'one of the two counts and not the other.',
+            tone: 'neutral',
+          },
+    );
   }
 
   const warnings = lastSummary.warnings;

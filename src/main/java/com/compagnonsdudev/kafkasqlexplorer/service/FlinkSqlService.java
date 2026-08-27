@@ -1211,6 +1211,118 @@ public class FlinkSqlService {
     /** The head of the caveat an aggregate carries when it stopped on that ceiling. */
     public static final String AGGREGATE_SCAN_CAPPED = "Aggregate scan ceiling reached";
 
+    /**
+     * The read mode that names an <b>instant</b> rather than an end of the log.
+     *
+     * <p>{@code readMode} is honoured by the direct reader alone, and it had exactly two values:
+     * enter by the oldest offset, or by the newest. Neither expresses "the last ten minutes", and
+     * the difference matters to any caller reading two topics that must describe the same window —
+     * a row cap over two topics of different throughputs reads two different stretches of time, so
+     * the pairs they yield are an accident of those throughputs. The instant travels in the mode
+     * itself rather than as a new field on {@link QueryRequest}: it is a direct-reader concept, and
+     * the string already carries direct-reader-only meaning.
+     */
+    static final String SINCE_READ_MODE_PREFIX = "since:";
+
+    /** Build the read mode that reads from {@code timestampMs} forward. */
+    public static String sinceReadMode(long timestampMs) {
+        return SINCE_READ_MODE_PREFIX + timestampMs;
+    }
+
+    /** The instant a {@code since:} read mode names, or {@code null} for the two offset modes. */
+    static Long sinceTimestampOf(String readMode) {
+        if (readMode == null || !readMode.startsWith(SINCE_READ_MODE_PREFIX)) return null;
+        try {
+            return Long.parseLong(readMode.substring(SINCE_READ_MODE_PREFIX.length()).trim());
+        } catch (NumberFormatException e) {
+            // Minted in this process, never accepted from a request, so this is a defect rather
+            // than bad input — said out loud instead of silently widening the read to the whole
+            // topic, which is the "a scan that lies" shape the search budgets are written against.
+            log.warn("Unparseable '{}' read mode — falling back to the most recent records",
+                LogSafe.text(readMode));
+            return null;
+        }
+    }
+
+    /**
+     * One direct-reader fetch, and the place two sides of one metric can share it.
+     *
+     * <p>Two aggregates over the <em>same</em> topic — two counts under different WHERE clauses,
+     * which is what a {@code TOPIC_COUNT_DELTA} on one topic is — each downloaded and parsed up to
+     * {@link #AGGREGATE_SCAN_RECORDS} records, thirty seconds apart. The per-cycle memoization one
+     * layer up keys on the SQL, so it never brought them together. The slot is opened by
+     * {@link #executeSqlPair} around the pair and closed after it, so nothing outside that pair can
+     * observe a record it did not read itself.
+     *
+     * <p>Restricted to aggregates on purpose: their fetch size is the constant above whatever the
+     * statement says, so there is no larger-read-serving-a-smaller-one to reason about, and a
+     * projection stops early at its own row limit, which would leave a partial list behind for the
+     * other side. Sharing also makes the two counts describe the <em>same instant</em>, which is
+     * the whole of D4 for that case — the same dissolution the offsets count gets.
+     */
+    private List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> fetchForDirectRead(
+            String topic, String readMode, int fetch, boolean shareable) {
+        PairScan slot = pairScan.get();
+        if (slot != null && shareable) {
+            SharedScan open = slot.scan;
+            if (open != null && open.topic().equals(topic) && Objects.equals(open.readMode(), readMode)
+                && open.fetch() >= fetch) {
+                slot.reuses++;
+                return open.records();
+            }
+        }
+        Long since = sinceTimestampOf(readMode);
+        List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records =
+            since != null
+                ? kafkaAdminService.getRecordsSinceTimestamp(topic, since, fetch)
+                : "earliest-offset".equals(readMode)
+                    ? kafkaAdminService.getEarliestRecords(topic, fetch)
+                    : kafkaAdminService.getRecentRecords(topic, fetch);
+        if (slot != null && shareable && slot.scan == null) {
+            slot.scan = new SharedScan(topic, readMode, fetch, records);
+        }
+        return records;
+    }
+
+    private record SharedScan(String topic, String readMode, int fetch,
+                              List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records) {}
+
+    /** Mutable because the reuse has to be reported back to the caller, not merely performed. */
+    private static final class PairScan {
+        SharedScan scan;
+        int reuses;
+    }
+
+    /** Open only for the duration of {@link #executeSqlPair}, on the calling thread. */
+    private final ThreadLocal<PairScan> pairScan = new ThreadLocal<>();
+
+    /**
+     * Two statements, run in the order given, sharing one topic read when they can.
+     *
+     * @param sharedScan whether the second statement was answered from the first one's records,
+     *                   which is what lets the caller say the two describe the same instant
+     *                   instead of one being a whole query older than the other.
+     */
+    public record QueryPair(QueryResult first, QueryResult second, boolean sharedScan) {}
+
+    /**
+     * Run two statements as a pair. The order is the caller's: a count delta reads its right side
+     * first so that traffic in between can only overstate the gap, and this method does not
+     * second-guess that. Sharing is decided inside {@link #fetchForDirectRead} on what the two
+     * reads turn out to be, not on what the SQL looks like from here.
+     */
+    public QueryPair executeSqlPair(QueryRequest first, QueryRequest second) {
+        PairScan slot = new PairScan();
+        pairScan.set(slot);
+        try {
+            QueryResult a = executeSql(first);
+            QueryResult b = executeSql(second);
+            return new QueryPair(a, b, slot.reuses > 0);
+        } finally {
+            pairScan.remove();
+        }
+    }
+
     private QueryResult kafkaDirectSelect(String sql, String readMode, int limit, long startTime) {
         // Extract table name from FROM clause
         Pattern fromPattern = Pattern.compile("(?i)\\bFROM\\s+`?([\\w.\\-]+)`?");
@@ -1273,9 +1385,7 @@ public class FlinkSqlService {
             fetch = Math.min(100_000, Math.max(5_000, limit * 100));
         }
         List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records =
-            "earliest-offset".equals(readMode)
-                ? kafkaAdminService.getEarliestRecords(topic, fetch)
-                : kafkaAdminService.getRecentRecords(topic, fetch);
+            fetchForDirectRead(topic, readMode, fetch, isAggregate);
 
         // Build result rows from JSON messages
         List<Map<String, Object>> rows = new ArrayList<>();
@@ -1519,9 +1629,7 @@ public class FlinkSqlService {
 
         // Fetch all messages (windows aggregate over the full dataset)
         List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records =
-            "earliest-offset".equals(readMode)
-                ? kafkaAdminService.getEarliestRecords(topic, 100_000)
-                : kafkaAdminService.getRecentRecords(topic, 100_000);
+            fetchForDirectRead(topic, readMode, 100_000, false);
 
         // Parse aggregate expressions from SELECT
         Matcher selMatcher = SELECT_PROJECTION.matcher(sql);

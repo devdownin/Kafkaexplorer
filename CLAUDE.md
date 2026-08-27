@@ -1029,13 +1029,59 @@ registry stayed small: `pruneStaleSeries` deregistered the previous series each 
 version of the same defect. The reserved-column rule is a prefix (`__`) now rather than a list of
 two names, so a measurement that belongs in the row and not in the label set says so by its name.
 
-What is deliberately still open is **D10**, the cost of a two-query metric on a single-threaded
-refresh loop — and it is a property of the design rather than a defect in it. Two things cut that
-cost without changing the shape (a bounded scan ends instead of spending its budget; the generated
-shape no longer consults the planner at all), so the arithmetic that made it alarming no longer
-describes the common case. The document says to re-measure before re-architecting, and what would
-settle it: the wall time of one `refreshMetrics()` over a handful of template metrics against the
-demo cluster.
+**Five more improvements followed, and four of them are about what the metric *means* rather than
+what it costs.** *A row cap is not a window, and on two topics it is not even one window*:
+`maxRowsPerSide` reads ten thousand records, which is an hour of a slow source and four minutes of a
+busy target, so the pairs that survived were the ones whose two halves fell in the overlap — and
+what that cost was not the average, computed over real pairs, but the **match rate beside it**,
+depressed by the misalignment exactly as by a genuine downstream loss, which sends an operator
+somewhere else entirely. `windowMs` reads both sides from the **same instant**, computed once rather
+than resolved per read (`KafkaAdminService.getRecordsSinceTimestamp`, the instant form beside the
+duration one), travelling as a third read mode — `since:<epochMillis>`, `FlinkSqlService.sinceReadMode` —
+because that string already carries direct-reader-only meaning and the alternative was a field on
+`QueryRequest` for a concept the planner cannot express. Which is why a window on a side the planner
+would answer is **refused at save time, naming the side**: honoured on one side and ignored on the
+other is worse than absent, the summary claiming one stretch of time while the reads covered two.
+What a window cannot avoid is stated rather than corrected — a source produced near its end has its
+target *after* it, outside both reads, so the trailing edge understates the rate by about one hop's
+worth of traffic, the same thing `ProcessModelBuilder` says about the cases its own window cuts in
+half. *The p95 was computed, put in the summary and alerted on by nobody*: an average holds still
+while the worst decile doubles, which is the case the template exists to catch, so
+`explorer_metric_correlation_latency_p95_ms` publishes it — and **only for the types that carry no
+quantiles of their own**, a `SUMMARY` already publishing `explorer_metric_summary{quantile="0.95"}`.
+*Total loss was the one state it could not express*: `PERCENT_GAP` divides by the right side, so
+"left > 0, right = 0" — everything produced, nothing arrived — was refused as a division by zero and
+published nothing, the most alarming reading staying silent while the alert fired happily at 3 %. It
+reports **100**, and that is a definition for the case rather than the formula's limit (which is
+infinity): 100 is the number a threshold is set against. Both sides at zero is not a loss and reads
+0; `RATIO` stays refused. *And two counts over one topic came out of two full reads* — two
+`COUNT(*)` under different `WHERE` clauses, which is what a same-topic gap is, each parsing up to
+`AGGREGATE_SCAN_RECORDS` records thirty seconds apart, the per-cycle memoization keying on the SQL
+and never bringing them together. `FlinkSqlService.executeSqlPair` runs them as a pair over a slot
+the direct reader fills and reuses, deciding on **what the two reads turn out to be** (same topic,
+same read mode, both aggregates) rather than on how the SQL looks: aggregates only, since their
+fetch size is that constant whatever the statement says, while a projection stops early at its own
+row limit and would leave a partial list behind for the other side. The gain is not only the read —
+the two counts then describe the **same instant**, which is D4 for that case, and the summary says
+`sharedScan` rather than leaving the card to infer it from `readGapMs` being zero: two separate
+reads can land in one millisecond, and "these describe one instant" is a claim about how they were
+taken, not a reading of the number.
+
+**D10 stays open, and half of it closed without any measurement.** It is the cost of a two-query
+metric on a single-threaded refresh loop — a property of the design rather than a defect in it.
+`refreshIntervalMs` is now a metric's own cadence: every metric was recomputed on every tick, which
+is right for a gauge over a cheap query and wrong for a template that reads two topics, and it can
+only *slow* one down since the loop's tick is the floor. Skipping touches no state — the gauge keeps
+the value it was last measured at, which is correct, and `explorer_metric_last_success_timestamp_seconds`
+is what dates it — and an explicit "Refresh now" ignores the interval, a gesture never being a
+cadence to be rationed. `explorer_metrics_refresh_duration_seconds` publishes what a cycle cost,
+which was the one thing about the loop nobody could see: it is single threaded by design, so a cycle
+outlasting its tick does not pile up threads but runs back to back, and the only symptom is a broker
+doing more work than anyone asked for (said once per process, naming the two ways out). More threads
+would be the wrong answer — the meter state assumes one writer. **The measurement is still untaken
+and still the thing that settles the rest**: the wall time of one `refreshMetrics()` over a handful
+of template metrics against the demo cluster, which that gauge now makes a reading rather than an
+experiment somebody has to set up.
 
 `SQL-EDITOR-AUDIT.md` is the review of the **SQL editor** (`QueryWorkbench.tsx` and its pure modules,
 plus `QueryController` / `SqlQueryValidator` / `FlinkSqlService.executeSync`) along the four axes it

@@ -497,7 +497,7 @@ documented in two files was wrong, and nothing but a broker could have said so.
 
 | # | Work | Size | Closes |
 |---|---|---|---|
-| ~~W1~~ | **Shipped.** The hint carries `scan.bounded.mode='latest-offset'`, the javadoc describes the code, and a connector that refuses the option degrades once and says so rather than breaking every template metric. | M | D1, and part of D2 |
+| ~~W1~~ | **Shipped, then measured and partly reverted.** The javadoc describes the code, and the hint carries the startup mode alone: `flink-connector-kafka:5.0.0-2.2` *refuses* `scan.bounded.mode`, and refuses it in the one way that is worse than not having it — as an engine failure the planner path swallows by falling back. See D1's own section; what actually removed the dependence on an unbounded scan is W2's direct-read routing. | M | D1 (as far as this stack allows), part of D2 |
 | ~~W2~~ | **Shipped.** The last numeric row, a truncated changelog refused, the generated shape answered by the direct reader, and that reader's own ceiling reported as a floor rather than compared. | M | D2 |
 | ~~W3~~ | **Shipped.** `maxRowsPerSide`, `timeoutMs` and `readMode` on the form and validated at save; the recent end as the latency template's default; the coverage in the summary. | M | D3, D9 (scan half) |
 | W4 | Report the scope: rows read vs cap, rows dropped for a missing column, `QueryResult.warnings` propagated into the metric's summary and error. | S–M | D5 (mostly shipped with W1–W3) |
@@ -574,14 +574,94 @@ version of the same defect.
 The reserved-column rule is now a prefix (`__`) rather than a list of two names, so a measurement
 that belongs in the row but not in the label set says so by its name. `theTwoCountsAreMeasurementsAndNeverPrometheusLabels` pins it, and was checked to fail against the previous code.
 
-**What is left is D10**, and it is the one item here that is a property of the design rather than a
-defect in it: a refresh cycle is single-threaded and serialized under one lock, each side of a
-two-query metric has its own timeout, and the scheduler fires every thirty seconds. Two things have
-changed since it was written and both cut the cost rather than the shape — a bounded scan ends
-instead of spending its budget (D1), and the generated shape no longer consults the planner at all
-(D2/D3) — so the arithmetic that made it alarming (60 s of a 30 s cycle, per metric) no longer
-describes the common case. **Re-measure before re-architecting**: what would settle it is the wall
-time of one `refreshMetrics()` over a handful of template metrics against the demo cluster, which
-is a measurement nobody has taken either before or after. If it is still minutes, the fix is a
-bounded per-cycle budget, not more threads — a refresh that cannot finish inside its interval
-should say so rather than queue.
+### The two sides of a latency were never read over the same stretch of time
+
+`maxRowsPerSide` is a row cap, and a row cap is not a window — on two topics it is not even one
+window. Ten thousand records is an hour of a slow source and four minutes of a busy target, so the
+pairs that survived were the ones whose two halves happened to fall in the overlap. What that cost
+is not the average, which is computed over real pairs, but the **match rate beside it**: the rate
+was depressed by the misalignment exactly as it is by a genuine downstream loss, and those two send
+an operator to opposite places. The rate had only just been exported as a series of its own (W5),
+which is what made the flaw worth fixing rather than merely worth knowing.
+
+`windowMs` reads both sides from the **same instant**, computed once in `computeTransitLatencyMetric`
+rather than resolved per read — the distinction `KafkaAdminService.getRecordsSinceTimestamp` exists
+for, beside the duration form. It travels as a third `readMode`, `since:<epochMillis>`, because the
+mode string already carries direct-reader-only meaning and the alternative was a new field on
+`QueryRequest` for a concept the planner cannot express. Which is also why a window on a side the
+planner would answer is **refused at save time, naming the side**: a window silently honoured on one
+side and ignored on the other is worse than none, the summary claiming one stretch of time while the
+reads covered two.
+
+One thing a window cannot avoid is stated rather than corrected: a source produced near the end of
+it has its target *after* it, outside both reads, so the trailing edge understates the match rate by
+about one hop's worth of traffic whatever the pipeline is doing. `ProcessModelBuilder` says the same
+thing about the cases its window cuts in half, and for the same reason — what looks like a defect
+and is not must be named, or it will be read as one. The suggestion panel proposes a 15-minute
+window on the latency cards it builds, and says so in a caveat.
+
+### The p95 was computed, put in the summary, and alerted on by nobody
+
+A latency alert is set on the tail: an average holds still while the worst decile doubles, which is
+the case this template exists to catch. `p95LatencyMs` and `maxLatencyMs` were both computed and
+neither left `lastSummary`. `explorer_metric_correlation_latency_p95_ms{metric_id}` publishes the
+first, through the same companion-series mechanism W5 and W6 added — and **only for the types that
+carry no quantiles of their own**: a `SUMMARY` already publishes `explorer_metric_summary{quantile="0.95"}`
+and a `HISTOGRAM` its buckets, so publishing beside them would be two answers to one question. What
+lacks one is a `GAUGE`, which is the default and what every suggestion card proposes.
+
+### Total loss was the one state the metric could not express
+
+`PERCENT_GAP` divides by the right side, so "left > 0, right = 0" — everything the source produced
+and nothing arrived — was refused as a division by zero and published *nothing at all*. The most
+alarming reading this template can take was the one reading it stayed silent on, while firing
+happily at 3 %. It reports **100** now, and that is a definition for the case rather than the
+formula's own answer (whose limit there is infinity): 100 is the number a threshold is set against,
+so any threshold below it fires. Both sides at zero is not a loss — nothing was produced and nothing
+was missed — and reads 0. `RATIO` stays refused, there being no defensible finite value for a ratio
+to zero, and the refusal names the three operations that report the same fact as a number.
+
+### Two counts over one topic came out of two full reads
+
+Two `COUNT(*)` under different `WHERE` clauses over the same topic — which is what a same-topic
+`TOPIC_COUNT_DELTA` is — each downloaded and parsed up to `AGGREGATE_SCAN_RECORDS` records, thirty
+seconds apart. The per-cycle memoization keys on the SQL, so it never brought them together.
+
+`FlinkSqlService.executeSqlPair` runs the two as a pair and opens a slot the direct reader fills
+and reuses; the decision is made on **what the two reads turn out to be** (same topic, same read
+mode, both aggregates) rather than on what the SQL looks like from the caller. Aggregates only, on
+purpose: their fetch size is that constant whatever the statement says, so there is no
+larger-read-serving-a-smaller-one to reason about, and a projection stops early at its own row limit,
+which would leave a partial list behind for the other side. The gain is not only the read — the two
+counts now describe the **same instant**, which is the whole of D4 for that case, and the summary
+says `sharedScan` rather than leaving the card to infer it from `readGapMs` being zero (two separate
+reads can land in one millisecond; "these describe one instant" is a claim about how they were
+taken, not a reading of the number).
+
+### D10, and the half of it that can be closed without measuring anything
+
+D10 is the one item here that is a property of the design rather than a defect in it: a refresh
+cycle is single-threaded and serialized under one lock, each side of a two-query metric has its own
+timeout, and the scheduler fires every thirty seconds. Two earlier changes cut the cost rather than
+the shape (the generated shape no longer consults the planner, and a whole-topic count reads no
+record at all), so the arithmetic that made it alarming — 60 s of a 30 s cycle, per metric — no
+longer describes the common case.
+
+Two more have shipped, and neither needs the measurement first because neither changes the shape:
+
+- **`refreshIntervalMs` per metric.** Every metric was recomputed on every tick, which is right for
+  a gauge over a cheap query and wrong for a template that reads two topics. It can only *slow* a
+  metric down — the loop's tick is the floor, and the form says so rather than accepting a number
+  that cannot be honoured. Skipping touches no state: the gauge keeps the value it was last
+  measured at, which is correct, and `explorer_metric_last_success_timestamp_seconds` is what dates
+  it. An explicit "Refresh now" ignores the interval, a gesture never being a cadence to be
+  rationed.
+- **`explorer_metrics_refresh_duration_seconds`.** The cost of the loop was the one thing about it
+  nobody could see. A cycle that outlasts its tick does not pile up threads — it runs back to back,
+  and the only symptom is a broker doing more work than anyone asked for. That is now a number, and
+  a cycle over its own tick logs once per process naming the two ways out.
+
+**The measurement is still the thing that would settle the rest**, and it is still untaken: the wall
+time of one `refreshMetrics()` over a handful of template metrics against the demo cluster. The
+gauge above is what makes it a reading rather than an experiment somebody has to set up. If it is
+still minutes after all of the above, the fix is a bounded per-cycle budget, not more threads.

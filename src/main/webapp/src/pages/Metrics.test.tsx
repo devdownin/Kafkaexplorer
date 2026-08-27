@@ -22,7 +22,7 @@ import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import axios from 'axios';
 import type { MetricConfig, MetricSuggestion, MetricSuggestions } from '../api/types';
-import { defaultReadMode, validateScanParams, validateTemplate } from './Metrics';
+import { defaultReadMode, isSingleTableRead, validateScanParams, validateTemplate } from './Metrics';
 
 vi.mock('axios');
 const mockedAxios = vi.mocked(axios, true);
@@ -308,5 +308,64 @@ describe('the scan window of a two-query template', () => {
     expect(msgs.some(m => m.level === 'warning')).toBe(true);
     // Le défaut d'un compte est ce même bout du topic, et n'a rien à signaler.
     expect(validateScanParams('TOPIC_COUNT_DELTA', { readMode: 'earliest-offset' })).toEqual([]);
+  });
+});
+
+describe('le miroir de isSingleTableRead refuse au plus ce que le serveur refuse', () => {
+  it('accepte les formes que le lecteur direct sait répondre', () => {
+    expect(isSingleTableRead('SELECT COUNT(*) AS metric_value FROM orders')).toBe(true);
+    expect(isSingleTableRead('SELECT id AS match_key, ts AS event_time\nFROM demo_orders WHERE status = \'OK\'')).toBe(true);
+    // Le serveur accepte le point-virgule final : un miroir plus strict refuserait dans le
+    // formulaire une configuration que l'API enregistre sans broncher.
+    expect(isSingleTableRead('SELECT COUNT(*) AS metric_value FROM orders;')).toBe(true);
+  });
+
+  it('refuse les formes dont le lecteur direct se tromperait en silence', () => {
+    expect(isSingleTableRead('SELECT COUNT(*) AS metric_value FROM a JOIN b ON a.id = b.id')).toBe(false);
+    expect(isSingleTableRead('SELECT COUNT(*) AS metric_value FROM a, b')).toBe(false);
+    expect(isSingleTableRead('SELECT COUNT(*) AS metric_value FROM (SELECT id FROM orders)')).toBe(false);
+    expect(isSingleTableRead('WITH recent AS (SELECT * FROM orders) SELECT COUNT(*) AS metric_value FROM recent')).toBe(false);
+    expect(isSingleTableRead('SELECT 1 AS metric_value')).toBe(false);
+    expect(isSingleTableRead('')).toBe(false);
+  });
+});
+
+describe('la fenêtre de latence', () => {
+  const latency = (params: Record<string, unknown>) => validateScanParams('TOPIC_TRANSIT_LATENCY', params);
+
+  it('refuse une fenêtre sur un côté que le planner répondrait, en nommant lequel', () => {
+    const msgs = latency({
+      windowMs: '600000',
+      sourceSql: 'SELECT id AS match_key, ts AS event_time FROM a',
+      targetSql: 'SELECT a.id AS match_key, a.ts AS event_time FROM a JOIN b ON a.id = b.id',
+    });
+    const error = msgs.find(m => m.level === 'error');
+    expect(error?.text).toContain('target');
+  });
+
+  it('accepte deux lectures simples et dit ce que la fenêtre coûte au bord', () => {
+    const msgs = latency({
+      windowMs: '600000',
+      sourceSql: 'SELECT id AS match_key, ts AS event_time FROM a',
+      targetSql: 'SELECT id AS match_key, ts AS event_time FROM b',
+    });
+    expect(msgs.some(m => m.level === 'error')).toBe(false);
+    expect(msgs.some(m => m.text.includes('trailing edge'))).toBe(true);
+  });
+
+  it('ne met plus en garde sur le mode de lecture quand une fenêtre le remplace', () => {
+    const base = {
+      readMode: 'earliest-offset',
+      sourceSql: 'SELECT id AS match_key, ts AS event_time FROM a',
+      targetSql: 'SELECT id AS match_key, ts AS event_time FROM b',
+    };
+    expect(latency(base).some(m => m.level === 'warning')).toBe(true);
+    expect(latency({ ...base, windowMs: '600000' }).some(m => m.level === 'warning')).toBe(false);
+  });
+
+  it('borne la cadence propre d’une métrique', () => {
+    expect(latency({ refreshIntervalMs: '10' }).some(m => m.level === 'error')).toBe(true);
+    expect(latency({ refreshIntervalMs: '300000' }).some(m => m.level === 'error')).toBe(false);
+    expect(latency({ refreshIntervalMs: '' }).some(m => m.level === 'error')).toBe(false);
   });
 });

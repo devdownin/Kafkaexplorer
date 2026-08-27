@@ -236,6 +236,45 @@ export function validateCountParams(params: Record<string, unknown>): Validation
   return msgs;
 }
 
+export const LATENCY_WINDOWS: { value: string; label: string }[] = [
+  { value: '', label: 'Row count only (no window)' },
+  { value: '300000', label: 'Same 5 min on both sides' },
+  { value: '900000', label: 'Same 15 min on both sides' },
+  { value: '3600000', label: 'Same hour on both sides' },
+  { value: '21600000', label: 'Same 6 h on both sides' },
+];
+
+export const REFRESH_INTERVALS: { value: string; label: string }[] = [
+  { value: '', label: 'Every cycle (default)' },
+  { value: '60000', label: 'At most once a minute' },
+  { value: '300000', label: 'At most every 5 min' },
+  { value: '900000', label: 'At most every 15 min' },
+  { value: '3600000', label: 'At most hourly' },
+];
+
+/**
+ * Miroir de `MetricService.isSingleTableRead` : la forme que le lecteur direct sait répondre.
+ *
+ * Transcription littérale des quatre règles du serveur, pas une réécriture : ce miroir n'existe que
+ * pour dire *pourquoi* une fenêtre est refusée, au moment où la requête peut encore être corrigée,
+ * donc il doit refuser exactement ce que le serveur refuse — un miroir plus strict rejetterait dans
+ * le formulaire une configuration que l'API accepte, ce qui est pire que de ne rien dire.
+ */
+export function isSingleTableRead(sql: string): boolean {
+  const body = sql.trim();
+  if (body === '') return false;
+  if (!/^select/i.test(body)) return false;
+  if (/\bjoin\b/i.test(body)) return false;
+  if (body.replace(/\s+/g, '').toUpperCase().includes('(SELECT')) return false;
+  const from = /\bfrom\b\s+(\w[\w.]*)/gi;
+  const first = from.exec(body);
+  if (!first) return false;
+  // Une virgule juste après le nom de table est une liste de tables, soit une jointure à l'ancienne.
+  if (body.slice(first.index + first[0].length).replace(/^\s+/, '').startsWith(',')) return false;
+  // Un second FROM est une forme que ce lecteur ne sait pas honorer non plus.
+  return from.exec(body) === null;
+}
+
 /** Miroir de MetricService.validateScanParams : refusé à l'enregistrement, pas au rafraîchissement. */
 export function validateScanParams(templateType: string, params: Record<string, unknown>): ValidationMsg[] {
   const msgs: ValidationMsg[] = [];
@@ -253,7 +292,27 @@ export function validateScanParams(templateType: string, params: Record<string, 
   if (readMode && !['earliest-offset', 'latest-offset'].includes(readMode))
     msgs.push({ level: 'error', text: 'Read from must be either the most recent records or the earliest offset.' });
 
-  const effective = readMode || defaultReadMode(templateType);
+  const interval = raw('refreshIntervalMs');
+  if (interval && (!/^\d+$/.test(interval) || Number(interval) < 1_000 || Number(interval) > 86_400_000))
+    msgs.push({ level: 'error', text: 'Refresh at most must be a whole number of milliseconds between 1,000 and 86,400,000, or blank to run on every cycle.' });
+
+  const windowMs = raw('windowMs');
+  if (templateType === 'TOPIC_TRANSIT_LATENCY' && windowMs) {
+    if (!/^\d+$/.test(windowMs) || Number(windowMs) < 1_000 || Number(windowMs) > 604_800_000) {
+      msgs.push({ level: 'error', text: 'Window must be a whole number of milliseconds between 1,000 and 604,800,000, or blank to bound the two reads by row count.' });
+    } else {
+      const sourceOk = isSingleTableRead(paramStr(params, 'sourceSql').trim());
+      const targetOk = isSingleTableRead(paramStr(params, 'targetSql').trim());
+      if (!sourceOk || !targetOk)
+        msgs.push({ level: 'error', text: `A window bounds the read by time, which only the direct Kafka reader can do — and it answers a single-table SELECT. The ${sourceOk ? 'target' : 'source'} query joins or nests, so it would go to the Flink planner and read a different stretch of time.` });
+      else
+        msgs.push({ level: 'info', text: 'Both sides read from one instant computed once, so the match rate below is depressed by real losses rather than by two topics being read over two different stretches of time. A source near the end of the window has its target after it — the trailing edge understates by about one hop.' });
+    }
+  }
+
+  // Une fenêtre décide où commencer, donc elle remplace le mode de lecture au lieu de coexister
+  // avec lui : le dire vaut mieux que laisser deux réglages se contredire en silence.
+  const effective = windowMs && templateType === 'TOPIC_TRANSIT_LATENCY' ? '' : readMode || defaultReadMode(templateType);
   if (templateType === 'TOPIC_TRANSIT_LATENCY' && effective === 'earliest-offset')
     msgs.push({ level: 'warning', text: 'Read from the earliest offset, this reports the latency of the oldest records the row cap allows — a figure that stops moving once the topic outgrows the cap.' });
 
@@ -459,7 +518,7 @@ const MetricCard: React.FC<{
   const status = getStatus(metric);
   const st = STATUS_STYLES[status];
   const tm = TYPE_META[metric.type] ?? TYPE_META.GAUGE;
-  const scopeChips = describeMetricScope(metric.lastSummary);
+  const scopeChips = describeMetricScope(metric.lastSummary, metric.templateParams);
 
   const chartData = (metric.history?.length === 1
     ? [metric.history[0], metric.history[0]]
@@ -717,16 +776,34 @@ const ScanParams: React.FC<{
   const readMode = p('readMode') || defaultReadMode(templateType);
   const maxRows = Number(p('maxRowsPerSide')) || SCAN_MAX_ROWS_DEFAULT;
   const timeoutMs = Number(p('timeoutMs')) || SCAN_TIMEOUT_MS_DEFAULT;
+  const windowMs = p('windowMs');
+  const isLatency = templateType === 'TOPIC_TRANSIT_LATENCY';
+  const windowed = isLatency && windowMs !== '' && windowMs !== '0';
   return (
     <div className="border-t border-outline-variant/60 pt-4 space-y-3">
       <p className="text-[11px] text-on-surface-variant leading-snug">
         What each side reads. The two queries run one after the other, so the two figures are a
         query apart rather than one instant.
       </p>
+      {isLatency && (
+        <Field
+          label="Window"
+          description="A row cap over two topics of different throughputs reads two different stretches of time, so the pairs that survive are an accident of those throughputs — and the match rate is depressed by that as much as by a real loss. A window reads both sides from one instant."
+        >
+          {f => (
+            <Select {...f} value={windowMs} onChange={e => setParam('windowMs', e.target.value)}>
+              {LATENCY_WINDOWS.map(w => (
+                <option key={w.value} value={w.value} className="bg-[#12151a] text-on-surface">{w.label}</option>
+              ))}
+            </Select>
+          )}
+        </Field>
+      )}
+      {!windowed && (
       <Field
         label="Read from"
         description={
-          templateType === 'TOPIC_TRANSIT_LATENCY'
+          isLatency
             ? 'A latency is a question about now: read from the earliest offset it reports the average of the oldest records the row cap allowed, and never moves again.'
             : 'A count must see the whole topic, so this normally starts at the earliest offset.'
         }
@@ -738,6 +815,7 @@ const ScanParams: React.FC<{
           </Select>
         )}
       </Field>
+      )}
       <div className="grid grid-cols-2 gap-3">
         <Field label="Max rows / side" description="Read no further; the summary says what was covered.">
           {f => (
@@ -752,6 +830,18 @@ const ScanParams: React.FC<{
           )}
         </Field>
       </div>
+      <Field
+        label="Refresh at most"
+        description="A two-query metric reads two topics; asking that of the broker every cycle because a single-row gauge beside it wants that cadence is what makes the refresh loop expensive. This can only slow it down — the loop\u2019s own tick is the floor."
+      >
+        {f => (
+          <Select {...f} value={p('refreshIntervalMs')} onChange={e => setParam('refreshIntervalMs', e.target.value)}>
+            {REFRESH_INTERVALS.map(r => (
+              <option key={r.value} value={r.value} className="bg-[#12151a] text-on-surface">{r.label}</option>
+            ))}
+          </Select>
+        )}
+      </Field>
     </div>
   );
 };
