@@ -6,7 +6,7 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.LlmResponse;
 
 import java.util.List;
 
-public interface LlmClient {
+public interface LlmClient extends AutoCloseable {
     String generate(String systemPrompt, String userPrompt);
 
     /**
@@ -28,5 +28,21 @@ public interface LlmClient {
     default LlmResponse generateWithMeta(String systemPrompt, String userPrompt,
                                          LlmOutputSchema schema) {
         return generateWithMeta(systemPrompt, userPrompt);
+    }
+
+    /**
+     * Releases whatever this client holds open — a connection pool, a selector thread.
+     *
+     * <p>{@link LlmClientProvider} replaces the client whenever the deployment is repointed, and
+     * dropped one on every such save: two of the three hold a {@link java.net.http.HttpClient},
+     * which keeps a selector thread and a pool alive until it is collected, and the Anthropic SDK
+     * wraps an OkHttp client with a dispatcher of its own.
+     *
+     * <p>Narrowed from {@link AutoCloseable} to throw nothing: a client being retired must not be
+     * able to fail the settings save that retired it. The default does nothing, which is the right
+     * behaviour for an implementation that holds no resource.
+     */
+    @Override
+    default void close() {
     }
 }

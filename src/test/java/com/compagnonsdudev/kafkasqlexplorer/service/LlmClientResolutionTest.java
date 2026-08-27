@@ -45,6 +45,90 @@ class LlmClientResolutionTest {
             "a provider changed through POST /api/config must be the one the analyses use");
     }
 
+    /**
+     * The request timeout is not read purely per call: {@code LlmHttpSupport.newClient} bakes it
+     * into the client as the <em>connect</em> timeout. Leaving it out of the fingerprint moved one
+     * half of the setting and left the other at the old value until the client happened to be
+     * rebuilt for an unrelated reason — the exact defect this class exists to prevent, in the one
+     * field added to it after the class was written.
+     */
+    @Test
+    void changingTheRequestTimeoutRebuildsTheClient() {
+        ClaudeConfig config = ollamaConfig();
+        LlmClientProvider provider = new LlmClientProvider(config);
+        LlmClient before = provider.get();
+
+        config.setRequestTimeoutSeconds(config.getRequestTimeoutSeconds() + 60);
+
+        assertNotSame(before, provider.get(),
+            "the connect timeout is baked into the client, so raising the setting means a new one");
+    }
+
+    /**
+     * A replaced client is closed. Two of the three hold an {@link java.net.http.HttpClient},
+     * which keeps a selector thread and a connection pool alive until it is collected; every
+     * Settings save that moved the endpoint leaked one.
+     */
+    @Test
+    void aReplacedClientIsClosed() {
+        ClaudeConfig config = ollamaConfig();
+        LlmClientProvider provider = new LlmClientProvider(config);
+        RecordingClient first = new RecordingClient();
+        provider.setClientForTest(first, config);
+
+        config.setProvider(ClaudeConfig.Provider.SPECTRA);
+        config.setBaseUrl("http://localhost:8080");
+        provider.get();
+
+        assertTrue(first.closed, "the outgoing client must be released, not dropped");
+    }
+
+    /** And the last one built is released at shutdown, or it is the one that leaks. */
+    @Test
+    void theLastClientIsClosedOnShutdown() {
+        ClaudeConfig config = ollamaConfig();
+        LlmClientProvider provider = new LlmClientProvider(config);
+        RecordingClient held = new RecordingClient();
+        provider.setClientForTest(held, config);
+
+        provider.shutdown();
+
+        assertTrue(held.closed);
+    }
+
+    /** Retiring a client must never be able to fail the save that retired it. */
+    @Test
+    void aClientThatRefusesToCloseDoesNotFailTheSave() {
+        ClaudeConfig config = ollamaConfig();
+        LlmClientProvider provider = new LlmClientProvider(config);
+        provider.setClientForTest(new RecordingClient() {
+            @Override
+            public void close() {
+                throw new IllegalStateException("pool already gone");
+            }
+        }, config);
+
+        config.setProvider(ClaudeConfig.Provider.SPECTRA);
+        config.setBaseUrl("http://localhost:8080");
+
+        assertInstanceOf(SpectraLlmClient.class, provider.get(),
+            "a client that will not close must not stop the replacement being handed out");
+    }
+
+    private static class RecordingClient implements LlmClient {
+        boolean closed;
+
+        @Override
+        public String generate(String systemPrompt, String userPrompt) {
+            return "";
+        }
+
+        @Override
+        public void close() {
+            closed = true;
+        }
+    }
+
     @Test
     void changingApiKeyRebuildsTheClient() {
         ClaudeConfig config = ollamaConfig();

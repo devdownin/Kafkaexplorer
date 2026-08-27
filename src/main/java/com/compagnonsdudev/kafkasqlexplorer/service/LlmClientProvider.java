@@ -5,6 +5,7 @@ package com.compagnonsdudev.kafkasqlexplorer.service;
 import com.compagnonsdudev.kafkasqlexplorer.config.ClaudeConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import jakarta.annotation.PreDestroy;
 import org.springframework.stereotype.Component;
 
 import java.util.Objects;
@@ -23,7 +24,9 @@ import java.util.Objects;
  *
  * <p>The client is rebuilt only when the fingerprint of what is baked into it changes, so the
  * common path is a volatile read: an HTTP client (and its connection pool) is not something to
- * reallocate per request.
+ * reallocate per request. The one it replaces is <b>closed</b> — a selector thread and a pool
+ * apiece, leaked on every save that moved the endpoint until somebody scripted that endpoint and
+ * found out.
  */
 @Component
 public class LlmClientProvider {
@@ -50,10 +53,54 @@ public class LlmClientProvider {
             if (client == null || !Objects.equals(current, fingerprint)) {
                 log.info("LLM client (re)built for provider {} at {}",
                     config.getProviderLabel(), config.getResolvedBaseUrl());
+                LlmClient outgoing = client;
                 client = LlmClientFactory.create(config);
                 fingerprint = current;
+                // After the replacement is published, never before: the retired client may still
+                // be finishing a call, and a reader that raced this block must find the new one
+                // rather than one being shut down.
+                closeQuietly(outgoing);
             }
             return client;
+        }
+    }
+
+    /**
+     * Releases the client on shutdown too — the last one built is otherwise the one that leaks.
+     *
+     * <p>Not through {@code ShutdownBudget}: that exists to share one deadline across the six
+     * executor pools whose private waits used to add up, and this holds no pool of its own and
+     * waits for nothing.
+     */
+    @PreDestroy
+    public synchronized void shutdown() {
+        closeQuietly(client);
+        client = null;
+        fingerprint = null;
+    }
+
+    /**
+     * A client being retired must never be able to fail the save that retired it, nor the
+     * application's shutdown. Whatever it says on the way out is a debug line and nothing more.
+     */
+    private static void closeQuietly(LlmClient outgoing) {
+        if (outgoing == null) return;
+        try {
+            outgoing.close();
+        } catch (Exception e) {
+            log.debug("Retired LLM client did not close cleanly: {}", e.toString());
+        }
+    }
+
+    /**
+     * Test seam, in the shape {@code KafkaAdminService.setAdminClientForTest} already uses: seats
+     * a client as though it had been built for {@code builtFor}, so a later change to that config
+     * exercises the replacement path with something whose {@code close()} can be observed.
+     */
+    void setClientForTest(LlmClient seated, ClaudeConfig builtFor) {
+        synchronized (this) {
+            this.client = seated;
+            this.fingerprint = fingerprintOf(builtFor);
         }
     }
 
@@ -65,6 +112,13 @@ public class LlmClientProvider {
         String apiKey = config.getApiKey() == null ? "" : config.getApiKey();
         return config.getProvider().name()
             + '|' + config.getResolvedBaseUrl()
-            + '|' + Integer.toHexString(apiKey.hashCode());
+            + '|' + Integer.toHexString(apiKey.hashCode())
+            // The request timeout is split across the two categories this class exists to
+            // distinguish: it is read per call (`withTimeout`) *and* baked into the client as the
+            // connect timeout (`newClient`). Raising it in Settings therefore moved one half and
+            // left the other at the old value until the client happened to be rebuilt for an
+            // unrelated reason — the very "what the client carries versus what it reads per call"
+            // defect this fingerprint was written to fix, in the one field added to it afterwards.
+            + '|' + config.getRequestTimeoutSeconds();
     }
 }
