@@ -1373,7 +1373,7 @@ classic `bad interpreter: /bin/sh^M` — inside a container, where it is awkward
 `.editorconfig` describes what the tree already does (Java 4 spaces, frontend/YAML/shell 2,
 `pom.xml` tabs); it is not an invitation to reformat.
 
-## Claude API Java SDK (anthropic-java 2.54.0 — the version in `pom.xml`, which this heading claimed was 2.16.1 for a long while)
+## Claude API Java SDK (anthropic-java 2.57.0 — the version in `pom.xml`, which this heading claimed was 2.16.1 for a long while)
 
 - Streaming collect pattern: `.flatMap(e -> e.contentBlockDelta().stream()).flatMap(d -> d.delta().text().stream()).map(TextDelta::text).collect(joining())`
 - `.maxTokens()` expects `long` — cast explicitly: `(long) config.getMaxTokens()`
