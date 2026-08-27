@@ -79,11 +79,27 @@ public class ConfigController {
         result.put("bootstrapServers", kafkaConfig.getBootstrapServers());
         result.put("mode", kafkaConfig.getMode());
         result.put("clusters", kafkaConfig.getClusters());
-        result.put("isConnected", kafkaAdminService.ping());
+        appendReachability(result);
         appendConnectionDetail(result);
         appendLlmConfig(result);
         appendPersistence(result);
         return result;
+    }
+
+    /**
+     * Whether the broker answers, <b>and why it does not when it does not</b>.
+     *
+     * <p>{@code ping()} is a boolean, and a boolean is the whole problem: a broker that is down, a
+     * bootstrap address pointing at nothing and a client the cluster refuses all render as
+     * "Not connected", which sends an operator to three different places. {@code pingDetail()} has
+     * carried the reason since the connection pill was rewritten for exactly this, and the Settings
+     * page — the one screen where the address can actually be corrected — was still reading the
+     * boolean. It costs nothing: {@code ping()} is itself {@code pingDetail().reachable()}.
+     */
+    private void appendReachability(Map<String, Object> result) {
+        KafkaAdminService.PingResult ping = kafkaAdminService.pingDetail();
+        result.put("isConnected", ping.reachable());
+        result.put("connectionError", ping.error());
     }
 
     /**
@@ -381,7 +397,7 @@ public class ConfigController {
         Map<String, Object> result = new HashMap<>();
         result.put("bootstrapServers", kafkaConfig.getBootstrapServers());
         result.put("mode", kafkaConfig.getMode());
-        result.put("isConnected", kafkaAdminService.ping());
+        appendReachability(result);
         // The same shape a GET answers with, so the page's picture of the connection after a save
         // is the one it would get by reloading. Without it a password the save just cleared went
         // on reporting itself as set, and the field's hint offered to clear it again.

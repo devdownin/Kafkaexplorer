@@ -330,3 +330,160 @@ describe('Config — a key that does not follow the endpoint', () => {
     expect(screen.queryByText(/was not carried over/i)).not.toBeInTheDocument();
   });
 });
+
+/*
+ * « Test connection » **enregistre**, et c'est la seule chose qu'il puisse faire : `POST
+ * /api/config` est le seul chemin qui repointe le cluster, et une adresse de courtier prise dans le
+ * corps d'une requête serait la contrefaçon de requête côté serveur que `test-llm` refuse par
+ * construction. Ce qui était faux n'était donc pas le geste, mais ce qu'il en disait.
+ */
+describe('Config — applying and testing the connection', () => {
+  it('reports a refusal with the server’s reason, not as a connection failure', async () => {
+    const user = userEvent.setup();
+    mockedAxios.post.mockRejectedValue({
+      isAxiosError: true,
+      response: { status: 400, data: { message: "Not applied: mode is 'SASL_SSL', which is not one of PLAIN, SSL, CONFLUENT_CLOUD." } },
+    });
+    mockedAxios.isAxiosError.mockImplementation((e: unknown) =>
+      !!e && typeof e === 'object' && 'isAxiosError' in e);
+    renderPage();
+    await screen.findByDisplayValue('openai/gpt-4o-mini');
+
+    await user.click(screen.getByRole('button', { name: /test connection/i }));
+
+    expect(await screen.findByText(/is not one of PLAIN/)).toBeInTheDocument();
+    expect(screen.queryByText(/connection failed/i)).not.toBeInTheDocument();
+  });
+
+  /*
+   * L'enregistrement réussi ne mettait pas `savedRef` à jour : la page affichait « Unsaved
+   * changes » et sa garde de sortie annonçait « ces réglages n'ont pas été appliqués » à propos de
+   * réglages qu'elle venait d'appliquer *et* d'écrire sur disque.
+   */
+  it('does not go on claiming unsaved changes once it has applied them', async () => {
+    const user = userEvent.setup();
+    mockedAxios.post.mockResolvedValue({ data: { ...serverConfig, isConnected: true } });
+    renderPage();
+    const field = await screen.findByDisplayValue('localhost:9092');
+
+    await user.clear(field);
+    await user.type(field, 'broker:9092');
+    expect(screen.getByText(/unsaved changes/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /test connection/i }));
+
+    await waitFor(() => expect(screen.queryByText(/unsaved changes/i)).not.toBeInTheDocument());
+  });
+});
+
+describe('Config — what the page says about the connection', () => {
+  /*
+   * « Not connected » recouvre un courtier arrêté, une adresse qui ne pointe sur rien et un client
+   * que le cluster refuse : trois causes, trois corrections, et c'est cet écran qui porte
+   * l'adresse. Le serveur donne la raison depuis `pingDetail` ; la page lisait le booléen.
+   */
+  it('says why the broker did not answer', async () => {
+    mockedAxios.get.mockImplementation((url: string) => {
+      if (url === '/api/config') {
+        return Promise.resolve({
+          data: { ...serverConfig, isConnected: false, connectionError: 'No answer within 2000 ms' },
+        });
+      }
+      return Promise.reject(new Error(`unexpected GET ${url}`));
+    });
+    renderPage();
+
+    expect(await screen.findByText(/No answer within 2000 ms/)).toBeInTheDocument();
+  });
+
+  it('says nothing of the sort when the broker answers', async () => {
+    mockedAxios.get.mockImplementation((url: string) => {
+      if (url === '/api/config') {
+        return Promise.resolve({ data: { ...serverConfig, isConnected: true, connectionError: null } });
+      }
+      return Promise.reject(new Error(`unexpected GET ${url}`));
+    });
+    renderPage();
+
+    await screen.findByText(/^Connected$/);
+    expect(screen.queryByText(/No answer within/)).not.toBeInTheDocument();
+  });
+});
+
+describe('Config — the LLM configuration in force', () => {
+  /*
+   * `llmConfigurationProblem` est servi et rendu par Process Mining depuis toujours ; la page qui
+   * porte le réglage à changer se taisait.
+   */
+  it('names what stops the deployment calling a model', async () => {
+    mockedAxios.get.mockImplementation((url: string) => {
+      if (url === '/api/config') {
+        return Promise.resolve({
+          data: { ...serverConfig, llmConfigurationProblem: 'No API key is configured (claude.api-key).' },
+        });
+      }
+      return Promise.reject(new Error(`unexpected GET ${url}`));
+    });
+    renderPage();
+
+    expect(await screen.findByText(/No API key is configured/)).toBeInTheDocument();
+  });
+
+  /* `AUTO` décline pour un point d'accès inconnu : le réglage seul ne dit pas si un schéma part. */
+  it('says whether a schema really travels with each request', async () => {
+    mockedAxios.get.mockImplementation((url: string) => {
+      if (url === '/api/config') {
+        return Promise.resolve({ data: { ...serverConfig, llmStructuredOutputActive: false } });
+      }
+      return Promise.reject(new Error(`unexpected GET ${url}`));
+    });
+    renderPage();
+
+    expect(await screen.findByText(/not constrained by a JSON schema/)).toBeInTheDocument();
+  });
+
+  it('shows nothing about it when the server did not say', async () => {
+    renderPage();
+    await screen.findByDisplayValue('openai/gpt-4o-mini');
+    expect(screen.queryByTestId('llm-in-force')).not.toBeInTheDocument();
+  });
+});
+
+describe('Config — a verdict describes what was tried', () => {
+  /*
+   * Une sonde ne valide que ce qu'elle envoie. Un chemin de keystore manquant refusait « Test
+   * LLM » — une erreur sans rapport avec le geste — et emportait le focus vers un champ Kafka.
+   */
+  it('does not refuse an LLM probe over an unrelated Kafka field', async () => {
+    const user = userEvent.setup();
+    mockedAxios.get.mockImplementation((url: string) => {
+      if (url === '/api/config') {
+        return Promise.resolve({ data: { ...serverConfig, mode: 'SSL', truststorePath: '', keystorePath: '' } });
+      }
+      if (url === '/api/config/llm-models') return Promise.resolve({ data: shortlist });
+      return Promise.reject(new Error(`unexpected GET ${url}`));
+    });
+    renderPage();
+    await screen.findByDisplayValue('openai/gpt-4o-mini');
+
+    await user.click(screen.getByRole('button', { name: /test llm/i }));
+
+    await waitFor(() => expect(
+      mockedAxios.post.mock.calls.map(c => c[0])).toContain('/api/config/test-llm'));
+    expect(screen.queryByText(/Truststore path is required/)).not.toBeInTheDocument();
+  });
+
+  /* Un verdict porte sur ce qui a été essayé, pas sur ce qui est à l'écran depuis. */
+  it('drops the LLM verdict once the model has changed', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    const field = await screen.findByDisplayValue('openai/gpt-4o-mini');
+
+    await user.click(screen.getByRole('button', { name: /test llm/i }));
+    await screen.findByText(/Candidate reachable/);
+
+    await user.type(field, 'x');
+
+    expect(screen.queryByText(/Candidate reachable/)).not.toBeInTheDocument();
+  });
+});

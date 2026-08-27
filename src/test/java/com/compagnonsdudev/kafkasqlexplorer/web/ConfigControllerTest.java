@@ -69,6 +69,11 @@ class ConfigControllerTest {
         sseEmitterManager = Mockito.mock(SseEmitterManager.class);
         when(flinkSqlService.getActiveJobsDetails()).thenReturn(Map.of());
         when(sseEmitterManager.activeSessions()).thenReturn(0);
+        // The default this fixture used to get for free from a boolean `ping()`. Every answer of
+        // this controller carries reachability, so the mock has to have one — an unstubbed
+        // `pingDetail()` is null, not "unreachable".
+        when(kafkaAdminService.pingDetail())
+            .thenReturn(new KafkaAdminService.PingResult(false, "no broker in this test"));
 
         storePath = tempDir.resolve("settings.json");
         settingsStore = new SettingsStore(explorerConfigStoringAt(storePath.toString(), true));
@@ -300,6 +305,39 @@ class ConfigControllerTest {
         config.setSettingsStorePath(path);
         config.setSettingsStoreSecrets(secrets);
         return config;
+    }
+
+    /**
+     * A broker that did not answer has a reason, and the Settings page is where the address that
+     * caused it can be corrected.
+     *
+     * <p>This served {@code kafkaAdminService.ping()}, a boolean — so a broker that is down, an
+     * address pointing at nothing and a client the cluster refuses all reached the page as the same
+     * "Not connected". {@code pingDetail()} has carried the reason since the connection pill was
+     * rewritten for exactly this, and costs nothing extra: {@code ping()} is itself
+     * {@code pingDetail().reachable()}.
+     */
+    @Test
+    void theConfigSaysWhyTheBrokerDidNotAnswer() throws Exception {
+        when(kafkaAdminService.pingDetail())
+            .thenReturn(new KafkaAdminService.PingResult(false, "No answer within 2000 ms"));
+
+        mockMvc.perform(get("/api/config"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.isConnected").value(false))
+            .andExpect(jsonPath("$.connectionError").value("No answer within 2000 ms"));
+    }
+
+    /** Reachable is not a failure with an empty reason: the field is null, so nothing is rendered. */
+    @Test
+    void aReachableBrokerCarriesNoReason() throws Exception {
+        when(kafkaAdminService.pingDetail())
+            .thenReturn(new KafkaAdminService.PingResult(true, null));
+
+        mockMvc.perform(get("/api/config"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.isConnected").value(true))
+            .andExpect(jsonPath("$.connectionError").value(org.hamcrest.Matchers.nullValue()));
     }
 
     /** `/config` belongs to the SPA. A controller mapping there answers a refresh with a 500. */

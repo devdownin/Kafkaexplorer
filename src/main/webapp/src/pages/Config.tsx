@@ -45,6 +45,15 @@ interface ClusterConfig {
   keyPasswordConfigured?: boolean;
   confluentSecretConfigured?: boolean;
   isConnected?: boolean;
+  /**
+   * Pourquoi le courtier n'a pas répondu, quand il n'a pas répondu.
+   *
+   * `isConnected` seul confond un courtier arrêté, une adresse qui ne pointe sur rien et un client
+   * que le cluster refuse — trois problèmes qui envoient à trois endroits différents, sur l'écran
+   * précisément fait pour corriger l'adresse. `null` quand la connexion est établie, et absent
+   * d'une réponse plus ancienne.
+   */
+  connectionError?: string | null;
   llmProvider: 'ANTHROPIC' | 'OPENAI_COMPATIBLE' | 'OLLAMA' | 'OPENROUTER' | 'SPECTRA';
   llmProviderLabel?: string;
   llmApiKey?: string;
@@ -59,6 +68,19 @@ interface ClusterConfig {
   llmSnapshotWindowSize: number;
   llmSnapshotWindowTimeoutSeconds: number;
   llmLocalDeployment?: boolean;
+  /**
+   * Ce qui empêche ce déploiement d'appeler un modèle, avant même d'essayer : clé absente, adresse
+   * absente, adresse qui n'en est pas une. Servi par le serveur et rendu par Process Mining depuis
+   * toujours — mais c'est ici que se trouve le réglage à changer, et ici que rien ne le disait.
+   */
+  llmConfigurationProblem?: string | null;
+  /**
+   * Ce que `claude.structured-output` produit réellement pour le fournisseur en vigueur. `AUTO`
+   * décline pour un point d'accès inconnu, et le réglage seul ne dit donc pas si un schéma part
+   * avec la requête — ce qui est la question qu'on se pose. Servi depuis longtemps, lu par
+   * personne.
+   */
+  llmStructuredOutputActive?: boolean;
   /**
    * Réglages de routage OpenRouter, servis par le serveur et non éditables ici — comme
    * `llmStructuredOutput`, ils se posent dans la configuration du déploiement. Le formulaire les
@@ -154,13 +176,15 @@ const isProviderDefaultUrl = (defaults: ProviderDefaults, url?: string): boolean
  * Rien n'est dit dès qu'on tape : ce qui est à l'écran est alors ce qui partira, et une phrase
  * décrivant l'état précédent ne ferait que semer le doute.
  */
-const secretHint = (configured?: boolean, typed?: string): string | undefined => {
+const secretHint = (
+  configured?: boolean, typed?: string, noun = 'password',
+): string | undefined => {
   if (!configured) return undefined;
   // Jamais touché : le champ n'est pas envoyé du tout, donc le mot de passe en vigueur reste.
   if (typed === undefined) return 'One is set. It is not shown — leave this field alone to keep it.';
   // Tapé puis effacé : la chaîne vide part et efface le mot de passe. Dire « laissez vide pour le
   // conserver » ici décrirait exactement l'inverse de ce que ferait l'enregistrement.
-  if (typed === '') return 'Saving now clears the password that is set.';
+  if (typed === '') return `Saving now clears the ${noun} that is set.`;
   return undefined;
 };
 
@@ -375,7 +399,7 @@ const Config: React.FC = () => {
    * Process Mining tourne encore dessus (409) : il dit lequel, et on propose de forcer plutôt que
    * d'afficher « Failed to save configuration » sur un refus parfaitement délibéré.
    */
-  const applyConfig = async (force: boolean) => {
+  const applyConfig = async (force: boolean): Promise<ClusterConfig> => {
     const res = await axios.post<ClusterConfig & SettingsPersistence>(
       '/api/config', force ? { ...config, force } : config);
     const { settings, persistence: kept } = splitPersistence(res.data);
@@ -406,16 +430,25 @@ const Config: React.FC = () => {
       : describeSaveOutcome(kept));
     setSaveSuccess(true);
     setTimeout(() => setSaveSuccess(false), 3000);
+    return settings;
   };
 
-  const handleSave = async () => {
-    if (!checkBeforeSubmit()) return;
-    setSaving(true);
-    setError(null);
-    setSaveNote(null);
-    setSaveSuccess(false);
+  /**
+   * Enregistre, et rend compte du refus quand il y en a un.
+   *
+   * Partagé entre les deux boutons parce que **les deux enregistrent** : ce point d'accès est le
+   * seul chemin qui repointe le cluster, et il n'y a pas de sonde sans lui — une adresse de
+   * courtier prise dans le corps d'une requête serait la contrefaçon de requête côté serveur que
+   * `test-llm` refuse par construction. Ce qui est corrigé n'est donc pas le geste mais ce qu'il
+   * raconte : un 409 (« un audit tourne encore ») et un 400 (« ce mode n'existe pas ») arrivaient
+   * ici sous la forme « Connection failed », c'est-à-dire un verdict sur le courtier à propos d'un
+   * appel qui ne l'avait jamais atteint.
+   *
+   * @returns les réglages appliqués, ou `null` si le serveur a refusé
+   */
+  const submitConfig = async (): Promise<ClusterConfig | null> => {
     try {
-      await applyConfig(false);
+      return await applyConfig(false);
     } catch (err) {
       const conflict = refusal(err, 409);
       const rejected = refusal(err, 400);
@@ -431,28 +464,49 @@ const Config: React.FC = () => {
         icon: 'warning',
       })) {
         try {
-          await applyConfig(true);
+          return await applyConfig(true);
         } catch (forced) {
           setError(refusal(forced, 400) ?? 'Failed to save configuration.');
         }
       }
+      return null;
+    }
+  };
+
+  const handleSave = async () => {
+    if (!checkBeforeSubmit()) return;
+    setSaving(true);
+    setError(null);
+    setSaveNote(null);
+    setSaveSuccess(false);
+    try {
+      await submitConfig();
     } finally {
       setSaving(false);
     }
   };
 
+  /**
+   * Applique le formulaire, puis dit si le courtier répond.
+   *
+   * Trois choses passaient à côté. Le refus du serveur était rendu comme un échec de connexion
+   * (voir `submitConfig`). L'enregistrement réussi ne mettait pas `savedRef` à jour, donc la page
+   * affichait « Unsaved changes » et sa garde de sortie annonçait « ces réglages n'ont pas été
+   * appliqués » à propos de réglages qu'elle venait d'appliquer *et* d'écrire sur disque. Et
+   * `inForce` restait en arrière, donc le bandeau de confidentialité continuait de décrire le
+   * fournisseur précédent. Tout cela vient de `applyConfig`, qu'il suffisait d'emprunter.
+   */
   const handleTestConnection = async () => {
     if (!checkBeforeSubmit()) return;
     setTesting(true);
     setTestResult(null);
+    setError(null);
+    setSaveNote(null);
     try {
-      const res = await axios.post<ClusterConfig & SettingsPersistence>('/api/config', config);
-      const { settings, persistence: kept } = splitPersistence(res.data);
-      setConfig(prev => ({ ...prev, ...settings }));
-      setPersistence(kept);
-      setTestResult(settings.isConnected ?? false);
-    } catch {
-      setTestResult(false);
+      // Le verdict ne se pose que si la configuration est passée : un refus n'a rien sondé, et
+      // l'erreur du serveur est déjà à l'écran.
+      const applied = await submitConfig();
+      if (applied) setTestResult(applied.isConnected ?? false);
     } finally {
       setTesting(false);
     }
@@ -478,7 +532,8 @@ const Config: React.FC = () => {
    * rien.
    */
   const handleTestLlm = async () => {
-    if (!checkBeforeSubmit()) return;
+    // Seul le modèle voyage (voir `probeBody`), donc seul le modèle est validé.
+    if (!checkBeforeSubmit(['llmModel'])) return;
     // `axios` ne pose aucun délai par défaut, donc ce bouton pouvait tourner indéfiniment face à un
     // serveur qui ne répond jamais — la règle que l'éditeur SQL a servi à écrire, restée non
     // appliquée ici. L'attente se déduit du budget du serveur : c'est le champ juste au-dessus, et
@@ -601,9 +656,25 @@ const Config: React.FC = () => {
    * Valide, publie les erreurs et focalise le premier champ fautif.
    * @returns true quand le formulaire peut partir
    */
-  const checkBeforeSubmit = (): boolean => {
-    const found = validateConfig();
-    setErrors(found);
+  const checkBeforeSubmit = (only?: readonly ValidatedField[]): boolean => {
+    const all = validateConfig();
+    /*
+     * Une sonde ne valide que ce qu'elle envoie. `checkBeforeSubmit()` refusait « Test LLM » sur un
+     * chemin de keystore manquant — une erreur sans rapport avec le geste — et déplaçait le focus
+     * vers un champ Kafka. Depuis que la sonde n'applique plus rien et n'emporte que le modèle, le
+     * reste du formulaire ne la concerne pas.
+     */
+    const found: FieldErrors = only
+      ? Object.fromEntries(only.filter(k => all[k]).map(k => [k, all[k]]))
+      : all;
+    /*
+     * Une validation restreinte ne *remplace* pas ce qui est affiché : elle rafraîchit ses propres
+     * champs et laisse les autres. Sinon une sonde effacerait les erreurs qu'un Enregistrer venait
+     * de poser sur l'autre moitié du formulaire — elles tiennent toujours.
+     */
+    setErrors(prev => (only
+      ? { ...prev, ...Object.fromEntries(only.map(k => [k, all[k]])) }
+      : all));
     const firstInvalid = FIELD_ORDER.find(key => found[key]);
     if (!firstInvalid) return true;
     // Le champ peut être dans une section masquée par le mode courant — d'où le garde-fou.
@@ -614,10 +685,25 @@ const Config: React.FC = () => {
   const set = (key: keyof ClusterConfig, value: string) => {
     setConfig(prev => ({ ...prev, [key]: value }));
     clearError(key);
+    forgetVerdicts(key);
   };
   const setNumber = (key: keyof ClusterConfig, value: number) => {
     setConfig(prev => ({ ...prev, [key]: value }));
     clearError(key);
+    forgetVerdicts(key);
+  };
+
+  /**
+   * Un verdict décrit ce qui a été essayé, pas ce qui est à l'écran.
+   *
+   * « Connection successful » restait affiché après qu'on eut changé l'adresse du courtier, et le
+   * résultat du test LLM après qu'on eut changé de modèle : deux affirmations portant sur une
+   * configuration qui n'existe plus. Même règle que `isResultStale` dans l'éditeur SQL — le
+   * résultat périmé disparaît plutôt que de passer pour celui du formulaire courant.
+   */
+  const forgetVerdicts = (key: keyof ClusterConfig) => {
+    if (String(key).startsWith('llm')) setLlmTestResult(null);
+    else setTestResult(null);
   };
 
   /** Une erreur disparaît dès qu'on retouche le champ — la revalidation a lieu au submit. */
@@ -712,6 +798,17 @@ const Config: React.FC = () => {
             {config.isConnected ? 'Connected' : 'Not connected'}
           </p>
           <p className="text-xs text-on-surface-variant">{config.bootstrapServers}</p>
+          {/*
+            Pourquoi, et pas seulement que. « Not connected » recouvre un courtier arrêté, une
+            adresse qui ne pointe sur rien et un client que le cluster refuse — trois causes, trois
+            corrections, et c'est ici qu'on vient corriger l'adresse. Le serveur porte la raison
+            depuis `pingDetail`, cette page lisait le booléen.
+          */}
+          {!config.isConnected && config.connectionError && (
+            <p className="text-xs text-on-surface-variant/80 mt-0.5 break-words">
+              {config.connectionError}
+            </p>
+          )}
         </div>
         {testResult !== null && (
           <div className={`ml-auto flex items-center gap-1.5 text-xs font-bold ${testResult ? 'text-success' : 'text-error'}`}>
@@ -894,7 +991,12 @@ const Config: React.FC = () => {
                   key={provider.value}
                   type="button"
                   aria-pressed={config.llmProvider === provider.value}
-                  onClick={() => { applyLlmProvider(provider.value); setErrors({}); }}
+                  onClick={() => {
+                    applyLlmProvider(provider.value);
+                    setErrors({});
+                    // Le verdict précédent portait sur un autre fournisseur.
+                    setLlmTestResult(null);
+                  }}
                   className={`p-3 rounded-lg border text-left transition-all ${
                     config.llmProvider === provider.value
                       ? 'border-primary bg-primary/10 text-on-surface'
@@ -931,6 +1033,53 @@ const Config: React.FC = () => {
               {policyIsStale && (
                 <p className="mt-1 font-medium">
                   This describes the configuration in force. Save to apply the provider selected above.
+                </p>
+              )}
+            </div>
+          )}
+
+          {/*
+            Deux faits sur la configuration *en vigueur*, servis depuis longtemps et rendus nulle
+            part ici. Le premier est celui qui coûte : `llmConfigurationProblem` dit ce qui empêche
+            d'appeler un modèle avant même d'essayer — une clé absente, une adresse absente, une
+            adresse qui n'en est pas une — et Process Mining l'affichait pendant que la page qui
+            porte le réglage à changer se taisait. Le second répond à la question que le réglage
+            seul ne tranche pas : `AUTO` décline pour un point d'accès inconnu, donc « AUTO » ne dit
+            pas si un schéma part avec la requête.
+
+            Ils décrivent ce qui tourne, jamais ce qui est tapé — d'où la formulation, et d'où le
+            même repère `policyIsStale` que le bandeau au-dessus.
+          */}
+          {(config.llmConfigurationProblem || config.llmStructuredOutputActive !== undefined) && (
+            <div className={`rounded-lg border px-4 py-3 text-[12px] space-y-1.5 ${
+              config.llmConfigurationProblem
+                ? 'border-warning/25 bg-warning/5' : 'border-outline-variant/60 bg-surface-container-low'
+            }`} data-testid="llm-in-force">
+              {config.llmConfigurationProblem && (
+                <p className="flex items-start gap-2 text-warning">
+                  <span aria-hidden="true" className="material-symbols-outlined text-[16px] mt-px">warning</span>
+                  <span className="break-words">
+                    The configuration in force cannot call a model: {config.llmConfigurationProblem}
+                  </span>
+                </p>
+              )}
+              {config.llmStructuredOutputActive !== undefined && (
+                <p className="flex items-start gap-2 text-on-surface-variant">
+                  <span aria-hidden="true" className="material-symbols-outlined text-[16px] mt-px">
+                    {config.llmStructuredOutputActive ? 'data_object' : 'help'}
+                  </span>
+                  <span className="break-words">
+                    {config.llmStructuredOutputActive
+                      ? 'Answers are constrained by a JSON schema on this provider.'
+                      : 'Answers are not constrained by a JSON schema here — the reply is parsed '
+                        + 'leniently instead. Set claude.structured-output to ON for a gateway '
+                        + 'known to support it.'}
+                  </span>
+                </p>
+              )}
+              {policyIsStale && (
+                <p className="text-on-surface-variant/80">
+                  This describes the configuration in force, not the provider selected above.
                 </p>
               )}
             </div>
@@ -1005,9 +1154,15 @@ const Config: React.FC = () => {
               required={API_KEY_REQUIRED.has(config.llmProvider) && !config.llmApiKeyConfigured}
               id={fieldIds.llmApiKey}
               error={errors.llmApiKey}
-              description={config.llmApiKeyConfigured
-                ? 'A key is currently configured in memory — leave blank to keep it.'
-                : 'No key configured in memory.'}
+              /*
+               * Même règle que les mots de passe SSL et le secret Confluent, dont ce champ se
+               * distinguait sans raison. « in memory » n'était plus vrai depuis que les réglages
+               * survivent à un redémarrage, et il manquait le second état : un champ tapé puis
+               * effacé *efface* la clé enregistrée — ce que faisait déjà, en silence, le passage à
+               * Ollama ou SpectraLLM, qui vide ce champ.
+               */
+              description={secretHint(config.llmApiKeyConfigured, config.llmApiKey, 'API key')
+                ?? (config.llmApiKeyConfigured ? undefined : 'No key is configured.')}
             >
               {p => (
                 <PasswordInput
@@ -1243,8 +1398,16 @@ const Config: React.FC = () => {
 
       {/* Actions */}
       <div className="flex items-center justify-between pt-2">
-        <Button type="button" variant="outline" icon={testing ? undefined : 'wifi_tethering'} loading={testing} onClick={handleTestConnection} disabled={testing || saving}>
-          {testing ? 'Testing…' : 'Test connection'}
+        {/*
+          Le nom dit ce que le bouton fait. Il enregistre — c'est `POST /api/config` qui repointe le
+          cluster, et il n'existe pas de sonde sans lui : une adresse de courtier prise dans le
+          corps d'une requête serait la contrefaçon de requête côté serveur que `test-llm` refuse
+          par construction. Le geste est donc légitime ; ce qui ne l'était pas, c'est de l'appeler
+          « Test connection » sur une page où l'autre bouton s'appelle « Save configuration ».
+        */}
+        <Button type="button" variant="outline" icon={testing ? undefined : 'wifi_tethering'} loading={testing} onClick={handleTestConnection} disabled={testing || saving}
+          title="Applies the form, then reports whether the broker answers.">
+          {testing ? 'Applying…' : 'Apply & test connection'}
         </Button>
         <div className="flex items-center gap-3">
           {draftConflict && (
