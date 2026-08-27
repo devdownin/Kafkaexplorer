@@ -96,8 +96,13 @@ public class SpectraLlmClient implements LlmClient {
             }
             // SpectraLLM's query API reports no token accounting, so the counts stay null rather
             // than zero — the duration is measured here and is real either way.
+            // No model name: this endpoint is never told which model to run and never says which
+            // one it ran, so the configured slug describes nothing here — it is whatever the
+            // provider was set to before, and reporting it would name a model that is not
+            // answering. Null is the honest value, and the page renders the absence as such.
             LlmUsage usage = LlmUsage.untokenized(System.currentTimeMillis() - startedAt,
-                config.getProviderLabel(), config.getModel());
+                config.getProviderLabel(),
+                config.namesTheModel() ? config.getModel() : null);
             log.debug("SpectraLLM call complete — {}", usage.summary());
             return new LlmResponse(answer.asText(), parseSources(root.path("sources")), usage);
 
@@ -158,5 +163,19 @@ public class SpectraLlmClient implements LlmClient {
             baseUrl = baseUrl.substring(0, baseUrl.length() - 1);
         }
         return baseUrl + "/api/query";
+    }
+
+    /**
+     * Orderly, and deliberately <b>not</b> {@code HttpClient.close()}.
+     *
+     * <p>{@code close()} blocks until every in-flight exchange has finished, and an exchange here
+     * is a model generating — up to {@code claude.request-timeout-seconds}, which the bundled
+     * local-inference stacks set to 300. That wait would land on the thread that saved the
+     * Settings page. {@code shutdown()} refuses new requests and lets the running one finish,
+     * which is what retiring a replaced client means.
+     */
+    @Override
+    public void close() {
+        httpClient.shutdown();
     }
 }

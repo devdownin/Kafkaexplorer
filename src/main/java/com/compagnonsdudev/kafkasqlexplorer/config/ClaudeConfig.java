@@ -476,6 +476,24 @@ public class ClaudeConfig {
      * for {@link Provider#SPECTRA}, which serves whichever model it is configured to run and
      * ignores the field entirely. Empty means "we have nothing to propose", not "no model".
      */
+    /**
+     * Whether this provider is told which model to run, or picks one itself.
+     *
+     * <p>SpectraLLM serves whichever model <em>it</em> is configured with and ignores the field
+     * entirely — {@link #defaultModel} returns {@code ""} for it for that reason. But a default is
+     * only what a fresh deployment starts from: one moved off the shipped OpenRouter provider
+     * keeps {@code openai/gpt-4o-mini} in the field, and that stale slug was then reported as the
+     * model answering, on every window, in the one line whose job is to say what is answering. It
+     * is the defect the connection pill was rewritten for — a label asserting a fact nobody
+     * checked — one banner over.
+     *
+     * <p>The rule this codebase applies to every count applies to a name too: a value nobody
+     * established is not rendered as one that was.
+     */
+    public boolean namesTheModel() {
+        return provider != Provider.SPECTRA;
+    }
+
     public static String defaultModel(Provider provider) {
         return switch (provider) {
             case ANTHROPIC -> "claude-3-5-sonnet-20241022";

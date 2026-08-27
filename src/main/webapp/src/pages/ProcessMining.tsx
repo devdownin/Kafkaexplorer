@@ -16,7 +16,7 @@ import { clearDraft, readDraft, useDraftConflict, usePersistentState, writeDraft
 import { recordMeasuredProcess, recordMetricPriorities } from './processModelEvidence';
 import { describeResume, resumableStep } from './processMiningDraft';
 import { describeUsage, formatCostUsd, totalCostUsd, totalTokens } from './llmUsage';
-import { describeDataPolicy } from './llmPolicy';
+import { describeDataPolicy, describeRuntimeModel } from './llmPolicy';
 import { describeTestTimeout, testTimeoutMs } from './llmTimeout';
 import { describeCoverage } from './processMiningCoverage';
 import ProcessModelPanel from '../components/processmining/ProcessModelPanel';
@@ -413,6 +413,10 @@ const ProcessMining: React.FC = () => {
   }, [profileResult]);
 
   const policy = useMemo(() => describeDataPolicy(llmInfo), [llmInfo]);
+  // Le champ `model` n'est pas lu par tous les fournisseurs — voir `describeRuntimeModel`.
+  const runtimeModel = useMemo(
+    () => describeRuntimeModel(llmInfo?.llmProvider, llmInfo?.llmModel),
+    [llmInfo]);
   /*
    * Tous les appels au modèle de l'exécution en cours, profilage compris. Le pipeline en fait deux
    * et seul le second était compté : le chiffre affiché sous-estimait donc la facture, ce qui est
@@ -833,7 +837,7 @@ const ProcessMining: React.FC = () => {
             <div className="min-w-0 flex-1">
               <p className="text-sm font-semibold text-on-surface">
                 LLM runtime: {llmInfo.llmProviderLabel ?? llmInfo.llmProvider ?? 'Unknown'}
-                {llmInfo.llmModel ? ` · ${llmInfo.llmModel}` : ''}
+                {runtimeModel ? ` · ${runtimeModel}` : ''}
               </p>
               <p className="text-xs text-on-surface-variant mt-1">
                 Profiling and analysis run against this endpoint — message digests, never raw payloads.
