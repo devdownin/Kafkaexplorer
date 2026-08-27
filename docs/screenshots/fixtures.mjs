@@ -35,6 +35,10 @@ export const TOPICS = [
   'demo.payments.authorized', 'demo.payments.captured',
   'demo.shipments.dispatched', 'demo.shipments.delivered',
   'demo.customers', 'demo.iot.sensors', 'demo.errors.poison',
+  // La file de reprise et les deux orthographes de file morte que `setup-demo.sh` sème :
+  // sans elles, la capture du tableau de bord ne peut montrer ni la marque de reprise ni le
+  // badge, qui sont pourtant deux colonnes de ce tableau.
+  'demo.orders.2.retry.5m', 'demo.orders.2.dlt', 'demo.payments.dlq',
   ...SUPPLY_CHAIN,
   'internal.audit.history', 'internal.metrics.config',
 ];
@@ -47,6 +51,9 @@ const SIZES = {
   'demo.payments.authorized': 1183, 'demo.payments.captured': 1150,
   'demo.shipments.dispatched': 1140, 'demo.shipments.delivered': 1096,
   'demo.customers': 240, 'demo.iot.sensors': 7200, 'demo.errors.poison': 18,
+  // Petits volumes, comme sur un cluster sain : une file morte qui pèse autant que sa source
+  // serait un incident, pas une capture de référence.
+  'demo.orders.2.retry.5m': 24, 'demo.orders.2.dlt': 9, 'demo.payments.dlq': 6,
   'internal.audit.history': 7, 'internal.metrics.config': 3,
 };
 

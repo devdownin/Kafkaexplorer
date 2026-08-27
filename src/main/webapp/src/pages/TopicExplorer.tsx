@@ -10,6 +10,7 @@ import { useToast } from '../components/Toast';
 import ErrorBanner from '../components/ErrorBanner';
 import { Button, Badge, Stat, EmptyState, ErrorPanel, StatGridSkeleton, TableSkeleton, Table, useVirtualRows } from '../components/ui';
 import { buildTraceLinkForKey } from './streamFlow';
+import { isDeadLetterTopic } from './topicKinds';
 import TopicSearchPanel, { FIELD_IDS } from '../components/topic/TopicSearchPanel';
 import TopicActivityPanel from '../components/topic/TopicActivityPanel';
 import TopicConsumersPanel from '../components/topic/TopicConsumersPanel';
@@ -1163,7 +1164,7 @@ const TopicExplorer: React.FC = () => {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <h1 className="text-2xl font-semibold font-mono tracking-tight text-on-surface truncate">{data.topic.name}</h1>
-            {data.topic.name.toLowerCase().endsWith('.dlt') && (
+            {isDeadLetterTopic(data.topic.name) && (
               <Badge tone="warning">Dead Letter Topic</Badge>
             )}
             <Badge tone="primary">{data.format}</Badge>

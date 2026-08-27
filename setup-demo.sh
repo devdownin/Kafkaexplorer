@@ -196,6 +196,15 @@ TOPICS=(
   # Time series with spread event times — the only dataset here on which a
   # TUMBLE/HOP window produces more than one bucket.
   "demo.iot.sensors:3"
+  # Retry queue and dead-letter topics. Nothing here used to carry either, so the
+  # Dashboard's retry marker and its dead-letter badge had no row to run against on
+  # the very cluster the README recommends. Two spellings on purpose: only Spring
+  # Kafka's DeadLetterPublishingRecoverer writes `.DLT`, while Spring Cloud Stream
+  # and most of the ecosystem say `.DLQ` — a cluster grown through more than one
+  # team carries both, which is exactly what the rule has to recognise.
+  "demo.orders.2.retry.5m:1"
+  "demo.orders.2.dlt:1"
+  "demo.payments.dlq:1"
 )
 
 # Supply Chain 2.0 Steps
@@ -665,6 +674,52 @@ for i in $(seq 0 9); do
 done
 
 # ---------------------------------------------------------------------------
+# --- Scenario 12: A retried order, and two dead-letter spellings -----------
+# ---------------------------------------------------------------------------
+#
+# ORD-107 enters the pipeline, fails validation, is retried twice and dies. It is
+# the one shape this cluster had no data for: the Dashboard marks retry topics and
+# badges dead-letter ones, and not a single seeded topic carried either name, so
+# both controls could only ever be demonstrated against a real production cluster.
+#
+# The two spellings are the point of the payments half. Only Spring Kafka's
+# DeadLetterPublishingRecoverer writes `.DLT`; Spring Cloud Stream and most of the
+# ecosystem say `.DLQ`. A cluster that has grown through more than one team carries
+# both, so the orders side uses one and the payments side the other — which is what
+# a rule recognising a single spelling lets through in silence.
+#
+# ORD-107 is only ever produced to `demo.orders.1.received` and then to the retry
+# queue: there is no `validated` record for it, because validation is what failed.
+TP_107=$(traceparent 107 1)
+H107="correlation-id:ORD-107,traceparent:$TP_107,source-system:OMS-v3.2,produced-at:${TS}000"
+ORD107_AMOUNT=$(money 24990)
+buffer "demo.orders.1.received" "$H107,event-type:order.received" "ORD-107" \
+  "{\"id\":\"ORD-107\",\"state\":\"RECEIVED\",\"description\":\"Espresso machine\",\"type\":\"APPLIANCE\",\"odate\":\"$DATE_NOW\",\"event_time\":$TS,\"amount\":$ORD107_AMOUNT,\"customer_id\":\"C-004\"}"
+
+# Two attempts on the retry queue: a single one would not show that a retry topic
+# is where a record comes back, which is what distinguishes it from a dead letter.
+for ATTEMPT in 1 2; do
+  buffer "demo.orders.2.retry.5m" \
+    "$H107,event-type:order.retry,original-topic:demo.orders.2.validated,retry-attempt:$ATTEMPT" \
+    "ORD-107" \
+    "{\"id\":\"ORD-107\",\"state\":\"RETRY_SCHEDULED\",\"description\":\"Espresso machine\",\"type\":\"APPLIANCE\",\"odate\":\"$DATE_NOW\",\"event_time\":$((TS + ATTEMPT * 300)),\"amount\":$ORD107_AMOUNT,\"customer_id\":\"C-004\",\"retry_attempt\":$ATTEMPT,\"failure_reason\":\"Inventory service timed out\"}"
+done
+
+buffer "demo.orders.2.dlt" \
+  "$H107,event-type:order.dead.lettered,original-topic:demo.orders.2.validated,retry-attempt:3" \
+  "ORD-107" \
+  "{\"id\":\"ORD-107\",\"state\":\"DEAD_LETTERED\",\"description\":\"Espresso machine\",\"type\":\"APPLIANCE\",\"odate\":\"$DATE_NOW\",\"event_time\":$((TS + 900)),\"amount\":$ORD107_AMOUNT,\"customer_id\":\"C-004\",\"retry_attempt\":3,\"failure_reason\":\"Inventory service timed out\",\"original_topic\":\"demo.orders.2.validated\"}"
+
+# The payments side spells it `.DLQ`, and keeps this flow's own rule: the payload
+# carries a PAY- reference and never the order id, which lives in the header alone.
+TP_108=$(traceparent 108 1)
+H108="correlation-id:ORD-108,traceparent:$TP_108,source-system:PSP-v1.2,produced-at:${TS}000"
+buffer "demo.payments.dlq" \
+  "$H108,event-type:payment.dead.lettered,original-topic:demo.payments.authorized,retry-attempt:3" \
+  "PAY-108" \
+  "{\"paymentRef\":\"PAY-108\",\"provider\":\"STRIPE\",\"amount\":$(money 7350),\"currency\":\"EUR\",\"state\":\"FAILED\",\"event_time\":$((TS + 120)),\"retry_attempt\":3,\"failure_reason\":\"Card declined by issuer\",\"original_topic\":\"demo.payments.authorized\"}"
+
+# ---------------------------------------------------------------------------
 # Flush everything still buffered — one producer per topic, DEMO_PARALLEL at a time.
 # ---------------------------------------------------------------------------
 echo "Publishing buffered records..."
@@ -676,7 +731,7 @@ done
 wait
 
 # ---------------------------------------------------------------------------
-# --- Scenario 12: Consumer groups — one draining, one abandoned ------------
+# --- Scenario 13: Consumer groups — one draining, one abandoned ------------
 # ---------------------------------------------------------------------------
 #
 # The seeder produced records and nothing ever read them, so a fresh demo cluster
@@ -723,7 +778,7 @@ seed_consumer_groups
 
 echo "--- Demo Setup Complete ---"
 echo ""
-echo "What was seeded (76 topics):"
+echo "What was seeded (79 topics):"
 echo "  • demo.orders.1..6.*   6-step order pipeline, 3 partitions, keyed by order id,"
 echo "                         with correlation-id / traceparent / source-system headers."
 echo "                         ORD-101 walks all 6 steps with a real pause between hops"
@@ -734,6 +789,10 @@ echo "  • demo.payments.* /    correlated to the orders by HEADER only — the
 echo "    demo.shipments.*     carry PAY-/SHP- references, never the order id."
 echo "  • demo.customers       log-compacted, keyed by customer_id (C-002 has 2 versions)."
 echo "  • demo.errors.poison   truncated JSON, prose, unclosed XML, invalid UTF-8, empty."
+echo "  • demo.orders.2.retry.5m ORD-107 retried twice, then dead-lettered to"
+echo "    demo.orders.2.dlt    demo.orders.2.dlt — the Dashboard marks the first and badges"
+echo "    demo.payments.dlq    the second. demo.payments.dlq spells it the other way on"
+echo "                         purpose: only Spring Kafka writes .DLT, the rest say .DLQ."
 echo "  • demo.orders.3.enriched also carries 2 truncated records — the cluster audit"
 echo "                         should report it CRITICAL inside an otherwise green flow."
 echo "  • demo.sc.*            20-step supply chain, 10 orders, 60 topics."
@@ -756,12 +815,15 @@ echo "5. Nested paths: SELECT id FROM \"demo.orders.nested\" WHERE customer.prof
 echo "6. XML / XPath: SELECT XmlExtract(raw_value, '/Order/Customer') FROM \"demo.orders.xml\""
 echo "   → demo.orders.xml also holds a nested document (ORD-XML-04) for XPath predicates."
 echo "7. Join: SELECT c.name, o.amount FROM \"demo.orders.1.received\" o JOIN \"demo.customers\" c ON o.customer_id = c.customer_id"
-echo "8. Cluster Audit: run it — duplicates on demo.orders.1.received (ORD-103 / ORD-105"
+echo "8. Retry and dead letter: Dashboard → 'Mark retry' ON marks demo.orders.2.retry.5m,"
+echo "   and demo.orders.2.dlt / demo.payments.dlq are badged DLT and DLQ respectively."
+echo "   → trace 'ORD-107' in Stream Flow to see an order received, retried and buried."
+echo "9. Cluster Audit: run it — duplicates on demo.orders.1.received (ORD-103 / ORD-105"
 echo "   redelivered), poison on demo.orders.3.enriched, drop-off on the orders flow."
-echo "9. Metrics: SELECT AVG(temperature) AS metric_value FROM \"demo.iot.sensors\" (GAUGE)"
-echo "9b. Consumer lag: Topic Explorer → demo.orders.1.received → Consumers tab."
+echo "10. Metrics: SELECT AVG(temperature) AS metric_value FROM \"demo.iot.sensors\" (GAUGE)"
+echo "11. Consumer lag: Topic Explorer → demo.orders.1.received → Consumers tab."
 echo "    'demo.orders.reporting' is behind with no member — run the Cluster Audit and"
 echo "    the Metrics page then proposes a CONSUMER_TIME_LAG KPI for it, which reads"
 echo "    the backlog in time. It grows on its own while the stack stays up."
-echo "10. Supply Chain deep nesting: inspect 'SC-100' in demo.sc.*.out — 3-level nesting"
+echo "12. Supply Chain deep nesting: inspect 'SC-100' in demo.sc.*.out — 3-level nesting"
 echo "    from step 6 onwards, each step stamped 90s after the previous one."
