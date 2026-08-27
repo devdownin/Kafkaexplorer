@@ -64,6 +64,7 @@ const suggestion: MetricSuggestion = {
   caveats: ['COUNT(DISTINCT …) needs the Flink planner.'],
   alreadyConfigured: false,
   existingMetricName: null,
+  dataState: 'POPULATED',
   metric: {
     id: 'server-side-id',
     name: 'gauge_duplicates_demo_orders_1_received',

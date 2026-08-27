@@ -83,3 +83,32 @@ export const describeDataPolicy = (facts: LlmPolicyFacts | null): LlmPolicy | nu
       + 'own terms — this application cannot enforce or observe a retention policy here.',
   };
 };
+
+// ── Quel modèle répond ? ─────────────────────────────────────────────────────
+
+/**
+ * La seconde moitié du bandeau « LLM runtime » : ce qui suit le nom du fournisseur.
+ *
+ * Le champ `model` n'est pas lu par tous les fournisseurs. SpectraLLM sert le modèle dont *il* est
+ * configuré et ignore celui-ci — mais un déploiement passé d'OpenRouter à SpectraLLM garde
+ * `openai/gpt-4o-mini` dans le champ, et c'est ce nom-là que la ligne affichait, à chaque fenêtre,
+ * pour désigner ce qui répond. Une étiquette qui affirme un fait que personne n'a vérifié : c'est
+ * exactement ce pour quoi la pastille de connexion a été réécrite, un bandeau plus loin.
+ *
+ * Trois réponses, et la troisième est celle qui manquait. Un modèle nommé s'affiche. Un
+ * fournisseur qui choisit lui-même se dit comme tel, sans prétendre savoir lequel — cette
+ * application ne le lui demande pas et il ne le dit pas. Et tant que rien n'a été chargé, il n'y a
+ * rien à dire : `null`, comme partout ailleurs ici.
+ */
+export function describeRuntimeModel(
+  provider: string | null | undefined,
+  model: string | null | undefined,
+): string | null {
+  // Le seul fournisseur qui ne lit pas le champ. Écrit ici plutôt que déduit d'un `model` vide :
+  // un modèle vide sur un fournisseur qui, lui, le lit est une configuration incomplète, ce qui
+  // n'est pas la même phrase et n'appelle pas le même geste.
+  if (provider === 'SPECTRA') return 'model chosen by the server';
+  const named = typeof model === 'string' ? model.trim() : '';
+  return named.length > 0 ? named : null;
+}
+

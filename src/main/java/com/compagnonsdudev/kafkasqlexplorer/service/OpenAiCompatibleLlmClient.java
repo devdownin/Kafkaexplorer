@@ -258,7 +258,11 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
             String text = firstChoiceContent(root, response.body());
             LlmUsage usage = usageOf(root, System.currentTimeMillis() - startedAt);
             log.debug("{} call complete — {}", config.getProviderLabel(), usage.summary());
-            return new LlmResponse(text, List.of(), usage);
+            // `schema != null` is the whole of it: this method is called with null on the
+            // unconstrained retry and whenever AUTO declined for this provider or the per-model
+            // latch has learned a refusal, so it says what actually went out rather than what was
+            // configured.
+            return new LlmResponse(text, List.of(), usage, schema != null);
 
         } catch (LlmHttpSupport.ClientErrorException e) {
             LlmHttpSupport.ClientErrorException reported = explainRoutingRefusal(e);
@@ -400,5 +404,19 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
             return "";
         }
         return body.length() > 300 ? body.substring(0, 300) + "…" : body;
+    }
+
+    /**
+     * Orderly, and deliberately <b>not</b> {@code HttpClient.close()}.
+     *
+     * <p>{@code close()} blocks until every in-flight exchange has finished, and an exchange here
+     * is a model generating — up to {@code claude.request-timeout-seconds}, which the bundled
+     * local-inference stacks set to 300. That wait would land on the thread that saved the
+     * Settings page. {@code shutdown()} refuses new requests and lets the running one finish,
+     * which is what retiring a replaced client means.
+     */
+    @Override
+    public void close() {
+        httpClient.shutdown();
     }
 }

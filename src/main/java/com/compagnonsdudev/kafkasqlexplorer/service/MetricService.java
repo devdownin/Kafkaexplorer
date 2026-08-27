@@ -983,10 +983,17 @@ public class MetricService {
     /**
      * Both counts out of the log's offsets, in one call and therefore at one instant.
      *
-     * <p>A topic that does not exist is refused rather than counted: {@code getTopicsSize} answers
-     * {@code 0} for an unknown name exactly as it does for an empty topic, and a 0 against a real
+     * <p><b>Two ways of not having a number, and neither may be published as one.</b> A topic that
+     * does not exist is refused by the {@code listTopics} check below, because an unknown name and
+     * an empty topic are indistinguishable once either has become a count, and a 0 against a real
      * count on the other side reads as total loss — the invented critical finding this codebase
-     * keeps removing.
+     * keeps removing. A topic that exists but whose <em>offsets</em> did not come back is the same
+     * refusal by the other door, and it used to go straight through: the guard for it was written
+     * ({@code left == null || right == null}) and could never fire, because {@code getTopicsSize}
+     * pre-seeds every requested name at {@code 0} and swallows the failure. Both sides then came
+     * back zero and {@code PERCENT_GAP} published {@code 0.0} — "nothing is being lost", from the
+     * metric that exists to report loss, on any broker blip. {@code getTopicRecordCounts} is the
+     * same read omitting what it could not measure, which is what makes that guard live.
      */
     private CountRead countByOffsets(String leftTopic, String rightTopic) {
         if (leftTopic.isBlank() || rightTopic.isBlank()) {
@@ -1010,11 +1017,19 @@ public class MetricService {
         }
 
         long startedAt = System.currentTimeMillis();
-        Map<String, Long> sizes = kafkaAdminService.getTopicsSize(wanted);
+        Map<String, Long> sizes = kafkaAdminService.getTopicRecordCounts(wanted);
         Long left = sizes.get(leftTopic);
         Long right = sizes.get(rightTopic);
         if (left == null || right == null) {
-            return CountRead.failed("The broker did not answer with offsets for both topics.");
+            // Named, because "we could not measure demo.orders.2.validated" and "the broker is
+            // gone" send an operator to two different places — and the refusal has to be legible
+            // enough that nobody is tempted to read the silence as a zero.
+            String unmeasured = left == null && right == null
+                ? leftTopic + " or " + rightTopic
+                : (left == null ? leftTopic : rightTopic);
+            return CountRead.failed("The broker did not answer with offsets for " + unmeasured
+                + ". The count is refused rather than reported as zero: a zero here is a "
+                + "measurement, and against a real count on the other side it reads as total loss.");
         }
         // One pair of listOffsets responses covers both sides, so the interval between the two
         // measurements is genuinely zero — see the ordering note on the records path below, which

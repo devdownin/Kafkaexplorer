@@ -117,6 +117,7 @@ public class FieldProfilingService {
         // 4. Call LLM API
         String rawResponse;
         LlmUsage usage = null;
+        boolean schemaSent = false;
         try {
             String systemPrompt = """
                 Expert Kafka & Data Mining. Analyze Kafka message samples.
@@ -128,6 +129,9 @@ public class FieldProfilingService {
             LlmResponse response =
                 llmClient.get().generateWithMeta(systemPrompt, userPrompt, PROFILING_SCHEMA);
             usage = response.usage();
+            // What the client actually sent, not what was configured: AUTO may have declined for
+            // this provider, or the per-model latch may have learned a refusal.
+            schemaSent = response.schemaSent();
             if (usage != null) {
                 log.info("Field profiling — {}", usage.summary());
             }
@@ -146,7 +150,34 @@ public class FieldProfilingService {
         // never read produces no row in the validation panel, so it is indistinguishable there from
         // a topic the model looked at and had nothing to say about. They go first, because they
         // explain an absence the model's own warnings cannot know about.
-        return parseProfileResult(rawResponse).withUsage(usage).withScopeNotes(read.scopeNotes());
+        // The signals follow the scope notes rather than leading them: a note explains an absence
+        // the model could not know about, while these describe the call that produced the answer.
+        List<String> notes = new ArrayList<>(read.scopeNotes());
+        notes.addAll(answerSignals(rawResponse, userPrompt, usage, schemaSent));
+        return parseProfileResult(rawResponse).withUsage(usage).withScopeNotes(notes);
+    }
+
+    /**
+     * A schema accepted and not applied, and a prompt the endpoint read only part of.
+     *
+     * <p>Both are failures that leave no error behind — see {@link LlmAnswerSignals} — and this
+     * half of the pipeline is the one that runs first, so a truncated prompt shows up here before
+     * it shows up in an analysis. Logged as well as carried, on the same reasoning as the
+     * analysis half: a run that succeeded while resting on less than it appears to is the failure
+     * mode with no other symptom.
+     */
+    private List<String> answerSignals(String rawResponse, String userPrompt,
+                                       LlmUsage usage, boolean schemaSent) {
+        List<String> signals = new ArrayList<>(2);
+        String payload = rawResponse == null ? null : LlmJsonSupport.extractJsonPayload(rawResponse);
+        String constraint = LlmAnswerSignals.constraintWarning(schemaSent, rawResponse, payload);
+        if (constraint != null) signals.add(constraint);
+        String truncation = LlmAnswerSignals.truncationWarning(
+            userPrompt == null ? 0 : userPrompt.length(),
+            usage == null ? null : usage.inputTokens());
+        if (truncation != null) signals.add(truncation);
+        signals.forEach(signal -> log.warn("Field profiling — {}", signal));
+        return signals;
     }
 
     /**

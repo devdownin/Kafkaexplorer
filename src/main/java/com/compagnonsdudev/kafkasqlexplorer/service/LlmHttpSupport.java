@@ -156,6 +156,32 @@ final class LlmHttpSupport {
                 if (status >= 200 && status < 300) {
                     return response;
                 }
+                if (status >= 300 && status < 400) {
+                    // A redirect is a permanent misconfiguration, and it used to be classified as
+                    // transient — so a 308 took all three attempts and came back as "call failed
+                    // with status 308: " with an empty body, a wrong verdict reached on a schedule
+                    // that could not possibly help. The case is ordinary rather than exotic: a
+                    // gateway redirecting http to https, or /v1 to /v1/, is a normal thing to sit
+                    // in front of a local engine.
+                    //
+                    // Following it was the tempting one-liner and is measured to be worse. With
+                    // `followRedirects(NORMAL)` the JDK converts a POST to a GET on 301 and 302
+                    // and *drops the body* (measured: `method=GET bodyLen=0`), so the prompt would
+                    // leave silently and the endpoint would answer about a request nobody made;
+                    // only 307 and 308 preserve both. Absorbing it would also pay an extra round
+                    // trip on every call for ever while the operator never learns their base URL
+                    // is wrong — where naming the target fixes it once, in Settings.
+                    String location = response.headers().firstValue("location")
+                        .filter(value -> !value.isBlank()).orElse(null);
+                    throw new ClientErrorException(status, provider + " call was redirected (status "
+                        + status + ")"
+                        + (location == null
+                            ? ", and the response names no Location to follow. Check claude.base-url."
+                            : " to " + location + ". This endpoint is not where the base URL points: "
+                              + "set claude.base-url to the address it redirects to.")
+                        + " A redirect is not retried — it is configuration, and every attempt would "
+                        + "be redirected identically.");
+                }
                 if (status >= 400 && status < 500 && status != 429) {
                     // Client-side / configuration error — retrying will not help. Typed, because
                     // one caller can actually act on it: an endpoint that rejects a request field

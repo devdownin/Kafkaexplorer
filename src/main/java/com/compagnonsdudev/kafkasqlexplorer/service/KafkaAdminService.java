@@ -225,6 +225,13 @@ public class KafkaAdminService {
     /**
      * Cached (30s TTL): each call spins up a full KafkaConsumer plus a describeTopics
      * round-trip, and the dashboard polls this every 5 seconds for every topic.
+     *
+     * <p><b>A topic this could not measure comes back as {@code 0}</b>, which is the right shape
+     * for the dashboard's column — a missing key there is a null pointer in the UI — and the wrong
+     * one for any caller that has to act on the difference between "this topic is empty" and "we
+     * could not read this topic". {@link #getTopicRecordCounts(List)} is the same measurement
+     * without that flattening, and this method is now a thin honest-to-lenient adapter over it, so
+     * there is one offsets read in the tree rather than two that can drift.
      */
     @Cacheable(value = "topicSizes", key = "#topicNames")
     public Map<String, Long> getTopicsSize(List<String> topicNames) {
@@ -233,6 +240,33 @@ public class KafkaAdminService {
 
         // Initialize with 0 to prevent null pointers or missing keys in UI
         topicNames.forEach(name -> sizes.put(name, 0L));
+        sizes.putAll(readRecordCounts(topicNames));
+        return sizes;
+    }
+
+    /**
+     * How many records each topic holds — <b>omitting the ones it could not measure</b>.
+     *
+     * <p>The count is {@code endOffset - beginningOffset} summed over the partitions, so it is
+     * what is still readable rather than what was ever produced: retention and compaction have
+     * already been applied, which is exactly the question "is there anything here for a query to
+     * read" asks. A topic the broker describes no partition for, or one whose offsets did not
+     * come back, carries <b>no entry</b> rather than a zero — {@code 0} is a measurement ("this
+     * topic is empty") and handing it back for a read that failed is the flattening this codebase
+     * keeps removing: a caller acting on it reports a topic as empty on the strength of a broker
+     * blip.
+     *
+     * <p>Cached on the same 30 s TTL as its lenient sibling, under its own name so the two
+     * contracts cannot be served from one another's entry.
+     */
+    @Cacheable(value = "topicRecordCounts", key = "#topicNames")
+    public Map<String, Long> getTopicRecordCounts(List<String> topicNames) {
+        if (topicNames == null || topicNames.isEmpty()) return Map.of();
+        return readRecordCounts(topicNames);
+    }
+
+    private Map<String, Long> readRecordCounts(List<String> topicNames) {
+        Map<String, Long> sizes = new HashMap<>();
 
         Properties props = new Properties();
         props.putAll(kafkaConfig.getKafkaProperties());
@@ -264,19 +298,25 @@ public class KafkaAdminService {
 
                 for (String name : topicNames) {
                     List<TopicPartition> tps = topicToPartitions.get(name);
-                    if (tps != null) {
-                        long size = tps.stream()
-                                .mapToLong(tp -> {
-                                    Long end = endOffsets.get(tp);
-                                    Long start = beginningOffsets.get(tp);
-                                    return (end != null && start != null) ? (end - start) : 0L;
-                                })
-                                .sum();
-                        sizes.put(name, size);
+                    if (tps == null) continue;
+                    long size = 0L;
+                    int measured = 0;
+                    for (TopicPartition tp : tps) {
+                        Long end = endOffsets.get(tp);
+                        Long start = beginningOffsets.get(tp);
+                        if (end == null || start == null) continue;
+                        size += end - start;
+                        measured++;
                     }
+                    // A partition that did not answer costs its own contribution, so the count is
+                    // a floor — which is harmless, since every caller here reads it as "is there
+                    // anything to measure". A topic where *none* answered is a different matter:
+                    // the sum would be 0, and 0 is the one value that must never be invented, so
+                    // the topic carries no entry at all rather than a fabricated emptiness.
+                    if (measured > 0) sizes.put(name, size);
                 }
             } catch (Exception e) {
-                log.error("Failed to get topics size for: {}", topicNames, e);
+                log.error("Failed to read record counts for: {}", topicNames, e);
             }
         }
         return sizes;

@@ -175,7 +175,19 @@ export function describeEvidence(response: MetricSuggestions | null): EvidenceSt
   return { summary: `${derived}: ${parts.join(', ')}.`, unlocks, waiting: false };
 }
 
-/** L'âge de l'observation, quand il commence à compter — un audit d'il y a trois semaines. */
+/**
+ * L'âge de l'observation, quand il commence à compter — un audit d'il y a trois semaines.
+ *
+ * La phrase disait « topics may have changed since ». Ce n'est plus à elle de le dire : le serveur
+ * vérifie maintenant, à chaque dérivation, que les topics existent encore et s'ils contiennent
+ * quelque chose — une proposition dont un topic a disparu est écartée, une dont un topic est vide
+ * est marquée. Répéter l'avertissement ici, c'est envoyer relancer un audit pour une question déjà
+ * tranchée, et affaiblir celle qui reste ouverte.
+ *
+ * Ce que l'âge seul dit encore, et que rien d'autre ne peut dire : **les seuils** sont des
+ * multiples d'un débit, d'une latence, d'un volume mesurés ce jour-là. Un topic qui existe et qui
+ * est plein peut avoir triplé de trafic depuis, et aucune vérification de présence ne le verra.
+ */
 export function stalenessNote(
   response: MetricSuggestions | null,
   now: number = Date.now(),
@@ -185,8 +197,9 @@ export function stalenessNote(
   const age = now - response.auditTimestamp;
   if (age < thresholdMs) return null;
   const days = Math.floor(age / (24 * 60 * 60 * 1000));
-  return `The audit these proposals rest on is ${days} day${days === 1 ? '' : 's'} old — topics may `
-    + 'have changed since. Re-run it before trusting the thresholds it suggested.';
+  return `The audit these proposals rest on is ${days} day${days === 1 ? '' : 's'} old. Whether its `
+    + 'topics still exist was checked just now; what was not is the traffic they carry, and every '
+    + 'threshold below is a multiple of a rate measured that day. Re-run it before trusting them.';
 }
 
 // ── Un audit plus récent ─────────────────────────────────────────────────────
@@ -265,6 +278,33 @@ export function suggestionToDraft(suggestion: MetricSuggestion): Partial<MetricC
     templateParams: metric.templateParams ?? {},
     labelFields: metric.labelFields ?? [],
   };
+}
+
+// ── Les données sont-elles là ? ──────────────────────────────────────────────
+
+/**
+ * Ce que la carte dit de la disponibilité des données, ou `null` quand il n'y a rien à dire.
+ *
+ * Trois états arrivent ici et un seul se rend : `EMPTY`. `POPULATED` n'a pas besoin d'être
+ * annoncé — c'est le cas ordinaire, et un bandeau posé sur chaque carte cesse d'être lu ; et
+ * surtout **`UNKNOWN` ne rend rien**, parce que la vérification n'a pas pu se faire et qu'afficher
+ * quoi que ce soit reviendrait à répondre à une question jamais posée. Ce que la vérification n'a
+ * pas pu faire est dit une fois, dans les `notes` de la réponse, pas vingt fois sur les cartes.
+ *
+ * Le serveur écarte les propositions dont un topic a disparu, donc `ABSENT` ne peut pas arriver ;
+ * la branche existe pour que le jour où ce choix changerait, le panneau ait déjà une phrase.
+ */
+export function describeDataState(suggestion: MetricSuggestion): string | null {
+  switch (suggestion.dataState) {
+    case 'EMPTY':
+      return 'A topic this reads holds no record right now — the KPI will report nothing until it fills.';
+    case 'ABSENT':
+      return 'A topic this reads is no longer on the cluster; the metric would fail at every refresh.';
+    case 'POPULATED':
+    case 'UNKNOWN':
+    default:
+      return null;
+  }
 }
 
 /** Les topics qu'une proposition mesure, pour les puces de la carte. */

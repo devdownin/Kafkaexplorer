@@ -43,6 +43,7 @@ function suggestion(overrides: Partial<MetricSuggestion> = {}): MetricSuggestion
     caveats: ['Correlation matches `id` — check it in the preview.'],
     alreadyConfigured: false,
     existingMetricName: null,
+    dataState: 'POPULATED',
     metric: metric(),
     ...overrides,
   };
@@ -245,5 +246,25 @@ describe('le bandeau désigne sans réordonner', () => {
   it('ne rend rien quand il n’y a pas de choix', () => {
     renderPanel({ highlight: null });
     expect(screen.queryByText(/reading, not a measurement/)).toBeNull();
+  });
+});
+
+describe('les données derrière la carte', () => {
+  it('signale sur la carte le topic qui ne contient rien', () => {
+    // La carte repose sur une observation qui a vieilli — un audit relu depuis le topic
+    // d'historique a des semaines. Le serveur le vérifie ; encore faut-il que ça se voie, sinon
+    // le seuil proposé se règle sur un comptage que la rétention a effacé.
+    renderPanel({ response: response({ suggestions: [suggestion({ dataState: 'EMPTY' })] }) });
+
+    expect(screen.getByText(/holds no record right now/)).toBeInTheDocument();
+  });
+
+  it('ne dit rien quand la vérification n’a pas pu se faire', () => {
+    // `UNKNOWN`, c'est « on n'a pas pu demander ». L'afficher comme un manque de données
+    // marquerait toutes les cartes sur un simple hoquet du broker ; la réponse le dit une fois
+    // dans ses `notes`, pas une fois par carte.
+    renderPanel({ response: response({ suggestions: [suggestion({ dataState: 'UNKNOWN' })] }) });
+
+    expect(screen.queryByText(/holds no record right now/)).toBeNull();
   });
 });

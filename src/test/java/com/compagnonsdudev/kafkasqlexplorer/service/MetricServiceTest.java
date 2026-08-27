@@ -1409,11 +1409,21 @@ class MetricServiceTest {
             "TOPIC_COUNT_DELTA", params, null, null, List.of());
     }
 
+    /**
+     * A broker that answers, described through both contracts.
+     *
+     * <p>{@code getTopicRecordCounts} is what the offset count reads — it omits what it could not
+     * measure, which is what lets a failed read be refused instead of published as two zeros.
+     * {@code getTopicsSize} is stubbed alongside it because it is the same measurement under the
+     * lenient contract, and a helper that described only one of them would let the two drift.
+     */
     private void stubOffsets(long left, long right) throws Exception {
+        Map<String, Long> counts = Map.of(
+            "demo.orders.1.received", left, "demo.orders.2.validated", right);
         Mockito.when(kafkaAdminService.listTopics())
             .thenReturn(List.of("demo.orders.1.received", "demo.orders.2.validated"));
-        Mockito.when(kafkaAdminService.getTopicsSize(Mockito.anyList())).thenReturn(Map.of(
-            "demo.orders.1.received", left, "demo.orders.2.validated", right));
+        Mockito.when(kafkaAdminService.getTopicRecordCounts(Mockito.anyList())).thenReturn(counts);
+        Mockito.when(kafkaAdminService.getTopicsSize(Mockito.anyList())).thenReturn(counts);
     }
 
     @Test
@@ -1443,7 +1453,7 @@ class MetricServiceTest {
         // Offsets cannot honour a predicate, so AUTO does not pretend they can.
         assertEquals("RECORDS", preview.summary().get("countedBy"));
         assertEquals(5.0, preview.value());
-        Mockito.verify(kafkaAdminService, Mockito.never()).getTopicsSize(Mockito.anyList());
+        Mockito.verify(kafkaAdminService, Mockito.never()).getTopicRecordCounts(Mockito.anyList());
     }
 
     @Test
@@ -1457,6 +1467,56 @@ class MetricServiceTest {
         assertNotNull(preview.error());
         assertTrue(preview.error().contains("demo.orders.2.validated"), preview.error());
         assertTrue(preview.error().contains("total loss"), preview.error());
+    }
+
+    /**
+     * The failure this whole path is written against, arriving by the one door nobody had shut.
+     *
+     * <p>Both topics exist, so the {@code listTopics} guard above lets the read through — and then
+     * the offsets read itself fails. {@code getTopicsSize} pre-seeds every requested topic at
+     * {@code 0} and swallows the failure, so both sides come back zero and {@code PERCENT_GAP}
+     * answers {@code 0.0}: "nothing is being lost", published by the alarm whose entire job is to
+     * report loss. The guard meant to catch it ({@code left == null || right == null}) could never
+     * fire, because that map always carries a key for every name it was asked about.
+     */
+    @Test
+    void anOffsetCountThatCouldNotBeTakenIsRefusedRatherThanPublishedAsNoLoss() throws Exception {
+        Mockito.when(kafkaAdminService.listTopics())
+            .thenReturn(List.of("demo.orders.1.received", "demo.orders.2.validated"));
+        // One broker state, described through both contracts: the lenient read answers zeros for a
+        // failure it swallowed, the honest one omits what it could not measure.
+        Mockito.when(kafkaAdminService.getTopicsSize(Mockito.anyList())).thenReturn(Map.of(
+            "demo.orders.1.received", 0L, "demo.orders.2.validated", 0L));
+        Mockito.when(kafkaAdminService.getTopicRecordCounts(Mockito.anyList())).thenReturn(Map.of());
+
+        MetricPreviewResult preview = service.previewMetric(offsetDelta(Map.of(
+            "operation", "PERCENT_GAP")));
+
+        assertNotNull(preview.error(),
+            "a gap that could not be measured must not publish 0 % — that reads as 'nothing is "
+                + "being lost' on the metric that exists to report loss");
+        assertNull(preview.value());
+    }
+
+    /**
+     * The narrower half of the same fault: one side measured, the other not. Reporting the pair
+     * would put a real count against a fabricated zero, which is the *most* alarming reading this
+     * metric can produce and the one least entitled to be believed.
+     */
+    @Test
+    void anOffsetCountRefusesThePairWhenOnlyOneSideCouldBeMeasured() throws Exception {
+        Mockito.when(kafkaAdminService.listTopics())
+            .thenReturn(List.of("demo.orders.1.received", "demo.orders.2.validated"));
+        Mockito.when(kafkaAdminService.getTopicsSize(Mockito.anyList())).thenReturn(Map.of(
+            "demo.orders.1.received", 1_000L, "demo.orders.2.validated", 0L));
+        Mockito.when(kafkaAdminService.getTopicRecordCounts(Mockito.anyList()))
+            .thenReturn(Map.of("demo.orders.1.received", 1_000L));
+
+        MetricPreviewResult preview = service.previewMetric(offsetDelta(Map.of(
+            "operation", "PERCENT_GAP")));
+
+        assertNotNull(preview.error(), "a real count against an unmeasured side is not a 100 % gap");
+        assertNull(preview.value());
     }
 
     @Test

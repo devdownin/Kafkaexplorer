@@ -4,8 +4,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   describeEvidence, describeHighlight, dismiss, dismissedSuggestions, DISMISSED_KEY,
-  highlightPriorities, newerAuditNote, newestUsableRun, readDismissed, restore, sourceLabel,
-  stalenessNote, suggestionTopics, suggestionToDraft, visibleSuggestions,
+  describeDataState, highlightPriorities, newerAuditNote, newestUsableRun, readDismissed, restore,
+  sourceLabel, stalenessNote, suggestionTopics, suggestionToDraft, visibleSuggestions,
 } from './metricSuggestions';
 import type { StoredMetricPriorities } from './processModelEvidence';
 import type {
@@ -50,6 +50,7 @@ function suggestion(overrides: Partial<MetricSuggestion> = {}): MetricSuggestion
     caveats: ['Correlation matches `id`.'],
     alreadyConfigured: false,
     existingMetricName: null,
+    dataState: 'POPULATED',
     metric: metric(),
     ...overrides,
   };
@@ -205,6 +206,17 @@ describe('stalenessNote', () => {
 
   it('claims nothing when the run carries no timestamp', () => {
     expect(stalenessNote(response({ auditTimestamp: null }), NOW)).toBeNull();
+  });
+
+  it('points at the thresholds, not at whether the topics are still there', () => {
+    // Le serveur vérifie la présence et le vide à chaque dérivation, écarte ce qui a disparu et
+    // marque ce qui est vide. Redire ici « les topics ont pu changer » enverrait relancer un audit
+    // pour une question déjà tranchée, en affaiblissant celle qui reste ouverte : les seuils sont
+    // des multiples d'un débit mesuré ce jour-là, et aucune vérification de présence ne le voit.
+    const note = stalenessNote(response(), NOW + 10 * 24 * 60 * 60 * 1000) ?? '';
+
+    expect(note).toContain('threshold');
+    expect(note).not.toContain('topics may have changed');
   });
 });
 
@@ -412,5 +424,25 @@ describe('le bandeau des KPI que le modèle retiendrait', () => {
     const note = describeHighlight(highlightPriorities(withCards('a'), chosen(['gone']), 'a>b'));
     expect(note).toContain('none of them is still proposed');
     expect(describeHighlight(null)).toBeNull();
+  });
+});
+
+describe('describeDataState', () => {
+  it('says nothing on a proposal whose topics hold records', () => {
+    // Le cas ordinaire. Un bandeau posé sur chaque carte est un bandeau qu'on cesse de lire, et
+    // c'est précisément ce qui rend celui de la carte vide visible.
+    expect(describeDataState(suggestion({ dataState: 'POPULATED' }))).toBeNull();
+  });
+
+  it('warns when a topic the KPI reads holds nothing right now', () => {
+    const note = describeDataState(suggestion({ dataState: 'EMPTY' }));
+    expect(note).toContain('no record');
+  });
+
+  it('says nothing when the check could not be made', () => {
+    // « On n'a pas pu demander » n'est pas « il n'y a rien » : rendre le second à la place du
+    // premier viderait le panneau sur un simple hoquet du broker. Ce que la vérification n'a pas
+    // pu faire est dit une fois, dans les notes de la réponse.
+    expect(describeDataState(suggestion({ dataState: 'UNKNOWN' }))).toBeNull();
   });
 });

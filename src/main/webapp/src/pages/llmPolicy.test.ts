@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 
 import { describe, expect, it } from 'vitest';
-import { describeDataPolicy } from './llmPolicy';
+import { describeDataPolicy, describeRuntimeModel } from './llmPolicy';
 
 describe('describeDataPolicy', () => {
   // Avant la première réponse, toute phrase serait une affirmation non vérifiée.
@@ -61,3 +61,25 @@ describe('describeDataPolicy', () => {
     expect(policy?.label).not.toContain('No retention');
   });
 });
+
+describe('describeRuntimeModel', () => {
+  it('names the model when the provider was told which one to run', () => {
+    expect(describeRuntimeModel('OPENROUTER', 'openai/gpt-4o-mini')).toBe('openai/gpt-4o-mini');
+  });
+
+  it('does not name a model SpectraLLM never chose', () => {
+    // Un déploiement passé d'OpenRouter à SpectraLLM garde l'ancien slug dans le champ ; c'est
+    // celui-là qui s'affichait, à chaque fenêtre, pour désigner ce qui répond.
+    expect(describeRuntimeModel('SPECTRA', 'openai/gpt-4o-mini')).toBe('model chosen by the server');
+  });
+
+  it('says the same thing when the field is empty on that provider', () => {
+    expect(describeRuntimeModel('SPECTRA', '')).toBe('model chosen by the server');
+  });
+
+  it('says nothing at all before anything is loaded', () => {
+    expect(describeRuntimeModel(null, null)).toBeNull();
+    expect(describeRuntimeModel('OLLAMA', '   ')).toBeNull();
+  });
+});
+

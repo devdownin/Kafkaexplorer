@@ -214,9 +214,16 @@ Chaque message est un résumé du payload d'origine :
         // 5. Call the configured LLM and parse. The measurement and the coverage travel on the
         //    answer whatever it is — an analysis that failed still knows what it read and what the
         //    records said, and the next attempt is sized from that.
-        return attachMetricPriorities(callLlmAndParse(prompt.text()), model)
+        // What the call says about itself — a schema accepted and not applied, a prompt the
+        // endpoint read only part of — travels back in this list and lands in the coverage, which
+        // is where the run already states what it rested on. Out-parameter rather than a carrier
+        // record, the idiom `MetricSuggestionService.readAudit(notes)` already uses here.
+        List<String> answerWarnings = new ArrayList<>();
+        return attachMetricPriorities(
+                callLlmAndParse(prompt.text(), answerWarnings), model)
             .withProcessModel(model)
-            .withCoverage(coverageOf(topics, read, prompt.scope(), prompt.text().length()));
+            .withCoverage(coverageOf(topics, read, prompt.scope(), prompt.text().length(),
+                answerWarnings));
     }
 
     /**
@@ -228,6 +235,12 @@ Chaque message est un résumé du payload d'origine :
      */
     private ProcessMiningCoverage coverageOf(List<String> topics, SnapshotRead read,
                                               PromptScope scope, int promptChars) {
+        return coverageOf(topics, read, scope, promptChars, List.of());
+    }
+
+    private ProcessMiningCoverage coverageOf(List<String> topics, SnapshotRead read,
+                                              PromptScope scope, int promptChars,
+                                              List<String> warnings) {
         List<TopicCoverage> rows = new ArrayList<>();
         for (String topic : topics) {
             rows.add(new TopicCoverage(
@@ -238,7 +251,7 @@ Chaque message est un résumé du payload d'origine :
                 !read.unreadableTopics().contains(topic)));
         }
         return ProcessMiningCoverage.of(rows, promptChars, processMiningConfig.getPromptCharBudget(),
-            read.budgetExhausted(), read.readError(), List.of());
+            read.budgetExhausted(), read.readError(), warnings);
     }
 
     public ProcessMiningResult analyzeLive(List<KafkaMessage> windowMessages,
@@ -279,7 +292,11 @@ Chaque message est un résumé du payload d'origine :
 
         String userPrompt =
             buildLivePrompt(byTopic, fieldMapping, referenceFlowchart, auditFocus, model);
-        return attachMetricPriorities(callLlmAndParse(userPrompt), model).withProcessModel(model);
+        // The live path reports its scope per window through WINDOW_STATS rather than through a
+        // coverage record, so the signals are logged (see collectAnswerSignals) rather than
+        // carried — the list is the collector's contract, not a second surface.
+        return attachMetricPriorities(callLlmAndParse(userPrompt, new ArrayList<>()), model)
+            .withProcessModel(model);
     }
 
     /**
@@ -967,7 +984,32 @@ sont dans la section VARIANTES.
         sb.append('"');
     }
 
-    private ProcessMiningResult callLlmAndParse(String userPrompt) {
+    /**
+     * What this call revealed about itself, added to the coverage the page already renders.
+     *
+     * <p>Both signals are read off things already in hand — whether a schema travelled, what the
+     * repair had to remove, what the provider says it read — so they cost nothing and hold on any
+     * endpoint. Neither is a verdict: see {@link LlmAnswerSignals}.
+     */
+    private void collectAnswerSignals(LlmResponse response, String userPrompt,
+                                      String rawResponse, String json, List<String> into) {
+        Long promptTokens = response.usage() == null ? null : response.usage().inputTokens();
+        for (String signal : new String[]{
+                LlmAnswerSignals.constraintWarning(response.schemaSent(), rawResponse, json),
+                LlmAnswerSignals.truncationWarning(
+                    userPrompt == null ? 0 : userPrompt.length(), promptTokens)}) {
+            if (signal == null) continue;
+            into.add(signal);
+            // Logged as well as carried, because the live path has no coverage to carry it in —
+            // its scope is reported per window by WINDOW_STATS — and a live session that has begun
+            // reasoning on half its prompt is exactly the case with no other symptom. WARN
+            // deliberately: both describe a run that succeeded while resting on less than it
+            // appears to, which is the failure mode this codebase treats as the worst kind.
+            log.warn("Process Mining analysis — {}", signal);
+        }
+    }
+
+    private ProcessMiningResult callLlmAndParse(String userPrompt, List<String> answerWarnings) {
         LlmResponse response;
         try {
             response = llmClient.get().generateWithMeta(SYSTEM_PROMPT, userPrompt, ANALYSIS_SCHEMA);
@@ -997,6 +1039,7 @@ sont dans la section VARIANTES.
         }
 
         String json = LlmJsonSupport.extractJsonPayload(rawResponse);
+        collectAnswerSignals(response, userPrompt, rawResponse, json, answerWarnings);
 
         // A reasoning model that never stopped thinking produced no answer at all. Saying so beats
         // the generic parse error that used to follow, which sent the reader looking for a

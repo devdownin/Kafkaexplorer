@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import com.compagnonsdudev.kafkasqlexplorer.config.ClaudeConfig;
+import com.compagnonsdudev.kafkasqlexplorer.domain.LlmUsage;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -76,6 +77,27 @@ class SpectraLlmClientTest {
         String result = client.generate("You are an auditor", "Audit these messages");
 
         assertEquals("No anomalies detected", result);
+    }
+
+    /**
+     * This endpoint is never told which model to run and never says which one it ran, so the
+     * configured slug describes nothing here — it is whatever the provider was set to before.
+     *
+     * <p>A deployment moved off the shipped OpenRouter default keeps {@code openai/gpt-4o-mini} in
+     * the field, and that name went into the usage summary, the {@code ANALYSIS_USAGE} event and
+     * the INFO line of every analysis, naming a model that is not answering. Same defect the
+     * connection pill was rewritten for, one banner over: a label asserting a fact nobody checked.
+     */
+    @Test
+    void reportsNoModelBecauseThisProviderChoosesItsOwn() throws Exception {
+        ClaudeConfig config = startServer(200, "{\"answer\":\"ok\"}");
+        config.setModel("openai/gpt-4o-mini");   // left behind by a previous provider
+
+        LlmUsage usage = new SpectraLlmClient(config).generateWithMeta("SYS", "USR").usage();
+
+        assertNull(usage.model(),
+            "a model nobody named must not be reported as the one that answered");
+        assertNotNull(usage.provider(), "the provider is known and is still reported");
     }
 
     @Test
