@@ -24,7 +24,7 @@
  */
 
 import type {
-  MeasuredRepeat, MeasuredTransition, ProcessModel, ProcessModelEvidence,
+  MeasuredRepeat, MeasuredTransition, MetricPriority, ProcessModel, ProcessModelEvidence,
 } from '../api/types';
 
 export const PROCESS_MODEL_KEY = 'kse:process-models';
@@ -212,4 +212,115 @@ export function recordMeasuredProcess(
  */
 export function latestProcessModel(now: number = Date.now()): ProcessModelEvidence | null {
   return readProcessModels(now)[0] ?? null;
+}
+
+// ── Les KPI que le modèle retiendrait ───────────────────────────────────────
+
+export const METRIC_PRIORITIES_KEY = 'kse:metric-priorities';
+
+const PRIORITIES_VERSION = 1;
+
+/**
+ * Ce que le modèle a désigné, et pour quel pipeline.
+ *
+ * La `route` est celle du processus mesuré au même moment. C'est elle qui empêche un bandeau
+ * périmé de surplomber des cartes fraîches : la page Metrics ne l'affiche que si elle correspond
+ * à la mesure qu'elle vient d'envoyer au serveur — deux pipelines différents produisent deux
+ * routes, et un choix fait sur l'un ne dit rien de l'autre.
+ */
+export interface StoredMetricPriorities {
+  route: string;
+  measuredAt: number;
+  priorities: MetricPriority[];
+}
+
+interface PriorityEnvelope {
+  v: number;
+  chosen: StoredMetricPriorities;
+}
+
+function isPriority(value: unknown): value is MetricPriority {
+  const p = value as MetricPriority;
+  return !!p && typeof p === 'object' && typeof p.id === 'string' && p.id !== '';
+}
+
+/**
+ * Le dernier choix encore valide, ou `null`.
+ *
+ * Mêmes garde-fous que les mesures au-dessus : enveloppe versionnée effacée plutôt que devinée,
+ * et sept jours de péremption — un avis sur ce qu'il fallait suivre il y a trois semaines porte
+ * sur un parc qui a pu changer.
+ */
+export function readMetricPriorities(now: number = Date.now()): StoredMetricPriorities | null {
+  let raw: string | null;
+  try {
+    raw = localStorage.getItem(METRIC_PRIORITIES_KEY);
+  } catch {
+    return null;
+  }
+  if (!raw) return null;
+
+  let envelope: PriorityEnvelope | null;
+  try {
+    envelope = JSON.parse(raw) as PriorityEnvelope;
+  } catch {
+    envelope = null;
+  }
+  if (!envelope || typeof envelope !== 'object' || envelope.v !== PRIORITIES_VERSION
+      || !envelope.chosen || typeof envelope.chosen !== 'object') {
+    clearMetricPriorities();
+    return null;
+  }
+  const chosen = envelope.chosen;
+  if (typeof chosen.route !== 'string' || typeof chosen.measuredAt !== 'number'
+      || !Array.isArray(chosen.priorities)) {
+    clearMetricPriorities();
+    return null;
+  }
+  if (now - chosen.measuredAt > MAX_PROCESS_MODEL_AGE_MS) {
+    clearMetricPriorities();
+    return null;
+  }
+  return { ...chosen, priorities: chosen.priorities.filter(isPriority) };
+}
+
+export function clearMetricPriorities(): void {
+  try {
+    localStorage.removeItem(METRIC_PRIORITIES_KEY);
+  } catch {
+    /* best-effort, comme partout ailleurs ici */
+  }
+}
+
+/**
+ * Retient le choix du modèle à côté de la mesure qu'il porte.
+ *
+ * Écrit **une seule** entrée, comme `latestProcessModel` n'en renvoie qu'une : le panneau est
+ * construit à partir de la dernière mesure, donc un choix fait sur une plus ancienne n'aurait
+ * aucune carte à désigner. Une liste vide efface plutôt que d'écrire du vide — le modèle qui n'a
+ * rien distingué et le modèle qu'on n'a pas interrogé donnent la même chose à l'écran, et garder
+ * une entrée vide ne ferait que retarder la péremption de la précédente.
+ */
+export function recordMetricPriorities(
+  model: ProcessModelEvidence | null,
+  priorities: MetricPriority[] | null | undefined,
+  now: number = Date.now(),
+): StoredMetricPriorities | null {
+  const kept = (priorities ?? []).filter(isPriority);
+  if (!model || kept.length === 0) {
+    clearMetricPriorities();
+    return null;
+  }
+  const chosen: StoredMetricPriorities = {
+    route: modelRoute(model),
+    measuredAt: now,
+    priorities: kept,
+  };
+  try {
+    localStorage.setItem(METRIC_PRIORITIES_KEY,
+      JSON.stringify({ v: PRIORITIES_VERSION, chosen } satisfies PriorityEnvelope));
+  } catch {
+    /* best-effort */
+  }
+  return chosen;
 }

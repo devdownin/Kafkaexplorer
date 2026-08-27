@@ -17,9 +17,10 @@ import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { MetricSuggestion, MetricSuggestions } from '../../api/types';
 import {
-  describeEvidence, dismiss, dismissedSuggestions, readDismissed, restore, sourceLabel,
-  stalenessNote, suggestionTopics, visibleSuggestions,
+  describeEvidence, describeHighlight, dismiss, dismissedSuggestions, readDismissed, restore,
+  sourceLabel, stalenessNote, suggestionTopics, visibleSuggestions,
 } from '../../pages/metricSuggestions';
+import type { PriorityHighlight } from '../../pages/metricSuggestions';
 import { Badge, Button, Card, EmptyState, ErrorPanel, Spinner, Tooltip } from '../ui';
 import type { QueryErrorInfo } from '../../pages/queryError';
 
@@ -29,6 +30,8 @@ interface Props {
   error: QueryErrorInfo | null;
   /** Un audit plus récent que celui dont ces cartes sont issues, s'il y en a un. */
   newerAudit: string | null;
+  /** Ce que l'analyse Process Mining a retenu, ou `null` — voir `highlightPriorities`. */
+  highlight: PriorityHighlight | null;
   onRefresh: () => void;
   onAdopt: (suggestion: MetricSuggestion) => void;
 }
@@ -140,7 +143,7 @@ const SuggestionCard: React.FC<{
   );
 };
 
-export const SuggestionsPanel: React.FC<Props> = ({ response, loading, error, newerAudit, onRefresh, onAdopt }) => {
+export const SuggestionsPanel: React.FC<Props> = ({ response, loading, error, newerAudit, highlight, onRefresh, onAdopt }) => {
   const [dismissed, setDismissed] = useState<string[]>(() => readDismissed());
   const [showDismissed, setShowDismissed] = useState(false);
 
@@ -151,6 +154,7 @@ export const SuggestionsPanel: React.FC<Props> = ({ response, loading, error, ne
   const hidden = useMemo(() => dismissedSuggestions(suggestions, dismissed), [suggestions, dismissed]);
   const evidence = useMemo(() => describeEvidence(response), [response]);
   const staleness = useMemo(() => stalenessNote(response), [response]);
+  const highlightNote = useMemo(() => describeHighlight(highlight), [highlight]);
 
   return (
     <section aria-labelledby="suggested-kpis">
@@ -185,6 +189,41 @@ export const SuggestionsPanel: React.FC<Props> = ({ response, loading, error, ne
           <span aria-hidden="true" className="material-symbols-outlined text-[14px] mt-0.5">schedule</span>
           <span>{staleness}</span>
         </p>
+      )}
+
+      {/* Ce que le modèle retiendrait.
+
+          Un bandeau qui **désigne**, jamais qui réordonne : la liste garde son ordre, lequel suit
+          une règle écrite et rejouable, et l'avis du modèle s'affiche au-dessus. Réordonner en
+          silence sur un jugement qu'on ne peut pas rejouer ferait perdre la seule chose que ce
+          panneau garantit. La phrase est étiquetée comme un avis, à côté des mesures et jamais
+          mêlée à elles. */}
+      {highlightNote && (
+        <div className="mb-4 rounded-xl border border-secondary/30 bg-secondary/5 px-4 py-3">
+          <p className="text-[11px] text-on-surface-variant flex items-start gap-1.5 leading-relaxed">
+            <span aria-hidden="true" className="material-symbols-outlined text-[14px] mt-px text-secondary">
+              neurology
+            </span>
+            <span>{highlightNote}</span>
+          </p>
+          {highlight && highlight.entries.length > 0 && (
+            <ul className="mt-2 space-y-1.5">
+              {highlight.entries.map(entry => (
+                <li key={entry.suggestion.id} className="text-[12px] flex items-start gap-2">
+                  <span aria-hidden="true" className="material-symbols-outlined text-[13px] mt-0.5 text-secondary">
+                    arrow_right
+                  </span>
+                  <span className="min-w-0">
+                    <span className="font-semibold text-on-surface">{entry.suggestion.title}</span>
+                    {entry.why && (
+                      <span className="text-on-surface-variant"> — <em>{entry.why}</em></span>
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
 
       {loading && !response ? (

@@ -27,6 +27,7 @@
 import type {
   AuditHistory, AuditRunSummary, MetricConfig, MetricSuggestion, MetricSuggestions, MetricSuggestionSource,
 } from '../api/types';
+import type { StoredMetricPriorities } from './processModelEvidence';
 
 export const DISMISSED_KEY = 'kse:metric-suggestions-dismissed';
 /** Au-delà, la liste de rejets décrit des propositions que plus aucun audit ne produit. */
@@ -279,4 +280,74 @@ export function suggestionTopics(suggestion: MetricSuggestion): string[] {
 function formatDate(epochMillis: number): string {
   const date = new Date(epochMillis);
   return Number.isNaN(date.getTime()) ? 'an unknown date' : date.toLocaleString();
+}
+
+// ── Les KPI que le modèle retiendrait ───────────────────────────────────────
+
+/** Une entrée du bandeau : ce que le modèle a désigné, et la carte correspondante. */
+export interface HighlightedSuggestion {
+  suggestion: MetricSuggestion;
+  /** La phrase du modèle. Un avis, pas une mesure — le rendu doit l'étiqueter comme tel. */
+  why: string;
+}
+
+export interface PriorityHighlight {
+  entries: HighlightedSuggestion[];
+  /** Combien des choix du modèle ne correspondent plus à aucune carte proposée. */
+  missing: number;
+  measuredAt: number;
+}
+
+/**
+ * Les cartes que le modèle a retenues, parmi celles réellement proposées.
+ *
+ * Le bandeau **désigne**, il ne réordonne pas : la liste garde son ordre, qui suit une règle
+ * écrite et vérifiable (`BY_RELEVANCE` côté serveur), et l'avis du modèle s'affiche au-dessus
+ * plutôt que de se substituer à elle en silence. Réordonner sur un jugement qu'on ne peut pas
+ * rejouer, c'est perdre la seule chose que ce panneau garantit.
+ *
+ * Un choix dont la carte n'est plus proposée est **compté, pas rendu** : un audit plus récent, un
+ * topic supprimé, et la carte disparaît légitimement. Le nombre le dit ; nommer une carte absente
+ * ne servirait à rien.
+ *
+ * Rien n'est renvoyé quand la mesure qui a produit le choix n'est pas celle qui a produit les
+ * cartes : deux pipelines différents, deux routes, et un avis sur l'un ne dit rien de l'autre.
+ */
+export function highlightPriorities(
+  response: MetricSuggestions | null,
+  chosen: StoredMetricPriorities | null,
+  currentRoute: string | null,
+): PriorityHighlight | null {
+  if (!response || !chosen || chosen.priorities.length === 0) return null;
+  if (!currentRoute || chosen.route !== currentRoute) return null;
+
+  const byId = new Map(response.suggestions.map(s => [s.id, s]));
+  const entries: HighlightedSuggestion[] = [];
+  let missing = 0;
+  for (const priority of chosen.priorities) {
+    const suggestion = byId.get(priority.id);
+    if (!suggestion) { missing++; continue; }
+    entries.push({ suggestion, why: priority.why });
+  }
+  if (entries.length === 0 && missing === 0) return null;
+  return { entries, missing, measuredAt: chosen.measuredAt };
+}
+
+/** Ce que le bandeau annonce, y compris quand il ne reste rien à désigner. */
+export function describeHighlight(highlight: PriorityHighlight | null): string | null {
+  if (!highlight) return null;
+  const { entries, missing } = highlight;
+  if (entries.length === 0) {
+    return `The analysis picked ${missing} KPI(s) to follow, and none of them is still proposed — `
+      + 'a later audit or a deleted topic will do that. Run a fresh Process Mining analysis to '
+      + 'get an opinion on the cards below.';
+  }
+  const head = `Out of the KPIs this process supports, the analysis would follow ${
+    entries.length === 1 ? 'this one' : `these ${entries.length}`}.`;
+  const tail = missing > 0
+    ? ` ${missing} other choice(s) name cards no longer proposed here.`
+    : '';
+  return head + tail
+    + ' That is the model’s reading, not a measurement: the evidence and the thresholds on each '
+    + 'card are unchanged, and so is the order of the list below.';
 }

@@ -13,7 +13,7 @@ import LiveStatusBar, { LiveWindowStats } from '../components/processmining/Live
 import AnomalyFeed, { LiveAnomaly } from '../components/processmining/AnomalyFeed';
 import { PageHeader, Button, Field, Textarea } from '../components/ui';
 import { clearDraft, readDraft, useDraftConflict, usePersistentState, writeDraft } from '../draftStore';
-import { recordMeasuredProcess } from './processModelEvidence';
+import { recordMeasuredProcess, recordMetricPriorities } from './processModelEvidence';
 import { describeResume, resumableStep } from './processMiningDraft';
 import { describeUsage, formatCostUsd, totalCostUsd, totalTokens } from './llmUsage';
 import { describeDataPolicy } from './llmPolicy';
@@ -488,7 +488,13 @@ const ProcessMining: React.FC = () => {
          * que la page Métriques relira pour proposer un KPI de latence fondé sur une distribution
          * plutôt que sur une moyenne déduite des noms de topics.
          */
-        recordMeasuredProcess(res.data.processModel);
+        const measured = recordMeasuredProcess(res.data.processModel);
+        /*
+         * Le choix du modèle voyage à côté de la mesure qu'il porte, jamais seul : le bandeau de
+         * la page Métriques désigne des cartes construites à partir de cette mesure-là, donc un
+         * choix sans elle n'aurait rien à désigner. Écrit après, parce qu'il en dépend.
+         */
+        recordMetricPriorities(measured, res.data.metricPriorities);
         // A failure answers 200 with `error` set. Staying on this step is the point: the operator
         // is one click from re-running with a different model or a narrower selection, where
         // landing on an empty Results page offers nothing to act on.

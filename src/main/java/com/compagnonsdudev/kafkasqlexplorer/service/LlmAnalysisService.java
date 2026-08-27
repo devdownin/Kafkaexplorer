@@ -15,6 +15,7 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.PayloadDigest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.PayloadShape;
 import com.compagnonsdudev.kafkasqlexplorer.domain.ProcessMiningCoverage;
 import com.compagnonsdudev.kafkasqlexplorer.domain.ProcessMiningResult;
+import com.compagnonsdudev.kafkasqlexplorer.domain.MetricPriority;
 import com.compagnonsdudev.kafkasqlexplorer.domain.ProcessModel;
 import com.compagnonsdudev.kafkasqlexplorer.domain.SnapshotConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.SnapshotRead;
@@ -26,6 +27,7 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -33,6 +35,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 @Service
 public class LlmAnalysisService {
@@ -81,6 +84,8 @@ public class LlmAnalysisService {
         reason about flows and shapes, and treat missing values as unobserved, not absent.
         Return ONLY valid JSON (camelCase). NO markdown, NO prose outside JSON.
         probableCause and sqlSuggestion may be null: say nothing rather than inventing one.
+        metricPriorities: at most 4, and ONLY ids copied from the MÉTRIQUES CANDIDATES list.
+        Never invent an id, a metric, a query or a threshold — those are measured, not chosen.
         sqlSuggestion is Flink SQL (SELECT / EXPLAIN / CREATE TABLE) — never ksqlDB.
 
         JSON structure:
@@ -89,6 +94,7 @@ public class LlmAnalysisService {
           "comments": "Short description",
           "hypotheses": ["..."],
           "blindSpots": ["..."],
+          "metricPriorities": [{"id": "<one of the ids listed under MÉTRIQUES CANDIDATES>", "why": "..."}],
           "anomalies": [
             {
               "id": "ANO-001",
@@ -207,7 +213,7 @@ Chaque message est un résumé du payload d'origine :
         // 5. Call the configured LLM and parse. The measurement and the coverage travel on the
         //    answer whatever it is — an analysis that failed still knows what it read and what the
         //    records said, and the next attempt is sized from that.
-        return callLlmAndParse(prompt.text())
+        return attachMetricPriorities(callLlmAndParse(prompt.text()), model)
             .withProcessModel(model)
             .withCoverage(coverageOf(topics, read, prompt.scope(), prompt.text().length()));
     }
@@ -270,7 +276,7 @@ Chaque message est un résumé du payload d'origine :
 
         String userPrompt =
             buildLivePrompt(byTopic, fieldMapping, referenceFlowchart, auditFocus, model);
-        return callLlmAndParse(userPrompt).withProcessModel(model);
+        return attachMetricPriorities(callLlmAndParse(userPrompt), model).withProcessModel(model);
     }
 
     /**
@@ -389,6 +395,7 @@ Chaque message est un résumé du payload d'origine :
             : appendTopicSamples(body, byTopic, inlined);
 
         appendProcessModel(sb, model);
+        appendMetricCandidates(sb, model);
         appendShapes(sb, inlined);
         sb.append(body);
 
@@ -409,6 +416,23 @@ Chaque message est un résumé du payload d'origine :
 8. Les payloads sont résumés, pas complets : ne conclus jamais à l'absence d'un champ
    à partir de son absence dans "sample" — seul "shape" fait foi sur la structure.
 """);
+        /*
+         * The instruction goes with its list, not with the prompt.
+         *
+         * Emitted unconditionally it told the model to choose among "MÉTRIQUES CANDIDATES" on the
+         * runs where that section does not exist — a run with no event log has no transitions —
+         * which is precisely the invitation to fill in an absent list that the section's own guard
+         * was written against. The section is silent there; so is the instruction that reads it.
+         */
+        if (!MetricCandidates.from(model).isEmpty()) {
+            sb.append("""
+9. metricPriorities : parmi les MÉTRIQUES CANDIDATES, désigne au plus les 4 qui méritent
+   d'être suivies sur CE parc, et dis en une phrase pourquoi celle-là plutôt qu'une autre.
+   Recopie l'id tel quel. N'en invente aucune, ne propose ni requête ni seuil : ces cartes
+   sont déjà construites et leurs seuils sortent d'une mesure. Moins de 4 est une réponse ;
+   si aucune ne se distingue, renvoie une liste vide plutôt que de compléter.
+""");
+        }
         return new PromptScope(measuredByTopic(byTopic, fieldMapping, model), detailed);
     }
 
@@ -478,6 +502,69 @@ Chaque message est un résumé du payload d'origine :
      * inference rather than falling silent. A prompt that simply omits the flows is one the model
      * fills in for itself, which is the failure this exists to remove.
      */
+    /**
+     * The KPIs this process supports, offered by id so the model can choose without inventing.
+     *
+     * <p>Nothing is emitted when the event log could not be built: with no case id there are no
+     * transitions, so there is nothing to choose between — and a heading over an empty list is an
+     * invitation to fill it, which on a model is not a rhetorical risk but the observed failure
+     * mode this whole prompt is written against.
+     *
+     * <p>The list is short by construction ({@link MetricCandidates} applies the panel's own caps),
+     * so it costs a few hundred characters against a budget of 120 000 — which is why this rides
+     * the analysis call rather than paying for one of its own. It also has to: on the Metrics page
+     * the candidates still exist but the anomalies the model has just found do not, and those are
+     * exactly the context that makes "which of these matter here" answerable.
+     */
+    private void appendMetricCandidates(StringBuilder sb, ProcessModel model) {
+        List<MetricCandidates.Candidate> candidates = MetricCandidates.from(model);
+        if (candidates.isEmpty()) return;
+        sb.append("## MÉTRIQUES CANDIDATES\n");
+        sb.append("Cartes KPI déjà construites à partir des mesures ci-dessus, avec leurs seuils. "
+            + "Tu n'as qu'à en désigner au plus 4 dans metricPriorities, en recopiant l'id.\n");
+        for (MetricCandidates.Candidate candidate : candidates) {
+            sb.append("- ").append(candidate.id()).append(" : ").append(candidate.label()).append('\n');
+        }
+        sb.append('\n');
+    }
+
+    /**
+     * Keep the priorities that name a candidate the prompt actually offered.
+     *
+     * <p>An id the model made up is a hallucination and is treated as one — dropped, and counted in
+     * a blind spot rather than in silence, because the operator is entitled to know the model went
+     * outside the list. The cap is applied here too: the instruction says at most four and the
+     * schema cannot express it, so the code does.
+     */
+    private ProcessMiningResult attachMetricPriorities(ProcessMiningResult result, ProcessModel model) {
+        if (result == null || result.error() != null) return result;
+        List<MetricCandidates.Candidate> candidates = MetricCandidates.from(model);
+        if (candidates.isEmpty()) return result.withMetricPriorities(List.of());
+
+        Set<String> known = candidates.stream()
+            .map(MetricCandidates.Candidate::id).collect(Collectors.toSet());
+        List<MetricPriority> kept = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        int invented = 0;
+        for (MetricPriority priority : result.metricPriorities() == null ? List.<MetricPriority>of()
+                                                                        : result.metricPriorities()) {
+            if (priority == null || priority.id() == null) continue;
+            String id = priority.id().trim();
+            if (!known.contains(id)) { invented++; continue; }
+            if (!seen.add(id)) continue;
+            if (kept.size() >= MAX_METRIC_PRIORITIES) continue;
+            kept.add(new MetricPriority(id, priority.why()));
+        }
+        ProcessMiningResult withPriorities = result.withMetricPriorities(kept);
+        if (invented == 0) return withPriorities;
+        return withPriorities.withBlindSpot(invented + " KPI(s) named by the analysis matched no "
+            + "candidate it was shown, so they were dropped: a metric this application cannot trace "
+            + "back to a measurement is one it will not propose.");
+    }
+
+    /** At most four, because a list of everything is not a choice. */
+    private static final int MAX_METRIC_PRIORITIES = 4;
+
     private void appendProcessModel(StringBuilder sb, ProcessModel model) {
         sb.append("## PROCESSUS MESURÉ\n");
         if (!model.available()) {

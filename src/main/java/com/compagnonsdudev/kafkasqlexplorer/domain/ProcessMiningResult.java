@@ -51,24 +51,37 @@ public record ProcessMiningResult(
      * them needs a model.
      */
     @JsonProperty(access = JsonProperty.Access.READ_ONLY)
-    ProcessModel processModel
+    ProcessModel processModel,
+    /**
+     * The KPIs the model would follow, out of the ones the measured process supports.
+     *
+     * <p>The one field here the model really does fill, and the exception is deliberate: choosing
+     * between candidates and saying why is judgement, which is what a model is for, where the
+     * measurements above are counting, which it is not. It carries ids, never metrics — see
+     * {@link MetricPriority} — and an id absent from the candidate list it was shown is dropped
+     * before this record is built, since a model naming a card nobody offered has invented it.
+     *
+     * <p>Empty rather than null when the model was asked and named none, absent when there was
+     * nothing to ask about: a run with no event log has no transitions to choose between.
+     */
+    List<MetricPriority> metricPriorities
 ) {
     /** Backwards-compatible constructor without RAG sources (the LLM JSON never carries them). */
     public ProcessMiningResult(String flowchart, String comments, List<String> hypotheses,
                                List<String> blindSpots, List<AnomalyReport> anomalies) {
-        this(flowchart, comments, hypotheses, blindSpots, anomalies, List.of(), null, null, null, null);
+        this(flowchart, comments, hypotheses, blindSpots, anomalies, List.of(), null, null, null, null, List.of());
     }
 
     public ProcessMiningResult(String flowchart, String comments, List<String> hypotheses,
                                List<String> blindSpots, List<AnomalyReport> anomalies,
                                List<RagSource> ragSources) {
-        this(flowchart, comments, hypotheses, blindSpots, anomalies, ragSources, null, null, null, null);
+        this(flowchart, comments, hypotheses, blindSpots, anomalies, ragSources, null, null, null, null, List.of());
     }
 
     /** A failed analysis: the reason, and nothing that could be mistaken for a finding. */
     public static ProcessMiningResult failed(String message) {
         return new ProcessMiningResult(null, null, List.of(), List.of(), List.of(), List.of(),
-            message, null, null, null);
+            message, null, null, null, List.of());
     }
 
     /**
@@ -78,19 +91,19 @@ public record ProcessMiningResult(
      */
     public static ProcessMiningResult failed(String message, LlmUsage usage) {
         return new ProcessMiningResult(null, null, List.of(), List.of(), List.of(), List.of(),
-            message, usage, null, null);
+            message, usage, null, null, List.of());
     }
 
     /** Returns a copy of this result with the given RAG sources attached. */
     public ProcessMiningResult withRagSources(List<RagSource> sources) {
         return new ProcessMiningResult(flowchart, comments, hypotheses, blindSpots, anomalies,
-            sources == null ? List.of() : sources, error, usage, coverage, processModel);
+            sources == null ? List.of() : sources, error, usage, coverage, processModel, metricPriorities);
     }
 
     /** Returns a copy of this result with the measured cost of the call attached. */
     public ProcessMiningResult withUsage(LlmUsage measured) {
         return new ProcessMiningResult(flowchart, comments, hypotheses, blindSpots, anomalies,
-            ragSources, error, measured, coverage, processModel);
+            ragSources, error, measured, coverage, processModel, metricPriorities);
     }
 
     /**
@@ -101,7 +114,7 @@ public record ProcessMiningResult(
      */
     public ProcessMiningResult withCoverage(ProcessMiningCoverage measured) {
         return new ProcessMiningResult(flowchart, comments, hypotheses, blindSpots, anomalies,
-            ragSources, error, usage, measured, processModel);
+            ragSources, error, usage, measured, processModel, metricPriorities);
     }
 
     /**
@@ -113,7 +126,7 @@ public record ProcessMiningResult(
      */
     public ProcessMiningResult withProcessModel(ProcessModel measured) {
         return new ProcessMiningResult(flowchart, comments, hypotheses, blindSpots, anomalies,
-            ragSources, error, usage, coverage, measured);
+            ragSources, error, usage, coverage, measured, metricPriorities);
     }
 
     /**
@@ -124,6 +137,32 @@ public record ProcessMiningResult(
      * "correlated" meant for the whole run. A result with no coverage at all gets one rather than
      * dropping the note: silence is what this record exists to stop.
      */
+    /**
+     * Returns a copy carrying the KPIs the model chose, already filtered to the candidates it was
+     * shown. The filtering is the caller's — it is the one that knows what the prompt offered.
+     */
+    public ProcessMiningResult withMetricPriorities(List<MetricPriority> chosen) {
+        return new ProcessMiningResult(flowchart, comments, hypotheses, blindSpots, anomalies,
+            ragSources, error, usage, coverage, processModel,
+            chosen == null ? List.of() : List.copyOf(chosen));
+    }
+
+    /**
+     * Returns a copy with one more blind spot.
+     *
+     * <p>For what the service notices <em>about</em> the answer rather than in the data — a model
+     * that named a KPI nobody offered, say. It belongs in the same list the model fills because it
+     * is the same kind of statement, "here is something this analysis does not cover", and putting
+     * it anywhere else would make it easier to miss than the thing it reports.
+     */
+    public ProcessMiningResult withBlindSpot(String note) {
+        if (note == null || note.isBlank()) return this;
+        List<String> merged = new java.util.ArrayList<>(blindSpots == null ? List.of() : blindSpots);
+        merged.add(note);
+        return new ProcessMiningResult(flowchart, comments, hypotheses, List.copyOf(merged),
+            anomalies, ragSources, error, usage, coverage, processModel, metricPriorities);
+    }
+
     public ProcessMiningResult withCoverageWarning(String warning) {
         if (warning == null || warning.isBlank()) {
             return this;
