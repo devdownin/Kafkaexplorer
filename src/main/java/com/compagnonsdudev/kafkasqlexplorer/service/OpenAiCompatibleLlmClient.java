@@ -18,8 +18,6 @@ import java.net.http.HttpResponse;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 
 public class OpenAiCompatibleLlmClient implements LlmClient {
     private static final Logger log = LoggerFactory.getLogger(OpenAiCompatibleLlmClient.class);
@@ -27,25 +25,8 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    /**
-     * The models this endpoint has refused a schema-constrained request for, so the next call does
-     * not repeat the mistake. Instance state rather than config: the client is rebuilt whenever the
-     * provider, base URL or key changes, which is exactly the lifetime this observation is valid
-     * for.
-     *
-     * <p>Keyed by <em>model</em> rather than being one flag for the client, because on a gateway
-     * that routes — OpenRouter above all — schema support is a property of the model and of the
-     * upstream provider serving it, not of the endpoint. One flag meant a model that cannot be
-     * constrained disabled constrained decoding for every model chosen afterwards, silently and for
-     * the client's whole lifetime: {@link LlmClientProvider} fingerprints provider, base URL and
-     * key, and the model is in none of them, so changing the model in Settings reuses this very
-     * client. A bounded map, since the set of models one deployment tries is small and this lives
-     * on a long-lived bean.
-     */
-    private final Set<String> modelsRefusingSchema = ConcurrentHashMap.newKeySet();
-
-    /** Upper bound on {@link #modelsRefusingSchema} — a guard against an unbounded field, not a policy. */
-    private static final int MAX_REMEMBERED_MODELS = 64;
+    /** Which models this endpoint has refused a schema for — see {@link SchemaRefusalMemory}. */
+    private final SchemaRefusalMemory schemaRefusals = new SchemaRefusalMemory();
 
     /** Sent only to OpenRouter — see the header block in {@link #call}. */
     private static final String OPENROUTER_APP_URL = "https://github.com/devdownin/Kafkaexplorer";
@@ -69,15 +50,15 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
     @Override
     public LlmResponse generateWithMeta(String systemPrompt, String userPrompt,
                                         LlmOutputSchema schema) {
-        String model = modelKey();
+        String model = SchemaRefusalMemory.modelKey(config.getModel());
         boolean constrain = schema != null
             && config.isStructuredOutputEnabled()
-            && !modelsRefusingSchema.contains(model);
+            && !schemaRefusals.refuses(model);
 
         try {
             return call(systemPrompt, userPrompt, constrain ? schema : null);
         } catch (LlmHttpSupport.ClientErrorException e) {
-            if (!constrain || !looksLikeSchemaRefusal(e.status())) {
+            if (!constrain || !SchemaRefusalMemory.looksLikeRefusal(e.status())) {
                 throw e;
             }
             // The endpoint rejected the request and a schema was the only unusual thing in it.
@@ -126,7 +107,7 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
             LlmResponse unconstrained = call(systemPrompt, userPrompt, null);
 
             if (!relayed) {
-                rememberSchemaRefusal(model);
+                schemaRefusals.remember(model);
                 log.warn("{} answered model '{}' without the schema, so the schema was the "
                         + "refusal's cause; no schema will be sent for that model again by this "
                         + "client.",
@@ -192,7 +173,7 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
      * provider serving it satisfies your policy", and the gateway answers the second question with
      * the same 404 it uses for a mistyped slug. Left alone, an operator reads "model not found",
      * checks the spelling — which is correct — and has no way to reach the real cause. The
-     * exception keeps its status, because {@link #looksLikeSchemaRefusal} reads it and a 404 must
+     * exception keeps its status, because {@link SchemaRefusalMemory#looksLikeRefusal} reads it and a 404 must
      * go on meaning "do not retry without the schema".
      */
     private LlmHttpSupport.ClientErrorException explainRoutingRefusal(
@@ -221,38 +202,6 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
         // to remove.
         return new LlmHttpSupport.ClientErrorException(e.status(), note.toString(),
             e.upstreamProvider());
-    }
-
-    /** The configured model, normalised so a null or blank one still keys the map. */
-    private String modelKey() {
-        String model = config.getModel();
-        return model == null || model.isBlank() ? "" : model.strip();
-    }
-
-    private void rememberSchemaRefusal(String model) {
-        if (modelsRefusingSchema.size() >= MAX_REMEMBERED_MODELS) {
-            // Nothing here is worth an eviction policy: forget the lot and re-probe. Sixty-four
-            // models on one client means the operator has been switching all afternoon, and one
-            // extra request per model is cheaper than a field that grows without bound.
-            modelsRefusingSchema.clear();
-        }
-        modelsRefusingSchema.add(model);
-    }
-
-    /**
-     * Whether a 4xx can plausibly mean "I do not implement {@code response_format}".
-     *
-     * <p>Only a rejected <em>request body</em> can: 400 and 422 are what a gateway answers to a field
-     * it does not understand. The latch used to fire on any 4xx, and the two that matter are 401 and
-     * 404 — a wrong key and a wrong model or path. Those disable structured output permanently for
-     * the client's lifetime, and that lifetime is longer than it looks: {@link LlmClientProvider}
-     * fingerprints provider, base URL and key, so correcting a mistyped <em>model</em> in Settings
-     * reuses the same client. The deployment then runs unconstrained for ever, silently, because of
-     * a typo that was fixed minutes later — the failure mode a fallback exists to prevent, arrived at
-     * through the fallback itself.
-     */
-    private static boolean looksLikeSchemaRefusal(int status) {
-        return status == 400 || status == 422;
     }
 
     private LlmResponse call(String systemPrompt, String userPrompt, LlmOutputSchema schema) {
@@ -313,13 +262,17 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
 
         } catch (LlmHttpSupport.ClientErrorException e) {
             LlmHttpSupport.ClientErrorException reported = explainRoutingRefusal(e);
-            log.error("Error calling OpenAI-compatible API: {}", reported.getMessage());
+            // Through LogSafe.text: these messages carry up to 300 characters of the provider's
+            // own body verbatim, which is a string a remote host chose. The relayed provider name
+            // is already neutralised where it is read (LlmHttpSupport.upstreamProviderOf); the
+            // body around it was not.
+            log.error("Error calling OpenAI-compatible API: {}", LogSafe.text(reported.getMessage()));
             throw reported;
         } catch (RuntimeException e) {
-            log.error("Error calling OpenAI-compatible API: {}", e.getMessage());
+            log.error("Error calling OpenAI-compatible API: {}", LogSafe.text(e.getMessage()));
             throw e;
         } catch (Exception e) {
-            log.error("Error calling OpenAI-compatible API: {}", e.getMessage(), e);
+            log.error("Error calling OpenAI-compatible API: {}", LogSafe.text(e.getMessage()), e);
             throw new RuntimeException("LLM call failed: " + e.getMessage(), e);
         }
     }

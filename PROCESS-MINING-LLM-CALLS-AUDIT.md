@@ -24,10 +24,11 @@ the configuration this project ships two Docker stacks and two setup scripts for
 > arithmetic consequence of two shipped values rather than an observation, it says so and names
 > both values.
 >
-> **Status.** It implemented nothing when it was written. **L1, L2 and L11 have since shipped**,
-> in one change; what each section below describes is therefore the state that work was done
-> *from*, and each of the three now ends with what replaced it. The other nine are open, and the
-> worklist at the end says so.
+> **Status.** It implemented nothing when it was written. **L1, L2, L3, L5, L7, L10, L11 and part
+> of L12 have since shipped**, in two changes: L1, L2 and L11 first, then the rest. What each
+> section below describes is therefore the state that work was done *from*, and each shipped item
+> now ends with what replaced it. **L4, L6, L8 and L9 remain open**, and the worklist at the end
+> says so.
 >
 > **One thing was found while implementing rather than while reviewing**, and L2 overstated its
 > symptom accordingly: the page does *not* print "The LLM could not be reached." on a client-side
@@ -178,6 +179,18 @@ so the pipeline refuses before the read like it does for a missing key; and vali
 `settingsProblems` (`ConfigController:175`) alongside the enums and the positive ints, which is
 where the same class of mistake is already caught for every other field.
 
+> **Shipped.** `ClaudeConfig.configurationProblem()` answers both halves of one question — *can
+> this deployment call a model?* — in one place rather than in the two services that each carried
+> their own copy of the first, and the sentence it returns names the property, because it is
+> rendered to whoever has to fix it. Both services consult it before reading anything, `test-llm`
+> before probing, and `GET /api/config` publishes it as `llmConfigurationProblem`, which the
+> Process Mining banner renders; a blank endpoint reads as `No endpoint configured.` there instead
+> of the line simply vanishing. `POST /api/config` refuses a *typed* base URL that is not an
+> absolute http(s) URL, and only a typed one — blank means "use the provider's default", which is a
+> legitimate thing to save. Pinned by three cases in `ClaudeConfigTest` and one in
+> `FieldProfilingServiceTest`; a fourth existing test had to be given a base URL, its fixture
+> having been in exactly the shape this describes.
+
 ---
 
 ## L4 — On SpectraLLM the page names a model that is not answering
@@ -243,6 +256,31 @@ which providers read it; and give the Anthropic path the same one-retry degrade 
 keyed on the model like its sibling. Then write the stub-server test that would have caught any of
 it.
 
+> **Shipped, five of the six.** The client now applies `claude.request-timeout-seconds` through the
+> SDK's `Timeout` builder, split the way `LlmHttpSupport.newClient` splits it and for the same
+> reason (the connect timeout capped at 10 s, since a wrong port should not take a full minute to
+> say so); pins `temperature` to 0.0 like every other provider here; reads `remedyFor` from
+> `LlmHttpSupport` — made package-private rather than copied, a 402 meaning the same thing on both
+> paths — and reports through `SqlErrorClassifier.explain`, which is never blank; and gets the same
+> one-retry degrade its sibling has, keyed on the model and recorded only when the retry succeeds.
+> **`AnthropicLlmClientTest` exists**, six cases, driven through the same stub `HttpServer` the
+> other two clients use — the SDK honours `baseUrl`, so nothing had ever prevented this. Two of the
+> six fail against the previous revision by construction: it sent no temperature and had no retry.
+>
+> The sixth is **not** shipped and is deliberately left: nothing asserts the *timeout* behaviourally.
+> A test for it means a server that does not answer, and the SDK's own retry makes the wall time
+> and the resulting exception non-deterministic — a slow, flaky test is worse than a stated gap.
+> What is asserted is that the value is applied; what it does when it expires is the SDK's.
+>
+> The refusal memory moved to **`SchemaRefusalMemory`** in the process: it was `OpenAiCompatibleLlmClient`'s
+> private field, and two copies of "which models cannot be constrained" is how one of them comes to
+> latch on a status the other does not — the same argument that produced `SecureXml`, `LogSafe` and
+> `EventTime`.
+>
+> Still open on this path: the Settings form renders `Request Timeout (s)` with no provider
+> condition, which is now correct for every provider rather than for three of five, so what is left
+> there is wording, not behaviour.
+
 ---
 
 ## L6 — Clients are replaced without being closed, and the fingerprint misses what they carry
@@ -294,6 +332,9 @@ hardening nobody can rely on.
 
 **Change.** `LogSafe.text` on both, and bound the SpectraLLM one with the same `truncate` its
 siblings use. A body that will not parse is worth 300 characters of evidence, not all of it.
+
+> **Shipped.** Both, plus the SpectraLLM catch that quotes a message built from the provider's
+> body. The SpectraLLM one is bounded at 300 characters by the same `truncate` its siblings use.
 
 ---
 
@@ -367,6 +408,8 @@ written for it — left standing on the analysis call itself.
 
 **Change.** One line.
 
+> **Shipped.** Two, in the end: the log line had the same defect as the returned message.
+
 ---
 
 ## L11 — The stack shipped for local inference runs unconstrained, and the `OLLAMA` provider is set by nothing
@@ -417,7 +460,8 @@ says what it means; the second survives an operator who writes the compose file 
 - **`isApiKeyMissing()` is written twice**, identically, in `LlmAnalysisService:961` and
   `FieldProfilingService:322`. The rule this codebase applies elsewhere (`SecureXml`, `LogSafe`,
   `EventTime`) puts it on `ClaudeConfig`, where `isApiKeyRequired()` already lives. It also becomes
-  the natural home for L3's endpoint check.
+  the natural home for L3's endpoint check. — **Shipped with L3**: both copies are gone, replaced by
+  `configurationProblem()`.
 - **SpectraLLM has no `noContentMessage` equivalent.** `SpectraLlmClient:83-87` refuses a missing or
   null `answer` and accepts everything else, so a blank one — or a non-textual node, where
   Jackson's `asText()` yields `""` — travels as an empty string and is reported one step later as
@@ -459,13 +503,13 @@ its comment gives, and matters most on the slow local models this audit is about
 |---|---|---|---|
 | L1 | ~~A non-schema 400 latches for good~~ **shipped** | remember only what the retry proves | `OpenAiCompatibleLlmClient:99-113` |
 | L2 | ~~Test aborts at 90 s against a 300 s server~~ **shipped** | derive both waits from the served budget | `ProcessMining.tsx:102`, `Config.tsx:485` |
-| L3 | A missing endpoint is not a state | `isEndpointMissing()`, checked and validated | `ClaudeConfig`, both services, `ConfigController:175` |
+| L3 | ~~A missing endpoint is not a state~~ **shipped** | `isEndpointMissing()`, checked and validated | `ClaudeConfig`, both services, `ConfigController:175` |
 | L4 | A model named that is not answering | null it where the server picks it | `SpectraLlmClient:90`, `ProcessMining.tsx:811` |
-| L5 | Anthropic skips six behaviours | timeout, temperature, degrade, and a test | `AnthropicLlmClient`, `Config.tsx:1066` |
+| L5 | ~~Anthropic skips six behaviours~~ **five shipped** | timeout, temperature, degrade, and a test | `AnthropicLlmClient`, `Config.tsx:1066` |
 | L6 | Clients leaked; fingerprint misses the timeout | close on replace, add the field | `LlmClientProvider:46-70` |
-| L7 | Remote bodies logged raw | `LogSafe.text` + truncate | `SpectraLlmClient:85`, `OpenAiCompatibleLlmClient:293` |
+| L7 | ~~Remote bodies logged raw~~ **shipped** | `LogSafe.text` + truncate | `SpectraLlmClient:85`, `OpenAiCompatibleLlmClient:293` |
 | L8 | 3xx retried as transient | follow redirects, or refuse and name `Location` | `LlmHttpSupport:109,150` |
 | L9 | A constraint that silently did not hold | report repair, and a short prompt count | `LlmJsonSupport`, `usageOf` |
-| L10 | "LLM call failed: null" | `SqlErrorClassifier.explain` | `LlmAnalysisService:974` |
+| L10 | ~~"LLM call failed: null"~~ **shipped** | `SqlErrorClassifier.explain` | `LlmAnalysisService:974` |
 | L11 | ~~The local stack runs unconstrained~~ **shipped** | name `OLLAMA`, or detect the endpoint | `compose/ollama.yml:63`, `setup-llm.*`, docs |
-| L12 | Five small ones | see above | — |
+| L12 | Five small ones — **one shipped** | see above | — |

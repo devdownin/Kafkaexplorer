@@ -365,6 +365,70 @@ public class ClaudeConfig {
     }
 
     /**
+     * Why this configuration cannot call a model at all, or {@code null} when it can be tried.
+     *
+     * <p>The pipeline asked one question — is a key required and absent — and there is a second
+     * that is just as final: <strong>is there an address to send to</strong>. It was never asked,
+     * and {@link #defaultBaseUrl} returns {@code ""} for {@link Provider#OPENAI_COMPATIBLE} by
+     * design, that being the honest answer for an endpoint this application knows nothing about.
+     * So a deployment that selected that provider and named no base URL passed every guard, read
+     * its topics, built its prompt, and died inside {@code HttpRequest.newBuilder().uri(…)} with
+     * <em>"URI with undefined scheme"</em> — a message naming neither the setting nor the page
+     * that sets it, arriving after the read rather than before it. A host written without a scheme
+     * (<code>gpu-box:11434</code>, which is how one writes an internal gateway) produced the same
+     * class of failure one line further on.
+     *
+     * <p>Both halves are the same question — <em>can this deployment call a model?</em> — so they
+     * are answered in one place rather than in the two services that each had their own copy of
+     * the first. The sentence names the property, because it is rendered to whoever has to fix it.
+     *
+     * <p>Deliberately <em>not</em> a check that the endpoint answers: that is what
+     * {@code POST /api/config/test-llm} is for, and it costs a round trip. This is the part that
+     * can be known without asking anybody.
+     */
+    public String configurationProblem() {
+        if (isApiKeyRequired() && !isApiKeyConfigured()) {
+            return "No API key is configured for " + getProviderLabel()
+                + ", which requires one — set claude.api-key (or the environment variable it is "
+                + "bound to) in Settings.";
+        }
+        String endpoint = getResolvedBaseUrl();
+        if (endpoint == null || endpoint.isBlank()) {
+            return "No endpoint is configured for " + getProviderLabel()
+                + ", and that provider has no default — set claude.base-url in Settings to the "
+                + "address of your gateway (for example http://localhost:11434/v1).";
+        }
+        if (!isAbsoluteHttpUrl(endpoint)) {
+            return "The configured endpoint '" + endpoint + "' is not an absolute http(s) URL, so "
+                + "nothing can be sent to it — claude.base-url needs the scheme and the host, for "
+                + "example http://gpu-box:11434/v1.";
+        }
+        return null;
+    }
+
+    /**
+     * Whether a string is something an HTTP client will accept as a destination.
+     *
+     * <p>Scheme <em>and</em> host, both of them: {@code java.net.URI} parses
+     * {@code gpu-box:11434/v1} without complaint — it reads as scheme {@code gpu-box} — and it is
+     * the HTTP client that refuses it, several layers away from the operator who typed it.
+     */
+    public static boolean isAbsoluteHttpUrl(String value) {
+        if (value == null || value.isBlank()) {
+            return false;
+        }
+        try {
+            java.net.URI uri = java.net.URI.create(value.strip());
+            String scheme = uri.getScheme();
+            return uri.getHost() != null
+                && scheme != null
+                && (scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https"));
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+    }
+
+    /**
      * Whether the configured endpoint is on this host — and therefore whether nothing sent to the
      * model leaves the machine.
      *

@@ -932,16 +932,27 @@ diagnoses anything; its twin on the Settings page has no timeout at all. And **t
 stack runs unconstrained**: `compose/ollama.yml`, `setup-llm.sh`, `setup-llm.ps1` and Option C of
 `docs/LLM-PROVIDERS.md` all set `OPENAI_COMPATIBLE`, which `structured-output: AUTO` deliberately
 leaves alone, while `docs/DOCKERHUB.md` tells operators to set `OLLAMA` — a value nothing in the
-tree actually sets. **Those three have shipped** (the latch now records only what the retry proves;
-`pages/llmTimeout.ts` derives both waits from the budget `GET /api/config` publishes, floored at the
-previous 90 s so nothing waits less than before; and every shipped artefact names `OLLAMA`, keeping
-`OPENAI_COMPATIBLE` where it is the right answer — vLLM, LM Studio, a gateway whose behaviour is not
-established). The other nine are open, the worklist at the end of the document says which, and the
-first two to reach for are **L3** — a base URL that is absent is not a state anything checks, so an
-`OPENAI_COMPATIBLE` deployment that names none fails with `URI with undefined scheme` — and **L5**,
-the six behaviours the Anthropic path skips by not going through `LlmHttpSupport`, none of which any
-test touches. Read it before touching `AnthropicLlmClient`, `SpectraLlmClient`, `LlmHttpSupport` or
-`LlmClientProvider`.
+tree actually sets. **Eight of the twelve have shipped**, in two changes. The latch now records only what the
+retry proves; `pages/llmTimeout.ts` derives both Test waits from the budget `GET /api/config`
+publishes, floored at the previous 90 s so nothing waits less than before; every shipped artefact
+names `OLLAMA`, keeping `OPENAI_COMPATIBLE` where it is the right answer (vLLM, LM Studio, a
+gateway whose behaviour is not established); **`ClaudeConfig.configurationProblem()`** answers "can
+this deployment call a model?" — key *and* address, the second of which was checked nowhere, so an
+`OPENAI_COMPATIBLE` deployment naming no base URL read its topics and then failed inside the HTTP
+client with `URI with undefined scheme` — consulted by both services, by `test-llm` and by the
+Process Mining banner, with a typed non-URL refused at save time; the **Anthropic path** applies
+the configured timeout, pins `temperature` to 0.0, shares `remedyFor`, reports through
+`SqlErrorClassifier.explain` and gets the one-retry schema degrade its sibling has, with
+`AnthropicLlmClientTest` as the first test that class has ever had; remote response bodies go
+through `LogSafe.text` before reaching the log; and the analysis half reports `explain(e)` where it
+reported a `getMessage()` that is null for an NPE. The refusal memory moved to
+**`SchemaRefusalMemory`** on the way — two copies of "which models cannot be constrained" is how
+one comes to latch on a status the other does not.
+**Four remain open**: L4 (SpectraLLM reports a model that is not answering — it ignores the field),
+L6 (clients replaced without being closed, and the fingerprint misses the timeout they carry), L8
+(a redirect retried three times as a transient failure) and L9 (nothing says whether a constraint
+held or whether a prompt was truncated, though both signals are already parsed). Read it before
+touching `AnthropicLlmClient`, `SpectraLlmClient`, `LlmHttpSupport` or `LlmClientProvider`.
 
 **The two metric templates that compare the results of two queries** — `TOPIC_COUNT_DELTA` and
 `TOPIC_TRANSIT_LATENCY`, which are also the two the KPI suggestion panel proposes most — are

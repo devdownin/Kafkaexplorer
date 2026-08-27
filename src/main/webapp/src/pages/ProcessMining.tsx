@@ -41,6 +41,13 @@ interface RuntimeLlmInfo {
   llmLocalDeployment?: boolean;
   /** Le budget du serveur pour un appel au modèle : ce dont la sonde déduit son attente. */
   llmRequestTimeoutSeconds?: number;
+  /**
+   * Pourquoi un appel échouerait avant même d'être fait — clé manquante, adresse manquante, adresse
+   * qui n'en est pas une — ou absent quand rien ne peut être dit sans interroger le point d'accès.
+   * Calculé par le serveur (`ClaudeConfig.configurationProblem`), pas déduit ici : c'est lui qui
+   * sait quel fournisseur exige quoi.
+   */
+  llmConfigurationProblem?: string | null;
   /** Vrai seulement là où le routage a pu imposer la non-rétention — voir `llmPolicy.ts`. */
   llmDataRetentionRefused?: boolean;
 }
@@ -845,8 +852,22 @@ const ProcessMining: React.FC = () => {
                   <span><span className="font-medium">{policy.label}.</span> {policy.detail}</span>
                 </p>
               )}
-              {llmInfo.llmBaseUrl && (
+              {/* Une adresse absente ne se lit pas comme absente : la ligne disparaissait, sous une
+                  bannière par ailleurs complète, et l'échec arrivait bien plus tard — depuis le
+                  client HTTP, après la lecture des topics, sous la forme « URI with undefined
+                  scheme ». Ce que le serveur ne peut pas atteindre, il le dit ici. */}
+              {llmInfo.llmBaseUrl ? (
                 <p className="text-[11px] font-mono text-on-surface-variant mt-2 break-all">{llmInfo.llmBaseUrl}</p>
+              ) : (
+                <p className="text-[11px] text-warning mt-2">No endpoint configured.</p>
+              )}
+              {llmInfo.llmConfigurationProblem && (
+                <p className="text-xs mt-2 flex items-start gap-1.5 text-warning">
+                  <span aria-hidden="true" className="material-symbols-outlined text-sm flex-shrink-0">
+                    warning
+                  </span>
+                  <span className="break-words">{llmInfo.llmConfigurationProblem}</span>
+                </p>
               )}
               {llmTest && (
                 <p className={`text-xs mt-2 flex items-start gap-1.5 ${llmTest.ok ? 'text-success' : 'text-error'}`}>

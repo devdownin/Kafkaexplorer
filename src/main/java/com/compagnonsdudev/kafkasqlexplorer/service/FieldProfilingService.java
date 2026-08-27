@@ -72,9 +72,12 @@ public class FieldProfilingService {
     }
 
     public FieldProfileResult profile(List<String> topics, SnapshotConfig config) {
-        if (isApiKeyMissing()) {
-            log.warn("LLM API key not configured — returning empty profile");
-            return FieldProfileResult.failed("LLM API key not configured.");
+        // Not only the key: an endpoint that is absent, or that is not an address anything can be
+        // sent to, is just as final and was checked nowhere — see ClaudeConfig.configurationProblem.
+        String llmProblem = claudeConfig.configurationProblem();
+        if (llmProblem != null) {
+            log.warn("Profiling refused before reading anything: {}", llmProblem);
+            return FieldProfileResult.failed(llmProblem);
         }
 
         // 1. Read samples — 50 messages per topic, digested on the fly. Profiling only needs
@@ -317,10 +320,6 @@ Réponds avec ce JSON exact (camelCase, sans markdown) :
 """);
 
         return sb.toString();
-    }
-
-    private boolean isApiKeyMissing() {
-        return claudeConfig.isApiKeyRequired() && !claudeConfig.isApiKeyConfigured();
     }
 
     /** Keeps up to 4 distinct example values per path — enough to infer a role, bounded in size. */
