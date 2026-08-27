@@ -22,7 +22,7 @@ import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import axios from 'axios';
 import type { MetricConfig, MetricSuggestion, MetricSuggestions } from '../api/types';
-import { defaultReadMode, validateScanParams } from './Metrics';
+import { defaultReadMode, isSingleTableRead, sameStatement, validateScanParams, validateTemplate } from './Metrics';
 
 vi.mock('axios');
 const mockedAxios = vi.mocked(axios, true);
@@ -51,7 +51,7 @@ const templateMetric: MetricConfig = {
   templateType: 'TOPIC_TRANSIT_LATENCY',
   templateParams: { sourceTopic: 'demo.orders.1.received', targetTopic: 'demo.orders.2.validated' },
   executionMode: 'TEMPLATE_BOUNDED_SCAN',
-  labelTopic: 'demo.orders.1.received', labelFields: [],
+  labelTopic: 'demo.orders.1.received', labelFields: [], componentHistory: null,
 };
 
 const suggestion: MetricSuggestion = {
@@ -74,7 +74,7 @@ const suggestion: MetricSuggestion = {
     lastValue: null, lastUpdateTime: null, errorMessage: null,
     history: [], lastSummary: null, createTableSql: null,
     templateType: 'RAW_SQL', templateParams: {}, executionMode: 'SQL',
-    labelTopic: 'demo.orders.1.received', labelFields: [],
+    labelTopic: 'demo.orders.1.received', labelFields: [], componentHistory: null,
   },
 };
 
@@ -291,11 +291,214 @@ describe('the scan window of a two-query template', () => {
     expect(errors({ readMode: 'group-offsets' })).toHaveLength(1);
   });
 
+  it('refuses an operation the server would refuse, and accepts the four it takes', () => {
+    const errors = (operation: string) =>
+      validateTemplate('TOPIC_COUNT_DELTA', 'GAUGE',
+        { leftSql: 'SELECT 1 AS metric_value FROM a', rightSql: 'SELECT 1 AS metric_value FROM b', operation })
+        .filter(m => m.level === 'error');
+
+    for (const ok of ['LEFT_MINUS_RIGHT', 'ABS_DIFF', 'RATIO', 'PERCENT_GAP', 'percent_gap', ''])
+      expect(errors(ok)).toEqual([]);
+    expect(errors('LEFT_OVER_RIGHT')).toHaveLength(1);
+  });
+
   it('warns rather than refuses a latency read from the earliest offset', () => {
     const msgs = validateScanParams('TOPIC_TRANSIT_LATENCY', { readMode: 'earliest-offset' });
     expect(msgs.filter(m => m.level === 'error')).toEqual([]);
     expect(msgs.some(m => m.level === 'warning')).toBe(true);
     // Le défaut d'un compte est ce même bout du topic, et n'a rien à signaler.
     expect(validateScanParams('TOPIC_COUNT_DELTA', { readMode: 'earliest-offset' })).toEqual([]);
+  });
+});
+
+describe('le miroir de isSingleTableRead refuse au plus ce que le serveur refuse', () => {
+  it('accepte les formes que le lecteur direct sait répondre', () => {
+    expect(isSingleTableRead('SELECT COUNT(*) AS metric_value FROM orders')).toBe(true);
+    expect(isSingleTableRead('SELECT id AS match_key, ts AS event_time\nFROM demo_orders WHERE status = \'OK\'')).toBe(true);
+    // Le serveur accepte le point-virgule final : un miroir plus strict refuserait dans le
+    // formulaire une configuration que l'API enregistre sans broncher.
+    expect(isSingleTableRead('SELECT COUNT(*) AS metric_value FROM orders;')).toBe(true);
+  });
+
+  it('refuse les formes dont le lecteur direct se tromperait en silence', () => {
+    expect(isSingleTableRead('SELECT COUNT(*) AS metric_value FROM a JOIN b ON a.id = b.id')).toBe(false);
+    expect(isSingleTableRead('SELECT COUNT(*) AS metric_value FROM a, b')).toBe(false);
+    expect(isSingleTableRead('SELECT COUNT(*) AS metric_value FROM (SELECT id FROM orders)')).toBe(false);
+    expect(isSingleTableRead('WITH recent AS (SELECT * FROM orders) SELECT COUNT(*) AS metric_value FROM recent')).toBe(false);
+    expect(isSingleTableRead('SELECT 1 AS metric_value')).toBe(false);
+    expect(isSingleTableRead('')).toBe(false);
+  });
+});
+
+describe('la fenêtre de latence', () => {
+  const latency = (params: Record<string, unknown>) => validateScanParams('TOPIC_TRANSIT_LATENCY', params);
+
+  it('refuse une fenêtre sur un côté que le planner répondrait, en nommant lequel', () => {
+    const msgs = latency({
+      windowMs: '600000',
+      sourceSql: 'SELECT id AS match_key, ts AS event_time FROM a',
+      targetSql: 'SELECT a.id AS match_key, a.ts AS event_time FROM a JOIN b ON a.id = b.id',
+    });
+    const error = msgs.find(m => m.level === 'error');
+    expect(error?.text).toContain('target');
+  });
+
+  it('accepte deux lectures simples et dit ce que la fenêtre coûte au bord', () => {
+    const msgs = latency({
+      windowMs: '600000',
+      sourceSql: 'SELECT id AS match_key, ts AS event_time FROM a',
+      targetSql: 'SELECT id AS match_key, ts AS event_time FROM b',
+    });
+    expect(msgs.some(m => m.level === 'error')).toBe(false);
+    expect(msgs.some(m => m.text.includes('trailing edge'))).toBe(true);
+  });
+
+  it('ne met plus en garde sur le mode de lecture quand une fenêtre le remplace', () => {
+    const base = {
+      readMode: 'earliest-offset',
+      sourceSql: 'SELECT id AS match_key, ts AS event_time FROM a',
+      targetSql: 'SELECT id AS match_key, ts AS event_time FROM b',
+    };
+    expect(latency(base).some(m => m.level === 'warning')).toBe(true);
+    expect(latency({ ...base, windowMs: '600000' }).some(m => m.level === 'warning')).toBe(false);
+  });
+
+  it('borne la cadence propre d’une métrique', () => {
+    expect(latency({ refreshIntervalMs: '10' }).some(m => m.level === 'error')).toBe(true);
+    expect(latency({ refreshIntervalMs: '300000' }).some(m => m.level === 'error')).toBe(false);
+    expect(latency({ refreshIntervalMs: '' }).some(m => m.level === 'error')).toBe(false);
+  });
+});
+
+describe('deux côtés qui ne peuvent pas différer', () => {
+  const gap = (params: Record<string, unknown>) =>
+    validateTemplate('TOPIC_COUNT_DELTA', 'GAUGE', {
+      leftSql: 'SELECT COUNT(*) AS metric_value FROM a',
+      rightSql: 'SELECT COUNT(*) AS metric_value FROM b',
+      ...params,
+    });
+
+  it('reconnaît deux instructions identiques au copier-coller près', () => {
+    expect(sameStatement('SELECT COUNT(*)  FROM a', 'select count(*) from a;')).toBe(true);
+    expect(sameStatement('SELECT COUNT(*) FROM a', 'SELECT COUNT(*) FROM b')).toBe(false);
+    // Deux champs vides ne sont pas « identiques » : leur absence a déjà son propre refus.
+    expect(sameStatement('', '')).toBe(false);
+  });
+
+  it('refuse un écart entre une chose et elle-même', () => {
+    // Zéro pour toujours, et zéro sur cette métrique se lit « aucune perte » — la seule valeur
+    // qu'elle ne doit jamais publier par accident.
+    const msgs = gap({ rightSql: 'SELECT COUNT(*) AS metric_value FROM a' });
+    expect(msgs.some(m => m.level === 'error' && m.text.includes('same statement'))).toBe(true);
+  });
+
+  it('refuse aussi le même topic en comptage par offsets, où le SQL n’est pas lu', () => {
+    const msgs = gap({ countBy: 'OFFSETS', leftTopic: 'demo.orders', rightTopic: 'demo.orders' });
+    expect(msgs.some(m => m.level === 'error' && m.text.includes('same topic'))).toBe(true);
+  });
+
+  it('laisse passer deux topics différents', () => {
+    const msgs = gap({ countBy: 'OFFSETS', leftTopic: 'demo.a', rightTopic: 'demo.b' });
+    expect(msgs.some(m => m.level === 'error')).toBe(false);
+  });
+
+  it('refuse une latence corrélée avec elle-même', () => {
+    const msgs = validateTemplate('TOPIC_TRANSIT_LATENCY', 'GAUGE', {
+      sourceSql: 'SELECT id AS match_key, ts AS event_time FROM a',
+      targetSql: 'SELECT id AS match_key, ts AS event_time FROM a',
+    });
+    expect(msgs.some(m => m.level === 'error' && m.text.includes('correlated with itself'))).toBe(true);
+  });
+});
+
+describe('la carte porte la mesure et la règle, pas seulement un nombre', () => {
+  const gapMetric: MetricConfig = {
+    ...templateMetric,
+    id: 'm-gap',
+    name: 'gauge_gap_a_to_b',
+    templateType: 'TOPIC_COUNT_DELTA',
+    templateParams: { leftTopic: 'demo.a', rightTopic: 'demo.b', operation: 'LEFT_MINUS_RIGHT' },
+    lastValue: 5,
+    warningThreshold: 10, criticalThreshold: 50,
+    lastSummary: {
+      leftValue: 12, rightValue: 7, operation: 'LEFT_MINUS_RIGHT',
+      countedBy: 'OFFSETS', readGapMs: 0, sharedScan: false,
+      scopeNote: 'Counted from the log’s own offsets.',
+    },
+  };
+
+  it('affiche les deux côtés, qui sont le diagnostic que « 5 » ne donne pas', async () => {
+    stubApi([gapMetric]);
+    await renderPage();
+
+    await waitFor(() => expect(screen.getByText('gauge_gap_a_to_b')).toBeInTheDocument());
+    expect(screen.getByText('left')).toBeInTheDocument();
+    expect(screen.getByText('12')).toBeInTheDocument();
+    expect(screen.getByText('right')).toBeInTheDocument();
+    expect(screen.getByText('7')).toBeInTheDocument();
+  });
+
+  it('offre la règle Prometheus, avec le garde de fraîcheur', async () => {
+    stubApi([gapMetric]);
+    await renderPage();
+
+    await waitFor(() => expect(screen.getByText('gauge_gap_a_to_b')).toBeInTheDocument());
+    expect(screen.getByLabelText('Copy the Prometheus alert rule for this metric')).toBeInTheDocument();
+    // La première ligne de la règle est visible sur la carte ; le garde voyage dans ce qui est copié.
+    expect(screen.getByText(/explorer_metric_gauge\{metric_id="m-gap"\} >= 50/)).toBeInTheDocument();
+  });
+
+  it('dit pourquoi il n’y a pas de règle plutôt que de n’en montrer aucune', async () => {
+    stubApi([{ ...gapMetric, warningThreshold: null, criticalThreshold: null }]);
+    await renderPage();
+
+    await waitFor(() => expect(screen.getByText('gauge_gap_a_to_b')).toBeInTheDocument());
+    expect(screen.getByText('No alert rule from this card')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Copy the Prometheus alert rule for this metric')).toBeNull();
+  });
+
+  it('suit la direction des seuils dans le signe affiché', async () => {
+    // Critique sous l'avertissement : la métrique se lit vers le bas, et « ≥ 0.95 » serait faux.
+    stubApi([{ ...gapMetric, lastValue: 0.98, warningThreshold: 0.99, criticalThreshold: 0.95 }]);
+    await renderPage();
+
+    await waitFor(() => expect(screen.getByText('gauge_gap_a_to_b')).toBeInTheDocument());
+    expect(screen.getByText(/≤ 0.95/)).toBeInTheDocument();
+    expect(screen.queryByText(/≥ 0.95/)).toBeNull();
+  });
+});
+
+describe('les deux côtés dans le temps', () => {
+  const withSeries: MetricConfig = {
+    ...templateMetric,
+    id: 'm-series',
+    name: 'gauge_gap_series',
+    templateType: 'TOPIC_COUNT_DELTA',
+    templateParams: { leftTopic: 'demo.a', rightTopic: 'demo.b' },
+    lastValue: 5,
+    history: [5, 5, 5],
+    componentHistory: { leftValue: [12, 13, 12], rightValue: [7, 8, 7] },
+    lastSummary: { leftValue: 12, rightValue: 7, operation: 'LEFT_MINUS_RIGHT' },
+  };
+
+  it('trace les composantes dans leur propre boîte, avec une légende', async () => {
+    stubApi([withSeries]);
+    await renderPage();
+
+    await waitFor(() => expect(screen.getByText('gauge_gap_series')).toBeInTheDocument());
+    // La légende nomme les deux séries. « left » et « right » apparaissent aussi à côté du nombre,
+    // donc ce qui est vérifié est qu'il y en a deux de chaque : la puce et la légende.
+    expect(screen.getAllByText('left')).toHaveLength(2);
+    expect(screen.getAllByText('right')).toHaveLength(2);
+  });
+
+  it('ne trace rien quand la métrique n’a qu’une valeur', async () => {
+    stubApi([{ ...withSeries, componentHistory: null }]);
+    await renderPage();
+
+    await waitFor(() => expect(screen.getByText('gauge_gap_series')).toBeInTheDocument());
+    // La puce à côté du nombre reste, la légende non : une ligne d'un seul point n'est pas une
+    // évolution, et une boîte vide sur chaque carte serait du bruit.
+    expect(screen.getAllByText('left')).toHaveLength(1);
   });
 });

@@ -77,6 +77,16 @@ public class MetricSuggestionService {
 
     /** Enough to fill the panel; past this the reader stops reading and starts scrolling. */
     private static final int MAX_SUGGESTIONS = 24;
+
+    /**
+     * The window a proposed latency metric reads on both sides.
+     *
+     * <p>Fifteen minutes rather than an hour: the row cap is what actually bounds the read, and a
+     * wider window on a busy topic only means the cap cuts inside it, which puts the two sides back
+     * on two different stretches of time — the very thing the window is for. Wide enough that an
+     * ordinary hop's traffic fits, narrow enough that the trailing edge is a small share of it.
+     */
+    private static final long SUGGESTED_LATENCY_WINDOW_MS = 900_000L;
     /** Volume KPIs are proposed for the busiest audited topics only — one per topic is plenty. */
     private static final int MAX_VOLUME_SUGGESTIONS = 3;
     /**
@@ -388,6 +398,15 @@ public class MetricSuggestionService {
         params.put("targetSql", correlationSql(targetTopic, targetKey.column()));
         params.put("sourceTopic", sourceTopic);
         params.put("targetTopic", targetTopic);
+        /*
+         * Both sides over the same window, because the number this card carries is a match rate as
+         * much as a latency. Bounded by row count alone, two topics of different throughputs are
+         * read over two different stretches of time, and the rate is then depressed by that
+         * misalignment as much as by a real loss — which is the reading this panel exists to keep
+         * honest. The SQL is the explorer's own single-table shape, so the direct reader can honour
+         * it; a hand-edited join in the modal is refused at save with the reason.
+         */
+        params.put("windowMs", SUGGESTED_LATENCY_WINDOW_MS);
 
         // 2× / 4× of what was measured: high enough that ordinary variation does not page anyone,
         // low enough that a hop taking four times as long is not "normal". Both are stated.
@@ -408,6 +427,10 @@ public class MetricSuggestionService {
             caveats.add("No usable latency was measured for this hop, so no threshold is proposed — "
                 + "run the metric for a while and set one from what it reports.");
         }
+        caveats.add("Both sides are read over the same " + formatMillis(SUGGESTED_LATENCY_WINDOW_MS)
+            + ", so the match rate reports real losses rather than two topics read over two "
+            + "different stretches of time. A source produced near the end of that window has its "
+            + "target after it, so the rate understates by about one hop's worth of traffic.");
 
         MetricConfig metric = new MetricConfig(
             null,
@@ -451,6 +474,12 @@ public class MetricSuggestionService {
         params.put("leftSql", countSql(from.topicName()));
         params.put("rightSql", countSql(to.topicName()));
         params.put("operation", "PERCENT_GAP");
+        // Offsets rather than a scan, and the interval rather than the lifetime: see
+        // COUNT_MODES and COUNT_WINDOWS in MetricService. Every card this panel builds is a
+        // plain whole-topic gap between two named topics, which is the shape offsets answer
+        // exactly — and the shape a lifetime total desensitises as history accumulates.
+        params.put("countBy", "OFFSETS");
+        params.put("window", "SINCE_LAST_REFRESH");
         params.put("leftTopic", from.topicName());
         params.put("rightTopic", to.topicName());
 
@@ -479,8 +508,12 @@ public class MetricSuggestionService {
             List.of(evidence),
             "Warning at 2× and critical at 4× the " + formatPercent(measuredGap)
                 + " gap observed, floored at 1 % / 5 % so a lossless flow still has a threshold.",
-            List.of("Both sides are bounded scans of the whole topic, so the gap only means "
-                + "something while the two topics have comparable retention.",
+            List.of("Both sides are counted from the log's offsets, so no record is read and no "
+                + "scan ceiling applies — but that counts what was produced, so a transaction "
+                + "marker counts and a compacted record still counts.",
+                    "Compared over each refresh interval rather than over the lifetime totals, "
+                + "which is what lets a threshold fire: the first refresh publishes nothing and "
+                + "says so.",
                     "A legitimate filter between the two steps shows up here as a permanent gap — "
                 + "set the thresholds around the level it normally sits at."),
             false, null, metric));
@@ -996,6 +1029,12 @@ public class MetricSuggestionService {
         params.put("leftSql", countSql(first.topic()));
         params.put("rightSql", countSql(last.topic()));
         params.put("operation", "PERCENT_GAP");
+        // Offsets rather than a scan, and the interval rather than the lifetime: see
+        // COUNT_MODES and COUNT_WINDOWS in MetricService. Every card this panel builds is a
+        // plain whole-topic gap between two named topics, which is the shape offsets answer
+        // exactly — and the shape a lifetime total desensitises as history accumulates.
+        params.put("countBy", "OFFSETS");
+        params.put("window", "SINCE_LAST_REFRESH");
         params.put("leftTopic", first.topic());
         params.put("rightTopic", last.topic());
 
@@ -1106,6 +1145,12 @@ public class MetricSuggestionService {
         params.put("leftSql", "SELECT COUNT(*) AS metric_value\nFROM " + source);
         params.put("rightSql", "SELECT COUNT(*) AS metric_value\nFROM " + target);
         params.put("operation", "PERCENT_GAP");
+        // Offsets rather than a scan, and the interval rather than the lifetime: see
+        // COUNT_MODES and COUNT_WINDOWS in MetricService. Every card this panel builds is a
+        // plain whole-topic gap between two named topics, which is the shape offsets answer
+        // exactly — and the shape a lifetime total desensitises as history accumulates.
+        params.put("countBy", "OFFSETS");
+        params.put("window", "SINCE_LAST_REFRESH");
         params.put("leftTopic", source);
         params.put("rightTopic", target);
 

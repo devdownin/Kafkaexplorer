@@ -6,7 +6,7 @@ import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import Editor, { useMonaco } from '@monaco-editor/react';
 import '../monaco-setup';
-import { AreaChart, Area, ResponsiveContainer, ReferenceLine, Tooltip, YAxis } from 'recharts';
+import { AreaChart, Area, Line, LineChart, ResponsiveContainer, ReferenceLine, Tooltip, YAxis } from 'recharts';
 import { useToast } from '../components/Toast';
 import { useCatalog } from '../catalogStore';
 import { describeApiError, type QueryErrorInfo } from './queryError';
@@ -28,7 +28,8 @@ import { SuggestionsPanel } from '../components/metrics/SuggestionsPanel';
 import { readFlowChains } from './flowChains';
 import { latestProcessModel } from './processModelEvidence';
 import { newerAuditNote, suggestionToDraft } from './metricSuggestions';
-import { describeMetricScope, scopeNoteOf } from './metricScope';
+import { componentSeries, describeMeasurement, describeMetricScope, describeRefreshCost, scopeNoteOf } from './metricScope';
+import { buildAlertRule, describeThresholdDirection, gradeMetric, thresholdDirection } from './metricAlert';
 
 interface MetricTemplateDescriptor {
   type: string;
@@ -182,10 +183,20 @@ function validateMetricName(name: string): ValidationMsg[] {
   return [];
 }
 
+/**
+ * Les deux seuils, et le sens qu'ils impliquent.
+ *
+ * `warn >= crit` était refusé tout court, ce qui rendait la lecture descendante **inatteignable** :
+ * un `RATIO` sain à 1.0 casse en descendant, donc ses seuils sont 0.99 puis 0.95 — la paire que
+ * cette règle interdisait. Seule l'égalité reste une erreur : deux seuils identiques n'expriment
+ * aucun sens et se déclencheraient ensemble. Le reste est une direction, énoncée plutôt que
+ * devinée — voir `describeThresholdDirection`.
+ */
 function validateThresholds(warn: number | null, crit: number | null): ValidationMsg[] {
-  if (warn !== null && crit !== null && warn >= crit)
-    return [{ level: 'error', text: 'Warning threshold must be strictly less than the Critical threshold.' }];
-  return [];
+  if (warn !== null && crit !== null && warn === crit)
+    return [{ level: 'error', text: 'The two thresholds are the same number, so they say nothing about which side the problem is on and would fire together.' }];
+  const direction = describeThresholdDirection(warn, crit);
+  return direction ? [{ level: 'info', text: direction }] : [];
 }
 
 function paramStr(params: Record<string, unknown>, key: string): string {
@@ -199,6 +210,109 @@ export const defaultReadMode = (templateType: string): string =>
 
 export const SCAN_MAX_ROWS_DEFAULT = 10_000;
 export const SCAN_TIMEOUT_MS_DEFAULT = 30_000;
+
+/**
+ * Deux instructions qui disent la même chose.
+ *
+ * La comparaison est sur le texte, espaces réduits et casse ignorée : elle attrape le copier-coller,
+ * qui est la façon dont ce défaut arrive, et ne prétend pas comprendre le SQL — deux requêtes
+ * sémantiquement identiques écrites différemment passent, et le serveur ne peut pas mieux faire.
+ * Deux chaînes vides ne sont pas identiques : le champ manquant a déjà son propre refus.
+ */
+export function sameStatement(a: string, b: string): boolean {
+  const norm = (sql: string) => sql.replace(/\s+/g, ' ').trim().replace(/;$/, '').toLowerCase();
+  return norm(a) !== '' && norm(a) === norm(b);
+}
+
+export const COUNT_MODES = ['AUTO', 'OFFSETS', 'RECORDS'];
+export const COUNT_WINDOWS = ['TOTAL', 'SINCE_LAST_REFRESH'];
+
+/**
+ * Miroir de la validation serveur des deux réglages qui décident *ce que* la métrique compare.
+ *
+ * Un comptage par offsets n'exécute aucune requête : il demande au log ses propres bornes, donc il
+ * lui faut les deux topics et pas les deux SQL — voir METRICS-TWO-QUERY-AUDIT.md.
+ */
+export function validateCountParams(params: Record<string, unknown>): ValidationMsg[] {
+  const msgs: ValidationMsg[] = [];
+  const countBy = paramStr(params, 'countBy').trim().toUpperCase();
+  const window = paramStr(params, 'window').trim().toUpperCase();
+
+  if (countBy && !COUNT_MODES.includes(countBy))
+    msgs.push({ level: 'error', text: `Count by must be one of ${COUNT_MODES.join(', ')}.` });
+  if (window && !COUNT_WINDOWS.includes(window))
+    msgs.push({ level: 'error', text: `Compare must be one of ${COUNT_WINDOWS.join(', ')}.` });
+
+  const hasTopics = !!paramStr(params, 'leftTopic').trim() && !!paramStr(params, 'rightTopic').trim();
+  if (countBy === 'OFFSETS' && !hasTopics)
+    msgs.push({ level: 'error', text: 'Counting by offsets needs both topics named: it asks the log rather than running a query.' });
+
+  if (window === 'SINCE_LAST_REFRESH')
+    msgs.push({ level: 'info', text: 'The first refresh establishes the baseline and publishes nothing; the next one reports the gap over the interval.' });
+
+  /*
+   * Deux côtés qui ne peuvent pas différer.
+   *
+   * Un écart entre une chose et elle-même vaut 0 pour toujours, et 0 sur cette métrique **se lit
+   * comme « aucune perte »** — la seule valeur qu'elle ne doit jamais publier par accident. Deux
+   * formes le produisent : les deux requêtes identiques, et, en comptage par offsets, les deux
+   * topics identiques (le SQL n'est alors pas lu du tout, donc deux requêtes différentes sur le
+   * même topic ne sauvent rien).
+   */
+  if (sameStatement(paramStr(params, 'leftSql'), paramStr(params, 'rightSql')))
+    msgs.push({ level: 'error', text: 'The two queries are the same statement, so this metric compares a topic with itself and will report no gap for ever — which reads as “nothing is being lost”.' });
+  else if (countBy === 'OFFSETS' && paramStr(params, 'leftTopic').trim() === paramStr(params, 'rightTopic').trim()
+           && paramStr(params, 'leftTopic').trim() !== '')
+    msgs.push({ level: 'error', text: 'Both sides name the same topic, and counting by offsets does not read the queries at all — so the two counts are the same number and the gap is always zero.' });
+
+  const plainCount = (key: string) => {
+    const sql = paramStr(params, key).trim();
+    return sql === '' || /^select\s+count\s*\(\s*\*\s*\)\s*(?:as\s+`?\w+`?\s*)?from\s+`?\w[\w.]*`?\s*;?$/is.test(sql);
+  };
+  if ((countBy === '' || countBy === 'AUTO') && hasTopics && plainCount('leftSql') && plainCount('rightSql'))
+    msgs.push({ level: 'info', text: 'Counted from the log\u2019s offsets: no record is read, no scan ceiling applies, and both sides describe the same instant.' });
+
+  return msgs;
+}
+
+export const LATENCY_WINDOWS: { value: string; label: string }[] = [
+  { value: '', label: 'Row count only (no window)' },
+  { value: '300000', label: 'Same 5 min on both sides' },
+  { value: '900000', label: 'Same 15 min on both sides' },
+  { value: '3600000', label: 'Same hour on both sides' },
+  { value: '21600000', label: 'Same 6 h on both sides' },
+];
+
+export const REFRESH_INTERVALS: { value: string; label: string }[] = [
+  { value: '', label: 'Every cycle (default)' },
+  { value: '60000', label: 'At most once a minute' },
+  { value: '300000', label: 'At most every 5 min' },
+  { value: '900000', label: 'At most every 15 min' },
+  { value: '3600000', label: 'At most hourly' },
+];
+
+/**
+ * Miroir de `MetricService.isSingleTableRead` : la forme que le lecteur direct sait répondre.
+ *
+ * Transcription littérale des quatre règles du serveur, pas une réécriture : ce miroir n'existe que
+ * pour dire *pourquoi* une fenêtre est refusée, au moment où la requête peut encore être corrigée,
+ * donc il doit refuser exactement ce que le serveur refuse — un miroir plus strict rejetterait dans
+ * le formulaire une configuration que l'API accepte, ce qui est pire que de ne rien dire.
+ */
+export function isSingleTableRead(sql: string): boolean {
+  const body = sql.trim();
+  if (body === '') return false;
+  if (!/^select/i.test(body)) return false;
+  if (/\bjoin\b/i.test(body)) return false;
+  if (body.replace(/\s+/g, '').toUpperCase().includes('(SELECT')) return false;
+  const from = /\bfrom\b\s+(\w[\w.]*)/gi;
+  const first = from.exec(body);
+  if (!first) return false;
+  // Une virgule juste après le nom de table est une liste de tables, soit une jointure à l'ancienne.
+  if (body.slice(first.index + first[0].length).replace(/^\s+/, '').startsWith(',')) return false;
+  // Un second FROM est une forme que ce lecteur ne sait pas honorer non plus.
+  return from.exec(body) === null;
+}
 
 /** Miroir de MetricService.validateScanParams : refusé à l'enregistrement, pas au rafraîchissement. */
 export function validateScanParams(templateType: string, params: Record<string, unknown>): ValidationMsg[] {
@@ -217,7 +331,27 @@ export function validateScanParams(templateType: string, params: Record<string, 
   if (readMode && !['earliest-offset', 'latest-offset'].includes(readMode))
     msgs.push({ level: 'error', text: 'Read from must be either the most recent records or the earliest offset.' });
 
-  const effective = readMode || defaultReadMode(templateType);
+  const interval = raw('refreshIntervalMs');
+  if (interval && (!/^\d+$/.test(interval) || Number(interval) < 1_000 || Number(interval) > 86_400_000))
+    msgs.push({ level: 'error', text: 'Refresh at most must be a whole number of milliseconds between 1,000 and 86,400,000, or blank to run on every cycle.' });
+
+  const windowMs = raw('windowMs');
+  if (templateType === 'TOPIC_TRANSIT_LATENCY' && windowMs) {
+    if (!/^\d+$/.test(windowMs) || Number(windowMs) < 1_000 || Number(windowMs) > 604_800_000) {
+      msgs.push({ level: 'error', text: 'Window must be a whole number of milliseconds between 1,000 and 604,800,000, or blank to bound the two reads by row count.' });
+    } else {
+      const sourceOk = isSingleTableRead(paramStr(params, 'sourceSql').trim());
+      const targetOk = isSingleTableRead(paramStr(params, 'targetSql').trim());
+      if (!sourceOk || !targetOk)
+        msgs.push({ level: 'error', text: `A window bounds the read by time, which only the direct Kafka reader can do — and it answers a single-table SELECT. The ${sourceOk ? 'target' : 'source'} query joins or nests, so it would go to the Flink planner and read a different stretch of time.` });
+      else
+        msgs.push({ level: 'info', text: 'Both sides read from one instant computed once, so the match rate below is depressed by real losses rather than by two topics being read over two different stretches of time. A source near the end of the window has its target after it — the trailing edge understates by about one hop.' });
+    }
+  }
+
+  // Une fenêtre décide où commencer, donc elle remplace le mode de lecture au lieu de coexister
+  // avec lui : le dire vaut mieux que laisser deux réglages se contredire en silence.
+  const effective = windowMs && templateType === 'TOPIC_TRANSIT_LATENCY' ? '' : readMode || defaultReadMode(templateType);
   if (templateType === 'TOPIC_TRANSIT_LATENCY' && effective === 'earliest-offset')
     msgs.push({ level: 'warning', text: 'Read from the earliest offset, this reports the latency of the oldest records the row cap allows — a figure that stops moving once the topic outgrows the cap.' });
 
@@ -225,13 +359,19 @@ export function validateScanParams(templateType: string, params: Record<string, 
 }
 
 // Front-end mirror of the backend template validation (MetricService.validateMetric).
-function validateTemplate(templateType: string, metricType: string,
+export function validateTemplate(templateType: string, metricType: string,
                           params: Record<string, unknown>): ValidationMsg[] {
   const msgs: ValidationMsg[] = [];
   if (templateType === 'TOPIC_COUNT_DELTA') {
     if (!paramStr(params, 'leftSql').trim())  msgs.push({ level: 'error', text: 'Left query (leftSql) is required.' });
     if (!paramStr(params, 'rightSql').trim()) msgs.push({ level: 'error', text: 'Right query (rightSql) is required.' });
     if (metricType !== 'GAUGE')               msgs.push({ level: 'error', text: 'Topic Count Delta supports GAUGE metrics only.' });
+    // Le select ne peut proposer que les quatre, mais l'API accepte un corps écrit à la main :
+    // le serveur refuse maintenant à l'enregistrement, et le formulaire dit la même chose.
+    const operation = paramStr(params, 'operation').trim().toUpperCase();
+    if (operation && !DELTA_OPERATIONS.some(o => o.value === operation))
+      msgs.push({ level: 'error', text: `Operation must be one of ${DELTA_OPERATIONS.map(o => o.value).join(', ')}.` });
+    msgs.push(...validateCountParams(params));
     msgs.push(...validateScanParams(templateType, params));
     msgs.push({ level: 'warning', text: 'The two counts are taken one after the other, not at one instant: whatever the pipeline produced in between is in the second and not in the first.' });
   } else if (templateType === 'TOPIC_TRANSIT_LATENCY') {
@@ -240,6 +380,8 @@ function validateTemplate(templateType: string, metricType: string,
     if (!['GAUGE', 'HISTOGRAM', 'SUMMARY'].includes(metricType))
       msgs.push({ level: 'error', text: 'Topic Transit Latency supports GAUGE, HISTOGRAM or SUMMARY.' });
     msgs.push({ level: 'info', text: 'Both queries must return match_key and event_time columns (event_time as ISO-8601 or epoch).' });
+    if (sameStatement(paramStr(params, 'sourceSql'), paramStr(params, 'targetSql')))
+      msgs.push({ level: 'error', text: 'The two queries are the same statement, so every event would be correlated with itself and the latency would be zero.' });
     msgs.push(...validateScanParams(templateType, params));
     msgs.push({ level: 'info', text: 'A source event whose target the read did not cover is counted as unmatched, never averaged in — the summary reports how many.' });
   } else if (templateType === 'CONSUMER_TIME_LAG') {
@@ -389,13 +531,11 @@ function relativeTime(ms: number | null): string {
   return new Date(ms).toLocaleTimeString();
 }
 
-function getStatus(m: MetricConfig): 'error' | 'critical' | 'warning' | 'ok' | 'pending' {
-  if (m.errorMessage) return 'error';
-  if (m.lastValue === null) return 'pending';
-  if (m.criticalThreshold !== null && m.lastValue >= m.criticalThreshold) return 'critical';
-  if (m.warningThreshold !== null && m.lastValue >= m.warningThreshold) return 'warning';
-  return 'ok';
-}
+/**
+ * Le verdict d'une carte. La règle vit dans `metricAlert.ts` — elle a cessé d'être « au-dessus du
+ * seuil » le jour où un ratio, sain à 1.0, a eu besoin d'être lu vers le bas.
+ */
+const getStatus = gradeMetric;
 
 const STATUS_STYLES = {
   ok:       { dot: 'bg-success', text: 'text-success', label: 'Healthy' },
@@ -417,7 +557,28 @@ const MetricCard: React.FC<{
   const status = getStatus(metric);
   const st = STATUS_STYLES[status];
   const tm = TYPE_META[metric.type] ?? TYPE_META.GAUGE;
-  const scopeChips = describeMetricScope(metric.lastSummary);
+  const scopeChips = describeMetricScope(metric.lastSummary, metric.templateParams);
+  const measurement = describeMeasurement(metric.lastSummary);
+  const series = componentSeries(metric.componentHistory, metric.history?.length ?? 0);
+  /*
+   * Un graphe à part, avec son échelle à lui — délibérément, et pas deux axes sur le premier.
+   *
+   * Sur un écart, la valeur vaut 5 pendant que les deux côtés valent douze mille : une échelle
+   * commune écrase la valeur sur la ligne du bas, et un double axe fait croire à un croisement qui
+   * n'existe pas. Deux boîtes, deux échelles, chacune lisible pour ce qu'elle montre.
+   */
+  const seriesData = series.length > 0
+    ? (metric.history ?? []).map((_, i) => {
+        const point: Record<string, number | null> = { i };
+        series.forEach(s => { point[s.key] = s.values[i] ?? null; });
+        return point;
+      })
+    : [];
+  // Le sens du seuil est déduit de l'ordre des deux, donc le signe affiché doit suivre — sans quoi
+  // la carte annoncerait « ≥ 0.95 » sur une métrique qui se déclenche en descendant.
+  const thresholdSign =
+    thresholdDirection(metric.warningThreshold, metric.criticalThreshold) === 'below' ? '≤' : '≥';
+  const alert = buildAlertRule(metric);
 
   const chartData = (metric.history?.length === 1
     ? [metric.history[0], metric.history[0]]
@@ -480,16 +641,30 @@ const MetricCard: React.FC<{
             ? metric.lastValue.toLocaleString(undefined, { maximumFractionDigits: 2 })
             : '—'}
         </div>
+        {/* Les composantes du nombre ci-dessus. Sur un écart, « 5 » ne dit rien et « 12 contre 7 »
+            est le diagnostic — et les deux étaient dans `lastSummary`, montrés à personne. */}
+        {measurement.length > 0 && (
+          <div className="flex items-center gap-3 mt-1 flex-wrap font-mono text-[11px]">
+            {measurement.map(part => (
+              <InfoTooltip key={part.label} content={part.detail}>
+                <span tabIndex={0} className="flex items-baseline gap-1 rounded">
+                  <span className="text-outline">{part.label}</span>
+                  <span className="text-on-surface-variant font-semibold">{part.value}</span>
+                </span>
+              </InfoTooltip>
+            ))}
+          </div>
+        )}
         <div className="flex items-center gap-3 mt-0.5 flex-wrap">
           {metric.description && <p title={metric.description} className="text-xs text-on-surface-variant truncate">{metric.description}</p>}
           {metric.warningThreshold !== null && (
             <span className="flex items-center gap-0.5 text-[10px] text-warning font-mono shrink-0">
-              <span className="material-symbols-outlined text-[11px]">warning</span>≥ {metric.warningThreshold.toLocaleString()}
+              <span className="material-symbols-outlined text-[11px]">warning</span>{thresholdSign} {metric.warningThreshold.toLocaleString()}
             </span>
           )}
           {metric.criticalThreshold !== null && (
             <span className="flex items-center gap-0.5 text-[10px] text-error font-mono shrink-0">
-              <span className="material-symbols-outlined text-[11px]">emergency</span>≥ {metric.criticalThreshold.toLocaleString()}
+              <span className="material-symbols-outlined text-[11px]">emergency</span>{thresholdSign} {metric.criticalThreshold.toLocaleString()}
             </span>
           )}
         </div>
@@ -566,6 +741,50 @@ const MetricCard: React.FC<{
         )}
       </div>
 
+      {/* Les composantes dans le temps.
+
+          `history` porte la valeur, qui pour un gabarit à deux requêtes est la *comparaison* : sur
+          un écart c'est la différence, et ce qu'un opérateur a besoin de voir bouger, ce sont les
+          deux comptes. Un trou reste un trou (`connectNulls={false}`) : un rafraîchissement qui n'a
+          rien mesuré ne doit pas être relié comme s'il avait mesuré. */}
+      {series.length > 0 && (
+        <div className="px-3 pb-2">
+          <div className="rounded-lg overflow-hidden border border-outline-variant/60 bg-background-dark/60">
+            <ResponsiveContainer width="100%" height={56}>
+              <LineChart data={seriesData} margin={{ top: 6, right: 8, left: 0, bottom: 2 }}>
+                <YAxis hide domain={['dataMin', 'dataMax']} />
+                {series.map(s => (
+                  <Line key={s.key} type="monotone" dataKey={s.key} stroke={s.color} strokeWidth={1.5}
+                    dot={false} connectNulls={false} isAnimationActive={false} />
+                ))}
+                <Tooltip cursor={{ stroke: '#8f93a3', strokeWidth: 1, strokeOpacity: 0.3 }}
+                  content={({ active, payload }) =>
+                    active && payload?.length ? (
+                      <div className="bg-surface-container-low border border-outline-variant px-2 py-1 rounded-lg text-[10px] font-mono space-y-0.5">
+                        {payload.map(entry => {
+                          const s = series.find(x => x.key === entry.dataKey);
+                          return s && typeof entry.value === 'number' ? (
+                            <div key={s.key} style={{ color: s.color }}>{s.label} {s.format(entry.value)}</div>
+                          ) : null;
+                        })}
+                      </div>
+                    ) : null
+                  }
+                />
+              </LineChart>
+            </ResponsiveContainer>
+            <div className="flex items-center gap-3 px-3 py-1.5 border-t border-primary/5 text-[10px] font-mono">
+              {series.map(s => (
+                <span key={s.key} className="flex items-center gap-1 text-outline">
+                  <span aria-hidden="true" className="w-2 h-0.5 rounded-full" style={{ background: s.color }} />
+                  {s.label}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Ce que la mesure a couvert.
 
           `lastSummary` était calculé, persisté, et rendu nulle part hors de l'aperçu du modal :
@@ -611,9 +830,46 @@ const MetricCard: React.FC<{
         {metric.sql && (
           <button onClick={() => void copyText(metric.sql ?? '').then(ok =>
               toast(ok ? 'SQL copied' : 'Could not copy to the clipboard', ok ? 'success' : 'error'))}
-            title="Copy SQL" aria-label="Copy the metric SQL" className="shrink-0 text-outline hover:text-primary transition-colors opacity-0 group-hover:opacity-100">
+            title="Copy SQL" aria-label="Copy the metric SQL" className="shrink-0 inline-flex items-center justify-center w-6 h-6 text-outline hover:text-primary transition-colors opacity-0 group-hover:opacity-100">
             <span className="material-symbols-outlined text-base">content_copy</span>
           </button>
+        )}
+      </div>
+
+      {/* La règle Prometheus.
+
+          Tout ceci existe pour qu'une alerte se déclenche, et la page s'arrêtait une marche avant :
+          la PromQL n'était écrite nulle part, et depuis les séries compagnes la règle correcte n'est
+          plus évidente — une valeur gelée se déclenche exactement comme une vraie. */}
+      <div className="border-t border-outline-variant/60 px-4 py-2 flex items-center justify-between gap-2">
+        {alert.unavailable ? (
+          <InfoTooltip content={alert.unavailable}>
+            <span tabIndex={0} className="text-[10px] text-outline flex items-center gap-1 rounded min-w-0">
+              <span className="material-symbols-outlined text-[11px] shrink-0">notifications_off</span>
+              <span className="truncate">No alert rule from this card</span>
+            </span>
+          </InfoTooltip>
+        ) : (
+          <>
+            <InfoTooltip content={alert.rules.map(r => `${r.title} — ${r.note}`).join('\n\n')}>
+              <span tabIndex={0} className="text-[10px] text-on-surface-variant flex items-center gap-1 rounded min-w-0">
+                <span className="material-symbols-outlined text-[11px] shrink-0">notifications_active</span>
+                <span className="truncate font-mono">{alert.rules[0].promql.split('\n')[0]}</span>
+              </span>
+            </InfoTooltip>
+            <button
+              onClick={() => void copyText(
+                alert.rules.map(r => `# ${r.title}\n# ${r.note}\n${r.promql}`).join('\n\n'),
+              ).then(ok => toast(
+                ok ? `Alert rule copied${alert.rules.length > 1 ? ' (2 variants)' : ''}`
+                   : 'Could not copy to the clipboard',
+                ok ? 'success' : 'error'))}
+              title="Copy the Prometheus alert rule"
+              aria-label="Copy the Prometheus alert rule for this metric"
+              className="shrink-0 inline-flex items-center justify-center w-6 h-6 text-outline hover:text-primary transition-colors">
+              <span className="material-symbols-outlined text-base">content_copy</span>
+            </button>
+          </>
         )}
       </div>
 
@@ -675,16 +931,34 @@ const ScanParams: React.FC<{
   const readMode = p('readMode') || defaultReadMode(templateType);
   const maxRows = Number(p('maxRowsPerSide')) || SCAN_MAX_ROWS_DEFAULT;
   const timeoutMs = Number(p('timeoutMs')) || SCAN_TIMEOUT_MS_DEFAULT;
+  const windowMs = p('windowMs');
+  const isLatency = templateType === 'TOPIC_TRANSIT_LATENCY';
+  const windowed = isLatency && windowMs !== '' && windowMs !== '0';
   return (
     <div className="border-t border-outline-variant/60 pt-4 space-y-3">
       <p className="text-[11px] text-on-surface-variant leading-snug">
         What each side reads. The two queries run one after the other, so the two figures are a
         query apart rather than one instant.
       </p>
+      {isLatency && (
+        <Field
+          label="Window"
+          description="A row cap over two topics of different throughputs reads two different stretches of time, so the pairs that survive are an accident of those throughputs — and the match rate is depressed by that as much as by a real loss. A window reads both sides from one instant."
+        >
+          {f => (
+            <Select {...f} value={windowMs} onChange={e => setParam('windowMs', e.target.value)}>
+              {LATENCY_WINDOWS.map(w => (
+                <option key={w.value} value={w.value} className="bg-[#12151a] text-on-surface">{w.label}</option>
+              ))}
+            </Select>
+          )}
+        </Field>
+      )}
+      {!windowed && (
       <Field
         label="Read from"
         description={
-          templateType === 'TOPIC_TRANSIT_LATENCY'
+          isLatency
             ? 'A latency is a question about now: read from the earliest offset it reports the average of the oldest records the row cap allowed, and never moves again.'
             : 'A count must see the whole topic, so this normally starts at the earliest offset.'
         }
@@ -696,6 +970,7 @@ const ScanParams: React.FC<{
           </Select>
         )}
       </Field>
+      )}
       <div className="grid grid-cols-2 gap-3">
         <Field label="Max rows / side" description="Read no further; the summary says what was covered.">
           {f => (
@@ -710,6 +985,18 @@ const ScanParams: React.FC<{
           )}
         </Field>
       </div>
+      <Field
+        label="Refresh at most"
+        description="A two-query metric reads two topics; asking that of the broker every cycle because a single-row gauge beside it wants that cadence is what makes the refresh loop expensive. This can only slow it down — the loop\u2019s own tick is the floor."
+      >
+        {f => (
+          <Select {...f} value={p('refreshIntervalMs')} onChange={e => setParam('refreshIntervalMs', e.target.value)}>
+            {REFRESH_INTERVALS.map(r => (
+              <option key={r.value} value={r.value} className="bg-[#12151a] text-on-surface">{r.label}</option>
+            ))}
+          </Select>
+        )}
+      </Field>
     </div>
   );
 };
@@ -767,9 +1054,32 @@ const TemplateParamsEditor: React.FC<{
             )}
           </Field>
           <div className="grid grid-cols-2 gap-3">
-            <ParamTopic label="Left topic (label)"  value={p('leftTopic')}  onChange={v => setParam('leftTopic', v)}  placeholder="optional" />
-            <ParamTopic label="Right topic (label)" value={p('rightTopic')} onChange={v => setParam('rightTopic', v)} placeholder="optional" />
+            <ParamTopic label="Left topic"  value={p('leftTopic')}  onChange={v => setParam('leftTopic', v)}  placeholder="demo.orders.1.received" />
+            <ParamTopic label="Right topic" value={p('rightTopic')} onChange={v => setParam('rightTopic', v)} placeholder="demo.orders.2.validated" />
           </div>
+          <Field
+            label="Count by"
+            description="Offsets ask the log how much it holds — no record is read, there is no scan ceiling, and both sides come out of one call, so they describe the same instant. They count what was produced, so a transaction marker counts and a compacted record still counts."
+          >
+            {f => (
+              <Select {...f} value={p('countBy') || 'AUTO'} onChange={e => setParam('countBy', e.target.value)}>
+                <option value="AUTO" className="bg-[#12151a] text-on-surface">Automatic — offsets for a plain whole-topic count</option>
+                <option value="OFFSETS" className="bg-[#12151a] text-on-surface">The log's offsets (no records read)</option>
+                <option value="RECORDS" className="bg-[#12151a] text-on-surface">Records returned by the two queries</option>
+              </Select>
+            )}
+          </Field>
+          <Field
+            label="Compare"
+            description="A lifetime total loses its sensitivity as history accumulates: on topics running for months, a total outage that started an hour ago is a fraction of a percent."
+          >
+            {f => (
+              <Select {...f} value={p('window') || 'TOTAL'} onChange={e => setParam('window', e.target.value)}>
+                <option value="TOTAL" className="bg-[#12151a] text-on-surface">The totals</option>
+                <option value="SINCE_LAST_REFRESH" className="bg-[#12151a] text-on-surface">What each side produced since the last refresh</option>
+              </Select>
+            )}
+          </Field>
           <ScanParams templateType={templateType} params={params} setParam={setParam} />
         </>
       ) : (
@@ -868,6 +1178,10 @@ const Metrics: React.FC = () => {
     () => (previewResult?.error ? describeQueryError(previewResult.error) : null),
     [previewResult],
   );
+  const previewSummary = previewResult?.summary ?? null;
+  const previewChips = useMemo(() => describeMetricScope(previewSummary), [previewSummary]);
+  const previewMeasurement = useMemo(() => describeMeasurement(previewSummary), [previewSummary]);
+  const previewNote = useMemo(() => scopeNoteOf(previewSummary), [previewSummary]);
   const [templates, setTemplates]       = useState<MetricTemplateDescriptor[]>([]);
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
   const [filterType, setFilterType]     = useState<string>('all');
@@ -1194,6 +1508,9 @@ const Metrics: React.FC = () => {
       ? [{ level: 'warning', text: 'Thresholds on a COUNTER compare against a cumulative total that only grows, so they will eventually always trip. Consider a GAUGE (e.g. a rate or point-in-time count) for alerting.' }]
       : [];
   const thresholdHints = [...thresholdValidation, ...counterThresholdWarning];
+  // Ce que cette configuration coûtera au broker, dit avant de l'enregistrer plutôt qu'après, par
+  // une jauge de durée de cycle.
+  const refreshCost = isTemplate ? describeRefreshCost(templateType, templateParams) : null;
   const hasBlockingErrors = [...nameValidation, ...sqlValidation, ...templateValidation, ...ddlValidation, ...thresholdValidation]
     .some(m => m.level === 'error');
 
@@ -1611,7 +1928,7 @@ const Metrics: React.FC = () => {
                               .catch(() => toast('Failed to refresh latest message', 'error'))
                               .finally(() => setLabelPreviewLoading(false));
                           }}
-                          className="shrink-0 text-on-surface-variant hover:text-primary transition-colors"
+                          className="shrink-0 inline-flex items-center justify-center w-6 h-6 text-on-surface-variant hover:text-primary transition-colors"
                           title="Refresh latest message" aria-label="Refresh the latest message"
                         >
                           <span className={`material-symbols-outlined text-base ${labelPreviewLoading ? 'animate-spin' : ''}`}>refresh</span>
@@ -1697,7 +2014,7 @@ const Metrics: React.FC = () => {
                         {f => (
                           <Input {...f} type="number" inputMode="decimal"
                             value={editingMetric.warningThreshold ?? ''}
-                            invalid={thresholdValidation.length > 0}
+                            invalid={thresholdValidation.some(v => v.level === 'error')}
                             aria-describedby={thresholdHints.length > 0 ? 'metric-threshold-hints' : undefined}
                             onChange={e => setEditingMetric(m => ({ ...m, warningThreshold: e.target.value ? parseFloat(e.target.value) : null }))}
                             className="bg-warning/5" />
@@ -1707,13 +2024,19 @@ const Metrics: React.FC = () => {
                         {f => (
                           <Input {...f} type="number" inputMode="decimal"
                             value={editingMetric.criticalThreshold ?? ''}
-                            invalid={thresholdValidation.length > 0}
+                            invalid={thresholdValidation.some(v => v.level === 'error')}
                             aria-describedby={thresholdHints.length > 0 ? 'metric-threshold-hints' : undefined}
                             onChange={e => setEditingMetric(m => ({ ...m, criticalThreshold: e.target.value ? parseFloat(e.target.value) : null }))}
                             className="bg-error/5" />
                         )}
                       </Field>
                     </div>
+                    {refreshCost && (
+                      <p className="text-[10px] text-on-surface-variant flex items-start gap-1 pt-0.5">
+                        <span aria-hidden="true" className="material-symbols-outlined text-[11px] shrink-0 mt-px">bolt</span>
+                        {refreshCost}
+                      </p>
+                    )}
                     {thresholdHints.length > 0 && (
                       <div id="metric-threshold-hints">
                         {thresholdHints.map((m, i) => (
@@ -1855,6 +2178,11 @@ const Metrics: React.FC = () => {
                         </div>
                         </InfoTooltip>
                       ) : (
+                        /* L'aperçu rendait `Object.entries(summary)` tel quel : la phrase entière
+                           de `scopeNote` dans une puce de 10 px, et `warnings` par `String(v)`,
+                           soit « a,b ». C'était aussi un *second* rendu de ce que
+                           `describeMetricScope` fait déjà — deux réponses à une question, à un
+                           écran de distance de la carte. */
                         <div className="space-y-1.5">
                           <span className="flex items-center gap-2">
                             <span className="material-symbols-outlined text-sm">check_circle</span>
@@ -1863,14 +2191,30 @@ const Metrics: React.FC = () => {
                               <span className="text-success ml-2">({previewResult.rows.length} rows total)</span>
                             )}
                           </span>
-                          {previewResult.summary && Object.keys(previewResult.summary).length > 0 && (
-                            <div className="flex flex-wrap gap-1.5 pt-0.5">
-                              {Object.entries(previewResult.summary).map(([k, v]) => (
-                                <span key={k} className="px-2 py-0.5 rounded bg-success/10 text-success text-[10px]">
-                                  {k}: <strong>{String(v)}</strong>
+                          {previewMeasurement.length > 0 && (
+                            <div className="flex flex-wrap gap-3 pt-0.5">
+                              {previewMeasurement.map(part => (
+                                <span key={part.label} title={part.detail} className="flex items-baseline gap-1">
+                                  <span className="opacity-60">{part.label}</span>
+                                  <strong>{part.value}</strong>
                                 </span>
                               ))}
                             </div>
+                          )}
+                          {previewChips.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 pt-0.5">
+                              {previewChips.map(chip => (
+                                <span key={chip.label} title={chip.detail}
+                                  className={`px-2 py-0.5 rounded text-[10px] ${
+                                    chip.tone === 'warning' ? 'bg-warning/10 text-warning' : 'bg-success/10 text-success'
+                                  }`}>
+                                  {chip.label}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          {previewNote && (
+                            <p className="font-sans text-success/80 leading-relaxed pt-0.5">{previewNote}</p>
                           )}
                         </div>
                       )}

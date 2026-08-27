@@ -143,11 +143,19 @@ Interactive elements below the 24 × 24 CSS px of WCAG 2.5.8 (Target Size, Minim
 | page | ratio | page | ratio |
 |---|---|---|---|
 | sql-editor | 39 / 113 | audit | 23 / 55 |
-| stream-flow | 19 / 44 | metrics | 8 / 54 |
+| stream-flow | 19 / 44 | metrics | 7 / 56 |
 | topic-explorer | 3 / 59 | dashboard | 5 / 89 |
 | data-model | 7 / 81 | cluster | 1 / 21 |
 
 (The worse of phone and desktop for each page, which is what `--check` gates on.)
+
+`metrics` moved from 8 to 7 by the same route `Checkbox` and `Switch` took, and the route is the
+point: three icon buttons on the metric card — copy the SQL, copy the alert rule, refresh the
+latest message — were all `16 × 26`, the icon's own size with no hit area around it. One control
+written three times, not three problems. They carry a 24 × 24 box now, and the **budget went down
+rather than up**, which is what stops the debt drifting back. The alert-rule button is what
+surfaced it: adding it took the page to 10 against a budget of 8 and the gate refused the change,
+which is the gate doing exactly what it exists for.
 
 **These counts barely move between 390 and 1440** — the elements do not change size with the
 viewport, only their number does, as a narrow layout adds a drawer trigger or drops a control. So

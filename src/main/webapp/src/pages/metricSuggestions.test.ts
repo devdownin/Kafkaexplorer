@@ -33,6 +33,7 @@ function metric(overrides: Partial<MetricConfig> = {}): MetricConfig {
     executionMode: 'TEMPLATE_BOUNDED_SCAN',
     labelTopic: 'a.topic',
     labelFields: [],
+    componentHistory: null,
     ...overrides,
   };
 }

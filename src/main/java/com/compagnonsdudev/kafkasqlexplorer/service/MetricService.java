@@ -37,6 +37,7 @@ import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -44,7 +45,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -97,6 +97,65 @@ public class MetricService {
      */
     private static final String DEFAULT_LATENCY_READ_MODE = "latest-offset";
     private static final Set<String> READ_MODES = Set.of("earliest-offset", "latest-offset");
+    /**
+     * What a count delta may do with its two numbers.
+     *
+     * <p>Named once and read twice — by the save-time validation and by the message the compute
+     * switch throws on an unrecognised value — because the two drifting apart is how a metric
+     * comes to be accepted by the API and then to fail on every refresh for ever.
+     */
+    private static final Set<String> DELTA_OPERATIONS =
+        Set.of("LEFT_MINUS_RIGHT", "ABS_DIFF", "RATIO", "PERCENT_GAP");
+
+    /**
+     * Where a count delta gets its two numbers.
+     *
+     * <p>{@code RECORDS} runs the two queries and counts the rows that come back — the original
+     * behaviour, and the only one that can honour a {@code WHERE}. {@code OFFSETS} asks the log
+     * instead: {@code endOffsets − beginningOffsets} summed over the partitions, which
+     * {@link KafkaAdminService#getTopicsSize} already answers <em>for both topics in one call</em>.
+     * That is not a faster version of the same measurement, it is a cheaper and a <em>larger</em>
+     * one: no record is read or parsed, the direct reader's 100 000-record ceiling does not apply,
+     * so a topic of any size is countable, and the two sides come out of the same pair of
+     * {@code listOffsets} responses — which removes the interval D4 is about rather than leaning
+     * it in the safe direction.
+     *
+     * <p>What it counts is <b>offsets produced, not records present</b>: a transaction marker takes
+     * one, and a record later compacted away still counts, because it was produced. That is the
+     * right answer to "how many did this stage emit", which is what a silent-drop alarm between
+     * two stages asks, and the wrong one to "how many are in there now" on a compacted topic.
+     * {@code getTopicActivity} draws the same distinction for the dashboard's sparkline.
+     *
+     * <p>{@code AUTO} takes offsets when the metric names both topics and neither query is
+     * anything but a plain whole-topic count — the case where the two measurements answer the same
+     * question — and records otherwise. Whichever it picked is in the summary; it is never silent.
+     */
+    private static final Set<String> COUNT_MODES = Set.of("AUTO", "OFFSETS", "RECORDS");
+
+    /**
+     * What the two numbers are compared over.
+     *
+     * <p>{@code TOTAL} compares the counts themselves, which is what this template always did and
+     * what makes it lose its sensitivity as history accumulates: on two topics running for months,
+     * a total outage that started an hour ago is a fraction of a percent of the lifetime totals,
+     * under every threshold anyone would set. {@code SINCE_LAST_REFRESH} compares what each side
+     * produced since the previous cycle, which is a quantity a threshold can fire on. Its first
+     * refresh publishes nothing and says why: there is no previous cycle to subtract.
+     */
+    private static final Set<String> COUNT_WINDOWS = Set.of("TOTAL", "SINCE_LAST_REFRESH");
+
+    /** A plain whole-topic count: the shape offsets answer exactly. */
+    private static final Pattern WHOLE_TOPIC_COUNT = Pattern.compile(
+        "(?is)^\\s*SELECT\\s+COUNT\\s*\\(\\s*\\*\\s*\\)\\s*(?:AS\\s+`?\\w+`?\\s*)?"
+            + "FROM\\s+`?\\w[\\w.]*`?\\s*;?\\s*$");
+
+    /** metricId → the counts the previous refresh saw, for a windowed comparison. */
+    private final Map<String, double[]> countDeltaBaselines = new ConcurrentHashMap<>();
+    /** A window shorter than a second is not a window; one longer than a week is not a metric. */
+    private static final long MIN_LATENCY_WINDOW_MS = 1_000L;
+    private static final long MAX_LATENCY_WINDOW_MS = 7L * 24 * 3_600_000L;
+    private static final long MIN_REFRESH_INTERVAL_MS = 1_000L;
+    private static final long MAX_REFRESH_INTERVAL_MS = 24L * 3_600_000L;
     private static final int MAX_TEMPLATE_MAX_ROWS = 1_000_000;
     private static final long MAX_TEMPLATE_TIMEOUT_MS = 600_000L;
 
@@ -151,19 +210,47 @@ public class MetricService {
      */
     private static final String OBSERVED_AT_COLUMN = "__observed_at";
 
-    /** Columns that are never labels. */
+    /**
+     * Columns that are never labels: the value itself, and anything marked with the {@code __}
+     * prefix.
+     *
+     * <p>The prefix is a rule rather than a list because the alternative was found the hard way.
+     * Every other column becomes a Prometheus label, which is right for a GROUP BY value and
+     * ruinous for a number that moves: a count delta put {@code left_value} and {@code right_value}
+     * in its row, so on any live topic the label set changed at <em>every refresh</em> and each
+     * series carried exactly one data point. The metric could not be graphed or alerted on at all
+     * — the one thing it exists for — and nothing said so, because the registry stayed small:
+     * {@code pruneStaleSeries} deregistered the previous series each cycle, which is the tidy
+     * version of the same defect.
+     */
     private static boolean isReservedColumn(String column) {
-        return "metric_value".equalsIgnoreCase(column) || OBSERVED_AT_COLUMN.equalsIgnoreCase(column);
+        return "metric_value".equalsIgnoreCase(column) || (column != null && column.startsWith("__"));
     }
 
     /** Companion series: one gauge per (metric, name), carrying no row labels. */
     private static final String LAST_SUCCESS_SERIES = "explorer_metric_last_success_timestamp_seconds";
     private static final String MATCH_RATE_SERIES = "explorer_metric_correlation_match_rate";
-    private static final List<String> COMPANION_SERIES = List.of(LAST_SUCCESS_SERIES, MATCH_RATE_SERIES);
+    /**
+     * The p95 of a correlated latency, for the metric types that carry no quantiles of their own.
+     *
+     * <p>A {@code SUMMARY} already publishes {@code explorer_metric_summary{quantile="0.95"}} and a
+     * {@code HISTOGRAM} its buckets, so publishing this beside them would be two answers to one
+     * question — the shape this codebase keeps removing. What lacks one is a {@code GAUGE}, where
+     * only the average comes out and the p95 was computed, put in the summary and alerted on by
+     * nobody. A latency alert is set on the tail: an average holds still while the worst decile
+     * doubles, which is the case the whole template exists to catch.
+     */
+    private static final String LATENCY_P95_SERIES = "explorer_metric_correlation_latency_p95_ms";
+    /** How long the last full refresh cycle took, which is what makes its cost visible at all. */
+    private static final String REFRESH_DURATION_SERIES = "explorer_metrics_refresh_duration_seconds";
+    private static final List<String> COMPANION_SERIES =
+        List.of(LAST_SUCCESS_SERIES, MATCH_RATE_SERIES, LATENCY_P95_SERIES);
 
     // ── metric state ─────────────────────────────────────────────────────────
     private final Map<String, MetricConfig>              metrics           = new ConcurrentHashMap<>();
     private final Map<String, LinkedList<Double>>        historyMap        = new ConcurrentHashMap<>();
+    /** metricId → (series name → rolling values), the components of the value in {@link #historyMap}. */
+    private final Map<String, Map<String, LinkedList<Double>>> componentHistoryMap = new ConcurrentHashMap<>();
     /** metricId → (series name → holder), for the gauges that describe the metric rather than its rows. */
     private final Map<String, Map<String, AtomicReference<Double>>> companionHolders = new ConcurrentHashMap<>();
     private final Map<String, Map<String, Gauge>>                   companionMeters  = new ConcurrentHashMap<>();
@@ -219,6 +306,24 @@ public class MetricService {
 
     /** Serializes scheduled and on-demand refreshes so meter state is never mutated concurrently. */
     private final java.util.concurrent.locks.ReentrantLock refreshLock = new java.util.concurrent.locks.ReentrantLock();
+
+    /**
+     * The loop's own tick, read from the same property the schedule is built on.
+     *
+     * <p>The field initializer is the value a hand-constructed instance keeps: {@code @Value} is
+     * applied by the container, and every test here builds the service with {@code new}.
+     */
+    @Value("${explorer.metrics-refresh-rate:30000}")
+    private long metricsRefreshRateMs = 30_000L;
+
+    /** metricId → when its last refresh started, for the metrics that ask for a slower cadence. */
+    private final Map<String, Long> lastRefreshStartedAt = new ConcurrentHashMap<>();
+
+    /** Holder for {@link #REFRESH_DURATION_SERIES}, registered on the first cycle that completes. */
+    private final AtomicReference<Double> refreshDurationHolder = new AtomicReference<>(0.0);
+    private volatile boolean refreshDurationRegistered;
+    /** Said once, not once per cycle: a warning repeated every tick is one people filter out. */
+    private volatile boolean refreshOverrunReported;
 
     public MetricService(FlinkSqlService flinkSqlService, MeterRegistry meterRegistry,
                          KafkaConfig kafkaConfig, ExplorerConfig explorerConfig,
@@ -367,7 +472,7 @@ public class MetricService {
             validateMetric(normalized);
             executeCreateTableIfPresent(normalized);
 
-            MetricComputationResult result = computeMetric(normalized);
+            MetricComputationResult result = computeMetric(normalized, true);
             Map<String, Object> summary = new LinkedHashMap<>(result.summary());
             if (MetricExecutionMode.FLINK_MANAGED_JOB.name().equals(normalized.executionMode())) {
                 summary.put("plannedExecutionMode", MetricExecutionMode.FLINK_MANAGED_JOB.name());
@@ -425,6 +530,7 @@ public class MetricService {
     public void delete(String id) {
         metrics.remove(id);
         historyMap.remove(id);
+        componentHistoryMap.remove(id);
         purgeMeters(id);
         persistToKafka(new MetricConfig(id, null, null, null, null, null, null, null, null, "DELETED"));
     }
@@ -443,6 +549,12 @@ public class MetricService {
         distributionWatermarks.remove(id);
         companionHolders.remove(id);
         companionMeters.remove(id);
+        // The interval-comparison baseline and the cadence bookkeeping are per-metric state of the
+        // same kind. A metric deleted and recreated under one id, or one whose two queries were
+        // edited, would otherwise subtract from a baseline measured for a different question — the
+        // "count went backwards" refusal catches it, but as a lost refresh rather than as nothing.
+        countDeltaBaselines.remove(id);
+        lastRefreshStartedAt.remove(id);
         meterRegistry.find("explorer_metric_gauge").tag("metric_id", id).meters().forEach(meterRegistry::remove);
         meterRegistry.find("explorer_metric_counter").tag("metric_id", id).meters().forEach(meterRegistry::remove);
         meterRegistry.find("explorer_metric_histogram").tag("metric_id", id).meters().forEach(meterRegistry::remove);
@@ -466,50 +578,45 @@ public class MetricService {
     // ── Scheduled refresh ─────────────────────────────────────────────────────
 
     /**
-     * What "bounded" actually takes, which is two options rather than one.
+     * The scan option a metric asks for, and the one it deliberately does not.
      *
      * <p>This was a lone {@code scan.startup.mode='earliest-offset'} under a comment promising the
      * query "reads all data that exists in Kafka at query start time, then terminates (no
      * indefinite streaming)". That sentence is the contract of {@code scan.bounded.mode};
-     * {@code scan.startup.mode} says where a scan <em>begins</em>. The two are not alternatives
-     * and the missing one is the one that ends the scan.
+     * {@code scan.startup.mode} says where a scan <em>begins</em>. Nothing bounded anything,
+     * therefore, and the option that was there changed nothing either — {@code DdlGeneratorService}
+     * already writes {@code earliest-offset} into every table it generates. The environment is
+     * built {@code inStreamingMode()} ({@code FlinkConfig}), so the source stayed unbounded and a
+     * metric's read either blocked until its own timeout or came back with the first rows an
+     * endless scan happened to yield.
      *
-     * <p>Nothing bounded anything, therefore, and the option that was there changed nothing
-     * either: {@code DdlGeneratorService} already writes {@code earliest-offset} into every table
-     * it generates, which is every table these metrics read. The environment is built
-     * {@code inStreamingMode()} ({@code FlinkConfig}), so the source stayed unbounded and each
-     * side of a two-query metric either blocked until its own timeout — 30 s, twice, on a 30 s
-     * schedule — or came back with the first rows an endless scan happened to yield: for a
-     * projection the oldest records, and for {@code COUNT(*)} the head of a retract changelog,
-     * whose first row is {@code +I(1)}.
+     * <p><b>The bounded option was added, and then measured, and this connector does not have
+     * it.</b> {@code flink-connector-kafka:5.0.0-2.2} answers a hint carrying it with
+     * {@code ValidationException: Unsupported options found for 'kafka'. Unsupported options:
+     * scan.bounded.mode, scan.bounded.specific-offsets, scan.bounded.timestamp-millis} — observed
+     * in CI by {@code KafkaClusterIntegrationTest}, which exists to ask exactly that. Worse than
+     * useless: {@code FlinkSqlService} reads that refusal as an <em>engine</em> failure, so it
+     * falls back to the direct reader and returns rows with no error at all — the caller cannot
+     * see the refusal, a degrade-once latch here could never fire on it, and three such queries
+     * would trip the process-wide circuit breaker that takes the Flink planner out for every
+     * other screen.
+     *
+     * <p>So the hint carries the startup mode alone, which is what this stack can express. What
+     * actually stopped the templates depending on an unbounded planner scan is a different fix:
+     * the shapes they generate are asked of the direct reader by name ({@link #isSingleTableRead},
+     * {@code QueryRequest.directRead}), which answers a count with one row and no changelog.
+     * Restore the bounded option the day a connector bump supports it — the integration test says
+     * which day that is, by starting to fail.
      */
-    private static final String SCAN_BOUNDED_OPTION = "'scan.bounded.mode'='latest-offset'";
     private static final String SCAN_STARTUP_EARLIEST = "'scan.startup.mode'='earliest-offset'";
-
-    /** Option names, used to recognise a connector that will not take them — see the latch below. */
-    private static final List<String> SCAN_OPTION_NAMES = List.of("scan.bounded.mode");
 
     private static final Pattern FROM_TABLE = Pattern.compile("(?i)\\bFROM\\b\\s+(\\w[\\w.]*)");
 
     private static final Pattern JOIN_KEYWORD = Pattern.compile("(?i)\\bJOIN\\b");
 
-    /**
-     * Raised once, for the life of the process, when a query fails on the scan options themselves.
-     *
-     * <p>The options above are the connector's, not ours, and a deployment can be pointed at a
-     * Kafka connector that predates {@code scan.bounded.mode} — on which asking for it turns every
-     * template metric from slow into broken. So a failure that names the option earns one retry
-     * without it, and the answer is remembered rather than re-derived on every refresh: the same
-     * degrade-once-and-remember shape {@code OpenAiCompatibleLlmClient} uses for a gateway that
-     * refuses {@code response_format}. What it costs when it latches is stated in the metric's
-     * own summary, never inferred from silence.
-     */
-    private final AtomicBoolean scanOptionsRefused = new AtomicBoolean(false);
-
-    /** The scan bounds a template asks for, or null once the connector has refused them. */
+    /** The scan option a template read asks for. */
     private String scanHint() {
-        if (scanOptionsRefused.get()) return null;
-        return "/*+ OPTIONS(" + SCAN_STARTUP_EARLIEST + "," + SCAN_BOUNDED_OPTION + ") */";
+        return "/*+ OPTIONS(" + SCAN_STARTUP_EARLIEST + ") */";
     }
 
     /**
@@ -552,13 +659,6 @@ public class MetricService {
         if (body.substring(m.end(1)).stripLeading().startsWith(",")) return false;
         // A second FROM is a shape this reader cannot honour either.
         return !m.find();
-    }
-
-    /** Did this failure come from the scan options rather than from the query? */
-    private boolean refusesScanOptions(QueryResult result) {
-        if (result == null || result.error() == null) return false;
-        String error = result.error().toLowerCase(Locale.ROOT);
-        return SCAN_OPTION_NAMES.stream().anyMatch(error::contains);
     }
 
     private MetricConfig normalizeMetric(MetricConfig metric) {
@@ -614,6 +714,17 @@ public class MetricService {
             throw new IllegalArgumentException("FLINK_MANAGED_JOB is only available for template metrics");
         }
 
+        // Not a template parameter by nature, but templateParams is this record's free-form
+        // per-metric bag and already carries every other knob; a component of its own would be a
+        // forty-three-call-site change for one number. Checked here, for any metric.
+        long refreshIntervalMs = getLongParam(params, "refreshIntervalMs", 0L);
+        if (refreshIntervalMs != 0L
+            && (refreshIntervalMs < MIN_REFRESH_INTERVAL_MS || refreshIntervalMs > MAX_REFRESH_INTERVAL_MS)) {
+            throw new IllegalArgumentException("refreshIntervalMs must be between "
+                + MIN_REFRESH_INTERVAL_MS + " and " + MAX_REFRESH_INTERVAL_MS
+                + ", or 0 to refresh on every cycle (was " + refreshIntervalMs + ")");
+        }
+
         switch (templateType) {
             case RAW_SQL -> {
                 if (metric.sql() == null || metric.sql().isBlank()) {
@@ -621,17 +732,73 @@ public class MetricService {
                 }
             }
             case TOPIC_COUNT_DELTA -> {
-                requireParam(params, "leftSql");
-                requireParam(params, "rightSql");
+                /*
+                 * Two shapes, and each needs what it reads. A records count needs the two queries;
+                 * an offsets count needs the two topics and no SQL at all, since it asks the log
+                 * rather than the query engine. AUTO needs whichever it will resolve to, which is
+                 * why the check follows resolveCountMode rather than restating its rule.
+                 */
+                String mode = resolveCountMode(params,
+                    getStringParam(params, "leftTopic", ""), getStringParam(params, "rightTopic", ""));
+                if ("OFFSETS".equals(mode)) {
+                    requireParam(params, "leftTopic");
+                    requireParam(params, "rightTopic");
+                } else {
+                    requireParam(params, "leftSql");
+                    requireParam(params, "rightSql");
+                }
                 validateScanParams(params, DEFAULT_TEMPLATE_READ_MODE);
+                // Checked here rather than from inside the refresh loop, where an unrecognised
+                // value threw every thirty seconds for ever on a metric the API had answered 200
+                // to. It is the rule CONSUMER_TIME_LAG's aggregation follows nine lines below,
+                // and the last of this template's parameters that did not follow it.
+                String operation = getStringParam(params, "operation", "LEFT_MINUS_RIGHT")
+                    .toUpperCase(Locale.ROOT);
+                if (!DELTA_OPERATIONS.contains(operation)) {
+                    throw new IllegalArgumentException("TOPIC_COUNT_DELTA operation must be one of "
+                        + DELTA_OPERATIONS + " (was '" + operation + "')");
+                }
+                String countBy = getStringParam(params, "countBy", "AUTO").toUpperCase(Locale.ROOT);
+                if (!COUNT_MODES.contains(countBy)) {
+                    throw new IllegalArgumentException("countBy must be one of " + COUNT_MODES
+                        + " (was '" + countBy + "')");
+                }
+                String window = getStringParam(params, "window", "TOTAL").toUpperCase(Locale.ROOT);
+                if (!COUNT_WINDOWS.contains(window)) {
+                    throw new IllegalArgumentException("window must be one of " + COUNT_WINDOWS
+                        + " (was '" + window + "')");
+                }
                 if (!"GAUGE".equals(metricType)) {
                     throw new IllegalArgumentException("TOPIC_COUNT_DELTA supports GAUGE metrics only");
                 }
             }
             case TOPIC_TRANSIT_LATENCY -> {
-                requireParam(params, "sourceSql");
-                requireParam(params, "targetSql");
+                String sourceSql = requireParam(params, "sourceSql");
+                String targetSql = requireParam(params, "targetSql");
                 validateScanParams(params, DEFAULT_LATENCY_READ_MODE);
+                long windowMs = getLongParam(params, "windowMs", 0L);
+                if (windowMs != 0L
+                    && (windowMs < MIN_LATENCY_WINDOW_MS || windowMs > MAX_LATENCY_WINDOW_MS)) {
+                    throw new IllegalArgumentException("windowMs must be between "
+                        + MIN_LATENCY_WINDOW_MS + " and " + MAX_LATENCY_WINDOW_MS
+                        + ", or 0 to bound the two reads by row count instead (was " + windowMs + ")");
+                }
+                /*
+                 * A window is a direct-reader instruction, so a side the planner will answer
+                 * cannot honour it — and a window silently ignored on one side is worse than none
+                 * at all: the two reads would cover different stretches of time while the summary
+                 * says they cover the same one. Refused where it can still be corrected, on the
+                 * same rule as the operation and the scan parameters beside it.
+                 */
+                if (windowMs != 0L && !(isSingleTableRead(sourceSql) && isSingleTableRead(targetSql))) {
+                    throw new IllegalArgumentException("windowMs bounds the read by time, which "
+                        + "only the direct Kafka reader can do — and it answers a single-table "
+                        + "SELECT. The "
+                        + (isSingleTableRead(sourceSql) ? "target" : "source")
+                        + " query joins or nests, so it goes to the Flink planner, which would "
+                        + "read a different stretch of time. Simplify that query, or leave "
+                        + "windowMs at 0 and bound both sides by maxRowsPerSide.");
+                }
                 if (!Set.of("GAUGE", "HISTOGRAM", "SUMMARY").contains(metricType)) {
                     throw new IllegalArgumentException("TOPIC_TRANSIT_LATENCY supports GAUGE, HISTOGRAM or SUMMARY");
                 }
@@ -695,10 +862,16 @@ public class MetricService {
         }
     }
 
-    private MetricComputationResult computeMetric(MetricConfig config) {
+    /**
+     * @param preview a dry run for the editor rather than a refresh. It must not touch state a
+     *                running metric owns — a windowed count delta keeps the previous cycle's
+     *                counts, and previewing one would leave it comparing against an instant the
+     *                operator was only looking at.
+     */
+    private MetricComputationResult computeMetric(MetricConfig config, boolean preview) {
         return switch (MetricTemplateType.fromValue(config.templateType())) {
             case RAW_SQL -> computeRawSqlMetric(config);
-            case TOPIC_COUNT_DELTA -> computeCountDeltaMetric(config);
+            case TOPIC_COUNT_DELTA -> computeCountDeltaMetric(config, preview);
             case TOPIC_TRANSIT_LATENCY -> computeTransitLatencyMetric(config);
             case CONSUMER_TIME_LAG -> computeConsumerTimeLagMetric(config);
         };
@@ -785,124 +958,361 @@ public class MetricService {
         );
     }
 
-    private MetricComputationResult computeCountDeltaMetric(MetricConfig config) {
+    /** True when the statement is a plain whole-topic count, which offsets answer exactly. */
+    static boolean isWholeTopicCount(String sql) {
+        return sql != null && WHOLE_TOPIC_COUNT.matcher(sql.trim()).matches();
+    }
+
+    /** Both sides' numbers, however they were obtained. */
+    /**
+     * @param sharedScan the two counts came out of one read of one topic, so they describe the
+     *                   same instant — which is what makes {@code gapMs} a zero that was measured
+     *                   rather than one nobody took.
+     */
+    private record CountRead(Double left, Double right, String error, String engine, long gapMs,
+                             List<String> warnings, boolean sharedScan) {
+        static CountRead failed(String error) {
+            return new CountRead(null, null, error, null, 0L, List.of(), false);
+        }
+        CountRead(Double left, Double right, String error, String engine, long gapMs,
+                  List<String> warnings) {
+            this(left, right, error, engine, gapMs, warnings, false);
+        }
+    }
+
+    /**
+     * Both counts out of the log's offsets, in one call and therefore at one instant.
+     *
+     * <p>A topic that does not exist is refused rather than counted: {@code getTopicsSize} answers
+     * {@code 0} for an unknown name exactly as it does for an empty topic, and a 0 against a real
+     * count on the other side reads as total loss — the invented critical finding this codebase
+     * keeps removing.
+     */
+    private CountRead countByOffsets(String leftTopic, String rightTopic) {
+        if (leftTopic.isBlank() || rightTopic.isBlank()) {
+            return CountRead.failed("An offset count needs both topics named (leftTopic and "
+                + "rightTopic): it asks the log for its own offsets rather than running a query.");
+        }
+        List<String> wanted = leftTopic.equals(rightTopic)
+            ? List.of(leftTopic) : List.of(leftTopic, rightTopic);
+        List<String> missing;
+        try {
+            List<String> known = kafkaAdminService.listTopics();
+            missing = wanted.stream().filter(t -> !known.contains(t)).toList();
+        } catch (Exception e) {
+            return CountRead.failed("The cluster's topics could not be listed, so an offset count "
+                + "cannot tell an absent topic from an empty one: " + SqlErrorClassifier.explain(e));
+        }
+        if (!missing.isEmpty()) {
+            return CountRead.failed("No topic named " + String.join(" or ", missing)
+                + " on this cluster. An offset count is refused rather than reported as zero: a "
+                + "zero against a real count on the other side reads as total loss.");
+        }
+
+        long startedAt = System.currentTimeMillis();
+        Map<String, Long> sizes = kafkaAdminService.getTopicsSize(wanted);
+        Long left = sizes.get(leftTopic);
+        Long right = sizes.get(rightTopic);
+        if (left == null || right == null) {
+            return CountRead.failed("The broker did not answer with offsets for both topics.");
+        }
+        // One pair of listOffsets responses covers both sides, so the interval between the two
+        // measurements is genuinely zero — see the ordering note on the records path below, which
+        // exists because that path cannot say the same. The call's own duration is not that
+        // interval and is not reported as one.
+        long unusedCallDuration = System.currentTimeMillis() - startedAt;
+        log.debug("Counted '{}' and '{}' from offsets in {} ms", LogSafe.name(leftTopic),
+            LogSafe.name(rightTopic), unusedCallDuration);
+        return new CountRead(left.doubleValue(), right.doubleValue(), null, "KAFKA_OFFSETS",
+            0L, List.of());
+    }
+
+    /** Both counts by running the two queries, which is the only way to honour a predicate. */
+    private CountRead countByRecords(Map<String, Object> params, int maxRows, long timeoutMs,
+                                     String readMode) {
+        String leftSql = requireParam(params, "leftSql");
+        String rightSql = requireParam(params, "rightSql");
+        /*
+         * The right side is read first, and the order is the measurement's, not the form's.
+         *
+         * Two counts cannot be taken at one instant on this path — a whole query separates them.
+         * So the arithmetic leans, and the only choice is which way. Every operation here grows
+         * with the left side, and the panel proposes the upstream topic there with a threshold
+         * that fires when the value is high — so reading the left side *last* lets the traffic of
+         * the interval land in it, and a gap that survives that is a real one. Read the other way
+         * round, the same traffic lands in the denominator and the gap is understated: the metric
+         * under-reports exactly the loss it exists to report.
+         *
+         * It is the rule KafkaAdminService already follows for consumer lag — committed offsets
+         * first, log end offsets last. ABS_DIFF is the one operation this cannot help: it is
+         * symmetric, so no ordering is conservative for it, and gapMs is what says how much room
+         * the interval left. The offsets path above needs none of this.
+         */
+        long rightReadAt = System.currentTimeMillis();
+        FlinkSqlService.QueryPair pair = executeMetricPair(
+            rightSql, leftSql, maxRows, timeoutMs, readMode);
+        QueryResult rightResult = pair.first();
+        if (rightResult.error() != null) return CountRead.failed("Right query: " + rightResult.error());
+        QueryResult leftResult = pair.second();
+        if (leftResult.error() != null) return CountRead.failed("Left query: " + leftResult.error());
+        /*
+         * When both sides are counts over the same topic they came out of one read, so there is no
+         * interval between them to lean either way — the gap is zero because it *is* zero, the
+         * same thing the offsets count gets for a different reason. Two different topics still pay
+         * a whole query, and the note above is what that ordering is for.
+         */
+        long gapMs = pair.sharedScan() ? 0L : System.currentTimeMillis() - rightReadAt;
+
+        SideRead left = aggregateValue(leftResult, maxRows, "left");
+        if (left.error() != null) return CountRead.failed(left.error());
+        SideRead right = aggregateValue(rightResult, maxRows, "right");
+        if (right.error() != null) return CountRead.failed(right.error());
+
+        // A floor is not a count, and two floors compared read as no gap at all — which is the one
+        // answer this metric must never give by accident. Offsets have no such ceiling, and the
+        // message says so rather than leaving the operator without a way out.
+        if (left.capped() || right.capped()) {
+            boolean both = left.capped() && right.capped();
+            return CountRead.failed(
+                (both ? "Both counts stopped" : (left.capped() ? "The left count stopped" : "The right count stopped"))
+                + " on the direct reader's " + FlinkSqlService.AGGREGATE_SCAN_RECORDS
+                + "-record ceiling, so " + (both ? "they are floors" : "it is a floor")
+                + " rather than a total. A gap measured between floors reads as no gap, so nothing "
+                + "is published. Count these topics by offsets instead (countBy = OFFSETS), which "
+                + "reads no records and has no ceiling.");
+        }
+
+        List<String> warnings = new ArrayList<>();
+        for (QueryResult result : List.of(rightResult, leftResult)) {
+            if (result.warnings() == null) continue;
+            for (String warning : result.warnings()) {
+                if (warning != null && !warning.isBlank() && !warnings.contains(warning)) {
+                    warnings.add(warning);
+                }
+            }
+        }
+        String engine = Objects.equals(leftResult.engine(), rightResult.engine())
+            ? String.valueOf(leftResult.engine())
+            : leftResult.engine() + "/" + rightResult.engine();
+        return new CountRead(left.value(), right.value(), null, engine, gapMs, warnings,
+            pair.sharedScan());
+    }
+
+    /** Offsets when both sides ask the question offsets answer, records otherwise. */
+    private String resolveCountMode(Map<String, Object> params, String leftTopic, String rightTopic) {
+        String requested = getStringParam(params, "countBy", "AUTO").toUpperCase(Locale.ROOT);
+        if (!"AUTO".equals(requested)) return requested;
+        if (leftTopic.isBlank() || rightTopic.isBlank()) return "RECORDS";
+        String leftSql = getStringParam(params, "leftSql", "");
+        String rightSql = getStringParam(params, "rightSql", "");
+        boolean plain = (leftSql.isBlank() || isWholeTopicCount(leftSql))
+            && (rightSql.isBlank() || isWholeTopicCount(rightSql));
+        return plain ? "OFFSETS" : "RECORDS";
+    }
+
+    private MetricComputationResult computeCountDeltaMetric(MetricConfig config, boolean preview) {
         Map<String, Object> params = config.templateParams() != null ? config.templateParams() : Map.of();
         int maxRows = getIntParam(params, "maxRowsPerSide", DEFAULT_TEMPLATE_MAX_ROWS);
         long timeoutMs = getLongParam(params, "timeoutMs", DEFAULT_TEMPLATE_TIMEOUT_MS);
         // A count must see the whole topic, so this side is read from the beginning whatever the
         // latency template does — the two templates ask different questions of the same broker.
         String readMode = getStringParam(params, "readMode", DEFAULT_TEMPLATE_READ_MODE);
+        String leftTopic = getStringParam(params, "leftTopic", "");
+        String rightTopic = getStringParam(params, "rightTopic", "");
+        String countBy = resolveCountMode(params, leftTopic, rightTopic);
 
-        String leftSql = requireParam(params, "leftSql");
-        String rightSql = requireParam(params, "rightSql");
-        /*
-         * The right side is read first, and the order is the measurement's, not the form's.
-         *
-         * Two counts cannot be taken at one instant — a whole query separates them, and on the
-         * shipped defaults that can be a 30 s timeout plus a hundred-thousand-record scan. So the
-         * arithmetic leans, and the only choice is which way. Every operation here grows with the
-         * left side (LEFT_MINUS_RIGHT, RATIO and PERCENT_GAP all do), and the panel proposes the
-         * upstream topic on the left with a threshold that fires when the value is high — so
-         * reading the left side *last* lets the traffic of the interval land in it, and a gap that
-         * survives that is a real one. Read the other way round, the same traffic lands in the
-         * denominator and the gap is understated: the metric under-reports exactly the loss it
-         * exists to report, which is the failure this ordering exists to prevent.
-         *
-         * It is the rule KafkaAdminService already follows for consumer lag — committed offsets
-         * first, log end offsets last, "so a consumer committing between the two calls can only
-         * make the lag look larger". ABS_DIFF is the one operation this cannot help: it is
-         * symmetric, so no ordering is conservative for it, and readGapMs below is what says how
-         * much room the interval left.
-         */
-        long readStartedAt = System.currentTimeMillis();
-        QueryResult rightResult =
-            executeMetricQuery(rightSql, maxRows, timeoutMs, readMode, isSingleTableRead(rightSql));
-        if (rightResult.error() != null) {
-            return MetricComputationResult.error("Right query: " + rightResult.error());
-        }
-        long rightReadAt = System.currentTimeMillis();
-        QueryResult leftResult =
-            executeMetricQuery(leftSql, maxRows, timeoutMs, readMode, isSingleTableRead(leftSql));
-        if (leftResult.error() != null) {
-            return MetricComputationResult.error("Left query: " + leftResult.error());
-        }
-        long readGapMs = System.currentTimeMillis() - rightReadAt;
-        long totalReadMs = System.currentTimeMillis() - readStartedAt;
+        CountRead read = "OFFSETS".equals(countBy)
+            ? countByOffsets(leftTopic, rightTopic)
+            : countByRecords(params, maxRows, timeoutMs, readMode);
+        if (read.error() != null) return MetricComputationResult.error(read.error());
 
-        SideRead left = aggregateValue(leftResult, maxRows, "left");
-        if (left.error() != null) return MetricComputationResult.error(left.error());
-        SideRead right = aggregateValue(rightResult, maxRows, "right");
-        if (right.error() != null) return MetricComputationResult.error(right.error());
+        double leftTotal = read.left();
+        double rightTotal = read.right();
 
-        // A floor is not a count, and two floors compared read as no gap at all — which is the
-        // one answer this metric must never give by accident.
-        if (left.capped() || right.capped()) {
-            boolean both = left.capped() && right.capped();
-            return MetricComputationResult.error(
-                (both ? "Both counts stopped" : (left.capped() ? "The left count stopped" : "The right count stopped"))
-                + " on the direct reader's " + FlinkSqlService.AGGREGATE_SCAN_RECORDS
-                + "-record ceiling, so " + (both ? "they are floors" : "it is a floor")
-                + " rather than a total. A gap measured between floors reads as no gap, so nothing "
-                + "is published: count topics this reader can read in full, or measure the drop "
-                + "another way.");
+        // ── what the two numbers are compared over ──────────────────────────────
+        String window = getStringParam(params, "window", "TOTAL").toUpperCase(Locale.ROOT);
+        boolean windowed = "SINCE_LAST_REFRESH".equals(window);
+        double comparedLeft = leftTotal;
+        double comparedRight = rightTotal;
+        String windowNote = null;
+        if (windowed) {
+            if (preview || config.id() == null || config.id().isBlank()) {
+                // A preview has no previous refresh, and must not invent one: writing a baseline
+                // here would leave a running metric subtracting from an instant nobody measured.
+                windowNote = "Previewed as totals: this metric publishes what each side produced "
+                    + "since the previous refresh, and a preview has no previous refresh.";
+            } else {
+                double[] baseline =
+                    countDeltaBaselines.put(config.id(), new double[]{leftTotal, rightTotal});
+                if (baseline == null) {
+                    return MetricComputationResult.error("Baseline established. This comparison "
+                        + "reports what each side produced since the previous refresh, so the first "
+                        + "one has nothing to subtract; the next refresh reports the gap over the "
+                        + "interval.");
+                }
+                comparedLeft = leftTotal - baseline[0];
+                comparedRight = rightTotal - baseline[1];
+                if (comparedLeft < 0 || comparedRight < 0) {
+                    return MetricComputationResult.error("A side's count went backwards, so the "
+                        + "interval cannot be measured: a topic was recreated, or its offsets were "
+                        + "reset. The baseline is re-established and the next refresh reports "
+                        + "normally.");
+                }
+            }
         }
 
-        double leftValue = left.value();
-        double rightValue = right.value();
         String operation = getStringParam(params, "operation", "LEFT_MINUS_RIGHT").toUpperCase(Locale.ROOT);
+        final double left = comparedLeft;
+        final double right = comparedRight;
+        /*
+         * Total loss is the state this metric exists to catch, and it was the one it could not say.
+         *
+         * PERCENT_GAP divides by the right side, so "left > 0, right = 0" — everything the source
+         * produced and nothing arrived — was refused as a division by zero and published nothing
+         * at all: the most alarming reading this template can take, and the alert stayed silent on
+         * it while firing happily at 3 %. It is not an indefinite form but a definition, and it is
+         * stated as one rather than derived: the formula's own limit there is infinity, and 100 is
+         * the number a threshold is set against, so any threshold below 100 fires. Both sides at
+         * zero is not a loss — nothing was produced and nothing was missed — and reads 0.
+         *
+         * RATIO stays refused. There is no defensible finite value for a ratio to zero, and the
+         * error already names the two operations that report the same fact as a number.
+         */
+        boolean totalLoss = "PERCENT_GAP".equals(operation) && right == 0.0 && left > 0.0;
         Double metricValue = switch (operation) {
-            case "LEFT_MINUS_RIGHT" -> leftValue - rightValue;
-            case "ABS_DIFF" -> Math.abs(leftValue - rightValue);
-            case "RATIO" -> rightValue == 0.0 ? null : leftValue / rightValue;
-            case "PERCENT_GAP" -> rightValue == 0.0 ? null : ((leftValue - rightValue) * 100.0) / rightValue;
-            default -> throw new IllegalArgumentException("Unsupported count delta operation: " + operation);
+            case "LEFT_MINUS_RIGHT" -> left - right;
+            case "ABS_DIFF" -> Math.abs(left - right);
+            case "RATIO" -> right == 0.0 ? null : left / right;
+            case "PERCENT_GAP" -> right == 0.0
+                ? (left > 0.0 ? 100.0 : 0.0)
+                : ((left - right) * 100.0) / right;
+            // Unreachable through save(), which refuses an unknown operation — kept because a
+            // record read back from internal.metrics.config predates that check.
+            default -> throw new IllegalArgumentException("Unsupported count delta operation: "
+                + operation + ". Expected one of " + DELTA_OPERATIONS + ".");
         };
         if (metricValue == null) {
             return MetricComputationResult.error("Cannot compute " + operation
-                + " when the right query counts zero: " + operation + " divides by it. The left "
-                + "query counted " + formatCount(leftValue) + ", so if the right topic really is "
-                + "empty that is the finding — LEFT_MINUS_RIGHT or ABS_DIFF report it as a number.");
+                + " when the right side counts zero: " + operation + " divides by it. The left side "
+                + "counted " + formatCount(left) + (windowed ? " over this interval" : "")
+                + ", so if the right topic really produced nothing that is the finding — "
+                + "LEFT_MINUS_RIGHT, ABS_DIFF or PERCENT_GAP report it as a number.");
         }
 
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("metric_value", metricValue);
-        row.put("left_value", leftValue);
-        row.put("right_value", rightValue);
+        // Measurements, not labels: these move on every refresh of a live topic, and a label that
+        // moves mints a new time series per scrape — see isReservedColumn.
+        row.put("__left_value", left);
+        row.put("__right_value", right);
         row.put("operation", operation);
         addIfPresent(row, "left_topic", params.get("leftTopic"));
         addIfPresent(row, "right_topic", params.get("rightTopic"));
 
         Map<String, Object> summary = new LinkedHashMap<>();
-        summary.put("leftValue", leftValue);
-        summary.put("rightValue", rightValue);
+        summary.put("leftValue", left);
+        summary.put("rightValue", right);
         summary.put("operation", operation);
-        summary.put("leftEngine", leftResult.engine());
-        summary.put("rightEngine", rightResult.engine());
-        // How much room the interval between the two reads left. A number rather than a
-        // reassurance: on a topic doing a thousand records a second, four seconds here is four
-        // thousand records that are in one count and not the other.
-        summary.put("readGapMs", readGapMs);
-        summary.put("readDurationMs", totalReadMs);
-        // Accurate per engine rather than in one clause: the row cap bounds what the planner
-        // returns, while the direct reader ignores it for an aggregate and stops on its own
-        // record ceiling — two different bounds, and a note naming the wrong one is worse than none.
-        summary.put("scopeNote", "The right side is counted first and the left "
-            + readGapMs + " ms later, so traffic in between lands in the left count and this "
-            + ("ABS_DIFF".equals(operation) ? "difference can move either way" : "value can only be overstated")
-            + ", never understated. Read " + describeReadEnd(readMode)
-            + ". A side the direct reader answered covers at most "
-            + FlinkSqlService.AGGREGATE_SCAN_RECORDS + " record(s); a side the planner answered "
-            + "covers at most " + maxRows + " row(s).");
-        addScanWarnings(summary, leftResult, rightResult);
+        summary.put("countedBy", countBy);
+        summary.put("window", window);
+        if (windowed) {
+            summary.put("leftTotal", leftTotal);
+            summary.put("rightTotal", rightTotal);
+        }
+        summary.put("engine", read.engine());
+        summary.put("readGapMs", read.gapMs());
+        // Stated, never inferred from the gap being zero: two separate reads can round to the
+        // same millisecond, and "these describe one instant" is a claim about how they were taken.
+        if (read.sharedScan()) summary.put("sharedScan", true);
+        if (totalLoss) summary.put("totalLoss", true);
+        summary.put("scopeNote",
+            countDeltaScopeNote(countBy, windowed, windowNote, operation, read, maxRows, readMode,
+                totalLoss));
+        if (!read.warnings().isEmpty()) summary.put("warnings", read.warnings());
 
         return new MetricComputationResult(List.of(row), metricValue, null, summary);
     }
 
+    private String countDeltaScopeNote(String countBy, boolean windowed, String windowNote,
+                                       String operation, CountRead read, int maxRows, String readMode,
+                                       boolean totalLoss) {
+        StringBuilder note = new StringBuilder();
+        if ("OFFSETS".equals(countBy)) {
+            note.append("Counted from the log's own offsets — no record is read — and both sides "
+                + "come out of one call, so they describe the same instant. That counts offsets "
+                + "produced rather than records present: a transaction marker takes one, and a "
+                + "record later compacted away still counts.");
+        } else {
+            if (read.sharedScan()) {
+                note.append("Counted by reading records, both sides out of one read of the one "
+                    + "topic they share, so they describe the same instant and no traffic falls "
+                    + "between them. Read ").append(describeReadEnd(readMode));
+            } else {
+                note.append("Counted by reading records, right side first and left ")
+                    .append(read.gapMs())
+                    .append(" ms later, so traffic in between lands in the left count and this ")
+                    .append("ABS_DIFF".equals(operation)
+                        ? "difference can move either way" : "value can only be overstated")
+                    .append(", never understated. Read ").append(describeReadEnd(readMode));
+            }
+            note.append(". A side the direct reader answered covers at most ")
+                .append(FlinkSqlService.AGGREGATE_SCAN_RECORDS)
+                .append(" record(s); a side the planner answered covers at most ")
+                .append(maxRows).append(" row(s).");
+        }
+        if (windowed) {
+            note.append(" Compared over what each side produced since the previous refresh, not "
+                + "over the totals — a lifetime total loses its sensitivity as history accumulates.");
+        }
+        if (windowNote != null) note.append(' ').append(windowNote);
+        if (totalLoss) {
+            note.append(" The right side counted zero against a non-zero left side, so the gap is "
+                + "total and is reported as 100 % — a definition for that case, not the formula's "
+                + "own answer, which divides by the right side.");
+        }
+        return note.toString();
+    }
+
     /** Which end of the topic a read entered by, in the words the summary uses. */
     private String describeReadEnd(String readMode) {
+        Long since = FlinkSqlService.sinceTimestampOf(readMode);
+        if (since != null) return "forward from " + Instant.ofEpochMilli(since);
         return DEFAULT_LATENCY_READ_MODE.equals(readMode)
             ? "from the most recent records backwards"
             : "from the earliest offset";
+    }
+
+    /**
+     * What the two correlated reads covered, and the one thing a window cannot avoid.
+     *
+     * <p>A snapshot manufactures unmatched events at its trailing edge: a source produced a second
+     * before the window closed has its target somewhere after it, outside both reads, and that is
+     * indistinguishable from a target that never came. It is not a defect and it is not a finding,
+     * so it is stated rather than corrected — {@code ProcessModelBuilder} says the same thing about
+     * the cases its window cuts in half, and for the same reason: what looks like a defect and is
+     * not must be named, or it will be read as one.
+     */
+    private String latencyScopeNote(int maxRows, String readMode, long windowMs, Long windowFromMs) {
+        if (windowMs <= 0 || windowFromMs == null) {
+            return "Correlated over at most " + maxRows + " row(s) per side, read "
+                + describeReadEnd(readMode) + ". The two sides are capped by row count rather than "
+                + "by time, so on topics of different throughputs they cover different stretches of "
+                + "it and the match rate is depressed by that misalignment as much as by a real "
+                + "loss. Set a window to compare the same stretch of time on both sides.";
+        }
+        return "Correlated over the same " + formatDurationMs(windowMs) + " on both sides — from "
+            + Instant.ofEpochMilli(windowFromMs) + " — at most " + maxRows + " row(s) each. A source "
+            + "produced near the end of that window has its target after it, outside both reads, so "
+            + "it counts as unmatched: the trailing edge understates the match rate by roughly one "
+            + "hop's latency worth of traffic, whatever the pipeline is doing.";
+    }
+
+    /** A duration in the words a scope note uses, never as a bare millisecond count. */
+    private static String formatDurationMs(long ms) {
+        if (ms >= 3_600_000L && ms % 3_600_000L == 0) return (ms / 3_600_000L) + " h";
+        if (ms >= 60_000L && ms % 60_000L == 0) return (ms / 60_000L) + " min";
+        if (ms >= 1_000L && ms % 1_000L == 0) return (ms / 1_000L) + " s";
+        return ms + " ms";
     }
 
     private String formatCount(double value) {
@@ -938,6 +1348,26 @@ public class MetricService {
         long timeoutMs = getLongParam(params, "timeoutMs", DEFAULT_TEMPLATE_TIMEOUT_MS);
         // The most recent records, not the oldest — see DEFAULT_LATENCY_READ_MODE.
         String readMode = getStringParam(params, "readMode", DEFAULT_LATENCY_READ_MODE);
+
+        /*
+         * A row cap is not a window, and on two topics it is not even one window.
+         *
+         * maxRowsPerSide reads the last N records of each side, so two topics of different
+         * throughputs are read over two different stretches of time — ten thousand records is an
+         * hour of the source and four minutes of the target — and the pairs that survive are the
+         * ones whose two halves happened to fall in the overlap. What that costs is not the
+         * average, which is computed over real pairs, but the matchRate beside it: the rate is
+         * depressed by the misalignment exactly as it is by a genuine loss, and those send an
+         * operator to opposite places. windowMs reads both sides from the *same instant*,
+         * computed once here rather than per read, so the two windows are the same window and the
+         * rate means what it says. Absent, everything below is unchanged.
+         */
+        long windowMs = getLongParam(params, "windowMs", 0L);
+        Long windowFromMs = null;
+        if (windowMs > 0) {
+            windowFromMs = System.currentTimeMillis() - windowMs;
+            readMode = FlinkSqlService.sinceReadMode(windowFromMs);
+        }
 
         String sourceSql = requireParam(params, "sourceSql");
         String targetSql = requireParam(params, "targetSql");
@@ -1071,36 +1501,65 @@ public class MetricService {
         summary.put("targetEventsUsed", targetEvents.size());
         summary.put("sourceEngine", sourceResult.engine());
         summary.put("targetEngine", targetResult.engine());
-        summary.put("scopeNote", "Correlated over at most " + maxRows + " row(s) per side, read "
-            + describeReadEnd(readMode) + ".");
+        summary.put("scopeNote", latencyScopeNote(maxRows, readMode, windowMs, windowFromMs));
+        if (windowMs > 0) {
+            summary.put("windowMs", windowMs);
+            summary.put("windowFromMs", windowFromMs);
+        }
         addScanWarnings(summary, sourceResult, targetResult);
 
         return new MetricComputationResult(rows, avgLatencyMs, null, summary);
     }
 
-    /**
-     * One template read: the scan bounds asked for, and one retry without them if the connector
-     * turns out not to know them (see {@link #scanOptionsRefused}).
-     */
+    /** One template read, with the scan option this stack can express. */
     private QueryResult executeMetricQuery(String sql, int maxRows, long timeoutMs, String readMode,
                                            boolean directRead) {
-        String hint = scanHint();
-        QueryResult result = runMetricQuery(injectScanHint(sql, hint), maxRows, timeoutMs, readMode, directRead);
-        if (hint == null || !refusesScanOptions(result)) return result;
-        if (scanOptionsRefused.compareAndSet(false, true)) {
-            log.warn("This Kafka connector refused {} — template scans are unbounded for the rest of "
-                    + "this process, so a read stops on its row cap or its timeout instead of at the "
-                    + "end of the topic. Cause: {}",
-                SCAN_OPTION_NAMES, LogSafe.text(result.error()));
+        return runMetricQuery(injectScanHint(sql, scanHint()), maxRows, timeoutMs, readMode, directRead);
+    }
+
+    /**
+     * Two template reads as a pair, so the engine can serve both from one topic read when they are
+     * two counts over the same topic.
+     *
+     * <p>The per-cycle memoization keys on the SQL, so it never brought two different WHERE
+     * clauses over one topic together; sharing is decided inside the engine, on what the reads
+     * turn out to be. The cache is still consulted first and filled afterwards — a second metric
+     * posing one of these statements in the same cycle must still be free.
+     */
+    private FlinkSqlService.QueryPair executeMetricPair(String firstSql, String secondSql,
+                                                        int maxRows, long timeoutMs, String readMode) {
+        String first = injectScanHint(firstSql, scanHint());
+        String second = injectScanHint(secondSql, scanHint());
+        boolean firstDirect = isSingleTableRead(firstSql);
+        boolean secondDirect = isSingleTableRead(secondSql);
+        Map<String, QueryResult> cycleCache = refreshCycleQueryCache.get();
+        if (cycleCache != null) {
+            QueryResult a = cycleCache.get(cacheKey(first, maxRows, timeoutMs, readMode, firstDirect));
+            QueryResult b = cycleCache.get(cacheKey(second, maxRows, timeoutMs, readMode, secondDirect));
+            if (a != null && b != null) return new FlinkSqlService.QueryPair(a, b, false);
         }
-        return runMetricQuery(sql, maxRows, timeoutMs, readMode, directRead);
+        FlinkSqlService.QueryPair pair = flinkSqlService.executeSqlPair(
+            firstDirect ? QueryRequest.directSql(first, maxRows, timeoutMs, readMode)
+                        : QueryRequest.sql(first, maxRows, timeoutMs, readMode),
+            secondDirect ? QueryRequest.directSql(second, maxRows, timeoutMs, readMode)
+                         : QueryRequest.sql(second, maxRows, timeoutMs, readMode));
+        if (cycleCache != null) {
+            cycleCache.put(cacheKey(first, maxRows, timeoutMs, readMode, firstDirect), pair.first());
+            cycleCache.put(cacheKey(second, maxRows, timeoutMs, readMode, secondDirect), pair.second());
+        }
+        return pair;
+    }
+
+    private static String cacheKey(String sql, int maxRows, long timeoutMs, String readMode,
+                                   boolean directRead) {
+        return sql + '|' + maxRows + '|' + timeoutMs + '|' + readMode + '|' + directRead;
     }
 
     private QueryResult runMetricQuery(String sql, int maxRows, long timeoutMs, String readMode,
                                        boolean directRead) {
         Map<String, QueryResult> cycleCache = refreshCycleQueryCache.get();
         if (cycleCache == null) return submitMetricQuery(sql, maxRows, timeoutMs, readMode, directRead);
-        String key = sql + '|' + maxRows + '|' + timeoutMs + '|' + readMode + '|' + directRead;
+        String key = cacheKey(sql, maxRows, timeoutMs, readMode, directRead);
         return cycleCache.computeIfAbsent(key,
             k -> submitMetricQuery(sql, maxRows, timeoutMs, readMode, directRead));
     }
@@ -1300,6 +1759,9 @@ public class MetricService {
             if (config == null) return Optional.empty();
             beginRefreshCycle();
             try {
+                // Deliberately not subject to refreshIntervalMs: this is somebody pressing
+                // Refresh, and an explicit gesture is never a cadence to be rationed.
+                lastRefreshStartedAt.put(id, System.currentTimeMillis());
                 refreshSingleMetric(id, config);
             } finally {
                 endRefreshCycle();
@@ -1311,7 +1773,78 @@ public class MetricService {
     }
 
     private void doRefreshMetrics() {
-        metrics.forEach(this::refreshSingleMetric);
+        long cycleStart = System.currentTimeMillis();
+        int refreshed = 0;
+        int skipped = 0;
+        for (Map.Entry<String, MetricConfig> entry : metrics.entrySet()) {
+            if (!isDue(entry.getKey(), entry.getValue(), cycleStart)) {
+                skipped++;
+                continue;
+            }
+            lastRefreshStartedAt.put(entry.getKey(), System.currentTimeMillis());
+            refreshSingleMetric(entry.getKey(), entry.getValue());
+            refreshed++;
+        }
+        recordCycleDuration(System.currentTimeMillis() - cycleStart, refreshed, skipped);
+    }
+
+    /**
+     * Whether this metric wants to run on this tick.
+     *
+     * <p>Every metric was recomputed on every tick, which is the right default for a gauge over a
+     * cheap query and the wrong one for a two-query template: those read two topics, and asking
+     * that of a broker every thirty seconds because a single-row gauge beside them wants it is how
+     * the refresh loop becomes the most expensive thing this application does. {@code
+     * refreshIntervalMs} is the metric's own cadence, and it can only <em>slow</em> one down: the
+     * loop's tick is the floor, so a value below it changes nothing — the form says so rather than
+     * accepting a number that cannot be honoured.
+     *
+     * <p>Skipping touches no state. The gauge keeps the value it was last measured at, which is
+     * correct — it <em>was</em> measured, just not now — and {@link #LAST_SUCCESS_SERIES} is what
+     * dates it, so an alert can already tell a held value from a fresh one.
+     */
+    private boolean isDue(String id, MetricConfig config, long now) {
+        long interval = configuredRefreshIntervalMs(config);
+        if (interval <= 0) return true;
+        Long last = lastRefreshStartedAt.get(id);
+        if (last == null) return true;
+        // A tolerance, because the cadence is a multiple of the loop's tick whatever is asked for:
+        // without it a 5-minute interval polled every 30 s fires at 5 min 30 s, every time.
+        long tolerance = Math.max(1_000L, interval / 10);
+        return now - last >= interval - tolerance;
+    }
+
+    private long configuredRefreshIntervalMs(MetricConfig config) {
+        Map<String, Object> params = config.templateParams();
+        return params == null ? 0L : getLongParam(params, "refreshIntervalMs", 0L);
+    }
+
+    /**
+     * Publish what the cycle cost, and say once when it outlasts its own tick.
+     *
+     * <p>The cost of the refresh loop was the one thing about it nobody could see: it is single
+     * threaded by design — the meter state assumes one writer — so a cycle that outlasts its tick
+     * does not pile up threads, it simply runs back to back with no idle, and the only symptom is
+     * a broker doing more work than anyone asked it for. More threads would be the wrong answer;
+     * a number and a per-metric cadence are the right ones, and this is the number.
+     */
+    private void recordCycleDuration(long durationMs, int refreshed, int skipped) {
+        refreshDurationHolder.set(durationMs / 1000.0);
+        if (!refreshDurationRegistered) {
+            Gauge.builder(REFRESH_DURATION_SERIES, refreshDurationHolder, AtomicReference::get)
+                .description("Duration of the last metric refresh cycle, in seconds")
+                .register(meterRegistry);
+            refreshDurationRegistered = true;
+        }
+        if (metricsRefreshRateMs > 0 && durationMs > metricsRefreshRateMs && !refreshOverrunReported) {
+            refreshOverrunReported = true;
+            log.warn("Metric refresh cycle took {} ms, longer than its own {} ms tick "
+                    + "({} metric(s) refreshed, {} skipped by their own interval). The loop is "
+                    + "single threaded, so it now runs back to back: give the expensive metrics a "
+                    + "refreshIntervalMs of their own, or count by offsets where both sides are "
+                    + "whole-topic counts. Said once per process.",
+                durationMs, metricsRefreshRateMs, refreshed, skipped);
+        }
     }
 
     private void refreshSingleMetric(String id, MetricConfig config) {
@@ -1326,7 +1859,7 @@ public class MetricService {
 
             executeCreateTableIfPresent(normalized);
 
-            MetricComputationResult result = computeMetric(normalized);
+            MetricComputationResult result = computeMetric(normalized, false);
             if (result.error() != null) {
                 updateMetricState(id, null, result.error(), result.summary());
             } else if (!result.rows().isEmpty()) {
@@ -1373,6 +1906,8 @@ public class MetricService {
 
         if (primaryValue != null) {
             updateHistory(metricId, primaryValue);
+            // After updateHistory, which is what sets the length every series is aligned to.
+            updateComponentHistory(metricId, summary);
             updateMetricState(metricId, primaryValue, null, summary);
             publishCompanions(metricId, config, summary);
         }
@@ -1402,6 +1937,14 @@ public class MetricService {
             publishCompanionGauge(metricId, config, MATCH_RATE_SERIES,
                 "Share of source events this metric could pair with a target event (0..1)",
                 rate.doubleValue());
+        }
+        // Only where the type carries no quantiles of its own — see LATENCY_P95_SERIES.
+        String type = config.type() == null ? "GAUGE" : config.type().toUpperCase(Locale.ROOT);
+        if (summary != null && !"HISTOGRAM".equals(type) && !"SUMMARY".equals(type)
+            && summary.get("p95LatencyMs") instanceof Number p95) {
+            publishCompanionGauge(metricId, config, LATENCY_P95_SERIES,
+                "95th percentile of the correlated latency, in milliseconds",
+                p95.doubleValue());
         }
     }
 
@@ -1780,6 +2323,76 @@ public class MetricService {
         if (history.size() > MAX_HISTORY) history.removeFirst();
     }
 
+    /**
+     * The summary keys worth keeping a series of, in the order a reader should draw them.
+     *
+     * <p>A closed list rather than "every number in the summary": most of what a summary carries is
+     * scope — rows read, partitions measured, a match rate — and a series of those is noise on a
+     * card. These are the values the metric's own number is <em>made of</em>, which is what
+     * {@code history} cannot show for a two-query template: on a gap it holds the difference, and
+     * the two counts are what an operator needs to see move.
+     */
+    private static final List<String> COMPONENT_SERIES = List.of(
+        "leftValue", "rightValue",
+        "avgLatencyMs", "p95LatencyMs", "maxLatencyMs",
+        "maxLagMs", "avgLagMs");
+
+    /**
+     * Append this refresh's components, keeping every series exactly as long as {@code history}.
+     *
+     * <p>Two rules, and they are the same rule twice. A key this refresh did not produce appends
+     * {@code null}, never {@code 0} — a zero draws a fall that never happened, and "not measured"
+     * and "measured as nothing" are the distinction this codebase keeps everywhere else. And a key
+     * seen for the <em>first</em> time is back-filled with nulls to the current length, so index
+     * <i>i</i> is the same refresh in every series however the metric was edited in between. That
+     * also makes the whole thing self-healing: a metric switched from one template to another
+     * simply flatlines its old series into nulls until they scroll out of the window, with no
+     * shape-change detection to get wrong.
+     */
+    private void updateComponentHistory(String id, Map<String, Object> summary) {
+        Map<String, LinkedList<Double>> series =
+            componentHistoryMap.computeIfAbsent(id, k -> new ConcurrentHashMap<>());
+        int length = historyMap.getOrDefault(id, new LinkedList<>()).size();
+
+        Map<String, Double> observed = new LinkedHashMap<>();
+        if (summary != null) {
+            for (String key : COMPONENT_SERIES) {
+                if (summary.get(key) instanceof Number n && Double.isFinite(n.doubleValue())) {
+                    observed.put(key, n.doubleValue());
+                }
+            }
+        }
+        // Nothing to track and nothing tracked yet: do not mint empty series on every gauge.
+        if (observed.isEmpty() && series.isEmpty()) return;
+
+        for (String key : observed.keySet()) {
+            series.computeIfAbsent(key, k -> {
+                LinkedList<Double> backfilled = new LinkedList<>();
+                for (int i = 0; i < length - 1; i++) backfilled.addLast(null);
+                return backfilled;
+            });
+        }
+        for (Map.Entry<String, LinkedList<Double>> entry : series.entrySet()) {
+            LinkedList<Double> values = entry.getValue();
+            values.addLast(observed.get(entry.getKey()));
+            while (values.size() > MAX_HISTORY) values.removeFirst();
+            while (values.size() > length) values.removeFirst();
+        }
+    }
+
+    /** A snapshot of the component series, for the record this refresh writes. */
+    private Map<String, List<Double>> componentHistorySnapshot(String id) {
+        Map<String, LinkedList<Double>> series = componentHistoryMap.get(id);
+        if (series == null || series.isEmpty()) return Map.of();
+        Map<String, List<Double>> copy = new LinkedHashMap<>();
+        // In the order a reader should draw them, not the map's.
+        for (String key : COMPONENT_SERIES) {
+            LinkedList<Double> values = series.get(key);
+            if (values != null && !values.isEmpty()) copy.put(key, new ArrayList<>(values));
+        }
+        return copy;
+    }
+
     private void updateMetricState(String id, Double value, String error, Map<String, Object> summary) {
         MetricConfig current = metrics.get(id);
         if (current == null) return;
@@ -1795,7 +2408,8 @@ public class MetricService {
             current.templateParams(),
             current.executionMode(),
             current.labelTopic(),
-            current.labelFields() != null ? List.copyOf(current.labelFields()) : List.of()));
+            current.labelFields() != null ? List.copyOf(current.labelFields()) : List.of(),
+            componentHistorySnapshot(id)));
     }
 
     // ── Kafka persistence ─────────────────────────────────────────────────────

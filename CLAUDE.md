@@ -761,6 +761,8 @@ graph and that `touch-action` is neutralised. It is what found the wheel defect 
   **A crowded layer wraps into adjacent sub-columns** (`maxNodesPerColumn`). A hub thirty topics reference — the most ordinary shape a data model takes — put all thirty in one column: an extent of 424 × 5 099 px, which *by construction* can never fill a screen, so the fit was height-bound at 0.14 with two thirds of the width empty. Measured on a 24-spoke star at 1280 × 800, wrapping takes the fit from 0.38 to 0.92 and the rendered text from 3.4 px to 8.3 px. The accepted cost is that an edge entering the second sub-column passes *behind* the first's nodes (edges are painted before nodes), and on a thirty-edge fan into one hub no layout separates them anyway. `orphanColumns` widens the isolated grid on the same reasoning, instead of staying four wide whatever its population. What neither fixes is a deep chain — twelve topics end to end are 3 000 px wide however they are drawn — which is what the minimap and zoom are for.
   Pure logic (selection, URL, node sizing and calibre choice, layered layout with real node heights and wrapped layers, edge geometry, cardinality glyphs, fit, domains, connectivity split, count compaction, field search, export framing, Mermaid emission, coverage line) lives in `pages/dataModel.ts`, unit-tested
 - `Lineage` (`/lineage`) — interactive dependency graph (custom SVG; no external graph lib). Same interaction model as the Stream Flow graph, and for the same reasons: panning uses *pointer* events with `touch-action: none` (a tablet could not pan at all), the SVG is focusable with arrows to pan, `+`/`−` to zoom, `0` to reset and `Escape` to deselect, every node is a Tab-reachable `role="button"` that opens its details on Enter or Space (and shows its tooltip on focus, not only on hover), and clicking the background deselects. Statements the backend could not resolve are listed above the graph — see `LineageService`
+- **A card carries the measurement and the rule it calls for, not only a number** (`pages/metricScope.ts`'s `describeMeasurement` / `describeRefreshCost`, `pages/metricAlert.ts`, both pure + tested). Three gaps, and they are one gap: everything this page computes was being shown to a scraper rather than to the person looking at it. `MetricCard` rendered `lastValue` and nothing else — on an écart **`5` says nothing and `12 against 7` is the diagnostic**, and both sides were in `lastSummary`, computed, persisted, rendered nowhere; on a latency it is worse since the p95 became a Prometheus series, because it then travelled to a scraper and not to the card. `describeMeasurement` returns the components the server actually measured — never a derivation, an absent key producing no part and a **zero producing one, since zero is a measurement**. **The threshold had one direction**: `getStatus` knew only `>=` and `validateThresholds` *refused* `warn >= crit` outright, so the descending reading was unreachable — a `RATIO` is healthy at 1.0 and breaks by falling, which is the 0.99-then-0.95 pair that rule forbade. The direction is now **derived from the order of the two thresholds rather than from a field of its own** (`thresholdDirection`): critical is always worse than warning, which is the one thing the pair is known to say, so a critical below the warning reads the metric downwards. No component on `MetricConfig`, none of its forty-three construction sites touched, and the convention is checkable by looking at two numbers — on the condition that it is **displayed**, which `describeThresholdDirection` does under the fields and the card's `≤` / `≥` sign follows; only equality stays an error, two identical thresholds expressing no direction and firing together. And **the page stopped one step before what these metrics are for**: it all exists so an alert fires, and the PromQL was written nowhere — which stopped being obvious the day the companion series arrived, since a frozen gauge fires exactly like a real breach. `buildAlertRule` emits it under two rules: **the alert must compare what the card compares**, so a `GAUGE` gets a rule while a `COUNTER` (whose series accumulates deltas, not this number) and a `HISTOGRAM`/`SUMMARY` (a distribution) get the reason there is none, naming what *is* exported; and every rule carries `explorer_metric_last_success_timestamp_seconds`, with a window of four times the metric's own `refreshIntervalMs` — or 120 s, **said to be an assumption** when the cadence is the loop's. On a transit latency the p95 series is offered as a second rule rather than substituted, since the threshold was set against an average and a p95 is above one by construction. Two more things the two-query templates needed: `describeRefreshCost` states in the editor what a configuration will cost the broker *before* it is saved, where `explorer_metrics_refresh_duration_seconds` only measures the cycle afterwards — and **invents no total**, since the direct reader bounds an aggregate by its own ceiling whatever `maxRowsPerSide` says; and `sameStatement` refuses two sides that cannot differ (the same statement on both, or the same topic on both under an offsets count, where the SQL is not read at all), because such a metric reports 0 for ever and **0 here reads as "nothing is being lost"** — the one value it must never publish by accident. The preview panel also stopped rendering `Object.entries(summary)` raw, which put the whole `scopeNote` paragraph inside a 10 px chip and `warnings` through `String(v)`: it reuses `describeMetricScope` and `describeMeasurement`, one renderer for what the card already shows.
+- **The sparkline plots the value, and the value is not the measurement** (`MetricConfig.componentHistory`, `MetricService.updateComponentHistory`, `componentSeries` in `pages/metricScope.ts`). `history` carries the metric's own number, which for a two-query template is the *comparison*: on a gap it is the difference, and what an operator needs to see move is the two counts. A second series per component is kept beside it — `leftValue`/`rightValue`, `avgLatencyMs`/`p95LatencyMs`/`maxLatencyMs`, `maxLagMs`/`avgLagMs`, a **closed list** rather than "every number in the summary", since most of a summary is scope and a series of *that* is noise on a card. Two invariants make it drawable and both are the same rule twice: every series is exactly as long as `history`, so index *i* is the same refresh in all of them; and a refresh that produced no value for a series appends **`null`, never `0`** — a zero draws a fall that never happened, on the metric whose whole job is to report a fall. A key seen for the first time is back-filled with nulls, which is also what makes the thing self-healing: a metric edited from one template to another flatlines its old series into nulls until they scroll out of the window, with no shape-change detection to get wrong. It is rendered as **its own chart with its own scale, deliberately not a second axis on the first**: on a gap the value is 5 while the two sides are twelve thousand, so a shared scale flattens the value onto the baseline and a dual axis manufactures a crossing that does not exist. `connectNulls={false}`, so a gap stays a gap. The record grew a nineteenth component for this and **no construction site was touched** — the 18-arg compat constructor is the same idiom the file already carries for the 11- and 12-arg shapes, and it is what makes "forty-three call sites" a cost this file had already answered. Adding it also found a gap in `docs/check-api-types.py`: `(number | null)[]` against `List<Double>` failed on the parentheses TypeScript *forces* around a nullable element, so the file's own "nullability is the frontend's at any depth" rule held for a map's value and not for a list's element; `unwrap` drops a parenthesised group only once no `|` is left in it, so a real union keeps its parentheses.
 - `Metrics` (`/metrics`) + `MetricsHelp` (`/metrics/help`) — Prometheus metric config, live values and Recharts charts. A metric is SQL, so a rejected save is answered like a rejected query: `describeApiError` into an `ErrorPanel` **inside the modal**, where the SQL can be fixed, instead of a toast that faded behind the dialog carrying none of the server's reasoning. Failing to load the template list is surfaced too — `.catch(() => {})` left the picker empty with nothing to explain it.
   **The panel says when the audit underneath has moved on** (`newerAuditNote` / `newestUsableRun`): it derives on page load and never again, so an audit run in another tab left thresholds computed from the previous run without a word — `stalenessNote` dates the observation, which cannot express that a fresher one exists. Three distinct answers, because they call for different gestures: a run **in flight** is not evidence yet (the server refuses a `RUNNING` report, whose topic list changes between two polls), a **first** audit unlocks cards that did not exist, and a **newer** run replaces what the thresholds rest on. It reads `/api/audit/history` — the summaries, not the reports, since a report carries an entry per topic and the question needs an id and a date — on mount and on window focus, which is exactly when the answer can have changed. `runs` is checked rather than assumed at that boundary: the type is hand-written, and a 200 carrying another shape took the whole page down in the test that caught it — the same class of failure that killed the Compare page.
 
@@ -858,6 +860,8 @@ truncated-record defect described under `ProcessModelBuilder`.
 
 
 **That class is also where the real broker gets asked the questions a mock cannot answer.** The three snapshot-read faults described under `KafkaSnapshotReader` were all found by hand against a live stack, and not one of them is reproducible against `MockConsumer`: it emulates neither an out-of-range seek nor the `auto.offset.reset` that follows one, and it delivers exactly what it was handed rather than prefetching in the background. So the suite — which already runs a Kafka 4.3 broker through Testcontainers — now seeds the state that produces them: a three-partition topic with four records per partition and everything below offset 2 removed with `deleteRecords`, which is what retention leaves behind. Three assertions on it: a trimmed topic read in full through `KafkaSnapshotReader`, a multi-topic snapshot returning **every** topic it was asked for, and the audit's own `getEarliestRecords` path over the same trimmed topic. Verified to bite — with the beginning-offset clamp reverted, two of the three fail — where the unit tests beside them pin the same rules against a mock and could not have caught the clamp at all. The general rule it states: a defect produced by the client's own behaviour belongs in the integration suite, because a mock that cannot fail is not coverage.
+
+**The metric templates' scan bounds are asked here too, and the answer overturned a shipped fix on its first run.** A mock cannot refuse a setting it has never heard of, so `MetricService`'s bounded-scan option had been added on a reading of the connector's documentation. Asked of a real broker, `flink-connector-kafka:5.0.0-2.2` refuses `scan.bounded.mode` — and refuses it *quietly*, because `FlinkSqlService` classifies that as an engine failure and falls back, so the query returns rows, no error, and `engine: KAFKA_DIRECT`. The test asserts that answer rather than working around it: the day a connector bump supports the option, it fails and says so. The sibling case pins the path a count-delta side really takes — `directSql` to the direct reader, one row rather than a changelog, a number that had to come out of the broker — and it is why the wrong option was survivable: the count was right all along, by the other route. Both build their own local Flink cluster on demand rather than as a field, since the rest of the class talks to the broker directly and should not pay for one.
 `MetricControllerTest` pins `POST /api/metrics/suggestions`, whose body is **optional** and whose record grew a component (`fieldMappingId`) after it shipped: no body at all, `{"flowChains":[]}`, `{"fieldMappingId":"x"}` alone, and a whole trace with hops that omit half their fields. Jackson binds a record through its canonical constructor, so an absent property arrives as `null` — the same class of failure `StreamFlowControllerTest` was written for, on the one endpoint-bearing controller that had no test.
 
 `KafkaAdminServiceActivityTest` drives the sparkline's read through a mocked AdminClient that **behaves like a log** rather than returning a canned response: each partition is a list of record timestamps, and a boundary resolves to the first record at or after it — or to no offset at all when every record predates it, which is the case a caller must not read as "offset 0". What it pins is mostly what the curve must not say: a quiet topic and an unreadable one are two different answers and only one is a row of zeros, a window retention has eaten into is reported as such, and a partition that did not answer makes the series a floor with the note saying so. The instant is a parameter (`getTopicActivity(..., nowMs)`, package-private beside the public method that reads the clock): the window is derived from the clock, so a test computing the alignment a microsecond before the method does would fail whenever the two land either side of a bucket boundary.
@@ -914,14 +918,21 @@ reviewed in `METRICS-TWO-QUERY-AUDIT.md`, twelve items ranked, of which the firs
 shipped. What they were is worth knowing before touching either compute method, because each fix
 is load-bearing and none of it is obvious from the code that remains.
 
-**`BOUNDED_HINT` bounded nothing.** Its javadoc described `scan.bounded.mode` ("reads all data that
-exists at query start, then terminates") while the constant wrote `scan.startup.mode`, which says
-where a scan *begins*; the environment is `inStreamingMode()`, so the source never ended, and the
-option merely restated what `DdlGeneratorService` already writes into every generated table. Both
-options travel now. Whether *this* deployment's connector knows the second one is settled at
-runtime rather than asserted — a failure naming it earns one retry without it, remembered for the
-life of the process with a WARN naming the cost, the same degrade-once-and-remember shape
-`OpenAiCompatibleLlmClient` uses for a gateway that refuses `response_format`.
+**`BOUNDED_HINT` bounded nothing, and the option that would have is not available here.** Its
+javadoc described `scan.bounded.mode` ("reads all data that exists at query start, then
+terminates") while the constant wrote `scan.startup.mode`, which says where a scan *begins*; the
+environment is `inStreamingMode()`, so the source never ended, and the option merely restated what
+`DdlGeneratorService` already writes into every generated table. The bounded option was added, with
+a degrade-once fallback standing in for an experiment nobody had run — and then the experiment ran
+(`KafkaClusterIntegrationTest`, in CI) and **`flink-connector-kafka:5.0.0-2.2` refuses it**:
+*"Unsupported options found for 'kafka'. Unsupported options: scan.bounded.mode,
+scan.bounded.specific-offsets, scan.bounded.timestamp-millis"*. Sending it was worse than not:
+`FlinkSqlService` reads that refusal as an **engine** failure, so it falls back to the direct reader
+and returns rows with **no error**, which means the latch could never fire on it and three such
+queries would trip the process-wide circuit breaker that takes the planner out for every other
+screen. The hint carries the startup mode alone now; **what actually removed the templates'
+dependence on an unbounded planner scan is the direct-read routing below**, and the integration test
+asserts the current answer so a connector bump that changes it fails and says which day that was.
 
 **A streaming `COUNT(*)` is a retract changelog, and the value is its *last* row.** The collector
 drops `RowKind` and `extractPrimaryMetricValue` kept the first, which is `+I(1)`, so above roughly
@@ -983,10 +994,96 @@ so a metric in service said nothing about its own scope; it is a chip row on the
 (`pages/metricScope.ts`, pure and tested), with the match rate shown even at 100 % on the rule the
 coverage notice already follows — an indicator seen only on bad news is one people stop reading.
 
-What is deliberately still open is listed in that document with what closes each: validating
-`operation` at save time like the three scan parameters beside it, the cost of a two-query metric
-on a single-threaded refresh loop (D10), and the note that the suite could not have caught any of
-this (D12).
+Two more followed and closed the document's own last two loose ends. **`operation` is refused at
+save time** like the three scan parameters beside it, against a set named once that the compute
+switch's error message reads too — it was the last of this template's parameters that could be
+accepted by the API and then throw from inside the refresh loop every thirty seconds. And **the two
+assertions the audit asked for exist**, in `KafkaClusterIntegrationTest`: the option D1 rests on is
+now measured against a real broker rather than read off a page (see the note under **Testing**).
+
+**And two changes that are not defect fixes at all**, each dissolving items the defect list could
+only mitigate. **A whole-topic count is metadata, not a scan**: `COUNT(*)` over a topic is
+`endOffsets − beginningOffsets`, which `KafkaAdminService.getTopicsSize` already answers *for both
+topics in one call*, where the engine was downloading and parsing up to 100 000 records per side
+every thirty seconds. `countBy: OFFSETS` — and `AUTO`, which picks it when the metric names both
+topics and neither query is anything but a plain whole-topic count — reads no record at all. That
+removes the 100 000-record ceiling (so a topic of any size is countable, and D2's "two floors
+compared read as no gap" refusal now names the way out), and it removes **D4** rather than leaning
+it: both counts come out of the same pair of `listOffsets` responses, so `readGapMs` is `0` because
+it *is* zero. The cost is stated on the card and in the summary — this counts **offsets produced,
+not records present**, so a transaction marker counts and a compacted record still counts, the same
+distinction `getTopicActivity` draws for the dashboard's sparkline — and a query carrying a `WHERE`
+cannot be answered this way, which `AUTO` does not pretend otherwise. **And a lifetime total stops
+being able to fire**: on two topics running for months, a total outage that started an hour ago is
+a fraction of a percent of the totals, under every threshold anyone would set — the metric was least
+sensitive exactly when it mattered most. `window: SINCE_LAST_REFRESH` compares what each side
+produced since the previous cycle; its first refresh publishes nothing and says why, a count that
+went backwards is refused and the baseline re-established, and **a preview never writes a baseline**
+(it would leave the running metric subtracting from an instant nobody measured). The suggestion
+panel proposes both on every gap card it builds.
+
+**The worst defect of the family was found while doing that**, and it had been there all along:
+`left_value` and `right_value` were ordinary row columns, and every non-`metric_value` column
+becomes a **Prometheus label**. Both move at every refresh of a live topic, so the label set changed
+at every scrape and each time series carried exactly one data point — the metric could not be
+graphed or alerted on at all, which is the only thing it exists for. Nothing said so, because the
+registry stayed small: `pruneStaleSeries` deregistered the previous series each cycle, the tidy
+version of the same defect. The reserved-column rule is a prefix (`__`) now rather than a list of
+two names, so a measurement that belongs in the row and not in the label set says so by its name.
+
+**Five more improvements followed, and four of them are about what the metric *means* rather than
+what it costs.** *A row cap is not a window, and on two topics it is not even one window*:
+`maxRowsPerSide` reads ten thousand records, which is an hour of a slow source and four minutes of a
+busy target, so the pairs that survived were the ones whose two halves fell in the overlap — and
+what that cost was not the average, computed over real pairs, but the **match rate beside it**,
+depressed by the misalignment exactly as by a genuine downstream loss, which sends an operator
+somewhere else entirely. `windowMs` reads both sides from the **same instant**, computed once rather
+than resolved per read (`KafkaAdminService.getRecordsSinceTimestamp`, the instant form beside the
+duration one), travelling as a third read mode — `since:<epochMillis>`, `FlinkSqlService.sinceReadMode` —
+because that string already carries direct-reader-only meaning and the alternative was a field on
+`QueryRequest` for a concept the planner cannot express. Which is why a window on a side the planner
+would answer is **refused at save time, naming the side**: honoured on one side and ignored on the
+other is worse than absent, the summary claiming one stretch of time while the reads covered two.
+What a window cannot avoid is stated rather than corrected — a source produced near its end has its
+target *after* it, outside both reads, so the trailing edge understates the rate by about one hop's
+worth of traffic, the same thing `ProcessModelBuilder` says about the cases its own window cuts in
+half. *The p95 was computed, put in the summary and alerted on by nobody*: an average holds still
+while the worst decile doubles, which is the case the template exists to catch, so
+`explorer_metric_correlation_latency_p95_ms` publishes it — and **only for the types that carry no
+quantiles of their own**, a `SUMMARY` already publishing `explorer_metric_summary{quantile="0.95"}`.
+*Total loss was the one state it could not express*: `PERCENT_GAP` divides by the right side, so
+"left > 0, right = 0" — everything produced, nothing arrived — was refused as a division by zero and
+published nothing, the most alarming reading staying silent while the alert fired happily at 3 %. It
+reports **100**, and that is a definition for the case rather than the formula's limit (which is
+infinity): 100 is the number a threshold is set against. Both sides at zero is not a loss and reads
+0; `RATIO` stays refused. *And two counts over one topic came out of two full reads* — two
+`COUNT(*)` under different `WHERE` clauses, which is what a same-topic gap is, each parsing up to
+`AGGREGATE_SCAN_RECORDS` records thirty seconds apart, the per-cycle memoization keying on the SQL
+and never bringing them together. `FlinkSqlService.executeSqlPair` runs them as a pair over a slot
+the direct reader fills and reuses, deciding on **what the two reads turn out to be** (same topic,
+same read mode, both aggregates) rather than on how the SQL looks: aggregates only, since their
+fetch size is that constant whatever the statement says, while a projection stops early at its own
+row limit and would leave a partial list behind for the other side. The gain is not only the read —
+the two counts then describe the **same instant**, which is D4 for that case, and the summary says
+`sharedScan` rather than leaving the card to infer it from `readGapMs` being zero: two separate
+reads can land in one millisecond, and "these describe one instant" is a claim about how they were
+taken, not a reading of the number.
+
+**D10 stays open, and half of it closed without any measurement.** It is the cost of a two-query
+metric on a single-threaded refresh loop — a property of the design rather than a defect in it.
+`refreshIntervalMs` is now a metric's own cadence: every metric was recomputed on every tick, which
+is right for a gauge over a cheap query and wrong for a template that reads two topics, and it can
+only *slow* one down since the loop's tick is the floor. Skipping touches no state — the gauge keeps
+the value it was last measured at, which is correct, and `explorer_metric_last_success_timestamp_seconds`
+is what dates it — and an explicit "Refresh now" ignores the interval, a gesture never being a
+cadence to be rationed. `explorer_metrics_refresh_duration_seconds` publishes what a cycle cost,
+which was the one thing about the loop nobody could see: it is single threaded by design, so a cycle
+outlasting its tick does not pile up threads but runs back to back, and the only symptom is a broker
+doing more work than anyone asked for (said once per process, naming the two ways out). More threads
+would be the wrong answer — the meter state assumes one writer. **The measurement is still untaken
+and still the thing that settles the rest**: the wall time of one `refreshMetrics()` over a handful
+of template metrics against the demo cluster, which that gauge now makes a reading rather than an
+experiment somebody has to set up.
 
 `SQL-EDITOR-AUDIT.md` is the review of the **SQL editor** (`QueryWorkbench.tsx` and its pure modules,
 plus `QueryController` / `SqlQueryValidator` / `FlinkSqlService.executeSync`) along the four axes it

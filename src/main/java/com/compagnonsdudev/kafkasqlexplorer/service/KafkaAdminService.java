@@ -1657,8 +1657,23 @@ public class KafkaAdminService {
     }
 
     public List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> getRecordsSince(String topicName, int minutes, int maxMessages) {
-        long timestampLimit = System.currentTimeMillis() - ((long) minutes * 60 * 1000);
-        return getRecordsWithPredicate(topicName, maxMessages, timestampLimit);
+        return getRecordsSinceTimestamp(topicName,
+            System.currentTimeMillis() - ((long) minutes * 60 * 1000), maxMessages);
+    }
+
+    /**
+     * Records at or after an <b>instant</b>, rather than at or after a duration ago.
+     *
+     * <p>The distinction is the whole point for a caller reading two topics that must describe the
+     * same window: a duration is resolved against the clock at the moment it is read, so two sides
+     * read one after the other cover two windows offset by however long the first read took. An
+     * instant is computed once and applied to both, so the pairs they yield are pairs rather than
+     * an accident of the two topics' throughputs. {@code MetricService}'s transit latency is that
+     * caller; {@link #getRecordsSince(String, int, int)} keeps the duration form for the rest.
+     */
+    public List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> getRecordsSinceTimestamp(
+            String topicName, long timestampMs, int maxMessages) {
+        return getRecordsWithPredicate(topicName, maxMessages, timestampMs);
     }
 
     /**
