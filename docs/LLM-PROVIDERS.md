@@ -52,8 +52,11 @@ Three things worth knowing before you point it at a production cluster:
   the Config page says "remote inference" accordingly. If that is not acceptable, Option C or D.
 - **Structured output depends on the model, not on OpenRouter.** Only some models — and only some
   of the upstream providers serving them — implement `response_format`. The app sends the schema
-  anyway, and a model that refuses it gets one unconstrained retry and is remembered as such, *for
-  that model alone*, so trying another one is not penalised by the first. `claude.structured-output:
+  anyway, and a model that refuses it gets one unconstrained retry — and is remembered as
+  schema-less only if that retry then succeeds, *for that model alone*, so trying another one is not
+  penalised by the first. The condition matters: a 400 says the request body was not understood and
+  not which field of it, so a model perfectly capable of schemas can draw one over `max_tokens` or
+  `temperature`, and a refusal the retry does not reproduce teaches nothing. `claude.structured-output:
   OFF` skips the probe entirely; the JSON is then recovered from the answer the way it is for
   SpectraLLM.
 
@@ -219,10 +222,20 @@ section just below, which is the trap this option carries.
 2. Update `src/main/resources/application.yml`:
 ```yaml
 claude:
-  provider: OPENAI_COMPATIBLE
-  base-url: http://localhost:11434/v1 # For Ollama
+  provider: OLLAMA                    # OPENAI_COMPATIBLE for vLLM, LM Studio or a gateway
+  base-url: http://localhost:11434/v1
   model: qwen2.5-coder:7b
 ```
+
+**Name the provider you are actually running.** Both values speak the same OpenAI dialect and reach
+the same client, so it is tempting to read them as interchangeable — they are not, and the
+difference lands on the setting a small model needs most. `claude.structured-output` defaults to
+`AUTO`, which sends a JSON Schema where support is known — `ANTHROPIC`, `OLLAMA`, `OPENROUTER` — and
+deliberately leaves `OPENAI_COMPATIBLE` alone, since some gateways answer 400 to a `response_format`
+they do not implement (see the paragraph under Option A). Writing `OPENAI_COMPATIBLE` in front of an
+Ollama therefore turns constrained decoding off, silently, on exactly the class of model that is
+most likely to wrap its JSON in prose. Use `OPENAI_COMPATIBLE` for vLLM, LM Studio or anything else
+whose schema support you have not established — and `claude.structured-output: ON` once you have.
 
 A one-command stack with Ollama pre-wired is available:
 ```bash

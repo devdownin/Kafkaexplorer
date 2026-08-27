@@ -200,8 +200,9 @@ Chaque message est un résumé du payload d'origine :
         //     measurement is untouched by that. Reporting the refusal *with* what was measured is
         //     the same rule coverage already follows on a failed analysis: these are measurements
         //     taken on this side of the call, so losing the call cannot invalidate them.
-        if (isApiKeyMissing()) {
-            return ProcessMiningResult.failed(noLlmExplanation(model))
+        String llmProblem = claudeConfig.configurationProblem();
+        if (llmProblem != null) {
+            return ProcessMiningResult.failed(noLlmExplanation(model, llmProblem))
                 .withProcessModel(model)
                 .withCoverage(coverageOf(topics, read,
                     new PromptScope(measuredByTopic(byTopic, fieldMapping, model), Map.of()), 0));
@@ -270,8 +271,10 @@ Chaque message est un résumé du payload d'origine :
         Map<String, List<PayloadDigest>> byTopic = groupAndSort(topics, window);
         ProcessModel model = processModelBuilder.build(window, fieldMapping);
 
-        if (isApiKeyMissing()) {
-            return ProcessMiningResult.failed(noLlmExplanation(model)).withProcessModel(model);
+        String llmProblem = claudeConfig.configurationProblem();
+        if (llmProblem != null) {
+            return ProcessMiningResult.failed(noLlmExplanation(model, llmProblem))
+                .withProcessModel(model);
         }
 
         String userPrompt =
@@ -285,10 +288,16 @@ Chaque message est un résumé du payload d'origine :
      * <p>Two different sentences, because the operator's next move differs: with a measured process
      * in hand the missing half is the interpretation, and the page has something to show; without a
      * field mapping there is nothing on either side and the mapping is the thing to go and fix.
+     *
+     * <p>{@code problem} comes from {@link ClaudeConfig#configurationProblem()} and names the
+     * setting. It used to be one fixed sentence — "Set an API key in Settings" — which was the
+     * right advice for exactly one of the reasons this branch is reached, and this branch was only
+     * reached for that one: a missing <em>endpoint</em> was checked nowhere and failed inside the
+     * HTTP client instead, after the read, as "URI with undefined scheme".
      */
-    private static String noLlmExplanation(ProcessModel model) {
+    private static String noLlmExplanation(ProcessModel model, String problem) {
         String base = "No LLM is configured, so nothing interpreted the run: the flowchart, the "
-            + "narrative and the anomalies all need a model. Set an API key in Settings to get them.";
+            + "narrative and the anomalies all need a model. " + problem;
         return model.available()
             ? base + " The measured process below needed none and is complete."
             : base + " " + model.unavailableReason();
@@ -958,10 +967,6 @@ sont dans la section VARIANTES.
         sb.append('"');
     }
 
-    private boolean isApiKeyMissing() {
-        return claudeConfig.isApiKeyRequired() && !claudeConfig.isApiKeyConfigured();
-    }
-
     private ProcessMiningResult callLlmAndParse(String userPrompt) {
         LlmResponse response;
         try {
@@ -969,9 +974,13 @@ sont dans la section VARIANTES.
         } catch (Exception e) {
             // Surface the real cause (timeout, bad URL/model/key, provider 5xx) instead of a
             // generic "empty response" — it is what the caller shows, as an error rather than as
-            // analysis prose.
-            log.error("Error calling LLM API for analysis: {}", e.getMessage(), e);
-            return errorResult("LLM call failed: " + e.getMessage());
+            // analysis prose. Through `explain`, which flattens the cause chain and is never
+            // blank: `getMessage()` is null for a NullPointerException, so the same failure read
+            // "LLM call failed: null" here while the profiling half of this very pipeline named
+            // its cause — the defect this codebase has already removed from `ddl-preview`,
+            // `QueryResult.error()` and `KafkaAdminService.pingDetail`.
+            log.error("Error calling LLM API for analysis: {}", SqlErrorClassifier.explain(e), e);
+            return errorResult("LLM call failed: " + SqlErrorClassifier.explain(e));
         }
 
         String rawResponse = response.text();

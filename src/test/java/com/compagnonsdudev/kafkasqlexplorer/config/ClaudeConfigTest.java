@@ -5,6 +5,8 @@ package com.compagnonsdudev.kafkasqlexplorer.config;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -104,5 +106,56 @@ class ClaudeConfigTest {
         assertFalse(ClaudeConfig.sameEndpointHost("not a url", "not a url"));
         assertFalse(ClaudeConfig.sameEndpointHost("", "https://openrouter.ai/api/v1"));
         assertFalse(ClaudeConfig.sameEndpointHost(null, null));
+    }
+    /**
+     * The two things that make a call impossible before it is made, and only the first was asked
+     * about.
+     *
+     * <p>A missing endpoint was checked nowhere, and {@code defaultBaseUrl(OPENAI_COMPATIBLE)} is
+     * {@code ""} by design — so such a deployment passed every guard, read its topics, built its
+     * prompt and died inside {@code HttpRequest.newBuilder().uri(…)} with "URI with undefined
+     * scheme", a message naming neither the setting nor the page that sets it.
+     */
+    @Test
+    void aMissingEndpointIsAsFinalAsAMissingKey() {
+        ClaudeConfig noEndpoint = at(ClaudeConfig.Provider.OPENAI_COMPATIBLE, "");
+        String problem = noEndpoint.configurationProblem();
+        assertNotNull(problem, "a provider with no default and no base URL cannot call anything");
+        assertTrue(problem.contains("claude.base-url"), problem);
+
+        ClaudeConfig noKey = at(ClaudeConfig.Provider.OPENROUTER, "");
+        assertNotNull(noKey.configurationProblem());
+        assertTrue(noKey.configurationProblem().contains("claude.api-key"),
+            noKey.configurationProblem());
+    }
+
+    /** A host with no scheme is how one writes an internal gateway, and it cannot be sent to. */
+    @Test
+    void anAddressThatIsNotAnAddressIsReported() {
+        ClaudeConfig config = at(ClaudeConfig.Provider.OPENAI_COMPATIBLE, "gpu-box:11434/v1");
+        String problem = config.configurationProblem();
+        assertNotNull(problem);
+        assertTrue(problem.contains("absolute http(s) URL"), problem);
+
+        assertFalse(ClaudeConfig.isAbsoluteHttpUrl("gpu-box:11434/v1"),
+            "java.net.URI parses this as a scheme of its own — the HTTP client is what refuses it");
+        assertFalse(ClaudeConfig.isAbsoluteHttpUrl("/v1/chat/completions"));
+        assertFalse(ClaudeConfig.isAbsoluteHttpUrl("ftp://gpu-box/v1"));
+        assertFalse(ClaudeConfig.isAbsoluteHttpUrl(""));
+        assertFalse(ClaudeConfig.isAbsoluteHttpUrl(null));
+        assertTrue(ClaudeConfig.isAbsoluteHttpUrl("http://gpu-box:11434/v1"));
+        assertTrue(ClaudeConfig.isAbsoluteHttpUrl("https://openrouter.ai/api/v1"));
+    }
+
+    /** Nothing is reported about a configuration that can be tried — the endpoint answers for itself. */
+    @Test
+    void aConfigurationThatCanBeTriedReportsNothing() {
+        assertNull(at(ClaudeConfig.Provider.OLLAMA, "").configurationProblem(),
+            "the provider's own default fills in, so there is an address");
+        assertNull(at(ClaudeConfig.Provider.SPECTRA, "http://spectra-api:8080").configurationProblem());
+
+        ClaudeConfig withKey = at(ClaudeConfig.Provider.OPENROUTER, "");
+        withKey.setApiKey("sk-or-v1-something");
+        assertNull(withKey.configurationProblem());
     }
 }

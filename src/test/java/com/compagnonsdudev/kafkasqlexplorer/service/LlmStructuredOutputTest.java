@@ -157,6 +157,59 @@ class LlmStructuredOutputTest {
             "an endpoint that refused once must not be probed on every later call");
     }
 
+    /**
+     * A 400 that persists <em>without</em> the schema was never about the schema, and must leave no
+     * durable conclusion behind.
+     *
+     * <p>The retry is the experiment; it used to be run after the verdict had already been written
+     * down. A constrained request from this client carries three fields besides the schema that are
+     * refused with the same status in the wild — {@code max_tokens} (which the OpenAI API rejects on
+     * reasoning models in favour of {@code max_completion_tokens}), {@code temperature: 0.0} on those
+     * same models, and a prompt over the context, which several gateways answer 400 rather than 413.
+     * Each of those latched the model as schema-incapable for the whole life of the client, and that
+     * lifetime outlasts the mistake: {@link LlmClientProvider} fingerprints provider, base URL and
+     * key, so correcting the cause reuses this very client and every later window runs unconstrained
+     * with nothing saying why.
+     */
+    @Test
+    void aFailureThatSurvivesDroppingTheSchemaTeachesNothingAboutTheSchema() throws Exception {
+        ClaudeConfig config = startServer(List.of(
+            new StubResponse(400, "{\"error\":{\"message\":\"Unsupported parameter: max_tokens\"}}"),
+            new StubResponse(400, "{\"error\":{\"message\":\"Unsupported parameter: max_tokens\"}}"),
+            new StubResponse(200, okBody())));
+
+        OpenAiCompatibleLlmClient client = new OpenAiCompatibleLlmClient(config);
+        RuntimeException e = assertThrows(RuntimeException.class,
+            () -> client.generateWithMeta("SYS", "USR", schema()));
+
+        assertTrue(e.getMessage().contains("max_tokens"),
+            "the second failure is the honest one to report: " + e.getMessage());
+        assertEquals(2, requestBodies.size(), "constrained, then unconstrained — one probe, no more");
+        assertFalse(requestBodies.get(1).contains("response_format"));
+
+        // The operator fixes the real cause. The client is the same one, and must constrain again.
+        client.generateWithMeta("SYS", "USR", schema());
+        assertEquals(3, requestBodies.size());
+        assertTrue(requestBodies.get(2).contains("response_format"),
+            "a refusal the retry disproved must not disable structured output for this model");
+    }
+
+    /** And the converse: a refusal the retry <em>confirms</em> is still remembered, once. */
+    @Test
+    void aRefusalTheRetryConfirmsIsStillRemembered() throws Exception {
+        ClaudeConfig config = startServer(List.of(
+            new StubResponse(400, "{\"error\":{\"message\":\"unknown field response_format\"}}"),
+            new StubResponse(200, okBody())));
+
+        OpenAiCompatibleLlmClient client = new OpenAiCompatibleLlmClient(config);
+        client.generateWithMeta("SYS", "USR", schema());
+        client.generateWithMeta("SYS", "USR", schema());
+
+        assertEquals(3, requestBodies.size());
+        assertFalse(requestBodies.get(2).contains("response_format"),
+            "the endpoint answered without the schema and refused it with — that is the observation");
+    }
+
     /** A 4xx that has nothing to do with the schema still surfaces — it is not swallowed by the retry. */
     @Test
     void stillReportsAGenuineClientError() throws Exception {

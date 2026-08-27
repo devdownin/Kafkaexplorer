@@ -17,6 +17,7 @@ import { recordMeasuredProcess, recordMetricPriorities } from './processModelEvi
 import { describeResume, resumableStep } from './processMiningDraft';
 import { describeUsage, formatCostUsd, totalCostUsd, totalTokens } from './llmUsage';
 import { describeDataPolicy } from './llmPolicy';
+import { describeTestTimeout, testTimeoutMs } from './llmTimeout';
 import { describeCoverage } from './processMiningCoverage';
 import ProcessModelPanel from '../components/processmining/ProcessModelPanel';
 import type { AnalysisMode, Step } from './processMiningDraft';
@@ -38,6 +39,15 @@ interface RuntimeLlmInfo {
   llmModel?: string;
   llmBaseUrl?: string;
   llmLocalDeployment?: boolean;
+  /** Le budget du serveur pour un appel au modèle : ce dont la sonde déduit son attente. */
+  llmRequestTimeoutSeconds?: number;
+  /**
+   * Pourquoi un appel échouerait avant même d'être fait — clé manquante, adresse manquante, adresse
+   * qui n'en est pas une — ou absent quand rien ne peut être dit sans interroger le point d'accès.
+   * Calculé par le serveur (`ClaudeConfig.configurationProblem`), pas déduit ici : c'est lui qui
+   * sait quel fournisseur exige quoi.
+   */
+  llmConfigurationProblem?: string | null;
   /** Vrai seulement là où le routage a pu imposer la non-rétention — voir `llmPolicy.ts`. */
   llmDataRetentionRefused?: boolean;
 }
@@ -98,8 +108,10 @@ const stepIndex = (s: Step) => STEPS.findIndex(x => x.key === s);
  */
 const PROFILING_TIMEOUT_MS = 5 * 60_000;
 const SNAPSHOT_TIMEOUT_MS = 10 * 60_000;
-// A one-word health check: if this does not answer, nothing else on the page will either.
-const LLM_TEST_TIMEOUT_MS = 90_000;
+// A one-word health check: if this does not answer, nothing else on the page will either. What it
+// waits is *derived* from the budget the server publishes rather than fixed here — see
+// `llmTimeout.ts`: 90 s in hard code aborted at less than a third of the 300 s both bundled local
+// stacks configure, so the button reported a failure about an endpoint that was answering.
 
 // Prefer the backend's error payload over axios' generic
 // "Request failed with status code 500" message.
@@ -274,14 +286,26 @@ const ProcessMining: React.FC = () => {
   const draftConflict = useDraftConflict(DRAFT_KEYS);
 
   const testLlmConnection = async () => {
+    const budget = llmInfo?.llmRequestTimeoutSeconds;
+    const waitMs = testTimeoutMs(budget);
     setLlmTesting(true);
     setLlmTest(null);
     try {
       const res = await axios.post<{ ok: boolean; message: string }>(
-        '/api/config/test-llm', {}, { timeout: LLM_TEST_TIMEOUT_MS });
+        '/api/config/test-llm', {}, { timeout: waitMs });
       setLlmTest({ ok: !!res.data.ok, message: res.data.message ?? '' });
     } catch (err: unknown) {
-      setLlmTest({ ok: false, message: errorMessage(err, 'The LLM could not be reached.') });
+      // Ce que le navigateur a abandonné ne dit rien du point d'accès, qui peut être en train de
+      // répondre — et le message générique conseille de réduire le nombre de topics, sur un appel
+      // qui n'en porte aucun.
+      const gaveUp = axios.isAxiosError(err)
+        && (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT');
+      setLlmTest({
+        ok: false,
+        message: gaveUp
+          ? describeTestTimeout(waitMs, budget)
+          : errorMessage(err, 'The LLM could not be reached.'),
+      });
     } finally {
       setLlmTesting(false);
     }
@@ -828,8 +852,22 @@ const ProcessMining: React.FC = () => {
                   <span><span className="font-medium">{policy.label}.</span> {policy.detail}</span>
                 </p>
               )}
-              {llmInfo.llmBaseUrl && (
+              {/* Une adresse absente ne se lit pas comme absente : la ligne disparaissait, sous une
+                  bannière par ailleurs complète, et l'échec arrivait bien plus tard — depuis le
+                  client HTTP, après la lecture des topics, sous la forme « URI with undefined
+                  scheme ». Ce que le serveur ne peut pas atteindre, il le dit ici. */}
+              {llmInfo.llmBaseUrl ? (
                 <p className="text-[11px] font-mono text-on-surface-variant mt-2 break-all">{llmInfo.llmBaseUrl}</p>
+              ) : (
+                <p className="text-[11px] text-warning mt-2">No endpoint configured.</p>
+              )}
+              {llmInfo.llmConfigurationProblem && (
+                <p className="text-xs mt-2 flex items-start gap-1.5 text-warning">
+                  <span aria-hidden="true" className="material-symbols-outlined text-sm flex-shrink-0">
+                    warning
+                  </span>
+                  <span className="break-words">{llmInfo.llmConfigurationProblem}</span>
+                </p>
               )}
               {llmTest && (
                 <p className={`text-xs mt-2 flex items-start gap-1.5 ${llmTest.ok ? 'text-success' : 'text-error'}`}>

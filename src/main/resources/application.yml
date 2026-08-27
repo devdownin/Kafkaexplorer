@@ -320,9 +320,12 @@ claude:
   # leaves an arbitrary OPENAI_COMPATIBLE gateway alone, because an unrecognised response_format is
   # a 400 on some of them and breaking a working deployment is the wrong default. ON forces it for
   # a gateway you know supports it; OFF disables it everywhere. Whatever the setting, a client that
-  # gets its schema refused retries once without it and stops sending one for that model — per
-  # model, not per endpoint, which is what makes AUTO safe on OpenRouter, where support depends on
-  # the model and the upstream provider serving it rather than on the gateway.
+  # gets its schema refused retries once without it and, if that retry succeeds, stops sending one
+  # for that model — per model, not per endpoint, which is what makes AUTO safe on OpenRouter, where
+  # support depends on the model and the upstream provider serving it rather than on the gateway.
+  # "If that retry succeeds" is load-bearing: a 400 says the body was not understood, not which
+  # field of it, and max_tokens or temperature can draw the same status from a model that supports
+  # schemas perfectly well.
   structured-output: AUTO
   # OPENROUTER only — how the gateway is allowed to route, which is the one place where "where does
   # my data go" has an answer better than a warning. DENY restricts routing to upstream providers

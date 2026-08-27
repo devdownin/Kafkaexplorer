@@ -29,10 +29,17 @@ Kafka Explorer communique avec vos modèles locaux via une API compatible OpenAI
 3.  **Configurez l'application** (`src/main/resources/application.yml`) :
     ```yaml
     claude:
-      provider: OPENAI_COMPATIBLE
+      provider: OLLAMA
       base-url: http://localhost:11434/v1
       model: qwen2.5-coder:7b
     ```
+
+    `OLLAMA` et non `OPENAI_COMPATIBLE` : les deux parlent le même dialecte et passent par le même
+    client, mais `claude.structured-output` vaut `AUTO`, qui n'envoie un schéma que là où le support
+    est connu — et une passerelle anonyme ne l'est pas. Écrire `OPENAI_COMPATIBLE` devant un Ollama
+    éteint donc la sortie contrainte, en silence, sur la catégorie de modèle qui en a le plus besoin
+    (voir le point 2 ci-dessous). Gardez `OPENAI_COMPATIBLE` pour vLLM, LM Studio ou une passerelle
+    dont vous n'avez pas établi le comportement.
 
 ---
 

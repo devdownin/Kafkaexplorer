@@ -176,13 +176,27 @@ class FieldProfilingServiceTest {
 
         FieldProfileResult result = fieldProfilingService.profile(List.of("topic1"), SnapshotConfig.latestN(10));
 
-        assertTrue(result.warnings().contains("LLM API key not configured."));
+        // The refusal names the property rather than restating the situation: it is rendered to
+        // whoever has to fix it, and "not configured" says nothing about where to configure it.
+        assertNotNull(result.error());
+        assertTrue(result.error().contains("claude.api-key"), result.error());
     }
 
+    /**
+     * A provider that needs no key still needs an address, and this fixture had none.
+     *
+     * <p>Which is the defect rather than an accident of the test: {@code OPENAI_COMPATIBLE} has no
+     * default base URL — deliberately, this application knowing nothing about that endpoint — so a
+     * deployment shaped exactly like this one passed every guard, read its topics, built its
+     * prompt and failed inside the HTTP client with "URI with undefined scheme". The base URL is
+     * what a real such deployment carries, and the case where it is absent is
+     * {@link #testProfileWithNoEndpointConfigured()} below.
+     */
     @Test
     void testProfileWithMissingApiKeyOpenAiCompatible() {
         claudeConfig.setProvider(ClaudeConfig.Provider.OPENAI_COMPATIBLE);
         claudeConfig.setApiKey("");
+        claudeConfig.setBaseUrl("http://localhost:11434/v1");
         LlmClient llmClient = mock(LlmClient.class);
         fieldProfilingService = new FieldProfilingService(snapshotReader, claudeConfig, llmClient);
 
@@ -195,7 +209,24 @@ class FieldProfilingServiceTest {
         FieldProfileResult result = fieldProfilingService.profile(List.of("topic1"), SnapshotConfig.latestN(10));
 
         assertNotNull(result);
+        assertNull(result.error(), "no key is required of this provider");
         assertTrue(result.warnings().isEmpty());
+    }
+
+    /** And an endpoint that is absent is refused before a single topic is read. */
+    @Test
+    void testProfileWithNoEndpointConfigured() {
+        claudeConfig.setProvider(ClaudeConfig.Provider.OPENAI_COMPATIBLE);
+        claudeConfig.setApiKey("");
+        claudeConfig.setBaseUrl("");
+        fieldProfilingService =
+            new FieldProfilingService(snapshotReader, claudeConfig, mock(LlmClient.class));
+
+        FieldProfileResult result = fieldProfilingService.profile(List.of("topic1"), SnapshotConfig.latestN(10));
+
+        assertNotNull(result.error());
+        assertTrue(result.error().contains("claude.base-url"), result.error());
+        verifyNoInteractions(snapshotReader);
     }
 
     @Test

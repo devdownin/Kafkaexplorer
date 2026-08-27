@@ -8,6 +8,7 @@ import com.compagnonsdudev.kafkasqlexplorer.config.ClaudeConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.LlmResponse;
 import com.compagnonsdudev.kafkasqlexplorer.domain.LlmUsage;
 import com.compagnonsdudev.kafkasqlexplorer.domain.RagSource;
+import com.compagnonsdudev.kafkasqlexplorer.util.LogSafe;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -82,7 +83,15 @@ public class SpectraLlmClient implements LlmClient {
             JsonNode root = objectMapper.readTree(response.body());
             JsonNode answer = root.path("answer");
             if (answer.isMissingNode() || answer.isNull()) {
-                log.error("SpectraLLM response has no 'answer' field: {}", response.body());
+                // Neutralised and bounded, unlike the whole body this used to write. Two reasons,
+                // and the second is the one specific to this provider: the string is chosen by a
+                // remote host, so it is a log-injection sink like every other value LogSafe covers
+                // — and on SpectraLLM the body *is* the model's answer about Kafka payloads, so an
+                // unbounded copy of it puts message-derived content in logs/kafkaexplorer.log,
+                // which is a named volume in every stack and the first file anyone pastes into a
+                // bug report. Evidence is worth 300 characters, not all of it.
+                log.error("SpectraLLM response has no 'answer' field: {}",
+                    LogSafe.text(truncate(response.body())));
                 throw new RuntimeException("SpectraLLM response did not contain an answer");
             }
             // SpectraLLM's query API reports no token accounting, so the counts stay null rather
@@ -94,10 +103,11 @@ public class SpectraLlmClient implements LlmClient {
 
         } catch (RuntimeException e) {
             // Already carries a precise message (transport, status, missing answer) — propagate as-is.
-            log.error("Error calling SpectraLLM API: {}", e.getMessage());
+            // Through LogSafe.text, because that message quotes the provider's body.
+            log.error("Error calling SpectraLLM API: {}", LogSafe.text(e.getMessage()));
             throw e;
         } catch (Exception e) {
-            log.error("Error calling SpectraLLM API: {}", e.getMessage(), e);
+            log.error("Error calling SpectraLLM API: {}", LogSafe.text(e.getMessage()), e);
             throw new RuntimeException("SpectraLLM call failed: " + e.getMessage(), e);
         }
     }
@@ -128,6 +138,14 @@ public class SpectraLlmClient implements LlmClient {
             result.add(new RagSource(text, sourceFile, score));
         }
         return result;
+    }
+
+    /** As much of a body as is worth logging or quoting back. */
+    private static String truncate(String body) {
+        if (body == null) {
+            return "";
+        }
+        return body.length() > 300 ? body.substring(0, 300) + "…" : body;
     }
 
     /** Builds {@code <base-url>/api/query}, tolerating an optional trailing slash on the base URL. */

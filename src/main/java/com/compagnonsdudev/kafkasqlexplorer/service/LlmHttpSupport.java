@@ -315,8 +315,13 @@ final class LlmHttpSupport {
      * <p>Deliberately phrased as what the status usually means rather than as a verdict: this is
      * shared by every plain-HTTP provider here, and a corporate gateway is free to use these codes
      * its own way.
+     *
+     * <p>Package-private rather than private because {@link AnthropicLlmClient} reads it too. That
+     * client does not go through {@link #sendWithRetry} — it speaks through the vendor SDK — but a
+     * 402 means the same thing there, and writing the sentence a second time is how the two come to
+     * disagree.
      */
-    private static String remedyFor(int status, String upstreamProvider) {
+    static String remedyFor(int status, String upstreamProvider) {
         if (upstreamProvider != null) {
             // Said before anything else, because every other sentence here would name the wrong
             // thing to go and change. The gateway accepted the request and passed it on; what

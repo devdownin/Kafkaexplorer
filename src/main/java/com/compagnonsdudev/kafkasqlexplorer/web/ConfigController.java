@@ -180,6 +180,7 @@ public class ConfigController {
             effective(body, "truststorePath", kafkaConfig.getTruststorePath()),
             effective(body, "keystorePath", kafkaConfig.getKeystorePath())));
 
+        checkEndpoint(body, problems);
         checkEnum(body, "llmProvider", ClaudeConfig.Provider.class, problems);
         checkEnum(body, "llmStructuredOutput", ClaudeConfig.StructuredOutput.class, problems);
         checkEnum(body, "llmOpenrouterDataCollection", ClaudeConfig.DataCollection.class, problems);
@@ -204,6 +205,24 @@ public class ConfigController {
         }
         problems.add(field + " is '" + value + "', which is not one of "
             + Arrays.stream(type.getEnumConstants()).map(Enum::name).collect(Collectors.joining(", ")) + ".");
+    }
+
+    /**
+     * A base URL that was typed has to be an address something can be sent to.
+     *
+     * <p>Only when it is non-blank, deliberately: blank means "use the provider's own default",
+     * which is a legitimate thing to save — and for {@code OPENAI_COMPATIBLE} there is no default,
+     * a state {@link ClaudeConfig#configurationProblem()} reports when a call is attempted rather
+     * than one this refuses. What is refused here is the mistake that cannot mean anything:
+     * {@code gpu-box:11434}, which {@code java.net.URI} parses happily as a scheme of its own and
+     * the HTTP client then rejects several layers from the operator who typed it.
+     */
+    private void checkEndpoint(Map<String, Object> body, List<String> problems) {
+        if (!body.containsKey("llmBaseUrl") || body.get("llmBaseUrl") == null) return;
+        String value = asString(body.get("llmBaseUrl"));
+        if (isBlank(value) || ClaudeConfig.isAbsoluteHttpUrl(value)) return;
+        problems.add("llmBaseUrl is '" + value + "', which is not an absolute http(s) URL — it "
+            + "needs the scheme and the host, for example http://gpu-box:11434/v1.");
     }
 
     private void checkPositiveInt(Map<String, Object> body, String field, List<String> problems) {
@@ -475,10 +494,12 @@ public class ConfigController {
         ClaudeConfig target = candidateFrom(body);
         boolean candidate = target != claudeConfig && target.differsFrom(claudeConfig);
 
-        if (target.isApiKeyRequired() && !target.isApiKeyConfigured()) {
-            return new LlmTestResponse(false,
-                "An API key is required for " + target.getProviderLabel()
-                    + " but none is configured.",
+        // The key and the address are the two things that make a call impossible before it is
+        // made, and only the first was asked about — an OPENAI_COMPATIBLE deployment with no base
+        // URL got as far as the HTTP client and came back with "URI with undefined scheme".
+        String problem = target.configurationProblem();
+        if (problem != null) {
+            return new LlmTestResponse(false, problem,
                 target.getProviderLabel(), target.getModel(), candidate, null);
         }
 
@@ -605,6 +626,11 @@ public class ConfigController {
         // What AUTO actually resolves to for the provider in force — the setting alone does not
         // say whether a schema will be sent, and that is the question an operator has.
         result.put("llmStructuredOutputActive", claudeConfig.isStructuredOutputEnabled());
+        // Why a call would fail before it is made — a missing key, a missing address, an address
+        // that is not one — or null when nothing can be said without asking the endpoint. Both
+        // pages that call a model render it: the failure it describes used to arrive after a
+        // topic read, from inside the HTTP client, naming no setting.
+        result.put("llmConfigurationProblem", claudeConfig.configurationProblem());
         result.put("llmRequestTimeoutSeconds", claudeConfig.getRequestTimeoutSeconds());
         result.put("llmMaxTokens", claudeConfig.getMaxTokens());
         result.put("llmSnapshotWindowSize", claudeConfig.getSnapshotWindowSize());

@@ -14,6 +14,7 @@ import {
   type SettingsPersistence,
 } from './settingsPersistence';
 import { describeDataPolicy, type LlmPolicyFacts } from './llmPolicy';
+import { describeTestTimeout, testTimeoutMs } from './llmTimeout';
 import type { LlmModelShortlist, LlmTestResponse } from '../api/types';
 import {
   describeKeyStatus, describeModelCheck, describeModelIdentity, hasModelWarning,
@@ -478,14 +479,26 @@ const Config: React.FC = () => {
    */
   const handleTestLlm = async () => {
     if (!checkBeforeSubmit()) return;
+    // `axios` ne pose aucun délai par défaut, donc ce bouton pouvait tourner indéfiniment face à un
+    // serveur qui ne répond jamais — la règle que l'éditeur SQL a servi à écrire, restée non
+    // appliquée ici. L'attente se déduit du budget du serveur : c'est le champ juste au-dessus, et
+    // une UI qui fixe elle-même un délai pour un appel dont elle connaît le budget se trompe le
+    // jour où ce budget bouge.
+    const budget = config.llmRequestTimeoutSeconds;
+    const waitMs = testTimeoutMs(budget);
     setLlmTesting(true);
     setLlmTestResult(null);
     setError(null);
     try {
-      const res = await axios.post<LlmTestResponse>('/api/config/test-llm', probeBody());
+      const res = await axios.post<LlmTestResponse>('/api/config/test-llm', probeBody(),
+        { timeout: waitMs });
       setLlmTestResult(res.data);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'LLM test failed';
+      const gaveUp = axios.isAxiosError(err)
+        && (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT');
+      const msg = gaveUp
+        ? describeTestTimeout(waitMs, budget)
+        : err instanceof Error ? err.message : 'LLM test failed';
       setLlmTestResult({ ok: false, message: msg, probeFailed: true });
     } finally {
       setLlmTesting(false);
