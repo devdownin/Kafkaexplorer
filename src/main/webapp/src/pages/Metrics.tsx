@@ -830,7 +830,7 @@ const MetricCard: React.FC<{
         {metric.sql && (
           <button onClick={() => void copyText(metric.sql ?? '').then(ok =>
               toast(ok ? 'SQL copied' : 'Could not copy to the clipboard', ok ? 'success' : 'error'))}
-            title="Copy SQL" aria-label="Copy the metric SQL" className="shrink-0 text-outline hover:text-primary transition-colors opacity-0 group-hover:opacity-100">
+            title="Copy SQL" aria-label="Copy the metric SQL" className="shrink-0 inline-flex items-center justify-center w-6 h-6 text-outline hover:text-primary transition-colors opacity-0 group-hover:opacity-100">
             <span className="material-symbols-outlined text-base">content_copy</span>
           </button>
         )}
@@ -866,7 +866,7 @@ const MetricCard: React.FC<{
                 ok ? 'success' : 'error'))}
               title="Copy the Prometheus alert rule"
               aria-label="Copy the Prometheus alert rule for this metric"
-              className="shrink-0 text-outline hover:text-primary transition-colors">
+              className="shrink-0 inline-flex items-center justify-center w-6 h-6 text-outline hover:text-primary transition-colors">
               <span className="material-symbols-outlined text-base">content_copy</span>
             </button>
           </>
@@ -1928,7 +1928,7 @@ const Metrics: React.FC = () => {
                               .catch(() => toast('Failed to refresh latest message', 'error'))
                               .finally(() => setLabelPreviewLoading(false));
                           }}
-                          className="shrink-0 text-on-surface-variant hover:text-primary transition-colors"
+                          className="shrink-0 inline-flex items-center justify-center w-6 h-6 text-on-surface-variant hover:text-primary transition-colors"
                           title="Refresh latest message" aria-label="Refresh the latest message"
                         >
                           <span className={`material-symbols-outlined text-base ${labelPreviewLoading ? 'animate-spin' : ''}`}>refresh</span>

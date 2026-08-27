@@ -222,8 +222,8 @@ const TARGET_BUDGET = {
   'stream-flow': 19,
   'data-model': 7,
   'audit': 23,
-  'metrics': 8,
-  'metrics·editor': 9,
+  'metrics': 7,
+  'metrics·editor': 7,
   'cluster': 1,
 };
 
