@@ -200,7 +200,8 @@ public class AnthropicLlmClient implements LlmClient {
             config.getModel());
         log.debug("Anthropic call complete — {}", usage.summary());
 
-        return new LlmResponse(text, List.of(), usage);
+        // Same rule as the OpenAI-shaped path: what actually went out, not what was configured.
+        return new LlmResponse(text, List.of(), usage, schema != null);
     }
 
     /** The SDK's schema object is a freeform property bag, so the map goes in key by key. */
@@ -208,5 +209,11 @@ public class AnthropicLlmClient implements LlmClient {
         JsonOutputFormat.Schema.Builder builder = JsonOutputFormat.Schema.builder();
         schema.forEach((key, value) -> builder.putAdditionalProperty(key, JsonValue.from(value)));
         return builder.build();
+    }
+
+    /** The SDK client wraps an OkHttp pool and dispatcher; retiring one means releasing those. */
+    @Override
+    public void close() {
+        client.close();
     }
 }

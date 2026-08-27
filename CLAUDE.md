@@ -954,11 +954,39 @@ through `LogSafe.text` before reaching the log; and the analysis half reports `e
 reported a `getMessage()` that is null for an NPE. The refusal memory moved to
 **`SchemaRefusalMemory`** on the way — two copies of "which models cannot be constrained" is how
 one comes to latch on a status the other does not.
-**Four remain open**: L4 (SpectraLLM reports a model that is not answering — it ignores the field),
-L6 (clients replaced without being closed, and the fingerprint misses the timeout they carry), L8
-(a redirect retried three times as a transient failure) and L9 (nothing says whether a constraint
-held or whether a prompt was truncated, though both signals are already parsed). Read it before
-touching `AnthropicLlmClient`, `SpectraLlmClient`, `LlmHttpSupport` or `LlmClientProvider`.
+**The last four have shipped too**, and three of them turned on a measurement rather than an
+argument. **L8**: a redirect fell into "everything else is transient", so a 308 took all three
+attempts and came back as `status 308: ` with an empty body — a permanent misconfiguration reported
+as a passing one. The audit's first suggestion was `followRedirects(NORMAL)`, and that was
+*measured before being taken*: the JDK converts a POST to a GET on 301 and 302 and **drops the
+body** (`method=GET bodyLen=0`), so the prompt would leave silently; only 307 and 308 preserve it.
+A 3xx is therefore refused, naming the `Location` to put in `claude.base-url` — an endpoint that
+redirects every call is configuration to fix once, not a round trip to pay for ever.
+**L6**: `LlmClient` is `AutoCloseable` (narrowed to throw nothing — a client being retired must not
+fail the save that retired it), the replaced one is closed after the replacement is published, and
+`@PreDestroy` releases the last. It is `HttpClient.shutdown()` and not `close()`: `close()` blocks
+until every in-flight exchange ends, and an exchange here is a model generating — up to the 300 s
+the bundled local-inference stacks configure — landing on the thread that saved the Settings page.
+`requestTimeoutSeconds` joins the fingerprint, since it is *both* read per call and baked in as the
+connect timeout, so raising it moved one half only. **L4**: `ClaudeConfig.namesTheModel()` is false
+for SPECTRA, which serves whichever model it is configured with and ignores the field — a
+deployment moved off the shipped OpenRouter default kept `openai/gpt-4o-mini` in it, and that stale
+slug was reported as the model answering on every window; `LlmUsage.model` is null there and
+`describeRuntimeModel` renders the absence as *model chosen by the server*. **L9** is the one the
+audit called out as silent: `LlmResponse.schemaSent` records what the client **sent** (not what was
+configured — `AUTO` declines for an unknown provider, and the per-model latch declines after a
+refusal), and `LlmAnswerSignals` turns two already-parsed facts into coverage warnings. A schema
+that travelled and an answer that still needed repairing means the endpoint accepted the field and
+ignored it — a constrained decoder cannot emit the reasoning block or fence that was stripped —
+which is `ACCEPTED_UNCONSTRAINED` for every provider that publishes no catalogue. And a
+`prompt_tokens` under **half** an optimistic four-characters-per-token floor is a prompt truncated
+to fit a window, which is Ollama's documented behaviour and logged by it at debug, i.e. nowhere.
+Both are **warnings, not verdicts** — the ratio is an estimate and this application does not own
+the tokeniser — and both are logged as well as carried, because the live path reports its scope
+through `WINDOW_STATS` rather than a coverage record and a live session reasoning on half its
+prompt has no other symptom. Read the audit before touching `AnthropicLlmClient`,
+`SpectraLlmClient`, `LlmHttpSupport` or `LlmClientProvider`; what it says about those files is
+still the reason they look as they do.
 
 **The two metric templates that compare the results of two queries** — `TOPIC_COUNT_DELTA` and
 `TOPIC_TRANSIT_LATENCY`, which are also the two the KPI suggestion panel proposes most — are
