@@ -1,0 +1,66 @@
+# The published-image pins, checked on a schedule rather than by whoever happens to open the
+# next pull request.
+#
+# `compose/spectra-hub.yml` and `compose/image.yml` name the Explorer image by hand
+# (`${EXPLORER_IMAGE_TAG:-<version>}`). Dependabot cannot read a `${VAR:-…}` default, so the
+# only thing that moves it is `release.yml`, which opens a bump pull request at publication
+# time — deliberately `continue-on-error`, because the image is already published by then and
+# a release must never be reported as failed over a follow-up.
+#
+# That posture is right and it leaves a hole: when the step does not produce a pull request,
+# **nothing says so**. The pin then goes stale in silence until the next pull request touching
+# a file `hub-changes` gates on fails `check-image-pins.py --published` — a check about
+# something it did not change. `release.yml`'s own comment records that happening twice in one
+# day on two unrelated branches; it happened again over v1.9.3 and v1.9.4, which is what this
+# file is here to stop.
+#
+# So the release keeps trying to fix it, and this asks the question on a timer instead of
+# leaving the only alarm on a best-effort step. It is the same argument as Scorecard one file
+# over: what decays silently needs something that looks at it when nothing else is happening.
+#
+# It deliberately does **not** open the bump pull request itself. That logic lives in
+# `release.yml`, and a second copy of it here is exactly the drift this repository keeps
+# removing — one definition, not two that agree until they do not.
+name: Image pins
+
+on:
+  schedule:
+    # Weekly. The pin only moves when a release publishes, so a day's staleness costs nothing;
+    # what matters is that it is never a month. Wednesday 06:41 UTC — off the hour, and off
+    # the days CodeQL (Monday) and Scorecard (Tuesday) already use, so the three do not queue
+    # together.
+    - cron: '41 6 * * 3'
+  # So the question can be asked straight after a release without waiting for Wednesday.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  pins:
+    runs-on: ubuntu-latest
+    # The check is one registry round trip over a handful of files; anything beyond this is
+    # a network that has stopped answering rather than work still in progress.
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # `check-image-pins.py` resolves the pin against the newest release tag, and the
+          # default checkout carries no tags at all — the check would fail on their absence
+          # rather than on a drift.
+          fetch-tags: true
+
+      # `--published` runs the offline rules too (nothing floats, the llama.cpp CPU and CUDA
+      # tags name the same build, the Explorer pin does not name an unpublished release) and
+      # then asks Docker Hub what it actually serves.
+      #
+      # A registry that cannot be reached is a `::warning::` inside the script, not a failure:
+      # "we asked and it is stale" and "we could not ask" are different answers, and only the
+      # first is a defect here. So a red run of this workflow means the pin really is behind,
+      # and its message names the three files to edit.
+      - name: Are the published-image pins still current?
+        run: python3 docs/check-image-pins.py --published
