@@ -392,3 +392,74 @@ describe('Dashboard activity column', () => {
     expect(params.buckets).toBe(12);
   });
 });
+
+/*
+ * La bascule « Mark retry ». Ce qui n'a de sens qu'ici, c'est qu'elle *marque* sans filtrer — la
+ * confondre avec ses deux voisines « Hide … » ferait disparaître des lignes que personne n'a
+ * demandé de cacher — et qu'elle dise quelque chose même quand la page courante n'en contient
+ * aucune, faute de quoi elle est indiscernable d'un interrupteur en panne.
+ */
+describe('Dashboard retry marker', () => {
+  const retryTopics = ['demo.orders.received', 'demo.orders.retry.5m', 'demo.RETRY-payments', 'demo.orders.dlt'];
+
+  function stubRetryCluster() {
+    mockedAxios.get.mockImplementation((url: string) => {
+      if (url === '/api/dashboard') {
+        return Promise.resolve({
+          data: {
+            ...dashboard,
+            topics: retryTopics,
+            topicSizes: Object.fromEntries(retryTopics.map(t => [t, 10])),
+            topicLastMessages: Object.fromEntries(retryTopics.map(t => [t, WINDOW_START])),
+          },
+        });
+      }
+      if (url === '/api/dashboard/activity') return Promise.resolve({ data: activityFor(retryTopics) });
+      return Promise.resolve({ data: {} });
+    });
+    mockedAxios.isCancel = ((e: unknown) => e instanceof Error && e.name === 'CanceledError') as never;
+  }
+
+  it('marks every topic whose name carries "retry", whatever its case or position', async () => {
+    const user = userEvent.setup();
+    stubRetryCluster();
+    renderPage();
+
+    await screen.findByText('demo.orders.retry.5m');
+    expect(screen.queryAllByText('Retry')).toHaveLength(0);
+
+    await user.click(screen.getByLabelText('Mark retry'));
+
+    // Un suffixe n'aurait trouvé ni `…retry.5m` ni `RETRY-payments`.
+    expect(screen.getAllByText('Retry')).toHaveLength(2);
+    expect(screen.getByText('2 marked retry')).toBeInTheDocument();
+  });
+
+  it('marks without filtering — the DLT and the plain topic stay on screen', async () => {
+    const user = userEvent.setup();
+    stubRetryCluster();
+    renderPage();
+
+    await screen.findByText('demo.orders.retry.5m');
+    await user.click(screen.getByLabelText('Mark retry'));
+
+    for (const topic of retryTopics) {
+      expect(screen.getByText(topic)).toBeInTheDocument();
+    }
+    // La marque est portée en plus de l'état, jamais à sa place : un topic de reprise reste vide,
+    // sain ou DLT par ailleurs.
+    expect(screen.getByText('DLT')).toBeInTheDocument();
+  });
+
+  it('says so when nothing on the cluster matches, rather than looking broken', async () => {
+    const user = userEvent.setup();
+    stubApi();
+    renderPage();
+
+    await screen.findByText(topics[0]);
+    await user.click(screen.getByLabelText('Mark retry'));
+
+    expect(screen.getByText('no retry topic')).toBeInTheDocument();
+    expect(screen.queryAllByText('Retry')).toHaveLength(0);
+  });
+});
