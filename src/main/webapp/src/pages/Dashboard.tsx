@@ -86,6 +86,19 @@ const SortButton: React.FC<{
 );
 
 /**
+ * Un topic de reprise, repéré à son nom. `includes` et non `endsWith` comme la règle DLT juste
+ * au-dessus, et ce n'est pas une incohérence : une file d'attente morte est un suffixe par
+ * convention (`….dlt`), alors qu'une reprise se nomme aussi bien `orders.retry.5m` que
+ * `retry-orders` — chercher un suffixe n'en trouverait qu'une partie, en silence.
+ *
+ * C'est une *marque*, jamais un filtre : un topic de reprise reste vide, sain ou DLT par
+ * ailleurs, donc l'état n'est pas la bonne colonne pour le dire et la ligne n'est pas retirée.
+ */
+function isRetryTopic(topic: string): boolean {
+  return topic.toLowerCase().includes('retry');
+}
+
+/**
  * « il y a 5 min » se calcule depuis un instant de référence *passé en paramètre* : appeler
  * `Date.now()` en plein rendu rend celui-ci impur, et fait dépendre l'affichage du moment où
  * React a choisi de re-rendre plutôt que de la fraîcheur des données.
@@ -114,6 +127,8 @@ const Dashboard: React.FC = () => {
   const [killingJob, setKillingJob] = useState<string | null>(null);
   const [hideEmpty, setHideEmpty] = useState(false);
   const [hideDlt, setHideDlt] = useState(false);
+  /** Marquer les topics de reprise — un signalement, pas un filtre : rien n'est retiré. */
+  const [markRetry, setMarkRetry] = useState(false);
   /**
    * Compte des topics à la visite précédente, lu une seule fois. C'était une ref écrite dans un
    * effet et lue pendant le rendu — un état à initialisation paresseuse dit la même chose sans
@@ -324,6 +339,16 @@ const Dashboard: React.FC = () => {
   const pagedTopics = useMemo(
     () => filteredTopics.slice(page * pageSize, (page + 1) * pageSize),
     [filteredTopics, page, pageSize],
+  );
+
+  /*
+   * Combien de topics la marque désigne, sur la liste filtrée entière et pas sur la page. Sans ce
+   * compte, activer l'interrupteur depuis une page qui n'en contient aucun ne produit rien à
+   * l'écran — indiscernable d'une bascule qui ne marche pas.
+   */
+  const retryCount = useMemo(
+    () => (markRetry ? filteredTopics.filter(isRetryTopic).length : 0),
+    [markRetry, filteredTopics],
   );
 
   const activityWindow = windowById(activityChoice);
@@ -553,6 +578,11 @@ const Dashboard: React.FC = () => {
           <h2 className="text-[15px] font-semibold text-on-surface flex items-center gap-2 shrink-0">
             Topics
             <span className="text-[12px] font-normal text-on-surface-variant tabular-nums">({filteredTopics.length})</span>
+            {markRetry && (
+              <span className="text-[12px] font-normal text-primary tabular-nums">
+                {retryCount === 0 ? 'no retry topic' : `${retryCount} marked retry`}
+              </span>
+            )}
           </h2>
           <div className="flex flex-wrap items-center gap-3 justify-end">
             <div className="relative w-full max-w-xs sm:w-64">
@@ -572,9 +602,17 @@ const Dashboard: React.FC = () => {
             </div>
 
             <div className="flex items-center gap-3 shrink-0">
+              {/*
+                * `filters` distingue les deux natures de bascule qui se ressemblent ici. « Hide … »
+                * change la liste, donc la pagination courante décrit un ensemble qui n'existe plus
+                * et il faut revenir en page 1 ; « Mark retry » ne retire rien, et renvoyer
+                * l'opérateur au début du tableau pour un changement purement visuel serait un saut
+                * que rien ne demande.
+                */}
               {([
-                { label: 'Hide empty', value: hideEmpty, set: setHideEmpty },
-                { label: 'Hide DLT',   value: hideDlt,   set: setHideDlt   },
+                { label: 'Hide empty', value: hideEmpty, set: setHideEmpty,  filters: true },
+                { label: 'Hide DLT',   value: hideDlt,   set: setHideDlt,    filters: true },
+                { label: 'Mark retry', value: markRetry, set: setMarkRetry,  filters: false },
               ] as const).map(sw => (
                 <label key={sw.label} className="flex items-center gap-1.5 cursor-pointer select-none group">
                   <span className="text-[11px] font-medium text-on-surface-variant group-hover:text-on-surface transition-colors whitespace-nowrap">
@@ -583,7 +621,7 @@ const Dashboard: React.FC = () => {
                   <Switch
                     checked={sw.value}
                     aria-label={sw.label}
-                    onChange={value => { sw.set(value); setPage(0); }}
+                    onChange={value => { sw.set(value); if (sw.filters) setPage(0); }}
                   />
                 </label>
               ))}
@@ -685,7 +723,12 @@ const Dashboard: React.FC = () => {
               >
                 <Td className="font-mono font-medium text-on-surface">{topic}</Td>
                 <Td className="text-on-surface-variant tabular-nums">{(data.topicSizes[topic] ?? 0).toLocaleString()}</Td>
-                <Td>{stateBadge(getState(topic))}</Td>
+                <Td>
+                  <span className="flex flex-wrap items-center gap-1.5">
+                    {stateBadge(getState(topic))}
+                    {markRetry && isRetryTopic(topic) && <Badge tone="primary">Retry</Badge>}
+                  </span>
+                </Td>
                 <Td className="text-on-surface-variant tabular-nums" title={data.topicLastMessages?.[topic] ? new Date(data.topicLastMessages[topic]!).toLocaleString() : undefined}>
                   {formatLastMessage(data.topicLastMessages?.[topic], fetchedAt)}
                 </Td>
