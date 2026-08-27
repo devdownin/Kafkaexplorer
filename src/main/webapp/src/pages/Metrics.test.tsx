@@ -22,7 +22,7 @@ import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import axios from 'axios';
 import type { MetricConfig, MetricSuggestion, MetricSuggestions } from '../api/types';
-import { defaultReadMode, isSingleTableRead, validateScanParams, validateTemplate } from './Metrics';
+import { defaultReadMode, isSingleTableRead, sameStatement, validateScanParams, validateTemplate } from './Metrics';
 
 vi.mock('axios');
 const mockedAxios = vi.mocked(axios, true);
@@ -367,5 +367,103 @@ describe('la fenêtre de latence', () => {
     expect(latency({ refreshIntervalMs: '10' }).some(m => m.level === 'error')).toBe(true);
     expect(latency({ refreshIntervalMs: '300000' }).some(m => m.level === 'error')).toBe(false);
     expect(latency({ refreshIntervalMs: '' }).some(m => m.level === 'error')).toBe(false);
+  });
+});
+
+describe('deux côtés qui ne peuvent pas différer', () => {
+  const gap = (params: Record<string, unknown>) =>
+    validateTemplate('TOPIC_COUNT_DELTA', 'GAUGE', {
+      leftSql: 'SELECT COUNT(*) AS metric_value FROM a',
+      rightSql: 'SELECT COUNT(*) AS metric_value FROM b',
+      ...params,
+    });
+
+  it('reconnaît deux instructions identiques au copier-coller près', () => {
+    expect(sameStatement('SELECT COUNT(*)  FROM a', 'select count(*) from a;')).toBe(true);
+    expect(sameStatement('SELECT COUNT(*) FROM a', 'SELECT COUNT(*) FROM b')).toBe(false);
+    // Deux champs vides ne sont pas « identiques » : leur absence a déjà son propre refus.
+    expect(sameStatement('', '')).toBe(false);
+  });
+
+  it('refuse un écart entre une chose et elle-même', () => {
+    // Zéro pour toujours, et zéro sur cette métrique se lit « aucune perte » — la seule valeur
+    // qu'elle ne doit jamais publier par accident.
+    const msgs = gap({ rightSql: 'SELECT COUNT(*) AS metric_value FROM a' });
+    expect(msgs.some(m => m.level === 'error' && m.text.includes('same statement'))).toBe(true);
+  });
+
+  it('refuse aussi le même topic en comptage par offsets, où le SQL n’est pas lu', () => {
+    const msgs = gap({ countBy: 'OFFSETS', leftTopic: 'demo.orders', rightTopic: 'demo.orders' });
+    expect(msgs.some(m => m.level === 'error' && m.text.includes('same topic'))).toBe(true);
+  });
+
+  it('laisse passer deux topics différents', () => {
+    const msgs = gap({ countBy: 'OFFSETS', leftTopic: 'demo.a', rightTopic: 'demo.b' });
+    expect(msgs.some(m => m.level === 'error')).toBe(false);
+  });
+
+  it('refuse une latence corrélée avec elle-même', () => {
+    const msgs = validateTemplate('TOPIC_TRANSIT_LATENCY', 'GAUGE', {
+      sourceSql: 'SELECT id AS match_key, ts AS event_time FROM a',
+      targetSql: 'SELECT id AS match_key, ts AS event_time FROM a',
+    });
+    expect(msgs.some(m => m.level === 'error' && m.text.includes('correlated with itself'))).toBe(true);
+  });
+});
+
+describe('la carte porte la mesure et la règle, pas seulement un nombre', () => {
+  const gapMetric: MetricConfig = {
+    ...templateMetric,
+    id: 'm-gap',
+    name: 'gauge_gap_a_to_b',
+    templateType: 'TOPIC_COUNT_DELTA',
+    templateParams: { leftTopic: 'demo.a', rightTopic: 'demo.b', operation: 'LEFT_MINUS_RIGHT' },
+    lastValue: 5,
+    warningThreshold: 10, criticalThreshold: 50,
+    lastSummary: {
+      leftValue: 12, rightValue: 7, operation: 'LEFT_MINUS_RIGHT',
+      countedBy: 'OFFSETS', readGapMs: 0, sharedScan: false,
+      scopeNote: 'Counted from the log’s own offsets.',
+    },
+  };
+
+  it('affiche les deux côtés, qui sont le diagnostic que « 5 » ne donne pas', async () => {
+    stubApi([gapMetric]);
+    await renderPage();
+
+    await waitFor(() => expect(screen.getByText('gauge_gap_a_to_b')).toBeInTheDocument());
+    expect(screen.getByText('left')).toBeInTheDocument();
+    expect(screen.getByText('12')).toBeInTheDocument();
+    expect(screen.getByText('right')).toBeInTheDocument();
+    expect(screen.getByText('7')).toBeInTheDocument();
+  });
+
+  it('offre la règle Prometheus, avec le garde de fraîcheur', async () => {
+    stubApi([gapMetric]);
+    await renderPage();
+
+    await waitFor(() => expect(screen.getByText('gauge_gap_a_to_b')).toBeInTheDocument());
+    expect(screen.getByLabelText('Copy the Prometheus alert rule for this metric')).toBeInTheDocument();
+    // La première ligne de la règle est visible sur la carte ; le garde voyage dans ce qui est copié.
+    expect(screen.getByText(/explorer_metric_gauge\{metric_id="m-gap"\} >= 50/)).toBeInTheDocument();
+  });
+
+  it('dit pourquoi il n’y a pas de règle plutôt que de n’en montrer aucune', async () => {
+    stubApi([{ ...gapMetric, warningThreshold: null, criticalThreshold: null }]);
+    await renderPage();
+
+    await waitFor(() => expect(screen.getByText('gauge_gap_a_to_b')).toBeInTheDocument());
+    expect(screen.getByText('No alert rule from this card')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Copy the Prometheus alert rule for this metric')).toBeNull();
+  });
+
+  it('suit la direction des seuils dans le signe affiché', async () => {
+    // Critique sous l'avertissement : la métrique se lit vers le bas, et « ≥ 0.95 » serait faux.
+    stubApi([{ ...gapMetric, lastValue: 0.98, warningThreshold: 0.99, criticalThreshold: 0.95 }]);
+    await renderPage();
+
+    await waitFor(() => expect(screen.getByText('gauge_gap_a_to_b')).toBeInTheDocument());
+    expect(screen.getByText(/≤ 0.95/)).toBeInTheDocument();
+    expect(screen.queryByText(/≥ 0.95/)).toBeNull();
   });
 });

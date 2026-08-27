@@ -28,7 +28,8 @@ import { SuggestionsPanel } from '../components/metrics/SuggestionsPanel';
 import { readFlowChains } from './flowChains';
 import { latestProcessModel } from './processModelEvidence';
 import { newerAuditNote, suggestionToDraft } from './metricSuggestions';
-import { describeMetricScope, scopeNoteOf } from './metricScope';
+import { describeMeasurement, describeMetricScope, describeRefreshCost, scopeNoteOf } from './metricScope';
+import { buildAlertRule, describeThresholdDirection, gradeMetric, thresholdDirection } from './metricAlert';
 
 interface MetricTemplateDescriptor {
   type: string;
@@ -182,10 +183,20 @@ function validateMetricName(name: string): ValidationMsg[] {
   return [];
 }
 
+/**
+ * Les deux seuils, et le sens qu'ils impliquent.
+ *
+ * `warn >= crit` était refusé tout court, ce qui rendait la lecture descendante **inatteignable** :
+ * un `RATIO` sain à 1.0 casse en descendant, donc ses seuils sont 0.99 puis 0.95 — la paire que
+ * cette règle interdisait. Seule l'égalité reste une erreur : deux seuils identiques n'expriment
+ * aucun sens et se déclencheraient ensemble. Le reste est une direction, énoncée plutôt que
+ * devinée — voir `describeThresholdDirection`.
+ */
 function validateThresholds(warn: number | null, crit: number | null): ValidationMsg[] {
-  if (warn !== null && crit !== null && warn >= crit)
-    return [{ level: 'error', text: 'Warning threshold must be strictly less than the Critical threshold.' }];
-  return [];
+  if (warn !== null && crit !== null && warn === crit)
+    return [{ level: 'error', text: 'The two thresholds are the same number, so they say nothing about which side the problem is on and would fire together.' }];
+  const direction = describeThresholdDirection(warn, crit);
+  return direction ? [{ level: 'info', text: direction }] : [];
 }
 
 function paramStr(params: Record<string, unknown>, key: string): string {
@@ -199,6 +210,19 @@ export const defaultReadMode = (templateType: string): string =>
 
 export const SCAN_MAX_ROWS_DEFAULT = 10_000;
 export const SCAN_TIMEOUT_MS_DEFAULT = 30_000;
+
+/**
+ * Deux instructions qui disent la même chose.
+ *
+ * La comparaison est sur le texte, espaces réduits et casse ignorée : elle attrape le copier-coller,
+ * qui est la façon dont ce défaut arrive, et ne prétend pas comprendre le SQL — deux requêtes
+ * sémantiquement identiques écrites différemment passent, et le serveur ne peut pas mieux faire.
+ * Deux chaînes vides ne sont pas identiques : le champ manquant a déjà son propre refus.
+ */
+export function sameStatement(a: string, b: string): boolean {
+  const norm = (sql: string) => sql.replace(/\s+/g, ' ').trim().replace(/;$/, '').toLowerCase();
+  return norm(a) !== '' && norm(a) === norm(b);
+}
 
 export const COUNT_MODES = ['AUTO', 'OFFSETS', 'RECORDS'];
 export const COUNT_WINDOWS = ['TOTAL', 'SINCE_LAST_REFRESH'];
@@ -225,6 +249,21 @@ export function validateCountParams(params: Record<string, unknown>): Validation
 
   if (window === 'SINCE_LAST_REFRESH')
     msgs.push({ level: 'info', text: 'The first refresh establishes the baseline and publishes nothing; the next one reports the gap over the interval.' });
+
+  /*
+   * Deux côtés qui ne peuvent pas différer.
+   *
+   * Un écart entre une chose et elle-même vaut 0 pour toujours, et 0 sur cette métrique **se lit
+   * comme « aucune perte »** — la seule valeur qu'elle ne doit jamais publier par accident. Deux
+   * formes le produisent : les deux requêtes identiques, et, en comptage par offsets, les deux
+   * topics identiques (le SQL n'est alors pas lu du tout, donc deux requêtes différentes sur le
+   * même topic ne sauvent rien).
+   */
+  if (sameStatement(paramStr(params, 'leftSql'), paramStr(params, 'rightSql')))
+    msgs.push({ level: 'error', text: 'The two queries are the same statement, so this metric compares a topic with itself and will report no gap for ever — which reads as “nothing is being lost”.' });
+  else if (countBy === 'OFFSETS' && paramStr(params, 'leftTopic').trim() === paramStr(params, 'rightTopic').trim()
+           && paramStr(params, 'leftTopic').trim() !== '')
+    msgs.push({ level: 'error', text: 'Both sides name the same topic, and counting by offsets does not read the queries at all — so the two counts are the same number and the gap is always zero.' });
 
   const plainCount = (key: string) => {
     const sql = paramStr(params, key).trim();
@@ -341,6 +380,8 @@ export function validateTemplate(templateType: string, metricType: string,
     if (!['GAUGE', 'HISTOGRAM', 'SUMMARY'].includes(metricType))
       msgs.push({ level: 'error', text: 'Topic Transit Latency supports GAUGE, HISTOGRAM or SUMMARY.' });
     msgs.push({ level: 'info', text: 'Both queries must return match_key and event_time columns (event_time as ISO-8601 or epoch).' });
+    if (sameStatement(paramStr(params, 'sourceSql'), paramStr(params, 'targetSql')))
+      msgs.push({ level: 'error', text: 'The two queries are the same statement, so every event would be correlated with itself and the latency would be zero.' });
     msgs.push(...validateScanParams(templateType, params));
     msgs.push({ level: 'info', text: 'A source event whose target the read did not cover is counted as unmatched, never averaged in — the summary reports how many.' });
   } else if (templateType === 'CONSUMER_TIME_LAG') {
@@ -490,13 +531,11 @@ function relativeTime(ms: number | null): string {
   return new Date(ms).toLocaleTimeString();
 }
 
-function getStatus(m: MetricConfig): 'error' | 'critical' | 'warning' | 'ok' | 'pending' {
-  if (m.errorMessage) return 'error';
-  if (m.lastValue === null) return 'pending';
-  if (m.criticalThreshold !== null && m.lastValue >= m.criticalThreshold) return 'critical';
-  if (m.warningThreshold !== null && m.lastValue >= m.warningThreshold) return 'warning';
-  return 'ok';
-}
+/**
+ * Le verdict d'une carte. La règle vit dans `metricAlert.ts` — elle a cessé d'être « au-dessus du
+ * seuil » le jour où un ratio, sain à 1.0, a eu besoin d'être lu vers le bas.
+ */
+const getStatus = gradeMetric;
 
 const STATUS_STYLES = {
   ok:       { dot: 'bg-success', text: 'text-success', label: 'Healthy' },
@@ -519,6 +558,12 @@ const MetricCard: React.FC<{
   const st = STATUS_STYLES[status];
   const tm = TYPE_META[metric.type] ?? TYPE_META.GAUGE;
   const scopeChips = describeMetricScope(metric.lastSummary, metric.templateParams);
+  const measurement = describeMeasurement(metric.lastSummary);
+  // Le sens du seuil est déduit de l'ordre des deux, donc le signe affiché doit suivre — sans quoi
+  // la carte annoncerait « ≥ 0.95 » sur une métrique qui se déclenche en descendant.
+  const thresholdSign =
+    thresholdDirection(metric.warningThreshold, metric.criticalThreshold) === 'below' ? '≤' : '≥';
+  const alert = buildAlertRule(metric);
 
   const chartData = (metric.history?.length === 1
     ? [metric.history[0], metric.history[0]]
@@ -581,16 +626,30 @@ const MetricCard: React.FC<{
             ? metric.lastValue.toLocaleString(undefined, { maximumFractionDigits: 2 })
             : '—'}
         </div>
+        {/* Les composantes du nombre ci-dessus. Sur un écart, « 5 » ne dit rien et « 12 contre 7 »
+            est le diagnostic — et les deux étaient dans `lastSummary`, montrés à personne. */}
+        {measurement.length > 0 && (
+          <div className="flex items-center gap-3 mt-1 flex-wrap font-mono text-[11px]">
+            {measurement.map(part => (
+              <InfoTooltip key={part.label} content={part.detail}>
+                <span tabIndex={0} className="flex items-baseline gap-1 rounded">
+                  <span className="text-outline">{part.label}</span>
+                  <span className="text-on-surface-variant font-semibold">{part.value}</span>
+                </span>
+              </InfoTooltip>
+            ))}
+          </div>
+        )}
         <div className="flex items-center gap-3 mt-0.5 flex-wrap">
           {metric.description && <p title={metric.description} className="text-xs text-on-surface-variant truncate">{metric.description}</p>}
           {metric.warningThreshold !== null && (
             <span className="flex items-center gap-0.5 text-[10px] text-warning font-mono shrink-0">
-              <span className="material-symbols-outlined text-[11px]">warning</span>≥ {metric.warningThreshold.toLocaleString()}
+              <span className="material-symbols-outlined text-[11px]">warning</span>{thresholdSign} {metric.warningThreshold.toLocaleString()}
             </span>
           )}
           {metric.criticalThreshold !== null && (
             <span className="flex items-center gap-0.5 text-[10px] text-error font-mono shrink-0">
-              <span className="material-symbols-outlined text-[11px]">emergency</span>≥ {metric.criticalThreshold.toLocaleString()}
+              <span className="material-symbols-outlined text-[11px]">emergency</span>{thresholdSign} {metric.criticalThreshold.toLocaleString()}
             </span>
           )}
         </div>
@@ -715,6 +774,43 @@ const MetricCard: React.FC<{
             title="Copy SQL" aria-label="Copy the metric SQL" className="shrink-0 text-outline hover:text-primary transition-colors opacity-0 group-hover:opacity-100">
             <span className="material-symbols-outlined text-base">content_copy</span>
           </button>
+        )}
+      </div>
+
+      {/* La règle Prometheus.
+
+          Tout ceci existe pour qu'une alerte se déclenche, et la page s'arrêtait une marche avant :
+          la PromQL n'était écrite nulle part, et depuis les séries compagnes la règle correcte n'est
+          plus évidente — une valeur gelée se déclenche exactement comme une vraie. */}
+      <div className="border-t border-outline-variant/60 px-4 py-2 flex items-center justify-between gap-2">
+        {alert.unavailable ? (
+          <InfoTooltip content={alert.unavailable}>
+            <span tabIndex={0} className="text-[10px] text-outline flex items-center gap-1 rounded min-w-0">
+              <span className="material-symbols-outlined text-[11px] shrink-0">notifications_off</span>
+              <span className="truncate">No alert rule from this card</span>
+            </span>
+          </InfoTooltip>
+        ) : (
+          <>
+            <InfoTooltip content={alert.rules.map(r => `${r.title} — ${r.note}`).join('\n\n')}>
+              <span tabIndex={0} className="text-[10px] text-on-surface-variant flex items-center gap-1 rounded min-w-0">
+                <span className="material-symbols-outlined text-[11px] shrink-0">notifications_active</span>
+                <span className="truncate font-mono">{alert.rules[0].promql.split('\n')[0]}</span>
+              </span>
+            </InfoTooltip>
+            <button
+              onClick={() => void copyText(
+                alert.rules.map(r => `# ${r.title}\n# ${r.note}\n${r.promql}`).join('\n\n'),
+              ).then(ok => toast(
+                ok ? `Alert rule copied${alert.rules.length > 1 ? ' (2 variants)' : ''}`
+                   : 'Could not copy to the clipboard',
+                ok ? 'success' : 'error'))}
+              title="Copy the Prometheus alert rule"
+              aria-label="Copy the Prometheus alert rule for this metric"
+              className="shrink-0 text-outline hover:text-primary transition-colors">
+              <span className="material-symbols-outlined text-base">content_copy</span>
+            </button>
+          </>
         )}
       </div>
 
@@ -1023,6 +1119,10 @@ const Metrics: React.FC = () => {
     () => (previewResult?.error ? describeQueryError(previewResult.error) : null),
     [previewResult],
   );
+  const previewSummary = previewResult?.summary ?? null;
+  const previewChips = useMemo(() => describeMetricScope(previewSummary), [previewSummary]);
+  const previewMeasurement = useMemo(() => describeMeasurement(previewSummary), [previewSummary]);
+  const previewNote = useMemo(() => scopeNoteOf(previewSummary), [previewSummary]);
   const [templates, setTemplates]       = useState<MetricTemplateDescriptor[]>([]);
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
   const [filterType, setFilterType]     = useState<string>('all');
@@ -1349,6 +1449,9 @@ const Metrics: React.FC = () => {
       ? [{ level: 'warning', text: 'Thresholds on a COUNTER compare against a cumulative total that only grows, so they will eventually always trip. Consider a GAUGE (e.g. a rate or point-in-time count) for alerting.' }]
       : [];
   const thresholdHints = [...thresholdValidation, ...counterThresholdWarning];
+  // Ce que cette configuration coûtera au broker, dit avant de l'enregistrer plutôt qu'après, par
+  // une jauge de durée de cycle.
+  const refreshCost = isTemplate ? describeRefreshCost(templateType, templateParams) : null;
   const hasBlockingErrors = [...nameValidation, ...sqlValidation, ...templateValidation, ...ddlValidation, ...thresholdValidation]
     .some(m => m.level === 'error');
 
@@ -1852,7 +1955,7 @@ const Metrics: React.FC = () => {
                         {f => (
                           <Input {...f} type="number" inputMode="decimal"
                             value={editingMetric.warningThreshold ?? ''}
-                            invalid={thresholdValidation.length > 0}
+                            invalid={thresholdValidation.some(v => v.level === 'error')}
                             aria-describedby={thresholdHints.length > 0 ? 'metric-threshold-hints' : undefined}
                             onChange={e => setEditingMetric(m => ({ ...m, warningThreshold: e.target.value ? parseFloat(e.target.value) : null }))}
                             className="bg-warning/5" />
@@ -1862,13 +1965,19 @@ const Metrics: React.FC = () => {
                         {f => (
                           <Input {...f} type="number" inputMode="decimal"
                             value={editingMetric.criticalThreshold ?? ''}
-                            invalid={thresholdValidation.length > 0}
+                            invalid={thresholdValidation.some(v => v.level === 'error')}
                             aria-describedby={thresholdHints.length > 0 ? 'metric-threshold-hints' : undefined}
                             onChange={e => setEditingMetric(m => ({ ...m, criticalThreshold: e.target.value ? parseFloat(e.target.value) : null }))}
                             className="bg-error/5" />
                         )}
                       </Field>
                     </div>
+                    {refreshCost && (
+                      <p className="text-[10px] text-on-surface-variant flex items-start gap-1 pt-0.5">
+                        <span aria-hidden="true" className="material-symbols-outlined text-[11px] shrink-0 mt-px">bolt</span>
+                        {refreshCost}
+                      </p>
+                    )}
                     {thresholdHints.length > 0 && (
                       <div id="metric-threshold-hints">
                         {thresholdHints.map((m, i) => (
@@ -2010,6 +2119,11 @@ const Metrics: React.FC = () => {
                         </div>
                         </InfoTooltip>
                       ) : (
+                        /* L'aperçu rendait `Object.entries(summary)` tel quel : la phrase entière
+                           de `scopeNote` dans une puce de 10 px, et `warnings` par `String(v)`,
+                           soit « a,b ». C'était aussi un *second* rendu de ce que
+                           `describeMetricScope` fait déjà — deux réponses à une question, à un
+                           écran de distance de la carte. */
                         <div className="space-y-1.5">
                           <span className="flex items-center gap-2">
                             <span className="material-symbols-outlined text-sm">check_circle</span>
@@ -2018,14 +2132,30 @@ const Metrics: React.FC = () => {
                               <span className="text-success ml-2">({previewResult.rows.length} rows total)</span>
                             )}
                           </span>
-                          {previewResult.summary && Object.keys(previewResult.summary).length > 0 && (
-                            <div className="flex flex-wrap gap-1.5 pt-0.5">
-                              {Object.entries(previewResult.summary).map(([k, v]) => (
-                                <span key={k} className="px-2 py-0.5 rounded bg-success/10 text-success text-[10px]">
-                                  {k}: <strong>{String(v)}</strong>
+                          {previewMeasurement.length > 0 && (
+                            <div className="flex flex-wrap gap-3 pt-0.5">
+                              {previewMeasurement.map(part => (
+                                <span key={part.label} title={part.detail} className="flex items-baseline gap-1">
+                                  <span className="opacity-60">{part.label}</span>
+                                  <strong>{part.value}</strong>
                                 </span>
                               ))}
                             </div>
+                          )}
+                          {previewChips.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 pt-0.5">
+                              {previewChips.map(chip => (
+                                <span key={chip.label} title={chip.detail}
+                                  className={`px-2 py-0.5 rounded text-[10px] ${
+                                    chip.tone === 'warning' ? 'bg-warning/10 text-warning' : 'bg-success/10 text-success'
+                                  }`}>
+                                  {chip.label}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          {previewNote && (
+                            <p className="font-sans text-success/80 leading-relaxed pt-0.5">{previewNote}</p>
                           )}
                         </div>
                       )}

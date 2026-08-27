@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 
 import { describe, it, expect } from 'vitest';
-import { describeMetricScope, formatDurationMs, scopeNoteOf, LOW_MATCH_RATE } from './metricScope';
+import { describeMeasurement, describeMetricScope, describeRefreshCost, formatDurationMs, scopeNoteOf, LOW_MATCH_RATE } from './metricScope';
 
 describe('what a metric says it measured', () => {
   it('says nothing at all when there is no summary', () => {
@@ -108,5 +108,59 @@ describe('la fenêtre, la perte totale, la lecture unique et la cadence', () => 
     // Le défaut n'a pas à être annoncé : une puce sur chaque carte n'apprend rien.
     expect(describeMetricScope(null, {})).toEqual([]);
     expect(describeMetricScope(null, { refreshIntervalMs: 0 })).toEqual([]);
+  });
+});
+
+describe('les composantes du nombre affiché', () => {
+  it('rend les deux côtés d’un écart, qui sont le diagnostic', () => {
+    const parts = describeMeasurement({ leftValue: 12, rightValue: 7, operation: 'LEFT_MINUS_RIGHT' });
+    expect(parts.map(p => `${p.label} ${p.value}`)).toEqual(['left 12', 'right 7']);
+    expect(parts[1].detail).toContain('LEFT_MINUS_RIGHT');
+  });
+
+  it('rend la queue d’une latence, pas seulement la moyenne que la carte affiche', () => {
+    const parts = describeMeasurement({ avgLatencyMs: 120, p95LatencyMs: 4_200, maxLatencyMs: 9_000 });
+    expect(parts.map(p => p.label)).toEqual(['avg', 'p95', 'worst']);
+    expect(parts[1].value).toBe('4.2 s');
+  });
+
+  it('ne produit rien pour une mesure qui n’a pas de composantes', () => {
+    expect(describeMeasurement(null)).toEqual([]);
+    expect(describeMeasurement({ rowCount: 3 })).toEqual([]);
+  });
+
+  it('compte zéro comme une mesure', () => {
+    // Zéro des deux côtés est un fait sur le cluster, pas une absence de mesure.
+    expect(describeMeasurement({ leftValue: 0, rightValue: 0 })).toHaveLength(2);
+  });
+});
+
+describe('ce que la configuration coûtera', () => {
+  it('dit « aucun enregistrement » quand le compte passe par les offsets', () => {
+    const note = describeRefreshCost('TOPIC_COUNT_DELTA', {
+      countBy: 'OFFSETS', leftTopic: 'a', rightTopic: 'b',
+    });
+    expect(note).toContain('Reads no record');
+  });
+
+  it('n’invente aucun total quand des enregistrements sont lus', () => {
+    const note = describeRefreshCost('TOPIC_COUNT_DELTA', {
+      countBy: 'RECORDS', maxRowsPerSide: 10_000,
+    }) ?? '';
+    // Le lecteur direct borne un agrégat à son propre plafond quoi que dise maxRowsPerSide, donc
+    // un nombre d'enregistrements affiché ici serait fabriqué.
+    expect(note).not.toMatch(/\d{3},\d{3}/);
+    expect(note).toContain('aggregate ceiling');
+  });
+
+  it('porte la cadence propre de la métrique quand elle en a une', () => {
+    expect(describeRefreshCost('TOPIC_TRANSIT_LATENCY', { refreshIntervalMs: 300_000 }))
+      .toContain('at most every 5 min');
+    expect(describeRefreshCost('TOPIC_TRANSIT_LATENCY', {})).toContain('on every refresh cycle');
+  });
+
+  it('énonce la fenêtre quand les deux côtés en partagent une', () => {
+    expect(describeRefreshCost('TOPIC_TRANSIT_LATENCY', { windowMs: 900_000, maxRowsPerSide: 5_000 }))
+      .toContain('the same 15 min on each side');
   });
 });

@@ -665,3 +665,71 @@ Two more have shipped, and neither needs the measurement first because neither c
 time of one `refreshMetrics()` over a handful of template metrics against the demo cluster. The
 gauge above is what makes it a reading rather than an experiment somebody has to set up. If it is
 still minutes after all of the above, the fix is a bounded per-cycle budget, not more threads.
+
+---
+
+## The screen, which was not in scope and turned out to be the same finding
+
+This document reviewed the engine. Reading the page afterwards found the *same* defect one layer
+up, three times over: **everything computed here was being shown to a Prometheus scraper rather
+than to the person looking at the card.**
+
+### The card showed one number and hid the two that make it
+
+`MetricCard` rendered `lastValue` and nothing else. On an écart, **`5` says nothing and `12 against
+7` is the diagnostic** — and both were in `lastSummary`, computed, persisted, rendered nowhere. On a
+latency it got worse the moment the p95 became a Prometheus series (above): it travelled to a
+scraper and not to the card. `describeMeasurement` renders the components the server *measured* —
+never a derivation, an absent key producing no part, and a zero producing one, since zero is a
+measurement.
+
+### The threshold had one direction, and one of the four operations needs the other
+
+`getStatus` knew only `>=`, and `validateThresholds` **refused `warn >= crit` outright**. A `RATIO`
+is healthy at 1.0 and breaks by *falling*, so its thresholds are 0.99 then 0.95 — the exact pair
+that rule forbade. The operation was offered in the form and could not be alerted in the direction
+that matters.
+
+The direction is now **derived from the order of the two thresholds** rather than from a field of
+its own. Critical is always worse than warning — the one thing the pair is known to say — so a
+critical below the warning reads the metric downwards. No component on `MetricConfig`, none of its
+forty-three construction sites touched, and the rule is checkable by looking at two numbers. That is
+only not magic **because it is displayed**: the form states the direction the entered pair implies,
+and the card's `≤` / `≥` follows. Equality stays an error; two identical thresholds express no
+direction and would fire together.
+
+### The page stopped one step before what these metrics are for
+
+All of this exists so that an alert fires, and the PromQL was written nowhere. It stopped being
+obvious the day the companion series arrived: a refresh that fails keeps the previous value —
+deliberately — so `value > N` fires the same way whether the condition is real and stuck or simply
+no longer measured.
+
+`buildAlertRule` emits the rule under two constraints. **The alert must compare what the card
+compares**: a `GAUGE`'s series *is* the number displayed, a `COUNTER`'s accumulates deltas between
+refreshes and a `HISTOGRAM`/`SUMMARY` exports a distribution — so those three get the reason there
+is no rule, naming what is exported, rather than a threshold copied onto a different quantity. And
+every rule carries `explorer_metric_last_success_timestamp_seconds`, over four times the metric's
+own `refreshIntervalMs` — or 120 s **said to be an assumption** when the cadence is the loop's own.
+On a transit latency the p95 series is offered as a *second* rule rather than substituted: the
+threshold was set against an average, and a p95 is above one by construction.
+
+### Three smaller ones, all of the same family
+
+- **The cost was only ever stated afterwards.** `explorer_metrics_refresh_duration_seconds` measures
+  the cycle once it has run; `describeRefreshCost` says it in the editor, at the moment it is
+  chosen. It **invents no total** — the direct reader bounds an aggregate by its own ceiling
+  whatever `maxRowsPerSide` says, and a projection stops at its row limit — so what it states is
+  what is configured and what bounds it.
+- **Two sides that cannot differ were accepted.** The same statement on both, or the same topic on
+  both under an offsets count (where the SQL is not read at all). Such a metric reports 0 for ever,
+  and **0 here reads as "nothing is being lost"** — the one value it must never publish by accident.
+- **The preview rendered `lastSummary` raw.** `Object.entries(summary)` put the whole `scopeNote`
+  paragraph inside a 10 px chip and `warnings` through `String(v)`, i.e. `a,b`. It was also a
+  *second* renderer for what `describeMetricScope` already did properly, one screen away from the
+  card — the "two answers to one question" shape this codebase keeps removing, left standing.
+
+What was deliberately **not** done: a second history series so the sparkline could draw the two
+sides diverging. `historyMap` keeps one number per metric, so it is a persistence change, and what
+it would buy is what the components line above now gives in text and what Grafana does better. It is
+recorded here so it is not re-derived.

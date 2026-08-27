@@ -195,3 +195,149 @@ export function scopeNoteOf(lastSummary: Record<string, unknown> | null): string
   const note = lastSummary?.scopeNote;
   return typeof note === 'string' && note.trim() !== '' ? note : null;
 }
+
+// ── Ce que la mesure vaut, et non seulement ce qu'elle a couvert ────────────
+
+/** Une composante du nombre affiché : son nom, sa valeur déjà formatée, ce qu'elle veut dire. */
+export interface MeasurementPart {
+  label: string;
+  value: string;
+  detail: string;
+}
+
+function count(n: number): string {
+  return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+/**
+ * Les composantes du nombre que la carte affiche en grand.
+ *
+ * La carte rendait `lastValue` et rien d'autre. Sur un écart, **`5` ne dit rien et `12 contre 7`
+ * est le diagnostic** — et les deux côtés étaient dans `lastSummary`, calculés, persistés, montrés
+ * à personne. Sur une latence c'est pire depuis que le p95 est exporté vers Prometheus : il partait
+ * vers un scraper et pas vers la personne qui regarde la carte.
+ *
+ * Rien n'est dérivé ici : chaque partie est une valeur que le serveur a mesurée et nommée. Une clé
+ * absente ne produit pas de partie — la métrique ne mesure pas ça — et une clé à zéro en produit
+ * une, parce que zéro est une mesure.
+ */
+export function describeMeasurement(lastSummary: Record<string, unknown> | null): MeasurementPart[] {
+  if (!lastSummary) return [];
+
+  // Écart de comptage : les deux côtés, dans l'ordre où l'opération les nomme.
+  const left = num(lastSummary, 'leftValue');
+  const right = num(lastSummary, 'rightValue');
+  if (left !== null && right !== null) {
+    const windowed = lastSummary.window === 'SINCE_LAST_REFRESH';
+    const over = windowed ? ' over this interval' : '';
+    return [
+      {
+        label: 'left',
+        value: count(left),
+        detail: `What the left side counted${over}.`,
+      },
+      {
+        label: 'right',
+        value: count(right),
+        detail: `What the right side counted${over}. The value above is these two compared by `
+          + `${typeof lastSummary.operation === 'string' ? lastSummary.operation : 'the chosen operation'}.`,
+      },
+    ];
+  }
+
+  // Latence corrélée : la moyenne est ce que la carte affiche, et c'est la queue qui réveille.
+  const avg = num(lastSummary, 'avgLatencyMs');
+  const p95 = num(lastSummary, 'p95LatencyMs');
+  const max = num(lastSummary, 'maxLatencyMs');
+  if (avg !== null || p95 !== null || max !== null) {
+    const parts: MeasurementPart[] = [];
+    if (avg !== null) parts.push({
+      label: 'avg', value: formatDurationMs(avg),
+      detail: 'The average of the pairs this read could form — which is the number above.',
+    });
+    if (p95 !== null) parts.push({
+      label: 'p95', value: formatDurationMs(p95),
+      detail: 'The 95th percentile. An average holds still while the worst decile doubles, so this '
+        + 'is what a latency alert is set on; it is exported as explorer_metric_correlation_latency_p95_ms '
+        + 'for a GAUGE metric.',
+    });
+    if (max !== null) parts.push({
+      label: 'worst', value: formatDurationMs(max),
+      detail: 'The slowest pair observed in this read.',
+    });
+    return parts;
+  }
+
+  // Retard d'un groupe, en temps.
+  const maxLag = num(lastSummary, 'maxLagMs');
+  const avgLag = num(lastSummary, 'avgLagMs');
+  if (maxLag !== null || avgLag !== null) {
+    const parts: MeasurementPart[] = [];
+    if (maxLag !== null) parts.push({
+      label: 'worst partition', value: formatDurationMs(maxLag),
+      detail: 'The age of the oldest waiting record, on the partition furthest behind.',
+    });
+    if (avgLag !== null) parts.push({
+      label: 'avg partition', value: formatDurationMs(avgLag),
+      detail: 'The same age averaged over the partitions that could be measured.',
+    });
+    return parts;
+  }
+
+  return [];
+}
+
+/**
+ * Ce que cette configuration coûtera au broker, dit avant plutôt qu'après.
+ *
+ * `explorer_metrics_refresh_duration_seconds` mesure le cycle une fois passé ; l'éditeur peut
+ * énoncer le coût au moment où on le choisit. **Aucun total n'est inventé** : le lecteur direct
+ * borne un agrégat à son propre plafond quoi que dise `maxRowsPerSide`, et une projection s'arrête
+ * à sa limite de lignes — deux formes, deux bornes. Ce qui est dit est ce qui est configuré et ce
+ * qui le borne, jamais un nombre d'enregistrements fabriqué.
+ */
+export function describeRefreshCost(
+  templateType: string,
+  params: Record<string, unknown>,
+): string | null {
+  const str = (key: string) => {
+    const v = params[key];
+    return v == null ? '' : String(v).trim();
+  };
+  const interval = num(params, 'refreshIntervalMs');
+  const cadence = interval !== null && interval > 0
+    ? `at most every ${formatDurationMs(interval)}`
+    : 'on every refresh cycle';
+
+  if (templateType === 'TOPIC_COUNT_DELTA') {
+    const countBy = str('countBy').toUpperCase();
+    const named = str('leftTopic') !== '' && str('rightTopic') !== '';
+    const plainCount = (key: string) => {
+      const sql = str(key);
+      return sql === '' || /^select\s+count\s*\(\s*\*\s*\)\s*(?:as\s+`?\w+`?\s*)?from\s+`?\w[\w.]*`?\s*;?$/is.test(sql);
+    };
+    const byOffsets = countBy === 'OFFSETS'
+      || ((countBy === '' || countBy === 'AUTO') && named && plainCount('leftSql') && plainCount('rightSql'));
+    if (byOffsets) {
+      return `Reads no record: two listOffsets calls, ${cadence}.`;
+    }
+    return `Reads records on both sides, ${cadence}. A side the direct reader answers is bounded `
+      + 'by its own aggregate ceiling rather than by Max rows / side — count these topics by '
+      + 'offsets to read nothing at all.';
+  }
+
+  if (templateType === 'TOPIC_TRANSIT_LATENCY') {
+    const rows = num(params, 'maxRowsPerSide') ?? 10_000;
+    const windowMs = num(params, 'windowMs');
+    const scope = windowMs !== null && windowMs > 0
+      ? `the same ${formatDurationMs(windowMs)} on each side, up to ${count(rows)} row(s) each`
+      : `up to ${count(rows)} row(s) on each side`;
+    return `Reads ${scope}, ${cadence}.`;
+  }
+
+  if (templateType === 'CONSUMER_TIME_LAG') {
+    return `Reads one record per lagging partition — none when the group is caught up — ${cadence}.`;
+  }
+
+  return null;
+}
