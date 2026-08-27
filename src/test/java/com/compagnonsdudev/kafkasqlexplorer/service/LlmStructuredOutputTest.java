@@ -69,6 +69,84 @@ class LlmStructuredOutputTest {
     private record StubResponse(int status, String body) {
     }
 
+    /**
+     * An endpoint that answers every call with a redirect — a gateway in front of a local engine
+     * sending {@code /v1} to {@code /v1/}, or http to https, which is an ordinary thing to meet.
+     *
+     * @param location what to put in the Location header, or null to send none
+     */
+    private ClaudeConfig startRedirectingServer(int status, String location) throws IOException {
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            requestBodies.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            if (location != null) {
+                exchange.getResponseHeaders().add("Location", location);
+            }
+            exchange.sendResponseHeaders(status, -1);
+            exchange.close();
+        });
+        server.start();
+
+        ClaudeConfig config = new ClaudeConfig();
+        config.setProvider(ClaudeConfig.Provider.OLLAMA);
+        config.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort() + "/v1");
+        config.setModel("qwen3:4b");
+        return config;
+    }
+
+    /**
+     * A redirect is configuration, not weather.
+     *
+     * <p>It used to fall into the "everything else is transient" branch, so a 308 took all three
+     * attempts and came back as {@code "call failed with status 308: "} with an empty body — a
+     * permanent misconfiguration reported as a passing one, on a schedule that could not possibly
+     * help. What the operator needs is the address to paste into Settings, and it is in the
+     * response.
+     */
+    @Test
+    void aRedirectIsRefusedOnceAndNamesWhereItPoints() throws Exception {
+        ClaudeConfig config = startRedirectingServer(308, "https://gateway.internal/v1/chat/completions");
+
+        RuntimeException error = assertThrows(RuntimeException.class,
+            () -> new OpenAiCompatibleLlmClient(config).generateWithMeta("SYS", "USR", schema()));
+
+        assertTrue(error.getMessage().contains("https://gateway.internal/v1/chat/completions"),
+            "the refusal has to carry the address to set: " + error.getMessage());
+        assertEquals(1, requestBodies.size(),
+            "a redirect is not retried: every attempt would be redirected identically, and three "
+                + "of them only delay the same verdict");
+    }
+
+    /**
+     * The JDK's {@code followRedirects(NORMAL)} was the tempting one-liner here and is measured to
+     * be worse: on 301 and 302 it turns the POST into a GET and drops the body, so the prompt
+     * would leave silently. Whatever else changes, the body must reach the endpoint or nothing
+     * must — never a request with the prompt removed.
+     */
+    @Test
+    void aRedirectNeverSendsTheCallOnWithoutItsPrompt() throws Exception {
+        ClaudeConfig config = startRedirectingServer(302, "/v1/chat/completions/");
+
+        assertThrows(RuntimeException.class,
+            () -> new OpenAiCompatibleLlmClient(config).generateWithMeta("SYS", "USR", schema()));
+
+        assertEquals(1, requestBodies.size());
+        assertTrue(requestBodies.get(0).contains("USR"),
+            "the one request made must still carry the prompt: " + requestBodies.get(0));
+    }
+
+    /** No Location to name: say that, rather than pointing at a header that is not there. */
+    @Test
+    void aRedirectWithNoLocationSaysSoRatherThanNamingNothing() throws Exception {
+        ClaudeConfig config = startRedirectingServer(301, null);
+
+        RuntimeException error = assertThrows(RuntimeException.class,
+            () -> new OpenAiCompatibleLlmClient(config).generateWithMeta("SYS", "USR", schema()));
+
+        assertTrue(error.getMessage().contains("names no Location"), error.getMessage());
+        assertTrue(error.getMessage().contains("claude.base-url"), error.getMessage());
+    }
+
     private static String okBody() {
         return "{\"choices\":[{\"message\":{\"content\":\"{}\"}}],"
             + "\"usage\":{\"prompt_tokens\":1200,\"completion_tokens\":340}}";
@@ -135,6 +213,50 @@ class LlmStructuredOutputTest {
      * The degradation that makes AUTO safe to ship: an endpoint that rejects `response_format`
      * gets one unconstrained retry rather than an error blamed on the operator's configuration.
      */
+    /**
+     * The answer says whether it was constrained, and that is the fact nothing could establish.
+     *
+     * <p>Everywhere but OpenRouter, a schema accepted and then ignored was invisible: the field
+     * went out, no error came back, {@code LlmJsonSupport} recovered the JSON from whatever prose
+     * came around it, and the deployment believed decoding was constrained. It has to be what the
+     * client <em>sent</em>, not what was configured — {@code AUTO} declines for an unknown
+     * provider and the per-model latch declines after a refusal.
+     */
+    @Test
+    void theAnswerRecordsThatASchemaTravelledWithIt() throws Exception {
+        ClaudeConfig config = startServer(List.of(new StubResponse(200, okBody())));
+
+        LlmResponse response = new OpenAiCompatibleLlmClient(config)
+            .generateWithMeta("SYS", "USR", schema());
+
+        assertTrue(response.schemaSent());
+    }
+
+    /** And the unconstrained retry says so, or the repair it needs would read as a broken guarantee. */
+    @Test
+    void theUnconstrainedRetryRecordsThatNoSchemaTravelled() throws Exception {
+        ClaudeConfig config = startServer(List.of(
+            new StubResponse(400, "{\"error\":{\"message\":\"unknown field response_format\"}}"),
+            new StubResponse(200, okBody())));
+
+        LlmResponse response = new OpenAiCompatibleLlmClient(config)
+            .generateWithMeta("SYS", "USR", schema());
+
+        assertFalse(response.schemaSent(),
+            "the answer that came back is the one sent without the schema; saying otherwise would "
+                + "report every repair on this endpoint as a constraint that failed");
+    }
+
+    /** A call made with no schema at all — the caller never asked — claims nothing either. */
+    @Test
+    void anUnschemaedCallRecordsThatNoSchemaTravelled() throws Exception {
+        ClaudeConfig config = startServer(List.of(new StubResponse(200, okBody())));
+
+        LlmResponse response = new OpenAiCompatibleLlmClient(config).generateWithMeta("SYS", "USR");
+
+        assertFalse(response.schemaSent());
+    }
+
     @Test
     void retriesWithoutTheSchemaWhenTheEndpointRefusesIt() throws Exception {
         ClaudeConfig config = startServer(List.of(
