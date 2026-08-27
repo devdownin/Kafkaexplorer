@@ -2,10 +2,19 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.compagnonsdudev.kafkasqlexplorer.service;
 
+import com.compagnonsdudev.kafkasqlexplorer.config.ExplorerConfig;
 import com.compagnonsdudev.kafkasqlexplorer.config.KafkaConfig;
 import com.compagnonsdudev.kafkasqlexplorer.config.ProcessMiningConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.KafkaMessage;
+import com.compagnonsdudev.kafkasqlexplorer.domain.QueryRequest;
+import com.compagnonsdudev.kafkasqlexplorer.domain.QueryResult;
 import com.compagnonsdudev.kafkasqlexplorer.domain.SnapshotConfig;
+import com.compagnonsdudev.kafkasqlexplorer.parser.AvroSchemaInferrer;
+import com.compagnonsdudev.kafkasqlexplorer.parser.JsonSchemaInferrer;
+import com.compagnonsdudev.kafkasqlexplorer.parser.XmlSchemaInferrer;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.table.api.EnvironmentSettings;
+import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.NewTopic;
@@ -27,6 +36,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.kafka.KafkaContainer;
 import org.testcontainers.utility.DockerImageName;
 
+import java.nio.file.Files;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -139,6 +149,45 @@ class KafkaClusterIntegrationTest {
         ProcessMiningConfig processMiningConfig = new ProcessMiningConfig();
         return new KafkaSnapshotReader(kafkaConfig, adminService, processMiningConfig,
             new PayloadDigestService(processMiningConfig));
+    }
+
+    /**
+     * A query engine wired to this broker, built on demand.
+     *
+     * <p>Not a field: it starts a local Flink cluster, and only the two metric-path cases below
+     * need one — the rest of this class talks to the broker directly.
+     */
+    private static FlinkSqlService flinkService() throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.createLocalEnvironment();
+        StreamTableEnvironment tableEnv = StreamTableEnvironment.create(env,
+            EnvironmentSettings.newInstance().inStreamingMode().build());
+
+        ExplorerConfig config = new ExplorerConfig();
+        config.setDefaultMaxRows(50);
+        config.setDefaultQueryTimeoutMs(10_000);
+        config.setFlinkJobStorePath(Files.createTempFile("it-flink-jobs-", ".json").toString());
+        config.setFlinkTableStorePath(Files.createTempFile("it-flink-tables-", ".json").toString());
+
+        SchemaInferenceService schemaInference = new SchemaInferenceService(
+            config, new JsonSchemaInferrer(), new XmlSchemaInferrer(),
+            new AvroSchemaInferrer(kafkaConfig), adminService);
+        DdlGeneratorService ddlGenerator =
+            new DdlGeneratorService(kafkaConfig, new NamingConventionService());
+
+        FlinkRuntimeCoordinator coordinator = new FlinkRuntimeCoordinator(tableEnv);
+        return new FlinkSqlService(tableEnv, coordinator, config,
+            new SqlQueryValidator(config, tableEnv, coordinator),
+            adminService, schemaInference, ddlGenerator,
+            new FlinkJobStore(config), new FlinkTableStore(config));
+    }
+
+    /** The value a count-delta metric publishes: the last numeric row, never the first. */
+    private static Double lastMetricValue(QueryResult result) {
+        Double last = null;
+        for (Map<String, Object> row : result.rows()) {
+            if (row.get("metric_value") instanceof Number n) last = n.doubleValue();
+        }
+        return last;
     }
 
     @AfterAll
@@ -274,5 +323,72 @@ class KafkaClusterIntegrationTest {
                     .orElseThrow(() -> new AssertionError("group " + groupId + " not listed in " + groups));
             assertEquals("CONSUMER", group.get("type"), "KIP-848 group must be listed with the CONSUMER type");
         }
+    }
+
+    /**
+     * The assertion METRICS-TWO-QUERY-AUDIT.md named and could not make: does this connector
+     * really know {@code scan.bounded.mode}, and does the option end the scan?
+     *
+     * <p>D1 was fixed on a reading of the Kafka connector's documentation, with a runtime fallback
+     * standing in for a measurement nobody could take — the whole backend suite runs against
+     * mocks, and a mock cannot refuse an option it has never heard of. This is the measurement.
+     * If the option were unknown here the query would fail on it and this test would say so; if it
+     * were known and ineffective, the scan would run to the timeout and the planner would hand the
+     * query to the direct reader, which the engine tells us apart from.
+     */
+    @Test
+    void aBoundedScanTerminatesWhereAnUnboundedOneSpendsItsTimeout() throws Exception {
+        FlinkSqlService flink = flinkService();
+        String table = DdlGeneratorService.toTableName(TOPIC);
+        String count = "SELECT COUNT(*) AS metric_value FROM " + table;
+
+        // What MetricService sends: the same statement, with the scan bounds it injects.
+        long startedAt = System.currentTimeMillis();
+        QueryResult bounded = flink.executeSql(QueryRequest.sql(
+            count + " /*+ OPTIONS('scan.startup.mode'='earliest-offset','scan.bounded.mode'='latest-offset') */",
+            10_000, 20_000L, "earliest-offset"));
+        long boundedMs = System.currentTimeMillis() - startedAt;
+
+        assertNull(bounded.error(), "the connector must accept the scan bounds: " + bounded.error());
+        assertEquals("FLINK", bounded.engine(),
+            "the planner answered, so the scan ended on its own rather than on the timeout");
+        assertTrue(boundedMs < 20_000,
+            "a bounded scan terminates rather than spending its budget (took " + boundedMs + " ms)");
+
+        // And the value is the last row of the changelog, not the +I(1) that opens it.
+        assertEquals(3.0, lastMetricValue(bounded),
+            "the topic holds three records, and that is what the metric must publish");
+
+        /*
+         * The other half, which is what makes the first half evidence rather than a coincidence:
+         * without the bounded option the source never ends, the collect spends the whole budget,
+         * and the planner's answer is abandoned for the direct reader. Same statement, same
+         * broker, one option apart.
+         */
+        QueryResult unbounded = flink.executeSql(QueryRequest.sql(count, 10_000, 4_000L, "earliest-offset"));
+        assertEquals("KAFKA_DIRECT", unbounded.engine(),
+            "an unbounded streaming COUNT(*) cannot finish, so the planner is abandoned for the "
+                + "direct reader — which is exactly what the bounded option is there to prevent");
+    }
+
+    /**
+     * The count a metric actually publishes, through the reader the template now asks for by name.
+     *
+     * <p>A single-table read goes to the direct reader rather than the planner (D2/D3), so this is
+     * the path a {@code TOPIC_COUNT_DELTA} side really takes. Against a mock it proves nothing
+     * about the records; here the number has to come out of the broker.
+     */
+    @Test
+    void theDirectReaderCountsTheRecordsThatAreReallyThere() throws Exception {
+        FlinkSqlService flink = flinkService();
+        String table = DdlGeneratorService.toTableName(TOPIC);
+
+        QueryResult result = flink.executeSql(QueryRequest.directSql(
+            "SELECT COUNT(*) AS metric_value FROM " + table, 10_000, 20_000L, "earliest-offset"));
+
+        assertNull(result.error(), String.valueOf(result.error()));
+        assertEquals("KAFKA_DIRECT", result.engine(), "directRead must not consult the planner");
+        assertEquals(1, result.rows().size(), "an aggregate on this reader is one row, not a changelog");
+        assertEquals(3.0, lastMetricValue(result));
     }
 }

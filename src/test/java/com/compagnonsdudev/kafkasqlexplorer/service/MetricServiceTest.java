@@ -933,8 +933,14 @@ class MetricServiceTest {
             () -> service.save(countDelta(Map.of("timeoutMs", "10"))));
         assertThrows(IllegalArgumentException.class,
             () -> service.save(countDelta(Map.of("readMode", "group-offsets"))));
-        // And the ordinary ones still save.
+        // The operation was the last one still checked from inside the refresh loop, where an
+        // unrecognised value threw every thirty seconds on a metric the API had accepted.
+        IllegalArgumentException badOperation = assertThrows(IllegalArgumentException.class,
+            () -> service.save(countDelta(Map.of("operation", "LEFT_OVER_RIGHT"))));
+        assertTrue(badOperation.getMessage().contains("PERCENT_GAP"), badOperation.getMessage());
+        // And the ordinary ones still save, whatever the case they are written in.
         service.save(countDelta(Map.of("maxRowsPerSide", "50000", "readMode", "latest-offset")));
+        service.save(countDelta(Map.of("operation", "percent_gap")));
     }
 
     @Test

@@ -18,8 +18,11 @@ here take: every item is derived from the code, names the file it comes from, an
 > engine's own warnings now travel into the metric's summary, and both templates report what their
 > read covered and what it dropped), **D9 for the three scan parameters** (refused when the metric
 > is saved, and on the form at last), and **D11 in part** (each of the three messages names the
-> side, the read and the alternative). **D10 and D12 remain open**, and the worklist at the end
-> says what closes each.
+> side, the read and the alternative). A later change closed **D9 outright** (`operation` is
+> refused at save time too) and took **D12** from a note to a measurement: the two assertions this
+> document asked for exist now in `KafkaClusterIntegrationTest`, so the option D1 rests on is
+> checked against a real broker rather than against a mock that cannot refuse it. **D10 remains
+> open**, and the worklist at the end says what would close it.
 >
 > **One thing was found while implementing rather than while reviewing**, and it is recorded here
 > because D5 understated it: an aggregate on the direct reader dropped its `WHERE` caveats
@@ -424,6 +427,26 @@ D1 and D2 are the two that need the real broker. Everything else (D4 ordering, D
 warnings, D6 match rate, D7 emission order, D9 validation, D11 messages) is unit-testable against
 the existing mock the moment the behaviour changes.
 
+**Shipped, and it changed what one of the fixes rests on.** `MetricServiceTest` carries the
+mock-side cases — forty-two of them — and `KafkaClusterIntegrationTest` now carries the two that
+need the broker.
+
+The first is a **differential**, which is what makes it evidence rather than a coincidence: the
+same `COUNT(*)`, over the same topic, run twice, one scan option apart. With
+`scan.bounded.mode='latest-offset'` the planner answers (`engine: FLINK`), inside its budget, and
+the **last** row of the changelog is the topic's real count. Without it the source never ends, the
+collect spends the whole budget, and the planner is abandoned for the direct reader
+(`engine: KAFKA_DIRECT`) — which is precisely the state D1 describes and the option exists to
+prevent. If this connector did not know the option at all, the bounded half would fail on it and
+say so; that is the case W1's runtime fallback was written blind for, and it is now measured
+rather than assumed.
+
+The second pins the path a count-delta side really takes: `directSql` reaching the direct reader,
+one row rather than a changelog, and a number that had to come out of the broker.
+
+What still cannot be checked here is anything needing Docker — this environment has no daemon, so
+the class skips locally and CI is its first run. That is a smaller gap than the one it closes.
+
 ---
 
 ## Minor, recorded so they are not re-derived
@@ -465,18 +488,22 @@ the existing mock the moment the behaviour changes.
 | ~~W5~~ | **Shipped.** `matchRate` exported as a series of its own, `unmatchedTargetCount` and `outOfOrderCount` measured, and `lastSummary` rendered on the card. | M | D6, minor 1 |
 | ~~W6~~ | **Shipped.** `explorer_metric_last_success_timestamp_seconds{metric_id}`, set only on a cycle that produced a value. | S | D8 |
 | ~~W7~~ | **Shipped**, and further: event-time order *and* a reserved observation column, because a sliding window breaks positional dedup outright. | M | D7 |
-| W8 | Validate `operation`, `maxRowsPerSide`, `timeoutMs` and `readMode` at save time, in the same switch that already validates `aggregation`; mirror it in `validateTemplate`. | S | D9 |
+| ~~W8~~ | **Shipped.** `operation` joins the three scan parameters: refused at save time against one named set, which the compute switch's own error message reads too. | S | D9 |
 | ~~W9~~ | **Shipped.** The right side first, the direction stated in the scope note, and `readGapMs` reported. | S | D4, D11 |
 
-W1 and W2 were the ones that changed what the numbers mean; W4 to W7 and W9 are what made them
-readable as measurements rather than as assertions. All of those have shipped. What is left is
-**W8** (validate `operation` at save time, the one scan parameter still checked only at refresh)
-and the two items no work order closes because they are properties of the design rather than
-defects in it — **D10**, the cost of a two-query metric on a single-threaded refresh loop, and
-**D12**, which is this document's own note that the suite could not have caught any of it.
+W1 and W2 were the ones that changed what the numbers mean; W4 to W9 are what made them readable
+as measurements rather than as assertions. All of them have shipped, and with them the two
+experiments D1 and D2 named — so the option W1 rests on is measured against a real broker instead
+of read off a page.
 
-**The two experiments D1 and D2 name are still worth running**, and they are the reason W1 shipped
-with a runtime fallback rather than a promise: nothing in this repository has yet executed a
-template metric against a real broker. `KafkaClusterIntegrationTest` already runs one, and the two
-assertions to add there are that a `COUNT(*)` through the metric path returns the topic's real
-count, and that the query terminates rather than spending its timeout.
+**What is left is D10**, and it is the one item here that is a property of the design rather than a
+defect in it: a refresh cycle is single-threaded and serialized under one lock, each side of a
+two-query metric has its own timeout, and the scheduler fires every thirty seconds. Two things have
+changed since it was written and both cut the cost rather than the shape — a bounded scan ends
+instead of spending its budget (D1), and the generated shape no longer consults the planner at all
+(D2/D3) — so the arithmetic that made it alarming (60 s of a 30 s cycle, per metric) no longer
+describes the common case. **Re-measure before re-architecting**: what would settle it is the wall
+time of one `refreshMetrics()` over a handful of template metrics against the demo cluster, which
+is a measurement nobody has taken either before or after. If it is still minutes, the fix is a
+bounded per-cycle budget, not more threads — a refresh that cannot finish inside its interval
+should say so rather than queue.

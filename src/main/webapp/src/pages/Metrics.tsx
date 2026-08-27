@@ -225,13 +225,18 @@ export function validateScanParams(templateType: string, params: Record<string, 
 }
 
 // Front-end mirror of the backend template validation (MetricService.validateMetric).
-function validateTemplate(templateType: string, metricType: string,
+export function validateTemplate(templateType: string, metricType: string,
                           params: Record<string, unknown>): ValidationMsg[] {
   const msgs: ValidationMsg[] = [];
   if (templateType === 'TOPIC_COUNT_DELTA') {
     if (!paramStr(params, 'leftSql').trim())  msgs.push({ level: 'error', text: 'Left query (leftSql) is required.' });
     if (!paramStr(params, 'rightSql').trim()) msgs.push({ level: 'error', text: 'Right query (rightSql) is required.' });
     if (metricType !== 'GAUGE')               msgs.push({ level: 'error', text: 'Topic Count Delta supports GAUGE metrics only.' });
+    // Le select ne peut proposer que les quatre, mais l'API accepte un corps écrit à la main :
+    // le serveur refuse maintenant à l'enregistrement, et le formulaire dit la même chose.
+    const operation = paramStr(params, 'operation').trim().toUpperCase();
+    if (operation && !DELTA_OPERATIONS.some(o => o.value === operation))
+      msgs.push({ level: 'error', text: `Operation must be one of ${DELTA_OPERATIONS.map(o => o.value).join(', ')}.` });
     msgs.push(...validateScanParams(templateType, params));
     msgs.push({ level: 'warning', text: 'The two counts are taken one after the other, not at one instant: whatever the pipeline produced in between is in the second and not in the first.' });
   } else if (templateType === 'TOPIC_TRANSIT_LATENCY') {

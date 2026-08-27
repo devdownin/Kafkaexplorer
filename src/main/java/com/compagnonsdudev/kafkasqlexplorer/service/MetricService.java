@@ -97,6 +97,15 @@ public class MetricService {
      */
     private static final String DEFAULT_LATENCY_READ_MODE = "latest-offset";
     private static final Set<String> READ_MODES = Set.of("earliest-offset", "latest-offset");
+    /**
+     * What a count delta may do with its two numbers.
+     *
+     * <p>Named once and read twice — by the save-time validation and by the message the compute
+     * switch throws on an unrecognised value — because the two drifting apart is how a metric
+     * comes to be accepted by the API and then to fail on every refresh for ever.
+     */
+    private static final Set<String> DELTA_OPERATIONS =
+        Set.of("LEFT_MINUS_RIGHT", "ABS_DIFF", "RATIO", "PERCENT_GAP");
     private static final int MAX_TEMPLATE_MAX_ROWS = 1_000_000;
     private static final long MAX_TEMPLATE_TIMEOUT_MS = 600_000L;
 
@@ -624,6 +633,16 @@ public class MetricService {
                 requireParam(params, "leftSql");
                 requireParam(params, "rightSql");
                 validateScanParams(params, DEFAULT_TEMPLATE_READ_MODE);
+                // Checked here rather than from inside the refresh loop, where an unrecognised
+                // value threw every thirty seconds for ever on a metric the API had answered 200
+                // to. It is the rule CONSUMER_TIME_LAG's aggregation follows nine lines below,
+                // and the last of this template's parameters that did not follow it.
+                String operation = getStringParam(params, "operation", "LEFT_MINUS_RIGHT")
+                    .toUpperCase(Locale.ROOT);
+                if (!DELTA_OPERATIONS.contains(operation)) {
+                    throw new IllegalArgumentException("TOPIC_COUNT_DELTA operation must be one of "
+                        + DELTA_OPERATIONS + " (was '" + operation + "')");
+                }
                 if (!"GAUGE".equals(metricType)) {
                     throw new IllegalArgumentException("TOPIC_COUNT_DELTA supports GAUGE metrics only");
                 }
@@ -855,7 +874,10 @@ public class MetricService {
             case "ABS_DIFF" -> Math.abs(leftValue - rightValue);
             case "RATIO" -> rightValue == 0.0 ? null : leftValue / rightValue;
             case "PERCENT_GAP" -> rightValue == 0.0 ? null : ((leftValue - rightValue) * 100.0) / rightValue;
-            default -> throw new IllegalArgumentException("Unsupported count delta operation: " + operation);
+            // Unreachable through save(), which refuses an unknown operation — kept because a
+            // record read back from internal.metrics.config predates that check.
+            default -> throw new IllegalArgumentException("Unsupported count delta operation: "
+                + operation + ". Expected one of " + DELTA_OPERATIONS + ".");
         };
         if (metricValue == null) {
             return MetricComputationResult.error("Cannot compute " + operation

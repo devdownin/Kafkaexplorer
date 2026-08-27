@@ -858,6 +858,8 @@ truncated-record defect described under `ProcessModelBuilder`.
 
 
 **That class is also where the real broker gets asked the questions a mock cannot answer.** The three snapshot-read faults described under `KafkaSnapshotReader` were all found by hand against a live stack, and not one of them is reproducible against `MockConsumer`: it emulates neither an out-of-range seek nor the `auto.offset.reset` that follows one, and it delivers exactly what it was handed rather than prefetching in the background. So the suite — which already runs a Kafka 4.3 broker through Testcontainers — now seeds the state that produces them: a three-partition topic with four records per partition and everything below offset 2 removed with `deleteRecords`, which is what retention leaves behind. Three assertions on it: a trimmed topic read in full through `KafkaSnapshotReader`, a multi-topic snapshot returning **every** topic it was asked for, and the audit's own `getEarliestRecords` path over the same trimmed topic. Verified to bite — with the beginning-offset clamp reverted, two of the three fail — where the unit tests beside them pin the same rules against a mock and could not have caught the clamp at all. The general rule it states: a defect produced by the client's own behaviour belongs in the integration suite, because a mock that cannot fail is not coverage.
+
+**The metric templates' scan bounds are asked here too, and one of the two cases is a differential** — the same `COUNT(*)`, over the same topic, run twice, one scan option apart. With `scan.bounded.mode='latest-offset'` the planner answers (`engine: FLINK`) inside its budget and the *last* row of the changelog is the topic's real count; without it the source never ends, the collect spends the whole budget, and the planner is abandoned for the direct reader (`engine: KAFKA_DIRECT`). That second half is what makes the first evidence rather than a coincidence, and the pair is the only thing in this repository that can tell whether *this* connector knows the option at all: a mock cannot refuse a setting it has never heard of, which is why `MetricService`'s degrade-once fallback was written blind. The sibling case pins the path a count-delta side really takes — `directSql` to the direct reader, one row rather than a changelog. Both build their own local Flink cluster on demand rather than as a field, since the rest of the class talks to the broker directly and should not pay for one.
 `MetricControllerTest` pins `POST /api/metrics/suggestions`, whose body is **optional** and whose record grew a component (`fieldMappingId`) after it shipped: no body at all, `{"flowChains":[]}`, `{"fieldMappingId":"x"}` alone, and a whole trace with hops that omit half their fields. Jackson binds a record through its canonical constructor, so an absent property arrives as `null` — the same class of failure `StreamFlowControllerTest` was written for, on the one endpoint-bearing controller that had no test.
 
 `KafkaAdminServiceActivityTest` drives the sparkline's read through a mocked AdminClient that **behaves like a log** rather than returning a canned response: each partition is a list of record timestamps, and a boundary resolves to the first record at or after it — or to no offset at all when every record predates it, which is the case a caller must not read as "offset 0". What it pins is mostly what the curve must not say: a quiet topic and an unreadable one are two different answers and only one is a row of zeros, a window retention has eaten into is reported as such, and a partition that did not answer makes the series a floor with the note saying so. The instant is a parameter (`getTopicActivity(..., nowMs)`, package-private beside the public method that reads the clock): the window is derived from the clock, so a test computing the alignment a microsecond before the method does would fail whenever the two land either side of a bucket boundary.
@@ -983,10 +985,20 @@ so a metric in service said nothing about its own scope; it is a chip row on the
 (`pages/metricScope.ts`, pure and tested), with the match rate shown even at 100 % on the rule the
 coverage notice already follows — an indicator seen only on bad news is one people stop reading.
 
-What is deliberately still open is listed in that document with what closes each: validating
-`operation` at save time like the three scan parameters beside it, the cost of a two-query metric
-on a single-threaded refresh loop (D10), and the note that the suite could not have caught any of
-this (D12).
+Two more followed and closed the document's own last two loose ends. **`operation` is refused at
+save time** like the three scan parameters beside it, against a set named once that the compute
+switch's error message reads too — it was the last of this template's parameters that could be
+accepted by the API and then throw from inside the refresh loop every thirty seconds. And **the two
+assertions the audit asked for exist**, in `KafkaClusterIntegrationTest`: the option D1 rests on is
+now measured against a real broker rather than read off a page (see the note under **Testing**).
+
+What is deliberately still open is **D10**, the cost of a two-query metric on a single-threaded
+refresh loop — and it is a property of the design rather than a defect in it. Two things cut that
+cost without changing the shape (a bounded scan ends instead of spending its budget; the generated
+shape no longer consults the planner at all), so the arithmetic that made it alarming no longer
+describes the common case. The document says to re-measure before re-architecting, and what would
+settle it: the wall time of one `refreshMetrics()` over a handful of template metrics against the
+demo cluster.
 
 `SQL-EDITOR-AUDIT.md` is the review of the **SQL editor** (`QueryWorkbench.tsx` and its pure modules,
 plus `QueryController` / `SqlQueryValidator` / `FlinkSqlService.executeSync`) along the four axes it

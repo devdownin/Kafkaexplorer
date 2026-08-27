@@ -22,7 +22,7 @@ import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import axios from 'axios';
 import type { MetricConfig, MetricSuggestion, MetricSuggestions } from '../api/types';
-import { defaultReadMode, validateScanParams } from './Metrics';
+import { defaultReadMode, validateScanParams, validateTemplate } from './Metrics';
 
 vi.mock('axios');
 const mockedAxios = vi.mocked(axios, true);
@@ -289,6 +289,17 @@ describe('the scan window of a two-query template', () => {
     expect(errors({ maxRowsPerSide: '2000000' })).toHaveLength(1);
     expect(errors({ timeoutMs: '10' })).toHaveLength(1);
     expect(errors({ readMode: 'group-offsets' })).toHaveLength(1);
+  });
+
+  it('refuses an operation the server would refuse, and accepts the four it takes', () => {
+    const errors = (operation: string) =>
+      validateTemplate('TOPIC_COUNT_DELTA', 'GAUGE',
+        { leftSql: 'SELECT 1 AS metric_value FROM a', rightSql: 'SELECT 1 AS metric_value FROM b', operation })
+        .filter(m => m.level === 'error');
+
+    for (const ok of ['LEFT_MINUS_RIGHT', 'ABS_DIFF', 'RATIO', 'PERCENT_GAP', 'percent_gap', ''])
+      expect(errors(ok)).toEqual([]);
+    expect(errors('LEFT_OVER_RIGHT')).toHaveLength(1);
   });
 
   it('warns rather than refuses a latency read from the earliest offset', () => {
