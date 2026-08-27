@@ -267,6 +267,33 @@ export function suggestionToDraft(suggestion: MetricSuggestion): Partial<MetricC
   };
 }
 
+// ── Les données sont-elles là ? ──────────────────────────────────────────────
+
+/**
+ * Ce que la carte dit de la disponibilité des données, ou `null` quand il n'y a rien à dire.
+ *
+ * Trois états arrivent ici et un seul se rend : `EMPTY`. `POPULATED` n'a pas besoin d'être
+ * annoncé — c'est le cas ordinaire, et un bandeau posé sur chaque carte cesse d'être lu ; et
+ * surtout **`UNKNOWN` ne rend rien**, parce que la vérification n'a pas pu se faire et qu'afficher
+ * quoi que ce soit reviendrait à répondre à une question jamais posée. Ce que la vérification n'a
+ * pas pu faire est dit une fois, dans les `notes` de la réponse, pas vingt fois sur les cartes.
+ *
+ * Le serveur écarte les propositions dont un topic a disparu, donc `ABSENT` ne peut pas arriver ;
+ * la branche existe pour que le jour où ce choix changerait, le panneau ait déjà une phrase.
+ */
+export function describeDataState(suggestion: MetricSuggestion): string | null {
+  switch (suggestion.dataState) {
+    case 'EMPTY':
+      return 'A topic this reads holds no record right now — the KPI will report nothing until it fills.';
+    case 'ABSENT':
+      return 'A topic this reads is no longer on the cluster; the metric would fail at every refresh.';
+    case 'POPULATED':
+    case 'UNKNOWN':
+    default:
+      return null;
+  }
+}
+
 /** Les topics qu'une proposition mesure, pour les puces de la carte. */
 export function suggestionTopics(suggestion: MetricSuggestion): string[] {
   const params = suggestion.metric.templateParams ?? {};

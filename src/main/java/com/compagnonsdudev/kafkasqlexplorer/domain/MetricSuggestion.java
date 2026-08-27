@@ -28,6 +28,12 @@ import java.util.List;
  * @param alreadyConfigured true when an existing metric already covers this ground; the panel says
  *                          so instead of hiding the card, since "already measured" is an answer
  * @param existingMetricName the metric that covers it, null unless {@code alreadyConfigured}
+ * @param dataState         whether the topics it reads still hold anything, asked of the cluster
+ *                          when the proposal was made — see {@link MetricDataState}. Every other
+ *                          field here describes a past observation, and a proposal is only worth
+ *                          offering if it can still be measured now: without this the panel
+ *                          proposed KPIs over topics that had been deleted, with thresholds taken
+ *                          from a count retention had since erased
  * @param metric            the pre-filled configuration, valid as-is for {@code POST /api/metrics}
  */
 public record MetricSuggestion(
@@ -40,5 +46,23 @@ public record MetricSuggestion(
     List<String> caveats,
     boolean alreadyConfigured,
     String existingMetricName,
+    MetricDataState dataState,
     MetricConfig metric
-) {}
+) {
+    /**
+     * The proposal as its family builds it, before the cluster has been asked.
+     *
+     * <p>{@link MetricDataState#UNKNOWN} is the only honest value at that point, and it is also
+     * what a proposal keeps when the check cannot run — so the families construct one shape and
+     * the verification pass is the single place that can say otherwise. Same idiom as
+     * {@code MetricConfig}'s compat constructors, and for the same reason: a record has no default
+     * values, and every one of these call sites would otherwise repeat the same literal.
+     */
+    public MetricSuggestion(String id, MetricSuggestionSource source, String title,
+                            String rationale, List<String> evidence, String thresholdBasis,
+                            List<String> caveats, boolean alreadyConfigured,
+                            String existingMetricName, MetricConfig metric) {
+        this(id, source, title, rationale, evidence, thresholdBasis, caveats, alreadyConfigured,
+             existingMetricName, MetricDataState.UNKNOWN, metric);
+    }
+}

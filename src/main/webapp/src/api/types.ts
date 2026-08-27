@@ -364,6 +364,19 @@ export interface MetricConfig {
 export type MetricSuggestionSource = 'AUDIT' | 'STREAM_FLOW' | 'LINEAGE' | 'PROCESS_MINING';
 
 /**
+ * Les topics que la proposition lit tiennent-ils encore quelque chose ? Question posée au cluster
+ * au moment de la dérivation, pas au moment de l'observation.
+ *
+ * `ABSENT` n'arrive jamais jusqu'ici : une telle proposition est écartée côté serveur et comptée
+ * dans les `notes`. `UNKNOWN` veut dire « on n'a pas pu demander » — jamais « il n'y a rien » —, ce
+ * qui est exactement la distinction que le panneau doit rendre : une carte non vérifiée s'affiche
+ * comme avant, elle ne s'affiche pas comme une carte sans données.
+ *
+ * @java MetricDataState
+ */
+export type MetricDataState = 'POPULATED' | 'EMPTY' | 'ABSENT' | 'UNKNOWN';
+
+/**
  * `POST /api/metrics/suggestions` — un KPI contextuel proposé, avec ce sur quoi il repose.
  *
  * `evidence` n'est jamais vide et `thresholdBasis` dit d'où sortent les seuils : c'est toute la
@@ -382,6 +395,8 @@ export interface MetricSuggestion {
   caveats: string[];
   alreadyConfigured: boolean;
   existingMetricName: string | null;
+  /** Ce que le cluster a répondu sur les topics lus — voir `MetricDataState`. */
+  dataState: MetricDataState;
   metric: MetricConfig;
 }
 

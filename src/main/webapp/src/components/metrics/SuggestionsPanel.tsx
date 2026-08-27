@@ -17,8 +17,8 @@ import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { MetricSuggestion, MetricSuggestions } from '../../api/types';
 import {
-  describeEvidence, describeHighlight, dismiss, dismissedSuggestions, readDismissed, restore,
-  sourceLabel, stalenessNote, suggestionTopics, visibleSuggestions,
+  describeDataState, describeEvidence, describeHighlight, dismiss, dismissedSuggestions,
+  readDismissed, restore, sourceLabel, stalenessNote, suggestionTopics, visibleSuggestions,
 } from '../../pages/metricSuggestions';
 import type { PriorityHighlight } from '../../pages/metricSuggestions';
 import { Badge, Button, Card, EmptyState, ErrorPanel, Spinner, Tooltip } from '../ui';
@@ -47,6 +47,7 @@ const SuggestionCard: React.FC<{
 }> = ({ suggestion, onAdopt, onDismiss }) => {
   const [assumptionsOpen, setAssumptionsOpen] = useState(false);
   const topics = suggestionTopics(suggestion);
+  const dataNote = describeDataState(suggestion);
 
   return (
     <Card padding="sm" className="flex flex-col gap-3">
@@ -69,6 +70,16 @@ const SuggestionCard: React.FC<{
           ))}
           <Badge tone="neutral">{suggestion.metric.type}</Badge>
         </div>
+      )}
+
+      {/* L'observation ci-dessous a vieilli : elle peut décrire un topic aujourd'hui vide. Le dire
+          au-dessus d'elle, pas dans les hypothèses repliées — c'est une mesure prise à l'instant,
+          pas une chose que la proposition ignore, et elle change la lecture des seuils. */}
+      {dataNote && (
+        <p className="text-[11px] text-warning flex gap-1.5 leading-relaxed">
+          <span aria-hidden="true" className="material-symbols-outlined text-[14px] shrink-0 mt-0.5">database_off</span>
+          <span>{dataNote}</span>
+        </p>
       )}
 
       {/* Ce sur quoi la proposition repose : jamais vide, c'est la condition de son existence. */}

@@ -13,6 +13,7 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.FlowChainEvidence;
 import com.compagnonsdudev.kafkasqlexplorer.domain.HealthStatus;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MessageFormat;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricConfig;
+import com.compagnonsdudev.kafkasqlexplorer.domain.MetricDataState;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricSuggestion;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricSuggestionRequest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricSuggestionSource;
@@ -743,6 +744,141 @@ class MetricSuggestionServiceTest {
         // Cards must not shuffle between two identical audits: a browser-side dismissal is keyed
         // on the id, and a list that reorders itself makes the panel look non-deterministic.
         assertEquals(first, second);
+    }
+
+    // ── Les données sont-elles encore là ? ───────────────────────────────────
+
+    /**
+     * Every card this panel builds rests on an observation that has already aged — an audit read
+     * back from the history topic is weeks old — so the proposals are checked against the cluster
+     * before being offered. A topic that has been deleted since can only fail at every refresh.
+     */
+    @Test
+    void aProposalOverADeletedTopicIsDroppedAndNamed() throws Exception {
+        when(auditService.getLastAuditReport()).thenReturn(reportWithFlow());
+        // The source survived; the target was deleted after the audit that measured the hop.
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("demo.orders.in"));
+        when(kafkaAdminService.getTopicRecordCounts(List.of("demo.orders.in")))
+            .thenReturn(Map.of("demo.orders.in", 1_000L));
+
+        MetricSuggestions result = service.suggest(null);
+
+        assertTrue(result.suggestions().stream().noneMatch(s -> s.id().contains("demo.orders.out")),
+            "a KPI reading a topic the cluster no longer carries must not be offered: "
+                + result.suggestions().stream().map(MetricSuggestion::id).toList());
+        assertTrue(result.notes().stream().anyMatch(note -> note.contains("demo.orders.out")),
+            "the drop must name the topic, or the card simply vanishes: " + result.notes());
+    }
+
+    /**
+     * Marked and kept, not dropped: a topic emptied by retention fills again, and on a gap KPI an
+     * empty target beside a populated source is the alarm the card exists to raise.
+     */
+    @Test
+    void aProposalOverAnEmptyTopicIsMarkedRatherThanDropped() throws Exception {
+        when(auditService.getLastAuditReport()).thenReturn(reportWithFlow());
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("demo.orders.in", "demo.orders.out"));
+        when(kafkaAdminService.getTopicRecordCounts(List.of("demo.orders.in", "demo.orders.out")))
+            .thenReturn(Map.of("demo.orders.in", 1_000L, "demo.orders.out", 0L));
+
+        MetricSuggestions result = service.suggest(null);
+
+        MetricSuggestion gap = find(result, "audit:flow-gap:demo.orders.in>demo.orders.out");
+        assertEquals(MetricDataState.EMPTY, gap.dataState());
+        assertTrue(gap.caveats().stream().anyMatch(c -> c.contains("demo.orders.out")
+                && c.contains("no record")),
+            "the card has to say *which* of its topics is empty: " + gap.caveats());
+    }
+
+    /** The ordinary case says so, so that a threshold set on the card rests on a live topic. */
+    @Test
+    void aProposalWhoseTopicsHoldRecordsIsReportedAsMeasurableToday() throws Exception {
+        when(auditService.getLastAuditReport()).thenReturn(reportWithFlow());
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("demo.orders.in", "demo.orders.out"));
+        when(kafkaAdminService.getTopicRecordCounts(List.of("demo.orders.in", "demo.orders.out")))
+            .thenReturn(Map.of("demo.orders.in", 1_000L, "demo.orders.out", 900L));
+
+        MetricSuggestions result = service.suggest(null);
+
+        assertEquals(MetricDataState.POPULATED,
+            find(result, "audit:flow-gap:demo.orders.in>demo.orders.out").dataState());
+    }
+
+    /**
+     * "We asked and the answer is no" and "we could not ask" are different answers, and only the
+     * first may drop a card. An unreachable broker must not empty the panel.
+     */
+    @Test
+    void anUnreadableTopicListDropsNothingAndSaysTheCheckDidNotRun() throws Exception {
+        when(auditService.getLastAuditReport()).thenReturn(reportWithFlow());
+        when(kafkaAdminService.listTopics()).thenThrow(new java.util.concurrent.TimeoutException("no broker"));
+
+        MetricSuggestions result = service.suggest(null);
+
+        MetricSuggestion gap = find(result, "audit:flow-gap:demo.orders.in>demo.orders.out");
+        assertEquals(MetricDataState.UNKNOWN, gap.dataState());
+        assertTrue(result.notes().stream().anyMatch(note -> note.contains("topic list could not be read")),
+            "an unverified panel has to say it is unverified: " + result.notes());
+    }
+
+    /**
+     * The counts failing is the narrower failure: existence was established, emptiness was not.
+     * A topic whose count could not be read must not be marked empty — that is the very
+     * flattening {@code getTopicRecordCounts} was split out of {@code getTopicsSize} to avoid.
+     */
+    @Test
+    void topicsThatExistButCouldNotBeCountedAreNotReportedAsEmpty() throws Exception {
+        when(auditService.getLastAuditReport()).thenReturn(reportWithFlow());
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("demo.orders.in", "demo.orders.out"));
+        when(kafkaAdminService.getTopicRecordCounts(List.of("demo.orders.in", "demo.orders.out")))
+            .thenReturn(Map.of());
+
+        MetricSuggestions result = service.suggest(null);
+
+        MetricSuggestion gap = find(result, "audit:flow-gap:demo.orders.in>demo.orders.out");
+        assertEquals(MetricDataState.UNKNOWN, gap.dataState());
+        // "no record" alone would match this card's standing caveat about offsets counting what
+        // was produced rather than what is readable; the marker's own phrase is what must not be
+        // there.
+        assertTrue(gap.caveats().stream().noneMatch(c -> c.contains("no record right now")),
+            "an unmeasured topic must not be described as empty: " + gap.caveats());
+        assertTrue(result.notes().stream().anyMatch(note -> note.contains("record counts")),
+            "the half of the check that did not run has to be named: " + result.notes());
+    }
+
+    /**
+     * The lineage family's two ends come out of Flink's parser, so they are table names. The
+     * cluster carries the topic under its dotted spelling, and reading one as the other would drop
+     * a card whose evidence is the strongest there is — a job the operator is running right now.
+     */
+    @Test
+    void aLineageProposalResolvesItsFlinkTableNamesBackToTopics() throws Exception {
+        runningJob("q-1", "INSERT INTO demo_orders_out SELECT * FROM demo_orders_in",
+            java.util.Set.of("demo_orders_in"), "demo_orders_out", true);
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("demo.orders.in", "demo.orders.out"));
+        when(kafkaAdminService.getTopicRecordCounts(List.of("demo.orders.in", "demo.orders.out")))
+            .thenReturn(Map.of("demo.orders.in", 1_000L, "demo.orders.out", 900L));
+
+        MetricSuggestions result = service.suggest(null);
+
+        MetricSuggestion declared = find(result, "lineage:flow-gap:demo_orders_in>demo_orders_out");
+        assertEquals(MetricDataState.POPULATED, declared.dataState());
+    }
+
+    /**
+     * A name that could never have been a topic spelling — no dot, no hyphen, so
+     * {@code toTableName} maps nothing onto it — is a Flink table this application did not
+     * register, quite possibly over another connector. Unknown, therefore kept.
+     */
+    @Test
+    void aNameThatResolvesToNoTopicIsUnknownRatherThanDeleted() throws Exception {
+        runningJob("q-1", "INSERT INTO sink SELECT * FROM source",
+            java.util.Set.of("source"), "sink", true);
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("demo.orders.in"));
+
+        MetricSuggestions result = service.suggest(null);
+
+        assertEquals(MetricDataState.UNKNOWN, find(result, "lineage:flow-gap:source>sink").dataState());
     }
 
     private static AuditReport report(List<TopicAudit> topics, List<FlowAudit> flows) {

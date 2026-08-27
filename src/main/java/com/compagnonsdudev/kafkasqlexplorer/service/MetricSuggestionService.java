@@ -13,6 +13,7 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.FieldMapping;
 import com.compagnonsdudev.kafkasqlexplorer.domain.FlowChainEvidence;
 import com.compagnonsdudev.kafkasqlexplorer.domain.HealthStatus;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricConfig;
+import com.compagnonsdudev.kafkasqlexplorer.domain.MetricDataState;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricSuggestion;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricSuggestionRequest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricSuggestionSource;
@@ -49,7 +50,7 @@ import java.util.Set;
  * measurements; a measurement is what turns "add a gauge" into "watch this hop, it took 812 ms
  * when it was traced".
  *
- * <p>Three rules hold this together, and each of them is the reason a line of this class looks the
+ * <p>Four rules hold this together, and each of them is the reason a line of this class looks the
  * way it does:
  *
  * <ol>
@@ -63,6 +64,13 @@ import java.util.Set;
  *   <li><b>Nothing is created.</b> A suggestion is a pre-filled form. It is opened, previewed and
  *       saved by hand, because the SQL rests on an inferred key column and on an engine that may
  *       or may not run the aggregate — both stated as caveats.</li>
+ *   <li><b>And the evidence has to still hold.</b> Everything above is a past observation — an
+ *       audit read back from the history topic is weeks old, a trace and a measured process are
+ *       kept in the browser for seven days — so before a card is offered the cluster is asked
+ *       whether the topics it reads are still there and still hold anything. A topic that is gone
+ *       drops its proposal, an empty one marks it, and a check that could not run changes nothing
+ *       and says so. See {@link #verifyDataAvailable}; without it the panel proposed KPIs over
+ *       deleted topics, with thresholds derived from counts retention had erased.</li>
  * </ol>
  *
  * <p>The audit is read from this process first and from {@code internal.audit.history} otherwise,
@@ -197,11 +205,15 @@ public class MetricSuggestionService {
         if (mapping != null) suggestions.addAll(fromFieldMapping(mapping, notes));
 
         // Deduplicate in source order, which encodes a deliberate precedence (the audit's card
-        // wins over a trace describing the same pair). Only then mark, rank and cut: marking has
-        // to precede the cap, or a proposal an existing metric already covers could take one of
-        // the slots and push out a fresh one — the panel would then say "already measured" on a
-        // card that displaced the suggestion the operator did not have.
-        List<MetricSuggestion> ranked = new ArrayList<>(markAlreadyConfigured(deduplicate(suggestions)));
+        // wins over a trace describing the same pair). Then ask the cluster whether what is left
+        // can still be measured — every proposal above rests on an observation that has already
+        // aged, and one naming a deleted topic could only fail at every refresh. Only then mark,
+        // rank and cut: both passes have to precede the cap, or a proposal an existing metric
+        // already covers, or one over a topic that is gone, could take one of the slots and push
+        // out a fresh one — the panel would then say "already measured" on a card that displaced
+        // the suggestion the operator did not have.
+        List<MetricSuggestion> ranked = new ArrayList<>(
+            markAlreadyConfigured(verifyDataAvailable(deduplicate(suggestions), notes)));
         ranked.sort(BY_RELEVANCE);
         if (ranked.size() > MAX_SUGGESTIONS) {
             notes.add(describeTruncation(ranked.subList(MAX_SUGGESTIONS, ranked.size())));
@@ -1296,6 +1308,274 @@ public class MetricSuggestionService {
             false, null, metric);
     }
 
+    // ── Does the evidence still hold? ─────────────────────────────────────────
+
+    /**
+     * Topics whose absence is named individually in a note; past that they are counted.
+     *
+     * <p>Same reasoning as {@code StreamFlowService.stats.skippedTopics}: the names are the
+     * actionable part — they say <em>which</em> proposals went — and a note listing forty of them
+     * is a note nobody reads.
+     */
+    private static final int MAX_NAMED_MISSING_TOPICS = 5;
+
+    /**
+     * What the cluster says right now about the topics the proposals read.
+     *
+     * @param byTopic     the state of each name a proposal asked about, keyed by the name as the
+     *                    proposal writes it (a topic, or the Flink table it is registered under)
+     * @param listRead    whether the topic list could be read at all. False means every entry is
+     *                    {@link MetricDataState#UNKNOWN} because the question was never put, which
+     *                    is not the same as every topic being fine — and the notes say so
+     */
+    private record TopicReadiness(Map<String, MetricDataState> byTopic, boolean listRead) {
+        MetricDataState of(String name) {
+            return byTopic.getOrDefault(name, MetricDataState.UNKNOWN);
+        }
+
+        static TopicReadiness unavailable() {
+            return new TopicReadiness(Map.of(), false);
+        }
+    }
+
+    /**
+     * Asks the cluster whether the proposals can still be measured, and acts on the answer.
+     *
+     * <p>Every other source this class reads has already aged by the time it is read: an audit
+     * comes back from the history topic and can be weeks old, a Stream Flow chain and a measured
+     * process are kept in the browser for seven days. In that interval a topic is deleted, or
+     * retention empties it. Nothing asked — so a card was offered naming a topic that no longer
+     * existed, with thresholds that are multiples of a count nothing could produce any more, and
+     * the operator found out once the metric had been refreshing against it every thirty seconds.
+     * That is the same defect this panel was built to avoid one step earlier: a figure on screen
+     * that no measurement stands behind.
+     *
+     * <p>Three rules, and the third is the one that makes the other two safe to apply:
+     *
+     * <ol>
+     *   <li><b>A topic that is gone drops its proposal</b>, named in a note. The metric could only
+     *       fail at every refresh, and offering it is worse than saying why it is not offered —
+     *       the same rule that makes a nested status path a note rather than SQL that would fail
+     *       on its first run.</li>
+     *   <li><b>A topic that is empty marks its proposal, and keeps it.</b> Empty now is not empty
+     *       in five minutes: retention refills, a topic created for a pipeline being built is
+     *       legitimately empty, and on a gap KPI an empty target beside a populated source is
+     *       precisely the alarm the card exists to raise. What the operator needs is to know it
+     *       before setting a threshold on it.</li>
+     *   <li><b>A check that could not run changes nothing.</b> An unreachable broker, an
+     *       unreadable topic list, a name that is a Flink table over another connector — each
+     *       leaves the proposal exactly as its family built it, and says so once. "We asked and
+     *       the answer is no" and "we could not ask" are different answers, and rendering the
+     *       second as the first would empty the panel on a blip.</li>
+     * </ol>
+     *
+     * <p>It costs two cached metadata reads for the whole request — the topic list on the entry
+     * every other screen already warms, and one batched offsets read — where the panel already
+     * pays a coordinator round trip per lag finding and a Flink parse per running job.
+     */
+    private List<MetricSuggestion> verifyDataAvailable(List<MetricSuggestion> suggestions,
+                                                       List<String> notes) {
+        if (suggestions.isEmpty()) return suggestions;
+
+        TopicReadiness readiness = readTopicReadiness(suggestions, notes);
+        List<MetricSuggestion> kept = new ArrayList<>(suggestions.size());
+        Map<String, Integer> missingByTopic = new LinkedHashMap<>();
+        int emptyCards = 0;
+
+        for (MetricSuggestion suggestion : suggestions) {
+            List<String> topics = topicsOf(suggestion);
+            MetricDataState state = MetricDataState.UNKNOWN;
+            List<String> absent = new ArrayList<>();
+            List<String> empty = new ArrayList<>();
+            for (String topic : topics) {
+                switch (readiness.of(topic)) {
+                    case ABSENT -> absent.add(topic);
+                    case EMPTY -> empty.add(topic);
+                    case POPULATED, UNKNOWN -> { }
+                }
+            }
+            if (!absent.isEmpty()) {
+                // Dropped, and recorded against the topic rather than against the card: several
+                // proposals usually name one deleted topic, and "3 proposals named demo.orders.x,
+                // which no longer exists" is the sentence that sends the reader somewhere.
+                absent.forEach(topic -> missingByTopic.merge(topic, 1, Integer::sum));
+                continue;
+            }
+            if (!empty.isEmpty()) {
+                state = MetricDataState.EMPTY;
+                emptyCards++;
+            } else if (!topics.isEmpty()
+                && topics.stream().allMatch(t -> readiness.of(t) == MetricDataState.POPULATED)) {
+                state = MetricDataState.POPULATED;
+            }
+            kept.add(withDataState(suggestion, state, empty));
+        }
+
+        if (!missingByTopic.isEmpty()) notes.add(describeMissingTopics(missingByTopic));
+        if (emptyCards > 0) {
+            notes.add(emptyCards + " proposal(s) read a topic that holds no record right now. They "
+                + "are kept and marked rather than dropped — a topic emptied by retention fills "
+                + "again, and an empty target beside a populated source is what a gap KPI is for — "
+                + "but a threshold set on one measures nothing until records arrive.");
+        }
+        if (!readiness.listRead()) {
+            notes.add("The cluster's topic list could not be read just now, so the proposals below "
+                + "were not checked against it: one naming a topic that has since been deleted "
+                + "would still be offered here. Re-derive once the broker answers.");
+        }
+        return kept;
+    }
+
+    /**
+     * The topic list and the record counts, taken once for the whole request.
+     *
+     * <p>The list is what separates "deleted" from "we could not ask", so it is read first and a
+     * failure there ends the check outright — deriving emptiness from counts alone would report a
+     * topic that no longer exists as one that is merely empty, which is a different repair.
+     */
+    private TopicReadiness readTopicReadiness(List<MetricSuggestion> suggestions, List<String> notes) {
+        List<String> topics;
+        try {
+            topics = kafkaAdminService.listTopics();
+        } catch (Exception e) {
+            log.debug("Topic list unreadable while suggesting metrics: {}", e.toString());
+            return TopicReadiness.unavailable();
+        }
+        if (topics == null) return TopicReadiness.unavailable();
+
+        // A proposal names a Kafka topic, except the lineage family, whose two ends come from
+        // Flink's parser and are therefore *table* names. `toTableName` is not injective, so the
+        // map is built forwards from the topics that exist rather than by trying to invert it.
+        Set<String> existing = new LinkedHashSet<>(topics);
+        Map<String, String> byTableName = new LinkedHashMap<>();
+        topics.forEach(topic -> byTableName.putIfAbsent(DdlGeneratorService.toTableName(topic), topic));
+
+        Map<String, String> resolved = new LinkedHashMap<>();   // name as written → topic
+        Set<String> unresolved = new LinkedHashSet<>();
+        for (MetricSuggestion suggestion : suggestions) {
+            for (String name : topicsOf(suggestion)) {
+                if (resolved.containsKey(name) || unresolved.contains(name)) continue;
+                if (existing.contains(name)) resolved.put(name, name);
+                else if (byTableName.containsKey(name)) resolved.put(name, byTableName.get(name));
+                else unresolved.add(name);
+            }
+        }
+
+        Map<String, Long> counts = Map.of();
+        if (!resolved.isEmpty()) {
+            // Sorted so two requests over the same topics hit one cache entry rather than two.
+            List<String> wanted = resolved.values().stream().distinct().sorted().toList();
+            try {
+                Map<String, Long> read = kafkaAdminService.getTopicRecordCounts(wanted);
+                if (read != null) counts = read;
+            } catch (Exception e) {
+                log.debug("Record counts unreadable while suggesting metrics: {}", e.toString());
+            }
+            if (counts.isEmpty()) {
+                notes.add("The record counts of the topics these proposals read could not be taken "
+                    + "just now — a topic that has been emptied since it was observed is therefore "
+                    + "not marked as such below. Whether each topic still exists was checked.");
+            }
+        }
+
+        Map<String, MetricDataState> byTopic = new LinkedHashMap<>();
+        Map<String, Long> measured = counts;
+        resolved.forEach((name, topic) -> {
+            Long records = measured.get(topic);
+            // Absent from the count map means the read failed or covered no partition of it — the
+            // topic exists, so it is not ABSENT, and nothing here knows whether it holds anything.
+            byTopic.put(name, records == null
+                ? MetricDataState.UNKNOWN
+                : records > 0 ? MetricDataState.POPULATED : MetricDataState.EMPTY);
+        });
+        // A name the cluster does not carry under either spelling: the lineage family can name a
+        // Flink table over another connector, or a view, and calling that a deleted topic would
+        // drop a perfectly measurable proposal. Unknown is the honest reading, and it drops
+        // nothing — the offsets template will say so itself if the name is wrong.
+        unresolved.forEach(name -> byTopic.put(name, unresolvedState(name, existing)));
+        return new TopicReadiness(byTopic, true);
+    }
+
+    /**
+     * What to make of a name the topic list does not carry.
+     *
+     * <p>{@code ABSENT} for a name written as a Kafka topic — every family but lineage writes one,
+     * and the list was read successfully, so its absence is a fact. {@code UNKNOWN} for a name
+     * that could only ever have been a Flink identifier: {@code toTableName} maps dots and hyphens
+     * to underscores, so a name carrying neither is indistinguishable from a table this
+     * application did not register, and dropping on it would penalise the one family whose
+     * evidence is the strongest — a job the operator is running right now.
+     */
+    private MetricDataState unresolvedState(String name, Set<String> existing) {
+        if (existing.isEmpty()) return MetricDataState.UNKNOWN;   // an empty cluster proves nothing
+        return name.indexOf('.') >= 0 || name.indexOf('-') >= 0
+            ? MetricDataState.ABSENT
+            : MetricDataState.UNKNOWN;
+    }
+
+    /**
+     * The names a proposal reads, from the configuration it carries rather than from its prose.
+     *
+     * <p>Mirrors {@code suggestionTopics} in {@code pages/metricSuggestions.ts}, which builds the
+     * card's chips from the same fields: the template parameters name the topics for the three
+     * templates, and {@code labelTopic} carries it for the raw-SQL cards, every one of which sets
+     * it to the topic its query reads.
+     */
+    private static final List<String> TOPIC_PARAM_KEYS =
+        List.of("sourceTopic", "targetTopic", "leftTopic", "rightTopic", "topic");
+
+    private List<String> topicsOf(MetricSuggestion suggestion) {
+        MetricConfig metric = suggestion.metric();
+        if (metric == null) return List.of();
+        Map<String, Object> params = metric.templateParams() == null ? Map.of() : metric.templateParams();
+        Set<String> topics = new LinkedHashSet<>();
+        for (String key : TOPIC_PARAM_KEYS) {
+            Object value = params.get(key);
+            if (value instanceof String name && !name.isBlank()) topics.add(name);
+        }
+        if (topics.isEmpty() && metric.labelTopic() != null && !metric.labelTopic().isBlank()) {
+            topics.add(metric.labelTopic());
+        }
+        return List.copyOf(topics);
+    }
+
+    /**
+     * The proposal with its measured state, and — when it is EMPTY — a caveat naming which topic.
+     *
+     * <p>The caveat rather than the badge alone, because a badge says a card is affected and only
+     * the sentence says which of its two topics is, which is the whole of the reading on a gap or
+     * a latency KPI.
+     */
+    private MetricSuggestion withDataState(MetricSuggestion suggestion, MetricDataState state,
+                                           List<String> emptyTopics) {
+        if (state == suggestion.dataState() && emptyTopics.isEmpty()) return suggestion;
+        List<String> caveats = new ArrayList<>(nullSafe(suggestion.caveats()));
+        if (!emptyTopics.isEmpty()) {
+            caveats.add(String.join(", ", emptyTopics)
+                + (emptyTopics.size() == 1 ? " holds" : " hold") + " no record right now, read from "
+                + "the log's offsets just now. The KPI is proposed anyway — the topic may fill "
+                + "again, and its being empty may itself be the finding — but it measures nothing "
+                + "until it does, and any threshold below rests on a count taken when it was not "
+                + "empty.");
+        }
+        return new MetricSuggestion(suggestion.id(), suggestion.source(), suggestion.title(),
+            suggestion.rationale(), suggestion.evidence(), suggestion.thresholdBasis(),
+            List.copyOf(caveats), suggestion.alreadyConfigured(), suggestion.existingMetricName(),
+            state, suggestion.metric());
+    }
+
+    private String describeMissingTopics(Map<String, Integer> missingByTopic) {
+        int proposals = missingByTopic.values().stream().mapToInt(Integer::intValue).sum();
+        List<String> names = missingByTopic.keySet().stream().limit(MAX_NAMED_MISSING_TOPICS).toList();
+        String tail = missingByTopic.size() > names.size()
+            ? " and " + (missingByTopic.size() - names.size()) + " other(s)"
+            : "";
+        return proposals + " proposal(s) were dropped: they read " + String.join(", ", names) + tail
+            + ", which the cluster no longer carries. What was observed about "
+            + (missingByTopic.size() == 1 ? "it" : "them")
+            + " is still in the run they came from; the metric would only fail at every refresh.";
+    }
+
     // ── Naming, SQL, dedupe ───────────────────────────────────────────────────
 
     /** Where a proposal's correlation key comes from — and the card says which. */
@@ -1455,6 +1735,10 @@ public class MetricSuggestionService {
      */
     private static final Comparator<MetricSuggestion> BY_RELEVANCE =
         Comparator.comparing(MetricSuggestion::alreadyConfigured)          // fresh before covered
+            // A KPI over a topic holding nothing measures nothing today, so it is what the cap
+            // drops first. Below `alreadyConfigured` and above everything else: what a card is
+            // about only matters among cards that have something to report on.
+            .thenComparing(s -> s.dataState() == MetricDataState.EMPTY)
             .thenComparingInt(MetricSuggestionService::kindRank)           // what it is about
             .thenComparing(s -> s.thresholdBasis() == null)                // derived thresholds first
             .thenComparingInt(s -> s.caveats() == null ? 0 : s.caveats().size())  // fewer assumptions
@@ -1509,7 +1793,7 @@ public class MetricSuggestionService {
                 .map(metric -> new MetricSuggestion(
                     suggestion.id(), suggestion.source(), suggestion.title(), suggestion.rationale(),
                     suggestion.evidence(), suggestion.thresholdBasis(), suggestion.caveats(),
-                    true, metric.name(), suggestion.metric()))
+                    true, metric.name(), suggestion.dataState(), suggestion.metric()))
                 .orElse(suggestion));
         }
         return marked;
