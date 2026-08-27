@@ -35,7 +35,7 @@ depends_on:
     condition: service_completed_successfully
 ```
 
-`demo-setup` crée 76 topics et y produit ~400 enregistrements : une à deux minutes, et le conteneur
+`demo-setup` crée 79 topics et y produit ~400 enregistrements : une à deux minutes, et le conteneur
 applicatif n'était **même pas créé** avant la fin. L'UI était donc injoignable pendant tout ce
 temps, pour des données dont elle n'a aucun besoin pour démarrer — le Dashboard interroge
 `/api/dashboard` toutes les 30 s, donc les topics apparaissent au fur et à mesure de leur création.

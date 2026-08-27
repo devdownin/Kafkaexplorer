@@ -215,9 +215,17 @@ const UNREACHABLE_BUDGET = {
 const TARGET_BUDGET = {
   'dashboard': 5,
   'dashboard·palette': 6,
-  'sql-editor': 39,
-  'sql-editor·confirm': 36,
-  'sql-editor·ddl': 37,
+  // +3 chacun le 2026-08-27, et la cause est mécanique plutôt qu'une dette qui glisse : le
+  // navigateur de schéma rend **un bouton de 195 x 16 par topic du catalogue**, et les fixtures
+  // ont gagné les trois topics de reprise et de file morte que `setup-demo.sh` sème désormais
+  // (`--detail` les compte `x31` là où il en comptait 28). C'est le contrôle que
+  // MOBILE-LAYOUT-SCOPE.md nomme parmi ceux qu'il laisse sciemment — un texte de liste dense,
+  // dont la hauteur ne se relève qu'en relevant le pas de toutes les vues denses. Le nombre suit
+  // donc la taille du catalogue, pas la qualité de la page ; c'est bien ce plafond qu'il faut
+  // recalibrer, et non le contrôle qu'il faut corriger ici.
+  'sql-editor': 42,
+  'sql-editor·confirm': 39,
+  'sql-editor·ddl': 40,
   'topic-explorer': 3,
   'stream-flow': 19,
   'data-model': 7,

@@ -400,7 +400,13 @@ describe('Dashboard activity column', () => {
  * aucune, faute de quoi elle est indiscernable d'un interrupteur en panne.
  */
 describe('Dashboard retry marker', () => {
-  const retryTopics = ['demo.orders.received', 'demo.orders.retry.5m', 'demo.RETRY-payments', 'demo.orders.dlt'];
+  const retryTopics = [
+    'demo.orders.received', 'demo.orders.retry.5m', 'demo.RETRY-payments',
+    // Les deux orthographes de la file morte : `.dlt` (Spring Kafka) et `.dlq` (Spring
+    // Cloud Stream et le reste de l'écosystème), la seconde n'ayant longtemps été
+    // reconnue nulle part.
+    'demo.orders.dlt', 'demo.payments.dlq',
+  ];
 
   function stubRetryCluster() {
     mockedAxios.get.mockImplementation((url: string) => {
@@ -461,5 +467,56 @@ describe('Dashboard retry marker', () => {
 
     expect(screen.getByText('no retry topic')).toBeInTheDocument();
     expect(screen.queryAllByText('Retry')).toHaveLength(0);
+  });
+});
+
+/*
+ * La règle de file morte, vue depuis la page. `topicKinds.test.ts` couvre la règle elle-même ; ce
+ * qui n'a de sens qu'ici, c'est que les deux orthographes atteignent vraiment le badge et le
+ * filtre — une règle élargie que la page n'appellerait pas serait verte en test et fausse à
+ * l'écran.
+ */
+describe('Dashboard dead-letter rule', () => {
+  const topicsWithDlq = ['demo.orders.received', 'demo.orders.dlt', 'demo.payments.dlq'];
+
+  function stubDlqCluster() {
+    mockedAxios.get.mockImplementation((url: string) => {
+      if (url === '/api/dashboard') {
+        return Promise.resolve({
+          data: {
+            ...dashboard,
+            topics: topicsWithDlq,
+            topicSizes: Object.fromEntries(topicsWithDlq.map(t => [t, 10])),
+            topicLastMessages: Object.fromEntries(topicsWithDlq.map(t => [t, WINDOW_START])),
+          },
+        });
+      }
+      if (url === '/api/dashboard/activity') return Promise.resolve({ data: activityFor(topicsWithDlq) });
+      return Promise.resolve({ data: {} });
+    });
+    mockedAxios.isCancel = ((e: unknown) => e instanceof Error && e.name === 'CanceledError') as never;
+  }
+
+  it('badges each dead-letter topic with the spelling it actually carries', async () => {
+    stubDlqCluster();
+    renderPage();
+
+    await screen.findByText('demo.payments.dlq');
+    // `DLQ` pour tout le monde serait une convention affirmée que le producteur n'a pas suivie.
+    expect(screen.getByText('DLT')).toBeInTheDocument();
+    expect(screen.getByText('DLQ')).toBeInTheDocument();
+  });
+
+  it('hides both spellings, the switch naming the kind rather than one of them', async () => {
+    const user = userEvent.setup();
+    stubDlqCluster();
+    renderPage();
+
+    await screen.findByText('demo.payments.dlq');
+    await user.click(screen.getByLabelText('Hide dead letter'));
+
+    expect(screen.queryByText('demo.orders.dlt')).toBeNull();
+    expect(screen.queryByText('demo.payments.dlq')).toBeNull();
+    expect(screen.getByText('demo.orders.received')).toBeInTheDocument();
   });
 });

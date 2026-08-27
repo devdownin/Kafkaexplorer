@@ -20,6 +20,7 @@ import {
   readActivityScale, windowById, writeActivityChoice, writeActivityScale,
   type ActivityChoice, type ActivityScale,
 } from './topicActivity';
+import { isRetryTopic, isDeadLetterTopic, deadLetterLabel } from './topicKinds';
 import {
   REFRESH_OPTIONS, REFRESH_OFF, readRefreshChoice, writeRefreshChoice,
   refreshIntervalMs, activityIntervalMs, describeRefreshStatus,
@@ -84,19 +85,6 @@ const SortButton: React.FC<{
     )}
   </button>
 );
-
-/**
- * Un topic de reprise, repéré à son nom. `includes` et non `endsWith` comme la règle DLT juste
- * au-dessus, et ce n'est pas une incohérence : une file d'attente morte est un suffixe par
- * convention (`….dlt`), alors qu'une reprise se nomme aussi bien `orders.retry.5m` que
- * `retry-orders` — chercher un suffixe n'en trouverait qu'une partie, en silence.
- *
- * C'est une *marque*, jamais un filtre : un topic de reprise reste vide, sain ou DLT par
- * ailleurs, donc l'état n'est pas la bonne colonne pour le dire et la ligne n'est pas retirée.
- */
-function isRetryTopic(topic: string): boolean {
-  return topic.toLowerCase().includes('retry');
-}
 
 /**
  * « il y a 5 min » se calcule depuis un instant de référence *passé en paramètre* : appeler
@@ -308,7 +296,7 @@ const Dashboard: React.FC = () => {
    */
   const getState = useCallback((topic: string) =>
     !data || data.topicSizes[topic] === 0 ? 'empty'
-    : topic.toLowerCase().endsWith('.dlt') ? 'dlt'
+    : isDeadLetterTopic(topic) ? 'dlt'
     : 'healthy', [data]);
 
   const filteredTopics = useMemo(() => {
@@ -316,7 +304,7 @@ const Dashboard: React.FC = () => {
     return data.topics
       .filter(t => t.toLowerCase().includes(searchTerm.toLowerCase()))
       .filter(t => !hideEmpty || (data.topicSizes[t] ?? 0) > 0)
-      .filter(t => !hideDlt   || !t.toLowerCase().endsWith('.dlt'))
+      .filter(t => !hideDlt   || !isDeadLetterTopic(t))
       .sort((a, b) => {
         let cmp = 0;
         if (sortKey === 'name') cmp = a.localeCompare(b);
@@ -492,9 +480,14 @@ const Dashboard: React.FC = () => {
     return num.toString();
   }
 
-  const stateBadge = (state: string) =>
+  /*
+   * Le badge de file morte nomme le suffixe que le topic porte réellement — `DLT` ou `DLQ` — au
+   * lieu de dire `DLT` à tout le monde : depuis que les deux orthographes sont reconnues, la
+   * seconde moitié des cas se verrait étiqueter d'une convention que son producteur n'a pas suivie.
+   */
+  const stateBadge = (topic: string, state: string) =>
     state === 'empty' ? <Badge tone="neutral">Empty</Badge>
-    : state === 'dlt' ? <Badge tone="warning" dot>DLT</Badge>
+    : state === 'dlt' ? <Badge tone="warning" dot>{deadLetterLabel(topic) ?? 'DLT'}</Badge>
     : <Badge tone="success" dot>Healthy</Badge>;
 
   const pagerBtn = 'inline-flex items-center justify-center w-8 h-8 rounded-md border border-outline-variant text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high disabled:opacity-30 disabled:cursor-not-allowed transition-colors';
@@ -610,9 +603,9 @@ const Dashboard: React.FC = () => {
                 * que rien ne demande.
                 */}
               {([
-                { label: 'Hide empty', value: hideEmpty, set: setHideEmpty,  filters: true },
-                { label: 'Hide DLT',   value: hideDlt,   set: setHideDlt,    filters: true },
-                { label: 'Mark retry', value: markRetry, set: setMarkRetry,  filters: false },
+                { label: 'Hide empty',       value: hideEmpty, set: setHideEmpty, filters: true },
+                { label: 'Hide dead letter', value: hideDlt, set: setHideDlt, filters: true },
+                { label: 'Mark retry',       value: markRetry, set: setMarkRetry, filters: false },
               ] as const).map(sw => (
                 <label key={sw.label} className="flex items-center gap-1.5 cursor-pointer select-none group">
                   <span className="text-[11px] font-medium text-on-surface-variant group-hover:text-on-surface transition-colors whitespace-nowrap">
@@ -725,7 +718,7 @@ const Dashboard: React.FC = () => {
                 <Td className="text-on-surface-variant tabular-nums">{(data.topicSizes[topic] ?? 0).toLocaleString()}</Td>
                 <Td>
                   <span className="flex flex-wrap items-center gap-1.5">
-                    {stateBadge(getState(topic))}
+                    {stateBadge(topic, getState(topic))}
                     {markRetry && isRetryTopic(topic) && <Badge tone="primary">Retry</Badge>}
                   </span>
                 </Td>

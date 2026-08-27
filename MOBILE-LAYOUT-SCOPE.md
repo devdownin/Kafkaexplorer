@@ -142,10 +142,10 @@ Interactive elements below the 24 × 24 CSS px of WCAG 2.5.8 (Target Size, Minim
 
 | page | ratio | page | ratio |
 |---|---|---|---|
-| sql-editor | 39 / 113 | audit | 23 / 55 |
+| sql-editor | 42 / 119 | audit | 23 / 55 |
 | stream-flow | 19 / 44 | metrics | 7 / 56 |
 | topic-explorer | 3 / 59 | dashboard | 5 / 89 |
-| data-model | 7 / 81 | cluster | 1 / 21 |
+| data-model | 7 / 84 | cluster | 1 / 21 |
 
 (The worse of phone and desktop for each page, which is what `--check` gates on.)
 
@@ -207,7 +207,7 @@ Measured effect, same probe, worse of phone and desktop: `dashboard` **32 → 5*
 
 **What is deliberately left, and why.** Almost everything remaining is a *text* control whose width
 is ample and whose height is 16–20 px because it is a line of text in a dense list: the sidebar's
-topic and table names (28 + 5 on the SQL editor), the Audit table's topic links, the Topic
+topic and table names (31 + 5 on the SQL editor), the Audit table's topic links, the Topic
 Explorer's field-name buttons inside a rendered JSON document, the table sort headers, the
 `Link` / `Format` toolbar buttons. Raising those to 24 px means raising the row pitch of every
 dense data view in the application — a decision about information density, not an accessibility
@@ -216,6 +216,21 @@ exception covers some of them honestly (a field name inside a rendered JSON docu
 stretch to a table row, so this is recorded as a **decision and not as a claim of compliance**: the
 remaining count is real, it is bounded by `TARGET_BUDGET` so it cannot drift upward, and reopening
 it means settling row density first.
+
+**Ce plafond a monté une fois, et la raison tient à la fixture et non à une page.** Le 2026-08-27,
+`setup-demo.sh` s'est mis à semer trois topics de plus — une file de reprise et les deux
+orthographes de file morte, sans lesquelles le tableau de bord ne pouvait montrer ni sa marque ni
+son badge — et les fixtures de captures, qui sont calquées sur ce que le seeder sème, ont suivi.
+Or le navigateur de schéma rend **un bouton par topic du catalogue** : la sonde en comptait 28, elle
+en compte 31, et les trois états de `sql-editor` ont pris +3 chacun (39 → 42, 36 → 39, 37 → 40).
+C'est exactement le contrôle que le paragraphe ci-dessus laisse sciemment, donc le nombre mesure la
+taille du catalogue et non la qualité de la page ; le corriger ici aurait voulu dire relever le pas
+de toutes les vues denses, ce qui est la décision de densité que ce document renvoie à plus tard.
+La distinction avec le cas de l'explorateur de topics juste au-dessus est nette et vaut d'être
+gardée : là, le compte avait bougé parce qu'une page affichait de nouveaux contrôles, et ils ont été
+**corrigés plutôt que budgétés** ; ici, aucune page n'a changé — seule la donnée mesurée a grandi.
+Le même mouvement a porté le total de `data-model` de 81 à 84 éléments, sans changer ses 7 cibles
+sous-dimensionnées, la liste de sélection y gagnant trois cases déjà conformes.
 
 ## The product question
 
