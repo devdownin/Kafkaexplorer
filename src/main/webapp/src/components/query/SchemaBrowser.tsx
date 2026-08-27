@@ -43,6 +43,26 @@ const ICON_BUTTON = `opacity-0 group-hover/tbl:opacity-100 ${ICON_HIT}`;
  */
 const TOPIC_ICON_BUTTON = `opacity-0 group-hover/topic:opacity-100 ${ICON_HIT}`;
 
+/**
+ * Ce qui rend lisible un nom que la colonne tronque.
+ *
+ * `truncate` coupe à la largeur de la barre latérale (288 px par défaut, 200 au minimum) et le
+ * `title` posé à côté ne rend le reste qu'à la souris, après le délai du navigateur, dans un rendu
+ * qui ne nous appartient pas. Au survol — et au focus clavier, que le `title` n'atteint jamais —
+ * la ligne cesse de tronquer et le nom passe à la ligne : il est lu en entier, sur place.
+ *
+ * `break-all` parce qu'un nom de topic n'offre pas d'espace où revenir à la ligne, et le passage
+ * en `whitespace-normal` suffit à désamorcer l'ellipse, qui ne s'applique qu'à une ligne unique.
+ *
+ * Une infobulle du design system a été essayée d'abord et écartée : sa bulle est positionnée en
+ * absolu dans un conteneur qui défile (`overflow-y: auto` coupe aussi l'axe horizontal), donc elle
+ * se fait couper là où c'est le plus étroit — et son contenu redirait le nom que `aria-label`
+ * énonce déjà, ce qui le ferait annoncer deux fois au clavier. Ici, rien n'est dupliqué : c'est le
+ * même texte qui cesse d'être coupé.
+ */
+const REVEAL_ON_HOVER = 'group-hover/name:whitespace-normal group-hover/name:break-all '
+  + 'group-focus-within/name:whitespace-normal group-focus-within/name:break-all';
+
 export interface SchemaBrowserProps {
   schema: SchemaInfo | null;
   schemaLoading: boolean;
@@ -175,18 +195,18 @@ export const SchemaBrowser = React.forwardRef<HTMLElement, SchemaBrowserProps>(f
           <ScrollList count={schema?.tables.length ?? 0} className="pl-4 pt-1 space-y-0.5">
             {schema?.tables.map(table => (
               <div key={table}>
-                <div className="flex items-center py-1 px-2 rounded hover:bg-primary/5 transition-colors group/tbl">
+                <div className="flex items-center py-1 px-2 rounded hover:bg-primary/5 transition-colors group/tbl group/name">
                   {/* Un `<div onClick>` n'est ni tabulable ni actionnable au clavier : toute la
                       barre latérale était inatteignable sans souris. */}
                   <button type="button" onClick={() => onToggleTable(table)}
                     aria-expanded={!!expandedTables[table]}
                     className="flex-1 flex items-center gap-1 min-w-0 text-left rounded">
                     <span className={`material-symbols-outlined text-xs text-on-surface-variant transition-transform duration-200 shrink-0 ${expandedTables[table] ? 'rotate-90' : ''}`}>chevron_right</span>
-                    {/* `truncate` sans `title`, c'est du texte que rien ne permet de lire — le
-                        défaut que W7 a trouvé sur les cartes de métriques. Les deux boutons
-                        d'action à droite rendent la troncature plus fréquente, donc la ligne
-                        porte le nom complet. */}
-                    <span className="text-xs text-on-surface truncate font-mono" title={table}>{table}</span>
+                    {/* Même traitement que la liste des topics plus bas, et pour la même raison :
+                        deux listes voisines qui tronquent de la même façon ne peuvent pas répondre
+                        différemment au même geste. Les deux boutons d'action à droite rendent la
+                        troncature plus fréquente ici. */}
+                    <span className={cn('text-xs text-on-surface truncate font-mono', REVEAL_ON_HOVER)} title={table}>{table}</span>
                   </button>
                   <button type="button" onClick={() => onSelectFrom(table)}
                     className={cn(ICON_BUTTON, 'hover:text-primary')} title={actionLabelFor('this table')} aria-label={actionLabelFor(table)}>
@@ -236,18 +256,17 @@ export const SchemaBrowser = React.forwardRef<HTMLElement, SchemaBrowserProps>(f
             ) : (
               <ScrollList count={schema?.topics.length ?? 0} className="space-y-0.5">
                 {schema?.topics.map(topic => (
-                  <div key={topic} className="flex items-center py-1 px-2 rounded hover:bg-primary/5 transition-colors group/topic">
+                  <div key={topic} className="flex items-center py-1 px-2 rounded hover:bg-primary/5 transition-colors group/topic group/name">
                     <button type="button" onClick={() => onSelectFrom(toTableName(topic))}
                       className="flex-1 min-w-0 text-left rounded" title={topic} aria-label={actionLabelFor(topic)}>
-                      {/* Même règle que la liste des tables juste au-dessus, qui l'appliquait
-                          déjà : un nom `truncate` sans `title` est du texte que rien ne permet
-                          de lire. Un nom de topic est plus long qu'un nom de table (il garde ses
-                          points là où `toTableName` les remplace) et la barre latérale est
-                          étroite, donc c'est ici que la troncature mord le plus. Le `title` va
-                          sur le bouton, pas sur le `span` : c'est lui qui occupe la ligne, donc
-                          la zone que l'on survole. Le nom accessible porte déjà le topic entier
-                          (`SELECT from <topic>`), donc ce qui manquait n'était que la souris. */}
-                      <span className="text-xs text-on-surface-variant hover:text-primary font-mono truncate block">{topic}</span>
+                      {/* Un nom de topic est plus long qu'un nom de table — il garde ses points
+                          là où `toTableName` les remplace — et la barre latérale est étroite :
+                          c'est ici que la troncature mord le plus. Le `title` reste (c'est
+                          l'infobulle que l'habitude attend, et il porte le nom entier), mais il
+                          n'est plus le seul recours : `REVEAL_ON_HOVER` déplie le nom sur place,
+                          au survol comme au focus. Le `title` va sur le bouton, pas sur le
+                          `span` : c'est lui qui occupe la ligne, donc la zone que l'on survole. */}
+                      <span className={cn('text-xs text-on-surface-variant hover:text-primary font-mono truncate block', REVEAL_ON_HOVER)}>{topic}</span>
                     </button>
                     <button type="button" onClick={e => { e.stopPropagation(); onPreviewDdl(topic); }}
                       className={cn(TOPIC_ICON_BUTTON, 'hover:text-primary')}
