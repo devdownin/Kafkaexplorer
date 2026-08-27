@@ -725,6 +725,14 @@ export interface RagSource {
  *
  * @java ProcessMiningResult
  */
+/** @java MetricPriority */
+export interface MetricPriority {
+  /** L'id de la carte KPI, tel que le panneau de suggestions le frappe. */
+  id: string;
+  /** Une phrase du modèle : pourquoi celle-là plutôt qu'une autre, sur ce parc. */
+  why: string;
+}
+
 export interface ProcessMiningResult {
   flowchart: string | null;
   comments: string | null;
@@ -747,6 +755,15 @@ export interface ProcessMiningResult {
    * *et* que rien ne l'a demandé (une réponse d'un serveur antérieur, par exemple).
    */
   processModel: ProcessModel | null;
+  /**
+   * Les KPI que le modèle suivrait, parmi ceux que le processus mesuré rend possibles.
+   *
+   * Le seul champ ici que le modèle remplit vraiment, et l'exception est délibérée : choisir entre
+   * des candidats et dire pourquoi est un jugement — ce pour quoi un modèle sert — là où les
+   * mesures au-dessus sont du comptage. Il porte des ids, jamais des métriques, et un id absent de
+   * la liste qu'on lui a montrée est écarté côté serveur avant d'arriver ici.
+   */
+  metricPriorities: MetricPriority[];
 }
 
 /**

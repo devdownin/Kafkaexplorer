@@ -3,10 +3,11 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  describeEvidence, dismiss, dismissedSuggestions, DISMISSED_KEY, newerAuditNote, newestUsableRun,
-  readDismissed, restore, sourceLabel, stalenessNote, suggestionTopics, suggestionToDraft,
-  visibleSuggestions,
+  describeEvidence, describeHighlight, dismiss, dismissedSuggestions, DISMISSED_KEY,
+  highlightPriorities, newerAuditNote, newestUsableRun, readDismissed, restore, sourceLabel,
+  stalenessNote, suggestionTopics, suggestionToDraft, visibleSuggestions,
 } from './metricSuggestions';
+import type { StoredMetricPriorities } from './processModelEvidence';
 import type {
   AuditHistory, AuditRunSummary, MetricConfig, MetricSuggestion, MetricSuggestions,
 } from '../api/types';
@@ -359,5 +360,57 @@ describe('newerAuditNote', () => {
     expect(newerAuditNote(null, history(run()))).toBeNull();
     expect(newerAuditNote(response(), null)).toBeNull();
     expect(newerAuditNote(response(), history())).toBeNull();
+  });
+});
+
+describe('le bandeau des KPI que le modèle retiendrait', () => {
+  const chosen = (ids: string[], route = 'a>b'): StoredMetricPriorities => ({
+    route,
+    measuredAt: NOW,
+    priorities: ids.map(id => ({ id, why: `because ${id}` })),
+  });
+
+  const withCards = (...ids: string[]) => response({
+    suggestions: ids.map(id => suggestion({ id, title: `Card ${id}` })),
+  });
+
+  it('désigne les cartes réellement proposées, et rien d’autre', () => {
+    const highlight = highlightPriorities(withCards('a', 'b'), chosen(['b']), 'a>b');
+    expect(highlight?.entries.map(e => e.suggestion.id)).toEqual(['b']);
+    expect(highlight?.entries[0].why).toBe('because b');
+    expect(highlight?.missing).toBe(0);
+  });
+
+  it('compte plutôt que de nommer une carte qui n’est plus là', () => {
+    // Un audit plus récent, un topic supprimé : la carte disparaît légitimement, et nommer une
+    // carte absente n'apprendrait rien.
+    const highlight = highlightPriorities(withCards('a'), chosen(['a', 'gone']), 'a>b');
+    expect(highlight?.entries).toHaveLength(1);
+    expect(highlight?.missing).toBe(1);
+  });
+
+  it('ne dit rien quand le choix porte sur un autre pipeline', () => {
+    // Deux pipelines, deux routes : un avis sur l'un ne dit rien de l'autre, et le poser au-dessus
+    // des cartes de l'autre serait exactement le genre d'affirmation non vérifiée qu'on évite.
+    expect(highlightPriorities(withCards('a'), chosen(['a'], 'x>y'), 'a>b')).toBeNull();
+    expect(highlightPriorities(withCards('a'), chosen(['a']), null)).toBeNull();
+  });
+
+  it('ne dit rien quand il n’y a rien à dire', () => {
+    expect(highlightPriorities(null, chosen(['a']), 'a>b')).toBeNull();
+    expect(highlightPriorities(withCards('a'), null, 'a>b')).toBeNull();
+    expect(highlightPriorities(withCards('a'), chosen([]), 'a>b')).toBeNull();
+  });
+
+  it('énonce que c’est un avis, et que l’ordre de la liste n’a pas bougé', () => {
+    const note = describeHighlight(highlightPriorities(withCards('a'), chosen(['a']), 'a>b'));
+    expect(note).toContain('reading, not a measurement');
+    expect(note).toContain('order of the list below');
+  });
+
+  it('dit ce qu’il reste quand plus aucune carte n’est désignable', () => {
+    const note = describeHighlight(highlightPriorities(withCards('a'), chosen(['gone']), 'a>b'));
+    expect(note).toContain('none of them is still proposed');
+    expect(describeHighlight(null)).toBeNull();
   });
 });

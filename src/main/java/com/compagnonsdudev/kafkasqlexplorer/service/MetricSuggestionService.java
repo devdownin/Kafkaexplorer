@@ -876,7 +876,7 @@ public class MetricSuggestionService {
         if (clock != null) lines.add(clock);
 
         return transitLatency(
-            "pm:hop-latency:" + from + ">" + to,
+            MetricCandidates.hopLatencyId(from, to),
             MetricSuggestionSource.PROCESS_MINING,
             from, to, edge.p95Ms(), measuredLabel, mapping,
             "Processing latency " + from + " → " + to,
@@ -979,7 +979,7 @@ public class MetricSuggestionService {
             .append(".");
 
         return new MetricSuggestion(
-            "pm:duplicates:" + topic,
+            MetricCandidates.reworkId(topic),
             MetricSuggestionSource.PROCESS_MINING,
             "Repeated records in " + topic,
             "A case came back through this step. Whether that is a redelivery, a retry without "
@@ -1278,7 +1278,7 @@ public class MetricSuggestionService {
             "SQL", topic, List.of());
 
         return new MetricSuggestion(
-            "pm:status:" + topic,
+            MetricCandidates.statusId(topic),
             MetricSuggestionSource.PROCESS_MINING,
             "Status breakdown of " + topic,
             "Process Mining identified which field carries the status of these records. Counting "

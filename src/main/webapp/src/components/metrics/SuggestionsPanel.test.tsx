@@ -67,6 +67,7 @@ function renderPanel(props: Partial<React.ComponentProps<typeof SuggestionsPanel
         loading={false}
         error={null}
         newerAudit={null}
+        highlight={null}
         onRefresh={onRefresh}
         onAdopt={onAdopt}
         {...props}
@@ -204,5 +205,45 @@ describe('un audit plus récent', () => {
     renderPanel({ newerAudit: null });
 
     expect(screen.queryByRole('button', { name: /Re-derive now/ })).toBeNull();
+  });
+});
+
+describe('le bandeau désigne sans réordonner', () => {
+  const highlight = (title: string, why: string, missing = 0) => ({
+    entries: [{ suggestion: { ...suggestion(), title }, why }],
+    missing,
+    measuredAt: Date.now(),
+  });
+
+  it('nomme la carte et la phrase du modèle, étiquetée comme un avis', () => {
+    renderPanel({ highlight: highlight('Latency a → b', 'The hop a customer waits on.') });
+
+    expect(screen.getByText('Latency a → b')).toBeInTheDocument();
+    expect(screen.getByText(/The hop a customer waits on\./)).toBeInTheDocument();
+    expect(screen.getByText(/reading, not a measurement/)).toBeInTheDocument();
+  });
+
+  it('laisse l’ordre de la liste intact', () => {
+    // C'est la promesse du bandeau : il désigne, il ne trie pas. L'ordre suit une règle serveur
+    // écrite et rejouable, et la perdre au profit d'un jugement qu'on ne peut pas rejouer serait
+    // le seul vrai coût de cette fonctionnalité.
+    const first = suggestion({ id: 'first', title: 'First card' });
+    const second = suggestion({ id: 'second', title: 'Second card' });
+    renderPanel({
+      response: response({ suggestions: [first, second] }),
+      highlight: highlight('Second card', 'this one matters'),
+    });
+
+    // Les titres des cartes, dans l'ordre du DOM. Le bandeau nomme « Second card » en premier ;
+    // la liste, elle, ne bouge pas.
+    const cards = screen.getAllByText(/^(First|Second) card$/)
+      .filter(el => el.tagName === 'P')
+      .map(el => el.textContent);
+    expect(cards).toEqual(['First card', 'Second card']);
+  });
+
+  it('ne rend rien quand il n’y a pas de choix', () => {
+    renderPanel({ highlight: null });
+    expect(screen.queryByText(/reading, not a measurement/)).toBeNull();
   });
 });

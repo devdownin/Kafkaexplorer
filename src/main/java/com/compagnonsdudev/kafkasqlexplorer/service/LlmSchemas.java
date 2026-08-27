@@ -57,15 +57,34 @@ final class LlmSchemas {
             List.of("id", "topic", "type", "severity", "fields", "description",
                 "probableCause", "sqlSuggestion"));
 
+        /*
+         * The KPIs to follow, and the schema constrains the *shape* only.
+         *
+         * "At most four" and "an id from the list above" are not expressible here — a JSON Schema
+         * cannot reference the prompt — so the service enforces both after parsing, dropping what
+         * the model invented and saying how many. Pinning an enum of candidate ids per request
+         * would express it and is refused on this file's own rule: constrained decoding narrows
+         * the model's choices at every token, and the field that matters here is `why`, which is
+         * prose.
+         */
+        Map<String, Object> priority = object(
+            Map.of(
+                "id", string("An id copied verbatim from the MÉTRIQUES CANDIDATES list"),
+                "why", string("One sentence on what makes this one worth following on this estate")
+            ),
+            List.of("id", "why"));
+
         return object(
             Map.of(
                 "flowchart", string("A Mermaid flowchart, starting with 'flowchart TD'"),
                 "comments", string("Short narrative describing the flow"),
                 "hypotheses", array(string("A hypothesis about the underlying architecture")),
                 "blindSpots", array(string("Something the sampled data could not show")),
-                "anomalies", array(anomaly)
+                "anomalies", array(anomaly),
+                "metricPriorities", array(priority)
             ),
-            List.of("flowchart", "comments", "hypotheses", "blindSpots", "anomalies"));
+            List.of("flowchart", "comments", "hypotheses", "blindSpots", "anomalies",
+                "metricPriorities"));
     }
 
     /** The profiling result — {@code FieldProfileResult}. */

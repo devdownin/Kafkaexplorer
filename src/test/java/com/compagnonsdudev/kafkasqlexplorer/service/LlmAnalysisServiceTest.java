@@ -127,6 +127,139 @@ class LlmAnalysisServiceTest {
         assertEquals("NO_CHANGE", result.flowchart());
     }
 
+    // ── The KPIs the model is asked to choose between ────────────────────────
+
+    /**
+     * Two topics an order travels between, so the event log has a transition to propose.
+     *
+     * <p>The mapped paths have to be handed to the digester: a digest keeps the fields the mapping
+     * <em>names</em> and a bounded sample of the rest, so a digest built with an empty set carries
+     * no case id and the builder rightly reports no process at all.
+     */
+    private void givenTwoHopFlow() {
+        List<PayloadDigest> digests = new java.util.ArrayList<>();
+        long t0 = 1_767_225_600_000L;
+        for (int i = 1; i <= 3; i++) {
+            digests.add(mappedDigest("orders.received", i,
+                "{\"id\":\"ORD-" + i + "\",\"at\":" + (t0 + i * 1_000L) + "}"));
+            digests.add(mappedDigest("orders.validated", i,
+                "{\"id\":\"ORD-" + i + "\",\"at\":" + (t0 + i * 1_000L + 5_000L) + "}"));
+        }
+        givenDigests(digests);
+    }
+
+    private static PayloadDigest mappedDigest(String topic, long offset, String json) {
+        return DIGEST_SERVICE.digest(topic, 0, offset, 1_767_225_600_000L, "k" + offset,
+            json.getBytes(StandardCharsets.UTF_8), Set.of("id", "at"));
+    }
+
+    private static FieldMapping twoHopMapping() {
+        Map<String, String> ids = Map.of("orders.received", "$.id", "orders.validated", "$.id");
+        Map<String, String> times = Map.of("orders.received", "$.at", "orders.validated", "$.at");
+        return new FieldMapping("m1", ids, times, Map.of(), null);
+    }
+
+    private static final String EMPTY_ANSWER =
+        "{\"flowchart\":\"x\",\"comments\":\"\",\"hypotheses\":[],\"blindSpots\":[],\"anomalies\":[]}";
+
+    @Test
+    void theCandidateKpisAreOfferedByIdSoTheModelNeedInventNone() {
+        givenTwoHopFlow();
+        when(llmClient.generateWithMeta(anyString(), anyString(), any()))
+            .thenReturn(new LlmResponse(EMPTY_ANSWER, List.of()));
+
+        llmAnalysisService.analyzeSnapshot(
+            List.of("orders.received", "orders.validated"), SnapshotConfig.latestN(10),
+            twoHopMapping(), null);
+
+        ArgumentCaptor<String> prompt = ArgumentCaptor.forClass(String.class);
+        verify(llmClient).generateWithMeta(anyString(), prompt.capture(), any());
+        assertTrue(prompt.getValue().contains("MÉTRIQUES CANDIDATES"), prompt.getValue());
+        // The id is the one the suggestion panel will mint for that card — which is the whole
+        // reason MetricCandidates exists rather than two concatenations in two files.
+        assertTrue(prompt.getValue().contains(
+            MetricCandidates.hopLatencyId("orders.received", "orders.validated")), prompt.getValue());
+    }
+
+    @Test
+    void noEventLogMeansNoSectionRatherThanAnEmptyOneToFillIn() {
+        // With no field mapping there is no case id, so there are no transitions to choose
+        // between. A heading over an empty list is an invitation, which is the observed failure
+        // mode this prompt is written against.
+        givenDigests(List.of(digestOf("topic1", "key1", "{\"val\":1}")));
+        when(llmClient.generateWithMeta(anyString(), anyString(), any()))
+            .thenReturn(new LlmResponse(EMPTY_ANSWER, List.of()));
+
+        ProcessMiningResult result = llmAnalysisService.analyzeSnapshot(
+            List.of("topic1"), SnapshotConfig.latestN(10), null, null);
+
+        ArgumentCaptor<String> prompt = ArgumentCaptor.forClass(String.class);
+        verify(llmClient).generateWithMeta(anyString(), prompt.capture(), any());
+        assertFalse(prompt.getValue().contains("MÉTRIQUES CANDIDATES"));
+        assertTrue(result.metricPriorities().isEmpty());
+    }
+
+    @Test
+    void theChosenKpisAreKeptAndAnInventedOneIsDroppedAndSaidSo() {
+        givenTwoHopFlow();
+        String real = MetricCandidates.hopLatencyId("orders.received", "orders.validated");
+        when(llmClient.generateWithMeta(anyString(), anyString(), any()))
+            .thenReturn(new LlmResponse("""
+                {"flowchart":"x","comments":"","hypotheses":[],"blindSpots":[],"anomalies":[],
+                 "metricPriorities":[
+                   {"id":"%s","why":"The slowest hop, and the one a customer waits on."},
+                   {"id":"pm:hop-latency:invented>card","why":"Sounds important."}]}
+                """.formatted(real), List.of()));
+
+        ProcessMiningResult result = llmAnalysisService.analyzeSnapshot(
+            List.of("orders.received", "orders.validated"), SnapshotConfig.latestN(10),
+            twoHopMapping(), null);
+
+        assertEquals(1, result.metricPriorities().size());
+        assertEquals(real, result.metricPriorities().get(0).id());
+        assertEquals("The slowest hop, and the one a customer waits on.",
+            result.metricPriorities().get(0).why());
+        // Dropped, and counted — an operator is entitled to know the model went outside the list.
+        assertTrue(result.blindSpots().stream().anyMatch(b -> b.contains("matched no candidate")),
+            String.valueOf(result.blindSpots()));
+    }
+
+    @Test
+    void atMostFourAreKeptAndADuplicateIdCountsOnce() {
+        givenTwoHopFlow();
+        String real = MetricCandidates.hopLatencyId("orders.received", "orders.validated");
+        when(llmClient.generateWithMeta(anyString(), anyString(), any()))
+            .thenReturn(new LlmResponse("""
+                {"flowchart":"x","comments":"","hypotheses":[],"blindSpots":[],"anomalies":[],
+                 "metricPriorities":[
+                   {"id":"%1$s","why":"a"},{"id":"%1$s","why":"b"}]}
+                """.formatted(real), List.of()));
+
+        ProcessMiningResult result = llmAnalysisService.analyzeSnapshot(
+            List.of("orders.received", "orders.validated"), SnapshotConfig.latestN(10),
+            twoHopMapping(), null);
+
+        assertEquals(1, result.metricPriorities().size());
+        assertEquals("a", result.metricPriorities().get(0).why(), "the first mention wins");
+        // The duplicate is not an invented id, so it is not reported as one.
+        assertTrue(result.blindSpots().stream().noneMatch(b -> b.contains("matched no candidate")));
+    }
+
+    @Test
+    void aRunWithNoModelStillMeasuresTheProcessAndChoosesNothing() {
+        claudeConfig.setApiKey("");
+        givenTwoHopFlow();
+
+        ProcessMiningResult result = llmAnalysisService.analyzeSnapshot(
+            List.of("orders.received", "orders.validated"), SnapshotConfig.latestN(10),
+            twoHopMapping(), null);
+
+        // The measured half survives; choosing is the half that needed a model.
+        assertNotNull(result.error());
+        assertTrue(result.processModel().available());
+        assertTrue(result.metricPriorities().isEmpty());
+    }
+
     @Test
     void testAuditFocusIsInjectedIntoPrompt() {
         givenDigests(List.of(

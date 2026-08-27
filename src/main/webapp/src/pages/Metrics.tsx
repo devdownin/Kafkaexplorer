@@ -26,8 +26,8 @@ import { copyText } from '../clipboard';
 import type { AuditHistory, MetricConfig, MetricSuggestion, MetricSuggestions, MetricTestResponse, TableMetadata } from '../api/types';
 import { SuggestionsPanel } from '../components/metrics/SuggestionsPanel';
 import { readFlowChains } from './flowChains';
-import { latestProcessModel } from './processModelEvidence';
-import { newerAuditNote, suggestionToDraft } from './metricSuggestions';
+import { latestProcessModel, modelRoute, readMetricPriorities } from './processModelEvidence';
+import { highlightPriorities, newerAuditNote, suggestionToDraft } from './metricSuggestions';
 import { componentSeries, describeMeasurement, describeMetricScope, describeRefreshCost, scopeNoteOf } from './metricScope';
 import { buildAlertRule, describeThresholdDirection, gradeMetric, thresholdDirection } from './metricAlert';
 
@@ -1184,6 +1184,8 @@ const Metrics: React.FC = () => {
   const previewNote = useMemo(() => scopeNoteOf(previewSummary), [previewSummary]);
   const [templates, setTemplates]       = useState<MetricTemplateDescriptor[]>([]);
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
+  /** La route de la mesure dont viennent les cartes affichées, pour situer le choix du modèle. */
+  const [priorityRoute, setPriorityRoute] = useState<string | null>(null);
   const [filterType, setFilterType]     = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [nameIsAuto, setNameIsAuto]     = useState(restoredEditor?.nameIsAuto ?? false);
@@ -1225,6 +1227,7 @@ const Metrics: React.FC = () => {
     setSuggestionsLoading(true);
     setSuggestionsError(null);
     try {
+      const model = latestProcessModel();
       const res = await axios.post<MetricSuggestions>('/api/metrics/suggestions', {
         flowChains: readFlowChains(),
         // Le mapping validé par Process Mining vit dans le brouillon de cette page-là ; c'est lui
@@ -1234,9 +1237,12 @@ const Metrics: React.FC = () => {
         // successions avec des quantiles par transition, compté sur tous les enregistrements lus.
         // Une seule — deux fenêtres décriraient deux fois le même saut, et la déduplication
         // trancherait sur l'ordre d'arrivée plutôt que sur la qualité de la mesure.
-        processModel: latestProcessModel(),
+        processModel: model,
       });
       setSuggestions(res.data);
+      // Le choix du modèle n'a de sens qu'au-dessus des cartes issues de *cette* mesure : deux
+      // pipelines produisent deux routes, et un avis sur l'un ne dit rien de l'autre.
+      setPriorityRoute(model ? modelRoute(model) : null);
     } catch (err) {
       // Un panneau vide se lirait « ce cluster n'appelle aucun KPI », qui est l'inverse de
       // « la dérivation a échoué ». La raison du serveur reste à l'écran.
@@ -1511,6 +1517,11 @@ const Metrics: React.FC = () => {
   // Ce que cette configuration coûtera au broker, dit avant de l'enregistrer plutôt qu'après, par
   // une jauge de durée de cycle.
   const refreshCost = isTemplate ? describeRefreshCost(templateType, templateParams) : null;
+  // Recalculé quand les cartes changent : un bandeau qui survivrait à une nouvelle dérivation
+  // désignerait des cartes qui ne sont plus là.
+  const priorityHighlight = useMemo(
+    () => highlightPriorities(suggestions, readMetricPriorities(), priorityRoute),
+    [suggestions, priorityRoute]);
   const hasBlockingErrors = [...nameValidation, ...sqlValidation, ...templateValidation, ...ddlValidation, ...thresholdValidation]
     .some(m => m.level === 'error');
 
@@ -1705,6 +1716,7 @@ const Metrics: React.FC = () => {
         loading={suggestionsLoading}
         error={suggestionsError}
         newerAudit={newerAudit}
+        highlight={priorityHighlight}
         onRefresh={() => void fetchSuggestions()}
         onAdopt={openSuggestion}
       />

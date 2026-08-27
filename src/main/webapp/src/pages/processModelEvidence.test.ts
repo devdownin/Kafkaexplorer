@@ -5,7 +5,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   clearProcessModels, evidenceFromModel, latestProcessModel, MAX_PROCESS_MODEL_AGE_MS,
   MAX_PROCESS_MODELS, modelRoute, PROCESS_MODEL_KEY, pushProcessModel, readProcessModels,
-  recordMeasuredProcess, topicOfActivity, writeProcessModels,
+  METRIC_PRIORITIES_KEY, readMetricPriorities, recordMeasuredProcess, recordMetricPriorities,
+  topicOfActivity, writeProcessModels,
 } from './processModelEvidence';
 import type { ProcessModel, ProcessModelEvidence } from '../api/types';
 
@@ -161,5 +162,48 @@ describe('recordMeasuredProcess / latestProcessModel', () => {
     recordMeasuredProcess(model(), NOW);
     clearProcessModels();
     expect(readProcessModels(NOW)).toEqual([]);
+  });
+});
+
+describe('le choix du modèle, gardé à côté de la mesure qu’il porte', () => {
+  const model = (from: string, to: string): ProcessModelEvidence => ({
+    measuredAt: NOW,
+    cases: 3,
+    windowStartMs: NOW - 1000,
+    windowEndMs: NOW,
+    eventTimeSource: 'MAPPED_FIELD',
+    transitions: [{ from, to, occurrences: 3, cases: 3, p50Ms: 1, p95Ms: 2, maxMs: 3 }],
+    repeats: [],
+  });
+
+  it('garde ce que le modèle a désigné, avec la route de cette mesure', () => {
+    const stored = recordMetricPriorities(model('a', 'b'), [{ id: 'pm:hop-latency:a>b', why: 'slow' }], NOW);
+    expect(stored?.route).toBe(modelRoute(model('a', 'b')));
+    expect(readMetricPriorities(NOW)?.priorities).toEqual([{ id: 'pm:hop-latency:a>b', why: 'slow' }]);
+  });
+
+  it('efface plutôt que d’écrire du vide', () => {
+    recordMetricPriorities(model('a', 'b'), [{ id: 'x', why: 'y' }], NOW);
+    // Le modèle qui n'a rien distingué et le modèle qu'on n'a pas interrogé donnent la même chose
+    // à l'écran ; garder une entrée vide ne ferait que retarder la péremption de la précédente.
+    recordMetricPriorities(model('a', 'b'), [], NOW);
+    expect(readMetricPriorities(NOW)).toBeNull();
+  });
+
+  it('périme au bout de sept jours, comme la mesure', () => {
+    recordMetricPriorities(model('a', 'b'), [{ id: 'x', why: 'y' }], NOW);
+    expect(readMetricPriorities(NOW + MAX_PROCESS_MODEL_AGE_MS + 1)).toBeNull();
+  });
+
+  it('efface une enveloppe d’une autre version plutôt que de la deviner', () => {
+    localStorage.setItem(METRIC_PRIORITIES_KEY, JSON.stringify({ v: 99, chosen: { route: 'a>b' } }));
+    expect(readMetricPriorities(NOW)).toBeNull();
+    expect(localStorage.getItem(METRIC_PRIORITIES_KEY)).toBeNull();
+  });
+
+  it('écarte une entrée sans id', () => {
+    const stored = recordMetricPriorities(model('a', 'b'),
+      [{ id: '', why: 'nothing' }, { id: 'ok', why: 'yes' }] as never, NOW);
+    expect(stored?.priorities).toEqual([{ id: 'ok', why: 'yes' }]);
   });
 });
