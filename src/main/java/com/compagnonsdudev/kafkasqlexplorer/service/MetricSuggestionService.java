@@ -23,6 +23,7 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.ProcessModelEvidence;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicAudit;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicConsumers;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicIssue;
+import com.compagnonsdudev.kafkasqlexplorer.util.LogSafe;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -1497,20 +1498,38 @@ public class MetricSuggestionService {
     }
 
     /**
-     * What to make of a name the topic list does not carry.
+     * What to make of a name the topic list does not carry: the catalogue is asked, not the spelling.
      *
-     * <p>{@code ABSENT} for a name written as a Kafka topic — every family but lineage writes one,
-     * and the list was read successfully, so its absence is a fact. {@code UNKNOWN} for a name
-     * that could only ever have been a Flink identifier: {@code toTableName} maps dots and hyphens
-     * to underscores, so a name carrying neither is indistinguishable from a table this
-     * application did not register, and dropping on it would penalise the one family whose
-     * evidence is the strongest — a job the operator is running right now.
+     * <p>The lineage family's two ends are Flink identifiers ({@code getObjectName}, so bare
+     * names), and such a table can legitimately sit over another connector — dropping a proposal
+     * on one would penalise the family whose evidence is the strongest there is, a job the
+     * operator is running right now. The first version told the two apart by <em>looking</em> at
+     * the name: {@code toTableName} maps dots and hyphens to underscores, so a name carrying
+     * neither might be a Flink table. That is a guess, and it is wrong in both directions — a flat
+     * {@code orders} is an entirely ordinary Kafka topic name, so a deleted one was kept; and a
+     * quoted Flink identifier may carry a dot, so a live table could be called deleted.
+     *
+     * <p>Flink can simply be asked. A name that is neither a topic nor a registered table is one
+     * nothing on this deployment can read, whatever it is spelled like, so the proposal is
+     * dropped; a registered table is {@code UNKNOWN}, since what sits behind it is the
+     * connector's business and not this method's. One catalogue lookup per unresolved name, which
+     * is normally none — and the same lookup {@link #keyColumn} already makes per topic.
      */
     private MetricDataState unresolvedState(String name, Set<String> existing) {
         if (existing.isEmpty()) return MetricDataState.UNKNOWN;   // an empty cluster proves nothing
-        return name.indexOf('.') >= 0 || name.indexOf('-') >= 0
-            ? MetricDataState.ABSENT
-            : MetricDataState.UNKNOWN;
+        return isRegisteredTable(name) ? MetricDataState.UNKNOWN : MetricDataState.ABSENT;
+    }
+
+    /** Whether Flink's catalogue carries this name. Empty, or a throw, both mean it does not. */
+    private boolean isRegisteredTable(String name) {
+        try {
+            Map<String, String> schema = flinkSqlService.getTableSchema(name);
+            return schema != null && !schema.isEmpty();
+        } catch (RuntimeException e) {
+            log.debug("No Flink table named {} while suggesting metrics: {}",
+                LogSafe.name(name), e.toString());
+            return false;
+        }
     }
 
     /**

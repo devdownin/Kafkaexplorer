@@ -866,19 +866,44 @@ class MetricSuggestionServiceTest {
     }
 
     /**
-     * A name that could never have been a topic spelling — no dot, no hyphen, so
-     * {@code toTableName} maps nothing onto it — is a Flink table this application did not
-     * register, quite possibly over another connector. Unknown, therefore kept.
+     * A name that is no topic but <em>is</em> in Flink's catalogue: a table over another
+     * connector, quite possibly. What sits behind it is the connector's business, so the
+     * proposal is kept — dropping it would penalise the family whose evidence is the strongest
+     * there is, a job the operator is running right now.
      */
     @Test
-    void aNameThatResolvesToNoTopicIsUnknownRatherThanDeleted() throws Exception {
+    void aNameThatIsARegisteredFlinkTableIsUnknownRatherThanDeleted() throws Exception {
         runningJob("q-1", "INSERT INTO sink SELECT * FROM source",
             java.util.Set.of("source"), "sink", true);
         when(kafkaAdminService.listTopics()).thenReturn(List.of("demo.orders.in"));
+        when(flinkSqlService.getTableSchema("source")).thenReturn(Map.of("id", "STRING"));
+        when(flinkSqlService.getTableSchema("sink")).thenReturn(Map.of("id", "STRING"));
 
         MetricSuggestions result = service.suggest(null);
 
         assertEquals(MetricDataState.UNKNOWN, find(result, "lineage:flow-gap:source>sink").dataState());
+    }
+
+    /**
+     * The case the spelling heuristic got wrong, and it is not exotic: a flat {@code orders} is an
+     * entirely ordinary Kafka topic name, and reading "no dot, no hyphen" as "must be a Flink
+     * table" kept a proposal over a topic that had been deleted. Neither the cluster nor the
+     * catalogue carries it, so nothing on this deployment can read it.
+     */
+    @Test
+    void aFlatNameThatIsNeitherATopicNorATableIsDropped() throws Exception {
+        runningJob("q-1", "INSERT INTO shipped SELECT * FROM orders",
+            java.util.Set.of("orders"), "shipped", true);
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("demo.orders.in"));
+        // getTableSchema answers an empty map for a name the catalogue does not carry — the
+        // default stub in setUp already does that, stated here because it is the whole point.
+        when(flinkSqlService.getTableSchema(anyString())).thenReturn(Map.of());
+
+        MetricSuggestions result = service.suggest(null);
+
+        assertTrue(result.suggestions().stream().noneMatch(s -> s.id().contains("orders>shipped")),
+            "a name neither the cluster nor Flink carries can only fail at every refresh: "
+                + result.suggestions().stream().map(MetricSuggestion::id).toList());
     }
 
     private static AuditReport report(List<TopicAudit> topics, List<FlowAudit> flows) {
