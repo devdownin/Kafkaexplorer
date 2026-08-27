@@ -14,6 +14,7 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.MetricTemplateType;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryRequest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryResult;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicTimeLag;
+import com.compagnonsdudev.kafkasqlexplorer.util.LogSafe;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.DistributionSummary;
 import io.micrometer.core.instrument.Gauge;
@@ -104,6 +105,51 @@ public class MetricService {
      */
     private static final Set<String> DELTA_OPERATIONS =
         Set.of("LEFT_MINUS_RIGHT", "ABS_DIFF", "RATIO", "PERCENT_GAP");
+
+    /**
+     * Where a count delta gets its two numbers.
+     *
+     * <p>{@code RECORDS} runs the two queries and counts the rows that come back — the original
+     * behaviour, and the only one that can honour a {@code WHERE}. {@code OFFSETS} asks the log
+     * instead: {@code endOffsets − beginningOffsets} summed over the partitions, which
+     * {@link KafkaAdminService#getTopicsSize} already answers <em>for both topics in one call</em>.
+     * That is not a faster version of the same measurement, it is a cheaper and a <em>larger</em>
+     * one: no record is read or parsed, the direct reader's 100 000-record ceiling does not apply,
+     * so a topic of any size is countable, and the two sides come out of the same pair of
+     * {@code listOffsets} responses — which removes the interval D4 is about rather than leaning
+     * it in the safe direction.
+     *
+     * <p>What it counts is <b>offsets produced, not records present</b>: a transaction marker takes
+     * one, and a record later compacted away still counts, because it was produced. That is the
+     * right answer to "how many did this stage emit", which is what a silent-drop alarm between
+     * two stages asks, and the wrong one to "how many are in there now" on a compacted topic.
+     * {@code getTopicActivity} draws the same distinction for the dashboard's sparkline.
+     *
+     * <p>{@code AUTO} takes offsets when the metric names both topics and neither query is
+     * anything but a plain whole-topic count — the case where the two measurements answer the same
+     * question — and records otherwise. Whichever it picked is in the summary; it is never silent.
+     */
+    private static final Set<String> COUNT_MODES = Set.of("AUTO", "OFFSETS", "RECORDS");
+
+    /**
+     * What the two numbers are compared over.
+     *
+     * <p>{@code TOTAL} compares the counts themselves, which is what this template always did and
+     * what makes it lose its sensitivity as history accumulates: on two topics running for months,
+     * a total outage that started an hour ago is a fraction of a percent of the lifetime totals,
+     * under every threshold anyone would set. {@code SINCE_LAST_REFRESH} compares what each side
+     * produced since the previous cycle, which is a quantity a threshold can fire on. Its first
+     * refresh publishes nothing and says why: there is no previous cycle to subtract.
+     */
+    private static final Set<String> COUNT_WINDOWS = Set.of("TOTAL", "SINCE_LAST_REFRESH");
+
+    /** A plain whole-topic count: the shape offsets answer exactly. */
+    private static final Pattern WHOLE_TOPIC_COUNT = Pattern.compile(
+        "(?is)^\\s*SELECT\\s+COUNT\\s*\\(\\s*\\*\\s*\\)\\s*(?:AS\\s+`?\\w+`?\\s*)?"
+            + "FROM\\s+`?\\w[\\w.]*`?\\s*;?\\s*$");
+
+    /** metricId → the counts the previous refresh saw, for a windowed comparison. */
+    private final Map<String, double[]> countDeltaBaselines = new ConcurrentHashMap<>();
     private static final int MAX_TEMPLATE_MAX_ROWS = 1_000_000;
     private static final long MAX_TEMPLATE_TIMEOUT_MS = 600_000L;
 
@@ -158,9 +204,21 @@ public class MetricService {
      */
     private static final String OBSERVED_AT_COLUMN = "__observed_at";
 
-    /** Columns that are never labels. */
+    /**
+     * Columns that are never labels: the value itself, and anything marked with the {@code __}
+     * prefix.
+     *
+     * <p>The prefix is a rule rather than a list because the alternative was found the hard way.
+     * Every other column becomes a Prometheus label, which is right for a GROUP BY value and
+     * ruinous for a number that moves: a count delta put {@code left_value} and {@code right_value}
+     * in its row, so on any live topic the label set changed at <em>every refresh</em> and each
+     * series carried exactly one data point. The metric could not be graphed or alerted on at all
+     * — the one thing it exists for — and nothing said so, because the registry stayed small:
+     * {@code pruneStaleSeries} deregistered the previous series each cycle, which is the tidy
+     * version of the same defect.
+     */
     private static boolean isReservedColumn(String column) {
-        return "metric_value".equalsIgnoreCase(column) || OBSERVED_AT_COLUMN.equalsIgnoreCase(column);
+        return "metric_value".equalsIgnoreCase(column) || (column != null && column.startsWith("__"));
     }
 
     /** Companion series: one gauge per (metric, name), carrying no row labels. */
@@ -374,7 +432,7 @@ public class MetricService {
             validateMetric(normalized);
             executeCreateTableIfPresent(normalized);
 
-            MetricComputationResult result = computeMetric(normalized);
+            MetricComputationResult result = computeMetric(normalized, true);
             Map<String, Object> summary = new LinkedHashMap<>(result.summary());
             if (MetricExecutionMode.FLINK_MANAGED_JOB.name().equals(normalized.executionMode())) {
                 summary.put("plannedExecutionMode", MetricExecutionMode.FLINK_MANAGED_JOB.name());
@@ -616,8 +674,21 @@ public class MetricService {
                 }
             }
             case TOPIC_COUNT_DELTA -> {
-                requireParam(params, "leftSql");
-                requireParam(params, "rightSql");
+                /*
+                 * Two shapes, and each needs what it reads. A records count needs the two queries;
+                 * an offsets count needs the two topics and no SQL at all, since it asks the log
+                 * rather than the query engine. AUTO needs whichever it will resolve to, which is
+                 * why the check follows resolveCountMode rather than restating its rule.
+                 */
+                String mode = resolveCountMode(params,
+                    getStringParam(params, "leftTopic", ""), getStringParam(params, "rightTopic", ""));
+                if ("OFFSETS".equals(mode)) {
+                    requireParam(params, "leftTopic");
+                    requireParam(params, "rightTopic");
+                } else {
+                    requireParam(params, "leftSql");
+                    requireParam(params, "rightSql");
+                }
                 validateScanParams(params, DEFAULT_TEMPLATE_READ_MODE);
                 // Checked here rather than from inside the refresh loop, where an unrecognised
                 // value threw every thirty seconds for ever on a metric the API had answered 200
@@ -628,6 +699,16 @@ public class MetricService {
                 if (!DELTA_OPERATIONS.contains(operation)) {
                     throw new IllegalArgumentException("TOPIC_COUNT_DELTA operation must be one of "
                         + DELTA_OPERATIONS + " (was '" + operation + "')");
+                }
+                String countBy = getStringParam(params, "countBy", "AUTO").toUpperCase(Locale.ROOT);
+                if (!COUNT_MODES.contains(countBy)) {
+                    throw new IllegalArgumentException("countBy must be one of " + COUNT_MODES
+                        + " (was '" + countBy + "')");
+                }
+                String window = getStringParam(params, "window", "TOTAL").toUpperCase(Locale.ROOT);
+                if (!COUNT_WINDOWS.contains(window)) {
+                    throw new IllegalArgumentException("window must be one of " + COUNT_WINDOWS
+                        + " (was '" + window + "')");
                 }
                 if (!"GAUGE".equals(metricType)) {
                     throw new IllegalArgumentException("TOPIC_COUNT_DELTA supports GAUGE metrics only");
@@ -700,10 +781,16 @@ public class MetricService {
         }
     }
 
-    private MetricComputationResult computeMetric(MetricConfig config) {
+    /**
+     * @param preview a dry run for the editor rather than a refresh. It must not touch state a
+     *                running metric owns — a windowed count delta keeps the previous cycle's
+     *                counts, and previewing one would leave it comparing against an instant the
+     *                operator was only looking at.
+     */
+    private MetricComputationResult computeMetric(MetricConfig config, boolean preview) {
         return switch (MetricTemplateType.fromValue(config.templateType())) {
             case RAW_SQL -> computeRawSqlMetric(config);
-            case TOPIC_COUNT_DELTA -> computeCountDeltaMetric(config);
+            case TOPIC_COUNT_DELTA -> computeCountDeltaMetric(config, preview);
             case TOPIC_TRANSIT_LATENCY -> computeTransitLatencyMetric(config);
             case CONSUMER_TIME_LAG -> computeConsumerTimeLagMetric(config);
         };
@@ -790,76 +877,201 @@ public class MetricService {
         );
     }
 
-    private MetricComputationResult computeCountDeltaMetric(MetricConfig config) {
+    /** True when the statement is a plain whole-topic count, which offsets answer exactly. */
+    static boolean isWholeTopicCount(String sql) {
+        return sql != null && WHOLE_TOPIC_COUNT.matcher(sql.trim()).matches();
+    }
+
+    /** Both sides' numbers, however they were obtained. */
+    private record CountRead(Double left, Double right, String error, String engine, long gapMs,
+                             List<String> warnings) {
+        static CountRead failed(String error) {
+            return new CountRead(null, null, error, null, 0L, List.of());
+        }
+    }
+
+    /**
+     * Both counts out of the log's offsets, in one call and therefore at one instant.
+     *
+     * <p>A topic that does not exist is refused rather than counted: {@code getTopicsSize} answers
+     * {@code 0} for an unknown name exactly as it does for an empty topic, and a 0 against a real
+     * count on the other side reads as total loss — the invented critical finding this codebase
+     * keeps removing.
+     */
+    private CountRead countByOffsets(String leftTopic, String rightTopic) {
+        if (leftTopic.isBlank() || rightTopic.isBlank()) {
+            return CountRead.failed("An offset count needs both topics named (leftTopic and "
+                + "rightTopic): it asks the log for its own offsets rather than running a query.");
+        }
+        List<String> wanted = leftTopic.equals(rightTopic)
+            ? List.of(leftTopic) : List.of(leftTopic, rightTopic);
+        List<String> missing;
+        try {
+            List<String> known = kafkaAdminService.listTopics();
+            missing = wanted.stream().filter(t -> !known.contains(t)).toList();
+        } catch (Exception e) {
+            return CountRead.failed("The cluster's topics could not be listed, so an offset count "
+                + "cannot tell an absent topic from an empty one: " + SqlErrorClassifier.explain(e));
+        }
+        if (!missing.isEmpty()) {
+            return CountRead.failed("No topic named " + String.join(" or ", missing)
+                + " on this cluster. An offset count is refused rather than reported as zero: a "
+                + "zero against a real count on the other side reads as total loss.");
+        }
+
+        long startedAt = System.currentTimeMillis();
+        Map<String, Long> sizes = kafkaAdminService.getTopicsSize(wanted);
+        Long left = sizes.get(leftTopic);
+        Long right = sizes.get(rightTopic);
+        if (left == null || right == null) {
+            return CountRead.failed("The broker did not answer with offsets for both topics.");
+        }
+        // One pair of listOffsets responses covers both sides, so the interval between the two
+        // measurements is genuinely zero — see the ordering note on the records path below, which
+        // exists because that path cannot say the same. The call's own duration is not that
+        // interval and is not reported as one.
+        long unusedCallDuration = System.currentTimeMillis() - startedAt;
+        log.debug("Counted '{}' and '{}' from offsets in {} ms", LogSafe.name(leftTopic),
+            LogSafe.name(rightTopic), unusedCallDuration);
+        return new CountRead(left.doubleValue(), right.doubleValue(), null, "KAFKA_OFFSETS",
+            0L, List.of());
+    }
+
+    /** Both counts by running the two queries, which is the only way to honour a predicate. */
+    private CountRead countByRecords(Map<String, Object> params, int maxRows, long timeoutMs,
+                                     String readMode) {
+        String leftSql = requireParam(params, "leftSql");
+        String rightSql = requireParam(params, "rightSql");
+        /*
+         * The right side is read first, and the order is the measurement's, not the form's.
+         *
+         * Two counts cannot be taken at one instant on this path — a whole query separates them.
+         * So the arithmetic leans, and the only choice is which way. Every operation here grows
+         * with the left side, and the panel proposes the upstream topic there with a threshold
+         * that fires when the value is high — so reading the left side *last* lets the traffic of
+         * the interval land in it, and a gap that survives that is a real one. Read the other way
+         * round, the same traffic lands in the denominator and the gap is understated: the metric
+         * under-reports exactly the loss it exists to report.
+         *
+         * It is the rule KafkaAdminService already follows for consumer lag — committed offsets
+         * first, log end offsets last. ABS_DIFF is the one operation this cannot help: it is
+         * symmetric, so no ordering is conservative for it, and gapMs is what says how much room
+         * the interval left. The offsets path above needs none of this.
+         */
+        QueryResult rightResult =
+            executeMetricQuery(rightSql, maxRows, timeoutMs, readMode, isSingleTableRead(rightSql));
+        if (rightResult.error() != null) return CountRead.failed("Right query: " + rightResult.error());
+        long rightReadAt = System.currentTimeMillis();
+        QueryResult leftResult =
+            executeMetricQuery(leftSql, maxRows, timeoutMs, readMode, isSingleTableRead(leftSql));
+        if (leftResult.error() != null) return CountRead.failed("Left query: " + leftResult.error());
+        long gapMs = System.currentTimeMillis() - rightReadAt;
+
+        SideRead left = aggregateValue(leftResult, maxRows, "left");
+        if (left.error() != null) return CountRead.failed(left.error());
+        SideRead right = aggregateValue(rightResult, maxRows, "right");
+        if (right.error() != null) return CountRead.failed(right.error());
+
+        // A floor is not a count, and two floors compared read as no gap at all — which is the one
+        // answer this metric must never give by accident. Offsets have no such ceiling, and the
+        // message says so rather than leaving the operator without a way out.
+        if (left.capped() || right.capped()) {
+            boolean both = left.capped() && right.capped();
+            return CountRead.failed(
+                (both ? "Both counts stopped" : (left.capped() ? "The left count stopped" : "The right count stopped"))
+                + " on the direct reader's " + FlinkSqlService.AGGREGATE_SCAN_RECORDS
+                + "-record ceiling, so " + (both ? "they are floors" : "it is a floor")
+                + " rather than a total. A gap measured between floors reads as no gap, so nothing "
+                + "is published. Count these topics by offsets instead (countBy = OFFSETS), which "
+                + "reads no records and has no ceiling.");
+        }
+
+        List<String> warnings = new ArrayList<>();
+        for (QueryResult result : List.of(rightResult, leftResult)) {
+            if (result.warnings() == null) continue;
+            for (String warning : result.warnings()) {
+                if (warning != null && !warning.isBlank() && !warnings.contains(warning)) {
+                    warnings.add(warning);
+                }
+            }
+        }
+        String engine = Objects.equals(leftResult.engine(), rightResult.engine())
+            ? String.valueOf(leftResult.engine())
+            : leftResult.engine() + "/" + rightResult.engine();
+        return new CountRead(left.value(), right.value(), null, engine, gapMs, warnings);
+    }
+
+    /** Offsets when both sides ask the question offsets answer, records otherwise. */
+    private String resolveCountMode(Map<String, Object> params, String leftTopic, String rightTopic) {
+        String requested = getStringParam(params, "countBy", "AUTO").toUpperCase(Locale.ROOT);
+        if (!"AUTO".equals(requested)) return requested;
+        if (leftTopic.isBlank() || rightTopic.isBlank()) return "RECORDS";
+        String leftSql = getStringParam(params, "leftSql", "");
+        String rightSql = getStringParam(params, "rightSql", "");
+        boolean plain = (leftSql.isBlank() || isWholeTopicCount(leftSql))
+            && (rightSql.isBlank() || isWholeTopicCount(rightSql));
+        return plain ? "OFFSETS" : "RECORDS";
+    }
+
+    private MetricComputationResult computeCountDeltaMetric(MetricConfig config, boolean preview) {
         Map<String, Object> params = config.templateParams() != null ? config.templateParams() : Map.of();
         int maxRows = getIntParam(params, "maxRowsPerSide", DEFAULT_TEMPLATE_MAX_ROWS);
         long timeoutMs = getLongParam(params, "timeoutMs", DEFAULT_TEMPLATE_TIMEOUT_MS);
         // A count must see the whole topic, so this side is read from the beginning whatever the
         // latency template does — the two templates ask different questions of the same broker.
         String readMode = getStringParam(params, "readMode", DEFAULT_TEMPLATE_READ_MODE);
+        String leftTopic = getStringParam(params, "leftTopic", "");
+        String rightTopic = getStringParam(params, "rightTopic", "");
+        String countBy = resolveCountMode(params, leftTopic, rightTopic);
 
-        String leftSql = requireParam(params, "leftSql");
-        String rightSql = requireParam(params, "rightSql");
-        /*
-         * The right side is read first, and the order is the measurement's, not the form's.
-         *
-         * Two counts cannot be taken at one instant — a whole query separates them, and on the
-         * shipped defaults that can be a 30 s timeout plus a hundred-thousand-record scan. So the
-         * arithmetic leans, and the only choice is which way. Every operation here grows with the
-         * left side (LEFT_MINUS_RIGHT, RATIO and PERCENT_GAP all do), and the panel proposes the
-         * upstream topic on the left with a threshold that fires when the value is high — so
-         * reading the left side *last* lets the traffic of the interval land in it, and a gap that
-         * survives that is a real one. Read the other way round, the same traffic lands in the
-         * denominator and the gap is understated: the metric under-reports exactly the loss it
-         * exists to report, which is the failure this ordering exists to prevent.
-         *
-         * It is the rule KafkaAdminService already follows for consumer lag — committed offsets
-         * first, log end offsets last, "so a consumer committing between the two calls can only
-         * make the lag look larger". ABS_DIFF is the one operation this cannot help: it is
-         * symmetric, so no ordering is conservative for it, and readGapMs below is what says how
-         * much room the interval left.
-         */
-        long readStartedAt = System.currentTimeMillis();
-        QueryResult rightResult =
-            executeMetricQuery(rightSql, maxRows, timeoutMs, readMode, isSingleTableRead(rightSql));
-        if (rightResult.error() != null) {
-            return MetricComputationResult.error("Right query: " + rightResult.error());
-        }
-        long rightReadAt = System.currentTimeMillis();
-        QueryResult leftResult =
-            executeMetricQuery(leftSql, maxRows, timeoutMs, readMode, isSingleTableRead(leftSql));
-        if (leftResult.error() != null) {
-            return MetricComputationResult.error("Left query: " + leftResult.error());
-        }
-        long readGapMs = System.currentTimeMillis() - rightReadAt;
-        long totalReadMs = System.currentTimeMillis() - readStartedAt;
+        CountRead read = "OFFSETS".equals(countBy)
+            ? countByOffsets(leftTopic, rightTopic)
+            : countByRecords(params, maxRows, timeoutMs, readMode);
+        if (read.error() != null) return MetricComputationResult.error(read.error());
 
-        SideRead left = aggregateValue(leftResult, maxRows, "left");
-        if (left.error() != null) return MetricComputationResult.error(left.error());
-        SideRead right = aggregateValue(rightResult, maxRows, "right");
-        if (right.error() != null) return MetricComputationResult.error(right.error());
+        double leftTotal = read.left();
+        double rightTotal = read.right();
 
-        // A floor is not a count, and two floors compared read as no gap at all — which is the
-        // one answer this metric must never give by accident.
-        if (left.capped() || right.capped()) {
-            boolean both = left.capped() && right.capped();
-            return MetricComputationResult.error(
-                (both ? "Both counts stopped" : (left.capped() ? "The left count stopped" : "The right count stopped"))
-                + " on the direct reader's " + FlinkSqlService.AGGREGATE_SCAN_RECORDS
-                + "-record ceiling, so " + (both ? "they are floors" : "it is a floor")
-                + " rather than a total. A gap measured between floors reads as no gap, so nothing "
-                + "is published: count topics this reader can read in full, or measure the drop "
-                + "another way.");
+        // ── what the two numbers are compared over ──────────────────────────────
+        String window = getStringParam(params, "window", "TOTAL").toUpperCase(Locale.ROOT);
+        boolean windowed = "SINCE_LAST_REFRESH".equals(window);
+        double comparedLeft = leftTotal;
+        double comparedRight = rightTotal;
+        String windowNote = null;
+        if (windowed) {
+            if (preview || config.id() == null || config.id().isBlank()) {
+                // A preview has no previous refresh, and must not invent one: writing a baseline
+                // here would leave a running metric subtracting from an instant nobody measured.
+                windowNote = "Previewed as totals: this metric publishes what each side produced "
+                    + "since the previous refresh, and a preview has no previous refresh.";
+            } else {
+                double[] baseline =
+                    countDeltaBaselines.put(config.id(), new double[]{leftTotal, rightTotal});
+                if (baseline == null) {
+                    return MetricComputationResult.error("Baseline established. This comparison "
+                        + "reports what each side produced since the previous refresh, so the first "
+                        + "one has nothing to subtract; the next refresh reports the gap over the "
+                        + "interval.");
+                }
+                comparedLeft = leftTotal - baseline[0];
+                comparedRight = rightTotal - baseline[1];
+                if (comparedLeft < 0 || comparedRight < 0) {
+                    return MetricComputationResult.error("A side's count went backwards, so the "
+                        + "interval cannot be measured: a topic was recreated, or its offsets were "
+                        + "reset. The baseline is re-established and the next refresh reports "
+                        + "normally.");
+                }
+            }
         }
 
-        double leftValue = left.value();
-        double rightValue = right.value();
         String operation = getStringParam(params, "operation", "LEFT_MINUS_RIGHT").toUpperCase(Locale.ROOT);
+        final double left = comparedLeft;
+        final double right = comparedRight;
         Double metricValue = switch (operation) {
-            case "LEFT_MINUS_RIGHT" -> leftValue - rightValue;
-            case "ABS_DIFF" -> Math.abs(leftValue - rightValue);
-            case "RATIO" -> rightValue == 0.0 ? null : leftValue / rightValue;
-            case "PERCENT_GAP" -> rightValue == 0.0 ? null : ((leftValue - rightValue) * 100.0) / rightValue;
+            case "LEFT_MINUS_RIGHT" -> left - right;
+            case "ABS_DIFF" -> Math.abs(left - right);
+            case "RATIO" -> right == 0.0 ? null : left / right;
+            case "PERCENT_GAP" -> right == 0.0 ? null : ((left - right) * 100.0) / right;
             // Unreachable through save(), which refuses an unknown operation — kept because a
             // record read back from internal.metrics.config predates that check.
             default -> throw new IllegalArgumentException("Unsupported count delta operation: "
@@ -867,43 +1079,67 @@ public class MetricService {
         };
         if (metricValue == null) {
             return MetricComputationResult.error("Cannot compute " + operation
-                + " when the right query counts zero: " + operation + " divides by it. The left "
-                + "query counted " + formatCount(leftValue) + ", so if the right topic really is "
-                + "empty that is the finding — LEFT_MINUS_RIGHT or ABS_DIFF report it as a number.");
+                + " when the right side counts zero: " + operation + " divides by it. The left side "
+                + "counted " + formatCount(left) + (windowed ? " over this interval" : "")
+                + ", so if the right topic really produced nothing that is the finding — "
+                + "LEFT_MINUS_RIGHT or ABS_DIFF report it as a number.");
         }
 
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("metric_value", metricValue);
-        row.put("left_value", leftValue);
-        row.put("right_value", rightValue);
+        // Measurements, not labels: these move on every refresh of a live topic, and a label that
+        // moves mints a new time series per scrape — see isReservedColumn.
+        row.put("__left_value", left);
+        row.put("__right_value", right);
         row.put("operation", operation);
         addIfPresent(row, "left_topic", params.get("leftTopic"));
         addIfPresent(row, "right_topic", params.get("rightTopic"));
 
         Map<String, Object> summary = new LinkedHashMap<>();
-        summary.put("leftValue", leftValue);
-        summary.put("rightValue", rightValue);
+        summary.put("leftValue", left);
+        summary.put("rightValue", right);
         summary.put("operation", operation);
-        summary.put("leftEngine", leftResult.engine());
-        summary.put("rightEngine", rightResult.engine());
-        // How much room the interval between the two reads left. A number rather than a
-        // reassurance: on a topic doing a thousand records a second, four seconds here is four
-        // thousand records that are in one count and not the other.
-        summary.put("readGapMs", readGapMs);
-        summary.put("readDurationMs", totalReadMs);
-        // Accurate per engine rather than in one clause: the row cap bounds what the planner
-        // returns, while the direct reader ignores it for an aggregate and stops on its own
-        // record ceiling — two different bounds, and a note naming the wrong one is worse than none.
-        summary.put("scopeNote", "The right side is counted first and the left "
-            + readGapMs + " ms later, so traffic in between lands in the left count and this "
-            + ("ABS_DIFF".equals(operation) ? "difference can move either way" : "value can only be overstated")
-            + ", never understated. Read " + describeReadEnd(readMode)
-            + ". A side the direct reader answered covers at most "
-            + FlinkSqlService.AGGREGATE_SCAN_RECORDS + " record(s); a side the planner answered "
-            + "covers at most " + maxRows + " row(s).");
-        addScanWarnings(summary, leftResult, rightResult);
+        summary.put("countedBy", countBy);
+        summary.put("window", window);
+        if (windowed) {
+            summary.put("leftTotal", leftTotal);
+            summary.put("rightTotal", rightTotal);
+        }
+        summary.put("engine", read.engine());
+        summary.put("readGapMs", read.gapMs());
+        summary.put("scopeNote",
+            countDeltaScopeNote(countBy, windowed, windowNote, operation, read, maxRows, readMode));
+        if (!read.warnings().isEmpty()) summary.put("warnings", read.warnings());
 
         return new MetricComputationResult(List.of(row), metricValue, null, summary);
+    }
+
+    private String countDeltaScopeNote(String countBy, boolean windowed, String windowNote,
+                                       String operation, CountRead read, int maxRows, String readMode) {
+        StringBuilder note = new StringBuilder();
+        if ("OFFSETS".equals(countBy)) {
+            note.append("Counted from the log's own offsets — no record is read — and both sides "
+                + "come out of one call, so they describe the same instant. That counts offsets "
+                + "produced rather than records present: a transaction marker takes one, and a "
+                + "record later compacted away still counts.");
+        } else {
+            note.append("Counted by reading records, right side first and left ")
+                .append(read.gapMs())
+                .append(" ms later, so traffic in between lands in the left count and this ")
+                .append("ABS_DIFF".equals(operation)
+                    ? "difference can move either way" : "value can only be overstated")
+                .append(", never understated. Read ").append(describeReadEnd(readMode))
+                .append(". A side the direct reader answered covers at most ")
+                .append(FlinkSqlService.AGGREGATE_SCAN_RECORDS)
+                .append(" record(s); a side the planner answered covers at most ")
+                .append(maxRows).append(" row(s).");
+        }
+        if (windowed) {
+            note.append(" Compared over what each side produced since the previous refresh, not "
+                + "over the totals — a lifetime total loses its sensitivity as history accumulates.");
+        }
+        if (windowNote != null) note.append(' ').append(windowNote);
+        return note.toString();
     }
 
     /** Which end of the topic a read entered by, in the words the summary uses. */
@@ -1322,7 +1558,7 @@ public class MetricService {
 
             executeCreateTableIfPresent(normalized);
 
-            MetricComputationResult result = computeMetric(normalized);
+            MetricComputationResult result = computeMetric(normalized, false);
             if (result.error() != null) {
                 updateMetricState(id, null, result.error(), result.summary());
             } else if (!result.rows().isEmpty()) {

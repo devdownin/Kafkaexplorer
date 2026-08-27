@@ -512,6 +512,68 @@ as measurements rather than as assertions. All of them have shipped, and with th
 experiments D1 and D2 named — so the option W1 rests on is measured against a real broker instead
 of read off a page.
 
+
+---
+
+## Beyond the defects: what makes a count delta worth running
+
+Everything above is a defect list. Two changes that are not — they alter what the metric measures
+and what it costs — have since shipped, and they are recorded here because each dissolves items the
+defect list could only mitigate.
+
+### A whole-topic count is metadata, not a scan
+
+`COUNT(*)` over a topic is `endOffsets − beginningOffsets` summed over its partitions.
+`KafkaAdminService.getTopicsSize` already answers exactly that, **for both topics in one call**, and
+the metric engine was instead downloading and parsing up to 100 000 records per side, every thirty
+seconds. `countBy: OFFSETS` (and `AUTO`, which picks it when the metric names both topics and
+neither query is anything but a plain whole-topic count) reads no record at all.
+
+What that dissolves rather than mitigates:
+
+- **D2's ceiling.** The refusal — two floors compared read as no gap — exists because the direct
+  reader stops at 100 000 records. Offsets have no ceiling, so a topic of any size is countable, and
+  the refusal's message now names the way out.
+- **D4 entirely.** The interval between the two sides is not leaned in the safe direction, it is
+  *gone*: both counts come out of the same pair of `listOffsets` responses. `readGapMs` is `0`
+  because it is zero, not because nobody measured it.
+- **Most of D10.** A metric goes from two bounded scans to two numbers already in the broker's
+  metadata.
+
+The cost is stated where it is paid, on the card and in the summary: this counts **offsets
+produced, not records present** — a transaction marker takes one, and a record later compacted away
+still counts. That is the right answer to "how many did this stage emit", which is the question a
+silent-drop alarm asks, and the wrong one to "how many are in there now". `getTopicActivity` draws
+the same distinction for the dashboard's sparkline. A query with a `WHERE` cannot be answered this
+way and `AUTO` does not pretend otherwise.
+
+### A lifetime total stops being able to fire
+
+`TOPIC_COUNT_DELTA` compared the counts themselves. On two topics running for months, **a total
+outage that started an hour ago is a fraction of a percent of the lifetime totals** — under every
+threshold anyone would set. The metric was least sensitive exactly when it mattered most, and
+nothing about the arithmetic said so.
+
+`window: SINCE_LAST_REFRESH` compares what each side produced since the previous cycle. Its first
+refresh publishes nothing and says why, a side whose count went backwards (a recreated topic, a
+reset) is refused and the baseline re-established rather than a negative production published, and
+**a preview never writes a baseline** — previewing a running metric would otherwise leave it
+subtracting from an instant nobody measured. The suggestion panel proposes both settings on the gap
+cards it builds, which are plain whole-topic gaps between two named topics: the shape offsets
+answer exactly, and the shape a lifetime total desensitises.
+
+### One defect found while doing it, and it was the worst of them
+
+`left_value` and `right_value` were ordinary row columns, and **every non-`metric_value` column
+becomes a Prometheus label.** On any live topic both move at every refresh, so the label set changed
+at every scrape: each time series carried exactly one data point, and the metric could not be
+graphed or alerted on at all — the only thing it exists for. Nothing said so, because the registry
+stayed small; `pruneStaleSeries` deregistered the previous series each cycle, which is the tidy
+version of the same defect.
+
+The reserved-column rule is now a prefix (`__`) rather than a list of two names, so a measurement
+that belongs in the row but not in the label set says so by its name. `theTwoCountsAreMeasurementsAndNeverPrometheusLabels` pins it, and was checked to fail against the previous code.
+
 **What is left is D10**, and it is the one item here that is a property of the design rather than a
 defect in it: a refresh cycle is single-threaded and serialized under one lock, each side of a
 two-query metric has its own timeout, and the scheduler fires every thirty seconds. Two things have

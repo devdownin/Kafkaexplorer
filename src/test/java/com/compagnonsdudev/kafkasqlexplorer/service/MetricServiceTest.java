@@ -1095,4 +1095,179 @@ class MetricServiceTest {
         assertEquals(3, rate.getId().getTags().size());
     }
 
+
+    // ── Counting by offsets, and comparing a window ──────────────────────────────
+
+    /** A count-delta naming its two topics, which is what an offset count needs. */
+    private MetricConfig offsetDelta(Map<String, Object> extraParams) {
+        Map<String, Object> params = new LinkedHashMap<>(Map.of(
+            "leftSql", "SELECT COUNT(*) AS metric_value\nFROM topic_a",
+            "rightSql", "SELECT COUNT(*) AS metric_value\nFROM topic_b",
+            "leftTopic", "demo.orders.1.received",
+            "rightTopic", "demo.orders.2.validated",
+            "operation", "LEFT_MINUS_RIGHT"
+        ));
+        params.putAll(extraParams);
+        return new MetricConfig(
+            null, "gap", "GAUGE", null, null, null, null, null, null, null, List.of(), Map.of(), null,
+            "TOPIC_COUNT_DELTA", params, null, null, List.of());
+    }
+
+    private void stubOffsets(long left, long right) throws Exception {
+        Mockito.when(kafkaAdminService.listTopics())
+            .thenReturn(List.of("demo.orders.1.received", "demo.orders.2.validated"));
+        Mockito.when(kafkaAdminService.getTopicsSize(Mockito.anyList())).thenReturn(Map.of(
+            "demo.orders.1.received", left, "demo.orders.2.validated", right));
+    }
+
+    @Test
+    void aPlainWholeTopicCountIsAnsweredByTheLogsOffsetsAndReadsNoRecord() throws Exception {
+        stubOffsets(1_500_000L, 1_499_000L);
+
+        MetricPreviewResult preview = service.previewMetric(offsetDelta(Map.of()));
+
+        assertNull(preview.error());
+        assertEquals(1000.0, preview.value());
+        assertEquals("OFFSETS", preview.summary().get("countedBy"));
+        assertEquals("KAFKA_OFFSETS", preview.summary().get("engine"));
+        // No query ran at all: no record read, no parsing, and no 100 000-record ceiling — which
+        // is what makes a topic of this size countable in the first place.
+        Mockito.verify(flinkSqlService, Mockito.never()).executeSql(Mockito.any());
+        // And both sides come out of one call, so there is no interval to lean.
+        assertTrue(String.valueOf(preview.summary().get("scopeNote")).contains("same instant"));
+    }
+
+    @Test
+    void aQueryThatFiltersIsStillCountedByReadingRecords() {
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(directCount(7.0), directCount(12.0));
+
+        MetricPreviewResult preview = service.previewMetric(offsetDelta(Map.of(
+            "leftSql", "SELECT COUNT(*) AS metric_value FROM topic_a WHERE status = 'OK'")));
+
+        // Offsets cannot honour a predicate, so AUTO does not pretend they can.
+        assertEquals("RECORDS", preview.summary().get("countedBy"));
+        assertEquals(5.0, preview.value());
+        Mockito.verify(kafkaAdminService, Mockito.never()).getTopicsSize(Mockito.anyList());
+    }
+
+    @Test
+    void anOffsetCountRefusesATopicThatDoesNotExistRatherThanCountingItAsZero() throws Exception {
+        Mockito.when(kafkaAdminService.listTopics()).thenReturn(List.of("demo.orders.1.received"));
+
+        MetricPreviewResult preview = service.previewMetric(offsetDelta(Map.of()));
+
+        // getTopicsSize answers 0 for an unknown name exactly as for an empty topic, and a zero
+        // against a real count on the other side reads as total loss.
+        assertNotNull(preview.error());
+        assertTrue(preview.error().contains("demo.orders.2.validated"), preview.error());
+        assertTrue(preview.error().contains("total loss"), preview.error());
+    }
+
+    @Test
+    void aWindowedComparisonReportsWhatWasProducedSinceTheLastRefreshRatherThanTheLifetimeTotals() throws Exception {
+        service.save(withIdAndType(offsetDelta(Map.of("window", "SINCE_LAST_REFRESH")), "gap-1", "GAUGE"));
+
+        // Two topics that have been running for a while: the lifetime gap is 1 000 in 1 500 000,
+        // which is 0.07 % and under any threshold worth setting.
+        stubOffsets(1_500_000L, 1_499_000L);
+        service.refreshMetric("gap-1");
+        MetricConfig afterFirst = service.getById("gap-1").orElseThrow();
+        assertNotNull(afterFirst.errorMessage(), "the first refresh has nothing to subtract");
+        assertTrue(afterFirst.errorMessage().contains("Baseline established"), afterFirst.errorMessage());
+        assertNull(afterFirst.lastValue());
+
+        // Next interval: the left topic produced 1 000 and the right one 200. The lifetime gap has
+        // barely moved; what happened in the interval is that four fifths of it went missing.
+        stubOffsets(1_501_000L, 1_499_200L);
+        service.refreshMetric("gap-1");
+        MetricConfig afterSecond = service.getById("gap-1").orElseThrow();
+
+        assertNull(afterSecond.errorMessage(), String.valueOf(afterSecond.errorMessage()));
+        assertEquals(800.0, afterSecond.lastValue());
+        assertEquals(1000.0, afterSecond.lastSummary().get("leftValue"));
+        assertEquals(200.0, afterSecond.lastSummary().get("rightValue"));
+        assertEquals(1_501_000.0, afterSecond.lastSummary().get("leftTotal"));
+    }
+
+    @Test
+    void aPreviewOfAWindowedMetricReportsTotalsAndLeavesTheRunningBaselineAlone() throws Exception {
+        service.save(withIdAndType(offsetDelta(Map.of("window", "SINCE_LAST_REFRESH")), "gap-2", "GAUGE"));
+        stubOffsets(1000L, 900L);
+        service.refreshMetric("gap-2");   // baseline at 1000/900
+
+        // A preview must not write a baseline: the running metric would then subtract from an
+        // instant nobody measured.
+        MetricPreviewResult preview = service.previewMetric(
+            withIdAndType(offsetDelta(Map.of("window", "SINCE_LAST_REFRESH")), "gap-2", "GAUGE"));
+        assertNull(preview.error());
+        assertEquals(100.0, preview.value(), "previewed as totals");
+        assertTrue(String.valueOf(preview.summary().get("scopeNote")).contains("no previous refresh"));
+
+        stubOffsets(1200L, 1050L);
+        service.refreshMetric("gap-2");
+        MetricConfig refreshed = service.getById("gap-2").orElseThrow();
+        // 200 produced on the left and 150 on the right since the baseline the *refresh* wrote.
+        assertEquals(50.0, refreshed.lastValue());
+    }
+
+    @Test
+    void aCountThatWentBackwardsIsRefusedAndTheBaselineIsReEstablished() throws Exception {
+        service.save(withIdAndType(offsetDelta(Map.of("window", "SINCE_LAST_REFRESH")), "gap-3", "GAUGE"));
+        stubOffsets(5000L, 4000L);
+        service.refreshMetric("gap-3");
+
+        // The topic was recreated: the offsets restart below the baseline.
+        stubOffsets(10L, 8L);
+        service.refreshMetric("gap-3");
+        assertTrue(service.getById("gap-3").orElseThrow().errorMessage().contains("went backwards"));
+
+        // And the next interval reports normally against the new baseline.
+        stubOffsets(60L, 50L);
+        service.refreshMetric("gap-3");
+        MetricConfig recovered = service.getById("gap-3").orElseThrow();
+        assertNull(recovered.errorMessage(), String.valueOf(recovered.errorMessage()));
+        assertEquals(8.0, recovered.lastValue());
+    }
+
+    @Test
+    void theTwoCountsAreMeasurementsAndNeverPrometheusLabels() throws Exception {
+        service.save(withIdAndType(offsetDelta(Map.of()), "gap-4", "GAUGE"));
+        stubOffsets(1000L, 900L);
+        service.refreshMetric("gap-4");
+
+        Gauge gauge = meterRegistry.find("explorer_metric_gauge").tag("metric_id", "gap-4").gauge();
+        assertNotNull(gauge);
+        List<String> tagKeys = gauge.getId().getTags().stream().map(io.micrometer.core.instrument.Tag::getKey).toList();
+        /*
+         * left_value and right_value used to be ordinary row columns, so they became labels — and
+         * on a live topic they move at every refresh, which mints a new time series per scrape and
+         * leaves each one carrying a single data point. The metric could not be graphed or alerted
+         * on at all, which is the only thing it is for.
+         */
+        assertFalse(tagKeys.contains("left_value"), tagKeys.toString());
+        assertFalse(tagKeys.contains("__left_value"), tagKeys.toString());
+        assertTrue(tagKeys.contains("operation"), "a constant is a fine label: " + tagKeys);
+        assertTrue(tagKeys.contains("left_topic"), tagKeys.toString());
+
+        // A second refresh at different counts must land on the same series, not a new one.
+        stubOffsets(2000L, 1500L);
+        service.refreshMetric("gap-4");
+        assertEquals(1, meterRegistry.find("explorer_metric_gauge").tag("metric_id", "gap-4").gauges().size());
+        assertEquals(500.0, meterRegistry.find("explorer_metric_gauge").tag("metric_id", "gap-4").gauge().value());
+    }
+
+    @Test
+    void theTwoNewParametersAreRefusedWhenTheMetricIsSaved() {
+        assertThrows(IllegalArgumentException.class,
+            () -> service.save(offsetDelta(Map.of("countBy", "MAGIC"))));
+        assertThrows(IllegalArgumentException.class,
+            () -> service.save(offsetDelta(Map.of("window", "LAST_HOUR"))));
+        // An offsets metric needs its topics rather than its queries, and says so.
+        Map<String, Object> noTopics = new LinkedHashMap<>(Map.of("countBy", "OFFSETS"));
+        assertThrows(IllegalArgumentException.class, () -> service.save(new MetricConfig(
+            null, "gap", "GAUGE", null, null, null, null, null, null, null, List.of(), Map.of(), null,
+            "TOPIC_COUNT_DELTA", noTopics, null, null, List.of())));
+        service.save(offsetDelta(Map.of("countBy", "OFFSETS", "window", "SINCE_LAST_REFRESH")));
+    }
+
 }

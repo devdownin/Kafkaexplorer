@@ -52,6 +52,28 @@ export function describeMetricScope(lastSummary: Record<string, unknown> | null)
   if (!lastSummary) return [];
   const chips: ScopeChip[] = [];
 
+  // Comment le compte a été obtenu, et sur quoi il porte : deux mesures différentes sous un même
+  // nom de métrique, donc la carte le dit plutôt que de laisser deviner.
+  if (lastSummary.countedBy === 'OFFSETS') {
+    chips.push({
+      label: 'by offsets',
+      detail:
+        'Counted from the log\u2019s own offsets rather than by reading records: no scan ceiling, ' +
+        'and both sides come out of one call so they describe the same instant. It counts what was ' +
+        'produced — a transaction marker counts, and a record later compacted away still counts.',
+      tone: 'neutral',
+    });
+  }
+  if (lastSummary.window === 'SINCE_LAST_REFRESH') {
+    chips.push({
+      label: 'per interval',
+      detail:
+        'Compares what each side produced since the previous refresh, not the lifetime totals — ' +
+        'which lose their sensitivity as history accumulates.',
+      tone: 'neutral',
+    });
+  }
+
   const matchRate = num(lastSummary, 'matchRate');
   if (matchRate !== null) {
     const matched = num(lastSummary, 'matchedCount');

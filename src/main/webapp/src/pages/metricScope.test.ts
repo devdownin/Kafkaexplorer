@@ -12,6 +12,14 @@ describe('what a metric says it measured', () => {
     expect(scopeNoteOf({ scopeNote: '   ' })).toBeNull();
   });
 
+  it('says how a count was obtained and what it compares, because both change the measurement', () => {
+    const chips = describeMetricScope({ countedBy: 'OFFSETS', window: 'SINCE_LAST_REFRESH' });
+    expect(chips.map(c => c.label)).toEqual(['by offsets', 'per interval']);
+    expect(chips[0].detail).toContain('compacted away still counts');
+    // Le mode par défaut ne dit rien : une puce toujours présente cesse d'être lue.
+    expect(describeMetricScope({ countedBy: 'RECORDS', window: 'TOTAL' })).toEqual([]);
+  });
+
   it('shows the match rate even at 100 %, because an indicator only seen on bad news stops being read', () => {
     const chips = describeMetricScope({ matchRate: 1, matchedCount: 40, unmatchedSourceCount: 0 });
     expect(chips.map(c => c.label)).toEqual(['100% paired']);

@@ -999,6 +999,36 @@ accepted by the API and then throw from inside the refresh loop every thirty sec
 assertions the audit asked for exist**, in `KafkaClusterIntegrationTest`: the option D1 rests on is
 now measured against a real broker rather than read off a page (see the note under **Testing**).
 
+**And two changes that are not defect fixes at all**, each dissolving items the defect list could
+only mitigate. **A whole-topic count is metadata, not a scan**: `COUNT(*)` over a topic is
+`endOffsets − beginningOffsets`, which `KafkaAdminService.getTopicsSize` already answers *for both
+topics in one call*, where the engine was downloading and parsing up to 100 000 records per side
+every thirty seconds. `countBy: OFFSETS` — and `AUTO`, which picks it when the metric names both
+topics and neither query is anything but a plain whole-topic count — reads no record at all. That
+removes the 100 000-record ceiling (so a topic of any size is countable, and D2's "two floors
+compared read as no gap" refusal now names the way out), and it removes **D4** rather than leaning
+it: both counts come out of the same pair of `listOffsets` responses, so `readGapMs` is `0` because
+it *is* zero. The cost is stated on the card and in the summary — this counts **offsets produced,
+not records present**, so a transaction marker counts and a compacted record still counts, the same
+distinction `getTopicActivity` draws for the dashboard's sparkline — and a query carrying a `WHERE`
+cannot be answered this way, which `AUTO` does not pretend otherwise. **And a lifetime total stops
+being able to fire**: on two topics running for months, a total outage that started an hour ago is
+a fraction of a percent of the totals, under every threshold anyone would set — the metric was least
+sensitive exactly when it mattered most. `window: SINCE_LAST_REFRESH` compares what each side
+produced since the previous cycle; its first refresh publishes nothing and says why, a count that
+went backwards is refused and the baseline re-established, and **a preview never writes a baseline**
+(it would leave the running metric subtracting from an instant nobody measured). The suggestion
+panel proposes both on every gap card it builds.
+
+**The worst defect of the family was found while doing that**, and it had been there all along:
+`left_value` and `right_value` were ordinary row columns, and every non-`metric_value` column
+becomes a **Prometheus label**. Both move at every refresh of a live topic, so the label set changed
+at every scrape and each time series carried exactly one data point — the metric could not be
+graphed or alerted on at all, which is the only thing it exists for. Nothing said so, because the
+registry stayed small: `pruneStaleSeries` deregistered the previous series each cycle, the tidy
+version of the same defect. The reserved-column rule is a prefix (`__`) now rather than a list of
+two names, so a measurement that belongs in the row and not in the label set says so by its name.
+
 What is deliberately still open is **D10**, the cost of a two-query metric on a single-threaded
 refresh loop — and it is a property of the design rather than a defect in it. Two things cut that
 cost without changing the shape (a bounded scan ends instead of spending its budget; the generated

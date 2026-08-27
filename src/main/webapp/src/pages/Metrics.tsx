@@ -200,6 +200,42 @@ export const defaultReadMode = (templateType: string): string =>
 export const SCAN_MAX_ROWS_DEFAULT = 10_000;
 export const SCAN_TIMEOUT_MS_DEFAULT = 30_000;
 
+export const COUNT_MODES = ['AUTO', 'OFFSETS', 'RECORDS'];
+export const COUNT_WINDOWS = ['TOTAL', 'SINCE_LAST_REFRESH'];
+
+/**
+ * Miroir de la validation serveur des deux réglages qui décident *ce que* la métrique compare.
+ *
+ * Un comptage par offsets n'exécute aucune requête : il demande au log ses propres bornes, donc il
+ * lui faut les deux topics et pas les deux SQL — voir METRICS-TWO-QUERY-AUDIT.md.
+ */
+export function validateCountParams(params: Record<string, unknown>): ValidationMsg[] {
+  const msgs: ValidationMsg[] = [];
+  const countBy = paramStr(params, 'countBy').trim().toUpperCase();
+  const window = paramStr(params, 'window').trim().toUpperCase();
+
+  if (countBy && !COUNT_MODES.includes(countBy))
+    msgs.push({ level: 'error', text: `Count by must be one of ${COUNT_MODES.join(', ')}.` });
+  if (window && !COUNT_WINDOWS.includes(window))
+    msgs.push({ level: 'error', text: `Compare must be one of ${COUNT_WINDOWS.join(', ')}.` });
+
+  const hasTopics = !!paramStr(params, 'leftTopic').trim() && !!paramStr(params, 'rightTopic').trim();
+  if (countBy === 'OFFSETS' && !hasTopics)
+    msgs.push({ level: 'error', text: 'Counting by offsets needs both topics named: it asks the log rather than running a query.' });
+
+  if (window === 'SINCE_LAST_REFRESH')
+    msgs.push({ level: 'info', text: 'The first refresh establishes the baseline and publishes nothing; the next one reports the gap over the interval.' });
+
+  const plainCount = (key: string) => {
+    const sql = paramStr(params, key).trim();
+    return sql === '' || /^select\s+count\s*\(\s*\*\s*\)\s*(?:as\s+`?\w+`?\s*)?from\s+`?\w[\w.]*`?\s*;?$/is.test(sql);
+  };
+  if ((countBy === '' || countBy === 'AUTO') && hasTopics && plainCount('leftSql') && plainCount('rightSql'))
+    msgs.push({ level: 'info', text: 'Counted from the log\u2019s offsets: no record is read, no scan ceiling applies, and both sides describe the same instant.' });
+
+  return msgs;
+}
+
 /** Miroir de MetricService.validateScanParams : refusé à l'enregistrement, pas au rafraîchissement. */
 export function validateScanParams(templateType: string, params: Record<string, unknown>): ValidationMsg[] {
   const msgs: ValidationMsg[] = [];
@@ -237,6 +273,7 @@ export function validateTemplate(templateType: string, metricType: string,
     const operation = paramStr(params, 'operation').trim().toUpperCase();
     if (operation && !DELTA_OPERATIONS.some(o => o.value === operation))
       msgs.push({ level: 'error', text: `Operation must be one of ${DELTA_OPERATIONS.map(o => o.value).join(', ')}.` });
+    msgs.push(...validateCountParams(params));
     msgs.push(...validateScanParams(templateType, params));
     msgs.push({ level: 'warning', text: 'The two counts are taken one after the other, not at one instant: whatever the pipeline produced in between is in the second and not in the first.' });
   } else if (templateType === 'TOPIC_TRANSIT_LATENCY') {
@@ -772,9 +809,32 @@ const TemplateParamsEditor: React.FC<{
             )}
           </Field>
           <div className="grid grid-cols-2 gap-3">
-            <ParamTopic label="Left topic (label)"  value={p('leftTopic')}  onChange={v => setParam('leftTopic', v)}  placeholder="optional" />
-            <ParamTopic label="Right topic (label)" value={p('rightTopic')} onChange={v => setParam('rightTopic', v)} placeholder="optional" />
+            <ParamTopic label="Left topic"  value={p('leftTopic')}  onChange={v => setParam('leftTopic', v)}  placeholder="demo.orders.1.received" />
+            <ParamTopic label="Right topic" value={p('rightTopic')} onChange={v => setParam('rightTopic', v)} placeholder="demo.orders.2.validated" />
           </div>
+          <Field
+            label="Count by"
+            description="Offsets ask the log how much it holds — no record is read, there is no scan ceiling, and both sides come out of one call, so they describe the same instant. They count what was produced, so a transaction marker counts and a compacted record still counts."
+          >
+            {f => (
+              <Select {...f} value={p('countBy') || 'AUTO'} onChange={e => setParam('countBy', e.target.value)}>
+                <option value="AUTO" className="bg-[#12151a] text-on-surface">Automatic — offsets for a plain whole-topic count</option>
+                <option value="OFFSETS" className="bg-[#12151a] text-on-surface">The log's offsets (no records read)</option>
+                <option value="RECORDS" className="bg-[#12151a] text-on-surface">Records returned by the two queries</option>
+              </Select>
+            )}
+          </Field>
+          <Field
+            label="Compare"
+            description="A lifetime total loses its sensitivity as history accumulates: on topics running for months, a total outage that started an hour ago is a fraction of a percent."
+          >
+            {f => (
+              <Select {...f} value={p('window') || 'TOTAL'} onChange={e => setParam('window', e.target.value)}>
+                <option value="TOTAL" className="bg-[#12151a] text-on-surface">The totals</option>
+                <option value="SINCE_LAST_REFRESH" className="bg-[#12151a] text-on-surface">What each side produced since the last refresh</option>
+              </Select>
+            )}
+          </Field>
           <ScanParams templateType={templateType} params={params} setParam={setParam} />
         </>
       ) : (
