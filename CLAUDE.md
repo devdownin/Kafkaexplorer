@@ -859,7 +859,7 @@ truncated-record defect described under `ProcessModelBuilder`.
 
 **That class is also where the real broker gets asked the questions a mock cannot answer.** The three snapshot-read faults described under `KafkaSnapshotReader` were all found by hand against a live stack, and not one of them is reproducible against `MockConsumer`: it emulates neither an out-of-range seek nor the `auto.offset.reset` that follows one, and it delivers exactly what it was handed rather than prefetching in the background. So the suite — which already runs a Kafka 4.3 broker through Testcontainers — now seeds the state that produces them: a three-partition topic with four records per partition and everything below offset 2 removed with `deleteRecords`, which is what retention leaves behind. Three assertions on it: a trimmed topic read in full through `KafkaSnapshotReader`, a multi-topic snapshot returning **every** topic it was asked for, and the audit's own `getEarliestRecords` path over the same trimmed topic. Verified to bite — with the beginning-offset clamp reverted, two of the three fail — where the unit tests beside them pin the same rules against a mock and could not have caught the clamp at all. The general rule it states: a defect produced by the client's own behaviour belongs in the integration suite, because a mock that cannot fail is not coverage.
 
-**The metric templates' scan bounds are asked here too, and one of the two cases is a differential** — the same `COUNT(*)`, over the same topic, run twice, one scan option apart. With `scan.bounded.mode='latest-offset'` the planner answers (`engine: FLINK`) inside its budget and the *last* row of the changelog is the topic's real count; without it the source never ends, the collect spends the whole budget, and the planner is abandoned for the direct reader (`engine: KAFKA_DIRECT`). That second half is what makes the first evidence rather than a coincidence, and the pair is the only thing in this repository that can tell whether *this* connector knows the option at all: a mock cannot refuse a setting it has never heard of, which is why `MetricService`'s degrade-once fallback was written blind. The sibling case pins the path a count-delta side really takes — `directSql` to the direct reader, one row rather than a changelog. Both build their own local Flink cluster on demand rather than as a field, since the rest of the class talks to the broker directly and should not pay for one.
+**The metric templates' scan bounds are asked here too, and the answer overturned a shipped fix on its first run.** A mock cannot refuse a setting it has never heard of, so `MetricService`'s bounded-scan option had been added on a reading of the connector's documentation. Asked of a real broker, `flink-connector-kafka:5.0.0-2.2` refuses `scan.bounded.mode` — and refuses it *quietly*, because `FlinkSqlService` classifies that as an engine failure and falls back, so the query returns rows, no error, and `engine: KAFKA_DIRECT`. The test asserts that answer rather than working around it: the day a connector bump supports the option, it fails and says so. The sibling case pins the path a count-delta side really takes — `directSql` to the direct reader, one row rather than a changelog, a number that had to come out of the broker — and it is why the wrong option was survivable: the count was right all along, by the other route. Both build their own local Flink cluster on demand rather than as a field, since the rest of the class talks to the broker directly and should not pay for one.
 `MetricControllerTest` pins `POST /api/metrics/suggestions`, whose body is **optional** and whose record grew a component (`fieldMappingId`) after it shipped: no body at all, `{"flowChains":[]}`, `{"fieldMappingId":"x"}` alone, and a whole trace with hops that omit half their fields. Jackson binds a record through its canonical constructor, so an absent property arrives as `null` — the same class of failure `StreamFlowControllerTest` was written for, on the one endpoint-bearing controller that had no test.
 
 `KafkaAdminServiceActivityTest` drives the sparkline's read through a mocked AdminClient that **behaves like a log** rather than returning a canned response: each partition is a list of record timestamps, and a boundary resolves to the first record at or after it — or to no offset at all when every record predates it, which is the case a caller must not read as "offset 0". What it pins is mostly what the curve must not say: a quiet topic and an unreadable one are two different answers and only one is a row of zeros, a window retention has eaten into is reported as such, and a partition that did not answer makes the series a floor with the note saying so. The instant is a parameter (`getTopicActivity(..., nowMs)`, package-private beside the public method that reads the clock): the window is derived from the clock, so a test computing the alignment a microsecond before the method does would fail whenever the two land either side of a bucket boundary.
@@ -916,14 +916,21 @@ reviewed in `METRICS-TWO-QUERY-AUDIT.md`, twelve items ranked, of which the firs
 shipped. What they were is worth knowing before touching either compute method, because each fix
 is load-bearing and none of it is obvious from the code that remains.
 
-**`BOUNDED_HINT` bounded nothing.** Its javadoc described `scan.bounded.mode` ("reads all data that
-exists at query start, then terminates") while the constant wrote `scan.startup.mode`, which says
-where a scan *begins*; the environment is `inStreamingMode()`, so the source never ended, and the
-option merely restated what `DdlGeneratorService` already writes into every generated table. Both
-options travel now. Whether *this* deployment's connector knows the second one is settled at
-runtime rather than asserted — a failure naming it earns one retry without it, remembered for the
-life of the process with a WARN naming the cost, the same degrade-once-and-remember shape
-`OpenAiCompatibleLlmClient` uses for a gateway that refuses `response_format`.
+**`BOUNDED_HINT` bounded nothing, and the option that would have is not available here.** Its
+javadoc described `scan.bounded.mode` ("reads all data that exists at query start, then
+terminates") while the constant wrote `scan.startup.mode`, which says where a scan *begins*; the
+environment is `inStreamingMode()`, so the source never ended, and the option merely restated what
+`DdlGeneratorService` already writes into every generated table. The bounded option was added, with
+a degrade-once fallback standing in for an experiment nobody had run — and then the experiment ran
+(`KafkaClusterIntegrationTest`, in CI) and **`flink-connector-kafka:5.0.0-2.2` refuses it**:
+*"Unsupported options found for 'kafka'. Unsupported options: scan.bounded.mode,
+scan.bounded.specific-offsets, scan.bounded.timestamp-millis"*. Sending it was worse than not:
+`FlinkSqlService` reads that refusal as an **engine** failure, so it falls back to the direct reader
+and returns rows with **no error**, which means the latch could never fire on it and three such
+queries would trip the process-wide circuit breaker that takes the planner out for every other
+screen. The hint carries the startup mode alone now; **what actually removed the templates'
+dependence on an unbounded planner scan is the direct-read routing below**, and the integration test
+asserts the current answer so a connector bump that changes it fails and says which day that was.
 
 **A streaming `COUNT(*)` is a retract changelog, and the value is its *last* row.** The collector
 drops `RowKind` and `extractPrimaryMetricValue` kept the first, which is `+I(1)`, so above roughly

@@ -326,49 +326,43 @@ class KafkaClusterIntegrationTest {
     }
 
     /**
-     * The assertion METRICS-TWO-QUERY-AUDIT.md named and could not make: does this connector
-     * really know {@code scan.bounded.mode}, and does the option end the scan?
+     * Whether this connector can bound a scan at all — the question D1 was fixed on a reading of
+     * the documentation, and that only a broker can answer.
      *
-     * <p>D1 was fixed on a reading of the Kafka connector's documentation, with a runtime fallback
-     * standing in for a measurement nobody could take — the whole backend suite runs against
-     * mocks, and a mock cannot refuse an option it has never heard of. This is the measurement.
-     * If the option were unknown here the query would fail on it and this test would say so; if it
-     * were known and ineffective, the scan would run to the timeout and the planner would hand the
-     * query to the direct reader, which the engine tells us apart from.
+     * <p>It answered no. {@code flink-connector-kafka:5.0.0-2.2} refuses
+     * {@code scan.bounded.mode} outright, and the shape of that refusal is the part worth pinning:
+     * {@code FlinkSqlService} classifies it as an <em>engine</em> failure, so it falls back to the
+     * direct reader and returns rows with <b>no error</b>. A caller cannot tell the option was
+     * rejected — which is why {@code MetricService} no longer sends it, and why the degrade-once
+     * latch that was written to make sending it safe could never have fired.
+     *
+     * <p>The day a connector bump supports the option, this test fails and says so. That is the
+     * point of asserting the current answer rather than working around it.
      */
     @Test
-    void aBoundedScanTerminatesWhereAnUnboundedOneSpendsItsTimeout() throws Exception {
+    void thisConnectorRefusesToBoundAScanAndSaysSoOnlyToTheLog() throws Exception {
         FlinkSqlService flink = flinkService();
         String table = DdlGeneratorService.toTableName(TOPIC);
         String count = "SELECT COUNT(*) AS metric_value FROM " + table;
 
-        // What MetricService sends: the same statement, with the scan bounds it injects.
-        long startedAt = System.currentTimeMillis();
         QueryResult bounded = flink.executeSql(QueryRequest.sql(
             count + " /*+ OPTIONS('scan.startup.mode'='earliest-offset','scan.bounded.mode'='latest-offset') */",
             10_000, 20_000L, "earliest-offset"));
-        long boundedMs = System.currentTimeMillis() - startedAt;
 
-        assertNull(bounded.error(), "the connector must accept the scan bounds: " + bounded.error());
-        assertEquals("FLINK", bounded.engine(),
-            "the planner answered, so the scan ended on its own rather than on the timeout");
-        assertTrue(boundedMs < 20_000,
-            "a bounded scan terminates rather than spending its budget (took " + boundedMs + " ms)");
+        assertNull(bounded.error(), "the refusal is swallowed by the fallback, not surfaced");
+        assertEquals("KAFKA_DIRECT", bounded.engine(),
+            "the planner refused the option and the query fell back — if this ever reads FLINK, "
+                + "the connector has gained scan.bounded.mode and MetricService can send it again");
 
-        // And the value is the last row of the changelog, not the +I(1) that opens it.
-        assertEquals(3.0, lastMetricValue(bounded),
-            "the topic holds three records, and that is what the metric must publish");
+        // The fallback still answers the question correctly, which is the only reason the defect
+        // was survivable: the direct reader counts the records rather than reading a changelog.
+        assertEquals(3.0, lastMetricValue(bounded));
 
-        /*
-         * The other half, which is what makes the first half evidence rather than a coincidence:
-         * without the bounded option the source never ends, the collect spends the whole budget,
-         * and the planner's answer is abandoned for the direct reader. Same statement, same
-         * broker, one option apart.
-         */
+        // Without the option the planner cannot finish either — an unbounded streaming COUNT(*)
+        // spends its whole budget — so on this stack the two are indistinguishable from outside,
+        // and the templates ask the direct reader by name rather than hoping.
         QueryResult unbounded = flink.executeSql(QueryRequest.sql(count, 10_000, 4_000L, "earliest-offset"));
-        assertEquals("KAFKA_DIRECT", unbounded.engine(),
-            "an unbounded streaming COUNT(*) cannot finish, so the planner is abandoned for the "
-                + "direct reader — which is exactly what the bounded option is there to prevent");
+        assertEquals("KAFKA_DIRECT", unbounded.engine());
     }
 
     /**

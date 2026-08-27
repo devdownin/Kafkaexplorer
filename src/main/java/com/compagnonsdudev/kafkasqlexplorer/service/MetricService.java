@@ -14,7 +14,6 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.MetricTemplateType;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryRequest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryResult;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicTimeLag;
-import com.compagnonsdudev.kafkasqlexplorer.util.LogSafe;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.DistributionSummary;
 import io.micrometer.core.instrument.Gauge;
@@ -44,7 +43,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -475,50 +473,45 @@ public class MetricService {
     // ── Scheduled refresh ─────────────────────────────────────────────────────
 
     /**
-     * What "bounded" actually takes, which is two options rather than one.
+     * The scan option a metric asks for, and the one it deliberately does not.
      *
      * <p>This was a lone {@code scan.startup.mode='earliest-offset'} under a comment promising the
      * query "reads all data that exists in Kafka at query start time, then terminates (no
      * indefinite streaming)". That sentence is the contract of {@code scan.bounded.mode};
-     * {@code scan.startup.mode} says where a scan <em>begins</em>. The two are not alternatives
-     * and the missing one is the one that ends the scan.
+     * {@code scan.startup.mode} says where a scan <em>begins</em>. Nothing bounded anything,
+     * therefore, and the option that was there changed nothing either — {@code DdlGeneratorService}
+     * already writes {@code earliest-offset} into every table it generates. The environment is
+     * built {@code inStreamingMode()} ({@code FlinkConfig}), so the source stayed unbounded and a
+     * metric's read either blocked until its own timeout or came back with the first rows an
+     * endless scan happened to yield.
      *
-     * <p>Nothing bounded anything, therefore, and the option that was there changed nothing
-     * either: {@code DdlGeneratorService} already writes {@code earliest-offset} into every table
-     * it generates, which is every table these metrics read. The environment is built
-     * {@code inStreamingMode()} ({@code FlinkConfig}), so the source stayed unbounded and each
-     * side of a two-query metric either blocked until its own timeout — 30 s, twice, on a 30 s
-     * schedule — or came back with the first rows an endless scan happened to yield: for a
-     * projection the oldest records, and for {@code COUNT(*)} the head of a retract changelog,
-     * whose first row is {@code +I(1)}.
+     * <p><b>The bounded option was added, and then measured, and this connector does not have
+     * it.</b> {@code flink-connector-kafka:5.0.0-2.2} answers a hint carrying it with
+     * {@code ValidationException: Unsupported options found for 'kafka'. Unsupported options:
+     * scan.bounded.mode, scan.bounded.specific-offsets, scan.bounded.timestamp-millis} — observed
+     * in CI by {@code KafkaClusterIntegrationTest}, which exists to ask exactly that. Worse than
+     * useless: {@code FlinkSqlService} reads that refusal as an <em>engine</em> failure, so it
+     * falls back to the direct reader and returns rows with no error at all — the caller cannot
+     * see the refusal, a degrade-once latch here could never fire on it, and three such queries
+     * would trip the process-wide circuit breaker that takes the Flink planner out for every
+     * other screen.
+     *
+     * <p>So the hint carries the startup mode alone, which is what this stack can express. What
+     * actually stopped the templates depending on an unbounded planner scan is a different fix:
+     * the shapes they generate are asked of the direct reader by name ({@link #isSingleTableRead},
+     * {@code QueryRequest.directRead}), which answers a count with one row and no changelog.
+     * Restore the bounded option the day a connector bump supports it — the integration test says
+     * which day that is, by starting to fail.
      */
-    private static final String SCAN_BOUNDED_OPTION = "'scan.bounded.mode'='latest-offset'";
     private static final String SCAN_STARTUP_EARLIEST = "'scan.startup.mode'='earliest-offset'";
-
-    /** Option names, used to recognise a connector that will not take them — see the latch below. */
-    private static final List<String> SCAN_OPTION_NAMES = List.of("scan.bounded.mode");
 
     private static final Pattern FROM_TABLE = Pattern.compile("(?i)\\bFROM\\b\\s+(\\w[\\w.]*)");
 
     private static final Pattern JOIN_KEYWORD = Pattern.compile("(?i)\\bJOIN\\b");
 
-    /**
-     * Raised once, for the life of the process, when a query fails on the scan options themselves.
-     *
-     * <p>The options above are the connector's, not ours, and a deployment can be pointed at a
-     * Kafka connector that predates {@code scan.bounded.mode} — on which asking for it turns every
-     * template metric from slow into broken. So a failure that names the option earns one retry
-     * without it, and the answer is remembered rather than re-derived on every refresh: the same
-     * degrade-once-and-remember shape {@code OpenAiCompatibleLlmClient} uses for a gateway that
-     * refuses {@code response_format}. What it costs when it latches is stated in the metric's
-     * own summary, never inferred from silence.
-     */
-    private final AtomicBoolean scanOptionsRefused = new AtomicBoolean(false);
-
-    /** The scan bounds a template asks for, or null once the connector has refused them. */
+    /** The scan option a template read asks for. */
     private String scanHint() {
-        if (scanOptionsRefused.get()) return null;
-        return "/*+ OPTIONS(" + SCAN_STARTUP_EARLIEST + "," + SCAN_BOUNDED_OPTION + ") */";
+        return "/*+ OPTIONS(" + SCAN_STARTUP_EARLIEST + ") */";
     }
 
     /**
@@ -561,13 +554,6 @@ public class MetricService {
         if (body.substring(m.end(1)).stripLeading().startsWith(",")) return false;
         // A second FROM is a shape this reader cannot honour either.
         return !m.find();
-    }
-
-    /** Did this failure come from the scan options rather than from the query? */
-    private boolean refusesScanOptions(QueryResult result) {
-        if (result == null || result.error() == null) return false;
-        String error = result.error().toLowerCase(Locale.ROOT);
-        return SCAN_OPTION_NAMES.stream().anyMatch(error::contains);
     }
 
     private MetricConfig normalizeMetric(MetricConfig metric) {
@@ -1100,22 +1086,10 @@ public class MetricService {
         return new MetricComputationResult(rows, avgLatencyMs, null, summary);
     }
 
-    /**
-     * One template read: the scan bounds asked for, and one retry without them if the connector
-     * turns out not to know them (see {@link #scanOptionsRefused}).
-     */
+    /** One template read, with the scan option this stack can express. */
     private QueryResult executeMetricQuery(String sql, int maxRows, long timeoutMs, String readMode,
                                            boolean directRead) {
-        String hint = scanHint();
-        QueryResult result = runMetricQuery(injectScanHint(sql, hint), maxRows, timeoutMs, readMode, directRead);
-        if (hint == null || !refusesScanOptions(result)) return result;
-        if (scanOptionsRefused.compareAndSet(false, true)) {
-            log.warn("This Kafka connector refused {} — template scans are unbounded for the rest of "
-                    + "this process, so a read stops on its row cap or its timeout instead of at the "
-                    + "end of the topic. Cause: {}",
-                SCAN_OPTION_NAMES, LogSafe.text(result.error()));
-        }
-        return runMetricQuery(sql, maxRows, timeoutMs, readMode, directRead);
+        return runMetricQuery(injectScanHint(sql, scanHint()), maxRows, timeoutMs, readMode, directRead);
     }
 
     private QueryResult runMetricQuery(String sql, int maxRows, long timeoutMs, String readMode,

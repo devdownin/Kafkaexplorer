@@ -753,17 +753,23 @@ class MetricServiceTest {
     }
 
     @Test
-    void theScanIsBoundedAndTheStartupModeIsNotWhatBoundsIt() {
+    void theScanHintCarriesOnlyWhatThisConnectorCanExpress() {
         Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(directCount(12.0), directCount(7.0));
 
         service.previewMetric(countDelta(Map.of()));
 
-        // scan.startup.mode says where a scan begins; scan.bounded.mode is what ends it, and the
-        // environment is streaming, so without the second the source never terminates.
         for (QueryRequest request : capturedRequests()) {
-            assertTrue(request.sql().contains("'scan.bounded.mode'='latest-offset'"),
-                "the bounded option must travel with every template read: " + request.sql());
             assertTrue(request.sql().contains("'scan.startup.mode'='earliest-offset'"), request.sql());
+            /*
+             * scan.bounded.mode is what would end the scan, and this connector does not have it:
+             * flink-connector-kafka:5.0.0-2.2 answers a hint carrying it with "Unsupported options
+             * found for 'kafka'", which FlinkSqlService reads as an engine failure and swallows by
+             * falling back — so the caller sees rows and no error, and three of them trip the
+             * process-wide circuit breaker. KafkaClusterIntegrationTest measures that; this pins
+             * that the option is not sent meanwhile.
+             */
+            assertFalse(request.sql().contains("scan.bounded.mode"),
+                "an option this connector rejects must not travel: " + request.sql());
         }
     }
 
@@ -817,28 +823,15 @@ class MetricServiceTest {
         assertNull(preview.value());
     }
 
-    @Test
-    void aConnectorThatRefusesTheScanOptionsIsRetriedOnceWithoutThem() {
-        QueryResult refusal = new QueryResult(List.of(), List.of(), 5L,
-            "Unsupported options found for 'kafka'. Unsupported options: scan.bounded.mode");
-        // Refuse the first hinted read, whichever side it is, then answer by table.
-        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenAnswer(invocation -> {
-            QueryRequest request = invocation.getArgument(0);
-            if (request.sql().contains("scan.bounded.mode")) return refusal;
-            return directCount(request.sql().contains("topic_a") ? 12.0 : 7.0);
-        });
-
-        MetricPreviewResult preview = service.previewMetric(countDelta(Map.of()));
-
-        assertNull(preview.error(), "a connector that lacks the option must degrade, not break");
-        assertEquals(5.0, preview.value());
-        List<QueryRequest> requests = capturedRequests();
-        assertTrue(requests.get(0).sql().contains("scan.bounded.mode"));
-        assertFalse(requests.get(1).sql().contains("scan.bounded.mode"), "the retry drops the options");
-        // And it is remembered rather than re-derived on every refresh: the second side is asked
-        // without the options at all.
-        assertFalse(requests.get(2).sql().contains("scan.bounded.mode"));
-    }
+    /*
+     * There was a case here for a degrade-once latch: send the bounded scan option, and on a
+     * connector that refuses it retry without and remember. It was removed with the latch, because
+     * the measurement showed the refusal never reaches this class — FlinkSqlService classifies it
+     * as an engine failure and falls back to the direct reader, so what comes back carries rows
+     * and no error. A latch that cannot observe its own trigger is not a safety net; the option is
+     * simply not sent. See theScanHintCarriesOnlyWhatThisConnectorCanExpress above, and the
+     * differential in KafkaClusterIntegrationTest that established it.
+     */
 
     @Test
     void theLatencyTemplateReadsTheMostRecentRecordsAndTheCountReadsFromTheStart() {

@@ -79,13 +79,27 @@ Three facts around it, each readable on its own:
 What follows from it is D2 and D3, which are different defects on the two templates because one
 runs an aggregate and the other a projection.
 
-**Shipped.** The hint now carries both options, and the javadoc describes what the code does. What
-the review could not settle — whether this deployment's connector knows `scan.bounded.mode` — is
-settled at runtime instead of asserted: a failure naming the option earns one retry without it and
-is then remembered for the life of the process, with a WARN naming what that costs. It is the
-degrade-once-and-remember shape `OpenAiCompatibleLlmClient` uses for a gateway that refuses
-`response_format`, and it is there precisely because this could not be run against a broker before
-being pushed.
+**Shipped, then measured, and the measurement said no.** The hint was given both options, with a
+degrade-once fallback standing in for the experiment nobody had run. The experiment has now run
+(D12), and **`flink-connector-kafka:5.0.0-2.2` does not support `scan.bounded.mode`**: it answers
+a hint carrying it with *"Unsupported options found for 'kafka'. Unsupported options:
+scan.bounded.mode, scan.bounded.specific-offsets, scan.bounded.timestamp-millis"*.
+
+Two things follow, and the second is why sending it was worse than not.
+
+`FlinkSqlService` classifies that refusal as an **engine** failure, so it falls back to the direct
+reader and returns rows with **no error at all**. The caller cannot see that the option was
+rejected — which means the degrade-once latch could never fire on it, and three such queries would
+have tripped the process-wide circuit breaker that takes the Flink planner out for every other
+screen. The latch is gone with the option; a safety net that cannot observe its own trigger is not
+one.
+
+So the hint carries the startup mode alone, which is what this stack can express, and **the fix
+that actually removed the templates' dependence on an unbounded planner scan is D2/D3's**: the
+generated shapes are asked of the direct reader by name, which answers a count with one row and no
+changelog. D1's own remedy is unavailable here and the code says so; the integration test asserts
+the current answer, so the day a connector bump supports the option it fails and says which day
+that was.
 
 **The experiment that settles it**: register a demo topic, run
 `SELECT COUNT(*) AS metric_value FROM demo_orders_1_received` through `FlinkSqlService.executeSql`
@@ -427,25 +441,27 @@ D1 and D2 are the two that need the real broker. Everything else (D4 ordering, D
 warnings, D6 match rate, D7 emission order, D9 validation, D11 messages) is unit-testable against
 the existing mock the moment the behaviour changes.
 
-**Shipped, and it changed what one of the fixes rests on.** `MetricServiceTest` carries the
-mock-side cases — forty-two of them — and `KafkaClusterIntegrationTest` now carries the two that
+**Shipped, and it overturned one of the fixes on its first run.** `MetricServiceTest` carries the
+mock-side cases — forty-one of them — and `KafkaClusterIntegrationTest` now carries the two that
 need the broker.
 
-The first is a **differential**, which is what makes it evidence rather than a coincidence: the
-same `COUNT(*)`, over the same topic, run twice, one scan option apart. With
-`scan.bounded.mode='latest-offset'` the planner answers (`engine: FLINK`), inside its budget, and
-the **last** row of the changelog is the topic's real count. Without it the source never ends, the
-collect spends the whole budget, and the planner is abandoned for the direct reader
-(`engine: KAFKA_DIRECT`) — which is precisely the state D1 describes and the option exists to
-prevent. If this connector did not know the option at all, the bounded half would fail on it and
-say so; that is the case W1's runtime fallback was written blind for, and it is now measured
-rather than assumed.
+The first was written as a differential — the same `COUNT(*)`, over the same topic, run twice, one
+scan option apart — expecting the bounded half to be answered by the planner. It was not. This
+connector refuses `scan.bounded.mode` outright, `FlinkSqlService` reads the refusal as an engine
+failure and falls back, and the query comes back with rows, no error, and `engine: KAFKA_DIRECT`.
+Both halves therefore land in the same place, which is the finding: **on this stack a scan cannot
+be bounded at all**, and the option W1 added was not merely inert but harmful — see D1. The test
+now asserts that answer, so a connector bump that changes it fails here and says so.
 
 The second pins the path a count-delta side really takes: `directSql` reaching the direct reader,
-one row rather than a changelog, and a number that had to come out of the broker.
+one row rather than a changelog, and a number that had to come out of the broker. It passed on the
+same run, which is what makes the first finding survivable: the count was right all along, by the
+route D2/D3 had already sent it down.
 
-What still cannot be checked here is anything needing Docker — this environment has no daemon, so
-the class skips locally and CI is its first run. That is a smaller gap than the one it closes.
+What cannot be checked without Docker — which this environment has no daemon for — is anything in
+this class: it skips locally and CI runs it. The gap it closes is larger than the one that remains,
+and this first run is the proof: a claim that had been read off documentation, shipped, and
+documented in two files was wrong, and nothing but a broker could have said so.
 
 ---
 
