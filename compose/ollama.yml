@@ -60,7 +60,17 @@ services:
       ollama:
         condition: service_healthy
     environment:
-      - CLAUDE_PROVIDER=OPENAI_COMPATIBLE
+      # OLLAMA, not OPENAI_COMPATIBLE, and the difference is not cosmetic: `claude.structured-output`
+      # defaults to AUTO, which sends a JSON Schema where support is known — ANTHROPIC, OLLAMA,
+      # OPENROUTER — and deliberately leaves an arbitrary OpenAI-compatible gateway alone, since some
+      # answer 400 to a `response_format` they do not implement. Naming the wrong one here therefore
+      # turned constrained decoding **off** on the one stack this project ships for local inference,
+      # on a 4-bit 7B model — which is exactly the case the schema work exists for, small models being
+      # the ones most likely to editorialise around the JSON they were asked for. The client speaks
+      # the same OpenAI dialect either way, so this changes what is sent and nothing else.
+      - CLAUDE_PROVIDER=OLLAMA
+      # Still explicit: the provider's own default is localhost, which inside this container is the
+      # container.
       - CLAUDE_BASE_URL=http://ollama:11434/v1
       - CLAUDE_MODEL=qwen2.5-coder:7b
       # The other half of OLLAMA_CONTEXT_LENGTH above: ~16 000 characters is ~4 000 tokens,

@@ -24,8 +24,20 @@ the configuration this project ships two Docker stacks and two setup scripts for
 > arithmetic consequence of two shipped values rather than an observation, it says so and names
 > both values.
 >
-> **This document implements nothing.** Each item ends with the change it asks for and what that
-> change costs.
+> **Status.** It implemented nothing when it was written. **L1, L2 and L11 have since shipped**,
+> in one change; what each section below describes is therefore the state that work was done
+> *from*, and each of the three now ends with what replaced it. The other nine are open, and the
+> worklist at the end says so.
+>
+> **One thing was found while implementing rather than while reviewing**, and L2 overstated its
+> symptom accordingly: the page does *not* print "The LLM could not be reached." on a client-side
+> abort. `errorMessage` (`ProcessMining.tsx:106`) has an `ECONNABORTED` branch, so what was shown
+> is *"The server did not answer in time. The model may still be working — check the backend logs,
+> then retry with fewer topics, a smaller sample, or a faster model."* — advice about topics and
+> sample size, on a one-word health check that carries neither. The substance of L2 is unchanged
+> (the wait was shorter than the budget the two bundled stacks configure, so Test failed on an
+> endpoint that was answering); the wording is corrected here rather than left to be found by the
+> next reader.
 
 Ranked. L1–L4 change what an operator is told or silently degrade a run; L5–L8 are gaps in the
 plumbing that only bite the non-OpenRouter providers; L9–L11 are the coherence problems, one of
@@ -77,6 +89,16 @@ problem.
 **Affects** `OLLAMA` and any gateway on `structured-output: ON`. Not `OPENAI_COMPATIBLE` under
 `AUTO`, which sends no schema — see L11.
 
+> **Shipped.** The unconstrained call now happens first and `rememberSchemaRefusal(model)` is
+> called on its success, so what is recorded is what was observed: *without the schema it works,
+> with it it does not.* A retry that fails too leaves the model unmarked and the caller gets that
+> second failure, which is the honest one. The log follows: one line before the retry saying it is
+> being tried, one after only when the conclusion is drawn. Pinned by
+> `aFailureThatSurvivesDroppingTheSchemaTeachesNothingAboutTheSchema` (a 400 on `max_tokens`, which
+> survives dropping the schema, must leave structured output alone) and its converse
+> `aRefusalTheRetryConfirmsIsStillRemembered` — the first was checked to fail against the revision
+> it describes, at the assertion that the next call constrains again.
+
 ---
 
 ## L2 — One endpoint, two waits, both wrong
@@ -110,6 +132,14 @@ fixed in the SQL editor, left standing here.
 (`ConfigController:442`) and which the Process Mining page already fetches: the server's own budget
 plus a margin, on both screens. A wait a UI invents for a call whose budget it knows is a wait that
 is wrong the day that budget moves.
+
+> **Shipped.** `pages/llmTimeout.ts` derives it: the served budget plus a 15 s margin for what is
+> not generation, floored at the previous 90 s so a deployment on the shipped 60 s waits exactly
+> what it waited before, and capped at 630 s so an aberrant setting cannot hold the browser
+> indefinitely. Both screens use it — Process Mining off `llmInfo.llmRequestTimeoutSeconds`,
+> Settings off the form's own field — and both now say, when it is *the browser* that gave up, how
+> long it waited and against what budget (`describeTestTimeout`), instead of advising a change to
+> topics a health check does not carry. Eight cases in `llmTimeout.test.ts`.
 
 ---
 
@@ -369,6 +399,17 @@ word each, and the `base-url` is already Ollama's — or let `AUTO` recognise an
 its address, the way `isOpenRouterEndpoint()` recognises OpenRouter's. The first is smaller and
 says what it means; the second survives an operator who writes the compose file themselves.
 
+> **Shipped, the first way.** `compose/ollama.yml`, `setup-llm.sh`, `setup-llm.ps1`, Option C of
+> `docs/LLM-PROVIDERS.md` and the Ollama example in `docs/LLM_OPEN_SOURCE_GUIDE.md` all name
+> `OLLAMA` now, each with the reason beside it — the two values reach the same client and speak the
+> same dialect, which is precisely why they read as interchangeable and are not. The base URLs are
+> unchanged and still explicit (the provider's own default is `localhost`, which inside a container
+> is the container). Both docs keep `OPENAI_COMPATIBLE` where it is the right answer — vLLM, LM
+> Studio, an unestablished gateway — and name `structured-output: ON` as the opt-in once its
+> behaviour is known. The second way was left: detecting an Ollama by its address would put a
+> guess where a declaration now stands, and `isOpenRouterEndpoint()` is deliberately used for a
+> courtesy header rather than for anything load-bearing.
+
 ---
 
 ## L12 — The small ones
@@ -416,8 +457,8 @@ its comment gives, and matters most on the slow local models this audit is about
 
 | | Item | Change | Where |
 |---|---|---|---|
-| L1 | A non-schema 400 latches for good | remember only what the retry proves | `OpenAiCompatibleLlmClient:99-113` |
-| L2 | Test aborts at 90 s against a 300 s server | derive both waits from the served budget | `ProcessMining.tsx:102`, `Config.tsx:485` |
+| L1 | ~~A non-schema 400 latches for good~~ **shipped** | remember only what the retry proves | `OpenAiCompatibleLlmClient:99-113` |
+| L2 | ~~Test aborts at 90 s against a 300 s server~~ **shipped** | derive both waits from the served budget | `ProcessMining.tsx:102`, `Config.tsx:485` |
 | L3 | A missing endpoint is not a state | `isEndpointMissing()`, checked and validated | `ClaudeConfig`, both services, `ConfigController:175` |
 | L4 | A model named that is not answering | null it where the server picks it | `SpectraLlmClient:90`, `ProcessMining.tsx:811` |
 | L5 | Anthropic skips six behaviours | timeout, temperature, degrade, and a test | `AnthropicLlmClient`, `Config.tsx:1066` |
@@ -426,5 +467,5 @@ its comment gives, and matters most on the slow local models this audit is about
 | L8 | 3xx retried as transient | follow redirects, or refuse and name `Location` | `LlmHttpSupport:109,150` |
 | L9 | A constraint that silently did not hold | report repair, and a short prompt count | `LlmJsonSupport`, `usageOf` |
 | L10 | "LLM call failed: null" | `SqlErrorClassifier.explain` | `LlmAnalysisService:974` |
-| L11 | The local stack runs unconstrained | name `OLLAMA`, or detect the endpoint | `compose/ollama.yml:63`, `setup-llm.*`, docs |
+| L11 | ~~The local stack runs unconstrained~~ **shipped** | name `OLLAMA`, or detect the endpoint | `compose/ollama.yml:63`, `setup-llm.*`, docs |
 | L12 | Five small ones | see above | — |

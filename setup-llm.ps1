@@ -36,12 +36,14 @@ ollama pull $ModelName
 
 # 4. Set environment variables (User scope for persistence)
 Write-Host "Setting environment variables..." -ForegroundColor Cyan
-[System.Environment]::SetEnvironmentVariable("CLAUDE_PROVIDER", "OPENAI_COMPATIBLE", "User")
+# OLLAMA rather than OPENAI_COMPATIBLE: same dialect, but claude.structured-output=AUTO only sends a
+# JSON Schema where support is known, and constrained decoding is what a small local model needs most.
+[System.Environment]::SetEnvironmentVariable("CLAUDE_PROVIDER", "OLLAMA", "User")
 [System.Environment]::SetEnvironmentVariable("CLAUDE_BASE_URL", "http://localhost:11434/v1", "User")
 [System.Environment]::SetEnvironmentVariable("CLAUDE_MODEL", $ModelName, "User")
 
 # Also set for current session
-$env:CLAUDE_PROVIDER = "OPENAI_COMPATIBLE"
+$env:CLAUDE_PROVIDER = "OLLAMA"
 $env:CLAUDE_BASE_URL = "http://localhost:11434/v1"
 $env:CLAUDE_MODEL = $ModelName
 

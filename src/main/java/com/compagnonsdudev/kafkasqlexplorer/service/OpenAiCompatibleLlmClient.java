@@ -85,17 +85,31 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
             // their gateway is broken when it merely does not implement response_format. If the
             // second call fails too, that error is the honest one to report.
             //
-            // What is *remembered* is narrower than what is retried, and the difference is the
-            // whole point of the check below. A 400 a routing gateway relayed from an upstream
-            // provider says nothing about the model: OpenRouter serves one model through several
-            // providers, picks one per call, and does not say which until it has failed — observed
-            // here as a 400 "Provider returned error" from AtlasCloud on a body that succeeded
-            // through Liquid minutes later. Latching that would mark the model schema-incapable for
-            // this client's lifetime on the strength of one provider's bad afternoon, and every
-            // later window would run unconstrained with nothing on screen saying why. So the retry
-            // still happens — an upstream that genuinely lacks response_format is a real
-            // possibility, and one extra request is the cheap half — while the durable conclusion
-            // is drawn only from a refusal the endpoint itself issued.
+            // What is *remembered* is narrower than what is retried, in two ways, and both are the
+            // difference between a suspicion and an observation.
+            //
+            // The first is the outcome of the retry itself, and the conclusion is drawn only after
+            // it. A 400 or a 422 is how an endpoint says it did not understand the request body;
+            // it does not say *which* field it did not understand, and a constrained request from
+            // this client carries three others that are refused with the same status in the wild —
+            // `max_tokens`, which the OpenAI API now rejects on reasoning models in favour of
+            // `max_completion_tokens`, `temperature: 0.0`, which those same models refuse, and a
+            // prompt over the model's context, which several gateways answer 400 rather than 413.
+            // Remembering before the retry drew a durable conclusion from evidence that never
+            // established it: the second call failed identically, the caller got the real error,
+            // and the model stayed marked schema-incapable for the whole life of this client —
+            // which outlasts the mistake, since {@link LlmClientProvider} fingerprints provider,
+            // base URL and key and not the model. Every later Process Mining window then ran
+            // unconstrained, silently, because of something fixed a minute afterwards. The
+            // unconstrained call is what proves the schema was the cause: it works without, it
+            // does not with.
+            //
+            // The second is who issued the refusal. A 400 a routing gateway relayed from an
+            // upstream provider says nothing about the model: OpenRouter serves one model through
+            // several providers, picks one per call, and does not say which until it has failed —
+            // observed here as a 400 "Provider returned error" from AtlasCloud on a body that
+            // succeeded through Liquid minutes later. Latching that would mark the model
+            // schema-incapable on the strength of one provider's bad afternoon.
             boolean relayed = e.upstreamProvider() != null;
             log.warn("{} refused a schema-constrained request for model '{}' (status {}); retrying "
                     + "without the constraint{}. Set claude.structured-output=OFF to skip this "
@@ -103,13 +117,22 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
                 config.getProviderLabel(), LogSafe.slug(model), e.status(),
                 relayed
                     ? " — the refusal came from upstream provider '" + e.upstreamProvider()
-                        + "', which the gateway may not route to next time, so it is not being "
+                        + "', which the gateway may not route to next time, so it will not be "
                         + "remembered against this model"
-                    : " and not sending one again for that model");
+                    : "");
+
+            // If this throws, nothing is remembered and the caller sees that failure: a request
+            // that fails with and without the schema alike was not refused over the schema.
+            LlmResponse unconstrained = call(systemPrompt, userPrompt, null);
+
             if (!relayed) {
                 rememberSchemaRefusal(model);
+                log.warn("{} answered model '{}' without the schema, so the schema was the "
+                        + "refusal's cause; no schema will be sent for that model again by this "
+                        + "client.",
+                    config.getProviderLabel(), LogSafe.slug(model));
             }
-            return call(systemPrompt, userPrompt, null);
+            return unconstrained;
         }
     }
 

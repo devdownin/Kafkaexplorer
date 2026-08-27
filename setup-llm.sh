@@ -38,7 +38,10 @@ echo "Pulling model: $MODEL_NAME (this may take a while)..."
 ollama pull "$MODEL_NAME"
 
 # 5. Export environment variables
-export CLAUDE_PROVIDER=OPENAI_COMPATIBLE
+# OLLAMA rather than OPENAI_COMPATIBLE: both speak the same OpenAI dialect, but claude.structured-output
+# defaults to AUTO, which sends a JSON Schema only where support is known — and an unnamed gateway is
+# not. Constrained decoding is what keeps a small local model from wrapping its JSON in prose.
+export CLAUDE_PROVIDER=OLLAMA
 export CLAUDE_BASE_URL=http://localhost:11434/v1
 export CLAUDE_MODEL=$MODEL_NAME
 
