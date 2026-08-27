@@ -51,7 +51,7 @@ const templateMetric: MetricConfig = {
   templateType: 'TOPIC_TRANSIT_LATENCY',
   templateParams: { sourceTopic: 'demo.orders.1.received', targetTopic: 'demo.orders.2.validated' },
   executionMode: 'TEMPLATE_BOUNDED_SCAN',
-  labelTopic: 'demo.orders.1.received', labelFields: [],
+  labelTopic: 'demo.orders.1.received', labelFields: [], componentHistory: null,
 };
 
 const suggestion: MetricSuggestion = {
@@ -74,7 +74,7 @@ const suggestion: MetricSuggestion = {
     lastValue: null, lastUpdateTime: null, errorMessage: null,
     history: [], lastSummary: null, createTableSql: null,
     templateType: 'RAW_SQL', templateParams: {}, executionMode: 'SQL',
-    labelTopic: 'demo.orders.1.received', labelFields: [],
+    labelTopic: 'demo.orders.1.received', labelFields: [], componentHistory: null,
   },
 };
 
@@ -465,5 +465,40 @@ describe('la carte porte la mesure et la règle, pas seulement un nombre', () =>
     await waitFor(() => expect(screen.getByText('gauge_gap_a_to_b')).toBeInTheDocument());
     expect(screen.getByText(/≤ 0.95/)).toBeInTheDocument();
     expect(screen.queryByText(/≥ 0.95/)).toBeNull();
+  });
+});
+
+describe('les deux côtés dans le temps', () => {
+  const withSeries: MetricConfig = {
+    ...templateMetric,
+    id: 'm-series',
+    name: 'gauge_gap_series',
+    templateType: 'TOPIC_COUNT_DELTA',
+    templateParams: { leftTopic: 'demo.a', rightTopic: 'demo.b' },
+    lastValue: 5,
+    history: [5, 5, 5],
+    componentHistory: { leftValue: [12, 13, 12], rightValue: [7, 8, 7] },
+    lastSummary: { leftValue: 12, rightValue: 7, operation: 'LEFT_MINUS_RIGHT' },
+  };
+
+  it('trace les composantes dans leur propre boîte, avec une légende', async () => {
+    stubApi([withSeries]);
+    await renderPage();
+
+    await waitFor(() => expect(screen.getByText('gauge_gap_series')).toBeInTheDocument());
+    // La légende nomme les deux séries. « left » et « right » apparaissent aussi à côté du nombre,
+    // donc ce qui est vérifié est qu'il y en a deux de chaque : la puce et la légende.
+    expect(screen.getAllByText('left')).toHaveLength(2);
+    expect(screen.getAllByText('right')).toHaveLength(2);
+  });
+
+  it('ne trace rien quand la métrique n’a qu’une valeur', async () => {
+    stubApi([{ ...withSeries, componentHistory: null }]);
+    await renderPage();
+
+    await waitFor(() => expect(screen.getByText('gauge_gap_series')).toBeInTheDocument());
+    // La puce à côté du nombre reste, la légende non : une ligne d'un seul point n'est pas une
+    // évolution, et une boîte vide sur chaque carte serait du bruit.
+    expect(screen.getAllByText('left')).toHaveLength(1);
   });
 });

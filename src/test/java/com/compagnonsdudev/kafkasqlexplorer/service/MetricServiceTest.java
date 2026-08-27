@@ -23,6 +23,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 import java.util.LinkedHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -859,6 +860,76 @@ class MetricServiceTest {
         assertNull(after.lastValue());
         assertTrue(String.valueOf(after.errorMessage()).contains("Baseline established"),
             String.valueOf(after.errorMessage()));
+    }
+
+    @Test
+    void theTwoSidesAreKeptAsSeriesBesideTheValueTheyMake() {
+        stubBySql(Map.of("topic_a", directCount(12.0), "topic_b", directCount(7.0)));
+        service.save(withIdAndType(countDelta(Map.of()), "gap", "GAUGE"));
+        service.refreshMetric("gap");
+        service.refreshMetric("gap");
+
+        MetricConfig saved = service.getAllMetrics().stream()
+            .filter(m -> "gap".equals(m.id())).findFirst().orElseThrow();
+        // history holds the *comparison*; what an operator needs to see move is the two counts.
+        assertEquals(List.of(5.0, 5.0), saved.history());
+        assertEquals(List.of(12.0, 12.0), saved.componentHistory().get("leftValue"));
+        assertEquals(List.of(7.0, 7.0), saved.componentHistory().get("rightValue"));
+    }
+
+    @Test
+    void aRefreshThatMeasuredNoComponentAppendsNullRatherThanZero() {
+        // Two cycles that measure the sides, then one that fails: a zero there would draw a fall
+        // to nothing that never happened, on the metric whose whole job is to report a fall.
+        AtomicInteger call = new AtomicInteger();
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenAnswer(invocation -> {
+            QueryRequest request = invocation.getArgument(0);
+            boolean left = request.sql() != null && request.sql().contains("topic_a");
+            return call.incrementAndGet() > 4
+                ? new QueryResult(List.of(), List.of(), 0L, "broker went away")
+                : directCount(left ? 12.0 : 7.0);
+        });
+
+        service.save(withIdAndType(countDelta(Map.of()), "gap", "GAUGE"));
+        service.refreshMetric("gap");
+        service.refreshMetric("gap");
+        service.refreshMetric("gap");
+
+        MetricConfig saved = service.getAllMetrics().stream()
+            .filter(m -> "gap".equals(m.id())).findFirst().orElseThrow();
+        // A failed refresh publishes no value at all, so nothing is appended anywhere and every
+        // series stays exactly as long as the history it is drawn against.
+        assertEquals(2, saved.history().size());
+        saved.componentHistory().forEach((key, values) ->
+            assertEquals(saved.history().size(), values.size(), key + " must stay aligned with history"));
+    }
+
+    @Test
+    void aSeriesSeenForTheFirstTimeIsBackFilledSoTheIndexStaysOneRefresh() {
+        // A latency metric edited into a gap changes which components exist. Index i has to keep
+        // meaning "the same refresh" in every series, or the chart shifts one line against another.
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(
+            new QueryResult(List.of("match_key", "event_time"),
+                List.of(Map.of("match_key", "A", "event_time", "2026-03-24T10:00:00Z")), 5L, null, false, "KAFKA_DIRECT"),
+            new QueryResult(List.of("match_key", "event_time"),
+                List.of(Map.of("match_key", "A", "event_time", "2026-03-24T10:00:01Z")), 5L, null, false, "KAFKA_DIRECT"));
+        service.save(withIdAndType(transitLatency(Map.of()), "shifting", "GAUGE"));
+        service.refreshMetric("shifting");
+
+        Mockito.reset(flinkSqlService);
+        wirePairDelegation();
+        Mockito.when(flinkSqlService.listTables()).thenReturn(List.of("demo_orders_in"));
+        stubBySql(Map.of("topic_a", directCount(12.0), "topic_b", directCount(7.0)));
+        service.save(withIdAndType(countDelta(Map.of()), "shifting", "GAUGE"));
+        service.refreshMetric("shifting");
+
+        MetricConfig saved = service.getAllMetrics().stream()
+            .filter(m -> "shifting".equals(m.id())).findFirst().orElseThrow();
+        saved.componentHistory().forEach((key, values) ->
+            assertEquals(saved.history().size(), values.size(), key + " must stay aligned with history"));
+        // The series that did not exist on the first refresh carries a null for it, not a value.
+        assertNull(saved.componentHistory().get("leftValue").get(0));
+        assertEquals(12.0, saved.componentHistory().get("leftValue").get(1));
     }
 
     @Test

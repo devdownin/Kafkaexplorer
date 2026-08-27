@@ -249,6 +249,8 @@ public class MetricService {
     // ── metric state ─────────────────────────────────────────────────────────
     private final Map<String, MetricConfig>              metrics           = new ConcurrentHashMap<>();
     private final Map<String, LinkedList<Double>>        historyMap        = new ConcurrentHashMap<>();
+    /** metricId → (series name → rolling values), the components of the value in {@link #historyMap}. */
+    private final Map<String, Map<String, LinkedList<Double>>> componentHistoryMap = new ConcurrentHashMap<>();
     /** metricId → (series name → holder), for the gauges that describe the metric rather than its rows. */
     private final Map<String, Map<String, AtomicReference<Double>>> companionHolders = new ConcurrentHashMap<>();
     private final Map<String, Map<String, Gauge>>                   companionMeters  = new ConcurrentHashMap<>();
@@ -528,6 +530,7 @@ public class MetricService {
     public void delete(String id) {
         metrics.remove(id);
         historyMap.remove(id);
+        componentHistoryMap.remove(id);
         purgeMeters(id);
         persistToKafka(new MetricConfig(id, null, null, null, null, null, null, null, null, "DELETED"));
     }
@@ -1903,6 +1906,8 @@ public class MetricService {
 
         if (primaryValue != null) {
             updateHistory(metricId, primaryValue);
+            // After updateHistory, which is what sets the length every series is aligned to.
+            updateComponentHistory(metricId, summary);
             updateMetricState(metricId, primaryValue, null, summary);
             publishCompanions(metricId, config, summary);
         }
@@ -2318,6 +2323,76 @@ public class MetricService {
         if (history.size() > MAX_HISTORY) history.removeFirst();
     }
 
+    /**
+     * The summary keys worth keeping a series of, in the order a reader should draw them.
+     *
+     * <p>A closed list rather than "every number in the summary": most of what a summary carries is
+     * scope — rows read, partitions measured, a match rate — and a series of those is noise on a
+     * card. These are the values the metric's own number is <em>made of</em>, which is what
+     * {@code history} cannot show for a two-query template: on a gap it holds the difference, and
+     * the two counts are what an operator needs to see move.
+     */
+    private static final List<String> COMPONENT_SERIES = List.of(
+        "leftValue", "rightValue",
+        "avgLatencyMs", "p95LatencyMs", "maxLatencyMs",
+        "maxLagMs", "avgLagMs");
+
+    /**
+     * Append this refresh's components, keeping every series exactly as long as {@code history}.
+     *
+     * <p>Two rules, and they are the same rule twice. A key this refresh did not produce appends
+     * {@code null}, never {@code 0} — a zero draws a fall that never happened, and "not measured"
+     * and "measured as nothing" are the distinction this codebase keeps everywhere else. And a key
+     * seen for the <em>first</em> time is back-filled with nulls to the current length, so index
+     * <i>i</i> is the same refresh in every series however the metric was edited in between. That
+     * also makes the whole thing self-healing: a metric switched from one template to another
+     * simply flatlines its old series into nulls until they scroll out of the window, with no
+     * shape-change detection to get wrong.
+     */
+    private void updateComponentHistory(String id, Map<String, Object> summary) {
+        Map<String, LinkedList<Double>> series =
+            componentHistoryMap.computeIfAbsent(id, k -> new ConcurrentHashMap<>());
+        int length = historyMap.getOrDefault(id, new LinkedList<>()).size();
+
+        Map<String, Double> observed = new LinkedHashMap<>();
+        if (summary != null) {
+            for (String key : COMPONENT_SERIES) {
+                if (summary.get(key) instanceof Number n && Double.isFinite(n.doubleValue())) {
+                    observed.put(key, n.doubleValue());
+                }
+            }
+        }
+        // Nothing to track and nothing tracked yet: do not mint empty series on every gauge.
+        if (observed.isEmpty() && series.isEmpty()) return;
+
+        for (String key : observed.keySet()) {
+            series.computeIfAbsent(key, k -> {
+                LinkedList<Double> backfilled = new LinkedList<>();
+                for (int i = 0; i < length - 1; i++) backfilled.addLast(null);
+                return backfilled;
+            });
+        }
+        for (Map.Entry<String, LinkedList<Double>> entry : series.entrySet()) {
+            LinkedList<Double> values = entry.getValue();
+            values.addLast(observed.get(entry.getKey()));
+            while (values.size() > MAX_HISTORY) values.removeFirst();
+            while (values.size() > length) values.removeFirst();
+        }
+    }
+
+    /** A snapshot of the component series, for the record this refresh writes. */
+    private Map<String, List<Double>> componentHistorySnapshot(String id) {
+        Map<String, LinkedList<Double>> series = componentHistoryMap.get(id);
+        if (series == null || series.isEmpty()) return Map.of();
+        Map<String, List<Double>> copy = new LinkedHashMap<>();
+        // In the order a reader should draw them, not the map's.
+        for (String key : COMPONENT_SERIES) {
+            LinkedList<Double> values = series.get(key);
+            if (values != null && !values.isEmpty()) copy.put(key, new ArrayList<>(values));
+        }
+        return copy;
+    }
+
     private void updateMetricState(String id, Double value, String error, Map<String, Object> summary) {
         MetricConfig current = metrics.get(id);
         if (current == null) return;
@@ -2333,7 +2408,8 @@ public class MetricService {
             current.templateParams(),
             current.executionMode(),
             current.labelTopic(),
-            current.labelFields() != null ? List.copyOf(current.labelFields()) : List.of()));
+            current.labelFields() != null ? List.copyOf(current.labelFields()) : List.of(),
+            componentHistorySnapshot(id)));
     }
 
     // ── Kafka persistence ─────────────────────────────────────────────────────

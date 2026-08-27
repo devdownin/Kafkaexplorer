@@ -11,7 +11,7 @@ const metric = (over: Partial<MetricConfig>): MetricConfig => ({
   id: 'm1', name: 'gap', type: 'GAUGE', sql: null, description: '',
   warningThreshold: null, criticalThreshold: null, lastValue: null, lastUpdateTime: null,
   errorMessage: null, history: [], lastSummary: null, createTableSql: null,
-  templateType: null, templateParams: null, executionMode: null, labelTopic: null, labelFields: null,
+  templateType: null, templateParams: null, executionMode: null, labelTopic: null, labelFields: null, componentHistory: null,
   ...over,
 });
 

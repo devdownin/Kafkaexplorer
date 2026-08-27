@@ -205,6 +205,26 @@ export interface MeasurementPart {
   detail: string;
 }
 
+/**
+ * Le nom lisible de chaque clé de composante, écrit **une fois**.
+ *
+ * `describeMeasurement` l'affiche à côté du nombre et `componentSeries` l'affiche dans la légende
+ * du graphe : deux endroits qui nomment la même chose, donc une seule table — sans quoi la puce
+ * dirait « worst » et la légende « max » pour la même série.
+ */
+const COMPONENT_LABELS: Record<string, string> = {
+  leftValue: 'left',
+  rightValue: 'right',
+  avgLatencyMs: 'avg',
+  p95LatencyMs: 'p95',
+  maxLatencyMs: 'worst',
+  maxLagMs: 'worst partition',
+  avgLagMs: 'avg partition',
+};
+
+/** Les clés qui se lisent comme une durée plutôt que comme un décompte. */
+const DURATION_KEYS = new Set(['avgLatencyMs', 'p95LatencyMs', 'maxLatencyMs', 'maxLagMs', 'avgLagMs']);
+
 function count(n: number): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
@@ -232,12 +252,12 @@ export function describeMeasurement(lastSummary: Record<string, unknown> | null)
     const over = windowed ? ' over this interval' : '';
     return [
       {
-        label: 'left',
+        label: COMPONENT_LABELS.leftValue,
         value: count(left),
         detail: `What the left side counted${over}.`,
       },
       {
-        label: 'right',
+        label: COMPONENT_LABELS.rightValue,
         value: count(right),
         detail: `What the right side counted${over}. The value above is these two compared by `
           + `${typeof lastSummary.operation === 'string' ? lastSummary.operation : 'the chosen operation'}.`,
@@ -252,17 +272,17 @@ export function describeMeasurement(lastSummary: Record<string, unknown> | null)
   if (avg !== null || p95 !== null || max !== null) {
     const parts: MeasurementPart[] = [];
     if (avg !== null) parts.push({
-      label: 'avg', value: formatDurationMs(avg),
+      label: COMPONENT_LABELS.avgLatencyMs, value: formatDurationMs(avg),
       detail: 'The average of the pairs this read could form — which is the number above.',
     });
     if (p95 !== null) parts.push({
-      label: 'p95', value: formatDurationMs(p95),
+      label: COMPONENT_LABELS.p95LatencyMs, value: formatDurationMs(p95),
       detail: 'The 95th percentile. An average holds still while the worst decile doubles, so this '
         + 'is what a latency alert is set on; it is exported as explorer_metric_correlation_latency_p95_ms '
         + 'for a GAUGE metric.',
     });
     if (max !== null) parts.push({
-      label: 'worst', value: formatDurationMs(max),
+      label: COMPONENT_LABELS.maxLatencyMs, value: formatDurationMs(max),
       detail: 'The slowest pair observed in this read.',
     });
     return parts;
@@ -274,11 +294,11 @@ export function describeMeasurement(lastSummary: Record<string, unknown> | null)
   if (maxLag !== null || avgLag !== null) {
     const parts: MeasurementPart[] = [];
     if (maxLag !== null) parts.push({
-      label: 'worst partition', value: formatDurationMs(maxLag),
+      label: COMPONENT_LABELS.maxLagMs, value: formatDurationMs(maxLag),
       detail: 'The age of the oldest waiting record, on the partition furthest behind.',
     });
     if (avgLag !== null) parts.push({
-      label: 'avg partition', value: formatDurationMs(avgLag),
+      label: COMPONENT_LABELS.avgLagMs, value: formatDurationMs(avgLag),
       detail: 'The same age averaged over the partitions that could be measured.',
     });
     return parts;
@@ -340,4 +360,67 @@ export function describeRefreshCost(
   }
 
   return null;
+}
+
+
+// ── Les composantes dans le temps ──────────────────────────────────────────
+
+/** Une série à tracer : sa clé, son nom, sa couleur, ses points alignés sur `history`. */
+export interface ComponentSeries {
+  key: string;
+  label: string;
+  color: string;
+  values: (number | null)[];
+  /** Formate une valeur de cette série pour l'infobulle — une durée n'est pas un décompte. */
+  format: (value: number) => string;
+}
+
+/**
+ * Une couleur par série, fixe par clé.
+ *
+ * Fixe, pas tirée de l'ordre : une carte qui recolore ses lignes selon ce que ce
+ * rafraîchissement-ci a mesuré est une carte qu'on ne peut pas relire d'un coup d'œil.
+ */
+const COMPONENT_COLORS: Record<string, string> = {
+  leftValue: '#a3adff',
+  rightValue: '#7fd1b9',
+  avgLatencyMs: '#a3adff',
+  p95LatencyMs: '#f5c264',
+  maxLatencyMs: '#f58c8c',
+  maxLagMs: '#f5c264',
+  avgLagMs: '#a3adff',
+};
+
+/**
+ * Les séries traçables d'une métrique, ou rien.
+ *
+ * `history` porte la valeur de la métrique, qui pour un gabarit à deux requêtes est la
+ * *comparaison* et non la mesure : sur un écart c'est la différence, et ce qu'un opérateur a besoin
+ * de voir bouger, ce sont les deux comptes. Le serveur garde ces séries alignées index par index
+ * sur `history` et met `null` là où il n'a rien mesuré ; ici on ne fait que les nommer et les
+ * colorer — **rien n'est complété, rien n'est interpolé**, un trou reste un trou.
+ *
+ * Rien n'est renvoyé sous deux points : une ligne d'un seul point n'est pas une évolution.
+ */
+export function componentSeries(
+  componentHistory: Record<string, (number | null)[]> | null,
+  historyLength: number,
+): ComponentSeries[] {
+  if (!componentHistory || historyLength < 2) return [];
+  const out: ComponentSeries[] = [];
+  for (const [key, values] of Object.entries(componentHistory)) {
+    if (!Array.isArray(values) || values.length < 2) continue;
+    // Une série désalignée ne se trace pas : l'index n'y voudrait plus dire « ce
+    // rafraîchissement-là », et deux lignes décalées se lisent comme un décalage réel.
+    if (values.length !== historyLength) continue;
+    if (!values.some(v => typeof v === 'number' && Number.isFinite(v))) continue;
+    out.push({
+      key,
+      label: COMPONENT_LABELS[key] ?? key,
+      color: COMPONENT_COLORS[key] ?? '#8f93a3',
+      values: values.map(v => (typeof v === 'number' && Number.isFinite(v) ? v : null)),
+      format: DURATION_KEYS.has(key) ? formatDurationMs : (v: number) => v.toLocaleString(undefined, { maximumFractionDigits: 2 }),
+    });
+  }
+  return out;
 }

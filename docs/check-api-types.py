@@ -168,6 +168,28 @@ def narrows_string(declared: str) -> bool:
     return bool(STRING_UNION.fullmatch(NULLABLE.sub('', declared).strip()))
 
 
+REDUNDANT_PARENS = re.compile(r'\(([^()|]+)\)')
+
+
+def unwrap(ts_type: str) -> str:
+    """
+    Drop the parentheses that only held a union together, once the union is gone.
+
+    A nullable *element* has to be parenthesised in TypeScript — `(number | null)[]`, because
+    `number | null[]` binds the other way — so stripping the nullability leaves `(number)[]`
+    against an expected `number[]`, and the comparison failed on punctuation the syntax forced.
+    The rule this file states is that nullability is the frontend's business at any depth; it held
+    for a map's value and not for a list's element, which is a gap in the check rather than a
+    finding about the type. Only a group with no `|` left is unwrapped: `(A | B)[]` is a real union
+    and keeps its parentheses.
+    """
+    previous = None
+    while previous != ts_type:
+        previous = ts_type
+        ts_type = REDUNDANT_PARENS.sub(r'\1', ts_type)
+    return ts_type
+
+
 def outside_generics(ts_type: str) -> str:
     """The type with every `<…>` payload removed, to look at the top level only."""
     previous = None
@@ -194,7 +216,7 @@ def accepts(declared: str, expected: str, java_type: str) -> bool:
         return True
     if expected == 'string' and narrows_string(declared):
         return True
-    if NULLABLE.sub('', declared) != NULLABLE.sub('', expected):
+    if unwrap(NULLABLE.sub('', declared)) != unwrap(NULLABLE.sub('', expected)):
         return False
     return java_type.strip() not in PRIMITIVES or not NULLABLE.search(outside_generics(declared))
 

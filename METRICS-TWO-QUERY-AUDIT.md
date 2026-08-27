@@ -729,7 +729,30 @@ threshold was set against an average, and a p95 is above one by construction.
   *second* renderer for what `describeMetricScope` already did properly, one screen away from the
   card — the "two answers to one question" shape this codebase keeps removing, left standing.
 
-What was deliberately **not** done: a second history series so the sparkline could draw the two
-sides diverging. `historyMap` keeps one number per metric, so it is a persistence change, and what
-it would buy is what the components line above now gives in text and what Grafana does better. It is
-recorded here so it is not re-derived.
+### The sparkline plotted the value, and the value is not the measurement
+
+This one was argued against and then asked for, and the argument was wrong in the part that
+mattered: the cost was "a component on `MetricConfig` means forty-three construction sites", and
+that record already carries two backwards-compatible constructors for exactly this. A third one
+makes the nineteenth component cost **zero call sites**.
+
+`history` holds the metric's own value — on a gap, the difference. The two counts are what an
+operator needs to see move, so `componentHistory` keeps a series per component beside it. The keys
+are a **closed list**, not "every number in the summary": most of a summary is scope, and a series
+of rows-read or partitions-measured is noise on a card.
+
+Two invariants make it drawable, and they are the same rule twice. Every series is exactly as long
+as `history`, so index *i* is the same refresh in all of them. And a refresh that produced no value
+for a series appends **`null`, never `0`** — a zero draws a fall that never happened, on the metric
+whose entire job is to report a fall. A key seen for the first time is back-filled with nulls, which
+is what makes it self-healing: a metric edited from one template to another flatlines its old series
+until they scroll out of the window, with no shape-change detection to get wrong.
+
+It is rendered as **its own chart with its own scale, deliberately not a second axis on the first**.
+On a gap the value is 5 while the two sides are twelve thousand: a shared scale flattens the value
+onto the baseline, and a dual axis manufactures a crossing that does not exist. A gap in a series is
+drawn as a gap.
+
+What is still **not** done, and now for the right reason: the two series are not aggregated,
+smoothed or interpolated anywhere. A hole is a hole, and a card that filled one in would be
+inventing a measurement — which is what the rest of this document exists to stop.

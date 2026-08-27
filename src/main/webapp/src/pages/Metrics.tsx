@@ -6,7 +6,7 @@ import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import Editor, { useMonaco } from '@monaco-editor/react';
 import '../monaco-setup';
-import { AreaChart, Area, ResponsiveContainer, ReferenceLine, Tooltip, YAxis } from 'recharts';
+import { AreaChart, Area, Line, LineChart, ResponsiveContainer, ReferenceLine, Tooltip, YAxis } from 'recharts';
 import { useToast } from '../components/Toast';
 import { useCatalog } from '../catalogStore';
 import { describeApiError, type QueryErrorInfo } from './queryError';
@@ -28,7 +28,7 @@ import { SuggestionsPanel } from '../components/metrics/SuggestionsPanel';
 import { readFlowChains } from './flowChains';
 import { latestProcessModel } from './processModelEvidence';
 import { newerAuditNote, suggestionToDraft } from './metricSuggestions';
-import { describeMeasurement, describeMetricScope, describeRefreshCost, scopeNoteOf } from './metricScope';
+import { componentSeries, describeMeasurement, describeMetricScope, describeRefreshCost, scopeNoteOf } from './metricScope';
 import { buildAlertRule, describeThresholdDirection, gradeMetric, thresholdDirection } from './metricAlert';
 
 interface MetricTemplateDescriptor {
@@ -559,6 +559,21 @@ const MetricCard: React.FC<{
   const tm = TYPE_META[metric.type] ?? TYPE_META.GAUGE;
   const scopeChips = describeMetricScope(metric.lastSummary, metric.templateParams);
   const measurement = describeMeasurement(metric.lastSummary);
+  const series = componentSeries(metric.componentHistory, metric.history?.length ?? 0);
+  /*
+   * Un graphe à part, avec son échelle à lui — délibérément, et pas deux axes sur le premier.
+   *
+   * Sur un écart, la valeur vaut 5 pendant que les deux côtés valent douze mille : une échelle
+   * commune écrase la valeur sur la ligne du bas, et un double axe fait croire à un croisement qui
+   * n'existe pas. Deux boîtes, deux échelles, chacune lisible pour ce qu'elle montre.
+   */
+  const seriesData = series.length > 0
+    ? (metric.history ?? []).map((_, i) => {
+        const point: Record<string, number | null> = { i };
+        series.forEach(s => { point[s.key] = s.values[i] ?? null; });
+        return point;
+      })
+    : [];
   // Le sens du seuil est déduit de l'ordre des deux, donc le signe affiché doit suivre — sans quoi
   // la carte annoncerait « ≥ 0.95 » sur une métrique qui se déclenche en descendant.
   const thresholdSign =
@@ -725,6 +740,50 @@ const MetricCard: React.FC<{
           </div>
         )}
       </div>
+
+      {/* Les composantes dans le temps.
+
+          `history` porte la valeur, qui pour un gabarit à deux requêtes est la *comparaison* : sur
+          un écart c'est la différence, et ce qu'un opérateur a besoin de voir bouger, ce sont les
+          deux comptes. Un trou reste un trou (`connectNulls={false}`) : un rafraîchissement qui n'a
+          rien mesuré ne doit pas être relié comme s'il avait mesuré. */}
+      {series.length > 0 && (
+        <div className="px-3 pb-2">
+          <div className="rounded-lg overflow-hidden border border-outline-variant/60 bg-background-dark/60">
+            <ResponsiveContainer width="100%" height={56}>
+              <LineChart data={seriesData} margin={{ top: 6, right: 8, left: 0, bottom: 2 }}>
+                <YAxis hide domain={['dataMin', 'dataMax']} />
+                {series.map(s => (
+                  <Line key={s.key} type="monotone" dataKey={s.key} stroke={s.color} strokeWidth={1.5}
+                    dot={false} connectNulls={false} isAnimationActive={false} />
+                ))}
+                <Tooltip cursor={{ stroke: '#8f93a3', strokeWidth: 1, strokeOpacity: 0.3 }}
+                  content={({ active, payload }) =>
+                    active && payload?.length ? (
+                      <div className="bg-surface-container-low border border-outline-variant px-2 py-1 rounded-lg text-[10px] font-mono space-y-0.5">
+                        {payload.map(entry => {
+                          const s = series.find(x => x.key === entry.dataKey);
+                          return s && typeof entry.value === 'number' ? (
+                            <div key={s.key} style={{ color: s.color }}>{s.label} {s.format(entry.value)}</div>
+                          ) : null;
+                        })}
+                      </div>
+                    ) : null
+                  }
+                />
+              </LineChart>
+            </ResponsiveContainer>
+            <div className="flex items-center gap-3 px-3 py-1.5 border-t border-primary/5 text-[10px] font-mono">
+              {series.map(s => (
+                <span key={s.key} className="flex items-center gap-1 text-outline">
+                  <span aria-hidden="true" className="w-2 h-0.5 rounded-full" style={{ background: s.color }} />
+                  {s.label}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Ce que la mesure a couvert.
 

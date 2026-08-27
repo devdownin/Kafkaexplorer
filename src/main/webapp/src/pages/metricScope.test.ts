@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 
 import { describe, it, expect } from 'vitest';
-import { describeMeasurement, describeMetricScope, describeRefreshCost, formatDurationMs, scopeNoteOf, LOW_MATCH_RATE } from './metricScope';
+import { componentSeries, describeMeasurement, describeMetricScope, describeRefreshCost, formatDurationMs, scopeNoteOf, LOW_MATCH_RATE } from './metricScope';
 
 describe('what a metric says it measured', () => {
   it('says nothing at all when there is no summary', () => {
@@ -162,5 +162,42 @@ describe('ce que la configuration coûtera', () => {
   it('énonce la fenêtre quand les deux côtés en partagent une', () => {
     expect(describeRefreshCost('TOPIC_TRANSIT_LATENCY', { windowMs: 900_000, maxRowsPerSide: 5_000 }))
       .toContain('the same 15 min on each side');
+  });
+});
+
+describe('les composantes dans le temps', () => {
+  it('nomme et colore les séries que le serveur tient alignées', () => {
+    const series = componentSeries({ leftValue: [12, 13], rightValue: [7, 9] }, 2);
+    expect(series.map(s => s.label)).toEqual(['left', 'right']);
+    expect(series[0].color).not.toBe(series[1].color);
+    // Le nom vient de la même table que la puce à côté du nombre : deux endroits, une définition.
+    expect(series[0].label).toBe(describeMeasurement({ leftValue: 12, rightValue: 7 })[0].label);
+  });
+
+  it('laisse les trous être des trous', () => {
+    // `null` veut dire « pas mesurée à ce rafraîchissement ». Rien n'est complété ni interpolé :
+    // relier ce point-là, ce serait dessiner une mesure qui n'a pas eu lieu.
+    const series = componentSeries({ leftValue: [12, null, 14] }, 3);
+    expect(series[0].values).toEqual([12, null, 14]);
+  });
+
+  it('refuse une série désalignée plutôt que de la décaler', () => {
+    // L'index doit vouloir dire « ce rafraîchissement-là » dans toutes les séries à la fois ;
+    // deux lignes décalées se lisent comme un décalage réel du pipeline.
+    expect(componentSeries({ leftValue: [12, 13, 14] }, 2)).toEqual([]);
+  });
+
+  it('ne trace rien qui ne soit pas une évolution', () => {
+    expect(componentSeries({ leftValue: [12] }, 1)).toEqual([]);
+    expect(componentSeries(null, 5)).toEqual([]);
+    // Une série qui n'a jamais rien mesuré n'est pas une ligne plate à zéro : elle n'est pas là.
+    expect(componentSeries({ leftValue: [null, null] }, 2)).toEqual([]);
+  });
+
+  it('formate une durée comme une durée et un décompte comme un décompte', () => {
+    const [latency] = componentSeries({ p95LatencyMs: [4200, 4300] }, 2);
+    expect(latency.format(4200)).toBe('4.2 s');
+    const [gap] = componentSeries({ leftValue: [12000, 12500] }, 2);
+    expect(gap.format(12000)).toBe('12,000');
   });
 });

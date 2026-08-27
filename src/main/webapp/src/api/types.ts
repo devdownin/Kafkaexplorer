@@ -352,6 +352,12 @@ export interface MetricConfig {
   executionMode: string | null;
   labelTopic: string | null;
   labelFields: string[] | null;
+  /**
+   * Les valeurs qui *composent* `lastValue`, une série par nom, alignées index par index sur
+   * `history`. `null` à un index veut dire « pas mesurée à ce rafraîchissement » — jamais zéro,
+   * qui dessinerait une chute qui n'a pas eu lieu.
+   */
+  componentHistory: Record<string, (number | null)[]> | null;
 }
 
 /** @java MetricSuggestionSource */

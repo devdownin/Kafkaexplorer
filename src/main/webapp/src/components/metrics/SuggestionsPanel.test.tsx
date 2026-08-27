@@ -27,7 +27,7 @@ function metric(overrides: Partial<MetricConfig> = {}): MetricConfig {
     lastValue: null, lastUpdateTime: null, errorMessage: null, history: [], lastSummary: null,
     createTableSql: null, templateType: 'TOPIC_TRANSIT_LATENCY',
     templateParams: { sourceTopic: 'orders.received', targetTopic: 'orders.enriched' },
-    executionMode: 'TEMPLATE_BOUNDED_SCAN', labelTopic: 'orders.received', labelFields: [],
+    executionMode: 'TEMPLATE_BOUNDED_SCAN', labelTopic: 'orders.received', labelFields: [], componentHistory: null,
     ...overrides,
   };
 }
