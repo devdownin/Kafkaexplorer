@@ -913,6 +913,28 @@ exists one file over: `FieldProfilingService` aggregates per path instead of inl
 which is why profiling behaves on small models and the analysis does not. Read it before touching
 `LlmAnalysisService`, `LlmSchemas` or `AuditPromptCatalog`.
 
+`PROCESS-MINING-LLM-CALLS-AUDIT.md` is its sibling on the other axis: the same feature, but the
+**calls** rather than the prompt, and every provider **except OpenRouter** — `ANTHROPIC`,
+`OPENAI_COMPATIBLE`, `OLLAMA`, `SPECTRA`. It exists because that is where the gap is: the routing
+policy, the per-model schema latch, the model catalogue, the key-credit read and the
+relayed-upstream diagnosis are all OpenRouter's, and so is most of `LlmStructuredOutputTest` — what
+is left over is the path every deployment that keeps inference in-house takes, which is what two
+bundled stacks and two setup scripts configure. Twelve items ranked, nothing implemented. Three
+dominate. A **400 that has nothing to do with the schema** still marks a model schema-incapable for
+the client's lifetime, because `rememberSchemaRefusal` is called *before* the unconstrained retry
+that would test the conclusion (`max_tokens` and `temperature: 0.0` are both refused with a 400 by
+current OpenAI reasoning models, and this client always sends them) — and `LlmClientProvider`
+fingerprints provider, base URL and key, so it survives every Settings change but those three.
+**Test LLM gives up at 90 s** on the Process Mining page while `compose/ollama.yml` and
+`compose/spectra-hub.yml` both configure the server to wait **300**, so the button reports "could
+not be reached" about an endpoint that was answering, on the two stacks where nothing else
+diagnoses anything; its twin on the Settings page has no timeout at all. And **the bundled Ollama
+stack runs unconstrained**: `compose/ollama.yml`, `setup-llm.sh`, `setup-llm.ps1` and Option C of
+`docs/LLM-PROVIDERS.md` all set `OPENAI_COMPATIBLE`, which `structured-output: AUTO` deliberately
+leaves alone, while `docs/DOCKERHUB.md` tells operators to set `OLLAMA` — a value nothing in the
+tree actually sets. Read it before touching `AnthropicLlmClient`, `SpectraLlmClient`,
+`LlmHttpSupport` or `LlmClientProvider`.
+
 **The two metric templates that compare the results of two queries** — `TOPIC_COUNT_DELTA` and
 `TOPIC_TRANSIT_LATENCY`, which are also the two the KPI suggestion panel proposes most — are
 reviewed in `METRICS-TWO-QUERY-AUDIT.md`, twelve items ranked, of which the first three have
