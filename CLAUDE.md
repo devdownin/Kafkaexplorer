@@ -1258,7 +1258,7 @@ and `pull_request_template.md`.
   protection rule on `main` ("Require review from Code Owners"), which lives in the repository
   settings and is the thing that turns the file into a gate.
 
-Two workflows beyond `ci.yml` / `release.yml` / `dockerhub-description.yml`:
+Three workflows beyond `ci.yml` / `release.yml` / `dockerhub-description.yml`:
 
 - **`codeql.yml`** — static analysis of the *source*, on push, pull request and weekly. Trivy in
   `ci.yml` scans the released image, which means its OS packages and the jars it ships; it never
@@ -1294,6 +1294,21 @@ Two workflows beyond `ci.yml` / `release.yml` / `dockerhub-description.yml`:
   needs a classic PAT as the optional `SCORECARD_TOKEN` secret — the default `GITHUB_TOKEN`
   cannot read those settings, so without it that one check reports unknown while the rest score
   normally; it stays optional so a fork is not failed on a secret it cannot have.
+
+- **`image-pins.yml`** — `check-image-pins.py --published`, weekly plus `workflow_dispatch`. The
+  Explorer pin of the published-image stacks is hand-written as `${EXPLORER_IMAGE_TAG:-<version>}`,
+  which Dependabot cannot read, so the only thing that moves it is `release.yml`'s bump pull
+  request — and that step is `continue-on-error` by design, the image being published by the time
+  it runs. The hole is not that posture but its consequence: when the step opens nothing,
+  **nothing says so**, and the pin goes stale in silence until the next pull request touching a
+  file `hub-changes` gates on fails a check about something it did not change. `release.yml`'s own
+  comment records that happening twice in one day; it then happened again across v1.9.3 and
+  v1.9.4. So the release keeps trying to fix it and this asks the question on a timer, which is
+  the same argument Scorecard rests on — what decays silently needs something looking at it when
+  nothing else is happening. It deliberately does **not** open the bump pull request: that logic
+  lives in `release.yml`, and a second copy is the drift this repository keeps removing. A
+  registry that cannot be reached is a `::warning::` inside the script rather than a red run, so
+  a failure here means the pin really is behind, and its message names the three files.
 
 **The JAR is signed, keylessly** (`actions/attest-build-provenance` in `release.yml`'s `build`
 job, hence the `id-token: write` + `attestations: write` on it). The image had a full SLSA
