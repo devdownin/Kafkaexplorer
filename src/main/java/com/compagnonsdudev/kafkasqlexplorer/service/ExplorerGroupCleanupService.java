@@ -9,7 +9,12 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
+import jakarta.annotation.PreDestroy;
+
 import java.util.List;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Removes the consumer groups this application left on a cluster — opt-in, and the only thing
@@ -35,8 +40,13 @@ import java.util.List;
  *       every deleted id is logged. A cleanup nobody can audit afterwards is worse than none.</li>
  * </ul>
  *
- * <p>It runs once, after the context is ready, on the caller's thread of the event — never during
- * bean construction, so a slow or unreachable broker cannot hold up the application's start.
+ * <p>The first pass runs after the context is ready, on the event's own thread — never during bean
+ * construction, so a slow or unreachable broker cannot hold up the application's start. Later
+ * passes run on a daemon thread every {@code explorer.cleanup-own-groups-interval-ms}: once at
+ * startup was the wrong cadence for what is being cleaned, since every bundled stack runs this
+ * application with {@code restart: unless-stopped} and a live Process Mining session leaves an
+ * empty group behind each time one ends. A pass costs one {@code ListGroups} and, normally, no
+ * deletion at all.
  */
 @Service
 public class ExplorerGroupCleanupService {
@@ -45,6 +55,12 @@ public class ExplorerGroupCleanupService {
 
     private final KafkaAdminService kafkaAdminService;
     private final ExplorerConfig explorerConfig;
+
+    private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "explorer-group-cleanup");
+        t.setDaemon(true);
+        return t;
+    });
 
     public ExplorerGroupCleanupService(KafkaAdminService kafkaAdminService, ExplorerConfig explorerConfig) {
         this.kafkaAdminService = kafkaAdminService;
@@ -56,6 +72,25 @@ public class ExplorerGroupCleanupService {
         if (!explorerConfig.isCleanupOwnGroups()) {
             return;
         }
+        runSafely();
+
+        long intervalMs = explorerConfig.getCleanupOwnGroupsIntervalMs();
+        if (intervalMs <= 0) {
+            log.info("Leftover-group cleanup will not run again "
+                + "(explorer.cleanup-own-groups-interval-ms is 0).");
+            return;
+        }
+        scheduler.scheduleWithFixedDelay(this::runSafely, intervalMs, intervalMs, TimeUnit.MILLISECONDS);
+        log.info("Leftover-group cleanup will run again every {} ms.", intervalMs);
+    }
+
+    /**
+     * One pass, never able to throw. {@code scheduleWithFixedDelay} cancels the whole schedule on
+     * the first exception its task lets out, so a single unreachable broker would otherwise end
+     * the cleanup for the life of the process — silently, which is how this became a startup-only
+     * job in the first place.
+     */
+    private void runSafely() {
         try {
             run();
         } catch (Exception e) {
@@ -63,6 +98,11 @@ public class ExplorerGroupCleanupService {
             // is not a reason to refuse to start.
             log.warn("Cleanup of the explorer's own consumer groups failed: {}", e.toString());
         }
+    }
+
+    @PreDestroy
+    void stop() {
+        scheduler.shutdownNow();
     }
 
     /** Visible for testing; returns the ids it deleted. */
@@ -84,7 +124,7 @@ public class ExplorerGroupCleanupService {
                 + "on the next start.", candidates.size() - deleted.size(), candidates.size());
         }
         if (candidates.size() == max) {
-            log.info("The cleanup cap of {} was reached — run again to remove the rest.", max);
+            log.info("The cleanup cap of {} was reached — the rest go on the next pass.", max);
         }
         return deleted;
     }

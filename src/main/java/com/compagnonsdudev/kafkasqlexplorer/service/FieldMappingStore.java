@@ -5,6 +5,7 @@ package com.compagnonsdudev.kafkasqlexplorer.service;
 import com.compagnonsdudev.kafkasqlexplorer.config.ExplorerConfig;
 import com.compagnonsdudev.kafkasqlexplorer.config.KafkaConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.FieldMapping;
+import com.compagnonsdudev.kafkasqlexplorer.util.LogSafe;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
@@ -33,6 +34,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
  * The field mappings validated by the Process Mining pipeline.
@@ -89,11 +92,29 @@ public class FieldMappingStore {
 
     private volatile Producer<String, String> producer;
 
+    /**
+     * Ids the in-memory bound has just dropped, waiting to be tombstoned on the topic.
+     *
+     * <p>Collected here rather than written from inside {@code removeEldestEntry} so that no
+     * producer call is made while the map's own lock is held.
+     */
+    private final Queue<String> evicted = new ConcurrentLinkedQueue<>();
+
+    /**
+     * True while {@link #restoreFromKafka()} is replaying the topic into the map.
+     *
+     * <p>A restore is not a decision: replaying a long topic evicts as it goes, and tombstoning
+     * those would turn every boot into a write storm against the very store being read.
+     */
+    private volatile boolean restoring;
+
     private final Map<String, FieldMapping> mappings = Collections.synchronizedMap(
         new LinkedHashMap<>(16, 0.75f, true) {
             @Override
             protected boolean removeEldestEntry(Map.Entry<String, FieldMapping> eldest) {
-                return size() > MAX_ENTRIES;
+                if (size() <= MAX_ENTRIES) return false;
+                if (!restoring) evicted.add(eldest.getKey());
+                return true;
             }
         });
 
@@ -113,6 +134,27 @@ public class FieldMappingStore {
         if (mapping == null || mapping.id() == null) return;
         mappings.put(mapping.id(), mapping);
         persist(mapping);
+        forgetEvicted();
+    }
+
+    /**
+     * Tombstones what the in-memory bound has dropped, so the topic follows the same bound.
+     *
+     * <p>Every validation in Process Mining mints a <em>fresh</em> UUID, so this topic gains one
+     * new key per click and keeps it for ever: compaction cannot reclaim a key that is never
+     * rewritten, and nothing else ever deleted one. A store bounded at {@link #MAX_ENTRIES} in
+     * memory and unbounded on disk is also incoherent in a way that shows — a restart resurrects
+     * mappings the running process had already stopped answering for.
+     *
+     * <p>The accepted cost is stated where it is paid: a mapping evicted by two hundred newer ones
+     * is gone, not merely absent from this process. That is the policy the store already applies
+     * to the answer it gives — {@code find} returns empty, and every caller is required to treat
+     * that as "never validated" — applied to the log as well.
+     */
+    private void forgetEvicted() {
+        for (String id = evicted.poll(); id != null; id = evicted.poll()) {
+            persistTombstone(id);
+        }
     }
 
     /**
@@ -127,6 +169,24 @@ public class FieldMappingStore {
     }
 
     // ── Kafka persistence ─────────────────────────────────────────────────────
+
+    /** A null value, so a compacted topic can actually reclaim the key. */
+    private void persistTombstone(String id) {
+        try {
+            producer().send(
+                new ProducerRecord<String, String>(explorerConfig.getFieldMappingTopic(), id, null),
+                (metadata, error) -> {
+                    if (error != null) {
+                        log.warn("Field mapping {} was evicted but not tombstoned: {}",
+                            LogSafe.name(id), error.toString());
+                        closeProducer();
+                    }
+                });
+        } catch (Exception e) {
+            log.warn("Field mapping {} was evicted but not tombstoned: {}", LogSafe.name(id), e.toString());
+            closeProducer();
+        }
+    }
 
     private void persist(FieldMapping mapping) {
         try {
@@ -218,6 +278,7 @@ public class FieldMappingStore {
         }
 
         long startedAt = System.currentTimeMillis();
+        restoring = true;
         try (Consumer<String, String> consumer = createConsumer()) {
             List<PartitionInfo> partitionInfos = consumer.partitionsFor(topic);
             if (partitionInfos == null || partitionInfos.isEmpty()) {
@@ -229,18 +290,24 @@ public class FieldMappingStore {
             consumer.assign(partitions);
             consumer.seekToBeginning(partitions);
             Map<TopicPartition, Long> endOffsets = consumer.endOffsets(partitions);
+            // Seeded from where this read seeked, advanced only by records it was handed. It used
+            // to be consumer.position(), which reports the client's prefetch rather than what has
+            // been delivered — so the loop could stop with mappings still in flight and call that
+            // a complete restore. See TopicReadCursor.
+            TopicReadCursor cursor = TopicReadCursor.of(consumer.beginningOffsets(partitions), endOffsets);
 
             // Driven by the end offsets, never by an empty poll: the first poll after an assignment
             // is very often empty while the fetch is in flight, and treating that as "exhausted"
             // is how a restore silently returns a fraction of what is stored.
             long deadline = startedAt + RESTORE_BUDGET_MS;
-            while (System.currentTimeMillis() < deadline && !reachedEnd(consumer, endOffsets)) {
+            while (System.currentTimeMillis() < deadline && cursor.hasUnread()) {
                 ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(300));
                 for (ConsumerRecord<String, String> record : records) {
+                    cursor.advance(record);
                     restoreOne(record);
                 }
             }
-            boolean complete = reachedEnd(consumer, endOffsets);
+            boolean complete = !cursor.hasUnread();
             long ms = System.currentTimeMillis() - startedAt;
             if (!complete) {
                 log.warn("Only part of {} was read: the {} ms restore budget ran out after {} ms "
@@ -265,6 +332,9 @@ public class FieldMappingStore {
             log.warn("Process Mining field mappings could not be restored from {} after {} ms: {}",
                 topic, ms, reason);
             return false;
+        } finally {
+            restoring = false;
+            evicted.clear();
         }
     }
 
@@ -281,13 +351,6 @@ public class FieldMappingStore {
             log.warn("Skipping an unreadable field mapping at {}:{}: {}",
                 record.partition(), record.offset(), e.toString());
         }
-    }
-
-    private boolean reachedEnd(Consumer<String, String> consumer, Map<TopicPartition, Long> endOffsets) {
-        for (Map.Entry<TopicPartition, Long> entry : endOffsets.entrySet()) {
-            if (consumer.position(entry.getKey()) < entry.getValue()) return false;
-        }
-        return true;
     }
 
     @PreDestroy

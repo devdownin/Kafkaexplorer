@@ -326,6 +326,20 @@ public class AuditService {
             if (prefix != null) {
                 topics = topics.stream().filter(t -> t.startsWith(prefix)).toList();
             }
+            // The application's own state topics are out of scope, unless the prefix asked for
+            // them by name. They are this application's bookkeeping, not the estate under
+            // exploration, and auditing them manufactures findings about ourselves: the metric
+            // configurations are a keyed store, so every edited metric is a "duplicate key" on
+            // internal.metrics.config, and the audit writes its own report to
+            // internal.audit.history while that topic is being read. It is the same defect
+            // ExplorerConsumerGroups removed for the groups — the app reporting its own leftovers
+            // as findings — left standing for the topics.
+            final List<String> ownTopics = prefix != null && explorerConfig.isInternalTopic(prefix)
+                ? List.of()
+                : topics.stream().filter(explorerConfig::isInternalTopic).sorted().toList();
+            if (!ownTopics.isEmpty()) {
+                topics = topics.stream().filter(t -> !ownTopics.contains(t)).toList();
+            }
             Map<String, Long> topicSizes = kafkaAdminService.getTopicsSize(topics);
 
             int totalTopics = topics.size();
@@ -396,6 +410,13 @@ public class AuditService {
             // stopped after 10 of 2 000 topics must not read as "1 990 topics are healthy".
             globalStats.put("healthScore", healthScore(auditedTopics, criticalCount, warningCount));
             List<String> scopeNotes = scopeNotes(options, topicAudits, groupSnapshot);
+            // Narrowing the scope is never silent: an excluded topic that says nothing about
+            // itself is indistinguishable from a topic that was audited and found healthy.
+            if (!ownTopics.isEmpty()) {
+                scopeNotes.add(0, ownTopics.size() + " topic(s) this application keeps its own "
+                    + "state in were not audited (" + String.join(", ", ownTopics) + "). Audit them "
+                    + "by naming their prefix explicitly.");
+            }
             if (wasCancelled) {
                 globalStats.put("cancelled", true);
                 globalStats.put("stopReason", stopped.name());

@@ -348,9 +348,12 @@ public class StreamFlowService {
             return List.of();
         }
 
-        Set<String> excluded = Set.of(explorerConfig.getAuditHistoryTopic(), explorerConfig.getMetricsConfigTopic());
+        // Every topic this application writes for itself, asked once and in one place. This used
+        // to be a Set.of() naming two of the three by hand, so a whole-cluster trace read
+        // internal.field.mappings and the demo stack's own marker topic — and a configured
+        // explorer.internal-topic-prefix moved the names out from under the literals.
         List<String> candidates = all.stream()
-            .filter(t -> !excluded.contains(t))
+            .filter(t -> !explorerConfig.isInternalTopic(t))
             .sorted()
             .toList();
 

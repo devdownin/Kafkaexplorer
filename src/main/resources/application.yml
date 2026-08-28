@@ -72,7 +72,25 @@ explorer:
   # ne déplace pas ce que le réglage précédent a écrit — un opérateur qui le pose sur un
   # déploiement vivant repart sur un historique d'audit vierge.
   internal-topic-prefix: ${EXPLORER_INTERNAL_TOPIC_PREFIX:}
+  # Create the three topics above with the retention policy each one needs, instead of letting the
+  # broker auto-create them with its defaults. Two of them are KEYED stores read back by key at
+  # startup, so they need `cleanup.policy=compact`; auto-creation gives them `delete` plus whatever
+  # `retention.ms` the broker has, and a metric configured a week earlier simply disappeared. It
+  # also removes the dependency on `auto.create.topics.enable`, which most production brokers turn
+  # off — there, the three writes just failed. Scoped to this application's own topics; the broker
+  # still chooses partitions and replication.
+  internal-topic-provisioning: ${EXPLORER_INTERNAL_TOPIC_PROVISIONING:true}
+  # Also FIX an internal topic that already exists with the wrong policy. Off, because altering a
+  # topic is not the same act as creating one — it may have been configured deliberately, so a
+  # mismatch is a WARN naming the topic, the value found and the value wanted. Worth turning on
+  # once on a deployment upgraded from a build that let the broker auto-create these.
+  internal-topic-reconcile: ${EXPLORER_INTERNAL_TOPIC_RECONCILE:false}
   audit-history-topic: internal.audit.history
+  # How long a stored audit report is kept (0 leaves the broker's retention alone, -1 keeps them
+  # for ever). The history topic is append-only and nothing here ever trimmed it, so what bounded
+  # it was whichever retention the broker happened to apply — unbounded on one cluster, a "Past
+  # runs" list that stops a week back on another. Applied by internal-topic-provisioning.
+  audit-history-retention-ms: ${EXPLORER_AUDIT_HISTORY_RETENTION_MS:2592000000}
   # Where the field mappings validated in Process Mining are kept, keyed by mapping id (so the
   # topic is meant to be compacted). The mapping is the only human-corrected artefact this app
   # produces; it used to live in memory alone and a restart lost it.
@@ -139,6 +157,11 @@ explorer:
   flink-warmup-enabled: true
   cleanup-own-groups: false
   cleanup-own-groups-max: 500
+  # How often the cleanup runs after the first pass; 0 runs it once at startup and never again,
+  # which is what it used to do. Once was the wrong cadence: every bundled stack runs the app with
+  # `restart: unless-stopped`, and a Process Mining live session leaves an empty group behind each
+  # time one ends. A pass costs one ListGroups and, normally, no deletion at all.
+  cleanup-own-groups-interval-ms: ${EXPLORER_CLEANUP_OWN_GROUPS_INTERVAL_MS:3600000}
   # Topics whose consumer lag is exported as Prometheus gauges — named explicitly, never
   # discovered: one series per group x topic is how a metrics backend gets killed. Empty (the
   # default) registers no gauge and starts no polling thread. Example:

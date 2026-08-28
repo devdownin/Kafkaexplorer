@@ -215,4 +215,18 @@ public final class ExplorerConsumerGroups {
         if (groupId.startsWith(DEFAULT_PREFIX)) return true;
         return LEGACY_PREFIXES.stream().anyMatch(groupId::startsWith);
     }
+
+    /**
+     * True when a group id carries one of the naming schemes used <em>before</em> the prefix
+     * existed — that is, a leftover no build running today can produce.
+     *
+     * <p>Used by the cleanup to decide what a capped pass removes first. Every candidate is ours
+     * and empty, so there is no wrong answer here; what makes this the better order is that these
+     * are the accumulated backlog the cleanup exists for — thousands of them on a cluster that ran
+     * an older build — while a current-prefix group is at most one live session that has just
+     * ended. Cutting alphabetically instead ordered them by a UUID, which is to say at random.
+     */
+    public static boolean isLegacyGroup(String groupId) {
+        return groupId != null && LEGACY_PREFIXES.stream().anyMatch(groupId::startsWith);
+    }
 }

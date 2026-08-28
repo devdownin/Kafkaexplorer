@@ -24,6 +24,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -43,10 +44,15 @@ class FieldMappingStoreTest {
     private MockProducer<String, String> producer;
     private FieldMappingStore store;
 
-    @BeforeEach
-    void setUp() {
+    private static KafkaConfig kafkaConfigStub() {
         KafkaConfig kafkaConfig = mock(KafkaConfig.class);
         when(kafkaConfig.getKafkaProperties()).thenReturn(Map.of("bootstrap.servers", "localhost:9092"));
+        return kafkaConfig;
+    }
+
+    @BeforeEach
+    void setUp() {
+        KafkaConfig kafkaConfig = kafkaConfigStub();
         consumer = new MockConsumer<>("earliest");
         // Kafka 4.x dropped the (boolean, Serializer, Serializer) overload; a null partitioner
         // puts every record on partition 0, which is all this test needs.
@@ -103,6 +109,66 @@ class FieldMappingStoreTest {
             {"id":"%s","correlationIdPaths":{"%s":"%s"},
              "timestampPaths":{},"statusPaths":{},"statusEquivalences":{}}"""
             .formatted(id, topic, path);
+    }
+
+    /**
+     * The defect this store shared with {@code MetricService}: the restore steered by
+     * {@code consumer.position()}, which is the client's <em>prefetch</em> position and runs ahead
+     * of what has been delivered. The mock has to lie the way a real client lies — report the log
+     * end while handing over nothing — since {@code MockConsumer} otherwise advances its position
+     * only on delivered records and could never reproduce it.
+     */
+    @Test
+    void aPrefetchPositionAtTheLogEndDoesNotEndTheRestore() {
+        MockConsumer<String, String> lying = new MockConsumer<>("earliest") {
+            @Override
+            public long position(TopicPartition partition) {
+                return 2L;   // the log end, whatever this read has actually been handed
+            }
+        };
+        consumer = lying;
+        store = newStore(kafkaConfigStub(), new ExplorerConfig());
+        seed(json("map-0", "t", "$.a"), json("map-1", "t", "$.b"));
+
+        assertTrue(store.restoreFromKafka());
+
+        assertTrue(store.find("map-0").isPresent(), "the read stopped on the prefetch position");
+        assertTrue(store.find("map-1").isPresent(), "the read stopped on the prefetch position");
+    }
+
+    /**
+     * Every validation mints a fresh id, so this topic gains one key per click and compaction can
+     * never reclaim one: nothing here had ever deleted a mapping. The in-memory bound is the
+     * policy the store already applies to its answers; the topic follows it.
+     */
+    @Test
+    void anEvictedMappingIsTombstonedSoTheTopicFollowsTheSameBound() {
+        for (int i = 0; i <= FieldMappingStore.MAX_ENTRIES; i++) {
+            store.put(mapping("map-" + i, "t", "$.id"));
+        }
+
+        assertFalse(store.find("map-0").isPresent(), "the oldest should have been evicted");
+        ProducerRecord<String, String> last = producer.history().get(producer.history().size() - 1);
+        assertEquals("map-0", last.key());
+        // A null value, not a "DELETED" sentinel: only a tombstone lets a compacted topic reclaim
+        // the key, which is the whole point of writing one.
+        assertNull(last.value());
+    }
+
+    /**
+     * A restore is a replay, not a decision. Without this, every boot on a long topic would answer
+     * by writing a tombstone for each record it evicted while reading — a write storm against the
+     * store it is in the middle of reading.
+     */
+    @Test
+    void aRestoreDoesNotTombstoneWhatItEvictsWhileReplaying() {
+        String[] payloads = new String[FieldMappingStore.MAX_ENTRIES + 10];
+        for (int i = 0; i < payloads.length; i++) payloads[i] = json("map-" + i, "t", "$.id");
+        seed(payloads);
+
+        store.restoreFromKafka();
+
+        assertTrue(producer.history().isEmpty(), "a restore must not write to the topic it reads");
     }
 
     @Test

@@ -108,7 +108,7 @@ NOT_A_PATH = {
     'java/log-injection',
     'src/main/resources/static/', 'src/main/webapp/node_modules',
     # Shipped inside the Kafka image, not in this repository.
-    'kafka-broker-api-versions.sh', 'kafka-consumer-groups.sh',
+    'kafka-broker-api-versions.sh', 'kafka-consumer-groups.sh', 'kafka-configs.sh',
     # A file of the *SpectraLLM* repository, named because its absence here is the reason
     # compose/spectra-hub.yml starts llama-server from arguments instead of mounting it.
     'scripts/llm-chat-entrypoint.sh',
