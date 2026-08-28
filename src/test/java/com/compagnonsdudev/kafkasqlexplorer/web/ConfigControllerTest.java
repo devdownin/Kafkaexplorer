@@ -398,6 +398,25 @@ class ConfigControllerTest {
             .andExpect(jsonPath("$.forgotten").isEmpty());
     }
 
+    /**
+     * {@code kafka.clusters} is gone, and its absence is pinned like {@code TableController}'s was.
+     *
+     * <p>It was a bindable {@code Map<String, String>} that nothing set, nothing documented and
+     * nothing read: never in {@code application.yml}, never in a doc table, and its only use in the
+     * tree was being echoed to the browser by this endpoint, where no page read it either. What it
+     * cost was not the two lines but the affordance — a {@code clusters} key in the settings
+     * response reads as named-cluster switching, which this application does not have, and
+     * {@code KAFKA_CLUSTERS_A=...} would have populated it and had it served while changing
+     * nothing. Same argument as the uncalled {@code POST /api/metrics/preview} and
+     * {@code TableController}: surface nobody calls is surface nobody guards.
+     */
+    @Test
+    void theSettingsAnswerCarriesNoClusterMap() throws Exception {
+        mockMvc.perform(get("/api/config"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.clusters").doesNotExist());
+    }
+
     /** `/config` belongs to the SPA. A controller mapping there answers a refresh with a 500. */
     @Test
     void thereIsNoServerSideConfigPage() throws Exception {

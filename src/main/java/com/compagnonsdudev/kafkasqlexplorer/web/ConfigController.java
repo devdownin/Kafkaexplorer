@@ -78,7 +78,6 @@ public class ConfigController {
         Map<String, Object> result = new HashMap<>();
         result.put("bootstrapServers", kafkaConfig.getBootstrapServers());
         result.put("mode", kafkaConfig.getMode());
-        result.put("clusters", kafkaConfig.getClusters());
         appendReachability(result);
         appendConnectionDetail(result);
         appendLlmConfig(result);

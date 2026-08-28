@@ -5,7 +5,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import axios from 'axios';
 import {
   PageHeader, Button, CardSkeleton, Checkbox, Combobox, ErrorPanel, Field, Input, NumberInput,
-  PasswordInput, useConfirm, useUnsavedGuard,
+  PasswordInput, RadioCards, Switch, useConfirm, useUnsavedGuard,
 } from '../components/ui';
 import { clearDraft, readDraft, useDraftConflict, writeDraft } from '../draftStore';
 import { draftableOnly, mergeDraft } from './configDraft';
@@ -83,9 +83,19 @@ interface ClusterConfig {
    */
   llmStructuredOutputActive?: boolean;
   /**
-   * Réglages de routage OpenRouter, servis par le serveur et non éditables ici — comme
-   * `llmStructuredOutput`, ils se posent dans la configuration du déploiement. Le formulaire les
-   * renvoie tels quels, donc ils ne comptent jamais comme « saisis ».
+   * Le contrat de décodage demandé au point d'accès. `AUTO` ne l'active que là où le support est
+   * connu (Anthropic, Ollama, OpenRouter) : une passerelle inconnue peut répondre 400 à un
+   * `response_format` qu'elle n'implémente pas, et transformer un déploiement qui marche en
+   * déploiement qui échoue pour gagner une garantie dont il n'a peut-être pas besoin est le
+   * mauvais défaut. `ON` est l'option de qui sait mieux. Le serveur l'acceptait et le validait
+   * depuis toujours ; il n'y avait simplement aucun contrôle.
+   */
+  llmStructuredOutput?: 'AUTO' | 'ON' | 'OFF';
+  /**
+   * Réglages de routage OpenRouter. `llmOpenrouterDataCollection` est le seul endroit de cette
+   * application où une affirmation de confidentialité cesse d'être un avertissement : OpenRouter
+   * l'impose au routage, donc le bandeau peut l'énoncer. Le formulaire les renvoyait tels quels
+   * sans jamais les montrer.
    */
   llmOpenrouterDataCollection?: 'ALLOW' | 'DENY';
   llmOpenrouterRequireParameters?: boolean;
@@ -129,6 +139,17 @@ const FIELD_ORDER: ValidatedField[] = [
   'llmModel', 'llmBaseUrl', 'llmApiKey',
   'llmMaxTokens', 'llmSnapshotWindowSize', 'llmSnapshotWindowTimeoutSeconds',
 ];
+
+const STRUCTURED_OUTPUT = [
+  { value: 'AUTO', label: 'Auto', description: 'On where support is known' },
+  { value: 'ON', label: 'On', description: 'Always send a JSON schema' },
+  { value: 'OFF', label: 'Off', description: 'Parse the answer leniently' },
+] as const;
+
+const DATA_COLLECTION = [
+  { value: 'DENY', label: 'Refuse retention', description: 'Route only to providers that keep nothing' },
+  { value: 'ALLOW', label: 'Allow any provider', description: 'Including those that retain or train' },
+] as const;
 
 const LLM_PROVIDERS = [
   { value: 'ANTHROPIC', label: 'Anthropic', description: 'Hosted Claude models' },
@@ -305,8 +326,18 @@ const Config: React.FC = () => {
   const connectionIsStale = inForce != null && inForce.llmProvider !== config.llmProvider;
   const modelSlugs = useMemo(() => optionSlugs(models), [models]);
   const shortlistState = useMemo(() => describeShortlist(models), [models]);
-  /** Le formulaire pointe ailleurs que ce qui tourne : le bandeau décrit encore l'ancien. */
-  const policyIsStale = inForce != null && inForce.llmProvider !== config.llmProvider;
+  /**
+   * Le formulaire pointe ailleurs que ce qui tourne : le bandeau décrit encore l'ancien.
+   *
+   * La politique de collecte compte autant que le fournisseur depuis qu'elle est modifiable ici :
+   * `llmDataRetentionRefused` est calculé côté serveur, donc passer à `ALLOW` dans le formulaire
+   * laisse le bandeau annoncer « aucune rétention » jusqu'à l'enregistrement — exactement le
+   * mensonge que ce repère existe pour empêcher, sur la seule phrase de cette page qui engage
+   * quelque chose.
+   */
+  const policyIsStale = inForce != null
+    && (inForce.llmProvider !== config.llmProvider
+      || inForce.llmOpenrouterDataCollection !== config.llmOpenrouterDataCollection);
 
   /*
    * Le serveur donne la base — c'est lui qui dit ce qui est réellement en vigueur, et lui seul
@@ -356,6 +387,7 @@ const Config: React.FC = () => {
           llmProvider: saved.llmProvider,
           llmLocalDeployment: saved.llmLocalDeployment,
           llmDataRetentionRefused: saved.llmDataRetentionRefused,
+          llmOpenrouterDataCollection: saved.llmOpenrouterDataCollection,
         } : null);
       setLoading(false);
   }, []);
@@ -430,6 +462,7 @@ const Config: React.FC = () => {
       llmProvider: settings.llmProvider,
       llmLocalDeployment: settings.llmLocalDeployment,
       llmDataRetentionRefused: settings.llmDataRetentionRefused,
+      llmOpenrouterDataCollection: settings.llmOpenrouterDataCollection,
     });
     // Ce que l'enregistrement a réellement obtenu quand ce n'est pas ce qui était promis : un
     // magasin qu'on n'a pas pu écrire laisse des réglages qui marchent maintenant et disparaissent
@@ -967,27 +1000,14 @@ const Config: React.FC = () => {
           </Field>
 
           {/* Security Mode */}
-          <fieldset>
-            <legend className="block text-[12px] font-medium text-on-surface-variant mb-1.5">Security Mode</legend>
-            <div className="grid grid-cols-3 gap-3">
-              {MODES.map(mode => (
-                <button
-                  key={mode.value}
-                  type="button"
-                  aria-pressed={config.mode === mode.value}
-                  onClick={() => set('mode', mode.value)}
-                  className={`p-3 rounded-lg border text-left transition-all ${
-                    config.mode === mode.value
-                      ? 'border-primary bg-primary/10 text-on-surface'
-                      : 'border-outline-variant bg-surface-container-low text-on-surface-variant hover:border-outline'
-                  }`}
-                >
-                  <p className="text-xs font-bold">{mode.label}</p>
-                  <p className="text-[10px] text-on-surface-variant mt-0.5">{mode.description}</p>
-                </button>
-              ))}
-            </div>
-          </fieldset>
+          <RadioCards
+            legend="Security Mode"
+            name="cfg-mode"
+            value={config.mode}
+            onChange={value => set('mode', value)}
+            options={MODES}
+            columns="grid-cols-1 sm:grid-cols-3"
+          />
         </div>
       </div>
 
@@ -998,7 +1018,7 @@ const Config: React.FC = () => {
             <span className="material-symbols-outlined text-primary">lock</span>
             <h2 className="font-bold text-on-surface">SSL / mTLS Settings</h2>
           </div>
-          <div className="p-5 grid grid-cols-2 gap-4">
+          <div className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Field label="Truststore Path" required id={fieldIds.truststorePath} error={errors.truststorePath}>
               {p => (
                 <Input {...p} className="font-mono" value={config.truststorePath ?? ''}
@@ -1045,7 +1065,7 @@ const Config: React.FC = () => {
             <span className="material-symbols-outlined text-primary">cloud</span>
             <h2 className="font-bold text-on-surface">Confluent Cloud Settings</h2>
           </div>
-          <div className="p-5 grid grid-cols-2 gap-4">
+          <div className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Field label="API Key" required id={fieldIds.confluentKey} error={errors.confluentKey}>
               {p => (
                 <Input {...p} className="font-mono" value={config.confluentKey ?? ''}
@@ -1076,32 +1096,19 @@ const Config: React.FC = () => {
           </div>
         </div>
         <div className="p-5 space-y-5">
-          <fieldset>
-            <legend className="block text-[12px] font-medium text-on-surface-variant mb-1.5">Provider</legend>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              {LLM_PROVIDERS.map(provider => (
-                <button
-                  key={provider.value}
-                  type="button"
-                  aria-pressed={config.llmProvider === provider.value}
-                  onClick={() => {
-                    applyLlmProvider(provider.value);
-                    setErrors({});
-                    // Le verdict précédent portait sur un autre fournisseur.
-                    setLlmTestResult(null);
-                  }}
-                  className={`p-3 rounded-lg border text-left transition-all ${
-                    config.llmProvider === provider.value
-                      ? 'border-primary bg-primary/10 text-on-surface'
-                      : 'border-outline-variant bg-surface-container-low text-on-surface-variant hover:border-outline'
-                  }`}
-                >
-                  <p className="text-xs font-bold">{provider.label}</p>
-                  <p className="text-[10px] text-on-surface-variant mt-0.5">{provider.description}</p>
-                </button>
-              ))}
-            </div>
-          </fieldset>
+          <RadioCards
+            legend="Provider"
+            name="cfg-llm-provider"
+            value={config.llmProvider}
+            onChange={provider => {
+              applyLlmProvider(provider);
+              setErrors({});
+              // Le verdict précédent portait sur un autre fournisseur.
+              setLlmTestResult(null);
+            }}
+            options={LLM_PROVIDERS}
+            columns="grid-cols-1 sm:grid-cols-2 lg:grid-cols-3"
+          />
 
           {/* Ce que devient le contenu envoyé au modèle, dans les quatre cas où la réponse
               diffère — voir `llmPolicy.ts`. Lu sur l'adresse résolue et sur le réglage de routage,
@@ -1178,7 +1185,76 @@ const Config: React.FC = () => {
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-4">
+          {/*
+            Trois réglages que le formulaire renvoyait au serveur sans jamais les montrer. Celui qui
+            compte est la politique de collecte : c'est le seul endroit de cette application où une
+            affirmation de confidentialité cesse d'être un avertissement, parce qu'OpenRouter
+            l'impose au routage — et le bandeau au-dessus l'énonce. Le laisser invisible revenait à
+            faire dépendre cette phrase d'une valeur que la page ne permettait pas de lire.
+          */}
+          <details className="rounded-lg border border-outline-variant/60 bg-surface-container-low">
+            <summary className="cursor-pointer select-none px-4 py-2.5 text-[12px] font-medium text-on-surface-variant">
+              Decoding and routing
+            </summary>
+            <div className="px-4 pb-4 pt-1 space-y-4">
+              <RadioCards
+                legend="Structured output"
+                name="cfg-llm-structured-output"
+                value={config.llmStructuredOutput ?? 'AUTO'}
+                onChange={value => set('llmStructuredOutput', value)}
+                options={STRUCTURED_OUTPUT}
+                columns="grid-cols-1 sm:grid-cols-3"
+              />
+              {config.llmProvider === 'OPENROUTER' && (
+                <>
+                  <div>
+                    <RadioCards
+                      legend="Data collection"
+                      name="cfg-llm-data-collection"
+                      value={config.llmOpenrouterDataCollection ?? 'DENY'}
+                      onChange={value => set('llmOpenrouterDataCollection', value)}
+                      options={DATA_COLLECTION}
+                      columns="grid-cols-1 sm:grid-cols-2"
+                    />
+                    {/* Ce que la restriction coûte, dit là où on la choisit : un modèle que seuls
+                        des fournisseurs collecteurs servent cesse d'être routable, et la
+                        passerelle le signale avec la même 404 qu'un slug mal tapé. */}
+                    <p className="mt-1.5 text-[11px] text-on-surface-variant">
+                      {(config.llmOpenrouterDataCollection ?? 'DENY') === 'DENY'
+                        ? 'A model served only by providers that retain data stops being routable, '
+                          + 'and OpenRouter reports that with the same 404 it uses for a mistyped '
+                          + 'slug. Free models are usually in that case.'
+                        : 'Message digests may be routed to providers that retain them, and may be '
+                          + 'used for training. Nothing here can observe or undo that.'}
+                    </p>
+                  </div>
+                  <label className="flex items-start gap-3">
+                    <Switch
+                      checked={config.llmOpenrouterRequireParameters ?? false}
+                      onChange={value => setConfig(prev => ({
+                        ...prev, llmOpenrouterRequireParameters: value,
+                      }))}
+                      aria-label="Route only to providers that implement every parameter sent"
+                      className="mt-0.5"
+                    />
+                    <span>
+                      <span className="block text-xs font-bold text-on-surface">
+                        Require full parameter support
+                      </span>
+                      <span className="block text-[11px] text-on-surface-variant mt-0.5">
+                        Off by default: it makes schema support a routing guarantee, but a model
+                        whose providers lack it becomes unroutable rather than degrading — and that
+                        arrives as “no endpoints found”, not as the 400 the per-model fallback
+                        keys on.
+                      </span>
+                    </span>
+                  </label>
+                </>
+              )}
+            </div>
+          </details>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Field
               label="Model"
               required={config.llmProvider !== 'SPECTRA'}

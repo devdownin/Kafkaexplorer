@@ -150,7 +150,7 @@ describe('Config — testing a model', () => {
     await screen.findByDisplayValue('openai/gpt-4o-mini');
 
     expect(screen.queryByText(/connection currently in force/i)).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /ollama/i }));
+    await user.click(screen.getByRole('radio', { name: /ollama/i }));
 
     expect(await screen.findByText(/connection currently in force/i)).toBeInTheDocument();
   });
@@ -244,7 +244,7 @@ describe('Config — provider defaults', () => {
     renderPage();
     await screen.findByDisplayValue('openai/gpt-4o-mini');
 
-    await user.click(screen.getByRole('button', { name: /ollama/i }));
+    await user.click(screen.getByRole('radio', { name: /ollama/i }));
 
     expect(await screen.findByDisplayValue('qwen3:4b')).toBeInTheDocument();
   });
@@ -577,5 +577,101 @@ describe('Config — taking back a stored setting', () => {
 
     await screen.findByDisplayValue('openai/gpt-4o-mini');
     expect(screen.queryByRole('button', { name: /forget all saved settings/i })).not.toBeInTheDocument();
+  });
+});
+
+/*
+ * Trois réglages que le formulaire renvoyait au serveur sans jamais les montrer. Celui qui compte
+ * est la politique de collecte : c'est le seul endroit de cette application où une affirmation de
+ * confidentialité cesse d'être un avertissement, parce qu'OpenRouter l'impose au routage.
+ */
+describe('Config — decoding and routing', () => {
+  const openRouting = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(screen.getByText(/decoding and routing/i));
+  };
+
+  it('offers the structured-output contract the server already accepted', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByDisplayValue('openai/gpt-4o-mini');
+
+    await openRouting(user);
+
+    expect(screen.getByRole('group', { name: /structured output/i })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /^Auto/ })).toBeChecked();
+  });
+
+  it('sends the chosen contract on save', async () => {
+    const user = userEvent.setup();
+    mockedAxios.post.mockResolvedValue({ data: serverConfig });
+    renderPage();
+    await screen.findByDisplayValue('openai/gpt-4o-mini');
+
+    await openRouting(user);
+    await user.click(screen.getByRole('radio', { name: /^Off/ }));
+    await user.click(screen.getByRole('button', { name: /save configuration/i }));
+
+    await waitFor(() => expect(mockedAxios.post).toHaveBeenCalled());
+    const call = mockedAxios.post.mock.calls.find(c => c[0] === '/api/config');
+    expect((call?.[1] as Record<string, unknown>).llmStructuredOutput).toBe('OFF');
+  });
+
+  /*
+   * `llmDataRetentionRefused` est calculé côté serveur, donc passer à ALLOW dans le formulaire
+   * laisserait le bandeau annoncer « aucune rétention » jusqu'à l'enregistrement — le mensonge
+   * exact que ce repère existe pour empêcher, sur la seule phrase de cette page qui engage
+   * quelque chose.
+   */
+  it('says the privacy banner is stale once the routing policy has been changed', async () => {
+    const user = userEvent.setup();
+    mockedAxios.get.mockImplementation((url: string) => {
+      if (url === '/api/config') {
+        return Promise.resolve({
+          data: { ...serverConfig, llmOpenrouterDataCollection: 'DENY', llmDataRetentionRefused: true },
+        });
+      }
+      if (url === '/api/config/llm-models') return Promise.resolve({ data: shortlist });
+      return Promise.reject(new Error(`unexpected GET ${url}`));
+    });
+    renderPage();
+    await screen.findByDisplayValue('openai/gpt-4o-mini');
+    expect(screen.queryByText(/not the provider selected above|Save to apply/i)).not.toBeInTheDocument();
+
+    await openRouting(user);
+    await user.click(screen.getByRole('radio', { name: /allow any provider/i }));
+
+    expect(await screen.findByText(/Save to apply/i)).toBeInTheDocument();
+  });
+
+  /* Ce que la restriction coûte, dit là où on la choisit. */
+  it('states what refusing retention costs, and what allowing it costs', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByDisplayValue('openai/gpt-4o-mini');
+    await openRouting(user);
+
+    expect(screen.getByText(/stops being routable/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('radio', { name: /allow any provider/i }));
+
+    expect(await screen.findByText(/may be used for training/)).toBeInTheDocument();
+  });
+
+  /* Le routage est celui d'OpenRouter : il n'a pas de sens ailleurs, et il n'est pas proposé. */
+  it('offers no routing policy for a provider that has none', async () => {
+    const user = userEvent.setup();
+    mockedAxios.get.mockImplementation((url: string) => {
+      if (url === '/api/config') {
+        return Promise.resolve({ data: { ...serverConfig, llmProvider: 'OLLAMA', llmModel: 'qwen3:4b' } });
+      }
+      return Promise.reject(new Error(`unexpected GET ${url}`));
+    });
+    renderPage();
+    await screen.findByDisplayValue('qwen3:4b');
+
+    await openRouting(user);
+
+    expect(screen.getByRole('group', { name: /structured output/i })).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: /data collection/i })).not.toBeInTheDocument();
   });
 });

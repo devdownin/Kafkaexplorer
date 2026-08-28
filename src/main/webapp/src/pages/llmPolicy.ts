@@ -28,6 +28,14 @@ export interface LlmPolicyFacts {
   llmLocalDeployment?: boolean;
   /** Vrai seulement là où le routage a pu être restreint — donc OpenRouter avec `DENY`. */
   llmDataRetentionRefused?: boolean;
+  /**
+   * Le réglage de routage tel qu'il est **en vigueur**. Aucune phrase de ce module ne le lit —
+   * c'est `llmDataRetentionRefused`, calculé côté serveur, qui décide, et c'est voulu : un réglage
+   * ne vaut que là où il est applicable. Il est ici parce que la page a besoin de comparer le
+   * formulaire à ce qui tourne, et qu'un `ALLOW` saisi sans être enregistré laisserait le bandeau
+   * annoncer « aucune rétention ».
+   */
+  llmOpenrouterDataCollection?: string;
 }
 
 export type PolicyTone = 'local' | 'restricted' | 'open' | 'unenforceable';

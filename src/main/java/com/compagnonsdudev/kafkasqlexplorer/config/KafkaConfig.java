@@ -38,8 +38,6 @@ public class KafkaConfig {
     public void setSchemaRegistryUrl(String schemaRegistryUrl) {
         this.schemaRegistryUrl = schemaRegistryUrl;
     }
-    private Map<String, String> clusters = new HashMap<>();
-
     // SSL properties
     private String truststorePath;
     private String truststorePassword;
@@ -172,14 +170,6 @@ public class KafkaConfig {
 
     public void setMode(String mode) {
         this.mode = mode;
-    }
-
-    public Map<String, String> getClusters() {
-        return clusters;
-    }
-
-    public void setClusters(Map<String, String> clusters) {
-        this.clusters = clusters;
     }
 
     public String getTruststorePath() {
