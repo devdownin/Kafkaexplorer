@@ -207,10 +207,10 @@ public class ProcessMiningController {
     }
 
     @GetMapping(value = "/live", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter startLive(@RequestParam List<String> topics,
-                                 @RequestParam String fieldMappingId,
-                                 @RequestParam(required = false) List<String> auditPromptIds,
-                                 @RequestParam(required = false) String customAuditPrompt) {
+    public SseEmitter startLive(@RequestParam("topics") List<String> topics,
+                                 @RequestParam("fieldMappingId") String fieldMappingId,
+                                 @RequestParam(name = "auditPromptIds", required = false) List<String> auditPromptIds,
+                                 @RequestParam(name = "customAuditPrompt", required = false) String customAuditPrompt) {
         String sessionId = UUID.randomUUID().toString();
         log.info("Starting live session {} for topics: {}",
             LogSafe.name(sessionId), LogSafe.names(topics));

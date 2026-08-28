@@ -32,13 +32,13 @@ public class LineageController {
     @GetMapping(value = "/api/lineage", produces = "application/json")
     @ResponseBody
     public Map<String, Object> getLineage(
-            @RequestParam(defaultValue = "false") boolean connectedOnly) {
+            @RequestParam(name = "connectedOnly", defaultValue = "false") boolean connectedOnly) {
         return lineageService.getLineage(connectedOnly);
     }
 
     @GetMapping(value = "/api/lineage/ddl/{name}", produces = "text/plain")
     @ResponseBody
-    public String getDdl(@PathVariable String name) {
+    public String getDdl(@PathVariable("name") String name) {
         return lineageService.getDdlForNode(name);
     }
 }
