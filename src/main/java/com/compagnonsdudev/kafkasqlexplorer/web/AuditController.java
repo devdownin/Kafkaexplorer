@@ -55,7 +55,7 @@ public class AuditController {
      * response deserialized to "not RUNNING", so it stopped polling and showed nothing.
      */
     @GetMapping("/status/{id}")
-    public ResponseEntity<AuditReport> getAuditStatus(@PathVariable String id) {
+    public ResponseEntity<AuditReport> getAuditStatus(@PathVariable("id") String id) {
         AuditReport report = auditService.getAuditReport(id);
         return report != null ? ResponseEntity.ok(report) : ResponseEntity.notFound().build();
     }
@@ -66,7 +66,7 @@ public class AuditController {
      * silent success. Cancellation is cooperative: 202 means "asked", not "stopped".
      */
     @PostMapping("/{id}/cancel")
-    public ResponseEntity<String> cancelAudit(@PathVariable String id) {
+    public ResponseEntity<String> cancelAudit(@PathVariable("id") String id) {
         return switch (auditService.cancelAudit(id)) {
             case CANCELLING -> ResponseEntity.accepted().body(id);
             case ALREADY_FINISHED -> ResponseEntity.status(HttpStatus.CONFLICT).body("Audit already finished");
@@ -100,7 +100,7 @@ public class AuditController {
      * cannot deserialize, and handing back what was stored beats failing or guessing.
      */
     @GetMapping("/history/{id}")
-    public ResponseEntity<JsonNode> getHistoricalReport(@PathVariable String id) {
+    public ResponseEntity<JsonNode> getHistoricalReport(@PathVariable("id") String id) {
         JsonNode report = auditHistoryService.findReport(id);
         return report != null ? ResponseEntity.ok(report) : ResponseEntity.notFound().build();
     }
@@ -111,7 +111,7 @@ public class AuditController {
      * regressed, and answering anyway would be a guess dressed as a result.
      */
     @GetMapping("/compare")
-    public ResponseEntity<?> compare(@RequestParam String from, @RequestParam String to) {
+    public ResponseEntity<?> compare(@RequestParam("from") String from, @RequestParam("to") String to) {
         AuditDiffService.DiffResult result = auditDiffService.compare(from, to);
         if (result.diff() != null) return ResponseEntity.ok(result.diff());
         HttpStatus status = result.error() == AuditDiffService.DiffError.LEGACY_SHAPE

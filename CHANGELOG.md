@@ -11,6 +11,34 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A page refresh on Compare or Help answered 500.** `CompareController` mapped `GET /compare`
+  returning the view name `"compare"` and `HelpController` did the same for `/help` — there is no
+  template engine, so both shadowed `SpaController` and produced a circular-view-path error. It is
+  the defect `StreamFlowController`, `ConfigController` and `TableController` were each fixed for;
+  these two survived because nothing tested them.
+- **A shared link to a topic answered 404.** `SpaController`'s patterns exclude a dot from the last
+  segment — which is what lets `/assets/index-a1b2c3.js` reach the resource handler — and Kafka
+  topic names contain dots, every one of the demo cluster's included. So `/topic/demo.orders.1.received`
+  matched nothing and fell through: opening a shared Topic Explorer link, or pressing F5 on it, was
+  broken for essentially every topic. `/topic/**` is now mapped explicitly, which fixes it without
+  loosening the rule that keeps the asset paths working.
+- **`POST /api/audit/start` refused a partial body.** `AuditOptions` carried six primitive
+  `boolean` components, so `{}` — or a body naming only `topicPrefix` — failed with a 400 quoting a
+  Jackson internal, on an endpoint that accepts no body at all. A boxed `@JsonCreator` binds it
+  now; an absent flag means the check runs, so `{}` means what sending nothing means.
+
+### Added
+
+- **`SpaRoutingTest`**, which boots the real web layer and walks the router of `App.tsx`: every
+  client-side route must forward to `index.html`, and `/api/**` must not. It replaces a guard that
+  was spread over three controller tests as 404 assertions — each proving only that *that*
+  controller does not map its own route, leaving `/audit`, `/lineage`, `/cluster` and `/compare`
+  covered by nothing. It found the three defects above on its first run.
+- **`AuditControllerTest` and `TopicControllerTest`**, the two largest endpoint families that had
+  no test, pinning the status codes whose whole purpose is to keep two answers apart.
+
 ### Added
 
 - **A component test for the four pages that had none** — `Cluster`, `Lineage`, `StreamFlow` and

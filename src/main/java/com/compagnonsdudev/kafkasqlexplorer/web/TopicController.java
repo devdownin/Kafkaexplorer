@@ -53,8 +53,8 @@ public class TopicController {
     }
 
     @GetMapping("/{name}")
-    public TopicDetailResponse getTopicDetail(@PathVariable String name,
-                                              @RequestParam(defaultValue = "earliest-offset") String readMode) throws Exception {
+    public TopicDetailResponse getTopicDetail(@PathVariable("name") String name,
+                                              @RequestParam(name = "readMode", defaultValue = "earliest-offset") String readMode) throws Exception {
         TopicDescriptor descriptor = kafkaAdminService.getTopicDescriptor(name);
         MessageFormat format = schemaInferenceService.detectFormat(name);
         Map<String, String> schema = schemaInferenceService.inferSchema(name, format);
@@ -76,7 +76,7 @@ public class TopicController {
      * hits immediately and resume on demand instead of blocking on an unbounded search.
      */
     @PostMapping("/{name}/search")
-    public TopicSearchResponse search(@PathVariable String name,
+    public TopicSearchResponse search(@PathVariable("name") String name,
                                       @RequestBody(required = false) TopicSearchRequest request) {
         TopicSearchRequest criteria = request != null ? request : new TopicSearchRequest(
                 null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
@@ -93,9 +93,9 @@ public class TopicController {
      * badge could otherwise only point at without ever letting anyone read the rest.
      */
     @GetMapping("/{name}/record")
-    public TopicMessage getRecord(@PathVariable String name,
-                                  @RequestParam int partition,
-                                  @RequestParam long offset) {
+    public TopicMessage getRecord(@PathVariable("name") String name,
+                                  @RequestParam("partition") int partition,
+                                  @RequestParam("offset") long offset) {
         TopicMessage record = topicSearchService.readRecord(name, partition, offset);
         if (record == null) {
             // Out of range or compacted away: a caller must be able to tell that from a failure.
@@ -112,7 +112,7 @@ public class TopicController {
      * confused with a failed one.
      */
     @GetMapping("/{name}/consumers")
-    public TopicConsumers getConsumers(@PathVariable String name) {
+    public TopicConsumers getConsumers(@PathVariable("name") String name) {
         return kafkaAdminService.getTopicConsumers(name, explorerConfig.getConsumerGroupMaxGroups());
     }
 
@@ -131,13 +131,13 @@ public class TopicController {
      * from "this group's delay could not be read".
      */
     @GetMapping("/{name}/time-lag")
-    public TopicTimeLag getTimeLag(@PathVariable String name, @RequestParam("group") String group) {
+    public TopicTimeLag getTimeLag(@PathVariable("name") String name, @RequestParam("group") String group) {
         return kafkaAdminService.getConsumerTimeLag(name, group);
     }
 
     @GetMapping(value = "/{name}/ddl", produces = "text/plain")
-    public String getDdl(@PathVariable String name,
-                         @RequestParam(defaultValue = "earliest-offset") String readMode) throws Exception {
+    public String getDdl(@PathVariable("name") String name,
+                         @RequestParam(name = "readMode", defaultValue = "earliest-offset") String readMode) throws Exception {
         MessageFormat format = schemaInferenceService.detectFormat(name);
         Map<String, String> schema = schemaInferenceService.inferSchema(name, format);
         return DdlGeneratorService.maskSensitiveProperties(

@@ -2,6 +2,9 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.compagnonsdudev.kafkasqlexplorer.domain;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 /**
  * Controls which checks are executed during an audit run, and optionally
  * restricts the audit to topics whose name starts with {@code topicPrefix}.
@@ -21,6 +24,38 @@ public record AuditOptions(
     boolean checkConsumerLag,
     String topicPrefix
 ) {
+    /**
+     * Binds a body that names only some of the checks — or none of them.
+     *
+     * <p>Jackson binds a record through its canonical constructor, so an absent property arrives as
+     * {@code null} and a primitive component fails the <em>whole</em> request with a parse error
+     * naming a Jackson internal. {@code POST /api/audit/start} declares
+     * {@code @RequestBody(required = false)} precisely so a caller may send nothing, so accepting
+     * no body while refusing <code>{}</code> was incoherent — and a body naming just a prefix is
+     * the most natural thing to write by hand. Same defect, same fix as {@code StreamFlowRequest}.
+     *
+     * <p><b>An absent flag means the check runs</b>, which is what makes <code>{}</code> mean
+     * exactly what sending no body means: {@link #all()}. Turning one off is then saying so.
+     */
+    @JsonCreator
+    public AuditOptions(
+        @JsonProperty("checkSchema") Boolean checkSchema,
+        @JsonProperty("checkPoisonMessages") Boolean checkPoisonMessages,
+        @JsonProperty("checkDuplicates") Boolean checkDuplicates,
+        @JsonProperty("checkFlows") Boolean checkFlows,
+        @JsonProperty("checkExactCount") Boolean checkExactCount,
+        @JsonProperty("checkConsumerLag") Boolean checkConsumerLag,
+        @JsonProperty("topicPrefix") String topicPrefix
+    ) {
+        this(checkSchema == null || checkSchema,
+             checkPoisonMessages == null || checkPoisonMessages,
+             checkDuplicates == null || checkDuplicates,
+             checkFlows == null || checkFlows,
+             checkExactCount == null || checkExactCount,
+             checkConsumerLag == null || checkConsumerLag,
+             topicPrefix);
+    }
+
     public static AuditOptions all() {
         return new AuditOptions(true, true, true, true, true, true, null);
     }
