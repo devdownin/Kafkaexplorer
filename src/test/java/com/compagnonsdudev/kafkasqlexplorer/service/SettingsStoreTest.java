@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -102,6 +103,94 @@ class SettingsStoreTest {
         Map<String, String> stored = SettingsStore.read(path).values();
         assertEquals("SSL", stored.get("kafka.mode"));
         assertEquals("qwen3:8b", stored.get("claude.model"));
+    }
+
+    /**
+     * The other half of {@link #aFieldStaysOwnedOnceItHasBeenEntered}, which had none.
+     *
+     * <p>Ownership was sticky and one-way: a bootstrap address entered by mistake was re-written by
+     * every later save, and the only ways out were editing this file on the deployment's disk or
+     * adding the environment variable that outranks it — both changes to the deployment, for a
+     * value entered through a web form.
+     */
+    @Test
+    void aFieldCanBeReleasedSoTheDeploymentOwnsItAgain() {
+        Path path = tempDir.resolve("settings.json");
+        SettingsStore store = storeAt(path, true);
+        store.save(Set.of("mode", "llmModel"), snapshot("mode", "SSL", "llmModel", "qwen3:4b"));
+
+        SettingsStore.ForgetOutcome outcome = store.forget(Set.of("mode"));
+
+        assertEquals(List.of("mode"), outcome.forgotten());
+        assertEquals(Set.of("claude.model"), SettingsStore.read(path).values().keySet());
+        assertEquals(List.of("llmModel"), store.ownedFields());
+    }
+
+    /** A later save must not resurrect it — releasing is the end of ownership, not a pause. */
+    @Test
+    void aReleasedFieldIsNotTakenBackByTheNextSave() {
+        Path path = tempDir.resolve("settings.json");
+        SettingsStore store = storeAt(path, true);
+        store.save(Set.of("mode", "llmModel"), snapshot("mode", "SSL", "llmModel", "qwen3:4b"));
+        store.forget(Set.of("mode"));
+
+        store.save(Set.of("llmModel"), snapshot("mode", "SSL", "llmModel", "qwen3:8b"));
+
+        assertEquals(Set.of("claude.model"), SettingsStore.read(path).values().keySet());
+    }
+
+    /** Forgetting everything means everything, including a key this build does not recognise. */
+    @Test
+    void anEmptyRequestReleasesTheWholeStore() throws IOException {
+        Path path = tempDir.resolve("settings.json");
+        SettingsStore store = storeAt(path, true);
+        store.save(Set.of("mode", "llmModel"), snapshot("mode", "SSL", "llmModel", "qwen3:4b"));
+        String withStranger = Files.readString(path)
+            .replace("\"settings\" : {", "\"settings\" : {\n    \"kafka.from-the-future\" : \"x\",");
+        Files.writeString(path, withStranger);
+
+        SettingsStore.ForgetOutcome outcome = store.forget(Set.of());
+
+        assertEquals(List.of("mode", "llmModel"), outcome.forgotten());
+        assertTrue(SettingsStore.read(path).isEmpty(), "the store has to read back as empty");
+    }
+
+    /** "We released nothing" and "we released it" are different answers; only one is a change. */
+    @Test
+    void releasingAFieldThatWasNeverStoredReportsNothing() {
+        Path path = tempDir.resolve("settings.json");
+        SettingsStore store = storeAt(path, true);
+        store.save(Set.of("mode"), snapshot("mode", "SSL"));
+
+        assertEquals(List.of(), store.forget(Set.of("llmModel")).forgotten());
+        assertEquals(Set.of("kafka.mode"), SettingsStore.read(path).values().keySet());
+    }
+
+    /**
+     * A field whose secret was deliberately not written is still one the store speaks for: it is
+     * owned by {@code save}, so it has to be listable and releasable, or it could never be undone.
+     */
+    @Test
+    void aSecretLeftOutIsStillOwnedAndStillReleasable() {
+        Path path = tempDir.resolve("settings.json");
+        SettingsStore store = storeAt(path, false);
+        store.save(Set.of("keystorePassword"), snapshot("keystorePassword", "hunter2"));
+
+        assertEquals(List.of("keystorePassword"), store.ownedFields());
+        assertEquals(List.of("keystorePassword"), store.forget(Set.of("keystorePassword")).forgotten());
+        assertEquals(List.of(), store.ownedFields());
+    }
+
+    /** Names this build knows, never the file's own keys — the rule the boot log already follows. */
+    @Test
+    void ownershipIsReportedInThisBuildsOwnNames() throws IOException {
+        Path path = tempDir.resolve("settings.json");
+        SettingsStore store = storeAt(path, true);
+        store.save(Set.of("mode"), snapshot("mode", "SSL"));
+        Files.writeString(path, Files.readString(path)
+            .replace("\"settings\" : {", "\"settings\" : {\n    \"kafka.from-the-future\" : \"x\","));
+
+        assertEquals(List.of("mode"), store.ownedFields());
     }
 
     /** Clearing a field is a save like any other: it must not read back as "never entered". */

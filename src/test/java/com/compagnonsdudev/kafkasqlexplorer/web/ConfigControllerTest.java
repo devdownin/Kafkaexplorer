@@ -22,6 +22,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -30,6 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -69,6 +71,11 @@ class ConfigControllerTest {
         sseEmitterManager = Mockito.mock(SseEmitterManager.class);
         when(flinkSqlService.getActiveJobsDetails()).thenReturn(Map.of());
         when(sseEmitterManager.activeSessions()).thenReturn(0);
+        // The default this fixture used to get for free from a boolean `ping()`. Every answer of
+        // this controller carries reachability, so the mock has to have one — an unstubbed
+        // `pingDetail()` is null, not "unreachable".
+        when(kafkaAdminService.pingDetail())
+            .thenReturn(new KafkaAdminService.PingResult(false, "no broker in this test"));
 
         storePath = tempDir.resolve("settings.json");
         settingsStore = new SettingsStore(explorerConfigStoringAt(storePath.toString(), true));
@@ -300,6 +307,114 @@ class ConfigControllerTest {
         config.setSettingsStorePath(path);
         config.setSettingsStoreSecrets(secrets);
         return config;
+    }
+
+    /**
+     * A broker that did not answer has a reason, and the Settings page is where the address that
+     * caused it can be corrected.
+     *
+     * <p>This served {@code kafkaAdminService.ping()}, a boolean — so a broker that is down, an
+     * address pointing at nothing and a client the cluster refuses all reached the page as the same
+     * "Not connected". {@code pingDetail()} has carried the reason since the connection pill was
+     * rewritten for exactly this, and costs nothing extra: {@code ping()} is itself
+     * {@code pingDetail().reachable()}.
+     */
+    @Test
+    void theConfigSaysWhyTheBrokerDidNotAnswer() throws Exception {
+        when(kafkaAdminService.pingDetail())
+            .thenReturn(new KafkaAdminService.PingResult(false, "No answer within 2000 ms"));
+
+        mockMvc.perform(get("/api/config"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.isConnected").value(false))
+            .andExpect(jsonPath("$.connectionError").value("No answer within 2000 ms"));
+    }
+
+    /** Reachable is not a failure with an empty reason: the field is null, so nothing is rendered. */
+    @Test
+    void aReachableBrokerCarriesNoReason() throws Exception {
+        when(kafkaAdminService.pingDetail())
+            .thenReturn(new KafkaAdminService.PingResult(true, null));
+
+        mockMvc.perform(get("/api/config"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.isConnected").value(true))
+            .andExpect(jsonPath("$.connectionError").value(org.hamcrest.Matchers.nullValue()));
+    }
+
+    /**
+     * The way back out of a stored setting, which this application did not have.
+     *
+     * <p>Ownership was sticky: a bootstrap address entered by mistake was re-written by every later
+     * save, and undoing it meant editing a file on the deployment's disk or adding the environment
+     * variable that outranks it.
+     */
+    @Test
+    void aStoredSettingCanBeReleasedSoTheDeploymentOwnsItAgain() throws Exception {
+        mockMvc.perform(post("/api/config").contentType(MediaType.APPLICATION_JSON)
+            .content("{\"bootstrapServers\":\"new:9092\",\"llmModel\":\"vendor/model\"}"));
+        assertEquals(List.of("bootstrapServers", "llmModel"), settingsStore.ownedFields());
+
+        mockMvc.perform(delete("/api/config/stored").param("field", "bootstrapServers"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.forgotten[0]").value("bootstrapServers"))
+            .andExpect(jsonPath("$.settingsStoredFields[0]").value("llmModel"));
+
+        assertEquals(List.of("llmModel"), settingsStore.ownedFields());
+    }
+
+    /**
+     * Releasing changes where the <em>next</em> start reads a setting, never what this process is
+     * connected to now: the stored value was applied at boot and is still in force. Quietly
+     * repointing a live cluster on a "forget" would be a worse surprise than the one being fixed.
+     */
+    @Test
+    void releasingASettingDoesNotMoveTheRunningConfiguration() throws Exception {
+        mockMvc.perform(post("/api/config").contentType(MediaType.APPLICATION_JSON)
+            .content("{\"bootstrapServers\":\"new:9092\"}"));
+
+        mockMvc.perform(delete("/api/config/stored")).andExpect(status().isOk());
+
+        assertEquals("new:9092", kafkaConfig.getBootstrapServers());
+    }
+
+    /**
+     * A name this build does not know is refused, not quietly ignored: a request that released
+     * nothing would read exactly like one that worked.
+     */
+    @Test
+    void anUnknownSettingNameIsRefusedRatherThanReleasingNothing() throws Exception {
+        mockMvc.perform(delete("/api/config/stored").param("field", "kafkaPassword"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.message")
+                .value(org.hamcrest.Matchers.containsString("bootstrapServers")));
+    }
+
+    /** Idempotent: forgetting what was never stored is a 200 naming nothing, not an error. */
+    @Test
+    void releasingAnEmptyStoreIsNotAFailure() throws Exception {
+        mockMvc.perform(delete("/api/config/stored"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.forgotten").isEmpty());
+    }
+
+    /**
+     * {@code kafka.clusters} is gone, and its absence is pinned like {@code TableController}'s was.
+     *
+     * <p>It was a bindable {@code Map<String, String>} that nothing set, nothing documented and
+     * nothing read: never in {@code application.yml}, never in a doc table, and its only use in the
+     * tree was being echoed to the browser by this endpoint, where no page read it either. What it
+     * cost was not the two lines but the affordance — a {@code clusters} key in the settings
+     * response reads as named-cluster switching, which this application does not have, and
+     * {@code KAFKA_CLUSTERS_A=...} would have populated it and had it served while changing
+     * nothing. Same argument as the uncalled {@code POST /api/metrics/preview} and
+     * {@code TableController}: surface nobody calls is surface nobody guards.
+     */
+    @Test
+    void theSettingsAnswerCarriesNoClusterMap() throws Exception {
+        mockMvc.perform(get("/api/config"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.clusters").doesNotExist());
     }
 
     /** `/config` belongs to the SPA. A controller mapping there answers a refresh with a 500. */

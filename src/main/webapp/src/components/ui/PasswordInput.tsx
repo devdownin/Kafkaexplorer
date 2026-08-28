@@ -38,7 +38,16 @@ export const PasswordInput: FC<PasswordInputProps> = ({
         onClick={() => setVisible(v => !v)}
         aria-label={visible ? 'Hide value' : 'Show value'}
         aria-pressed={visible}
-        className="absolute right-2 top-1/2 -translate-y-1/2 text-outline hover:text-on-surface"
+        /*
+         * 24 x 24, mesuré : `layout-probe.mjs` le comptait à **18 x 24** — quatre pixels de trop
+         * peu sur la largeur, la même famille que `Checkbox` (13 x 13) et `Switch` (36 x 20), et
+         * sur un contrôle partagé par tous les champs secrets de l'application. La cible est
+         * élargie autour du glyphe, qui garde ses 18 px : ici le `flex` centre le dessin dans une
+         * boîte plus grande, ce qui est exactement ce qu'un `padding` ne fait pas de façon fiable
+         * sur un contrôle remplacé.
+         */
+        className="absolute right-1.5 top-1/2 -translate-y-1/2 flex h-6 w-6 items-center
+          justify-center text-outline hover:text-on-surface"
       >
         <span aria-hidden="true" className="material-symbols-outlined text-[18px]">
           {visible ? 'visibility_off' : 'visibility'}
