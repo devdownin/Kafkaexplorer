@@ -320,6 +320,94 @@ public class SettingsStore {
         }
     }
 
+    /**
+     * The settings this deployment has taken over from its own configuration, by API field name.
+     *
+     * <p>Ownership is what the store is: a field in here takes its value from the file at the next
+     * start, ahead of {@code application.yml}, and a field absent from it keeps taking the
+     * deployment's own. Nothing said which was which — the answer carried a <em>count</em>, and a
+     * count cannot be acted on. A field whose secret was deliberately not written is listed too:
+     * {@link #save} counts it as owned, so it is one of the fields this file is speaking for.
+     *
+     * <p><b>This build's own constants, never the file's keys.</b> The names are matched against
+     * {@link #FIELDS} and it is the matching field's string that is returned, so what reaches an
+     * API response is a compile-time constant of this application whatever the file happens to
+     * contain — the same rule {@code StoredSettingsInitializer.knownPropertyNames} follows for the
+     * log, and for the same reason. A property this build does not know is dropped: it is either a
+     * field a later version added, about which this process can say nothing useful, or something
+     * that has no business being in there.
+     */
+    public List<String> ownedFields() {
+        StoredSettings stored = current();
+        List<String> owned = new ArrayList<>();
+        for (Field field : FIELDS) {
+            if (stored.values().containsKey(field.property())
+                || stored.secretsOmitted().contains(field.property())) {
+                owned.add(field.apiField());
+            }
+        }
+        return owned;
+    }
+
+    /** What one {@link #forget} achieved, in the same shape and for the same reason as a save. */
+    public record ForgetOutcome(List<String> forgotten, String error) {}
+
+    /**
+     * Stops keeping a setting, so the next start takes it from the deployment's own configuration.
+     *
+     * <p>The gap this closes: ownership was <b>sticky and one-way</b>. Once a property was in the
+     * file, {@link #save} kept re-writing it for ever, and this application offered no way to
+     * release it — a bootstrap address entered by mistake, or one naming a cluster that has since
+     * been decommissioned, could only be undone by editing a file on the deployment's disk. The
+     * documented escape hatch was to set the environment variable that outranks it, which is a
+     * change to the deployment for a value that was entered through a web form.
+     *
+     * <p><b>It changes nothing in this process</b>, and the caller has to say so. The stored value
+     * was applied at boot, into {@link com.compagnonsdudev.kafkasqlexplorer.config.KafkaConfig} and
+     * {@link com.compagnonsdudev.kafkasqlexplorer.config.ClaudeConfig}, and it is still what this
+     * application is connected to; what is being changed is where the <em>next</em> start reads it
+     * from. Reverting the running value would mean recovering what the deployment's configuration
+     * says underneath the store, which is a property source this process deliberately shadowed —
+     * and quietly repointing a live cluster on a "forget" is a worse surprise than the one being
+     * fixed. Whoever wants it now saves the value they want, which is what the form is for.
+     *
+     * @param apiFields the fields to release; <b>empty forgets the whole store</b>, which also
+     *                  drops any property this build does not recognise — a request to forget
+     *                  everything that left entries behind would not have been honoured
+     * @return the fields actually released, so the answer names what changed rather than implying
+     *         it, and a field that was not stored to begin with is not reported as forgotten
+     */
+    public ForgetOutcome forget(Set<String> apiFields) {
+        if (!isEnabled()) return new ForgetOutcome(List.of(), null);
+        StoredSettings existing = read(path);
+        if (existing.isEmpty()) return new ForgetOutcome(List.of(), null);
+
+        boolean all = apiFields == null || apiFields.isEmpty();
+        Map<String, String> values = all ? new LinkedHashMap<>() : new LinkedHashMap<>(existing.values());
+        List<String> omitted = all ? new ArrayList<>() : new ArrayList<>(existing.secretsOmitted());
+        List<String> forgotten = new ArrayList<>();
+        for (Field field : FIELDS) {
+            if (!all && !apiFields.contains(field.apiField())) continue;
+            boolean held = existing.values().containsKey(field.property())
+                || existing.secretsOmitted().contains(field.property());
+            if (!held) continue;
+            values.remove(field.property());
+            omitted.remove(field.property());
+            forgotten.add(field.apiField());
+        }
+        if (forgotten.isEmpty() && !all) return new ForgetOutcome(List.of(), null);
+
+        try {
+            write(values, omitted);
+            return new ForgetOutcome(List.copyOf(forgotten), null);
+        } catch (Exception e) {
+            String reason = SqlErrorClassifier.explain(e);
+            log.warn("Settings were not released from {}: {}. They are still stored and will be "
+                + "restored at the next start.", path, reason);
+            return new ForgetOutcome(List.of(), reason);
+        }
+    }
+
     /** Replaces the file in one step — see {@link JsonStoreFile#replace}. */
     private void write(Map<String, String> values, List<String> omitted) throws IOException {
         ObjectNode root = MAPPER.createObjectNode();

@@ -445,16 +445,62 @@ export const cluster = {
   },
 };
 
+/*
+ * The Settings page's own response, shaped as `ConfigController.getConfig` really answers it.
+ *
+ * It carried nine keys of the thirty-odd the endpoint serves, so the page rendered here was not
+ * the page the application shows: no persistence banner, no stored-settings chips, no provider
+ * defaults, and the routing controls hidden behind a provider that has none. That is fine while
+ * nothing measures this screen and wrong the moment something does — a probe reading a state the
+ * app never reaches reports a number about a page nobody sees.
+ *
+ * OpenRouter because it is the shipped default provider, so this is what a deployment that
+ * changed nothing looks like — and it is the one provider whose routing policy is enforceable,
+ * which is the half of the form worth measuring.
+ */
 export const config = {
   bootstrapServers: 'kafka:29092',
   mode: 'PLAIN',
-  schemaRegistryUrl: 'http://schema-registry:8081',
   isConnected: true,
-  clusterName: 'Kafka cluster',
-  llmProvider: 'OLLAMA',
-  llmBaseUrl: 'http://ollama:11434/v1',
-  llmModel: 'qwen3:4b',
-  llmApiKeyConfigured: false,
+  connectionError: null,
+  truststorePath: null,
+  keystorePath: null,
+  confluentKey: null,
+  truststorePasswordConfigured: false,
+  keystorePasswordConfigured: false,
+  keyPasswordConfigured: false,
+  confluentSecretConfigured: false,
+  llmProvider: 'OPENROUTER',
+  llmProviderLabel: 'OpenRouter',
+  llmBaseUrl: 'https://openrouter.ai/api/v1',
+  llmModel: 'openai/gpt-4o-mini',
+  llmApiKeyConfigured: true,
+  llmApiKeyRequired: true,
+  llmUseRag: false,
+  llmCollection: null,
+  llmStructuredOutput: 'AUTO',
+  llmStructuredOutputActive: true,
+  llmOpenrouterDataCollection: 'DENY',
+  llmOpenrouterRequireParameters: false,
+  llmDataRetentionRefused: true,
+  llmLocalDeployment: false,
+  llmConfigurationProblem: null,
+  llmRequestTimeoutSeconds: 60,
+  llmMaxTokens: 4096,
+  llmSnapshotWindowSize: 100,
+  llmSnapshotWindowTimeoutSeconds: 30,
+  llmProviderDefaults: {
+    ANTHROPIC: { baseUrl: 'https://api.anthropic.com', model: 'claude-sonnet-4-5' },
+    OPENROUTER: { baseUrl: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4o-mini' },
+    OPENAI_COMPATIBLE: { baseUrl: '', model: '' },
+    OLLAMA: { baseUrl: 'http://localhost:11434/v1', model: 'qwen3:4b' },
+    SPECTRA: { baseUrl: 'http://localhost:8080', model: '' },
+  },
+  settingsPersisted: true,
+  settingsStoreSecrets: true,
+  settingsStorePath: '/app/data/settings.json',
+  settingsSavedAt: new Date(NOW - 3 * 3600_000).toISOString(),
+  settingsStoredFields: ['bootstrapServers', 'llmModel'],
 };
 
 /* ──────────────────────────────────────────────────────────────────────────

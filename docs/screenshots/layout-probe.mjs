@@ -54,6 +54,10 @@ const PAGES = [
   { name: 'audit', url: '/audit' },
   { name: 'metrics', url: '/metrics' },
   { name: 'cluster', url: '/cluster' },
+  // The one screen whose entire purpose is data entry, and it was not measured at all — so the
+  // form primitives it is built out of (the radio-card groups, the password fields, the stored
+  // settings chips) had no target count anywhere. Cheap to add: two more page loads in `--check`.
+  { name: 'settings', url: '/config' },
 ];
 
 /*
@@ -210,6 +214,15 @@ const UNREACHABLE_BUDGET = {
   'metrics': 0,
   'metrics·editor': 2,
   'cluster': 2,
+  /*
+   * L'unique ligne est le point de la pastille de connexion — `span 18>12`, classe
+   * `relative flex h-3 w-3`, **sans aucun texte**. Rien n'y est coupé au sens où cette colonne
+   * l'entend : c'est un élément décoratif de 12 px, pas un contenu inatteignable. Budgété à 1 et
+   * nommé plutôt que corrigé au jugé, parce que le corriger demanderait de deviner d'où viennent
+   * ces 18 px, et qu'une modification de balisage faite à l'aveugle sur une pastille est un plus
+   * mauvais échange que la ligne qu'elle supprime.
+   */
+  'settings': 1,
 };
 
 const TARGET_BUDGET = {
@@ -233,6 +246,16 @@ const TARGET_BUDGET = {
   'metrics': 7,
   'metrics·editor': 7,
   'cluster': 1,
+  /*
+   * 15 à la première mesure, dont **13 étaient les `<input>` `sr-only` des groupes radio de cette
+   * page** : la sonde comptait la boîte de 1 x 1 alors que la cible est la carte qui l'étiquette,
+   * large de plus de cent pixels. Ce sont ces faux positifs qui ont fait ajouter `targetBox`
+   * ci-dessus — un budget de 15 aurait plafonné du bruit et masqué le reste. Des deux qui
+   * restaient, l'un était réel et est corrigé (`PasswordInput`, 18 x 24), l'autre est le lien de
+   * marque de la barre latérale, que toutes les pages portent et que leurs budgets contiennent
+   * déjà.
+   */
+  'settings': 1,
 };
 
 /*
@@ -388,9 +411,32 @@ const MEASURE = () => {
      les panneaux avant eux leur ferait décrire un écran différent de celui qui a été filtré. */
   hiddenTooltips.forEach(({ panel, previous }) => { panel.style.display = previous; });
 
+  /*
+   * Ce qu'une personne vise réellement.
+   *
+   * Un contrôle `sr-only` n'est pas la cible : il mesure 1 x 1 et ce qu'on touche est le libellé
+   * qui le représente, un clic sur ce libellé activant le contrôle — c'est aussi ce que WCAG 2.5.8
+   * mesure. Sans cette règle, un groupe de boutons radio rendus en cartes déclare autant d'échecs
+   * qu'il a d'options alors que chaque carte fait plus de 100 px, et ces faux positifs remplissent
+   * le budget d'une page, où ils masquent les vraies trouvailles — l'argument exact qui a sorti les
+   * couches internes de Monaco de la colonne `unreachable`.
+   *
+   * Étroit volontairement : la substitution ne vaut que pour un contrôle *à la fois* masqué et
+   * étiqueté. Un contrôle `sr-only` sans libellé garde sa taille réelle, et c'est correct — rien
+   * ne permet de le viser.
+   */
+  const targetBox = el => {
+    if (isScreenReaderOnly(el)) {
+      const label = el.closest('label')
+        ?? (el.id ? document.querySelector(`label[for="${CSS.escape(el.id)}"]`) : null);
+      if (label) return label.getBoundingClientRect();
+    }
+    return el.getBoundingClientRect();
+  };
+
   const targets = [...document.querySelectorAll('button, [role="button"], a, input, select')]
     .map(el => {
-      const r = el.getBoundingClientRect();
+      const r = targetBox(el);
       return {
         tag: el.tagName.toLowerCase(),
         cls: String(el.className).slice(0, 70),

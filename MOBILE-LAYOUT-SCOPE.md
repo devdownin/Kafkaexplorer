@@ -67,6 +67,7 @@ no `title`, no scrollable ancestor, not `sr-only`:
 | audit | 0 clipped, 0 unreachable | 0 / 0 | 0 / 0 |
 | metrics | 18 clipped, 13 unreachable | 13 / 8 | 11 / 6 |
 | cluster | 12 clipped, 2 unreachable | 2 / 0 | 5 / 0 |
+| settings | 1 clipped, 1 unreachable | 1 / 1 | 1 / 1 |
 
 The document never exceeds the window on any page at any of the three widths — that part held and
 still holds. The discipline `CLAUDE.md` states for artifacts — wide content scrolls inside its own
@@ -146,6 +147,7 @@ Interactive elements below the 24 × 24 CSS px of WCAG 2.5.8 (Target Size, Minim
 | stream-flow | 19 / 44 | metrics | 7 / 56 |
 | topic-explorer | 3 / 59 | dashboard | 5 / 89 |
 | data-model | 7 / 84 | cluster | 1 / 21 |
+| settings | 1 / 49 | | |
 
 (The worse of phone and desktop for each page, which is what `--check` gates on.)
 
@@ -357,7 +359,23 @@ it was meant to.
 | sql-editor | 4 | 4 |
 | stream-flow | 2 | **0** |
 | cluster | 2 | 2 |
+| settings | — | 1 |
 | dashboard / data-model / audit | 0 | 0 |
+
+**`settings` was added to the probe later**, and it is why the table above has an em dash rather
+than a number for it: the page had never been measured, so there is no "before". What it taught is
+worth more than its own row. Its first reading was **15 undersized targets, of which 13 were the
+`sr-only` `<input>` of its radio-card groups** — the probe measured the 1 × 1 box while the target
+a person actually hits is the card labelling it, over a hundred pixels wide. A budget of 15 would
+have been a ceiling over noise, and would have hidden the two real rows underneath it: the same
+argument that took Monaco's internal scroll layers out of `unreachable`. `targetBox` attributes a
+visually hidden control to its label, which is also what WCAG 2.5.8 measures, and the page reads
+**1 / 49**. Of the two that were real, one is fixed — `PasswordInput`'s reveal toggle at 18 × 24,
+the fourth control of the `Checkbox` / `Switch` / `HelpTip` family, shared by every secret field in
+the application — and the other is the sidebar's brand link, which every page carries and every
+budget already contains. Its single `unreachable` row is the connection pill's dot: a decorative
+12 px span with no text, so nothing is cut off in the sense this column means. It is budgeted and
+named rather than fixed on a guess.
 
 **What is left is real, and small.** Naming it is the point of the correction — the previous number
 buried it. On the SQL editor at 390 px: one Monaco-internal scroller (the editor scrolls; not our
