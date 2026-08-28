@@ -94,13 +94,13 @@ public class MetricController {
     }
 
     @DeleteMapping("/{id}")
-    public void delete(@PathVariable String id) {
+    public void delete(@PathVariable("id") String id) {
         metricService.delete(id);
     }
 
     /** Recompute a single metric immediately and return its refreshed (credential-masked) state. */
     @PostMapping("/{id}/refresh")
-    public ResponseEntity<MetricConfig> refresh(@PathVariable String id) {
+    public ResponseEntity<MetricConfig> refresh(@PathVariable("id") String id) {
         return metricService.refreshMetric(id)
             .map(this::maskForDisplay)
             .map(ResponseEntity::ok)
@@ -127,7 +127,7 @@ public class MetricController {
     }
 
     @GetMapping("/label-preview")
-    public MetricLabelPreview getLabelPreview(@RequestParam String topic) {
+    public MetricLabelPreview getLabelPreview(@RequestParam("topic") String topic) {
         return kafkaAdminService.getLatestMessage(topic)
             .map(message -> new MetricLabelPreview(
                 topic,

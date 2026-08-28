@@ -16,6 +16,7 @@ import org.springframework.web.context.WebApplicationContext;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.forwardedUrl;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
  * Every client-side route reaches the SPA, and no controller shadows one.
@@ -89,9 +90,45 @@ class SpaRoutingTest {
     /**
      * And the other direction, which is what makes the rule above safe to state: the catch-all
      * must not swallow the API. A forward here would mean every endpoint answers with the SPA.
+     *
+     * <p>This half was always true and proves the weaker of the two claims: {@code /api/metrics} is
+     * mapped by {@code MetricController}, and a mapped endpoint outranks the catch-all on
+     * specificity. It cannot fail on the rule {@link SpaController} documents, which is about the
+     * paths no controller claims — that is the test below.
      */
     @Test
     void theApiIsNotForwardedToTheSpa() throws Exception {
         mockMvc.perform(get("/api/metrics")).andExpect(forwardedUrl(null));
+    }
+
+    /**
+     * The rule itself: an <b>unmapped</b> API path answers 404, not the SPA.
+     *
+     * <p>{@code /api/topics} is the plural of the real {@code /api/topic} — a renamed endpoint, or
+     * one letter of a typo — and it carries no dot, so {@code SpaController}'s
+     * {@code /**}{@code /{path}} catch-all matched it and answered <b>200 {@code text/html}</b>
+     * with {@code index.html}. axios then died inside {@code JSON.parse} on {@code <!doctype},
+     * which names neither the route nor the mistake. The status is asserted as well as the absence
+     * of a forward: a 404 reached by some other route would be the right answer for the wrong
+     * reason, and a forward with a 404 status is not a thing this can produce.
+     */
+    @Test
+    void anUnmappedApiPathIsA404RatherThanTheSpa() throws Exception {
+        mockMvc.perform(get("/api/topics"))
+            .andExpect(status().isNotFound())
+            .andExpect(forwardedUrl(null));
+    }
+
+    /**
+     * And the guarantee holds one segment down, where a path variable could have absorbed it:
+     * {@code /api/topic/{name}} is mapped, {@code /api/topic/demo.orders.1.received/consumer} (the
+     * singular of {@code /consumers}) is not — and it is dotless in its last segment, so it is
+     * exactly the shape the catch-all takes.
+     */
+    @Test
+    void anUnmappedApiSubPathIsA404Too() throws Exception {
+        mockMvc.perform(get("/api/topic/demo.orders.1.received/consumer"))
+            .andExpect(status().isNotFound())
+            .andExpect(forwardedUrl(null));
     }
 }

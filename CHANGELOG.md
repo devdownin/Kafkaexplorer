@@ -24,6 +24,32 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   matched nothing and fell through: opening a shared Topic Explorer link, or pressing F5 on it, was
   broken for essentially every topic. `/topic/**` is now mapped explicitly, which fixes it without
   loosening the rule that keeps the asset paths working.
+- **An unmapped API path answered the SPA instead of 404.** `SpaController`'s
+  `/**/{path:[^\.]*}` matches any dotless path, `/api/` included — it only ever lost to a *mapped*
+  endpoint on specificity — so `GET /api/topics`, the plural of the real `/api/topic`, came back
+  **200, as HTML**, with `index.html`. A renamed or mistyped endpoint therefore reached axios as
+  HTML and failed inside `JSON.parse` on `<!doctype`, which names neither the route nor the mistake.
+  `unmappedApi` maps `/api/**` and throws a 404; measured against `PathPatternParser`, that pattern
+  outranks the catch-all and is outranked by every mapping under `/api/` in the package, literal and
+  path-variable alike, so it shadows none of them.
+- **The guard for that rule could not fail on it.** `theApiIsNotForwardedToTheSpa` asserted on
+  `/api/metrics`, which `MetricController` maps — so it proved a specific mapping beats the
+  catch-all, which was never in doubt, while `SpaController`'s javadoc and `CLAUDE.md` both stated
+  the stronger rule. It is asserted on an **unmapped** path now, at two depths.
+- **The Lineage failure test could not distinguish the failure it names.**
+  `reports a failed load instead of leaving the previous graph passing for current` asserted only
+  `No lineage data available` — byte-identical to the empty-result case two tests above — and never
+  rendered a successful graph first, so it passed against a page that silently kept stale data. On
+  an error the page does not clear `data`; it toasts. The test now loads a graph, fails the reload,
+  and asserts both halves: the error is reported *and* the previous graph is still on screen. The
+  cancellation and sequencing the file's own header advertises are covered too, the sequencing half
+  by resolving a superseded request last.
+- **`@PathVariable` / `@RequestParam` names were missing from four more controllers.**
+  `LineageController`, `MetricController`, `ProcessMiningController` and `QueryController` carried
+  eleven unnamed ones between them — `QueryController` included, which the previous entry for this
+  had credited as already following the convention. Under `verify-offline.sh`, which compiles with
+  plain `javac` and no `-parameters`, those handlers fail at *request* time; Maven and CI are
+  unaffected, which is why a partial pass fixed nothing an operator would notice.
 - **`POST /api/audit/start` refused a partial body.** `AuditOptions` carried six primitive
   `boolean` components, so `{}` — or a body naming only `topicPrefix` — failed with a 400 quoting a
   Jackson internal, on an endpoint that accepts no body at all. A boxed `@JsonCreator` binds it
@@ -32,7 +58,7 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - **`SpaRoutingTest`**, which boots the real web layer and walks the router of `App.tsx`: every
-  client-side route must forward to `index.html`, and `/api/**` must not. It replaces a guard that
+  client-side route must forward to `index.html`, and no path under `/api/` may. It replaces a guard that
   was spread over three controller tests as 404 assertions — each proving only that *that*
   controller does not map its own route, leaving `/audit`, `/lineage`, `/cluster` and `/compare`
   covered by nothing. It found the three defects above on its first run.

@@ -125,13 +125,13 @@ public class QueryController {
     }
 
     @GetMapping(value = "/jobs/{queryId}", produces = "application/json")
-    public FlinkManagedJobDetails getJob(@PathVariable String queryId) {
+    public FlinkManagedJobDetails getJob(@PathVariable("queryId") String queryId) {
         return flinkJobService.getJob(queryId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Job not found: " + queryId));
     }
 
     @GetMapping(value = "/schema/{tableName}", produces = "application/json")
-    public Map<String, String> getSchema(@PathVariable String tableName) {
+    public Map<String, String> getSchema(@PathVariable("tableName") String tableName) {
         return flinkSqlService.getTableSchema(tableName);
     }
 
