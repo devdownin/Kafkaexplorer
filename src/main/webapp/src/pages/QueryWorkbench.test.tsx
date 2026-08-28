@@ -305,6 +305,24 @@ describe('QueryWorkbench — the sidebar lets a truncated name be read', () => {
     expect(row).toHaveTextContent('demo.orders.1.received');
   });
 
+  /*
+   * Le `title` seul ne suffisait pas : il n'apparaît qu'à la souris, après le délai du
+   * navigateur, et jamais au focus clavier — alors que la liste est tabulable. Le nom se déplie
+   * donc sur place, et ce qui se casse en silence est l'appariement : un modificateur
+   * `group-hover/name` sans `group/name` sur un ancêtre ne fait rien du tout, et rien à l'écran
+   * ne le dirait. Les deux moitiés sont vérifiées ensemble, ici et pour les tables.
+   */
+  it('unfolds the name in place, on hover and on keyboard focus', async () => {
+    renderPage();
+    const row = await screen.findByRole('button', { name: 'SELECT from demo.orders.1.received' });
+    const name = row.querySelector('span')!;
+
+    expect(name).toHaveClass('truncate');
+    expect(name.className).toContain('group-hover/name:whitespace-normal');
+    expect(name.className).toContain('group-focus-within/name:whitespace-normal');
+    expect(name.closest('.group\\/name')).not.toBeNull();
+  });
+
   it('does the same for a Flink table and for the columns it unfolds', async () => {
     get.mockImplementation((url: string) => {
       if (url === '/api/query/init') return Promise.resolve({ data: { ...CATALOGUE, tables: ['orders'] } });
@@ -316,6 +334,8 @@ describe('QueryWorkbench — the sidebar lets a truncated name be read', () => {
     renderPage();
     const tableName = await screen.findByTitle('orders');
     expect(tableName).toHaveTextContent('orders');
+    expect(tableName.className).toContain('group-hover/name:whitespace-normal');
+    expect(tableName.closest('.group\\/name')).not.toBeNull();
 
     await userEvent.click(tableName);
 
