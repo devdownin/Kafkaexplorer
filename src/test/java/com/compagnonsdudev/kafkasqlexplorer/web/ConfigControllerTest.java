@@ -22,6 +22,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -30,6 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -338,6 +340,62 @@ class ConfigControllerTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.isConnected").value(true))
             .andExpect(jsonPath("$.connectionError").value(org.hamcrest.Matchers.nullValue()));
+    }
+
+    /**
+     * The way back out of a stored setting, which this application did not have.
+     *
+     * <p>Ownership was sticky: a bootstrap address entered by mistake was re-written by every later
+     * save, and undoing it meant editing a file on the deployment's disk or adding the environment
+     * variable that outranks it.
+     */
+    @Test
+    void aStoredSettingCanBeReleasedSoTheDeploymentOwnsItAgain() throws Exception {
+        mockMvc.perform(post("/api/config").contentType(MediaType.APPLICATION_JSON)
+            .content("{\"bootstrapServers\":\"new:9092\",\"llmModel\":\"vendor/model\"}"));
+        assertEquals(List.of("bootstrapServers", "llmModel"), settingsStore.ownedFields());
+
+        mockMvc.perform(delete("/api/config/stored").param("field", "bootstrapServers"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.forgotten[0]").value("bootstrapServers"))
+            .andExpect(jsonPath("$.settingsStoredFields[0]").value("llmModel"));
+
+        assertEquals(List.of("llmModel"), settingsStore.ownedFields());
+    }
+
+    /**
+     * Releasing changes where the <em>next</em> start reads a setting, never what this process is
+     * connected to now: the stored value was applied at boot and is still in force. Quietly
+     * repointing a live cluster on a "forget" would be a worse surprise than the one being fixed.
+     */
+    @Test
+    void releasingASettingDoesNotMoveTheRunningConfiguration() throws Exception {
+        mockMvc.perform(post("/api/config").contentType(MediaType.APPLICATION_JSON)
+            .content("{\"bootstrapServers\":\"new:9092\"}"));
+
+        mockMvc.perform(delete("/api/config/stored")).andExpect(status().isOk());
+
+        assertEquals("new:9092", kafkaConfig.getBootstrapServers());
+    }
+
+    /**
+     * A name this build does not know is refused, not quietly ignored: a request that released
+     * nothing would read exactly like one that worked.
+     */
+    @Test
+    void anUnknownSettingNameIsRefusedRatherThanReleasingNothing() throws Exception {
+        mockMvc.perform(delete("/api/config/stored").param("field", "kafkaPassword"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.message")
+                .value(org.hamcrest.Matchers.containsString("bootstrapServers")));
+    }
+
+    /** Idempotent: forgetting what was never stored is a 200 naming nothing, not an error. */
+    @Test
+    void releasingAnEmptyStoreIsNotAFailure() throws Exception {
+        mockMvc.perform(delete("/api/config/stored"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.forgotten").isEmpty());
     }
 
     /** `/config` belongs to the SPA. A controller mapping there answers a refresh with a 500. */

@@ -487,3 +487,95 @@ describe('Config — a verdict describes what was tried', () => {
     expect(screen.queryByText(/Candidate reachable/)).not.toBeInTheDocument();
   });
 });
+
+describe('Config — taking back a stored setting', () => {
+  const stored = {
+    settingsPersisted: true,
+    settingsStoreSecrets: true,
+    settingsStorePath: '/app/data/settings.json',
+    settingsStoredFields: ['bootstrapServers', 'llmModel'],
+  };
+
+  beforeEach(() => {
+    mockedAxios.get.mockImplementation((url: string) => {
+      if (url === '/api/config') return Promise.resolve({ data: { ...serverConfig, ...stored } });
+      if (url === '/api/config/llm-models') return Promise.resolve({ data: shortlist });
+      return Promise.reject(new Error(`unexpected GET ${url}`));
+    });
+  });
+
+  /*
+   * Le serveur envoyait un *nombre*, lu par personne : « 5 réglages sont conservés » ne se corrige
+   * pas, là où « l'adresse du courtier est conservée » se corrige.
+   */
+  it('names the settings the file speaks for', async () => {
+    renderPage();
+
+    expect(await screen.findByRole('button', { name: /Bootstrap servers/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /LLM model/ })).toBeInTheDocument();
+  });
+
+  it('releases one, and says the running application did not move', async () => {
+    const user = userEvent.setup();
+    mockedAxios.delete.mockResolvedValue({
+      data: { ...stored, settingsStoredFields: ['llmModel'], forgotten: ['bootstrapServers'] },
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /Bootstrap servers/ }));
+    await user.click(await screen.findByRole('button', { name: /^forget$/i }));
+
+    await waitFor(() => expect(mockedAxios.delete).toHaveBeenCalledWith(
+      '/api/config/stored', { params: { field: 'bootstrapServers' } }));
+    expect(await screen.findByText(/Nothing changed in the running application/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Bootstrap servers/ })).not.toBeInTheDocument();
+  });
+
+  /* Le geste est contre-intuitif dans un sens précis, et le dialogue est ce qui le dit. */
+  it('says what forgetting does not do, before doing it', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /Bootstrap servers/ }));
+
+    expect(await screen.findByText(/does not change what this application is connected to/))
+      .toBeInTheDocument();
+  });
+
+  it('does nothing when the confirmation is declined', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /Bootstrap servers/ }));
+    await user.click(await screen.findByRole('button', { name: /cancel/i }));
+
+    expect(mockedAxios.delete).not.toHaveBeenCalled();
+  });
+
+  /* Un fichier qu'on n'a pas pu réécrire n'est pas un oubli : les réglages sont toujours là. */
+  it('says the settings are still stored when the file could not be rewritten', async () => {
+    const user = userEvent.setup();
+    mockedAxios.delete.mockResolvedValue({
+      data: { ...stored, forgotten: [], forgetError: 'Permission denied' },
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /LLM model/ }));
+    await user.click(await screen.findByRole('button', { name: /^forget$/i }));
+
+    expect(await screen.findByText(/Still stored: Permission denied/)).toBeInTheDocument();
+  });
+
+  it('offers nothing to release on a deployment that keeps nothing', async () => {
+    mockedAxios.get.mockImplementation((url: string) => {
+      if (url === '/api/config') {
+        return Promise.resolve({ data: { ...serverConfig, settingsPersisted: false } });
+      }
+      return Promise.reject(new Error(`unexpected GET ${url}`));
+    });
+    renderPage();
+
+    await screen.findByDisplayValue('openai/gpt-4o-mini');
+    expect(screen.queryByRole('button', { name: /forget all saved settings/i })).not.toBeInTheDocument();
+  });
+});

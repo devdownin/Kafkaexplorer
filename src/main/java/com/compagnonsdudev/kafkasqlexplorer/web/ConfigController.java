@@ -147,7 +147,13 @@ public class ConfigController {
         result.put("settingsStorePath", path == null ? null : path.toString());
         SettingsStore.StoredSettings stored = settingsStore.current();
         result.put("settingsSavedAt", stored.savedAt());
-        result.put("settingsStoredFields", stored.values().size());
+        // Which settings this file speaks for, not how many. The count was served and read by
+        // nobody, and it could not be: "5 settings are stored" is not something an operator can
+        // act on, where "the bootstrap address and the LLM model are stored" is — and it is the
+        // question the precedence rule raises, since a stored field takes its value from here
+        // rather than from the deployment's own configuration at every start. Names this build
+        // recognises, never the file's own keys (see SettingsStore.ownedFields).
+        result.put("settingsStoredFields", settingsStore.ownedFields());
     }
 
     /**
@@ -280,6 +286,52 @@ public class ConfigController {
             }
         }
         return ResponseEntity.ok(applyConfig(body));
+    }
+
+    /**
+     * Stops keeping settings, so the next start reads them from the deployment again.
+     *
+     * <p>Ownership was sticky and one-way: once a field reached the store, every later save
+     * re-wrote it and nothing could release it, so a bootstrap address entered by mistake — or one
+     * naming a cluster since decommissioned — could only be undone by editing a file on the
+     * deployment's disk, or by adding the environment variable that outranks it. Both are changes
+     * to the deployment, for a value that was entered through a web form.
+     *
+     * <p><b>Nothing about the running process changes</b>, and the answer says so rather than
+     * leaving a 200 to imply otherwise: the stored value was applied at boot and is still what this
+     * application is connected to. Whoever wants a different value now saves it, which is what the
+     * form is for.
+     *
+     * <p>Idempotent by construction — it answers with what it actually released, so forgetting a
+     * field that was never stored is a 200 naming nothing rather than an error. A field name this
+     * build does not know is a 400, because a request that silently released nothing would read
+     * exactly like one that worked.
+     *
+     * @param field one setting to release, by the name {@code POST /api/config} uses; absent
+     *              releases the whole store
+     */
+    @DeleteMapping("/api/config/stored")
+    public ResponseEntity<Map<String, Object>> forgetStoredSettings(
+            @RequestParam(name = "field", required = false) String field) {
+        Set<String> known = SettingsStore.FIELDS.stream()
+            .map(SettingsStore.Field::apiField).collect(Collectors.toCollection(LinkedHashSet::new));
+        if (field != null && !known.contains(field)) {
+            Map<String, Object> rejected = new HashMap<>();
+            rejected.put("message", "Not released: '" + field + "' is not a setting this page "
+                + "stores. Expected one of " + String.join(", ", known) + ".");
+            return ResponseEntity.badRequest().body(rejected);
+        }
+
+        SettingsStore.ForgetOutcome outcome =
+            settingsStore.forget(field == null ? Set.of() : Set.of(field));
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("forgotten", outcome.forgotten());
+        result.put("forgetError", outcome.error());
+        // The store's new state, in the shape a GET answers with, so the page redraws from the
+        // answer instead of asking again.
+        appendPersistence(result);
+        return ResponseEntity.ok(result);
     }
 
     private Map<String, Object> applyConfig(Map<String, Object> body) {

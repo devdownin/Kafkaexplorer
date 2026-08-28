@@ -10,8 +10,9 @@ import {
 import { clearDraft, readDraft, useDraftConflict, writeDraft } from '../draftStore';
 import { draftableOnly, mergeDraft } from './configDraft';
 import {
-  describePersistence, describeSaveOutcome, splitPersistence,
-  type SettingsPersistence,
+  describeForget, describeForgetOutcome, describePersistence, describeSaveOutcome,
+  splitPersistence, storedFieldLabel,
+  type ForgetOutcome, type SettingsPersistence,
 } from './settingsPersistence';
 import { describeDataPolicy, type LlmPolicyFacts } from './llmPolicy';
 import { describeTestTimeout, testTimeoutMs } from './llmTimeout';
@@ -263,7 +264,16 @@ const Config: React.FC = () => {
    */
   const [inForce, setInForce] = useState<LlmPolicyFacts | null>(null);
   const [saveNote, setSaveNote] = useState<string | null>(null);
+  /** Un oubli en cours, par nom de champ — ou `''` pour la totalité du magasin. */
+  const [forgetting, setForgetting] = useState<string | null>(null);
   const persistenceNotice = useMemo(() => describePersistence(persistence), [persistence]);
+  /*
+   * Ce que le fichier porte, servi par nom depuis que le compte a été remplacé — et vide tant que
+   * la première réponse n'est pas arrivée, ce qui est la valeur juste : rien n'est affirmé sur un
+   * magasin dont on n'a pas encore lu l'état.
+   */
+  const storedFields = useMemo(
+    () => persistence.settingsStoredFields ?? [], [persistence.settingsStoredFields]);
   const policy = useMemo(() => describeDataPolicy(inForce), [inForce]);
   /*
    * Ce que la passerelle a dit du modèle au dernier test. Dérivé du résultat et non d'un état à
@@ -596,6 +606,47 @@ const Config: React.FC = () => {
   };
 
   /**
+   * Cesse de conserver un réglage — ou tous.
+   *
+   * L'appartenance au magasin était **collante et à sens unique** : un champ qui y était entré y
+   * restait, réécrit à chaque enregistrement, sans qu'aucun geste de cette page ne puisse l'en
+   * sortir. Une adresse de courtier saisie par erreur, ou nommant un cluster démantelé depuis, ne
+   * se défaisait qu'en éditant un fichier sur le disque du déploiement, ou en ajoutant la variable
+   * d'environnement qui la surclasse — deux modifications du déploiement pour une valeur saisie
+   * dans un formulaire.
+   *
+   * Le geste est confirmé parce qu'il n'est pas intuitif dans un sens précis, que le dialogue dit :
+   * il ne change rien au processus en cours.
+   */
+  const handleForget = async (field?: string) => {
+    const targets = field ? [field] : (persistence.settingsStoredFields ?? []);
+    if (targets.length === 0) return;
+    const ok = await confirm({
+      title: field
+        ? `Stop keeping “${storedFieldLabel(field)}”?`
+        : `Stop keeping ${targets.length === 1 ? 'this setting' : `these ${targets.length} settings`}?`,
+      description: describeForget(targets),
+      confirmLabel: 'Forget',
+      tone: 'danger',
+      icon: 'warning',
+    });
+    if (!ok) return;
+    setForgetting(field ?? '');
+    setError(null);
+    try {
+      const res = await axios.delete<ForgetOutcome & SettingsPersistence>(
+        '/api/config/stored', field ? { params: { field } } : undefined);
+      const { persistence: kept } = splitPersistence(res.data);
+      setPersistence(kept);
+      setSaveNote(describeForgetOutcome(res.data));
+    } catch (err) {
+      setError(refusal(err, 400) ?? 'The saved settings could not be released.');
+    } finally {
+      setForgetting(null);
+    }
+  };
+
+  /**
    * Toutes les erreurs d'un coup, indexées par champ.
    *
    * La version précédente renvoyait la **première** erreur sous forme de chaîne, affichée dans un
@@ -837,10 +888,52 @@ const Config: React.FC = () => {
           {persistenceNotice.tone === 'not-kept' ? 'warning'
             : persistenceNotice.tone === 'unknown' ? 'hourglass_empty' : 'save'}
         </span>
-        <div>
+        <div className="min-w-0">
           <p className="font-medium">{persistenceNotice.text}</p>
           {persistenceNotice.detail && (
             <p className="text-on-surface-variant/80 mt-0.5">{persistenceNotice.detail}</p>
+          )}
+          {/*
+            Lesquels, et le moyen de les reprendre. Le serveur envoyait un *nombre*, que personne
+            ne lisait et que personne ne pouvait lire : « 5 réglages sont conservés » ne se corrige
+            pas. Et l'appartenance au magasin était à sens unique — un champ entré là y restait,
+            réécrit à chaque enregistrement, et seule l'édition d'un fichier sur le disque du
+            déploiement l'en sortait.
+          */}
+          {storedFields.length > 0 && (
+            <div className="mt-2">
+              <p className="text-on-surface-variant/80">
+                Taken from the file rather than from this deployment’s own configuration:
+              </p>
+              <ul className="mt-1 flex flex-wrap gap-1.5">
+                {storedFields.map(field => (
+                  <li key={field}>
+                    <button
+                      type="button"
+                      onClick={() => void handleForget(field)}
+                      disabled={forgetting !== null}
+                      title={`Stop keeping ${storedFieldLabel(field)} — the next start reads it from this deployment’s configuration`}
+                      className="inline-flex items-center gap-1 rounded-md border border-outline-variant
+                        bg-surface-container-low pl-2 pr-1.5 py-1 text-[12px] text-on-surface-variant
+                        hover:border-outline disabled:opacity-50"
+                    >
+                      {storedFieldLabel(field)}
+                      <span aria-hidden="true" className="material-symbols-outlined text-[14px]">close</span>
+                      <span className="sr-only">— stop keeping this setting</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <Button
+                type="button" variant="ghost" size="sm" className="mt-1.5"
+                icon={forgetting === '' ? undefined : 'delete_sweep'}
+                loading={forgetting === ''}
+                disabled={forgetting !== null}
+                onClick={() => void handleForget()}
+              >
+                Forget all saved settings
+              </Button>
+            </div>
           )}
         </div>
       </div>

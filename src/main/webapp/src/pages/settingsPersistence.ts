@@ -26,14 +26,29 @@ export interface SettingsPersistence {
   settingsStorePath?: string | null;
   /** Date ISO du dernier enregistrement, `null` si rien n'a jamais été saisi. */
   settingsSavedAt?: string | null;
-  /** Nombre de réglages actuellement repris du fichier. */
-  settingsStoredFields?: number;
+  /**
+   * Les réglages actuellement repris du fichier, par leur nom d'API.
+   *
+   * C'était un *nombre*, servi et lu par personne — et il ne pouvait pas l'être : « 5 réglages sont
+   * conservés » ne se corrige pas, là où « l'adresse du courtier et le modèle sont conservés » se
+   * corrige. C'est aussi la question que pose la règle de précédence, un champ conservé prenant sa
+   * valeur ici plutôt que dans la configuration du déploiement à chaque démarrage.
+   */
+  settingsStoredFields?: string[];
   /** L'enregistrement qui vient d'avoir lieu a-t-il été écrit. */
   settingsPersistedNow?: boolean;
   /** La raison quand il ne l'a pas été. */
   settingsPersistenceError?: string | null;
   /** Les champs volontairement laissés de côté, en clair (`keystorePassword`, …). */
   settingsNotStored?: string[];
+}
+
+/** Ce que le serveur a réellement relâché sur un `DELETE /api/config/stored`. */
+export interface ForgetOutcome {
+  /** Les champs qui étaient conservés et ne le sont plus — vide si aucun ne l'était. */
+  forgotten?: string[];
+  /** La raison quand le fichier n'a pas pu être réécrit. */
+  forgetError?: string | null;
 }
 
 /** Les clés ci-dessus, pour les retirer de l'état du formulaire — ce n'en sont pas des champs. */
@@ -142,4 +157,80 @@ export function describeSaveOutcome(p: SettingsPersistence): string | null {
       + 'disk on this deployment, so they have to be entered again after a restart.';
   }
   return null;
+}
+
+/**
+ * Le nom lisible d'un réglage conservé.
+ *
+ * Une table plutôt qu'une dérivation, parce que ces noms sont ceux de l'API et pas ceux de
+ * l'écran : `llmSnapshotWindowTimeoutSeconds` n'a pas de découpage automatique acceptable. Un nom
+ * inconnu — un champ qu'une version plus récente du serveur a ajouté — est *affiché tel quel*
+ * plutôt qu'omis : une liste qui dit ce qu'elle conserve doit rester exhaustive, et un nom d'API
+ * reste plus utile qu'un silence.
+ */
+export const STORED_FIELD_LABELS: Record<string, string> = {
+  bootstrapServers: 'Bootstrap servers',
+  mode: 'Security mode',
+  truststorePath: 'Truststore path',
+  truststorePassword: 'Truststore password',
+  keystorePath: 'Keystore path',
+  keystorePassword: 'Keystore password',
+  keyPassword: 'Key password',
+  confluentKey: 'Confluent API key',
+  confluentSecret: 'Confluent API secret',
+  llmProvider: 'LLM provider',
+  llmApiKey: 'LLM API key',
+  llmBaseUrl: 'LLM base URL',
+  llmModel: 'LLM model',
+  llmUseRag: 'SpectraLLM RAG',
+  llmCollection: 'SpectraLLM collection',
+  llmStructuredOutput: 'Structured output',
+  llmOpenrouterDataCollection: 'OpenRouter data collection',
+  llmOpenrouterRequireParameters: 'OpenRouter parameter routing',
+  llmRequestTimeoutSeconds: 'Request timeout',
+  llmMaxTokens: 'Max tokens',
+  llmSnapshotWindowSize: 'Live window size',
+  llmSnapshotWindowTimeoutSeconds: 'Live window timeout',
+};
+
+export const storedFieldLabel = (field: string): string =>
+  STORED_FIELD_LABELS[field] ?? field;
+
+/**
+ * Ce que « oublier » fait, et surtout ce qu'il ne fait pas.
+ *
+ * La phrase existe parce que le geste est contre-intuitif dans un sens précis : il ne change **rien**
+ * au processus en cours. La valeur conservée a été appliquée au démarrage et reste celle sur
+ * laquelle l'application est connectée ; ce qui change, c'est l'endroit où le *prochain* démarrage
+ * ira la lire. Laisser un 200 le sous-entendre ferait croire à un retour en arrière immédiat, et
+ * repointer un cluster vivant sur un « oublier » serait une surprise pire que celle qu'on corrige.
+ */
+export function describeForget(fields: string[]): string {
+  const what = fields.length === 1
+    ? `“${storedFieldLabel(fields[0])}”`
+    : `these ${fields.length} settings`;
+  return `Forgetting ${what} does not change what this application is connected to right now — `
+    + 'the value in force stays until it is stopped. What changes is where the next start reads '
+    + 'it from: this deployment\'s own configuration (environment variables, application.yml) '
+    + 'instead of the saved file.';
+}
+
+/**
+ * Le résultat d'un oubli, en une phrase — `null` quand il n'y a rien à signaler.
+ *
+ * Trois réponses, parce qu'un fichier qu'on n'a pas pu réécrire et un champ qui n'était pas
+ * conservé sont deux non-événements très différents, et qu'aucun des deux n'est « c'est fait ».
+ */
+export function describeForgetOutcome(outcome: ForgetOutcome): string | null {
+  if (outcome.forgetError) {
+    return `Still stored: ${outcome.forgetError}. These settings will be restored at the next `
+      + 'start, as before.';
+  }
+  const forgotten = outcome.forgotten ?? [];
+  if (forgotten.length === 0) {
+    return 'Nothing was stored, so nothing changed.';
+  }
+  const names = forgotten.map(storedFieldLabel).join(', ');
+  return `No longer stored: ${names}. The next start takes ${forgotten.length === 1 ? 'it' : 'them'} `
+    + 'from this deployment\'s own configuration. Nothing changed in the running application.';
 }
