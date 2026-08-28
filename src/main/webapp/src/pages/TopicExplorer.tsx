@@ -28,6 +28,7 @@ import {
   buildSearchQuery,
   coverageOf,
   criteriaFromQuery,
+  normalizeTopicDetail,
   readCriteriaDraft,
   seedFromQuery,
   saveCriteriaDraft,
@@ -791,7 +792,7 @@ const TopicExplorer: React.FC = () => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- chargement du topic
     setLoading(true);
     axios.get(`/api/topic/${encodeURIComponent(name ?? '')}?readMode=${readMode}`)
-      .then(res => { if (active) setData(res.data); })
+      .then(res => { if (active) setData(normalizeTopicDetail(res.data)); })
       .catch(() => { if (active) toast('Failed to load topic details', 'error'); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
@@ -803,7 +804,7 @@ const TopicExplorer: React.FC = () => {
     setLoading(true);
     try {
       const response = await axios.get(`/api/topic/${encodeURIComponent(name ?? '')}?readMode=${readMode}`);
-      setData(response.data);
+      setData(normalizeTopicDetail(response.data));
     } catch {
       toast('Failed to load topic details', 'error');
     } finally {

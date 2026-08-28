@@ -11,6 +11,33 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **The Metrics page is split**, from 2 272 lines — the largest file in the tree — to 1 249, into
+  `components/metrics/MetricCard.tsx`, `components/metrics/TemplateParamsEditor.tsx` and
+  `pages/metricsEditor.ts` for what renders nothing. Same precedent as `components/query/`, and the
+  same order: the page's 29 test cases existed before the split, not after. Nothing was rewritten
+  in the move; the whole suite and a real production build were run after each of the three steps.
+- **A component test for the Audit and Topic Explorer pages**, which had none. Both reunite the
+  two failure modes this repository has already paid for: a hand-written response shape trusted at
+  runtime (the Audit page narrows `globalStats` from a `Map<String, Object>` by a cast on a
+  convention nothing verifies), and a page state that used to render a reassuring verdict from a
+  run that measured nothing. Six cases and five, each pinned against a documented past defect —
+  and the FAILED-run case was verified to fail against the defect it describes.
+- **A first measurement of the shipped Process Mining prompt** (`theShippedPromptHoldsItsFormat`,
+  in the opt-in `llm-eval` suite): how often it comes back in the format it asked for, on the model
+  actually configured. `PROCESS-MINING-LLM-SCOPE.md` records the bilingual prompt as a suspicion
+  nobody had measured; this is the half that can be measured without building anything. An English
+  variant is deliberately not shipped to compare against — that would be a second production
+  surface built on a belief, and a prompt that holds its format needs no variant.
+
+### Fixed
+
+- **An incomplete topic response took the whole Topic Explorer down.** The render dereferences
+  `data.samples.length` and `data.schema` on every pass, and `samples` is the very field whose
+  shape change killed the Compare page. Normalised once on the way in rather than guarded at each
+  dereference; what is missing becomes empty, never invented. Found by the new page test.
+
 ### Changed
 
 - **The compose tree went from sixteen files to twelve, and from five ways of starting the app

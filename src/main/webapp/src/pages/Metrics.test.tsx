@@ -22,7 +22,8 @@ import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import axios from 'axios';
 import type { MetricConfig, MetricSuggestion, MetricSuggestions } from '../api/types';
-import { defaultReadMode, isSingleTableRead, sameStatement, validateScanParams, validateTemplate } from './Metrics';
+// La logique pure a quitté la page pour `metricsEditor.ts` ; les cas ci-dessous sont inchangés.
+import { defaultReadMode, isSingleTableRead, sameStatement, validateScanParams, validateTemplate } from './metricsEditor';
 
 vi.mock('axios');
 const mockedAxios = vi.mocked(axios, true);

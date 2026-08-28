@@ -384,7 +384,16 @@ Recorded rather than fixed, because each is a decision rather than a defect:
 - **The prompts are bilingual.** The system prompt is English, the user prompt's headings and
   instructions are French, the enums are English. Small models are measurably worse at holding a
   format across a language switch, and this application is routinely pointed at a 3B model. Nobody
-  has measured it *here*, so it stays a suspicion — and W8 is what would settle it.
+  had measured it *here*, so it stayed a suspicion — and W8 is what would settle it.
+  **The first half of that experiment now exists**: `LlmAnalysisEvalTest.theShippedPromptHoldsItsFormat`
+  runs the shipped prompt N times (`-Dllm.eval.runs`, default 3) against the configured model and
+  reports how often it came back usable, distinguishing a parse failure from an answer that
+  parsed and carried no flowchart. An English variant is deliberately **not** shipped to compare
+  against: a second production prompt is a second surface to keep in step for ever, built on a
+  belief, and if the prompt as it stands holds the format every time on the model under test then
+  the suspicion is answered for that model and nothing needs building. Only a run that shows
+  failures justifies the variant — and it would then be justified by a number. Record the rate
+  here when someone runs it; the suspicion stands until then, neither confirmed nor dismissed.
 - **`temperature` is hardcoded to `0.0`** in both plain-HTTP clients. That is the right default for
   a structured extraction and it is not configurable; a deployment wanting variety in the prose has
   no way to ask. Left alone deliberately — determinism is worth more here.
