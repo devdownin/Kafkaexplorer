@@ -114,6 +114,49 @@ class AuditServiceTest {
         assertEquals(2, flow.steps().size());
     }
 
+    /**
+     * The application's own state topics are not part of the estate under exploration, and
+     * auditing them manufactures findings about ourselves: {@code internal.metrics.config} is a
+     * keyed store, so every edited metric reads as a duplicate key, and the run writes its own
+     * report to {@code internal.audit.history} while that topic is being read. Same defect
+     * {@code ExplorerConsumerGroups} removed for the groups, left standing for the topics.
+     */
+    @Test
+    void theApplicationsOwnTopicsAreOutOfScope() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of(
+                "demo.test.1", "internal.audit.history", "internal.metrics.config",
+                "internal.field.mappings"));
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("demo.test.1", 10L));
+        when(flinkSqlService.listTables()).thenReturn(Collections.emptyList());
+
+        auditService.runAuditAsync("own-topics", AuditOptions.all());
+
+        AuditReport report = auditService.getAuditReport("own-topics");
+        assertTrue(report.topicAudits().stream().noneMatch(t -> t.name().startsWith("internal.")),
+                "the audit reported on its own bookkeeping topics");
+        assertEquals(1, report.totalTopics());
+        // Narrowing the scope is never silent.
+        Object notes = report.globalStats().get("scopeNotes");
+        assertTrue(notes instanceof List<?> list
+                        && list.stream().anyMatch(n -> String.valueOf(n).contains("its own state")),
+                "the report must say which topics it left out: " + notes);
+    }
+
+    /** Naming their prefix is an explicit request, and an explicit request is honoured. */
+    @Test
+    void namingTheInternalPrefixAuditsThemAnyway() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("demo.test.1", "internal.audit.history"));
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("internal.audit.history", 3L));
+        when(flinkSqlService.listTables()).thenReturn(Collections.emptyList());
+
+        auditService.runAuditAsync("explicit",
+                new AuditOptions(true, true, true, true, true, true, "internal."));
+
+        AuditReport report = auditService.getAuditReport("explicit");
+        assertEquals(1, report.totalTopics());
+        assertEquals("internal.audit.history", report.topicAudits().get(0).name());
+    }
+
     @Test
     void auditFlagsLaggingMetadataVersion() throws Exception {
         when(kafkaAdminService.listTopics()).thenReturn(Collections.emptyList());

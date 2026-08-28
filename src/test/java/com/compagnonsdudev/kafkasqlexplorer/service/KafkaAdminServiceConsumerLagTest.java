@@ -440,8 +440,27 @@ class KafkaAdminServiceConsumerLagTest {
             dormantGroup("orders-service"),                  // vide, mais pas à nous
             group("payments", GroupType.CLASSIC));           // ni l'un ni l'autre
 
-        assertEquals(List.of("kafka-explorer-metadata-1", "kafka-sql-explorer-timestamps-9"),
+        // Les résidus des anciens builds passent devant — voir l'ordre du plafond plus bas.
+        assertEquals(List.of("kafka-sql-explorer-timestamps-9", "kafka-explorer-metadata-1"),
             service.listDeletableExplorerGroups(100));
+    }
+
+    /*
+     * Ce que le plafond coupe en premier. La coupe était alphabétique sur des identifiants qui
+     * sont des UUID — une coupe au hasard déguisée en ordre. Ce qu'une passe plafonnée doit
+     * enlever d'abord, c'est l'arriéré qu'aucun build actuel ne peut recréer : les groupes aux
+     * schémas de nommage d'avant le préfixe, dont un cluster ayant fait tourner une ancienne
+     * version porte des milliers.
+     */
+    @Test
+    void removesTheLeftoversOfOlderBuildsFirstWhenTheCapHasToCut() {
+        groups(dormantGroup("kafka-explorer-aaa"),
+               dormantGroup("kafka-explorer-bbb"),
+               dormantGroup("snapshot-reader-zzz"),      // schéma hérité
+               dormantGroup("topic-search-yyy"));        // schéma hérité
+
+        assertEquals(List.of("snapshot-reader-zzz", "topic-search-yyy"),
+            service.listDeletableExplorerGroups(2));
     }
 
     /*

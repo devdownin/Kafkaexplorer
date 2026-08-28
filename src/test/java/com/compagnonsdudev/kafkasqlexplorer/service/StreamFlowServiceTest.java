@@ -26,6 +26,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -84,6 +85,43 @@ class StreamFlowServiceTest {
         assertEquals("topic1", edge.get("from"));
         assertEquals("topic2", edge.get("to"));
         assertEquals("+100 ms", edge.get("label"), "the edge label carries the hop latency");
+    }
+
+    /**
+     * A whole-cluster trace does not read the topics this application writes for itself. That
+     * exclusion used to name two of the three by hand ({@code Set.of(auditHistory, metricsConfig)}),
+     * so the field mappings and the demo stack's marker topic were traced — and a configured
+     * {@code explorer.internal-topic-prefix} moved the names out from under the literals.
+     */
+    @Test
+    void aWholeClusterTraceSkipsTheApplicationsOwnTopics() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of(
+            "orders", "internal.audit.history", "internal.metrics.config",
+            "internal.field.mappings", "internal.demo.seeded"));
+        onSearch("orders", found(List.of(message(0, 1L, 100L, "K-1", "created")), 1));
+
+        service.getStreamFlow(request("K-1", null, false, null, null));
+
+        verify(topicSearchService, never()).search(eq("internal.field.mappings"), any());
+        verify(topicSearchService, never()).search(eq("internal.demo.seeded"), any());
+        verify(topicSearchService, never()).search(eq("internal.audit.history"), any());
+        verify(topicSearchService).search(eq("orders"), any());
+    }
+
+    /** And it follows a configured prefix, which a literal could not. */
+    @Test
+    void theExclusionFollowsTheConfiguredInternalPrefix() throws Exception {
+        ExplorerConfig prefixed = new ExplorerConfig();
+        prefixed.setInternalTopicPrefix("acme");
+        StreamFlowService prefixedService =
+            new StreamFlowService(kafkaAdminService, topicSearchService, prefixed);
+        when(kafkaAdminService.listTopics())
+            .thenReturn(List.of("orders", "acme.internal.audit.history"));
+        onSearch("orders", found(List.of(message(0, 1L, 100L, "K-1", "created")), 1));
+
+        prefixedService.getStreamFlow(request("K-1", null, false, null, null));
+
+        verify(topicSearchService, never()).search(eq("acme.internal.audit.history"), any());
     }
 
     /** A key seen twice in one topic must not produce a back-edge. */

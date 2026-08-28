@@ -156,6 +156,52 @@ public class ExplorerConfig {
      */
     private long startupRestoreTimeoutMs = 3000;
 
+    /**
+     * Create the three topics this application keeps its own state in, with the retention policy
+     * they actually need, instead of letting the broker auto-create them.
+     *
+     * <p>On by default, and it fixes two things at once. Auto-creation gives a topic the broker's
+     * defaults — {@code cleanup.policy=delete} and whatever {@code retention.ms} is — and two of
+     * these three are <em>keyed stores</em>: {@code internal.metrics.config} and
+     * {@code internal.field.mappings} are read back by key at startup, and a store the broker
+     * deletes by age is a store whose contents quietly disappear, which is exactly what happened
+     * to a metric configured a week earlier. And auto-creation is a broker setting that most
+     * production clusters turn off, so on those the three writes simply failed.
+     *
+     * <p>It is bounded to this application's own topics — the ones {@link #isInternalTopic(String)}
+     * matches — and it never touches a topic of the user's pipelines. Partitions and replication
+     * are left to the broker's defaults: what is asserted here is the retention policy, not how a
+     * cluster sizes a topic.
+     *
+     * <p>Turn it off for a deployment whose topics are created by an operator or by
+     * infrastructure-as-code; the startup log then names what it would have created.
+     */
+    private boolean internalTopicProvisioning = true;
+    /**
+     * Also fix the configuration of an internal topic that already exists with the wrong one.
+     *
+     * <p>Off, because altering a topic is not the same act as creating one: the topic may have
+     * been configured deliberately, by an operator this application has no business overruling.
+     * With it off, a mismatch is a WARN naming the topic, the value found, the value wanted and
+     * this property — a diagnosis rather than a silent correction.
+     *
+     * <p>It is worth turning on once on a deployment upgraded from a build that let the broker
+     * auto-create these: that is the common case, and those topics carry {@code delete} where
+     * {@code compact} is what makes the store work.
+     */
+    private boolean internalTopicReconcile = false;
+    /**
+     * How long a stored audit report is kept, in milliseconds. {@code 0} leaves the broker's own
+     * retention alone; {@code -1} keeps them for ever.
+     *
+     * <p>The history topic is append-only — one record per run, keyed by a unique audit id, so
+     * compaction has nothing to reclaim — and nothing in this application ever trimmed it. What
+     * bounded it in practice was whatever retention the broker happened to apply, which is a
+     * decision nobody took: on a cluster with none it grows without end, and on a default one the
+     * "Past runs" list silently stops a week back. Thirty days is a stated choice, and
+     * {@link #getAuditHistoryMaxRecords()} still bounds what a single listing reads.
+     */
+    private long auditHistoryRetentionMs = 2_592_000_000L;
     private String auditHistoryTopic = "internal.audit.history";
     /**
      * Records read from the end of the audit-history topic when listing past runs. The topic is
@@ -311,6 +357,20 @@ public class ExplorerConfig {
     /** Ceiling on one cleanup pass, so a cluster full of them cannot turn startup into a batch job. */
     private int cleanupOwnGroupsMax = 500;
     /**
+     * How often the cleanup runs after the first pass, in milliseconds. {@code 0} runs it once, at
+     * startup, which is what it used to do and nothing else.
+     *
+     * <p>Once at startup is the wrong cadence for the thing being cleaned. Every bundled stack
+     * runs this application with {@code restart: unless-stopped}, so a deployment that stays up
+     * for months tidied up once, months ago — while the groups it is meant to remove keep being
+     * produced: a Process Mining live session subscribes, and therefore leaves an empty group
+     * behind when it ends. A pass costs one {@code ListGroups} and, normally, no deletion at all.
+     *
+     * <p>The per-pass cap still applies, so the interval is also the rate limit on a cluster
+     * carrying more leftovers than one pass may remove.
+     */
+    private long cleanupOwnGroupsIntervalMs = 3_600_000L;
+    /**
      * Topics whose consumer lag is exported as Prometheus gauges. Named explicitly rather than
      * discovered: a series per group × topic is how a metrics backend gets killed, and the topics
      * worth alerting on are a short, deliberate list. Empty (the default) registers no gauge and
@@ -402,6 +462,30 @@ public class ExplorerConfig {
     public void setInternalTopicPrefix(String internalTopicPrefix) {
         this.internalTopicPrefix = internalTopicPrefix;
         this.resolvedInternalPrefix = resolveInternalTopicPrefix(internalTopicPrefix);
+    }
+
+    public boolean isInternalTopicProvisioning() {
+        return internalTopicProvisioning;
+    }
+
+    public void setInternalTopicProvisioning(boolean internalTopicProvisioning) {
+        this.internalTopicProvisioning = internalTopicProvisioning;
+    }
+
+    public boolean isInternalTopicReconcile() {
+        return internalTopicReconcile;
+    }
+
+    public void setInternalTopicReconcile(boolean internalTopicReconcile) {
+        this.internalTopicReconcile = internalTopicReconcile;
+    }
+
+    public long getAuditHistoryRetentionMs() {
+        return auditHistoryRetentionMs;
+    }
+
+    public void setAuditHistoryRetentionMs(long auditHistoryRetentionMs) {
+        this.auditHistoryRetentionMs = auditHistoryRetentionMs;
     }
 
     public String getAuditHistoryTopic() {
@@ -650,6 +734,14 @@ public class ExplorerConfig {
 
     public void setCleanupOwnGroups(boolean cleanupOwnGroups) {
         this.cleanupOwnGroups = cleanupOwnGroups;
+    }
+
+    public long getCleanupOwnGroupsIntervalMs() {
+        return cleanupOwnGroupsIntervalMs;
+    }
+
+    public void setCleanupOwnGroupsIntervalMs(long cleanupOwnGroupsIntervalMs) {
+        this.cleanupOwnGroupsIntervalMs = cleanupOwnGroupsIntervalMs;
     }
 
     public int getCleanupOwnGroupsMax() {

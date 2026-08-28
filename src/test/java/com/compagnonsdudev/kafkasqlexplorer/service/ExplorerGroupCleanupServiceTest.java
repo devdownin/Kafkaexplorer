@@ -13,7 +13,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.Mockito.after;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -68,6 +70,63 @@ class ExplorerGroupCleanupServiceTest {
         service.run();
 
         verify(admin).listDeletableExplorerGroups(50);
+    }
+
+    /**
+     * Once at startup was the wrong cadence for what is being cleaned: every bundled stack runs
+     * this application with {@code restart: unless-stopped}, and a live Process Mining session
+     * leaves an empty group behind each time one ends — so a deployment that stays up for months
+     * tidied up once, months ago.
+     */
+    @Test
+    void itRunsAgainOnTheConfiguredInterval() {
+        config.setCleanupOwnGroups(true);
+        config.setCleanupOwnGroupsIntervalMs(50);
+        when(admin.listDeletableExplorerGroups(anyInt())).thenReturn(List.of());
+
+        try {
+            service.cleanUpOnStartup();
+            verify(admin, timeout(5_000).atLeast(3)).listDeletableExplorerGroups(anyInt());
+        } finally {
+            service.stop();
+        }
+    }
+
+    /**
+     * {@code scheduleWithFixedDelay} cancels the whole schedule on the first exception its task
+     * lets out, so one unreachable broker would otherwise end the cleanup for the life of the
+     * process — silently, which is how this became a startup-only job in the first place.
+     */
+    @Test
+    void oneFailedPassDoesNotEndTheSchedule() {
+        config.setCleanupOwnGroups(true);
+        config.setCleanupOwnGroupsIntervalMs(50);
+        when(admin.listDeletableExplorerGroups(anyInt()))
+                .thenThrow(new IllegalStateException("broker unreachable"))
+                .thenReturn(List.of());
+
+        try {
+            service.cleanUpOnStartup();
+            verify(admin, timeout(5_000).atLeast(3)).listDeletableExplorerGroups(anyInt());
+        } finally {
+            service.stop();
+        }
+    }
+
+    /** Zero keeps the old behaviour exactly: one pass, at startup, and never again. */
+    @Test
+    void anIntervalOfZeroRunsOnlyAtStartup() {
+        config.setCleanupOwnGroups(true);
+        config.setCleanupOwnGroupsIntervalMs(0);
+        when(admin.listDeletableExplorerGroups(anyInt())).thenReturn(List.of());
+
+        try {
+            service.cleanUpOnStartup();
+            verify(admin, timeout(500).times(1)).listDeletableExplorerGroups(anyInt());
+            verify(admin, after(300).times(1)).listDeletableExplorerGroups(anyInt());
+        } finally {
+            service.stop();
+        }
     }
 
     @Test

@@ -239,4 +239,19 @@ class ExplorerConsumerGroupsTest {
         }
         assertFalse(ExplorerConsumerGroups.isExplorerGroup(null));
     }
+
+    /**
+     * The predicate the capped cleanup pass orders by. Every candidate is ours and dormant, so
+     * there is no wrong answer — what makes this the better order is that a legacy id is the
+     * accumulated backlog no build running today can recreate, while a current-prefix group is at
+     * most one live session that has just ended.
+     */
+    @Test
+    void aLegacyIdIsRecognisedAsTheBacklogNoCurrentBuildProduces() {
+        assertTrue(ExplorerConsumerGroups.isLegacyGroup("snapshot-reader-abc"));
+        assertTrue(ExplorerConsumerGroups.isLegacyGroup("kafka-sql-explorer-metadata-1"));
+        assertFalse(ExplorerConsumerGroups.isLegacyGroup("kafka-explorer-metadata-1"));
+        assertFalse(ExplorerConsumerGroups.isLegacyGroup("orders-service"));
+        assertFalse(ExplorerConsumerGroups.isLegacyGroup(null));
+    }
 }

@@ -136,7 +136,10 @@ services:
       # Share groups (KIP-932, Kafka 4.1+) state topic on a single node
       KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: 1
-      # internal.audit.history / internal.metrics.config are auto-created on first write
+      # The explorer creates its own internal.* topics itself now (InternalTopicProvisioner),
+      # with the cleanup policy each one needs — this is no longer what they depend on. It
+      # stays on for what still relies on it here, such as the .DLT topics Spring Kafka
+      # creates on a failed ingestion.
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       # Fixed KRaft cluster id — the apache/kafka image reads CLUSTER_ID
       # (KAFKA_CLUSTER_ID would be passed to server.properties and ignored)
@@ -166,7 +169,7 @@ services:
   # ═══ Kafka Explorer ═════════════════════════════════════════════════════════
 
   explorer:
-    image: ${EXPLORER_IMAGE_NAMESPACE:-compagnonsdudev}/kafkaexplorer:${EXPLORER_IMAGE_TAG:-1.9.4}
+    image: ${EXPLORER_IMAGE_NAMESPACE:-compagnonsdudev}/kafkaexplorer:${EXPLORER_IMAGE_TAG:-1.9.5}
     ports:
       # Loopback only. This application has no authentication and `POST /api/config` can
       # repoint the Kafka cluster at runtime, so the Docker default of 0.0.0.0 would offer it

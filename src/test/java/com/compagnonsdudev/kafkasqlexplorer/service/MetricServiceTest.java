@@ -15,7 +15,15 @@ import io.micrometer.core.instrument.DistributionSummary;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.kafka.clients.consumer.Consumer;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.MockConsumer;
+import org.apache.kafka.clients.producer.MockProducer;
+import org.apache.kafka.clients.producer.Producer;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.Node;
+import org.apache.kafka.common.PartitionInfo;
+import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.serialization.StringSerializer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -39,6 +47,7 @@ class MetricServiceTest {
     private ExplorerConfig explorerConfig;
     private KafkaAdminService kafkaAdminService;
     private MessageFieldExtractorService messageFieldExtractorService;
+    private MockProducer<String, String> producer;
 
     @BeforeEach
     void setUp() {
@@ -48,6 +57,9 @@ class MetricServiceTest {
         explorerConfig = Mockito.mock(ExplorerConfig.class);
         kafkaAdminService = Mockito.mock(KafkaAdminService.class);
         messageFieldExtractorService = new MessageFieldExtractorService();
+        // Kafka 4.x dropped the (boolean, Serializer, Serializer) overload; a null partitioner
+        // puts every record on partition 0, which is all this test needs.
+        producer = new MockProducer<>(true, null, new StringSerializer(), new StringSerializer());
 
         Mockito.when(explorerConfig.getMetricsConfigTopic()).thenReturn("internal.metrics.config");
         Mockito.when(kafkaConfig.getKafkaProperties()).thenReturn(Map.of());
@@ -81,7 +93,71 @@ class MetricServiceTest {
             Consumer<String, String> createConsumer() {
                 return new MockConsumer<>("earliest");
             }
+
+            @Override
+            protected Producer<String, String> createProducer() {
+                return producer;
+            }
         };
+    }
+
+    /**
+     * Deleting a metric writes a real tombstone, not a sentinel.
+     *
+     * <p>It used to write a {@code MetricConfig(id, …, "DELETED")} — a record with a non-null
+     * value. The restore reads that correctly, so the metric did disappear from the page; what
+     * could never happen is compaction, which reclaims a key only on a null value. Every metric
+     * ever deleted therefore stayed on the topic for good, and "deleted" meant "hidden".
+     */
+    @Test
+    void deletingAMetricWritesATombstone() {
+        service.init();
+        MetricConfig metric = new MetricConfig(null, "Doomed", "GAUGE", "SELECT 1 as metric_value",
+            null, null, null, null, null, null, null);
+        service.save(metric);
+        String id = service.getAllMetrics().stream()
+            .filter(m -> "Doomed".equals(m.name())).findFirst().orElseThrow().id();
+        producer.clear();
+
+        service.delete(id);
+
+        ProducerRecord<String, String> written = producer.history().stream()
+            .filter(r -> id.equals(r.key())).reduce((first, second) -> second).orElseThrow();
+        assertEquals("internal.metrics.config", written.topic());
+        assertNull(written.value(), "a compacted topic can only reclaim a key on a null value");
+    }
+
+    /** A tombstone left by this build, or by compaction, removes the metric on the way back in. */
+    @Test
+    void aTombstoneRemovesTheMetricOnRestore() {
+        MockConsumer<String, String> seeded = new MockConsumer<>("earliest");
+        TopicPartition tp = new TopicPartition("internal.metrics.config", 0);
+        seeded.updatePartitions("internal.metrics.config",
+            List.of(new PartitionInfo("internal.metrics.config", 0, null, new Node[0], new Node[0])));
+        seeded.assign(List.of(tp));
+        seeded.updateBeginningOffsets(Map.of(tp, 0L));
+        seeded.updateEndOffsets(Map.of(tp, 2L));
+        seeded.addRecord(new ConsumerRecord<>("internal.metrics.config", 0, 0, "m-1",
+            "{\"id\":\"m-1\",\"name\":\"Kept\",\"type\":\"GAUGE\",\"sql\":\"SELECT 1 as metric_value\"}"));
+        seeded.addRecord(new ConsumerRecord<>("internal.metrics.config", 0, 1, "m-1", null));
+
+        MetricService restoring = new MetricService(
+            flinkSqlService, meterRegistry, kafkaConfig, explorerConfig, kafkaAdminService,
+            messageFieldExtractorService, new StartupRestore(new ExplorerConfig())
+        ) {
+            @Override
+            Consumer<String, String> createConsumer() {
+                return seeded;
+            }
+
+            @Override
+            protected Producer<String, String> createProducer() {
+                return producer;
+            }
+        };
+
+        assertTrue(restoring.restoreFromKafka());
+        assertTrue(restoring.getAllMetrics().stream().noneMatch(m -> "m-1".equals(m.id())));
     }
 
     @Test

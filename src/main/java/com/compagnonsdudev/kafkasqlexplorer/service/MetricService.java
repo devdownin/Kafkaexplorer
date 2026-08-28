@@ -29,6 +29,7 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
+import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.PartitionInfo;
@@ -287,7 +288,7 @@ public class MetricService {
     private final ObjectMapper    objectMapper = new ObjectMapper();
 
     /** Shared producer for config persistence — creating a KafkaProducer per save is expensive. */
-    private volatile KafkaProducer<String, String> configProducer;
+    private volatile Producer<String, String> configProducer;
 
     /**
      * Per-refresh-cycle memoization of metric queries: the seeded metrics all share the same
@@ -532,7 +533,7 @@ public class MetricService {
         historyMap.remove(id);
         componentHistoryMap.remove(id);
         purgeMeters(id);
-        persistToKafka(new MetricConfig(id, null, null, null, null, null, null, null, null, "DELETED"));
+        persistTombstone(id);
     }
 
     /**
@@ -2429,6 +2430,27 @@ public class MetricService {
 
     // ── Kafka persistence ─────────────────────────────────────────────────────
 
+    /**
+     * Deletes a metric from the topic <em>and lets the broker reclaim it</em>.
+     *
+     * <p>This used to write a {@code MetricConfig(id, …, "DELETED")} — a sentinel with a non-null
+     * value. The restore reads it correctly, so the metric did disappear; what could never happen
+     * is compaction, which reclaims a key only on a null value. On a compacted topic every metric
+     * ever deleted therefore stayed on the log for good, and "deleted" meant "hidden".
+     *
+     * <p>The sentinel is still understood on the way in (see {@code restoreFromKafka}), because a
+     * topic written by an earlier build is exactly what this store exists to read.
+     */
+    private void persistTombstone(String id) {
+        try {
+            configProducer().send(new ProducerRecord<>(
+                explorerConfig.getMetricsConfigTopic(), id, null)).get();
+        } catch (Exception e) {
+            log.warn("Failed to write the tombstone for metric {}: {}", LogSafe.name(id), e.toString());
+            closeConfigProducer();
+        }
+    }
+
     private void persistToKafka(MetricConfig metric) {
         try {
             configProducer().send(new ProducerRecord<>(
@@ -2442,19 +2464,24 @@ public class MetricService {
         }
     }
 
-    private KafkaProducer<String, String> configProducer() {
-        KafkaProducer<String, String> existing = configProducer;
+    private Producer<String, String> configProducer() {
+        Producer<String, String> existing = configProducer;
         if (existing != null) return existing;
         synchronized (this) {
             if (configProducer == null) {
-                Properties props = new Properties();
-                props.putAll(kafkaConfig.getKafkaProperties());
-                props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG,   StringSerializer.class.getName());
-                props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
-                configProducer = new KafkaProducer<>(props);
+                configProducer = createProducer();
             }
             return configProducer;
         }
+    }
+
+    /** Seam for tests: overridden to inject a MockProducer instead of a real one. */
+    protected Producer<String, String> createProducer() {
+        Properties props = new Properties();
+        props.putAll(kafkaConfig.getKafkaProperties());
+        props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG,   StringSerializer.class.getName());
+        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+        return new KafkaProducer<>(props);
     }
 
     private synchronized void closeConfigProducer() {
@@ -2533,14 +2560,21 @@ public class MetricService {
             consumer.assign(partitions);
             consumer.seekToBeginning(partitions);
             Map<TopicPartition, Long> endOffsets = consumer.endOffsets(partitions);
+            // The cursor is seeded from where this read seeked — stated, not read back — and moves
+            // only on records the loop was handed. It used to be consumer.position(), which is the
+            // client's prefetch position and runs ahead of what has been delivered: the loop could
+            // exit with configurations still in flight and report the fraction as the whole. See
+            // TopicReadCursor.
+            TopicReadCursor cursor = TopicReadCursor.of(consumer.beginningOffsets(partitions), endOffsets);
 
             // Poll until every partition reaches its end offset. An empty poll does NOT mean
             // the topic is exhausted (the first poll after assignment is typically empty
-            // while the fetch is in flight), so completion is tracked by position instead.
+            // while the fetch is in flight), so completion is tracked by the cursor instead.
             long deadline = startedAt + RESTORE_BUDGET_MS;
-            while (System.currentTimeMillis() < deadline && !reachedEndOffsets(consumer, endOffsets)) {
+            while (System.currentTimeMillis() < deadline && cursor.hasUnread()) {
                 ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(300));
                 for (ConsumerRecord<String, String> record : records) {
+                    cursor.advance(record);
                     try {
                         if (record.value() == null) {
                             metrics.remove(record.key());
@@ -2556,7 +2590,7 @@ public class MetricService {
                     }
                 }
             }
-            boolean complete = reachedEndOffsets(consumer, endOffsets);
+            boolean complete = !cursor.hasUnread();
             long ms = System.currentTimeMillis() - startedAt;
             if (!complete) {
                 log.warn("Only part of {} was read: the {} ms restore budget ran out after {} ms "
@@ -2580,13 +2614,4 @@ public class MetricService {
         }
     }
 
-    private boolean reachedEndOffsets(Consumer<String, String> consumer,
-                                      Map<TopicPartition, Long> endOffsets) {
-        for (Map.Entry<TopicPartition, Long> entry : endOffsets.entrySet()) {
-            if (consumer.position(entry.getKey()) < entry.getValue()) {
-                return false;
-            }
-        }
-        return true;
-    }
 }

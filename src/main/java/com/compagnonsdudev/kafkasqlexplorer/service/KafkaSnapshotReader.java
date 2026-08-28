@@ -512,17 +512,12 @@ public class KafkaSnapshotReader {
                                             Map<TopicPartition, Long> nextOffsets,
                                             Map<String, Integer> collectedByTopic,
                                             int maxMessagesPerTopic) {
-        for (TopicPartition tp : partitions) {
-            if (collectedByTopic.getOrDefault(tp.topic(), 0) >= maxMessagesPerTopic) {
-                continue;
-            }
-            Long end = endOffsets.get(tp);
-            Long next = nextOffsets.get(tp);
-            if (end != null && next != null && next < end) {
-                return true;
-            }
-        }
-        return false;
+        List<TopicPartition> stillWanted = partitions.stream()
+            .filter(tp -> collectedByTopic.getOrDefault(tp.topic(), 0) < maxMessagesPerTopic)
+            .toList();
+        // The comparison itself lives in TopicReadCursor; what is this method's own is which
+        // partitions the read still wants.
+        return TopicReadCursor.hasUnread(stillWanted, endOffsets, nextOffsets);
     }
 
     /** Seam for tests: overridden to inject a MockConsumer instead of a real one. */

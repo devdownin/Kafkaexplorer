@@ -49,6 +49,29 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The three topics this application keeps its own state in are created, with the retention
+  policy each one needs** (`InternalTopicProvisioner`, `explorer.internal-topic-provisioning`,
+  on by default). Nothing here had ever created them: they were auto-created by the broker on
+  the first write, and therefore with its defaults. That was wrong for all three.
+  `internal.metrics.config` and `internal.field.mappings` are **keyed stores**, replayed by key
+  at startup with only the last record per key mattering — the definition of a compacted topic —
+  and both got `cleanup.policy=delete` plus whatever `retention.ms` the broker had, so a metric
+  configured eight days earlier was deleted by the broker and the next restart came up without
+  it, silently. `FieldMappingStore` said as much in its own warning ("The topic is meant to be
+  compacted — check that it is"): the requirement was documented and enforced nowhere. And
+  `internal.audit.history` is append-only and nothing ever trimmed it, so what bounded it was
+  whichever retention the broker happened to apply — unbounded growth on one cluster, a "Past
+  runs" list that stops a week back on another; `explorer.audit-history-retention-ms` (30 days,
+  `0` to leave the broker's own alone) is a decision somebody took. It also removes the
+  dependency on `auto.create.topics.enable`, which the bundled stacks set to `true` with a
+  comment naming these very topics and which most production brokers turn off — there, the three
+  writes simply failed. Scoped to this application's own topics, so a configured
+  `explorer.internal-topic-prefix` is followed and nothing of the user's can be named; partitions
+  and replication are left to the broker's defaults. An existing topic whose policy differs is
+  **reported, not corrected** — it may have been configured deliberately —
+  with `explorer.internal-topic-reconcile` (off) as the opt-in that fixes it, which is what a
+  deployment upgraded from an auto-creating build wants once.
+
 - **`docs/check-readme-parity.py`** — README.md against README.fr.md. It compares the four
   things a translation must not change and a one-sided edit always does: the sequence of
   heading levels, the number of fenced code blocks and the lines in each, the set of URLs,
@@ -79,6 +102,58 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   start. It is `docker compose up -d kafka` — the base file carries the broker.
 
 ### Fixed
+
+- **The two startup restores no longer steer by `consumer.position()`.** `MetricService` and
+  `FieldMappingStore` each read their topic to its end offsets, comparing against the consumer's
+  position — which is not a consumption watermark but the client's *fetch* position, advanced as
+  responses are buffered in the background rather than as records are returned. Measured against
+  the demo broker, one poll delivered two records while `position()` reported the log end for all
+  eighteen partitions, so the loop could exit with records still in flight and log "Restored N" as
+  though N were the total: metric configurations and field mappings silently missing at boot. It
+  is the same defect already found and fixed twice here, in `KafkaAdminService.drain` and in
+  `KafkaSnapshotReader`, each time with a private cursor; `TopicReadCursor` is now the one
+  definition, seeded from where the read seeked and advanced only by records it was handed, and
+  the two earlier copies delegate to it.
+
+- **Deleting a metric writes a real tombstone.** It wrote a `MetricConfig(id, …, "DELETED")` — a
+  record with a non-null value. The restore reads that correctly, so the metric did disappear from
+  the page; what could never happen is compaction, which reclaims a key only on a null value. On a
+  compacted topic every metric ever deleted stayed on the log for good, and "deleted" meant
+  "hidden". The sentinel is still understood on the way in, since a topic written by an earlier
+  build is exactly what the store exists to read.
+
+- **The field-mapping topic is bounded like the store that reads it.** Every validation in Process
+  Mining mints a *fresh* UUID, so that topic gained one new key per click and kept it for ever:
+  compaction cannot reclaim a key that is never rewritten, and nothing had ever deleted one. A
+  store bounded at 200 entries in memory and unbounded on disk is also incoherent in a way that
+  shows — a restart resurrects mappings the running process had already stopped answering for. An
+  entry the in-memory bound drops is now tombstoned; a *restore* is a replay and tombstones
+  nothing, or every boot on a long topic would answer with a write storm against the store it is
+  reading.
+
+- **The cluster audit no longer audits this application's own topics.** It listed every topic and
+  filtered only on the prefix an operator asked for, so `internal.metrics.config` — a keyed store,
+  therefore full of repeated keys — was reported as a topic with duplicates, and the run wrote its
+  own report to `internal.audit.history` while that topic was being read. It is the same defect
+  `ExplorerConsumerGroups` removed for the consumer groups, the app reporting its own leftovers as
+  findings, left standing for the topics. Naming their prefix explicitly still audits them, and
+  what was left out is stated in `globalStats.scopeNotes` rather than silently narrowed.
+
+- **A whole-cluster Stream Flow trace skips all of the explorer's own topics, not two of them.**
+  The exclusion was a `Set.of()` naming `internal.audit.history` and `internal.metrics.config` by
+  hand, so `internal.field.mappings` and the demo stack's `internal.demo.seeded` were traced — and
+  a configured `explorer.internal-topic-prefix` moved the names out from under the literals.
+  `ExplorerConfig.isInternalTopic` is the one answer to that question now, on both call sites.
+
+- **The leftover-group cleanup runs on an interval, not once at startup**
+  (`explorer.cleanup-own-groups-interval-ms`, one hour; `0` restores the old behaviour). Every
+  bundled stack runs the application with `restart: unless-stopped`, so a deployment that stays up
+  for months tidied up once, months ago — while the groups it removes keep being produced, a
+  Process Mining live session leaving an empty group behind each time one ends. A pass costs one
+  `ListGroups` and, normally, no deletion at all, and a failed pass no longer cancels the schedule.
+  When the per-pass cap has to cut, it now removes the naming schemes that predate the group prefix
+  first: those are the accumulated backlog no build running today can recreate, where the previous
+  cut was alphabetical over identifiers that are UUIDs — a random cut dressed up as an order.
 
 - **A Process Mining snapshot read no longer returns a random subset of the topics it was asked
   for.** Three separate faults, each hiding the next, and one symptom: profiling reported one topic

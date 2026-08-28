@@ -50,6 +50,9 @@ import org.apache.kafka.clients.admin.ListConsumerGroupOffsetsSpec;
 import org.apache.kafka.clients.admin.ListGroupsOptions;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
 import org.apache.kafka.clients.admin.MemberDescription;
+import org.apache.kafka.clients.admin.NewTopic;
+import org.apache.kafka.clients.admin.AlterConfigOp;
+import org.apache.kafka.common.errors.TopicExistsException;
 import org.apache.kafka.clients.admin.OffsetSpec;
 import org.apache.kafka.clients.admin.QuorumInfo;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
@@ -1042,7 +1045,13 @@ public class KafkaAdminService {
                     .filter(g -> ExplorerConsumerGroups.isOwnReaderGroup(g.groupId()))
                     .filter(KafkaAdminService::isDormant)
                     .map(GroupListing::groupId)
-                    .sorted()
+                    // Leftovers of older builds first, then by id so a pass is reproducible. The
+                    // cut used to be alphabetical over ids that are UUIDs, which is a random cut
+                    // dressed up as an order; what a capped pass should remove first is the
+                    // backlog no build running today can recreate.
+                    .sorted(Comparator
+                        .comparing((String id) -> !ExplorerConsumerGroups.isLegacyGroup(id))
+                        .thenComparing(Comparator.naturalOrder()))
                     .limit(Math.max(0, max))
                     .toList();
         } catch (Exception e) {
@@ -1098,6 +1107,68 @@ public class KafkaAdminService {
                 errors.put(entry.getKey(), rootMessage(e));
             }
         }
+    }
+
+    // ── The application's own topics ──────────────────────────────────────────
+
+    /**
+     * Creates {@code name} if it is absent, with {@code configs}, and says whether it did.
+     *
+     * <p>Partitions and replication are deliberately left to the broker's own defaults
+     * ({@code Optional.empty()}): what this application has an opinion about is the retention
+     * policy of its own stores, not how a given cluster sizes a topic — a hard-coded replication
+     * factor of 1 would be wrong on every real cluster, and 3 would fail on every single-node one.
+     *
+     * <p>A concurrent creation (two explorers pointed at one cluster, both starting) comes back as
+     * {@link TopicExistsException} and is reported as "already there", not as a failure: the
+     * outcome asked for is the outcome obtained.
+     *
+     * @return true when this call created the topic
+     */
+    public boolean createTopicIfAbsent(String name, Map<String, String> configs)
+            throws ExecutionException, InterruptedException, TimeoutException {
+        NewTopic topic = new NewTopic(name, Optional.empty(), Optional.empty()).configs(configs);
+        try {
+            adminClient.createTopics(List.of(topic)).all().get(15, TimeUnit.SECONDS);
+            return true;
+        } catch (ExecutionException e) {
+            if (e.getCause() instanceof TopicExistsException) return false;
+            throw e;
+        }
+    }
+
+    /** The topic's configuration as the broker reports it, empty when it could not be read. */
+    public Map<String, String> getTopicConfigs(String name) {
+        ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, name);
+        try {
+            Config config = adminClient.describeConfigs(List.of(resource))
+                    .all().get(10, TimeUnit.SECONDS).get(resource);
+            if (config == null) return Map.of();
+            Map<String, String> values = new LinkedHashMap<>();
+            for (ConfigEntry entry : config.entries()) {
+                if (entry.value() != null) values.put(entry.name(), entry.value());
+            }
+            return values;
+        } catch (Exception e) {
+            log.warn("Could not read the configuration of topic '{}': {}", LogSafe.name(name), rootMessage(e));
+            return Map.of();
+        }
+    }
+
+    /**
+     * Sets the given entries on a topic, leaving every other entry alone.
+     *
+     * <p>{@code incrementalAlterConfigs} rather than the deprecated whole-config form, which
+     * replaces the resource's configuration outright — an operator's {@code min.insync.replicas}
+     * is not ours to reset while fixing a cleanup policy.
+     */
+    public void alterTopicConfigs(String name, Map<String, String> configs)
+            throws ExecutionException, InterruptedException, TimeoutException {
+        ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, name);
+        List<AlterConfigOp> ops = configs.entrySet().stream()
+                .map(e -> new AlterConfigOp(new ConfigEntry(e.getKey(), e.getValue()), AlterConfigOp.OpType.SET))
+                .toList();
+        adminClient.incrementalAlterConfigs(Map.of(resource, ops)).all().get(15, TimeUnit.SECONDS);
     }
 
     /** One reason stands for the batch — the count beside it says how many shared it. */
@@ -1879,15 +1950,16 @@ public class KafkaAdminService {
         return records;
     }
 
-    /** True while at least one assigned partition still holds records this read has not been handed. */
+    /**
+     * True while at least one assigned partition still holds records this read has not been handed.
+     *
+     * <p>Delegates: the comparison is stated once, in {@link TopicReadCursor}, which the two
+     * startup restores also read it from. Three copies of "is this read finished?" is three
+     * chances for the next one to be written with {@code consumer.position()} again.
+     */
     private static boolean hasUnreadOffsets(List<TopicPartition> partitions,
                                             Map<TopicPartition, Long> endOffsets,
                                             Map<TopicPartition, Long> nextOffsets) {
-        for (TopicPartition tp : partitions) {
-            Long end = endOffsets.get(tp);
-            Long next = nextOffsets.get(tp);
-            if (end != null && next != null && next < end) return true;
-        }
-        return false;
+        return TopicReadCursor.hasUnread(partitions, endOffsets, nextOffsets);
     }
 }
