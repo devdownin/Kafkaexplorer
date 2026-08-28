@@ -75,7 +75,9 @@ import {
   readCriteriaDraft,
   saveCriteriaDraft,
   isEmptyCriteria,
+  normalizeTopicDetail,
 } from './topicSearch';
+import type { TopicDetailResponse } from '../../api/types';
 import { buildTopicSearchQuery, parseTraceParams } from '../../pages/streamFlow';
 
 const criteria = (over: Partial<TopicSearchCriteria> = {}): TopicSearchCriteria =>
@@ -1216,5 +1218,32 @@ describe('brouillon du critère', () => {
     expect(isEmptyCriteria(emptyCriteria)).toBe(true);
     expect(isEmptyCriteria({ ...emptyCriteria, partitions: [0] })).toBe(false);
     expect(isEmptyCriteria({ ...emptyCriteria, query: 'x' })).toBe(false);
+  });
+});
+
+describe('normalizeTopicDetail', () => {
+  const base = {
+    topic: { name: 't', partitions: 1, minOffsets: {}, maxOffsets: {}, detectedFormat: null, estimatedSize: 0 },
+    format: null, schema: { id: 'STRING' }, ddl: null,
+    samples: [{ partition: 0, offset: 1, timestamp: 0, key: null, value: '{}', headers: {}, valueBytes: 2, truncated: false }],
+  } as unknown as TopicDetailResponse;
+
+  it('passes a well-formed response through unchanged', () => {
+    const out = normalizeTopicDetail(base);
+    expect(out.samples).toHaveLength(1);
+    expect(out.schema).toEqual({ id: 'STRING' });
+  });
+
+  it('fills in what a response left out rather than letting the page dereference it', () => {
+    // La page lit `data.samples.length` et `data.schema` à chaque rendu : sans ce garde, une
+    // réponse incomplète emporte l'écran entier au lieu de la section concernée.
+    const out = normalizeTopicDetail({ ...base, samples: undefined, schema: undefined } as unknown as TopicDetailResponse);
+    expect(out.samples).toEqual([]);
+    expect(out.schema).toEqual({});
+  });
+
+  it('does not invent samples out of a value that is not a list', () => {
+    const out = normalizeTopicDetail({ ...base, samples: 'nope' } as unknown as TopicDetailResponse);
+    expect(out.samples).toEqual([]);
   });
 });

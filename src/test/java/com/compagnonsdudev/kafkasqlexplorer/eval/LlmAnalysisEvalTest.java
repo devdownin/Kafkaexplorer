@@ -18,6 +18,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
@@ -172,6 +173,55 @@ class LlmAnalysisEvalTest {
         assertTrue(model.cases() == 6 && model.events() == 14,
             "the model rewrote the measurement: " + model.cases() + " cases, " + model.events()
                 + " events — the fixture holds 6 and 14");
+    }
+
+    /**
+     * How often the shipped prompt actually comes back in the format it asked for.
+     *
+     * <p>This is the first half of an experiment `PROCESS-MINING-LLM-SCOPE.md` records as a
+     * suspicion rather than a defect: the system prompt is English, the user prompt's headings and
+     * instructions are French, the enums are English, and small models are reputed to hold a
+     * format less well across a language switch — which matters here because this application is
+     * routinely pointed at a 3B model. Nobody had measured it *on this prompt*.
+     *
+     * <p>Measuring the shipped prompt is deliberately the first step, and an English variant is
+     * deliberately <b>not</b> shipped to compare against. A second production prompt is a second
+     * surface to keep in step for ever, and it would be built on a belief; if the prompt as it
+     * stands holds the format every time on the model under test, the suspicion is answered for
+     * that model and nothing needs building. Only a run that shows failures justifies the variant,
+     * and it will then be justified by a number.
+     *
+     * <p>What it reports is therefore the rate, not a verdict on a language: the assertion is that
+     * every run held, and the message carries how many did and why the others did not — a parse
+     * failure, a model that spent its whole output budget reasoning, and an unreachable endpoint
+     * are three different answers. {@code -Dllm.eval.runs=N} buys a tighter number for N times the
+     * tokens; three is enough to see a format that fails half the time, and not enough to measure
+     * one that fails one time in twenty.
+     */
+    @Test
+    void theShippedPromptHoldsItsFormat() {
+        int runs = Math.max(1, Integer.getInteger("llm.eval.runs", 3));
+        List<String> failures = new ArrayList<>();
+        int held = 0;
+
+        for (int i = 0; i < runs; i++) {
+            ProcessMiningResult result = analyse();
+            if (result.error() != null) {
+                failures.add("run " + (i + 1) + ": " + result.error());
+            } else if (result.flowchart() == null || result.flowchart().isBlank()) {
+                // Parsed, and still nothing to render: the schema was satisfied by an empty answer.
+                failures.add("run " + (i + 1) + ": parsed, but carried no flowchart");
+            } else {
+                held++;
+            }
+        }
+
+        assertTrue(failures.isEmpty(),
+            "the shipped prompt held its format " + held + "/" + runs + " times on this model. "
+                + "That is the measurement PROCESS-MINING-LLM-SCOPE.md asks for — record it there "
+                + "before changing anything, and note that a failure here is not by itself "
+                + "evidence about the prompt's bilingualism: an endpoint that refused the request "
+                + "fails the same way. Reasons:\n  " + String.join("\n  ", failures));
     }
 
     /**

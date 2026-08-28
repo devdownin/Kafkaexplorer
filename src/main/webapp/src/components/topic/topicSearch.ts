@@ -15,7 +15,7 @@ import { clearDraft, readDraft, writeDraft } from '../../draftStore';
  * Elle était déclarée ici, et une seconde fois — différemment — dans la page Compare : c'est cette
  * duplication qui a permis à l'une des deux de se périmer sans que rien ne le dise.
  */
-import type { TopicMessage, TopicSearchResponse } from '../../api/types';
+import type { TopicDetailResponse, TopicMessage, TopicSearchResponse } from '../../api/types';
 
 // Réexportés pour que les consommateurs de ce module gardent un seul point d'import ; la forme
 // elle-même vit dans api/types.ts, où check-api-types.py la résout contre le record Java.
@@ -1601,4 +1601,30 @@ export function suggestWidenings(criteria: TopicSearchCriteria): SearchSuggestio
     });
   }
   return suggestions.slice(0, 4);
+}
+
+// ── La réponse de détail, ramenée à une forme sur laquelle la page peut compter ───────────────
+
+/**
+ * Complète ce que `GET /api/topic/{name}` a laissé de côté.
+ *
+ * Le type est écrit à la main, et c'est exactement sur ce champ-là que la page Compare est morte :
+ * `samples` a été un `string[]`, il est devenu un `TopicMessage[]`, et rien n'a échoué à la
+ * compilation. Le rendu déréférence `data.samples.length` et `data.schema` à chaque passage, donc
+ * une réponse à laquelle il manque l'un ou l'autre — une version antérieure, une erreur renvoyée
+ * en 200 — emporte la page entière plutôt que la section concernée.
+ *
+ * Normalisé une fois, à l'entrée, plutôt que gardé à chaque déréférencement : c'est la même règle
+ * que partout ailleurs ici, une définition et non cinq occasions d'en oublier une. Ce qui manque
+ * devient vide, jamais inventé — un topic sans échantillon et un topic dont les échantillons n'ont
+ * pas été lus s'affichent pareil, et c'est le serveur qui doit faire la différence, pas ce garde.
+ */
+export function normalizeTopicDetail<T extends Pick<TopicDetailResponse, 'samples' | 'schema'>>(data: T): T {
+  // Générique plutôt que fixé sur `TopicDetailResponse` : la page garde une forme locale plus
+  // stricte que le contrat partagé, et lui faire traverser ce garde ne doit pas l'élargir.
+  return {
+    ...data,
+    samples: Array.isArray(data?.samples) ? data.samples : [],
+    schema: data?.schema && typeof data.schema === 'object' ? data.schema : {},
+  };
 }
