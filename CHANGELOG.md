@@ -13,6 +13,18 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A component test for the four pages that had none** — `Cluster`, `Lineage`, `StreamFlow` and
+  `ProcessMining` — closing the gap the Audit and Topic Explorer tests opened. Nineteen cases, each
+  aimed at a decision the repository already documents and nothing verified: a group the
+  application left on the cluster is marked rather than hidden; a lineage graph built partly by
+  guessing says so, since a missing edge and an absent dependency look identical; a shared Stream
+  Flow link replays its trace on open, and falls back to the non-streaming endpoint when the
+  response body is not readable — a path production never takes; and Process Mining keeps
+  "the profiling did not happen" apart from "it ran and found nothing", which send the operator to
+  opposite places. Each was verified to fail against the defect it describes before being kept.
+
+### Added
+
 - **The Metrics page is split**, from 2 272 lines — the largest file in the tree — to 1 249, into
   `components/metrics/MetricCard.tsx`, `components/metrics/TemplateParamsEditor.tsx` and
   `pages/metricsEditor.ts` for what renders nothing. Same precedent as `components/query/`, and the
