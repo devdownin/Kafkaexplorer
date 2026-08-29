@@ -244,55 +244,22 @@ class FlinkSqlServiceJobRegistryTest {
         assertEquals(1, service.getHeldJobs().size());
     }
 
+    /**
+     * Un INSERT est refusé, et le refus ne renvoie plus vers une porte qui n'existe plus.
+     *
+     * <p>Le message nommait {@code /api/query/jobs} — l'endpoint du mode « Flink job » du SQL
+     * editor. Ce mode ne fonctionnait pas, il a été retiré et l'endpoint avec, donc un message qui
+     * le nomme envoie l'opérateur nulle part. Le refus lui-même reste : il est plus précis que la
+     * whitelist d'{@code executeSql}, qui se lit comme une restriction de sécurité.
+     */
     @Test
-    void submitJobRegistersInsertIntoStatementWithoutSyncCollection() {
-        // Mock TableResult to avoid Flink optimizer NPE (metadataHandlerProvider=null) in embedded environment
-        // for INSERT INTO statements during unit tests.
-        TableResult mockResult = mock(TableResult.class);
-        JobClient mockClient = mock(JobClient.class);
-        when(mockClient.getJobID()).thenReturn(JobID.generate());
-        when(mockClient.getJobStatus()).thenReturn(CompletableFuture.completedFuture(JobStatus.RUNNING));
-        when(mockResult.getJobClient()).thenReturn(java.util.Optional.of(mockClient));
-
-        // Using a spy to mock executeMutationSql while keeping the rest of the service logic
-        FlinkSqlService spyService = spy(service);
-        doReturn(mockResult).when(spyService).executeMutationSql(anyString(), anyString());
-
-        FlinkJobSummary summary = spyService.submitJob(QueryRequest.sql("INSERT INTO job_sink SELECT * FROM job_source", null, null, null));
-
-        assertEquals("INSERT", summary.statementType());
-        assertFalse(summary.queryId().isBlank());
-        assertFalse(summary.flinkJobId().isBlank());
-        assertTrue(heldJobs.containsKey(summary.queryId()));
-    }
-
-    @Test
-    void executeSyncRejectsInsertStatementsWithModeGuidance() {
+    void executeSyncRefusesAnInsertWithoutPointingAtARemovedEndpoint() {
         var result = service.executeSync(QueryRequest.sql("INSERT INTO job_sink SELECT * FROM job_source", null, null, null));
 
         assertNotNull(result.error());
-        assertTrue(result.error().contains("/api/query/jobs"));
-    }
-
-    @Test
-    void submittedJobIsRecoverableFromPersistentStore() {
-        TableResult mockResult = mock(TableResult.class);
-        JobClient mockClient = mock(JobClient.class);
-        when(mockClient.getJobID()).thenReturn(JobID.generate());
-        when(mockClient.getJobStatus()).thenReturn(CompletableFuture.completedFuture(JobStatus.RUNNING));
-        when(mockResult.getJobClient()).thenReturn(java.util.Optional.of(mockClient));
-
-        FlinkSqlService spyService = spy(service);
-        doReturn(mockResult).when(spyService).executeMutationSql(anyString(), anyString());
-
-        FlinkJobSummary summary = spyService.submitJob(QueryRequest.sql("INSERT INTO job_sink SELECT * FROM job_source", null, null, null));
-
-        FlinkJobStore reloadedStore = new FlinkJobStore(configFor(storePath));
-        FlinkManagedJobDetails persisted = reloadedStore.findById(summary.queryId()).orElseThrow();
-
-        assertEquals(summary.queryId(), persisted.queryId());
-        assertEquals("ASYNC_JOB", persisted.executionMode());
-        assertFalse(persisted.history().isEmpty());
+        assertTrue(result.error().contains("INSERT INTO is not run by this application"), result.error());
+        assertFalse(result.error().contains("/api/query/jobs"), result.error());
+        assertFalse(result.error().toLowerCase().contains("job mode"), result.error());
     }
 
     /**

@@ -2,7 +2,6 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.compagnonsdudev.kafkasqlexplorer.web;
 
-import com.compagnonsdudev.kafkasqlexplorer.domain.ApiError;
 import com.compagnonsdudev.kafkasqlexplorer.domain.SqlValidationResponse;
 import com.compagnonsdudev.kafkasqlexplorer.domain.DdlPreviewResponse;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryCancelResponse;
@@ -21,7 +20,6 @@ import com.compagnonsdudev.kafkasqlexplorer.service.SqlErrorClassifier;
 import com.compagnonsdudev.kafkasqlexplorer.service.SqlExplorationService;
 import com.compagnonsdudev.kafkasqlexplorer.service.SqlQueryValidator;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -112,45 +110,18 @@ public class QueryController {
         return sqlExplorationService.runSync(request);
     }
 
-    /**
-     * Soumet un {@code INSERT INTO} en mode Job Flink — et, quand ça échoue, <em>dit pourquoi</em>.
+    /*
+     * Il n'y a pas de `POST /jobs`.
      *
-     * <p>Ce point d'entrée répondait « Internal Server Error » et rien d'autre. Deux causes se
-     * cumulaient. Une {@code ResponseStatusException} porte sa raison dans le champ {@code message}
-     * du corps d'erreur par défaut de Spring, or {@code server.error.include-message} vaut
-     * {@code never} : le refus « Only INSERT INTO statements are allowed in Flink Job mode. »
-     * n'atteignait donc jamais l'appelant, qui recevait un 400 vide. Et tout le reste — une table
-     * introuvable, une option que le connecteur refuse, un runtime occupé — remontait en
-     * {@code RuntimeException} non attrapée, donc en 500 vide. Le navigateur lit {@code message}
-     * puis {@code error} dans le corps ({@code extractApiErrorMessage}), et n'avait ni l'un ni
-     * l'autre : {@code describeApiError} se rabattait sur le libellé du statut, si bien que
-     * l'unique geste de cette page qui n'a aucun repli était aussi le seul dont on ne pouvait rien
-     * apprendre.
+     * <p>Il existait : il soumettait un `INSERT INTO` comme job Flink continu, pour le mode « Flink
+     * job » du SQL editor. Ce mode ne fonctionnait pas et a été retiré de l'éditeur ; l'endpoint
+     * est parti avec, plutôt que de rester un second chemin non authentifié vers le moteur de
+     * requêtes que plus aucun appelant n'exerce — la forme que ce paquet a déjà supprimée deux fois
+     * (`POST /api/metrics/preview`, `TableController`).
      *
-     * <p>Le corps est un {@link ApiError}, la forme que {@code MetricController.save} sert déjà —
-     * pas une troisième — et son texte passe par {@code SqlErrorClassifier.explain}, documenté pour
-     * n'être jamais nul ni blanc et pour aplatir la chaîne des causes, où Flink range la partie
-     * utile. Le statut suit la même classification que le moteur de requête : une erreur de
-     * l'utilisateur (table inconnue, colonne absente, type incompatible) est un 400, une panne du
-     * moteur reste un 500 — un refus mal classé en panne serveur envoie chercher un incident là où
-     * il y a une faute de frappe, et l'inverse fait porter à l'opérateur une panne qui n'est pas
-     * la sienne. Dans les deux cas la phrase est la même : celle du moteur.
+     * <p>Les trois lectures ci-dessous restent : le registre qu'elles servent est alimenté par les
+     * lectures synchrones, qui y déposent leur `JobClient` le temps de leur requête HTTP.
      */
-    @PostMapping(value = "/jobs", produces = "application/json")
-    public ResponseEntity<?> submitJob(@RequestBody QueryRequest request) {
-        try {
-            return ResponseEntity.ok(flinkJobService.submit(request));
-        } catch (IllegalArgumentException e) {
-            // Un refus posé par cette application : whitelist de statements, validateur SQL.
-            return ResponseEntity.badRequest().body(ApiError.of(e));
-        } catch (RuntimeException e) {
-            SqlErrorClassifier.Classification classification = SqlErrorClassifier.classify(e);
-            HttpStatus status = classification.isUserError()
-                ? HttpStatus.BAD_REQUEST
-                : HttpStatus.INTERNAL_SERVER_ERROR;
-            return ResponseEntity.status(status).body(ApiError.of(classification.message()));
-        }
-    }
 
     @GetMapping(value = "/jobs", produces = "application/json")
     public List<FlinkJobSummary> listJobs() {

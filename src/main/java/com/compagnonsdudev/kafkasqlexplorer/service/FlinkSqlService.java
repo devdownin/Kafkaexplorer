@@ -385,15 +385,14 @@ public class FlinkSqlService {
         // its body reads was never registered and the planner answered "Object not found" — which
         // is how supporting CTEs at the guard alone would have produced a different dead end.
         //
-        // `INSERT INTO … SELECT` entre ici pour la même raison, et c'est le mode Job qui en avait
-        // besoin : `submitJob` ne passait par aucun enregistrement, donc le raccourci que la barre
-        // latérale propose elle-même — un INSERT depuis la table d'un topic — répondait « Object
-        // not found » tant qu'un SELECT n'était pas venu enregistrer la source d'abord. Seule la
-        // *source* est concernée : `extractPrimaryTable` lit le FROM, donc la cible de l'INSERT
-        // est exclue par construction, et c'est voulu — dériver un schéma d'un topic cible vide
-        // rendrait `raw_value STRING` et un échec d'arité, pire qu'un « table inconnue ».
+        // `INSERT INTO … SELECT` était admis ici aussi, pour le mode Job du SQL editor : `submitJob`
+        // ne passait par aucun enregistrement, donc un INSERT depuis la table d'un topic répondait
+        // « Object not found » tant qu'un SELECT n'était pas venu enregistrer la source. Ce mode a
+        // été retiré et son endpoint avec — plus aucun INSERT n'atteint ce point (`executeSync` le
+        // refuse, la whitelist d'`executeSql` aussi), donc la branche est retirée plutôt que laissée
+        // à garder un cas qui ne peut plus se produire.
         String body = SqlStatements.classifiableBody(sql);
-        if (!body.startsWith("SELECT") && !body.startsWith("INSERT INTO")) return AutoRegResult.skip();
+        if (!body.startsWith("SELECT")) return AutoRegResult.skip();
         // The first FROM is inside the CTE body, which is exactly the source table to register.
         String rawTableRef = extractPrimaryTable(sql);
         if (rawTableRef == null) return AutoRegResult.skip();
@@ -642,6 +641,16 @@ public class FlinkSqlService {
         return stripSqlComments(normalizeIdentifierQuotes(sql.trim()));
     }
 
+    /**
+     * Runs a statement and returns its rows.
+     *
+     * <p>An {@code INSERT INTO} is refused here rather than by {@code executeSql}'s whitelist, and
+     * the difference is the message: "Only SELECT, EXPLAIN and CREATE TABLE statements are allowed"
+     * reads as a security restriction, where the truth is narrower — this application submits no
+     * continuous job. It used to point at {@code POST /api/query/jobs}, which was the Flink Job
+     * mode of the SQL editor; that mode did not work and has been removed, endpoint included, so a
+     * message naming it would send an operator to a door that is no longer there.
+     */
     public QueryResult executeSync(QueryRequest request) {
         String strippedSql = prepareSql(request.sql());
         if ("INSERT".equals(extractStatementType(strippedSql))) {
@@ -649,101 +658,11 @@ public class FlinkSqlService {
                 Collections.emptyList(),
                 Collections.emptyList(),
                 0,
-                "INSERT INTO statements must be submitted via /api/query/jobs in Flink Job mode."
+                "INSERT INTO is not run by this application: it submits no continuous Flink job. "
+              + "Run the pipeline as a job of your own; this engine reads what it produces."
             );
         }
         return executeSql(request);
-    }
-
-    public FlinkJobSummary submitJob(QueryRequest request) {
-        long startedAt = System.currentTimeMillis();
-        String queryId = UUID.randomUUID().toString();
-        String strippedSql = prepareSql(request.sql());
-        String statementType = extractStatementType(strippedSql);
-
-        if (!"INSERT".equals(statementType)) {
-            flinkJobStore.create(
-                queryId,
-                null,
-                statementType,
-                "ASYNC_JOB",
-                "FAILED",
-                "Rejected before execution",
-                strippedSql,
-                startedAt,
-                "Only INSERT INTO statements are allowed in Flink Job mode."
-            );
-            throw new IllegalArgumentException("Only INSERT INTO statements are allowed in Flink Job mode.");
-        }
-
-        try {
-            sqlQueryValidator.validate(strippedSql);
-
-            /*
-             * Enregistrer la table source, comme le fait une lecture.
-             *
-             * Ce chemin ne le faisait pas, si bien que le raccourci proposé par la barre latérale
-             * elle-même — un `INSERT INTO … SELECT … FROM <table d'un topic>` — échouait sur
-             * « Object not found » tant qu'un SELECT n'était pas venu enregistrer la source dans
-             * ce processus. Le mode Job devenait donc dépendant d'un geste fait ailleurs, ce que
-             * rien n'indiquait.
-             *
-             * Un échec est rapporté ici plutôt que laissé remonter en erreur de planner : c'est la
-             * même règle qu'en lecture, à une exception près qui compte. `deferToDirect` n'a aucun
-             * sens en mode Job — il n'y a pas de lecteur direct pour rattraper la requête — donc
-             * l'absence de schéma devient un refus qui nomme sa cause, au lieu d'un « table
-             * inconnue » sur un nom parfaitement correct.
-             */
-            AutoRegResult autoReg = autoRegisterTableIfNeeded(strippedSql);
-            if (autoReg.error() != null) {
-                throw new IllegalStateException(autoReg.error());
-            }
-            if (autoReg.deferredToDirectReader()) {
-                throw new IllegalArgumentException(
-                    "No schema could be inferred for the topic this statement reads, so no Flink "
-                  + "table could be registered for it — the topic may be empty, or its messages "
-                  + "unreadable. A streaming job needs a typed source: create the table yourself "
-                  + "with CREATE TABLE, then submit the INSERT.");
-            }
-
-            TableResult result = executeMutationSql("submit-job", strippedSql);
-            JobClient client = result.getJobClient()
-                .orElseThrow(() -> new IllegalStateException("Flink did not return a JobClient for the submitted job."));
-
-            JobInfo info = new JobInfo(queryId, strippedSql, statementType, "ASYNC_JOB", client, startedAt);
-            heldJobs.put(queryId, info);
-            FlinkJobSummary summary = buildJobSummary(info);
-            flinkJobStore.create(
-                queryId,
-                info.flinkJobId(),
-                statementType,
-                info.executionMode(),
-                summary.status(),
-                "Submitted via Flink Job mode",
-                strippedSql,
-                startedAt,
-                null
-            );
-            return summary;
-        } catch (RuntimeException e) {
-            // explain(), et non getMessage() : c'est nul sur une NullPointerException, et ce champ
-            // est la seule trace de la raison — `FlinkJobCard` l'affiche sous la carte rouge, et
-            // rien d'autre ne la garde. Flink emballe par ailleurs le texte utile (la ligne et la
-            // colonne de Calcite, la clé d'option refusée par le connecteur) dans une exception
-            // externe générique, que explain() aplatit.
-            flinkJobStore.create(
-                queryId,
-                null,
-                statementType,
-                "ASYNC_JOB",
-                "FAILED",
-                "Submission failed before a Flink JobClient was available",
-                strippedSql,
-                startedAt,
-                SqlErrorClassifier.explain(e)
-            );
-            throw e;
-        }
     }
 
     public QueryResult executeSql(QueryRequest request) {
