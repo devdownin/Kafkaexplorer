@@ -107,6 +107,27 @@ public class FlinkSqlService {
     private static final int FLINK_SELECT_FAILURE_THRESHOLD = 3;
 
     /**
+     * Combien de temps le disjoncteur reste fermé avant de laisser passer une tentative.
+     *
+     * <p>Il latchait pour la vie du processus, et « redémarrez l'application » était la seule
+     * sortie. C'était défendable tant que la cause supposée était un défaut de version de Flink :
+     * une panne qui ne se répare pas toute seule. Ce dépôt a maintenant vu l'inverse — un job qui
+     * n'obtenait pas ses emplacements, c'est-à-dire une panne d'<em>environnement</em>, qui
+     * disparaît dès que la configuration est corrigée — et exige alors un redémarrage pour une
+     * chose déjà réparée.
+     *
+     * <p>Ce que le délai achète est borné et se compte : passé l'intervalle, une tentative est
+     * autorisée. Elle réussit, le disjoncteur et le compteur sont remis à zéro ; elle échoue,
+     * l'horodatage est réarmé et rien n'a coûté de plus qu'une tentative par intervalle. Plusieurs
+     * threads peuvent franchir la porte ensemble et en payer chacun une : c'est borné, et
+     * l'alternative — un verrou sur le chemin de lecture — coûterait plus cher que ce qu'elle
+     * évite. Une constante et non une propriété : aucun déploiement connu n'a besoin d'une autre
+     * valeur, et une propriété que personne ne règle est une surface de configuration de plus.
+     */
+    /** Package-private: {@code FlinkSqlServiceTest} drives the decay against it. */
+    static final long FLINK_SELECT_RETRY_AFTER_MS = 10 * 60 * 1000L;
+
+    /**
      * Floor on the wait for the Flink runtime, whatever the query's own timeout is. Entering a free
      * runtime costs milliseconds; this only matters when several statements arrive at once, and a
      * caller with a 1 s timeout should still be allowed to queue briefly rather than fail on the
@@ -181,6 +202,8 @@ public class FlinkSqlService {
 
     private final java.util.concurrent.atomic.AtomicInteger flinkSelectFailures = new java.util.concurrent.atomic.AtomicInteger(0);
     private volatile boolean flinkSelectDisabled = false;
+    /** Quand le disjoncteur a latché, pour que {@link #FLINK_SELECT_RETRY_AFTER_MS} soit lisible. */
+    private volatile long flinkSelectDisabledAt = 0L;
 
     public static final class JobInfo {
         private final String queryId;
@@ -821,11 +844,11 @@ public class FlinkSqlService {
                     }
                     unhonouredReadMode = readMode;
                 }
-                if (explorerConfig.isFlinkSelectEnabled() && !flinkSelectDisabled) {
+                if (explorerConfig.isFlinkSelectEnabled() && takePlannerAttempt()) {
                     try {
                         QueryResult flinkResult = executeViaFlinkPlanner(queryId, sqlToExecute, "SELECT", limit, timeout, startTime);
                         if (flinkResult.error() == null) {
-                            flinkSelectFailures.set(0);
+                            clearFlinkSelectLatch();
                             if (unhonouredReadMode != null) {
                                 flinkResult = withExtraWarning(flinkResult, "The read mode \""
                                     + unhonouredReadMode + "\" was not applied: this statement needs "
@@ -1097,20 +1120,6 @@ public class FlinkSqlService {
     }
 
     /**
-     * Why the Flink planner is not answering, in the words a user can act on.
-     *
-     * <p>Two different states read identically from the outside — an operator turned the planner
-     * off, or the circuit breaker turned it off after {@link #FLINK_SELECT_FAILURE_THRESHOLD}
-     * failures — and the second one is invisible without this: it latches for the lifetime of the
-     * process, so every later query silently gets an engine that supports neither JOIN nor
-     * subqueries.
-     */
-    /**
-     * L'ouverture commune des avertissements de repli : ce que l'appelant perd en changeant de
-     * moteur. Une phrase, pas deux, parce que les deux motifs — notre décision de ne pas
-     * enregistrer la table, et une panne du planner — se distinguent par ce qui la suit.
-     */
-    /**
      * Le mode de lecture demande-t-il explicitement les enregistrements <em>récents</em> ?
      *
      * <p>Explicitement : {@code null} veut dire « l'appelant ne se prononce pas », et le lecteur
@@ -1124,8 +1133,58 @@ public class FlinkSqlService {
         return "latest-offset".equals(mode) || mode.startsWith(SINCE_READ_MODE_PREFIX);
     }
 
+    /**
+     * L'ouverture commune des avertissements de repli : ce que l'appelant perd en changeant de
+     * moteur. Une phrase, pas deux, parce que les deux motifs — notre décision de ne pas
+     * enregistrer la table, et une panne du planner — se distinguent par ce qui la suit.
+     */
     private static final String DIRECT_READER_CAVEAT =
         "This query fell back to the direct Kafka reader, which supports neither JOIN nor subqueries.";
+
+    /**
+     * Why the Flink planner is not answering, in the words a user can act on.
+     *
+     * <p>Two different states read identically from the outside — an operator turned the planner
+     * off, or the circuit breaker turned it off after {@link #FLINK_SELECT_FAILURE_THRESHOLD}
+     * failures — and the second one is invisible without this: every later query silently gets an
+     * engine that supports neither JOIN nor subqueries.
+     */
+    /**
+     * Le planner a-t-il le droit d'être tenté ?
+     *
+     * <p>Vrai tant que le disjoncteur n'a pas latché, et de nouveau une fois
+     * {@link #FLINK_SELECT_RETRY_AFTER_MS} écoulé depuis le dernier échec — une tentative, dont
+     * l'issue décide de la suite : {@code clearFlinkSelectLatch} sur un succès,
+     * {@code recordFlinkSelectFailure} réarme l'horodatage sinon.
+     */
+    private boolean takePlannerAttempt() {
+        if (!flinkSelectDisabled) return true;
+        if (System.currentTimeMillis() - flinkSelectDisabledAt < FLINK_SELECT_RETRY_AFTER_MS) return false;
+        // Le jeton est consommé ici plutôt qu'au vu du résultat, et c'est ce qui rend la borne
+        // vraie : une tentative qui expire ne passe ni par le succès ni par l'échec compté, donc
+        // réarmer là-bas laisserait un planner qui n'aboutit jamais être retenté à *chaque*
+        // requête une fois l'intervalle écoulé. Plusieurs threads peuvent franchir la porte
+        // ensemble et en payer chacun une : c'est borné, et un verrou sur le chemin de lecture
+        // coûterait plus que ce qu'il éviterait.
+        flinkSelectDisabledAt = System.currentTimeMillis();
+        return true;
+    }
+
+    /**
+     * Le planner a répondu : le disjoncteur se rouvre.
+     *
+     * <p>Le compteur seul ne suffit pas — {@code flinkSelectDisabled} est ce que lisent
+     * {@code plannerUnavailableMessage} et {@code isFlinkSelectDisabled()}, donc le laisser levé
+     * après une tentative réussie ferait dire à l'avertissement que le moteur est coupé pendant
+     * qu'il répond.
+     */
+    private void clearFlinkSelectLatch() {
+        flinkSelectFailures.set(0);
+        if (flinkSelectDisabled) {
+            flinkSelectDisabled = false;
+            log.info("The Flink planner answered again — the circuit breaker is cleared");
+        }
+    }
 
     private String plannerUnavailableMessage() {
         if (!explorerConfig.isFlinkSelectEnabled()) {
@@ -1133,10 +1192,12 @@ public class FlinkSqlService {
                  + "query needs it — the direct Kafka reader only reads a topic named after FROM.";
         }
         if (flinkSelectDisabled) {
-            return "The Flink planner failed " + FLINK_SELECT_FAILURE_THRESHOLD + " times and is "
-                 + "disabled for the rest of this process, so queries fall back to the direct Kafka "
-                 + "reader, which supports neither JOIN nor subqueries. Restart the application to "
-                 + "retry it; the log records why it failed.";
+            return "The Flink planner failed " + FLINK_SELECT_FAILURE_THRESHOLD + " times, so "
+                 + "queries fall back to the direct Kafka reader, which supports neither JOIN nor "
+                 + "subqueries. It is retried automatically about "
+                 + (FLINK_SELECT_RETRY_AFTER_MS / 60_000L) + " minutes after the last failure, so "
+                 + "a cause that has been fixed since needs no restart; the log records why it "
+                 + "failed.";
         }
         return "The Flink planner did not answer, and this query needs it — the direct Kafka reader "
              + "only reads a topic named after FROM.";
@@ -1150,6 +1211,17 @@ public class FlinkSqlService {
     }
 
     /** Whether the circuit breaker has taken the Flink planner out for this process. */
+    /**
+     * Sème de test : lever le disjoncteur comme si le dernier échec datait de {@code at}.
+     *
+     * <p>L'intervalle se compte en minutes ; un test qui l'attendrait ne serait pas un test. Le
+     * même idiome que {@code setAdminClientForTest} et {@code createConsumer()} ailleurs.
+     */
+    void tripFlinkSelectAt(long at) {
+        flinkSelectDisabled = true;
+        flinkSelectDisabledAt = at;
+    }
+
     public boolean isFlinkSelectDisabled() {
         return flinkSelectDisabled;
     }
@@ -1162,6 +1234,7 @@ public class FlinkSqlService {
         int failures = flinkSelectFailures.incrementAndGet();
         if (failures >= FLINK_SELECT_FAILURE_THRESHOLD && !flinkSelectDisabled) {
             flinkSelectDisabled = true;
+            flinkSelectDisabledAt = System.currentTimeMillis();
             log.warn("Flink SELECT failed {} times (last: {}); disabling the Flink planner path for SELECT "
                 + "for this process and using the direct Kafka reader instead. Restart after upgrading Flink to retry.",
                 failures, reason);

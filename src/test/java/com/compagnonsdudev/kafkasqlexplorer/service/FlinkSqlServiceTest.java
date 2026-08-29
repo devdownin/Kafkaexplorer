@@ -646,6 +646,36 @@ class FlinkSqlServiceTest {
                 "The error must carry a line/column so the editor can point at it, got: " + result.error());
     }
 
+    /**
+     * Le disjoncteur se rouvre tout seul, et se referme s'il avait raison.
+     *
+     * <p>Il latchait pour la vie du processus, « redémarrez l'application » étant la seule sortie.
+     * Défendable tant que la cause supposée était un défaut de version de Flink ; ce dépôt a
+     * depuis vu une panne d'<em>environnement</em> le déclencher — un job qui n'obtenait pas ses
+     * emplacements — donc un redémarrage était exigé pour une chose déjà réparée.
+     */
+    @Test
+    void theSelectCircuitBreakerReopensOnceTheIntervalHasPassed() throws Exception {
+        stubRegisteredTopicWithRecords();
+
+        service.tripFlinkSelectAt(System.currentTimeMillis());
+        QueryResult stillClosed = service.executeSql(QueryRequest.sql(
+            "SELECT event_id FROM strict_mode_topic", 10, 5_000L, null));
+        assertEquals("KAFKA_DIRECT", stillClosed.engine(), "inside the interval the planner is not tried");
+        assertTrue(service.isFlinkSelectDisabled());
+
+        service.tripFlinkSelectAt(
+            System.currentTimeMillis() - FlinkSqlService.FLINK_SELECT_RETRY_AFTER_MS - 1);
+        QueryResult retried = service.executeSql(QueryRequest.sql(
+            "SELECT event_id FROM strict_mode_topic", 10, 5_000L, null));
+
+        assertNoError(retried);
+        assertEquals("FLINK", retried.engine(), "past the interval one attempt is allowed");
+        assertFalse(service.isFlinkSelectDisabled(),
+            "and a successful attempt clears the latch — leaving it up would make the warning "
+                + "say the engine is off while it answers");
+    }
+
     @Test
     void repeatedTyposDoNotTripTheSelectCircuitBreaker() throws Exception {
         stubRegisteredTopicWithRecords();
