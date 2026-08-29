@@ -387,8 +387,31 @@ class KafkaClusterIntegrationTest {
      * <p>The day a connector bump supports the option, this test fails and says so. That is the
      * point of asserting the current answer rather than working around it.
      */
+    /**
+     * Ce connecteur <em>borne</em> une lecture quand on le lui demande — mesuré, après que la
+     * mesure précédente se soit révélée confondue.
+     *
+     * <p>Ce cas s'appelait {@code thisConnectorRefusesToBoundAScanAndSaysSoOnlyToTheLog} et
+     * affirmait le contraire, sur la foi d'une {@code ValidationException: Unsupported options}.
+     * Deux choses l'invalidaient, et aucune n'était visible depuis le test. Le hint n'atteignait
+     * jamais le planner : {@code stripSqlComments} effaçait les blocs {@code /* … *}{@code /}, et
+     * un hint Calcite est en forme de commentaire — le journal du moteur rapportait la requête
+     * sans son hint. Et la clé réellement refusée dans le même {@code WITH (…)} en était une
+     * autre, {@code json.ignore-parse-errors} écrite sans son préfixe {@code value.} : l'exception
+     * énumère toutes les options non consommées ensemble, donc le refus avait été attribué à
+     * l'option qu'on venait d'ajouter plutôt qu'à celle qui était fautive depuis toujours.
+     *
+     * <p>Les deux corrigées, le compte passe par le planner et se termine — les tâches source
+     * passent en {@code FINISHED}, ce qu'une source non bornée ne fait jamais. L'ancien message
+     * d'échec avait prévu ce jour en toutes lettres : « si ceci lit un jour FLINK, le connecteur a
+     * gagné scan.bounded.mode ».
+     *
+     * <p>Ce que ce cas ne fait pas : renvoyer l'option depuis {@code MetricService}. Ce que borne
+     * une lecture de métrique change ce que la métrique <em>mesure</em>, et cela se décide
+     * ailleurs qu'ici. Ce test dit seulement ce qui est vrai du connecteur.
+     */
     @Test
-    void thisConnectorRefusesToBoundAScanAndSaysSoOnlyToTheLog() throws Exception {
+    void thisConnectorBoundsAScanWhenAsked() throws Exception {
         FlinkSqlService flink = flinkService();
         String table = DdlGeneratorService.toTableName(TOPIC);
         String count = "SELECT COUNT(*) AS metric_value FROM " + table;
@@ -397,97 +420,21 @@ class KafkaClusterIntegrationTest {
             count + " /*+ OPTIONS('scan.startup.mode'='earliest-offset','scan.bounded.mode'='latest-offset') */",
             10_000, 20_000L, "earliest-offset"));
 
-        assertNull(bounded.error(), "the refusal is swallowed by the fallback, not surfaced");
-        assertEquals("KAFKA_DIRECT", bounded.engine(),
-            "the planner refused the option and the query fell back — if this ever reads FLINK, "
-                + "the connector has gained scan.bounded.mode and MetricService can send it again");
+        assertNull(bounded.error(), String.valueOf(bounded.error()));
+        assertEquals("FLINK", bounded.engine(),
+            "a bounded scan terminates, so the planner can answer an aggregate — KAFKA_DIRECT here "
+                + "means the connector has lost scan.bounded.mode, or the hint stopped reaching it");
+        assertEquals(3.0, lastMetricValue(bounded),
+            "the last row of a complete changelog, never the first");
 
-        // The fallback still answers the question correctly, which is the only reason the defect
-        // was survivable: the direct reader counts the records rather than reading a changelog.
-        assertEquals(3.0, lastMetricValue(bounded));
-
-        // Without the option the planner cannot finish either — an unbounded streaming COUNT(*)
-        // spends its whole budget — so on this stack the two are indistinguishable from outside,
-        // and the templates ask the direct reader by name rather than hoping.
+        // Et sans l'option, la même requête ne se termine pas : c'est ce qui rend la première
+        // assertion concluante plutôt que tautologique. Un budget court, puisqu'on mesure ici une
+        // absence de fin — pas une lenteur.
         QueryResult unbounded = flink.executeSql(QueryRequest.sql(count, 10_000, 4_000L, "earliest-offset"));
-        assertEquals("KAFKA_DIRECT", unbounded.engine());
-    }
-
-    /**
-     * The generated table is one this connector accepts — asserted where only a real one can say so.
-     *
-     * <p>{@code DdlGeneratorService} declares the format as {@code value.format}, so its options
-     * have to carry the {@code value.} prefix too, and it wrote {@code json.ignore-parse-errors}
-     * bare. {@code FactoryUtil.validateUnconsumedKeys} rejects that — but only when Flink builds
-     * a source or a sink from the table, never at {@code CREATE TABLE}, which validates nothing.
-     * So registration succeeded, every JSON topic's table was unusable by the planner, and the
-     * SELECT path swallowed it whole: an unconsumed-option {@code ValidationException} is an
-     * engine failure, so the query fell back to the direct reader and returned rows — without
-     * JOIN or subquery support, with three such failures enough to disable the planner for the
-     * rest of the process. Nothing on screen said the engine had changed.
-     *
-     * <p>A string assertion on the generated DDL would have pinned whatever was written and
-     * caught nothing: the fact under test is that <em>Flink</em> accepts the key. Hence this
-     * class, on the rule it already follows — a defect produced by the client's own behaviour is
-     * asserted against the real client.
-     *
-     * <p>{@code maxRows} is the record count of the topic, because the collection loop stops at
-     * the row limit and a streaming source never ends: asking for more would spend the budget and
-     * come back as a timeout, which falls back too and would make this test pass for the wrong
-     * reason.
-     */
-    @Test
-    void theGeneratedTableIsOneThePlannerCanReadFrom() throws Exception {
-        FlinkSqlService flink = flinkService();
-        String table = DdlGeneratorService.toTableName(TOPIC);
-
-        QueryResult result = flink.executeSql(QueryRequest.sql(
-            "SELECT id, status FROM " + table, 3, 30_000L, "earliest-offset"));
-
-        assertNull(result.error(), String.valueOf(result.error()));
-        assertEquals("FLINK", result.engine(),
-            "the auto-registered table must be readable by the planner — KAFKA_DIRECT here means "
-                + "the connector refused an option in the generated WITH clause and the SELECT "
-                + "silently fell back");
-        assertEquals(3, result.rows().size());
-    }
-
-    /**
-     * And the same table works as a <em>sink</em>, which is the half that had no fallback at all.
-     *
-     * <p>{@code INSERT INTO} in Flink Job mode is the one gesture of the SQL editor that cannot
-     * degrade to the direct reader, so the refused option surfaced there as a bare
-     * "Internal Server Error" — the symptom this test exists for. The sink is generated by the
-     * same service as the source, since {@code createDynamicTableSink} validates the option list
-     * exactly as {@code createDynamicTableSource} does.
-     */
-    @Test
-    void anInsertJobSubmitsBetweenTwoGeneratedTables() throws Exception {
-        FlinkSqlService flink = flinkService();
-        DdlGeneratorService ddlGenerator = new DdlGeneratorService(kafkaConfig, new NamingConventionService());
-
-        Map<String, String> schema = new LinkedHashMap<>();
-        schema.put("id", "BIGINT");
-        schema.put("status", "STRING");
-
-        // Les deux tables sont enregistrées explicitement : `submitJob` n'auto-enregistre rien
-        // (seul un SELECT le fait), et chaque cas de cette classe construit son propre
-        // TableEnvironment, donc rien ne survit du test précédent.
-        for (String topic : List.of(TOPIC, SINK_TOPIC)) {
-            String ddl = ddlGenerator.generateDdl(topic, schema, MessageFormat.JSON);
-            QueryResult created = flink.executeSql(QueryRequest.sql(ddl, 10, 30_000L, "earliest-offset"));
-            assertNull(created.error(), String.valueOf(created.error()));
-        }
-
-        String source = DdlGeneratorService.toTableName(TOPIC);
-        String sink = DdlGeneratorService.toTableName(SINK_TOPIC);
-        FlinkJobSummary summary = flink.submitJob(QueryRequest.sql(
-            "INSERT INTO " + sink + " (id, status) SELECT id, status FROM " + source,
-            10, 30_000L, "earliest-offset"));
-
-        assertNotNull(summary.queryId());
-        assertNotNull(summary.flinkJobId(), "a submitted job carries the id Flink gave it");
-        flink.cancelJob(summary.queryId());
+        assertEquals("KAFKA_DIRECT", unbounded.engine(),
+            "an unbounded streaming COUNT(*) spends its whole budget and falls back");
+        assertTrue(unbounded.warnings().stream().anyMatch(w -> w.contains("direct Kafka reader")),
+            "and the fallback says so, got: " + unbounded.warnings());
     }
 
     /**

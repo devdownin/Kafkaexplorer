@@ -344,7 +344,8 @@ public class FlinkSqlService {
      * registered, and the planner's resulting "Object 'orders' not found" looked exactly like a
      * typo. The window call is therefore consulted first — it carries the real name.
      */
-    private String extractPrimaryTable(String sql) {
+    /** Package-private: driven directly by {@code FlinkSqlServiceTest}, like {@link #stripSqlComments}. */
+    String extractPrimaryTable(String sql) {
         Matcher window = WINDOW_CALL.matcher(sql);
         if (window.find()) return window.group(2);
         Matcher from = FROM_TABLE.matcher(sql);
@@ -458,11 +459,34 @@ public class FlinkSqlService {
         while (open >= 0) {
             int close = sql.indexOf("*/", open + 2);
             if (close < 0) break;              // unterminated: keep the rest verbatim
-            out.append(sql, from, open).append(' ');
+            if (isHint(sql, open)) {
+                // Un hint n'est pas un commentaire, il porte juste le même habillage.
+                out.append(sql, from, close + 2);
+            } else {
+                out.append(sql, from, open).append(' ');
+            }
             from = close + 2;
             open = sql.indexOf("/*", from);
         }
         return out.append(sql, from, sql.length()).toString();
+    }
+
+    /**
+     * Un hint SQL — {@code /*+ … *}{@code /} — plutôt qu'un commentaire.
+     *
+     * <p>C'est la syntaxe de Calcite et de Flink pour les options de table
+     * ({@code FROM t /*+ OPTIONS('scan.startup.mode'='earliest-offset') *}{@code /}), et elle est
+     * <em>en forme de commentaire</em> : le seul caractère qui l'en distingue est le {@code +} qui
+     * suit l'ouverture. Ce nettoyage-ci les effaçait donc tous, en silence, avant que la requête
+     * n'atteigne le planner — un hint écrit dans l'éditeur n'a jamais rien fait, et la preuve
+     * était dans le journal du moteur lui-même, qui rapportait la requête sans son hint.
+     *
+     * <p>Ce que cela coûtait dépasse l'éditeur : c'est sur ce mécanisme que reposait l'expérience
+     * ayant conclu que ce connecteur refuse {@code scan.bounded.mode}. L'option n'était jamais
+     * partie, et la clé réellement refusée dans le même {@code WITH (…)} était une autre.
+     */
+    private static boolean isHint(String sql, int open) {
+        return open + 2 < sql.length() && sql.charAt(open + 2) == '+';
     }
 
     private String extractStatementType(String sql) {

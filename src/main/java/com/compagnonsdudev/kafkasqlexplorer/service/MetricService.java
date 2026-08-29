@@ -591,23 +591,27 @@ public class MetricService {
      * metric's read either blocked until its own timeout or came back with the first rows an
      * endless scan happened to yield.
      *
-     * <p><b>The bounded option was added, and then measured, and this connector does not have
-     * it.</b> {@code flink-connector-kafka:5.0.0-2.2} answers a hint carrying it with
-     * {@code ValidationException: Unsupported options found for 'kafka'. Unsupported options:
-     * scan.bounded.mode, scan.bounded.specific-offsets, scan.bounded.timestamp-millis} — observed
-     * in CI by {@code KafkaClusterIntegrationTest}, which exists to ask exactly that. Worse than
-     * useless: {@code FlinkSqlService} reads that refusal as an <em>engine</em> failure, so it
-     * falls back to the direct reader and returns rows with no error at all — the caller cannot
-     * see the refusal, a degrade-once latch here could never fire on it, and three such queries
-     * would trip the process-wide circuit breaker that takes the Flink planner out for every
-     * other screen.
+     * <p><b>The bounded option was added, then measured as refused, and that measurement was
+     * wrong.</b> {@code flink-connector-kafka:5.0.0-2.2} answered a hint carrying it with
+     * {@code ValidationException: Unsupported options found for 'kafka'}, and the refusal was
+     * attributed to {@code scan.bounded.mode}. Two things made that conclusion unsound, neither
+     * visible from where it was drawn. The hint never reached the planner at all:
+     * {@code FlinkSqlService.stripSqlComments} erased {@code /* … *}{@code /} blocks, and a
+     * Calcite hint is comment-shaped. And the key actually refused in the same {@code WITH (…)}
+     * was a different one — {@code json.ignore-parse-errors} written without its {@code value.}
+     * prefix — the exception listing every unconsumed option together, so the blame fell on the
+     * option just added rather than on the one that had always been wrong.
      *
-     * <p>So the hint carries the startup mode alone, which is what this stack can express. What
-     * actually stopped the templates depending on an unbounded planner scan is a different fix:
-     * the shapes they generate are asked of the direct reader by name ({@link #isSingleTableRead},
-     * {@code QueryRequest.directRead}), which answers a count with one row and no changelog.
-     * Restore the bounded option the day a connector bump supports it — the integration test says
-     * which day that is, by starting to fail.
+     * <p>Both corrected, {@code KafkaClusterIntegrationTest.thisConnectorBoundsAScanWhenAsked}
+     * measures the opposite: the count runs through the planner and terminates. So the sentence
+     * this constant was named for is expressible here after all.
+     *
+     * <p>The hint still carries the startup mode alone, and that is a decision rather than an
+     * omission: what bounds a metric's read changes what the metric <em>measures</em> — a count
+     * over "everything at query start" is not the count the templates publish today, whose
+     * semantics ({@link #isSingleTableRead}, {@code QueryRequest.directRead}, the window and
+     * offset-count modes) were settled against the direct reader. Sending the option again is a
+     * change to that, argued and measured on its own, not a line to flip here.
      */
     private static final String SCAN_STARTUP_EARLIEST = "'scan.startup.mode'='earliest-offset'";
 

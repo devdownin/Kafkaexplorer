@@ -936,6 +936,32 @@ class FlinkSqlServiceTest {
         assertTrue(service.stripSqlComments("/* never closed SELECT 1").contains("SELECT 1"));
     }
 
+    /**
+     * Un hint survit au nettoyage — c'est du SQL, pas un commentaire.
+     *
+     * <p>La syntaxe des hints de Calcite et de Flink est en forme de commentaire : seul le
+     * {@code +} qui suit l'ouverture les distingue. Ce nettoyage les effaçait donc tous avant que
+     * la requête n'atteigne le planner, si bien qu'un {@code OPTIONS(…)} écrit dans l'éditeur
+     * n'avait jamais aucun effet — et que l'expérience concluant que ce connecteur refuse
+     * {@code scan.bounded.mode} portait sur une option qui n'était jamais partie.
+     */
+    @Test
+    void aHintIsNotAComment() {
+        String hinted = "SELECT * FROM t /*+ OPTIONS('scan.startup.mode'='earliest-offset') */";
+        assertEquals(hinted, service.stripSqlComments(hinted),
+            "a hint must reach the planner verbatim");
+
+        // Et un commentaire ordinaire dans la même requête s'en va toujours.
+        String mixed = service.stripSqlComments("SELECT /* why */ * FROM t /*+ OPTIONS('k'='v') */");
+        assertFalse(mixed.contains("why"), mixed);
+        assertTrue(mixed.endsWith("/*+ OPTIONS('k'='v') */"), mixed);
+
+        // Le hint ne perturbe ni la reconnaissance de la table ni la liste blanche : les deux
+        // travaillent sur le texte nettoyé, qui le porte désormais.
+        assertEquals("t", service.extractPrimaryTable(hinted));
+        assertTrue(service.stripSqlComments("/* lead */ " + hinted).startsWith("SELECT"));
+    }
+
     @Test
     void projectionAndWhereParsingAreUnchanged() {
         assertEquals(List.of("id", "name"), service.extractSelectedColumns("SELECT id, name FROM t"));
