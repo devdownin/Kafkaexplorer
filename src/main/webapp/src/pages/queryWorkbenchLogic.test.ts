@@ -9,14 +9,14 @@ import {
   readLayout, LAYOUT_STORAGE_KEY, DEFAULT_LAYOUT, SPLIT_MIN, SIDEBAR_MAX,
   readSqlParam, buildQueryLink,
   NARROW_ALTERNATIVES, WIDE_WINDOW_MIN_PX, dismissNarrowNotice, readNarrowNoticeDismissed,
-  starterTable, starterQueries, starterJobQueries, pushHistory, describeHistoryEntry, formatDuration,
+  starterTable, starterQueries, pushHistory, describeHistoryEntry, formatDuration,
   splitStatements, statementIndexAt, positionAt, offsetAt, resolveOrigin,
   detailValue, withoutLeadingCte,
   planRun, previewStatement, detectStatementType,
   forgetOldestResults, summariseBatch, describeStatementRun, MAX_RETAINED_BATCH_ROWS,
   buildCompletionEntries, SQL_KEYWORD_SUGGESTIONS,
   type StatementRun,
-  sidebarSqlFor, sidebarActionLabel, insertableColumns, sinkNameRange, pickSinkTable,
+  sidebarSqlFor, sidebarActionLabel,
   type HistoryEntry,
 } from './queryWorkbenchLogic';
 
@@ -619,153 +619,20 @@ describe('starterTable / starterQueries', () => {
 });
 
 describe('sidebarSqlFor / sidebarActionLabel', () => {
-  it('reads the table in Read mode, with the row cap actually in force', () => {
-    expect(sidebarSqlFor('demo_orders', 'SYNC_READ', 500))
-      .toBe('SELECT * FROM demo_orders LIMIT 500');
+  it('reads the table, with the row cap actually in force', () => {
+    expect(sidebarSqlFor('demo_orders', 500)).toBe('SELECT * FROM demo_orders LIMIT 500');
   });
 
-  // Le mode Job ne laisse passer que INSERT INTO : un SELECT y était refusé par la garde de mode,
-  // donc le clic ne pouvait produire qu'un panneau d'erreur.
-  it('writes an INSERT INTO in Job mode, which is the only statement that mode accepts', () => {
-    const sql = sidebarSqlFor('demo_orders', 'ASYNC_JOB', 500);
-    expect(sql).toContain('INSERT INTO demo_orders_out');
-    expect(sql).toContain('SELECT * FROM demo_orders');
+  // Le mode « Flink job » posait ici un squelette d'INSERT INTO ; il a été retiré de l'éditeur,
+  // et avec lui la seule raison qu'avait ce raccourci d'écrire autre chose qu'une lecture.
+  it('writes a read and nothing else — the editor has no other mode', () => {
+    const sql = sidebarSqlFor('demo_orders', 50);
+    expect(sql).not.toContain('INSERT INTO');
+    expect(sql.startsWith('SELECT')).toBe(true);
   });
 
-  it('bounds nothing in Job mode — an INSERT there is a continuous job', () => {
-    expect(sidebarSqlFor('demo_orders', 'ASYNC_JOB', 500)).not.toContain('LIMIT');
-  });
-
-  it('says the sink is a placeholder rather than letting a plausible name pass for a promise', () => {
-    const sql = sidebarSqlFor('demo_orders', 'ASYNC_JOB', 50);
-    expect(sql).toContain('placeholder');
-    // Le commentaire est en tête : la classification d'instruction dépouille les commentaires,
-    // donc l'instruction reste vue comme un INSERT.
-    expect(sql.startsWith('--')).toBe(true);
-  });
-
-  // `proc_time AS PROCTIME()` sort d'un SELECT * mais n'entre dans aucun sink : entre deux tables
-  // du générateur, l'INSERT partait avec une colonne de trop.
-  it('lists the columns when the schema is known, minus the computed one', () => {
-    const sql = sidebarSqlFor('orders', 'ASYNC_JOB', 50, {
-      id: 'STRING', event_time: 'TIMESTAMP(3)', proc_time: 'TIMESTAMP_LTZ(3)',
-    });
-    expect(sql).toContain('`id`');
-    // METADATA FROM 'timestamp' est persistable, donc inscriptible : elle reste.
-    expect(sql).toContain('`event_time`');
-    expect(sql).not.toContain('proc_time');
-    expect(sql).not.toContain('SELECT *');
-  });
-
-  it('falls back to SELECT * without a schema, and names the failure that awaits', () => {
-    const sql = sidebarSqlFor('orders', 'ASYNC_JOB', 50);
-    expect(sql).toContain('SELECT * FROM orders');
-    expect(sql).toContain('proc_time, which a sink refuses');
-    expect(sidebarSqlFor('orders', 'ASYNC_JOB', 50, {})).toContain('SELECT * FROM orders');
-  });
-
-  it('keeps a table whose only columns are computed on the honest fallback', () => {
-    expect(insertableColumns({ proc_time: 'TIMESTAMP_LTZ(3)' })).toBeNull();
-    expect(insertableColumns(null)).toBeNull();
-  });
-
-  it('names the action the click performs, in both modes', () => {
-    expect(sidebarActionLabel('demo.orders', 'SYNC_READ')).toBe('SELECT from demo.orders');
-    expect(sidebarActionLabel('demo.orders', 'ASYNC_JOB')).toBe('INSERT INTO from demo.orders');
-  });
-});
-
-describe('starterJobQueries', () => {
-  it('offers an INSERT — the only statement Job mode runs', () => {
-    const [starter] = starterJobQueries({ tables: [], topics: ['demo.orders.1.received'] });
-    expect(starter.sql).toContain('INSERT INTO');
-    expect(starter.preview).toContain('INSERT INTO demo_orders_1_received_out');
-  });
-
-  it('names a registered target when there is one, and says what it does not guarantee', () => {
-    const [starter] = starterJobQueries({ tables: ['orders', 'orders_enriched'], topics: [] });
-    expect(starter.sql).toContain('INSERT INTO orders_enriched');
-    expect(starter.hint).toContain('must accept the projection');
-  });
-
-  it('sends you to declare the target first when the catalogue has none', () => {
-    const [starter] = starterJobQueries({ tables: [], topics: ['demo.orders'] });
-    expect(starter.hint).toContain('CREATE TABLE');
-  });
-
-  it('lists the columns when the schema is at hand, like the sidebar does', () => {
-    const [starter] = starterJobQueries(
-      { tables: ['orders', 'orders_enriched'], topics: [] },
-      { orders: { id: 'STRING', proc_time: 'TIMESTAMP_LTZ(3)' } },
-    );
-    expect(starter.sql).toContain('`id`');
-    expect(starter.sql).not.toContain('proc_time');
-  });
-
-  it('offers nothing rather than an example built on an absent table', () => {
-    expect(starterJobQueries({ tables: [], topics: [] })).toEqual([]);
-    expect(starterJobQueries(null)).toEqual([]);
-  });
-
-  // La carte tronque sur une ligne : sans aperçu, on n'y lirait que le commentaire de tête.
-  it('previews the statement, not the comment the SQL opens with', () => {
-    const [starter] = starterJobQueries({ tables: ['orders', 'orders_enriched'], topics: [] });
-    expect(starter.sql.startsWith('--')).toBe(true);
-    expect(starter.preview!.startsWith('INSERT INTO')).toBe(true);
-  });
-});
-
-describe('pickSinkTable', () => {
-  it('prefers a table named after the source — a derived sink usually is', () => {
-    expect(pickSinkTable('orders', ['payments', 'orders_enriched', 'shipments']))
-      .toBe('orders_enriched');
-  });
-
-  it('falls back to the first candidate, which the editor poses selected anyway', () => {
-    expect(pickSinkTable('orders', ['payments', 'shipments'])).toBe('payments');
-  });
-
-  it('never targets the source itself, nor the tables the app writes to itself', () => {
-    expect(pickSinkTable('orders', ['orders'])).toBeNull();
-    expect(pickSinkTable('orders', ['internal_audit_history'])).toBeNull();
-  });
-
-  it('reports nothing rather than inventing one, which is what the placeholder is for', () => {
-    expect(pickSinkTable('orders', [])).toBeNull();
-    expect(pickSinkTable('orders', null)).toBeNull();
-  });
-
-  it('says the target exists only when it does', () => {
-    const chosen = sidebarSqlFor('orders', 'ASYNC_JOB', 50, null, 'orders_enriched');
-    expect(chosen).toContain('INSERT INTO orders_enriched');
-    expect(chosen).toContain('is an existing Flink table');
-    // Le catalogue est vide : annoncer « une table qui existe » au-dessus d'un nom inventé serait
-    // le contraire de ce que le commentaire doit dire.
-    const placeholder = sidebarSqlFor('orders', 'ASYNC_JOB', 50);
-    expect(placeholder).toContain('INSERT INTO orders_out');
-    expect(placeholder).toContain('is a placeholder');
-    expect(placeholder).not.toContain('existing Flink table');
-  });
-});
-
-describe('sinkNameRange', () => {
-  it('points at the sink name, so the editor can pose it selected', () => {
-    const sql = sidebarSqlFor('orders', 'ASYNC_JOB', 50);
-    const range = sinkNameRange(sql)!;
-    expect(sql.slice(range.start, range.end)).toBe('orders_out');
-  });
-
-  // Les commentaires de tête contiennent le mot INSERT : ancré en début de ligne, le repérage ne
-  // peut pas les prendre pour l'instruction.
-  it('is not fooled by the word INSERT inside the leading comments', () => {
-    const sql = '-- an INSERT INTO comment_sink is described here\nINSERT INTO real_sink\nSELECT * FROM t';
-    const range = sinkNameRange(sql)!;
-    expect(sql.slice(range.start, range.end)).toBe('real_sink');
-  });
-
-  it('finds nothing in everything else this page writes', () => {
-    expect(sinkNameRange('SELECT * FROM orders LIMIT 50')).toBeNull();
-    expect(sinkNameRange('')).toBeNull();
+  it('names the action the click performs', () => {
+    expect(sidebarActionLabel('demo.orders')).toBe('SELECT from demo.orders');
   });
 });
 

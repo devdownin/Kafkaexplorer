@@ -38,12 +38,14 @@ describe('Help', () => {
     expect(new URLSearchParams(href.slice(href.indexOf('?'))).get('sql')).toBe(lesson.sql);
   });
 
-  it('offers no editor link for a statement Run would refuse', () => {
+  // Le mode « Flink job » a été retiré de l'éditeur : plus aucune leçon ne propose une
+  // instruction que Run refuserait, donc chacune s'ouvre.
+  it('opens every step in the editor, none of them being refused', () => {
     renderPage();
-    const insert = LESSONS.find((l) => !l.runnable);
-    const card = lessonCard(insert!.title);
-    expect(within(card).queryByRole('link', { name: /open in editor/i })).toBeNull();
-    expect(within(card).getByText('Job mode')).toBeInTheDocument();
+    LESSONS.forEach((lesson) => {
+      const card = lessonCard(lesson.title);
+      expect(within(card).getByRole('link', { name: /open in editor/i })).toBeInTheDocument();
+    });
   });
 
   it('filters the path, and says so when nothing matches', async () => {

@@ -23,14 +23,14 @@ import {
   writeStored, readStored, removeStored,
   readLayout, clamp, LAYOUT_STORAGE_KEY, DEFAULT_LAYOUT,
   SPLIT_MIN, SPLIT_MAX, SIDEBAR_MIN, SIDEBAR_MAX, type WorkbenchLayout,
-  starterQueries, starterJobQueries, pushHistory, describeHistoryEntry, formatDuration, type HistoryEntry,
+  starterQueries, pushHistory, describeHistoryEntry, formatDuration, type HistoryEntry,
   splitStatements, statementIndexAt, offsetAt, resolveOrigin,
   planRun, detectStatementType, previewStatement,
   forgetOldestResults, summariseBatch, describeStatementRun, MAX_RETAINED_BATCH_ROWS,
   buildCompletionEntries, type CompletionEntry,
   type PlannedStatement, type StatementRun,
   readSqlParam, buildQueryLink,
-  sidebarSqlFor, sidebarActionLabel, sinkNameRange, pickSinkTable, type ExecutionMode,
+  sidebarSqlFor, sidebarActionLabel,
 } from './queryWorkbenchLogic';
 import { ResultsGrid } from '../components/query/ResultsGrid';
 import { WindowAssistant } from '../components/query/WindowAssistant';
@@ -43,13 +43,12 @@ import { copyText } from '../clipboard';
 import { useCatalog } from '../catalogStore';
 import type {
   QueryResult,
-  FlinkJobSummary,
   DdlPreviewResponse,
   SqlValidationResponse,
   QueryCancelResponse,
 } from '../api/types';
 
-/** Contrôle segmenté compact (mode d'exécution, offset). */
+/** Contrôle segmenté compact (offset de lecture). */
 function Segmented<T extends string>({ value, onChange, options, ariaLabel }: {
   value: T; onChange: (v: T) => void; options: { value: T; label: string }[]; ariaLabel: string;
 }) {
@@ -76,16 +75,6 @@ function Segmented<T extends string>({ value, onChange, options, ariaLabel }: {
 interface Tab { id: string; name: string; sql: string; }
 
 /**
- * Ce que `POST /api/query/jobs` rend. Le nom local est celui du geste (une soumission) ; la forme
- * est celle du record Java, importée plutôt que recopiée — la page en tenait sa propre déclaration,
- * huit champs écrits à la main au point d'appel, alors que `api/types.ts` portait déjà la même
- * interface sous son marqueur `@java`. C'est exactement la dérive que `check-api-types.py` existe
- * pour attraper, et le motif qui a tué la page Compare : les deux copies s'accordaient, et rien ne
- * l'exigeait.
- */
-type FlinkJobSubmission = FlinkJobSummary;
-
-/**
  * Ce qu'une instruction a donné. `executeStatement` le rend, la boucle d'un lot le range dans son
  * entrée : un booléen suffisait pour « faut-il continuer », pas pour « qu'a fait celle-ci ».
  */
@@ -97,12 +86,11 @@ interface StatementOutcome {
   /** Plafond de lignes sous lequel elle a tourné, pour juger sa troncature plus tard. */
   limit?: number;
   result: QueryResult | null;
-  job: FlinkJobSubmission | null;
   error: QueryErrorInfo | null;
 }
 
-/** Une entrée de lot, avec la soumission de job que seule cette page connaît. */
-type Run = StatementRun<FlinkJobSubmission>;
+/** Une entrée de lot. */
+type Run = StatementRun;
 
 /** L'icône de chaque issue d'instruction dans la liste d'un lot. */
 const STATEMENT_ICON: Record<string, string> = {
@@ -236,11 +224,9 @@ const QueryWorkbench: React.FC = () => {
    * sondage de `/api/dashboard` — donc aucune requête de plus, et la même valeur que celle dont
    * le modèle de données se sert. Le catalogue de cette page vient de `/api/query/init`, qui ne
    * le porte pas : deux réponses porteraient deux copies d'un même réglage, ce qui finit par
-   * diverger. Un `ref` en plus, parce que `pickSinkTable` est appelé depuis un gestionnaire.
+   * diverger.
    */
   const { internalPrefix } = useCatalog();
-  const internalPrefixRef = useRef(internalPrefix);
-  useEffect(() => { internalPrefixRef.current = internalPrefix; }, [internalPrefix]);
 
   // ── Tabs ──────────────────────────────────────────────────────────────────────
   // Une seule restauration, au premier rendu : relire le stockage à chaque rendu
@@ -541,7 +527,6 @@ const QueryWorkbench: React.FC = () => {
 
   // ── Query state ───────────────────────────────────────────────────────────────
   const [results, setResults] = useState<QueryResult | null>(null);
-  const [submittedJob, setSubmittedJob] = useState<FlinkJobSubmission | null>(null);
   const [executing, setExecuting] = useState(false);
   // Miroir synchrone de `executing` : un état React n'est pas encore à jour quand deux ⌘↵ se
   // suivent dans le même tick, et c'est précisément ce qu'il faut refuser.
@@ -608,7 +593,6 @@ const QueryWorkbench: React.FC = () => {
     () => statementIndexAt(statements, cursorOffset),
     [statements, cursorOffset],
   );
-  const [executionMode, setExecutionMode] = useState<ExecutionMode>('SYNC_READ');
   const [offsetMode, setOffsetMode] = useState<'EARLIEST' | 'LATEST'>('EARLIEST');
   const [panelError, setPanelError] = useState<QueryErrorInfo | null>(null);
   const [sortCol, setSortCol] = useState<string | null>(null);
@@ -946,8 +930,6 @@ const QueryWorkbench: React.FC = () => {
    * rafraîchissement du catalogue), et seulement pour un nom que le catalogue connaît — sinon
    * chaque frappe dans le FROM déclencherait une requête sur un nom incomplet.
    */
-  /** Plage à sélectionner au prochain rendu — voir `openSelectFor`. */
-  const pendingSinkSelectionRef = useRef<{ start: number; end: number } | null>(null);
   const schemaFetchAttempted = useRef<Set<string>>(new Set());
   useEffect(() => {
     const handle = setTimeout(() => {
@@ -1065,22 +1047,23 @@ const QueryWorkbench: React.FC = () => {
 
     /** Refus avant exécution : rien n'est parti au moteur, et le panneau porte la raison. */
     const refuse = (error: QueryErrorInfo): StatementOutcome => {
-      setResults(null); setSubmittedJob(null); setPanelError(error);
-      return { status: 'failed', ms: 0, result: null, job: null, error };
+      setResults(null); setPanelError(error);
+      return { status: 'failed', ms: 0, result: null, error };
     };
 
-    if (executionMode === 'SYNC_READ' && statementType === 'INSERT') {
+    /*
+     * L'éditeur lit : il rend des lignes. Le mode « Flink job », qui soumettait un INSERT continu
+     * à `POST /api/query/jobs`, a été retiré parce qu'il ne fonctionnait pas — donc un INSERT n'a
+     * plus de destination ici, et le refus le dit plutôt que de renvoyer vers un mode absent. Le
+     * backend le refuserait de toute façon (`executeSql` n'accepte que SELECT, EXPLAIN et
+     * CREATE TABLE) ; le dire avant l'aller-retour, c'est nommer la cause au lieu d'une règle qui
+     * se lit comme une restriction de sécurité.
+     */
+    if (statementType === 'INSERT') {
       return refuse({
-        title: 'INSERT INTO cannot run in Read mode',
-        hint: 'Switch the execution mode to Flink Job — Read mode returns rows, so it only accepts SELECT, EXPLAIN and CREATE TABLE.',
-        raw: 'INSERT INTO must be submitted in Flink Job mode.',
-      });
-    }
-    if (executionMode === 'ASYNC_JOB' && statementType !== 'INSERT') {
-      return refuse({
-        title: 'Flink Job mode only accepts INSERT INTO',
-        hint: `This statement is ${statementType || 'not an INSERT'}. Switch back to Read mode to run it and see the rows.`,
-        raw: 'Flink Job mode only accepts INSERT INTO statements.',
+        title: 'INSERT INTO is not run by the SQL editor',
+        hint: 'The editor executes reads — SELECT, EXPLAIN and CREATE TABLE. Continuous INSERT jobs are not submitted from here.',
+        raw: 'INSERT INTO is not accepted by the query editor.',
       });
     }
 
@@ -1116,66 +1099,53 @@ const QueryWorkbench: React.FC = () => {
     runningQueryIdRef.current = queryId;
     abortRef.current = controller;
     executingRef.current = true;
-    setExecuting(true); setResults(null); setSubmittedJob(null); setSortCol(null); setDetailIndex(null);
+    setExecuting(true); setResults(null); setSortCol(null); setDetailIndex(null);
     // Ce qui a réellement été exécuté — c'est lui, et non le contenu courant de l'onglet, qui dit
     // si les lignes affichées répondent encore au texte sous les yeux.
     setRanSql(sqlToRun);
     try {
-      if (executionMode === 'ASYNC_JOB') {
-        const response = await axios.post<FlinkJobSubmission>('/api/query/jobs', { sql: sqlToRun },
-          { signal: controller.signal, timeout: REQUEST_TIMEOUT_MS });
-        const ms = Date.now() - start;
-        setExecutionMs(ms);
-        setSubmittedJob(response.data);
-        setResults(null);
-        saveToHistory({ sql: sqlToRun, ts: Date.now(), ms, ok: true, engine: 'FLINK JOB' });
-        toast(`Streaming job submitted: ${response.data.status}`, 'success');
-        return { status: 'ok', ms, result: null, job: response.data, error: null };
-      } else {
-        const readMode = offsetMode === 'LATEST' ? 'latest-offset' : 'earliest-offset';
-        const limit = maxRows;
-        const response = await axios.post<QueryResult>('/api/query/run-sync',
-          { sql: sqlToRun, readMode, maxRows: limit, queryId },
-          { signal: controller.signal, timeout: REQUEST_TIMEOUT_MS });
-        const ms = Date.now() - start;
-        setExecutionMs(ms);
-        setResultLimit(limit);
-        setResults(response.data);
-        // Une requête qui a échoué entre aussi dans l'historique : c'est très souvent celle-là
-        // que l'on veut rouvrir pour la corriger, et elle n'y était pas.
-        saveToHistory({
-          sql: sqlToRun,
-          ts: Date.now(),
-          ms,
-          ok: !response.data.error,
-          rows: response.data.error ? undefined : response.data.rows.length,
-          // `?? undefined` : le serveur peut renvoyer `engine: null` (chemins d'erreur), ce que
-          // l'interface locale — qui déclarait `engine?: string` — ne disait pas. Une entrée
-          // d'historique portant `null` s'afficherait « null » au lieu de ne rien afficher.
-          engine: response.data.error ? undefined : (response.data.engine ?? undefined),
-        });
-        const failed = !!response.data.error;
-        if (!failed) {
-          // Refresh the schema browser when:
-          // 1. The user explicitly ran a CREATE TABLE statement.
-          // 2. The backend auto-registered a Flink table during query execution.
-          const strippedForCheck = sqlToRun.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, '').trim();
-          if (strippedForCheck.toUpperCase().startsWith('CREATE TABLE') || response.data.tableRegistered) {
-            fetchSchema();
-          }
+      const readMode = offsetMode === 'LATEST' ? 'latest-offset' : 'earliest-offset';
+      const limit = maxRows;
+      const response = await axios.post<QueryResult>('/api/query/run-sync',
+        { sql: sqlToRun, readMode, maxRows: limit, queryId },
+        { signal: controller.signal, timeout: REQUEST_TIMEOUT_MS });
+      const ms = Date.now() - start;
+      setExecutionMs(ms);
+      setResultLimit(limit);
+      setResults(response.data);
+      // Une requête qui a échoué entre aussi dans l'historique : c'est très souvent celle-là
+      // que l'on veut rouvrir pour la corriger, et elle n'y était pas.
+      saveToHistory({
+        sql: sqlToRun,
+        ts: Date.now(),
+        ms,
+        ok: !response.data.error,
+        rows: response.data.error ? undefined : response.data.rows.length,
+        // `?? undefined` : le serveur peut renvoyer `engine: null` (chemins d'erreur), ce que
+        // l'interface locale — qui déclarait `engine?: string` — ne disait pas. Une entrée
+        // d'historique portant `null` s'afficherait « null » au lieu de ne rien afficher.
+        engine: response.data.error ? undefined : (response.data.engine ?? undefined),
+      });
+      const failed = !!response.data.error;
+      if (!failed) {
+        // Refresh the schema browser when:
+        // 1. The user explicitly ran a CREATE TABLE statement.
+        // 2. The backend auto-registered a Flink table during query execution.
+        const strippedForCheck = sqlToRun.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, '').trim();
+        if (strippedForCheck.toUpperCase().startsWith('CREATE TABLE') || response.data.tableRegistered) {
+          fetchSchema();
         }
-        return {
-          status: failed ? 'failed' : 'ok',
-          ms,
-          // Pas de compte de lignes sur un échec : « 0 ligne » se lit comme une réponse.
-          rows: failed ? undefined : response.data.rows.length,
-          engine: failed ? undefined : (response.data.engine ?? undefined),
-          limit,
-          result: response.data,
-          job: null,
-          error: failed ? describeQueryError(response.data.error ?? 'Query failed') : null,
-        };
       }
+      return {
+        status: failed ? 'failed' : 'ok',
+        ms,
+        // Pas de compte de lignes sur un échec : « 0 ligne » se lit comme une réponse.
+        rows: failed ? undefined : response.data.rows.length,
+        engine: failed ? undefined : (response.data.engine ?? undefined),
+        limit,
+        result: response.data,
+        error: failed ? describeQueryError(response.data.error ?? 'Query failed') : null,
+      };
     } catch (error) {
       const ms = Date.now() - start;
       setExecutionMs(ms);
@@ -1183,8 +1153,7 @@ const QueryWorkbench: React.FC = () => {
       // rien dans l'historique — on n'a appris rien de la requête, seulement qu'on l'a arrêtée.
       if (axios.isCancel(error)) {
         setResults(null);
-        setSubmittedJob(null);
-        return { status: 'cancelled', ms, result: null, job: null, error: null };
+        return { status: 'cancelled', ms, result: null, error: null };
       }
       saveToHistory({ sql: sqlToRun, ts: Date.now(), ms, ok: false });
       // describeApiError couvre aussi ce que le corps de réponse ne dit pas : backend
@@ -1192,10 +1161,9 @@ const QueryWorkbench: React.FC = () => {
       // « Query execution failed », qui n'apprend rien.
       const info = describeApiError(error, 'Query execution failed');
       setResults(null);
-      setSubmittedJob(null);
       setPanelError(info);
       toast(info.title, 'error');
-      return { status: 'failed', ms, result: null, job: null, error: info };
+      return { status: 'failed', ms, result: null, error: info };
     } finally {
       setExecuting(false);
       executingRef.current = false;
@@ -1314,7 +1282,6 @@ const QueryWorkbench: React.FC = () => {
     setSortCol(null);
     setDetailIndex(null);
     setResults(run.result ?? null);
-    setSubmittedJob(run.job ?? null);
     setPanelError(run.error ?? null);
     setExecutionMs(run.ms ?? null);
     setRanSql(run.sql);
@@ -1473,58 +1440,11 @@ const QueryWorkbench: React.FC = () => {
     return 'new' as const;
   }, [activeTab.sql, activeTabId, addTab, updateSql]);
 
-  /**
-   * Le raccourci de la barre latérale, sans écraser l'onglet en cours.
-   *
-   * Le SQL posé suit le mode d'exécution (`sidebarSqlFor`) : en mode Job, un `SELECT` était refusé
-   * par la garde de mode, donc cliquer un topic n'y menait qu'à un panneau d'erreur.
-   *
-   * En mode Job le schéma est chargé au besoin — le même appel que déclenche le dépliage d'une
-   * table dans la barre latérale — parce que c'est lui qui permet de lister les colonnes plutôt
-   * que d'écrire `SELECT *`, lequel emporte `proc_time` et fait échouer l'INSERT sur l'arité. Une
-   * table que Flink ne connaît pas encore rend un schéma vide : on retombe alors sur `SELECT *`,
-   * en le disant dans le SQL généré.
-   */
-  const openSelectFor = useCallback(async (table: string) => {
-    let schema = tableSchemasRef.current[table];
-    if (executionMode === 'ASYNC_JOB' && !schema) {
-      try {
-        const r = await axios.get<Record<string, string>>(`/api/query/schema/${encodeURIComponent(table)}`);
-        schema = r.data;
-        if (schema && Object.keys(schema).length > 0) setTableSchemas(prev => ({ ...prev, [table]: r.data }));
-      } catch { /* pas encore enregistrée côté Flink — le SQL généré le dit et reste utilisable */ }
-    }
-    // Une cible prise dans le catalogue résout, là où `<source>_out` ne peut qu'échouer.
-    const sink = executionMode === 'ASYNC_JOB'
-      ? pickSinkTable(table, schemaRef.current?.tables, internalPrefixRef.current) : null;
-    const sqlText = sidebarSqlFor(table, executionMode, maxRows, schema, sink);
-    const where = openSql(sqlText, table);
-    // La sélection ne peut être posée qu'une fois le nouveau texte rendu : l'effet ci-dessous s'en
-    // charge, sur le `sql` qui vient d'être écrit.
-    pendingSinkSelectionRef.current = sinkNameRange(sqlText);
+  /** Le raccourci de la barre latérale, sans écraser l'onglet en cours. */
+  const openSelectFor = useCallback((table: string) => {
+    const where = openSql(sidebarSqlFor(table, maxRows), table);
     if (where === 'new') toast(`Opened ${table} in a new tab`, 'success');
-  }, [openSql, maxRows, executionMode, toast]);
-
-  /**
-   * Pose la sélection sur le nom de sink du dernier INSERT généré, pour que la première frappe le
-   * remplace. `setSelection` accepte un `IRange` littéral, donc rien ici ne dépend de l'instance
-   * Monaco.
-   */
-  useEffect(() => {
-    const pending = pendingSinkSelectionRef.current;
-    if (!pending) return;
-    pendingSinkSelectionRef.current = null;
-    const ed = editorRef.current;
-    const model = ed?.getModel();
-    if (!ed || !model) return;
-    const from = model.getPositionAt(pending.start);
-    const to = model.getPositionAt(pending.end);
-    ed.setSelection({
-      startLineNumber: from.lineNumber, startColumn: from.column,
-      endLineNumber: to.lineNumber, endColumn: to.column,
-    });
-    ed.focus();
-  }, [sql]);
+  }, [openSql, maxRows, toast]);
 
   /**
    * Remplace *tout* le texte de l'onglet actif — utilisé par l'assistant de fenêtrage.
@@ -1551,16 +1471,9 @@ const QueryWorkbench: React.FC = () => {
     return had ? ('replaced' as const) : ('filled' as const);
   }, [updateSql]);
 
-  /*
-   * Les propositions suivent le mode, comme le raccourci de la barre latérale : en mode Job elles
-   * étaient purement absentes, alors que c'est le mode où la forme attendue — un INSERT INTO, et
-   * lui seul — est la moins évidente.
-   */
   const starters = useMemo(
-    () => (executionMode === 'ASYNC_JOB'
-      ? starterJobQueries(schema, tableSchemas, internalPrefix)
-      : starterQueries(schema, internalPrefix)),
-    [schema, executionMode, tableSchemas, internalPrefix],
+    () => starterQueries(schema, internalPrefix),
+    [schema, internalPrefix],
   );
 
   /**
@@ -1660,7 +1573,7 @@ const QueryWorkbench: React.FC = () => {
           if (e.key === 'ArrowRight') { setSidebarWidth(w => w + 16); e.preventDefault(); }
           if (e.key === 'Home') { setSidebarWidth(DEFAULT_LAYOUT.sidebarWidth); e.preventDefault(); }
         }}
-        actionLabelFor={target => sidebarActionLabel(target, executionMode)}
+        actionLabelFor={target => sidebarActionLabel(target)}
         expandedTables={expandedTables}
         tableSchemas={tableSchemas}
         onToggleTable={toggleTable}
@@ -1690,41 +1603,28 @@ const QueryWorkbench: React.FC = () => {
               mondes. */}
           <div className="flex items-center gap-4 min-w-0 overflow-x-auto custom-scrollbar">
             <div className="flex items-center gap-2 shrink-0">
-              <span className="text-[12px] text-on-surface-variant hidden sm:inline">Mode</span>
+              <Tooltip content="Which end of each topic the direct reader starts from. Earliest replays history; Latest reads what arrives from now on.">
+                <span tabIndex={0} className="text-[12px] text-on-surface-variant rounded">Offset</span>
+              </Tooltip>
               <Segmented
-                ariaLabel="Execution mode"
-                value={executionMode}
-                onChange={setExecutionMode}
-                options={[{ value: 'SYNC_READ', label: 'Sync read' }, { value: 'ASYNC_JOB', label: 'Flink job' }]}
+                ariaLabel="Offset mode"
+                value={offsetMode}
+                onChange={setOffsetMode}
+                options={[{ value: 'EARLIEST', label: 'Earliest' }, { value: 'LATEST', label: 'Latest' }]}
               />
             </div>
-            {executionMode === 'SYNC_READ' && (
-              <>
-                <div className="flex items-center gap-2 shrink-0">
-                  <Tooltip content="Which end of each topic the direct reader starts from. Earliest replays history; Latest reads what arrives from now on.">
-                    <span tabIndex={0} className="text-[12px] text-on-surface-variant rounded">Offset</span>
-                  </Tooltip>
-                  <Segmented
-                    ariaLabel="Offset mode"
-                    value={offsetMode}
-                    onChange={setOffsetMode}
-                    options={[{ value: 'EARLIEST', label: 'Earliest' }, { value: 'LATEST', label: 'Latest' }]}
-                  />
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <label htmlFor="kse-max-rows" className="text-[12px] text-on-surface-variant">Rows</label>
-                  <Select
-                    id="kse-max-rows"
-                    aria-label="Maximum rows to fetch"
-                    className="h-7 w-24 text-[12px]"
-                    value={String(maxRows)}
-                    onChange={e => setMaxRows(Number(e.target.value))}
-                  >
-                    {ROW_LIMITS.map(n => <option key={n} value={n}>{n.toLocaleString()}</option>)}
-                  </Select>
-                </div>
-              </>
-            )}
+            <div className="flex items-center gap-2 shrink-0">
+              <label htmlFor="kse-max-rows" className="text-[12px] text-on-surface-variant">Rows</label>
+              <Select
+                id="kse-max-rows"
+                aria-label="Maximum rows to fetch"
+                className="h-7 w-24 text-[12px]"
+                value={String(maxRows)}
+                onChange={e => setMaxRows(Number(e.target.value))}
+              >
+                {ROW_LIMITS.map(n => <option key={n} value={n}>{n.toLocaleString()}</option>)}
+              </Select>
+            </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <div className="relative" ref={historyRef}>
@@ -1780,10 +1680,6 @@ const QueryWorkbench: React.FC = () => {
             )}
             {/* Ce que Run va envoyer, dit avant d'appuyer. « Run statement » sans dire laquelle
                 serait la moitié inquiétante de la fonctionnalité. */}
-            {/* Le mode ne conditionne plus rien ici. En mode Flink Job, Run visait déjà la seule
-                instruction sous le curseur : un onglet de trois INSERT en soumettait *un* sans que
-                rien ne le dise, et « Run all » n'y était pas offert — une exécution partielle
-                silencieuse, exactement ce que ce compteur existe pour empêcher. */}
             {!hasSelection && statements.length > 1 && (
               <>
                 <Tooltip content="This tab holds several statements. ⌘↵ runs the one the cursor is in, ⌘⇧↵ runs them all — select a fragment to run something else.">
@@ -1810,7 +1706,6 @@ const QueryWorkbench: React.FC = () => {
               icon={executing ? undefined : 'play_arrow'}
             >
               {executing ? 'Running…'
-                : executionMode === 'ASYNC_JOB' ? 'Submit job'
                 : hasSelection ? 'Run selection'
                 : statements.length > 1 ? 'Run statement' : 'Run query'}
             </Button>
@@ -1998,7 +1893,7 @@ const QueryWorkbench: React.FC = () => {
                     )}
                   </span>
                 </div>
-                {(results?.engine || (executionMode === 'SYNC_READ' && (results || executing))) && (
+                {(results?.engine || results || executing) && (
                   <Tooltip content={
                     (results?.engine ?? 'KAFKA_DIRECT') === 'KAFKA_DIRECT'
                       ? 'Kafka Direct: a bounded scan over Kafka messages. It supports SELECT, WHERE, aggregates and TUMBLE windows — but no multi-topic JOIN, which is the limit worth knowing before reading these rows.'
@@ -2031,8 +1926,8 @@ const QueryWorkbench: React.FC = () => {
                     </button>
                   </Tooltip>
                 )}
-                <Badge tone={executing ? 'primary' : (queryError ? 'error' : (results || submittedJob || shownRun?.forgotten) ? 'success' : 'neutral')} dot>
-                  {executing ? 'Running' : queryError ? 'Error' : submittedJob ? 'Job submitted'
+                <Badge tone={executing ? 'primary' : (queryError ? 'error' : (results || shownRun?.forgotten) ? 'success' : 'neutral')} dot>
+                  {executing ? 'Running' : queryError ? 'Error'
                     : (results || shownRun?.forgotten) ? 'Complete' : 'Idle'}
                 </Badge>
               </div>
@@ -2157,37 +2052,6 @@ const QueryWorkbench: React.FC = () => {
                     </button>
                   </div>
                 </div>
-              ) : submittedJob ? (
-                <div className="p-4">
-                  <div className="flex items-start gap-3 p-4 rounded-lg border border-success/30 bg-success/10">
-                    <span className="material-symbols-outlined text-success text-base mt-0.5 shrink-0">rocket_launch</span>
-                    <div className="flex-1 min-w-0 space-y-2">
-                      <div>
-                        <p className="text-success font-semibold text-sm">Flink job submitted</p>
-                        <p className="text-xs text-on-surface-variant">The SQL was accepted in asynchronous job mode and is now tracked by the dashboard.</p>
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px] font-mono text-on-surface">
-                        <div>
-                          <p className="text-on-surface-variant uppercase tracking-wider text-[10px]">Status</p>
-                          <p>{submittedJob.status}</p>
-                        </div>
-                        <div>
-                          <p className="text-on-surface-variant uppercase tracking-wider text-[10px]">Type</p>
-                          <p>{submittedJob.statementType.replace('_', ' ')}</p>
-                        </div>
-                        <div>
-                          <p className="text-on-surface-variant uppercase tracking-wider text-[10px]">Query ID</p>
-                          <p className="break-all">{submittedJob.queryId}</p>
-                        </div>
-                        <div>
-                          <p className="text-on-surface-variant uppercase tracking-wider text-[10px]">Flink Job ID</p>
-                          <p className="break-all">{submittedJob.flinkJobId}</p>
-                        </div>
-                      </div>
-                      <pre className="text-[10px] text-on-surface-variant font-mono whitespace-pre-wrap overflow-x-auto leading-relaxed border-t border-success/20 pt-2">{submittedJob.sql}</pre>
-                    </div>
-                  </div>
-                </div>
               ) : shownRun?.forgotten ? (
                 /* Les lignes de cette instruction ont été libérées pour borner ce que le lot
                    retient. Une grille vide se lirait « aucune ligne » : ce panneau dit ce qui a
@@ -2222,8 +2086,8 @@ const QueryWorkbench: React.FC = () => {
                 <div className="p-4">
                   <EmptyState
                     icon="terminal"
-                    title={executionMode === 'ASYNC_JOB' ? 'No job submitted yet' : 'No results yet'}
-                    description={executionMode === 'ASYNC_JOB' ? 'Submit an INSERT INTO statement to launch a streaming job and track it here.' : 'Run a query with ⌘↵ to see results in this panel.'}
+                    title="No results yet"
+                    description="Run a query with ⌘↵ to see results in this panel."
                   />
                   {/* Propositions de départ, bâties sur le catalogue réellement chargé — donc
                       jamais sur une table absente. L'onglet initial portait à leur place une
@@ -2235,15 +2099,13 @@ const QueryWorkbench: React.FC = () => {
                       <div className="space-y-1.5">
                         {starters.map(s => (
                           <button key={s.label} type="button"
-                            // Même geste que la barre latérale : la cible d'un INSERT est posée
-                            // sélectionnée, donc remplaçable d'une frappe.
-                            onClick={() => { openSql(s.sql); pendingSinkSelectionRef.current = sinkNameRange(s.sql); editorRef.current?.focus(); }}
+                            onClick={() => { openSql(s.sql); editorRef.current?.focus(); }}
                             className="w-full text-left px-3 py-2 rounded-lg border border-outline-variant hover:border-primary/50 hover:bg-primary/5 transition-colors group/starter">
                             <div className="flex items-center gap-2">
                               <span aria-hidden="true" className="material-symbols-outlined text-[16px] text-primary">play_arrow</span>
                               <span className="text-[12px] font-medium text-on-surface">{s.label}</span>
                             </div>
-                            <p className="font-mono text-[11px] text-on-surface-variant truncate mt-1">{s.preview ?? s.sql}</p>
+                            <p className="font-mono text-[11px] text-on-surface-variant truncate mt-1">{s.sql}</p>
                             <p className="text-[11px] text-outline mt-0.5">{s.hint}</p>
                           </button>
                         ))}
