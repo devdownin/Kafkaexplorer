@@ -271,6 +271,48 @@ class KafkaClusterIntegrationTest {
             records.size(), "the audit samples a trimmed, multi-partition topic in full");
     }
 
+    /**
+     * The consumer pool, against a real broker — the only place it can be checked at all.
+     *
+     * <p>It ships disabled, so without this nothing would ever run the enabled path: the unit
+     * tests drive a {@code MockConsumer}, which cannot reproduce what makes lending a client risky
+     * in the first place — a real assignment, a real fetch buffer, and a partition paused by a
+     * read that has finished with it. What matters is not that the second read is faster but that
+     * it returns the <em>same records</em> as the first: a consumer handed back dirty delivers
+     * nothing, and from outside that is indistinguishable from an empty topic.
+     */
+    @Test
+    void pooledReadsReturnTheSameRecordsAsUnpooledOnes() throws Exception {
+        List<ConsumerRecord<String, String>> unpooled = adminService.getEarliestRecords(TRIMMED_TOPIC, 100);
+
+        ExplorerConfig pooling = new ExplorerConfig();
+        pooling.setConsumerPoolSize(2);
+        KafkaAdminService pooled = new KafkaAdminService(kafkaConfig);
+        java.lang.reflect.Field field = KafkaAdminService.class.getDeclaredField("explorerConfig");
+        field.setAccessible(true);
+        field.set(pooled, pooling);
+        pooled.init();
+        try {
+            // Three reads through one pool of two: the second and third are served by a consumer a
+            // previous read assigned, seeked and left with paused partitions behind it.
+            for (int attempt = 1; attempt <= 3; attempt++) {
+                assertEquals(unpooled.size(), pooled.getEarliestRecords(TRIMMED_TOPIC, 100).size(),
+                    "read " + attempt + " through the pool must see the whole trimmed topic");
+            }
+            // A different topic through the same pool. Two ways this can go wrong and only one of
+            // them is visible as an empty list: a stale assignment answers with nothing, and a
+            // fetch buffer the reset did not clear answers with the *previous topic's* records
+            // mixed into this one's — which no count would catch, so the topic of every record is
+            // what is asserted.
+            List<ConsumerRecord<String, String>> other = pooled.getEarliestRecords(TOPIC, 100);
+            assertFalse(other.isEmpty(), "a pooled consumer must be reusable across topics");
+            assertTrue(other.stream().allMatch(r -> TOPIC.equals(r.topic())),
+                "a pooled consumer must not carry records from the topic it read before");
+        } finally {
+            pooled.close();
+        }
+    }
+
     @Test
     void clusterDetailsExposeKraftQuorumGroupsAndFeatures() {
         Map<String, Object> details = adminService.getClusterDetails();

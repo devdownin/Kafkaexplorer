@@ -17,6 +17,8 @@ import com.compagnonsdudev.kafkasqlexplorer.util.LogSafe;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.DescribeClusterOptions;
 import org.apache.kafka.clients.admin.DescribeClusterResult;
+import org.springframework.cache.Cache;
+import org.springframework.cache.CacheManager;
 import org.springframework.cache.annotation.Cacheable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -102,6 +104,30 @@ public class KafkaAdminService {
     private SchemaRegistryClient schemaRegistryClient;
     private KafkaAvroDeserializer avroDeserializer;
 
+    /**
+     * Consulted by {@link #cachedPartitions} only, and optional on purpose: this service is
+     * constructed with {@code KafkaConfig} alone in a dozen tests, so a required dependency here
+     * would be a constructor change in all of them for a memo. Absent, the read is simply not
+     * memoized — same answer, one more round trip.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private CacheManager cacheManager;
+
+    /**
+     * Optional for the same reason as {@link #cacheManager}: a dozen tests construct this service
+     * with {@code KafkaConfig} alone. Absent, the consumer pool is sized 0 — which is also the
+     * shipped default, so the tests exercise the same path an untouched deployment does.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.compagnonsdudev.kafkasqlexplorer.config.ExplorerConfig explorerConfig;
+
+    /**
+     * Lends consumers to the three per-topic record readers. Rebuilt by {@link #init()}, which is
+     * also the cluster-repoint hook — a pooled client carries the bootstrap address it was built
+     * with, so it must not outlive the configuration that produced it.
+     */
+    private volatile KafkaConsumerPool consumerPool = new KafkaConsumerPool(0);
+
     public KafkaAdminService(KafkaConfig kafkaConfig) {
         this.kafkaConfig = kafkaConfig;
     }
@@ -125,6 +151,13 @@ public class KafkaAdminService {
         Properties props = new Properties();
         props.putAll(kafkaConfig.getKafkaProperties());
         this.adminClient = AdminClient.create(props);
+
+        // Before anything else can borrow one: an idle consumer built for the previous cluster
+        // would answer a question about this one with a connection to that one.
+        KafkaConsumerPool previousPool = this.consumerPool;
+        this.consumerPool = new KafkaConsumerPool(
+                explorerConfig == null ? 0 : explorerConfig.getConsumerPoolSize());
+        if (previousPool != null) previousPool.close();
         if (previous != null) {
             // Bounded for the same reason as close() below: this runs when the cluster is
             // repointed, which is very often *because* the previous one stopped answering.
@@ -141,6 +174,7 @@ public class KafkaAdminService {
 
     @PreDestroy
     public void close() {
+        consumerPool.close();
         if (adminClient != null) {
             // Bounded on purpose. The no-arg close() waits for pending calls with no
             // deadline, so a describe still retrying against an unreachable broker — the
@@ -185,6 +219,24 @@ public class KafkaAdminService {
         return configs;
     }
 
+    /**
+     * A {@code GenericDatumWriter} per Avro schema, rather than one per record.
+     *
+     * <p>The writer resolves the schema when it is built, and the JSON encoder allocates its own
+     * parser and output stack — three objects and a schema walk per record, on a path the audit
+     * drives ten thousand times for a single topic's duplicate scan. A writer is stateless once
+     * built and safe to share; the encoder is not, so it stays per call. Bounded because the key
+     * is the schema and a topic whose producers evolve it would otherwise grow this without end.
+     */
+    private final Map<org.apache.avro.Schema, org.apache.avro.io.DatumWriter<GenericRecord>> avroWriters =
+            java.util.Collections.synchronizedMap(new LinkedHashMap<>(16, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(
+                        Map.Entry<org.apache.avro.Schema, org.apache.avro.io.DatumWriter<GenericRecord>> eldest) {
+                    return size() > 64;
+                }
+            });
+
     /** Public so the topic search can decode records with the same Avro / UTF-8 rules as sampling. */
     public String deserializeValue(String topic, byte[] value) {
         if (value == null) return null;
@@ -195,12 +247,15 @@ public class KafkaAdminService {
                     Object record = avroDeserializer.deserialize(topic, value);
                     if (record instanceof GenericRecord genericRecord) {
                         try {
+                            org.apache.avro.Schema schema = genericRecord.getSchema();
                             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
-                            org.apache.avro.io.DatumWriter<GenericRecord> writer = new org.apache.avro.generic.GenericDatumWriter<>(genericRecord.getSchema());
-                            org.apache.avro.io.Encoder encoder = org.apache.avro.io.EncoderFactory.get().jsonEncoder(genericRecord.getSchema(), out);
-                            writer.write(genericRecord, encoder);
+                            org.apache.avro.io.Encoder encoder =
+                                org.apache.avro.io.EncoderFactory.get().jsonEncoder(schema, out);
+                            avroWriters.computeIfAbsent(schema,
+                                    org.apache.avro.generic.GenericDatumWriter::new)
+                                .write(genericRecord, encoder);
                             encoder.flush();
-                            return new String(out.toByteArray(), StandardCharsets.UTF_8);
+                            return out.toString(StandardCharsets.UTF_8);
                         } catch (Exception e) {
                             return genericRecord.toString();
                         }
@@ -275,7 +330,7 @@ public class KafkaAdminService {
 
         Map<String, List<TopicPartition>> topicToPartitions;
         try {
-            topicToPartitions = describePartitions(topicNames, 10_000);
+            topicToPartitions = cachedPartitions(topicNames, 10_000);
         } catch (Exception e) {
             log.error("Failed to describe topics for record counts", e);
             return sizes;
@@ -1320,7 +1375,7 @@ public class KafkaAdminService {
 
         Map<String, List<TopicPartition>> topicToPartitions;
         try {
-            topicToPartitions = describePartitions(topicNames, 10_000);
+            topicToPartitions = cachedPartitions(topicNames, 10_000);
         } catch (Exception e) {
             log.error("Failed to describe topics for last-message timestamps", e);
             return timestamps;
@@ -1459,6 +1514,37 @@ public class KafkaAdminService {
      */
     private Map<String, List<TopicPartition>> describePartitions(List<String> topicNames, long timeoutMs) {
         return describePartitions(topicNames, timeoutMs, null);
+    }
+
+    /**
+     * The same map, memoized on the same 30 s TTL as everything else this service caches.
+     *
+     * <p>The dashboard's two bulk reads are separately {@code @Cacheable}, so on a cold entry they
+     * both run — and both began by describing every topic of the cluster, which is one metadata
+     * request more than the question needs. They share the answer here instead.
+     *
+     * <p>Deliberately not {@code @Cacheable} on this method: it is called from inside this bean,
+     * where self-invocation bypasses the Spring proxy and the annotation would do nothing at all —
+     * the trap {@code AuditService} carries a warning about for {@code @Async}. And deliberately
+     * not shared with {@link #getTopicActivity}, which collects a <em>reason</em> per topic it
+     * could not describe: a cache hit has no reasons to give, and that response states its own
+     * scope from them.
+     */
+    private Map<String, List<TopicPartition>> cachedPartitions(List<String> topicNames, long timeoutMs) {
+        Cache cache = cacheManager == null ? null : cacheManager.getCache("topicPartitions");
+        if (cache == null) return describePartitions(topicNames, timeoutMs);
+
+        List<String> key = List.copyOf(topicNames);
+        @SuppressWarnings("unchecked")
+        Map<String, List<TopicPartition>> hit = cache.get(key, Map.class);
+        if (hit != null) return hit;
+
+        Map<String, List<TopicPartition>> described = describePartitions(topicNames, timeoutMs);
+        // A read that described nothing is not cached: the broker being unreachable for one call
+        // must not freeze an empty cluster for the next thirty seconds, which is the rule the
+        // consumer and activity reads already follow with their `unless` clauses.
+        if (!described.isEmpty()) cache.put(key, described);
+        return described;
     }
 
     /**
@@ -1771,6 +1857,37 @@ public class KafkaAdminService {
                 .toList();
     }
 
+    /** The offsets a partition currently spans: its first surviving record, and one past its last. */
+    public record OffsetRange(long beginning, long end) {}
+
+    /**
+     * Both bounds of one partition, asked for together.
+     *
+     * <p>{@code Consumer.beginningOffsets} and {@code endOffsets} each block, so a caller needing
+     * both waits two round trips in series. These are futures: the two requests are issued before
+     * either is awaited, so the wait is one round trip.
+     *
+     * @return {@code null} when there is no admin client, or when the broker did not answer —
+     *     which is a different thing from an empty partition, and the caller has a slower way to
+     *     ask
+     */
+    public OffsetRange offsetRange(TopicPartition tp) {
+        AdminClient admin = this.adminClient;
+        if (admin == null) return null;
+        try {
+            List<TopicPartition> one = List.of(tp);
+            ListOffsetsResult earliest = admin.listOffsets(specs(one, OffsetSpec.earliest()));
+            ListOffsetsResult latest = admin.listOffsets(specs(one, OffsetSpec.latest()));
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            return new OffsetRange(awaitOffset(earliest, tp, deadline).offset(),
+                                   awaitOffset(latest, tp, deadline).offset());
+        } catch (Exception e) {
+            log.debug("Offset range for {}-{} could not be read: {}", LogSafe.name(tp.topic()),
+                    tp.partition(), LogSafe.text(SqlErrorClassifier.explain(e)));
+            return null;
+        }
+    }
+
     /** Where the newest record of a topic sits, as the broker's offset index reports it. */
     private record NewestRecord(TopicPartition partition, long offset, long timestamp) {}
 
@@ -1846,7 +1963,9 @@ public class KafkaAdminService {
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
         ExplorerConsumerGroups.configure(props, "latest-message");
 
-        try (KafkaConsumer<byte[], byte[]> consumer = new KafkaConsumer<>(props)) {
+        KafkaConsumerPool.Lease lease = consumerPool.lease(props);
+        try {
+            Consumer<byte[], byte[]> consumer = lease.consumer();
             List<TopicPartition> partitions = partitionsOf(consumer, topicName);
             if (partitions.isEmpty()) return Optional.empty();
 
@@ -1903,8 +2022,11 @@ public class KafkaAdminService {
                     deserializeValue(record.topic(), record.value())
                 ));
         } catch (Exception e) {
+            lease.discard();
             log.error("Failed to get latest message for topic {}", LogSafe.name(topicName), e);
             return Optional.empty();
+        } finally {
+            lease.close();
         }
     }
 
@@ -1963,7 +2085,9 @@ public class KafkaAdminService {
         ExplorerConsumerGroups.configure(props, "records");
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
-        try (KafkaConsumer<byte[], byte[]> consumer = new KafkaConsumer<>(props)) {
+        KafkaConsumerPool.Lease lease = consumerPool.lease(props);
+        try {
+            Consumer<byte[], byte[]> consumer = lease.consumer();
             List<TopicPartition> partitions = partitionsOf(consumer, topicName);
             if (partitions.isEmpty()) return records;
             consumer.assign(partitions);
@@ -1973,7 +2097,11 @@ public class KafkaAdminService {
             startOffsets.forEach(consumer::seek);
             records.addAll(drain(consumer, startOffsets, consumer.endOffsets(partitions), maxMessages));
         } catch (Exception e) {
+            // The borrower does not vouch for a client whose read threw: it is closed, not pooled.
+            lease.discard();
             log.error("Error fetching earliest records for topic {}", LogSafe.name(topicName), e);
+        } finally {
+            lease.close();
         }
         return records;
     }
@@ -2016,7 +2144,9 @@ public class KafkaAdminService {
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
 
-        try (KafkaConsumer<byte[], byte[]> consumer = new KafkaConsumer<>(props)) {
+        KafkaConsumerPool.Lease lease = consumerPool.lease(props);
+        try {
+            Consumer<byte[], byte[]> consumer = lease.consumer();
             List<TopicPartition> partitions = partitionsOf(consumer, topicName);
             if (partitions.isEmpty()) return records;
 
@@ -2078,7 +2208,10 @@ public class KafkaAdminService {
             // holding is a listOffsets round trip per sample, on the audit's hot path.
             records.addAll(drain(consumer, startOffsets, endOffsets, maxMessages));
         } catch (Exception e) {
+            lease.discard();
             log.error("Error fetching records for topic {}", LogSafe.name(topicName), e);
+        } finally {
+            lease.close();
         }
         return records;
     }
@@ -2127,7 +2260,7 @@ public class KafkaAdminService {
      *                     nobody has to ask the client where the read begins
      */
     private List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> drain(
-            KafkaConsumer<byte[], byte[]> consumer, Map<TopicPartition, Long> startOffsets, int maxMessages) {
+            Consumer<byte[], byte[]> consumer, Map<TopicPartition, Long> startOffsets, int maxMessages) {
         return drain(consumer, startOffsets, consumer.endOffsets(List.copyOf(startOffsets.keySet())), maxMessages);
     }
 
@@ -2140,7 +2273,7 @@ public class KafkaAdminService {
      * the same instant it seeked from, rather than against an end that moved in between.
      */
     private List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> drain(
-            KafkaConsumer<byte[], byte[]> consumer, Map<TopicPartition, Long> startOffsets,
+            Consumer<byte[], byte[]> consumer, Map<TopicPartition, Long> startOffsets,
             Map<TopicPartition, Long> endOffsets, int maxMessages) {
         List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records = new ArrayList<>();
         List<TopicPartition> partitions = List.copyOf(startOffsets.keySet());
@@ -2183,7 +2316,7 @@ public class KafkaAdminService {
     }
 
     /** Pauses every assigned partition whose cursor has reached the end offset this read seeked against. */
-    private static void pauseDrained(KafkaConsumer<byte[], byte[]> consumer, List<TopicPartition> partitions,
+    private static void pauseDrained(Consumer<byte[], byte[]> consumer, List<TopicPartition> partitions,
                                      Map<TopicPartition, Long> endOffsets, Map<TopicPartition, Long> nextOffsets) {
         Set<TopicPartition> paused = consumer.paused();
         List<TopicPartition> toPause = new ArrayList<>();

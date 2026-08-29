@@ -590,12 +590,32 @@ public class AuditService {
         Map<String, String> schema = Collections.emptyMap();
         List<TopicIssue> issues = new ArrayList<>();
 
-        // One sample serves format detection, schema inference and the poison check. Each of the
-        // three used to open its own KafkaConsumer (describeTopics + assign + seek + poll) to read
-        // the very same ten messages — three round trips per topic, times every topic.
-        List<String> samples = (options.checkSchema() || options.checkPoisonMessages())
-            ? kafkaAdminService.getSampleMessages(topicName, POISON_SAMPLE_SIZE)
-            : Collections.emptyList();
+        // One read serves every check that needs records. Format detection, schema inference and
+        // the poison check each used to open a KafkaConsumer of their own for the very same ten
+        // messages; they now share one sample, and that sample in turn comes out of the duplicate
+        // scan's own records rather than a second read of the same end of the same topic.
+        //
+        // Only when both are reading the same end, which is the default and not a given:
+        // `explorer.audit-duplicate-scan-from: EARLIEST` points the duplicate scan at the oldest
+        // surviving records, and on a topic with retention those answer a different question from
+        // the one every other check here asks. Sharing across that would silently change what the
+        // schema describes and what the poison check looks at, so under EARLIEST the two reads
+        // stay two reads.
+        boolean needsSample = options.checkSchema() || options.checkPoisonMessages();
+        boolean sharesOneRead = options.checkDuplicates() && !scansDuplicatesFromEarliest();
+
+        List<ConsumerRecord<String, String>> scanRecords = null;
+        if (options.checkDuplicates()) {
+            scanRecords = readDuplicateScanRecords(topicName);
+        }
+        List<String> samples;
+        if (!needsSample) {
+            samples = Collections.emptyList();
+        } else if (sharesOneRead) {
+            samples = sampleFrom(scanRecords);
+        } else {
+            samples = kafkaAdminService.getSampleMessages(topicName, POISON_SAMPLE_SIZE);
+        }
 
         if (options.checkSchema()) {
             format = schemaInferenceService.detectFormat(topicName, samples);
@@ -608,6 +628,17 @@ public class AuditService {
             format = dominantFormat(samples);
         }
 
+        // Reduced here, as soon as the schema it needs exists, rather than after the exact count.
+        // The scan holds up to DUPLICATE_SCAN_MAX_MESSAGES records, four topic workers run at
+        // once, and a payload can be a megabyte — so how long that list stays reachable is not a
+        // detail. Counting the keys now and dropping the reference keeps the hold to the two
+        // cheap passes that need it, where leaving it live across the exact count's SQL round
+        // trip would widen the window in which all four workers hold a scan apiece.
+        DuplicateScan duplicateScan = options.checkDuplicates()
+            ? detectDuplicates(scanRecords, schema)
+            : DuplicateScan.skipped();
+        scanRecords = null;
+
         long exactCount = approximateCount;
         if (options.checkExactCount()) {
             ExactCount counted = getExactCount(topicName, approximateCount);
@@ -618,10 +649,6 @@ public class AuditService {
                     "Exact count unavailable (" + counted.error() + ") — showing the offset estimate."));
             }
         }
-
-        DuplicateScan duplicateScan = options.checkDuplicates()
-            ? detectDuplicates(topicName, schema)
-            : DuplicateScan.skipped();
 
         int poisonCount = 0;
         if (options.checkPoisonMessages()) {
@@ -858,17 +885,10 @@ public class AuditService {
      * The previous SQL implementation (GROUP BY subquery with HAVING) is not supported by
      * the direct Kafka SELECT engine and silently returned 0 for every topic.
      */
-    private DuplicateScan detectDuplicates(String topicName, Map<String, String> schema) {
+    private DuplicateScan detectDuplicates(List<ConsumerRecord<String, String>> records,
+                                           Map<String, String> schema) {
         String keyField = namingConventionService.findKeyField(schema);
-
-        // Recent by default: every other check samples recent messages, and on a topic with
-        // retention the oldest surviving records are rarely what an operator is asking about.
-        // `explorer.audit-duplicate-scan-from: EARLIEST` restores the previous behaviour.
-        boolean fromEarliest = scansDuplicatesFromEarliest();
-        List<ConsumerRecord<String, String>> records = fromEarliest
-            ? kafkaAdminService.getEarliestRecords(topicName, DUPLICATE_SCAN_MAX_MESSAGES)
-            : kafkaAdminService.getRecentRecords(topicName, DUPLICATE_SCAN_MAX_MESSAGES);
-        if (records.isEmpty()) return DuplicateScan.skipped();
+        if (records == null || records.isEmpty()) return DuplicateScan.skipped();
 
         Map<String, Integer> keyCounts = new HashMap<>();
         int scanned = 0;
@@ -896,6 +916,38 @@ public class AuditService {
 
     private boolean scansDuplicatesFromEarliest() {
         return "EARLIEST".equalsIgnoreCase(explorerConfig.getAuditDuplicateScanFrom());
+    }
+
+    /**
+     * The records the duplicate scan runs over.
+     *
+     * <p>Recent by default: every other check samples recent messages, and on a topic with
+     * retention the oldest surviving records are rarely what an operator is asking about.
+     * {@code explorer.audit-duplicate-scan-from: EARLIEST} restores the previous behaviour.
+     */
+    private List<ConsumerRecord<String, String>> readDuplicateScanRecords(String topicName) {
+        return scansDuplicatesFromEarliest()
+            ? kafkaAdminService.getEarliestRecords(topicName, DUPLICATE_SCAN_MAX_MESSAGES)
+            : kafkaAdminService.getRecentRecords(topicName, DUPLICATE_SCAN_MAX_MESSAGES);
+    }
+
+    /**
+     * {@link #POISON_SAMPLE_SIZE} values off the <em>end</em> of a wider scan.
+     *
+     * <p>The end, because that is where the newest records of a LATEST scan are: {@code drain()}
+     * collects in poll-delivery order rather than by timestamp, so this is "recent records" and
+     * not "the ten newest" — which is all any of the three checks it feeds ever needed, and
+     * exactly what the dedicated read it replaces promised too.
+     */
+    private static List<String> sampleFrom(List<ConsumerRecord<String, String>> records) {
+        if (records == null || records.isEmpty()) return Collections.emptyList();
+        List<String> values = new ArrayList<>(POISON_SAMPLE_SIZE);
+        for (int i = records.size() - 1; i >= 0 && values.size() < POISON_SAMPLE_SIZE; i--) {
+            String value = records.get(i).value();
+            if (value != null) values.add(value);
+        }
+        Collections.reverse(values);   // back into the order they were read in
+        return values;
     }
 
     /**

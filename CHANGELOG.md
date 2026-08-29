@@ -11,6 +11,17 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`explorer.consumer-pool-size`** (**0**, disabled) — the per-topic record readers can borrow a
+  byte-array consumer instead of building one per read. Constructing a `KafkaConsumer` is a connect,
+  an ApiVersions exchange and a metadata fetch, plus a handshake and an authentication round trip on
+  a TLS or SASL cluster, and the audit reads once per topic. It ships **off**, which is a statement
+  about evidence rather than about the code: the saving's size depends on the deployment, nothing
+  here has measured it against a real cluster, and a pooled client handed out carrying a previous
+  read's assignment or paused partitions answers the wrong question rather than answering slowly.
+  A lease is exclusive, reset before it is handed on, and never returned by a read that threw.
+
 ### Changed
 
 - **Reading a topic costs a fraction of what it did.** Four reads answered from records what the
@@ -37,6 +48,15 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     existed for exactly this; the one endpoint a user waits on was left on the un-shared path.
     Inference now reads the records the page displays, capped at `explorer.inference-sample-size`,
     which also stops the schema and the DDL describing records the panel below is not showing.
+  - **An audited topic is read once, not twice.** The poison check's ten-record sample now comes
+    out of the records the duplicate scan already holds, rather than a second read of the same end
+    of the same topic — and only when both are reading the same end, since
+    `audit-duplicate-scan-from: EARLIEST` points the scan at the oldest records, which answer a
+    different question from the one every other check asks.
+  - **`readRecord` places a record with one round trip rather than two**, and **`deserializeValue`
+    keeps one Avro writer per schema** instead of building one per record — the audit drives that
+    path ten thousand times for a single topic's duplicate scan.
+  - **The dashboard's two bulk reads share one `describeTopics`** instead of each making their own.
   - **The per-topic record fetchers dropped a `describeTopics` round trip each**, taking their
     partition list off the consumer that is about to read anyway; **`drain()` and the Process Mining
     snapshot read stopped asking twice for end offsets** their callers already hold; and both, like

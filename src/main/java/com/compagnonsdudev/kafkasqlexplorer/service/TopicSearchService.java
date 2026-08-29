@@ -209,8 +209,16 @@ public class TopicSearchService {
             List<TopicPartition> assignment = List.of(tp);
             consumer.assign(assignment);
 
-            long beginning = consumer.beginningOffsets(assignment).getOrDefault(tp, 0L);
-            long end = consumer.endOffsets(assignment).getOrDefault(tp, 0L);
+            // Both bounds are needed before anything can be decided, and the consumer's two
+            // getters block one after the other — two round trips in series to place one record.
+            // The admin client answers them as futures, so the requests overlap and the wait is
+            // one round trip rather than two. It degrades to the consumer when there is no admin
+            // client to ask, which is what the tests drive.
+            KafkaAdminService.OffsetRange range = kafkaAdminService.offsetRange(tp);
+            long beginning = range == null ? consumer.beginningOffsets(assignment).getOrDefault(tp, 0L)
+                                           : range.beginning();
+            long end = range == null ? consumer.endOffsets(assignment).getOrDefault(tp, 0L)
+                                     : range.end();
             if (offset < beginning || offset >= end) {
                 return null;
             }
