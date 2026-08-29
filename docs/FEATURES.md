@@ -11,6 +11,7 @@ The complete guided tour of everything Kafka SQL Explorer does. For the short ve
   - **Full Name Match**: Exact search to isolate a specific topic.
   - **DLT Filtering**: Toggle to hide Dead Letter Topics (`*.dlt`) and focus on functional streams.
 - **Flink Dynamic Tables**: Dedicated section to manage temporary tables and views registered in the local Flink engine.
+- **Flink SQL Jobs**: What the embedded engine is running, one card per job — statement type, status, Flink job id, start and end — with a Kill button, and opening onto the job's own record: how it ended, the error if it failed, and each dated transition with how long the state before it lasted. Read on demand, so a card nobody opens costs nothing.
 - **Command Palette**: `⌘K` / `Ctrl+K` global search over pages, quick actions, Kafka topics and Flink tables.
 
 ![The dashboard: every topic with its message count, state and last message, over the seeded demo cluster](img/dashboard.png)
