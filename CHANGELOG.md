@@ -13,6 +13,73 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A Flink job's own record is on screen.** The store keeps a `statusDetail`, an `errorMessage`
+  and a dated history of every transition; the summary the dashboard receives drops all three, so a
+  red `FAILED` badge had its reason only in `data/flink-jobs.json` — and `GET /api/query/jobs/{id}`,
+  which serves them, was called by nothing. The job card opens onto them, **on the click and once**:
+  the dashboard polls every five seconds by default, so a read per card per turn would make everyone
+  pay for a detail nobody is looking at, and folding then reopening must not re-ask. A read that
+  fails leaves the server's reason under the card rather than in a toast — it is what you came to
+  read. `UNAVAILABLE` is described there as a status that could not be read, never as an ending.
+
+### Changed
+
+- **The live job registry is `heldJobs`, and its accessor `getHeldJobs()`.** "Active" meant two
+  different things on two methods a caller has to choose between: `getActiveJobs()` answers from the
+  *store*, filtered on `isTerminal`, while this map is the `JobClient`s the runtime holds right now.
+  Its two populations have two lifetimes and the field says so — a Job-mode submission stays for as
+  long as it runs, a synchronous read only for the duration of its HTTP request, which it must,
+  since that is how `POST /api/query/cancel/{queryId}` finds it.
+- **The job store is bounded in count as well as in time, and the count is the bound that binds.**
+  `explorer.flink-job-retention-hours` is right for what the file was written for — Job-mode
+  submissions, a handful a day — and wrong for what feeds it: every statement the planner runs as a
+  job, one per Run in the editor and ~2 900 a day per planner-answered metric. `MAX_RETAINED_JOBS`
+  (200) drops the oldest **ended** jobs first and never a running one. Measured, because both bounds
+  had been argued rather than counted: a write serialises the whole list, so it costs 111 µs at 10
+  records and **17.3 ms at 10 000** — a 5.3 MB file — where the count bound puts the ceiling at
+  436 µs.
+- **A status poll that changed nothing no longer rewrites the store.** Its caller is a five-second
+  poll and a running job answers `RUNNING` every time, so the whole file was being rewritten, once
+  per live job, to record a fact about the clock.
+
+### Fixed
+
+- **A status that could not be read was filed as a job that had ended.** The generic catch in
+  `buildJobSummary` reported a status call that ran out of its 150 ms as `UNKNOWN`, which the store
+  counts as *terminal* — so one slow answer stamped an `endedAt` on a running job, dropped it out of
+  the dashboard's list and put it on the retention clock, where a long `INSERT INTO` could be pruned
+  out of the store while it ran. `STATUS_UNAVAILABLE` is that third state and is not terminal; the
+  branch above it, which really does mean the job is over, is unchanged.
+- **Cancelling a job that had already ended erased how it ended.** With no live `JobClient` the
+  fallback wrote `UNKNOWN` over the record, so pressing **Kill** on a dashboard card whose job
+  finished between two five-second polls destroyed the only account of how it finished. The attempt
+  is recorded as a history entry under the status that was actually observed; the verdict is left
+  alone.
+- **A synchronous read never handed its job back.** It stayed in the registry until some *other*
+  caller ran the status sweep — which on a headless deployment is nobody, while the metric refresh
+  loop adds one every 30 s for any metric the planner answers, each holding a `JobClient`. It is
+  released when the request returns; the cancel endpoint still finds it *while* the query runs.
+- **Retention only applied while something else was writing.** The prune ran on the way to a write,
+  so a store nothing wrote to again kept its expired records for good and handed them back at the
+  next boot. A prune that removed something now reaches the file, `load()` included.
+- **The job store was written in place.** It is read at boot, which is exactly when an interrupted
+  write from the previous run surfaces — as a file that will not parse, and so as the loss of every
+  job record rather than of the one being written. It goes through `JsonStoreFile` like the two
+  stores beside it: replaced atomically where the filesystem allows it, and owner-only.
+
+### Security
+
+- **A statement refused in Flink Job mode had its credentials written to disk and served back.**
+  `submitJob` rejects a non-INSERT statement and files it *first*, so a hand-written `CREATE TABLE`
+  pasted into the editor with Job mode selected put its SSL passwords and its Confluent
+  `sasl.jaas.config` secret into `data/flink-jobs.json` and into `GET /api/query/jobs`. Everything
+  else that returns or logs DDL goes through `DdlGeneratorService.maskSensitiveProperties`; this
+  store was the exception, and it is masked at the door now — nothing here replays the SQL, so it
+  costs nothing.
+
+
+### Added
+
 - **`explorer.consumer-pool-size`** (**0**, disabled) — the per-topic record readers can borrow a
   byte-array consumer instead of building one per read. Constructing a `KafkaConsumer` is a connect,
   an ApiVersions exchange and a metadata fetch, plus a handshake and an authentication round trip on
