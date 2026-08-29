@@ -171,7 +171,7 @@ public class ConfigController {
         if (auditId != null) {
             running.add("an audit (" + auditId + ")");
         }
-        int jobs = flinkSqlService.getActiveJobsDetails().size();
+        int jobs = flinkSqlService.getHeldJobs().size();
         if (jobs > 0) {
             running.add(jobs + " Flink job" + (jobs > 1 ? "s" : ""));
         }

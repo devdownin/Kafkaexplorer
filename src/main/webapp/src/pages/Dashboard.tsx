@@ -9,11 +9,12 @@ import ErrorBanner from '../components/ErrorBanner';
 import {
   PageHeader, Stat, Card, Badge, Button, EmptyState,
   Table, TableHead, TableBody, TableRow, Th, Td,
-  Input, Select, useConfirm, StatGridSkeleton, TableSkeleton, type BadgeTone,
+  Input, Select, useConfirm, StatGridSkeleton, TableSkeleton,
   Switch,
 } from '../components/ui';
 import Sparkline from '../components/dashboard/Sparkline';
-import type { TopicActivityResponse } from '../api/types';
+import FlinkJobCard from '../components/dashboard/FlinkJobCard';
+import type { FlinkJobSummary, TopicActivityResponse } from '../api/types';
 import { describeApiError } from './queryError';
 import {
   ACTIVITY_WINDOWS, ACTIVITY_OFF, describeActivityScope, describeScale, readActivityChoice,
@@ -45,16 +46,12 @@ interface DashboardData {
   topicSizes: Record<string, number>;
   totalMessages: number;
   tables: string[];
-  jobs: Array<{
-    queryId: string;
-    flinkJobId: string;
-    statementType: string;
-    status: string;
-    sql: string;
-    startedAt: number;
-    endedAt: number | null;
-    cancelRequested: boolean;
-  }>;
+  /*
+   * Le type partagé, pas une redéclaration : cette forme était recopiée à la main ici, ce qui est
+   * précisément ce que `check-api-types.py` existe pour supprimer — une annotation écrite au point
+   * d'appel, que TypeScript croit sur parole et que le serveur peut démentir en silence.
+   */
+  jobs: FlinkJobSummary[];
   health: boolean;
   topicLastMessages: Record<string, number | null>;
 }
@@ -182,21 +179,6 @@ const Dashboard: React.FC = () => {
     }
   }, [data]);
 
-  const formatJobTime = (ms: number | null | undefined) =>
-    ms ? new Date(ms).toLocaleString() : '—';
-
-  const isTerminalStatus = (status: string) =>
-    ['FINISHED', 'FAILED', 'CANCELED', 'CANCELLED'].includes(status.toUpperCase());
-
-  const getJobBadgeTone = (status: string): BadgeTone => {
-    const upper = status.toUpperCase();
-    if (upper === 'RUNNING') return 'primary';
-    if (['CANCELLING', 'CANCEL_REQUESTED'].includes(upper)) return 'warning';
-    if (upper === 'FINISHED') return 'success';
-    if (upper === 'FAILED') return 'error';
-    return 'neutral';
-  };
-
   /**
    * @param showSpinner remet la page en chargement *avant* l'appel — réservé à une relance
    *   manuelle. Le premier chargement ne le fait pas : la page démarre déjà en `loading`, et
@@ -211,7 +193,13 @@ const Dashboard: React.FC = () => {
       setData(response.data);
       // `loadDashboard` ne tourne que depuis un effet ou un gestionnaire, jamais pendant le
       // rendu — ce que la règle, qui raisonne sur la portée du composant, ne peut pas voir.
-      // eslint-disable-next-line react-hooks/purity -- appelé hors rendu
+      //
+      // L'exception `react-hooks/purity` qui se trouvait ici a été **retirée parce qu'elle est
+      // devenue inutile, pas parce que le motif a disparu** : sortir la carte de job de ce
+      // fichier a déplacé le point où l'analyse du compilateur s'arrête, et la règle ne signale
+      // plus cette ligne. `--report-unused-disable-directives` impose de l'enlever — c'est le
+      // mécanisme qui empêche les exceptions de survivre à leur raison. Si l'analyse reprend un
+      // jour, l'erreur revient et le raisonnement est ici pour la remettre.
       setFetchedAt(Date.now());
       if (reportErrors) {
         setError(null);
@@ -839,39 +827,13 @@ const Dashboard: React.FC = () => {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {data.jobs.map(job => (
-              <Card key={job.queryId} padding="none" className="p-4 flex flex-col gap-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[11px] uppercase tracking-[0.05em] text-on-surface-variant">{job.statementType.replace('_', ' ')}</p>
-                    <p className="text-[12px] font-mono text-on-surface line-clamp-2 mt-0.5">{job.sql}</p>
-                    <p className="text-[11px] text-outline font-mono mt-1">Query: {job.queryId.substring(0, 16)}</p>
-                    <p className="text-[11px] text-outline font-mono">Flink: {job.flinkJobId.substring(0, 16)}</p>
-                  </div>
-                  <Badge tone={getJobBadgeTone(job.status)} dot>{job.status}</Badge>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-[11px] text-on-surface-variant font-mono">
-                  <div>
-                    <p className="uppercase tracking-[0.05em] text-outline">Started</p>
-                    <p>{formatJobTime(job.startedAt)}</p>
-                  </div>
-                  <div>
-                    <p className="uppercase tracking-[0.05em] text-outline">Ended</p>
-                    <p>{formatJobTime(job.endedAt)}</p>
-                  </div>
-                </div>
-                {job.cancelRequested && (
-                  <p className="text-[11px] text-warning font-mono">Cancellation requested</p>
-                )}
-                <Button
-                  variant="danger" size="sm" className="w-full"
-                  onClick={() => killJob(job.queryId)}
-                  loading={killingJob === job.queryId}
-                  disabled={killingJob === job.queryId || isTerminalStatus(job.status)}
-                  icon={killingJob === job.queryId ? undefined : 'cancel'}
-                >
-                  {killingJob === job.queryId ? 'Killing…' : 'Kill Job'}
-                </Button>
-              </Card>
+              <FlinkJobCard
+                key={job.queryId}
+                job={job}
+                now={now}
+                killing={killingJob === job.queryId}
+                onKill={id => void killJob(id)}
+              />
             ))}
           </div>
         )}

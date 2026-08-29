@@ -2,7 +2,7 @@
 
 Everything this application asks the embedded Flink runtime to do becomes a *job*, and there is a
 small subsystem whose whole purpose is to know which jobs exist, what became of them, and to let
-one be stopped: `FlinkSqlService`'s in-memory registry (`activeJobs`, `JobInfo`, `buildJobSummary`,
+one be stopped: `FlinkSqlService`'s in-memory registry (`heldJobs`, `JobInfo`, `buildJobSummary`,
 `syncPersistedJobs`), the file it is mirrored into (`FlinkJobStore`, `data/flink-jobs.json`), the
 four endpoints on `QueryController` behind `FlinkJobService`, and the "Flink SQL Jobs" panel of
 `Dashboard.tsx`.
@@ -17,9 +17,15 @@ derived from the code, names where it comes from, and is ranked.
 
 > **Status.** **F1 through F8 have shipped**, in one change, with `FlinkJobStoreTest` (new) and
 > three cases added to `FlinkSqlServiceJobRegistryTest`. What each section below describes is the
-> state that work was done *from*; each ends with what replaced it. **F9 through F13 are recorded
-> and not implemented** — the reason is given under each, and in two cases the reason is that the
-> fix would be a behaviour change nobody has asked for.
+> state that work was done *from*; each ends with what replaced it. **F9 and F11 through F13 are
+> recorded and not implemented** — the reason is given under each, and in two cases the reason is
+> that the fix would be a behaviour change nobody has asked for.
+>
+> **A later change closed F10 and the first two items of the worklist.** The two uncalled
+> endpoints are called now: the dashboard's job card opens onto the job's history, which is what
+> made them worth keeping rather than deleting. And the live registry was renamed — `activeJobs`
+> → `heldJobs`, `getActiveJobsDetails()` → `getHeldJobs()` — because "active" meant two different
+> things on two methods a caller has to choose between.
 
 > **What this audit is derived from.** The code and the shipped configuration, plus the test
 > harness: `packages.confluent.io` is blocked from this sandbox, so the suite runs through
@@ -61,7 +67,7 @@ list, `listActive()` filtering on exactly that — and it went onto the retentio
 `INSERT INTO` could be pruned out of the store *while it was still running*.
 
 It survived because the in-memory half is right: `JobInfo.endedAt` stays null on that branch, so
-`activeJobs` keeps the job and `getActiveJobsDetails()` — the 409 guard — still sees it.
+`heldJobs` keeps the job and `getHeldJobs()` — the 409 guard — still sees it.
 `FlinkSqlServiceJobRegistryTest.aJobWhoseStatusTimesOutStaysActive` pinned that half, and only that
 half.
 
@@ -94,15 +100,15 @@ the caller re-deciding what terminal means. Pinned by `cancellingAJobThatAlready
 
 ## F3 — A synchronous read never handed its job back
 
-`executeViaFlinkPlanner` puts a `JobInfo` into `activeJobs` when the planner returns a `JobClient`,
+`executeViaFlinkPlanner` puts a `JobInfo` into `heldJobs` when the planner returns a `JobClient`,
 and **nothing removed it when the query returned**. The only thing that ever swept it was
 `syncPersistedJobs()`, which runs when somebody calls `getActiveJobs()`, `listRecentJobs()`,
-`getJob()` or `getActiveJobsDetails()` — that is, when a browser is looking.
+`getJob()` or `getHeldJobs()` — that is, when a browser is looking.
 
 So on a deployment with no browser open, the registry grew without bound, each entry holding a
 `JobClient`; and the thing that feeds it is not the operator but a timer, since `MetricService`
 refreshes on a thirty-second loop and any metric whose SQL the planner answers registers a job.
-This is the same shape as the defect `getActiveJobsDetails()` was fixed for, one method over, and
+This is the same shape as the defect `getHeldJobs()` was fixed for, one method over, and
 it stayed invisible for the same reason: an open dashboard is a sweeper.
 
 **Shipped.** `releaseSyncJob(info)` from a `finally` on `executeViaFlinkPlanner`: a synchronous read
@@ -210,7 +216,7 @@ that is `JsonStoreFile`'s documented posture, not an omission).
 
 `resolveQueryId` accepts any client-supplied `queryId` matching `[A-Za-z0-9_-]{8,64}`, which a UUID
 matches — and job-mode ids *are* UUIDs. A second request naming an id already held would
-`activeJobs.put` over the live `JobInfo` and `flinkJobStore.create` over its record: the running job
+`heldJobs.put` over the live `JobInfo` and `flinkJobStore.create` over its record: the running job
 becomes unreachable and uncancellable, and its history restarts.
 
 Not fixed, because every fix is worse than the defect at today's severity. Minting a fresh id
@@ -229,13 +235,21 @@ statements concurrently.
 nobody calls is an entry point nobody guards"*, which took out `TableController` and
 `POST /api/metrics/preview`.
 
-They are left, and the distinction from those two is worth writing down: both of those were a
+They were left, and the distinction from those two is worth writing down: both of those were a
 *second* path to a behaviour another endpoint already offered, which is how two paths to one
 behaviour drift. These two are the only way to reach a job's history and status detail at all —
 which is real content nothing else serves, since `FlinkJobSummary` drops `statusDetail`,
-`errorMessage` and `history`. The right resolution is to use them (a job's history is the answer to
-"what happened to my INSERT", and the dashboard card does not have it), not to delete them; until
-someone does, they are guarded by `QueryControllerTest` and by nothing else.
+`errorMessage` and `history`. The right resolution is to use them, not to delete them.
+
+**Shipped.** The dashboard's job card opens onto the record: `components/dashboard/FlinkJobCard.tsx`
+reads `GET /api/query/jobs/{queryId}` **on the click and once**, and renders the outcome, the error
+message, the execution mode and the dated transitions with how long each state lasted. On the
+click, because the dashboard polls every five seconds by default and a read per card per turn would
+make everyone pay for a detail nobody is looking at; once, because folding and reopening should not
+re-ask. A read that fails leaves the server's reason under the card rather than a toast — it is what
+you came to read. The reading logic is `pages/flinkJobHistory.ts`, pure and tested, and it keeps the
+distinction the server side was fixed for: `UNAVAILABLE` is described as a status that could not be
+read, explicitly *not* as an ending.
 
 ### F11 — Two definitions of "terminal", and a `substring` on a field that can be null
 
@@ -279,12 +293,14 @@ are the service-level halves of F1, F2 and F3.
 
 ## What I would do next, in this order
 
-1. **Give the job history a screen** (F10). The store keeps `statusDetail`, `errorMessage` and a
-   timestamped history that nothing displays, and `GET /api/query/jobs/{id}` already serves it. The
-   dashboard card is the natural place — it is where the Kill button already is.
-2. **Decide what `activeJobs` is for** (F3, F13). With synchronous reads released on return, it now
-   holds submitted jobs and nothing else, which is what the 409 repoint guard and the lineage graph
-   actually want — the name and the javadoc should say so before something puts transient jobs back.
+1. ~~**Give the job history a screen** (F10).~~ **Done** — see F10 above.
+2. ~~**Decide what the live registry is for** (F3, F13).~~ **Done, and the framing in the first
+   draft of this list was wrong.** It said the map "holds submitted jobs and nothing else", which
+   it does not: a synchronous read is in it for the duration of its request, and has to be, or
+   `POST /api/query/cancel/{queryId}` could not find it. What was actually wrong was the *word* —
+   `activeJobs` beside `getActiveJobs()`, which answers from the store on a different definition of
+   active. It is `heldJobs` / `getHeldJobs()` now, with the two populations and their two lifetimes
+   written down where the field is declared.
 3. **Measure a poll.** Everything above about cost is arithmetic on the configured cadences, not an
    observation. What one `getActiveJobs()` costs with a handful of live jobs is one number nobody
    has taken, and it is what says whether F13 stays an observation.

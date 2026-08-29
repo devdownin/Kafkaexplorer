@@ -59,6 +59,29 @@ const dashboard = {
   topicLastMessages: Object.fromEntries(topics.map(t => [t, WINDOW_START])),
 };
 
+const runningJob = {
+  queryId: 'q-7f3a91c4',
+  flinkJobId: '8b1e0a2c94d7f6135ae2',
+  statementType: 'INSERT',
+  status: 'RUNNING',
+  sql: 'INSERT INTO demo_orders_out SELECT * FROM demo_orders_1_received',
+  startedAt: WINDOW_START,
+  endedAt: null,
+  cancelRequested: false,
+};
+
+const jobDetails = {
+  ...runningJob,
+  executionMode: 'ASYNC_JOB',
+  statusDetail: 'Submitted via Flink Job mode',
+  cancelRequestedAt: null,
+  errorMessage: null,
+  lastUpdatedAt: WINDOW_START + 1_000,
+  history: [
+    { timestamp: WINDOW_START, status: 'RUNNING', detail: 'Submitted via Flink Job mode' },
+  ],
+};
+
 function activityFor(names: string[], warnings: string[] = []): TopicActivityResponse {
   return {
     topics: Object.fromEntries(names.map((t, i) => [t, series(t, [0, i + 1, 2 * (i + 1), i + 1])])),
@@ -518,5 +541,65 @@ describe('Dashboard dead-letter rule', () => {
     expect(screen.queryByText('demo.orders.dlt')).toBeNull();
     expect(screen.queryByText('demo.payments.dlq')).toBeNull();
     expect(screen.getByText('demo.orders.received')).toBeInTheDocument();
+  });
+});
+
+/*
+ * L'historique d'un job.
+ *
+ * Le magasin garde `statusDetail`, `errorMessage` et les transitions datées — la réponse à
+ * « qu'est-il arrivé à mon INSERT » — et `GET /api/query/jobs/{id}` les servait déjà. Ce qui n'a
+ * de sens qu'ici : la carte ne les demande **qu'au clic** (le tableau de bord sonde toutes les
+ * cinq secondes, une requête par carte à chaque tour ferait payer à tout le monde un détail que
+ * personne ne regarde), elle ne redemande pas ce qu'elle a déjà lu, et une lecture qui échoue
+ * laisse la raison à l'écran — c'est précisément ce qu'on était venu lire.
+ */
+describe('Dashboard — the history of a Flink job', () => {
+  function stubWithJob(detail: unknown | Error = jobDetails) {
+    mockedAxios.get.mockImplementation((url: string) => {
+      if (url === '/api/dashboard') return Promise.resolve({ data: { ...dashboard, jobs: [runningJob] } });
+      if (url === '/api/dashboard/activity') return Promise.resolve({ data: activityFor(topics.slice(0, 25)) });
+      if (url.startsWith('/api/query/jobs/')) {
+        return detail instanceof Error ? Promise.reject(detail) : Promise.resolve({ data: detail });
+      }
+      return Promise.resolve({ data: {} });
+    });
+    mockedAxios.isCancel = ((e: unknown) => e instanceof Error && e.name === 'CanceledError') as never;
+  }
+
+  const detailRequests = () =>
+    mockedAxios.get.mock.calls.filter(call => String(call[0]).startsWith('/api/query/jobs/'));
+
+  it('asks for the record only when the card is opened, and only once', async () => {
+    stubWithJob();
+    const user = userEvent.setup();
+    renderPage();
+
+    const toggle = await screen.findByRole('button', { name: /history and detail/i });
+    expect(detailRequests()).toHaveLength(0);
+
+    await user.click(toggle);
+    await waitFor(() => expect(detailRequests()).toHaveLength(1));
+    expect(detailRequests()[0][0]).toBe('/api/query/jobs/q-7f3a91c4');
+    expect(await screen.findByText('Submitted via Flink Job mode')).toBeInTheDocument();
+
+    // Replier puis rouvrir ne relit pas : ce qu'on a lu, on l'a.
+    await user.click(toggle);
+    await user.click(toggle);
+    await waitFor(() => expect(screen.getByText('Submitted via Flink Job mode')).toBeInTheDocument());
+    expect(detailRequests()).toHaveLength(1);
+  });
+
+  it('shows the reason when the record cannot be read', async () => {
+    stubWithJob(new Error('Network Error'));
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /history and detail/i }));
+
+    // Pas un toast qui passe en trois secondes : l'échec porte sur ce qu'on venait lire, et il
+    // reste sous la carte avec la raison du serveur.
+    expect(await screen.findByText(/backend may be offline or unreachable/i)).toBeInTheDocument();
+    expect(screen.queryByText('Submitted via Flink Job mode')).not.toBeInTheDocument();
   });
 });
