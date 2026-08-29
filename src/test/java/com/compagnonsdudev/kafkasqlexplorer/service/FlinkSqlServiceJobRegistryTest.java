@@ -58,6 +58,12 @@ class FlinkSqlServiceJobRegistryTest {
             .thenAnswer(invocation -> ((java.util.function.Supplier<?>) invocation.getArgument(1)).get());
         when(runtimeCoordinator.runRead(anyString(), any(java.util.function.Supplier.class)))
             .thenAnswer(invocation -> ((java.util.function.Supplier<?>) invocation.getArgument(1)).get());
+        // The planner path passes its own wait budget, which is a different overload — unstubbed,
+        // it answers null and the statement fails before ever registering a job.
+        when(runtimeCoordinator.runMutation(anyString(), any(java.util.function.Supplier.class), anyLong()))
+            .thenAnswer(invocation -> ((java.util.function.Supplier<?>) invocation.getArgument(1)).get());
+        when(runtimeCoordinator.runRead(anyString(), any(java.util.function.Supplier.class), anyLong()))
+            .thenAnswer(invocation -> ((java.util.function.Supplier<?>) invocation.getArgument(1)).get());
 
         SqlQueryValidator validator = mock(SqlQueryValidator.class);
         doNothing().when(validator).validate(anyString());
@@ -282,6 +288,85 @@ class FlinkSqlServiceJobRegistryTest {
         assertEquals(summary.queryId(), persisted.queryId());
         assertEquals("ASYNC_JOB", persisted.executionMode());
         assertFalse(persisted.history().isEmpty());
+    }
+
+    /**
+     * A status poll that never answers says nothing about the job.
+     *
+     * <p>It was reported as UNKNOWN, which {@link FlinkJobStore#isTerminal} counts as the job being
+     * over: one slow answer stamped an `endedAt` on a job that was still running, dropped it out of
+     * `getActiveJobs()` — the dashboard's list — and put it on the retention clock, so a long
+     * INSERT could be pruned out of the store while it ran. The sibling above pins the in-memory
+     * half of this; the store is where the damage was.
+     */
+    @Test
+    void aStatusThatCouldNotBeReadDoesNotEndTheJob() {
+        JobClient client = mock(JobClient.class);
+        when(client.getJobID()).thenReturn(new JobID());
+        when(client.getJobStatus()).thenReturn(new CompletableFuture<>()); // never completes
+
+        activeJobs.put("job-slow", new FlinkSqlService.JobInfo(
+            "job-slow", "INSERT INTO sink SELECT * FROM src", "INSERT", "FLINK_JOB", client,
+            1_700_000_000_000L));
+
+        List<FlinkJobSummary> active = service.getActiveJobs();
+
+        assertEquals(1, active.size(), "a job whose status we could not read is still a job");
+        assertEquals(FlinkSqlService.STATUS_UNAVAILABLE, active.get(0).status());
+        assertNull(active.get(0).endedAt(), "and it has not ended — we simply could not tell");
+        assertNull(flinkJobStore.findById("job-slow").orElseThrow().endedAt());
+    }
+
+    /**
+     * Pressing Kill on a dashboard card whose job finished between two five-second polls.
+     *
+     * <p>There is no live JobClient by then, and the fallback wrote UNKNOWN over the record — so
+     * the one thing the store is for, how the job ended, was destroyed by the gesture that could
+     * no longer change it. The attempt is worth recording; the verdict is not ours to replace.
+     */
+    @Test
+    void cancellingAJobThatAlreadyEndedKeepsHowItEnded() {
+        flinkJobStore.create("job-over", "flink-1", "INSERT", "ASYNC_JOB", "FINISHED",
+            "Submitted via Flink Job mode", "INSERT INTO sink SELECT * FROM src",
+            1_700_000_000_000L, null);
+
+        assertEquals(FlinkSqlService.CancelOutcome.NO_ACTIVE_JOB, service.cancelQuery("job-over"));
+
+        FlinkManagedJobDetails after = flinkJobStore.findById("job-over").orElseThrow();
+        assertEquals("FINISHED", after.status(), "the recorded outcome stands");
+        assertTrue(after.cancelRequested(), "the attempt is still recorded");
+        assertTrue(after.history().get(after.history().size() - 1).detail().contains("already ended"),
+            "and it is in the history, under the status that was actually observed");
+    }
+
+    /**
+     * A synchronous read is over when the request returns, and nothing else knows that.
+     *
+     * <p>Its job used to be left in `activeJobs` until some other caller happened to run the status
+     * sweep — which on a headless deployment is nobody, while the metric refresh loop adds one
+     * every thirty seconds, each holding a JobClient. An open browser hid it: the dashboard poll is
+     * the only sweeper there is.
+     */
+    @Test
+    void aSynchronousReadHandsItsJobBackWhenItReturns() {
+        JobClient client = mock(JobClient.class);
+        when(client.getJobID()).thenReturn(JobID.generate());
+        when(client.getJobStatus()).thenReturn(CompletableFuture.completedFuture(JobStatus.FINISHED));
+
+        TableResult planned = mock(TableResult.class);
+        when(planned.getJobClient()).thenReturn(Optional.of(client));
+        when(planned.collect()).thenReturn(org.apache.flink.util.CloseableIterator.empty());
+        when(planned.getResolvedSchema())
+            .thenReturn(org.apache.flink.table.catalog.ResolvedSchema.of());
+        when(tableEnv.executeSql(anyString())).thenReturn(planned);
+
+        service.executeSql(new QueryRequest(
+            "CREATE TABLE released (id STRING)", null, 10, null, null, "kse-sync-read-1"));
+
+        assertTrue(flinkJobStore.findById("kse-sync-read-1").isPresent(),
+            "the statement really did register a job — without this the assertion below is vacuous");
+        assertTrue(activeJobs.isEmpty(),
+            "the read has returned, so nothing is holding its JobClient any more");
     }
 
     private ExplorerConfig configFor(Path path) {
