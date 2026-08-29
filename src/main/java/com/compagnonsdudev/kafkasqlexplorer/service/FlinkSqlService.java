@@ -784,6 +784,38 @@ public class FlinkSqlService {
                             engineFailure != null ? engineFailure : plannerUnavailableMessage());
                 }
                 QueryResult qr = kafkaDirectSelect(sqlToExecute, readMode, limit, startTime);
+                /*
+                 * Dire *pourquoi* cette requête-ci a changé de moteur, et pas seulement que le
+                 * planner a fini par être coupé.
+                 *
+                 * `engineFailure` était calculé ici, lu nulle part, et jeté. Un repli ponctuel
+                 * rendait donc `engine: KAFKA_DIRECT`, `error: null`, `warnings: []` — indiscernable
+                 * d'une requête que le lecteur direct était censé traiter. C'est ce silence qui a
+                 * gardé trois défauts distincts invisibles : une option refusée par le connecteur,
+                 * un job qui ne pouvait pas obtenir ses emplacements, et une boucle de collecte qui
+                 * bloquait sur sa dernière ligne. Les trois se lisaient « la requête a marché ».
+                 *
+                 * Le verrou ne suffisait pas à le remplacer, et pas seulement parce qu'il arrive
+                 * après trois échecs : un *dépassement de délai* remet le compteur à zéro
+                 * délibérément (le planner a fonctionné, le job était lent), donc la panne la plus
+                 * courante ici ne l'atteint jamais. Une dégradation permanente et le motif de cette
+                 * requête sont deux faits différents, alors les deux phrases s'ajoutent au lieu de
+                 * se remplacer.
+                 *
+                 * Une erreur *utilisateur* ne passe pas par là : `rejectIfUserError` a déjà rendu
+                 * le message du planner à l'appelant.
+                 */
+                if (autoReg.deferredToDirectReader()) {
+                    // Le repli est *notre* décision, pas une panne : l'inférence n'a rien trouvé
+                    // (topic vide ou illisible), donc la table n'a jamais été enregistrée et le
+                    // « Object not found » du planner dit notre propre choix. Répercuter ce
+                    // message enverrait chercher une faute de frappe dans un nom correct.
+                    qr = withExtraWarning(qr, DIRECT_READER_CAVEAT
+                        + " No schema could be inferred for this topic, so no Flink table was "
+                        + "registered for it — the topic may be empty, or its messages unreadable.");
+                } else if (engineFailure != null) {
+                    qr = withExtraWarning(qr, DIRECT_READER_CAVEAT + " " + engineFailure);
+                }
                 // Say that the planner is out of the picture for the rest of this process, on the
                 // queries it actually affects. The latch was written in one place and read in one
                 // place and surfaced nowhere, so a user got `engine: KAFKA_DIRECT` — no JOIN, no
@@ -970,6 +1002,14 @@ public class FlinkSqlService {
      * process, so every later query silently gets an engine that supports neither JOIN nor
      * subqueries.
      */
+    /**
+     * L'ouverture commune des avertissements de repli : ce que l'appelant perd en changeant de
+     * moteur. Une phrase, pas deux, parce que les deux motifs — notre décision de ne pas
+     * enregistrer la table, et une panne du planner — se distinguent par ce qui la suit.
+     */
+    private static final String DIRECT_READER_CAVEAT =
+        "This query fell back to the direct Kafka reader, which supports neither JOIN nor subqueries.";
+
     private String plannerUnavailableMessage() {
         if (!explorerConfig.isFlinkSelectEnabled()) {
             return "The Flink planner is disabled (explorer.flink-select-enabled=false), and this "

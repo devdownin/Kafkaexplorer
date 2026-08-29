@@ -683,6 +683,37 @@ class FlinkSqlServiceTest {
         assertNoError(result);
         assertEquals(2, result.rows().size(), "The direct reader must still serve an unregistered topic");
         verify(ddlGeneratorService, never()).generateDdl(anyString(), any(), any());
+
+        // Et le changement de moteur est dit. Sans cela, la réponse est `engine: KAFKA_DIRECT`,
+        // `error: null`, `warnings: []` — indiscernable d'une requête que ce lecteur était censé
+        // traiter, alors que JOIN et sous-requêtes viennent d'être perdus en silence.
+        assertTrue(result.warnings().stream().anyMatch(w -> w.contains("direct Kafka reader")),
+                "the engine change must travel with the rows, got: " + result.warnings());
+        // Le motif est le nôtre — aucun schéma n'a pu être inféré — et non le « Object not found »
+        // du planner, qui enverrait chercher une faute de frappe dans un nom correct.
+        assertTrue(result.warnings().stream().anyMatch(w -> w.contains("No schema could be inferred")),
+                "a deliberate skip must not be reported as the planner's own complaint, got: "
+                    + result.warnings());
+        assertTrue(result.warnings().stream().noneMatch(w -> w.contains("not found")),
+                "got: " + result.warnings());
+    }
+
+    /**
+     * Une requête que le planner sert vraiment ne porte aucun avertissement de repli.
+     *
+     * <p>Le pendant du cas ci-dessus, et il compte autant : un avertissement qui apparaît toujours
+     * cesse d'être lu. C'est ce qui rend le premier utilisable comme signal.
+     */
+    @Test
+    void aQueryThePlannerAnswersCarriesNoFallbackWarning() throws Exception {
+        stubRegisteredTopicWithRecords();
+
+        QueryResult result = execute("SELECT event_id, payload FROM strict_mode_topic");
+
+        assertNoError(result);
+        assertEquals("FLINK", result.engine());
+        assertTrue(result.warnings().stream().noneMatch(w -> w.contains("direct Kafka reader")),
+                "got: " + result.warnings());
     }
 
     @Test
@@ -724,7 +755,12 @@ class FlinkSqlServiceTest {
 
         assertNoError(result);
         assertEquals(2, result.rows().size(), "two records 7 minutes apart fall in two 5-minute buckets");
-        assertTrue(result.warnings().isEmpty(), "TUMBLE is emulated exactly, got: " + result.warnings());
+        // Ce qui est affirmé, c'est l'absence de *caveat d'approximation* — pas l'absence de
+        // tout avertissement : cette requête tourne sur le lecteur direct, et le repli le dit
+        // désormais, ce qui est vrai ici comme ailleurs. HOP et SESSION, eux, ajoutent leur
+        // approximation par-dessus, et c'est cette phrase-là que les cas suivants cherchent.
+        assertTrue(result.warnings().stream().noneMatch(w -> w.contains("approximated")),
+                "TUMBLE is emulated exactly, got: " + result.warnings());
     }
 
     @Test
