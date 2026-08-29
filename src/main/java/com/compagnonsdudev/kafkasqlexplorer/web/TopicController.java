@@ -26,6 +26,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 @RestController
 @RequestMapping("/api/topic")
@@ -52,20 +53,44 @@ public class TopicController {
         this.explorerConfig = explorerConfig;
     }
 
+    /**
+     * Everything the Topic Explorer opens with, from <b>one</b> read of the topic.
+     *
+     * <p>It used to take three, each opening a KafkaConsumer of its own: {@code detectFormat}
+     * sampled the topic, {@code inferSchema} sampled it again for the identical ten records, and
+     * the displayed messages were a third read. The audit had already learned this — it fetches
+     * one sample and feeds the {@code detectFormat(topic, samples)} / {@code inferSchema(topic,
+     * format, samples)} overloads, which exist for exactly this — and the one endpoint a user
+     * actually waits on was left on the un-shared path.
+     *
+     * <p>Inference now reads the records the page displays, capped at {@code
+     * explorer.inference-sample-size} so that property still governs how much of a payload budget
+     * inference spends. That also makes the two agree: the schema and the DDL used to be inferred
+     * from the <em>newest</em> records while the panel below showed the oldest, so the column list
+     * could describe records nobody was looking at. The read mode already claims to drive the
+     * sample and the DDL together; now it drives the schema between them.
+     */
     @GetMapping("/{name}")
     public TopicDetailResponse getTopicDetail(@PathVariable("name") String name,
                                               @RequestParam(name = "readMode", defaultValue = "earliest-offset") String readMode) throws Exception {
         TopicDescriptor descriptor = kafkaAdminService.getTopicDescriptor(name);
-        MessageFormat format = schemaInferenceService.detectFormat(name);
-        Map<String, String> schema = schemaInferenceService.inferSchema(name, format);
-        String ddl = DdlGeneratorService.maskSensitiveProperties(
-                ddlGeneratorService.generateDdl(name, schema, format, readMode));
 
         // The read mode drives the sample too, not only the generated DDL: a toggle labelled
         // "Earliest / Latest" sitting next to the message list has to change which messages show up.
         List<ConsumerRecord<String, String>> records = "latest-offset".equals(readMode)
                 ? kafkaAdminService.getRecentRecords(name, SAMPLE_SIZE)
                 : kafkaAdminService.getEarliestRecords(name, SAMPLE_SIZE);
+
+        List<String> samples = records.stream()
+                .map(ConsumerRecord::value)
+                .filter(Objects::nonNull)
+                .limit(explorerConfig.getInferenceSampleSize())
+                .toList();
+
+        MessageFormat format = schemaInferenceService.detectFormat(name, samples);
+        Map<String, String> schema = schemaInferenceService.inferSchema(name, format, samples);
+        String ddl = DdlGeneratorService.maskSensitiveProperties(
+                ddlGeneratorService.generateDdl(name, schema, format, readMode));
 
         return new TopicDetailResponse(descriptor, format, schema, ddl,
                 records.stream().map(this::toMessage).toList());

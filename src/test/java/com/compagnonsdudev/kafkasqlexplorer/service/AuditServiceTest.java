@@ -369,14 +369,16 @@ class AuditServiceTest {
         when(kafkaAdminService.getTopicsSize(any()))
                 .thenReturn(Map.of("a.critical", 5L, "a.warning", 5L, "a.clean", 5L));
         // a.critical: an unparseable payload. a.warning: duplicate record keys. a.clean: neither.
-        when(kafkaAdminService.getSampleMessages(eq("a.critical"), anyInt()))
-                .thenReturn(List.of("{\"id\":\"1\"}", "{\"id\":"));
-        when(kafkaAdminService.getSampleMessages(eq("a.warning"), anyInt()))
-                .thenReturn(List.of("{\"id\":\"1\"}"));
-        when(kafkaAdminService.getSampleMessages(eq("a.clean"), anyInt()))
-                .thenReturn(List.of("{\"id\":\"1\"}"));
+        // One stubbed read per topic, because that is what the audit now performs: the poison
+        // check's sample is taken from the records the duplicate scan already holds, so a fixture
+        // that answered one thing to getSampleMessages and another to getRecentRecords would be
+        // describing a topic whose records depend on who is asking.
+        when(kafkaAdminService.getRecentRecords(eq("a.critical"), anyInt())).thenReturn(List.of(
+                record("a.critical", 0, "k1", "{\"id\":\"1\"}"), record("a.critical", 1, "k2", "{\"id\":")));
         when(kafkaAdminService.getRecentRecords(eq("a.warning"), anyInt())).thenReturn(List.of(
-                record("a.warning", 0, "k1", "{}"), record("a.warning", 1, "k1", "{}")));
+                record("a.warning", 0, "k1", "{\"id\":\"1\"}"), record("a.warning", 1, "k1", "{\"id\":\"2\"}")));
+        when(kafkaAdminService.getRecentRecords(eq("a.clean"), anyInt())).thenReturn(List.of(
+                record("a.clean", 0, "k1", "{\"id\":\"1\"}"), record("a.clean", 1, "k2", "{\"id\":\"2\"}")));
 
         auditService.runAuditAsync("sev", new AuditOptions(false, true, true, false, false, false, null));
 
@@ -394,10 +396,10 @@ class AuditServiceTest {
     void aTopicTakesTheWorstSeverityAmongItsIssues() throws Exception {
         when(kafkaAdminService.listTopics()).thenReturn(List.of("mixed.topic"));
         when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("mixed.topic", 5L));
-        when(kafkaAdminService.getSampleMessages(eq("mixed.topic"), anyInt()))
-                .thenReturn(List.of("{\"id\":\"1\"}", "{\"id\":"));
+        // One read, carrying both properties: the same key twice (a duplicate, WARNING) and a
+        // payload that does not parse (poison, CRITICAL).
         when(kafkaAdminService.getRecentRecords(eq("mixed.topic"), anyInt())).thenReturn(List.of(
-                record("mixed.topic", 0, "k1", "{}"), record("mixed.topic", 1, "k1", "{}")));
+                record("mixed.topic", 0, "k1", "{\"id\":\"1\"}"), record("mixed.topic", 1, "k1", "{\"id\":")));
 
         auditService.runAuditAsync("mixed", new AuditOptions(false, true, true, false, false, false, null));
 
@@ -552,6 +554,46 @@ class AuditServiceTest {
     }
 
     @Test
+    void oneReadServesTheSampleAndTheDuplicateScanWhenBothWantRecentRecords() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders.created"));
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("orders.created", 3L));
+        when(kafkaAdminService.getRecentRecords(eq("orders.created"), anyInt())).thenReturn(List.of(
+                record("orders.created", 0, "k1", "{\"id\":\"1\"}"),
+                record("orders.created", 1, "k1", "{\"id\":")));
+
+        // Poison detection and the duplicate scan both read the newest records of the same topic,
+        // so the sample comes out of the scan's own records rather than a second consumer.
+        auditService.runAuditAsync("shared", new AuditOptions(false, true, true, false, false, false, null));
+
+        verify(kafkaAdminService, never()).getSampleMessages(eq("orders.created"), anyInt());
+        verify(kafkaAdminService).getRecentRecords(eq("orders.created"), anyInt());
+        TopicAudit audit = auditService.getAuditReport("shared").topicAudits().get(0);
+        assertEquals(1, audit.poisonMessageCount(), "the shared sample must still reach the poison check");
+        assertEquals(1L, audit.duplicateCount());
+    }
+
+    @Test
+    void theSampleIsReadSeparatelyWhenTheDuplicateScanReadsTheOtherEnd() throws Exception {
+        explorerConfig.setAuditDuplicateScanFrom("EARLIEST");
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders.created"));
+        when(kafkaAdminService.getTopicsSize(any())).thenReturn(Map.of("orders.created", 3L));
+        when(kafkaAdminService.getEarliestRecords(eq("orders.created"), anyInt())).thenReturn(List.of(
+                record("orders.created", 0, "k1", "{\"id\":\"1\"}"),
+                record("orders.created", 1, "k1", "{\"id\":\"2\"}")));
+        when(kafkaAdminService.getSampleMessages(eq("orders.created"), anyInt()))
+                .thenReturn(List.of("{\"id\":\"1\"}", "{\"id\":"));
+
+        auditService.runAuditAsync("split", new AuditOptions(false, true, true, false, false, false, null));
+
+        // The oldest surviving records answer a different question from the one every other check
+        // here asks, so sharing across that end would change what the poison check looks at.
+        verify(kafkaAdminService).getSampleMessages(eq("orders.created"), anyInt());
+        TopicAudit audit = auditService.getAuditReport("split").topicAudits().get(0);
+        assertEquals(1, audit.poisonMessageCount(), "the poison check must read the recent sample, not the scan");
+        assertEquals(1L, audit.duplicateCount());
+    }
+
+    @Test
     void duplicateScanCanBePointedAtTheStartOfTheTopic() throws Exception {
         explorerConfig.setAuditDuplicateScanFrom("EARLIEST");
         when(kafkaAdminService.listTopics()).thenReturn(List.of("orders.created"));
@@ -569,10 +611,19 @@ class AuditServiceTest {
 
     @Test
     void aRunThatOutlivesItsTimeBudgetStopsAndSaysSo() throws Exception {
-        // Budget of 1 ms: the deadline is already past by the time the first topic is picked up,
-        // so every topic is skipped and the run reports why rather than grinding on.
+        // Budget of 1 ms, and a first call that takes longer than that. The budget alone used to
+        // be the whole fixture, on the reasoning that "the deadline is already past by the time
+        // the first topic is picked up" — which is an assumption about how long a mocked audit
+        // takes, not something 1 ms guarantees. Every mock here answers instantly, so the run
+        // really can finish inside the budget, and it began doing so on CI as soon as the audit
+        // got faster: the same run now reads each topic once instead of twice. Racing the clock
+        // is not a way to test a deadline. The sleep sits on the first call made *after* the
+        // deadline is computed, so the run outlives its budget by construction.
         explorerConfig.setAuditMaxDurationMs(1);
-        when(kafkaAdminService.listTopics()).thenReturn(List.of("a.one", "a.two", "a.three"));
+        when(kafkaAdminService.listTopics()).thenAnswer(invocation -> {
+            Thread.sleep(50);
+            return List.of("a.one", "a.two", "a.three");
+        });
         when(kafkaAdminService.getTopicsSize(any()))
                 .thenReturn(Map.of("a.one", 1L, "a.two", 1L, "a.three", 1L));
 

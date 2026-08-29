@@ -30,6 +30,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -106,9 +107,15 @@ public class TopicSearchService {
                     stopReason = "TIMEOUT";
                     break;
                 }
+                // A partition the scan has read to its end is paused rather than left assigned:
+                // the fetcher keeps a request in flight for every assigned partition, so a drained
+                // one holds each poll for fetch.max.wait.ms with nothing to deliver while the
+                // partitions that still have records are already back. On a LAST_N search over a
+                // topic whose partitions are unevenly filled, that is most of the wall clock.
+                pauseDrained(consumer, partitions, endOffsets, nextCursor);
                 ConsumerRecords<byte[], byte[]> polled = consumer.poll(POLL_TIMEOUT);
                 if (polled.isEmpty()) {
-                    if (reachedEnd(consumer, partitions, endOffsets) || ++emptyPolls >= MAX_EMPTY_POLLS) {
+                    if (reachedEnd(partitions, endOffsets, nextCursor) || ++emptyPolls >= MAX_EMPTY_POLLS) {
                         break;
                     }
                     continue;
@@ -159,7 +166,7 @@ public class TopicSearchService {
             }
 
             boolean exhausted = "EXHAUSTED".equals(stopReason)
-                && reachedEnd(consumer, partitions, endOffsets);
+                && reachedEnd(partitions, endOffsets, nextCursor);
             if (exhausted) {
                 stopReason = "EXHAUSTED";
             }
@@ -202,8 +209,16 @@ public class TopicSearchService {
             List<TopicPartition> assignment = List.of(tp);
             consumer.assign(assignment);
 
-            long beginning = consumer.beginningOffsets(assignment).getOrDefault(tp, 0L);
-            long end = consumer.endOffsets(assignment).getOrDefault(tp, 0L);
+            // Both bounds are needed before anything can be decided, and the consumer's two
+            // getters block one after the other — two round trips in series to place one record.
+            // The admin client answers them as futures, so the requests overlap and the wait is
+            // one round trip rather than two. It degrades to the consumer when there is no admin
+            // client to ask, which is what the tests drive.
+            KafkaAdminService.OffsetRange range = kafkaAdminService.offsetRange(tp);
+            long beginning = range == null ? consumer.beginningOffsets(assignment).getOrDefault(tp, 0L)
+                                           : range.beginning();
+            long end = range == null ? consumer.endOffsets(assignment).getOrDefault(tp, 0L)
+                                     : range.end();
             if (offset < beginning || offset >= end) {
                 return null;
             }
@@ -469,18 +484,44 @@ public class TopicSearchService {
         }
     }
 
-    private boolean reachedEnd(Consumer<byte[], byte[]> consumer, List<TopicPartition> partitions,
-                                Map<TopicPartition, Long> endOffsets) {
+    /**
+     * True when every partition has handed this scan everything it held at the start.
+     *
+     * <p>Measured against the cursor the scan keeps, never against {@code consumer.position(tp)}.
+     * That one is the client's <em>fetch</em> position, advanced as responses are buffered in the
+     * background rather than as records are returned — the defect {@link TopicReadCursor} exists
+     * to state once, and reading it here would let a scan announce {@code exhausted} with records
+     * still in flight. The cursor is seeded from the seek positions and moves only on delivery.
+     */
+    private static boolean reachedEnd(List<TopicPartition> partitions,
+                                      Map<TopicPartition, Long> endOffsets,
+                                      Map<String, Long> cursor) {
+        return !TopicReadCursor.hasUnread(partitions, endOffsets, positions(partitions, cursor));
+    }
+
+    /** Pauses every assigned partition the scan has already read to its end offset. */
+    private static void pauseDrained(Consumer<byte[], byte[]> consumer, List<TopicPartition> partitions,
+                                     Map<TopicPartition, Long> endOffsets, Map<String, Long> cursor) {
+        Map<TopicPartition, Long> next = positions(partitions, cursor);
+        Set<TopicPartition> paused = consumer.paused();
+        List<TopicPartition> toPause = new ArrayList<>();
         for (TopicPartition tp : partitions) {
+            if (paused.contains(tp)) continue;
             Long end = endOffsets.get(tp);
-            if (end == null) {
-                continue;
-            }
-            if (consumer.position(tp) < end) {
-                return false;
-            }
+            Long at = next.get(tp);
+            if (end != null && at != null && at >= end) toPause.add(tp);
         }
-        return true;
+        if (!toPause.isEmpty()) consumer.pause(toPause);
+    }
+
+    /** The cursor, keyed the way the offsets are — it travels to the client keyed by partition number. */
+    private static Map<TopicPartition, Long> positions(List<TopicPartition> partitions, Map<String, Long> cursor) {
+        Map<TopicPartition, Long> next = new LinkedHashMap<>();
+        for (TopicPartition tp : partitions) {
+            Long at = cursor.get(String.valueOf(tp.partition()));
+            if (at != null) next.put(tp, at);
+        }
+        return next;
     }
 
     private Map<String, String> headersOf(ConsumerRecord<byte[], byte[]> record) {

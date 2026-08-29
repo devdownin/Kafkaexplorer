@@ -11,6 +11,77 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`explorer.consumer-pool-size`** (**0**, disabled) — the per-topic record readers can borrow a
+  byte-array consumer instead of building one per read. Constructing a `KafkaConsumer` is a connect,
+  an ApiVersions exchange and a metadata fetch, plus a handshake and an authentication round trip on
+  a TLS or SASL cluster, and the audit reads once per topic. It ships **off**, which is a statement
+  about evidence rather than about the code: the saving's size depends on the deployment, nothing
+  here has measured it against a real cluster, and a pooled client handed out carrying a previous
+  read's assignment or paused partitions answers the wrong question rather than answering slowly.
+  A lease is exclusive, reset before it is handed on, and never returned by a read that threw.
+
+### Changed
+
+- **Reading a topic costs a fraction of what it did.** Four reads answered from records what the
+  broker holds as metadata, or read the same thing twice.
+  - **The dashboard's "Last Message" column no longer reads a record.** It assigned every non-empty
+    partition of every topic on the cluster, seeked each to `end - 1` and polled until each had
+    answered — and a fetch returns the *batch* the record sits in, up to `max.partition.fetch.bytes`
+    (1 MiB by default) per partition, so a three-partition cluster of three hundred topics dragged
+    the tail of nine hundred partitions across the network every 30 s to render relative dates.
+    `ListOffsets(maxTimestamp)` states it from the broker's own index: one request, no consumer, no
+    record. It is also the better measurement — the old code read the *last* record, whose timestamp
+    is the newest only when producers stamp in order. A broker older than Kafka 3.0 does not
+    implement the spec and takes the previous route, which is kept whole.
+  - **`getLatestMessage` reads one partition instead of all of them.** The same spec says which
+    partition holds the newest record and at which offset, so the read no longer fetches the tail of
+    every partition to discard all but one.
+  - **The record counts behind the dashboard's size column open no consumer.** They read only
+    offsets, so the consumer was pure overhead; both bounds go through the admin client, issued
+    before either is awaited so they overlap, and awaited per partition so one that does not answer
+    costs its own contribution rather than the batch.
+  - **The Topic Explorer opens on one read of the topic, not three.** `GET /api/topic/{name}`
+    sampled the topic for format detection, sampled it again for the identical records for schema
+    inference, then read the messages to display. The shared-sample overloads the audit uses have
+    existed for exactly this; the one endpoint a user waits on was left on the un-shared path.
+    Inference now reads the records the page displays, capped at `explorer.inference-sample-size`,
+    which also stops the schema and the DDL describing records the panel below is not showing.
+  - **An audited topic is read once, not twice.** The poison check's ten-record sample now comes
+    out of the records the duplicate scan already holds, rather than a second read of the same end
+    of the same topic — and only when both are reading the same end, since
+    `audit-duplicate-scan-from: EARLIEST` points the scan at the oldest records, which answer a
+    different question from the one every other check asks.
+  - **`readRecord` places a record with one round trip rather than two**, and **`deserializeValue`
+    keeps one Avro writer per schema** instead of building one per record — the audit drives that
+    path ten thousand times for a single topic's duplicate scan.
+  - **The dashboard's two bulk reads share one `describeTopics`** instead of each making their own.
+  - **The per-topic record fetchers dropped a `describeTopics` round trip each**, taking their
+    partition list off the consumer that is about to read anyway; **`drain()` and the Process Mining
+    snapshot read stopped asking twice for end offsets** their callers already hold; and both, like
+    the topic search, now **pause a partition they have finished with** — the fetcher keeps a
+    request in flight for every assigned partition, so a drained one holds each poll for
+    `fetch.max.wait.ms` while the partitions that still have records are already back.
+
+### Fixed
+
+- **A topic search could report `exhausted` with records still in flight.** `reachedEnd` compared
+  `consumer.position(tp)` — the client's *fetch* position, which advances as responses are buffered
+  rather than as records are delivered — against the end offsets. It reads the cursor the response
+  already carries, which is the rule `TopicReadCursor` states and the third place this defect has
+  been found.
+- **An internal read could create a topic on the cluster under exploration.**
+  `allow.auto.create.topics` defaults to *true*, so asking a consumer about a topic that does not
+  exist creates it, with one partition and the broker's defaults. Every internal consumer is
+  configured with it off, beside the group id and the commit switch that
+  `ExplorerConsumerGroups.configure` already sets together.
+- **One unknown topic emptied the dashboard's whole table.** Both halves of it — the record counts
+  and the last-message timestamps — described their topics through `allTopicNames()`, which fails
+  wholesale when any name is unknown, and a topic deleted between the `listTopics` that named it and
+  the call that uses it is an ordinary race on a live cluster. They now share the per-topic-futures
+  loop the activity sparkline had already been fixed with, so a stale name costs its own row.
+
 ### Fixed
 
 - **A page refresh on Compare or Help answered 500.** `CompareController` mapped `GET /compare`

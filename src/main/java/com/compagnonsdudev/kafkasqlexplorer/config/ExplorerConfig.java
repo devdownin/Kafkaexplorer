@@ -257,6 +257,22 @@ public class ExplorerConfig {
      * the same order as the audit's own budget.
      */
     private int dataModelMaxTopics = 100;
+    /**
+     * How many byte-array consumers the per-topic record readers keep alive between reads.
+     *
+     * <p><b>0 disables the pool</b>, which is the shipped value and means every read builds and
+     * closes its own client exactly as before. Turning it on removes a TCP connect, an ApiVersions
+     * exchange and a metadata fetch per read — plus a TLS handshake and an authentication round
+     * trip on a secured cluster, which is where the saving actually lives — and the cluster audit
+     * reads once per topic, so that is the run it is for. Sized to the audit's fan-out (4) at
+     * most; more idle clients than there are worker threads holds connections open for nothing.
+     *
+     * <p>Off by default because nothing here has measured the saving against a real cluster and
+     * the failure mode of getting it wrong is a wrong read rather than a slow one. See
+     * {@code KafkaConsumerPool}.
+     */
+    private int consumerPoolSize = 0;
+
     private int inferenceSampleSize = 10;
     private long inferencePollTimeoutMs = 2000;
     private boolean allowCrossJoin = false;
@@ -574,6 +590,14 @@ public class ExplorerConfig {
 
     public void setDataModelMaxTopics(int dataModelMaxTopics) {
         this.dataModelMaxTopics = dataModelMaxTopics;
+    }
+
+    public int getConsumerPoolSize() {
+        return consumerPoolSize;
+    }
+
+    public void setConsumerPoolSize(int consumerPoolSize) {
+        this.consumerPoolSize = consumerPoolSize;
     }
 
     public int getInferenceSampleSize() {

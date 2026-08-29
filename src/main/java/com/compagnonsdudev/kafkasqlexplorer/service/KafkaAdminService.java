@@ -17,6 +17,8 @@ import com.compagnonsdudev.kafkasqlexplorer.util.LogSafe;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.DescribeClusterOptions;
 import org.apache.kafka.clients.admin.DescribeClusterResult;
+import org.springframework.cache.Cache;
+import org.springframework.cache.CacheManager;
 import org.springframework.cache.annotation.Cacheable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -102,6 +104,30 @@ public class KafkaAdminService {
     private SchemaRegistryClient schemaRegistryClient;
     private KafkaAvroDeserializer avroDeserializer;
 
+    /**
+     * Consulted by {@link #cachedPartitions} only, and optional on purpose: this service is
+     * constructed with {@code KafkaConfig} alone in a dozen tests, so a required dependency here
+     * would be a constructor change in all of them for a memo. Absent, the read is simply not
+     * memoized — same answer, one more round trip.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private CacheManager cacheManager;
+
+    /**
+     * Optional for the same reason as {@link #cacheManager}: a dozen tests construct this service
+     * with {@code KafkaConfig} alone. Absent, the consumer pool is sized 0 — which is also the
+     * shipped default, so the tests exercise the same path an untouched deployment does.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.compagnonsdudev.kafkasqlexplorer.config.ExplorerConfig explorerConfig;
+
+    /**
+     * Lends consumers to the three per-topic record readers. Rebuilt by {@link #init()}, which is
+     * also the cluster-repoint hook — a pooled client carries the bootstrap address it was built
+     * with, so it must not outlive the configuration that produced it.
+     */
+    private volatile KafkaConsumerPool consumerPool = new KafkaConsumerPool(0);
+
     public KafkaAdminService(KafkaConfig kafkaConfig) {
         this.kafkaConfig = kafkaConfig;
     }
@@ -125,6 +151,13 @@ public class KafkaAdminService {
         Properties props = new Properties();
         props.putAll(kafkaConfig.getKafkaProperties());
         this.adminClient = AdminClient.create(props);
+
+        // Before anything else can borrow one: an idle consumer built for the previous cluster
+        // would answer a question about this one with a connection to that one.
+        KafkaConsumerPool previousPool = this.consumerPool;
+        this.consumerPool = new KafkaConsumerPool(
+                explorerConfig == null ? 0 : explorerConfig.getConsumerPoolSize());
+        if (previousPool != null) previousPool.close();
         if (previous != null) {
             // Bounded for the same reason as close() below: this runs when the cluster is
             // repointed, which is very often *because* the previous one stopped answering.
@@ -141,6 +174,7 @@ public class KafkaAdminService {
 
     @PreDestroy
     public void close() {
+        consumerPool.close();
         if (adminClient != null) {
             // Bounded on purpose. The no-arg close() waits for pending calls with no
             // deadline, so a describe still retrying against an unreachable broker — the
@@ -185,6 +219,24 @@ public class KafkaAdminService {
         return configs;
     }
 
+    /**
+     * A {@code GenericDatumWriter} per Avro schema, rather than one per record.
+     *
+     * <p>The writer resolves the schema when it is built, and the JSON encoder allocates its own
+     * parser and output stack — three objects and a schema walk per record, on a path the audit
+     * drives ten thousand times for a single topic's duplicate scan. A writer is stateless once
+     * built and safe to share; the encoder is not, so it stays per call. Bounded because the key
+     * is the schema and a topic whose producers evolve it would otherwise grow this without end.
+     */
+    private final Map<org.apache.avro.Schema, org.apache.avro.io.DatumWriter<GenericRecord>> avroWriters =
+            java.util.Collections.synchronizedMap(new LinkedHashMap<>(16, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(
+                        Map.Entry<org.apache.avro.Schema, org.apache.avro.io.DatumWriter<GenericRecord>> eldest) {
+                    return size() > 64;
+                }
+            });
+
     /** Public so the topic search can decode records with the same Avro / UTF-8 rules as sampling. */
     public String deserializeValue(String topic, byte[] value) {
         if (value == null) return null;
@@ -195,12 +247,15 @@ public class KafkaAdminService {
                     Object record = avroDeserializer.deserialize(topic, value);
                     if (record instanceof GenericRecord genericRecord) {
                         try {
+                            org.apache.avro.Schema schema = genericRecord.getSchema();
                             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
-                            org.apache.avro.io.DatumWriter<GenericRecord> writer = new org.apache.avro.generic.GenericDatumWriter<>(genericRecord.getSchema());
-                            org.apache.avro.io.Encoder encoder = org.apache.avro.io.EncoderFactory.get().jsonEncoder(genericRecord.getSchema(), out);
-                            writer.write(genericRecord, encoder);
+                            org.apache.avro.io.Encoder encoder =
+                                org.apache.avro.io.EncoderFactory.get().jsonEncoder(schema, out);
+                            avroWriters.computeIfAbsent(schema,
+                                    org.apache.avro.generic.GenericDatumWriter::new)
+                                .write(genericRecord, encoder);
                             encoder.flush();
-                            return new String(out.toByteArray(), StandardCharsets.UTF_8);
+                            return out.toString(StandardCharsets.UTF_8);
                         } catch (Exception e) {
                             return genericRecord.toString();
                         }
@@ -226,8 +281,10 @@ public class KafkaAdminService {
     }
 
     /**
-     * Cached (30s TTL): each call spins up a full KafkaConsumer plus a describeTopics
-     * round-trip, and the dashboard polls this every 5 seconds for every topic.
+     * Cached (30s TTL): each call costs a describeTopics and two listOffsets over every partition
+     * of every topic, and the dashboard polls it for the whole cluster. It no longer costs a
+     * KafkaConsumer as well — this reads offsets and not one record, so the client it opened was
+     * pure overhead; see {@link #readRecordCounts}.
      *
      * <p><b>A topic this could not measure comes back as {@code 0}</b>, which is the right shape
      * for the dashboard's column — a missing key there is a null pointer in the UI — and the wrong
@@ -271,56 +328,52 @@ public class KafkaAdminService {
     private Map<String, Long> readRecordCounts(List<String> topicNames) {
         Map<String, Long> sizes = new HashMap<>();
 
-        Properties props = new Properties();
-        props.putAll(kafkaConfig.getKafkaProperties());
-        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
-        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
-        ExplorerConsumerGroups.configure(props, "bulk-metadata");
+        Map<String, List<TopicPartition>> topicToPartitions;
+        try {
+            topicToPartitions = cachedPartitions(topicNames, 10_000);
+        } catch (Exception e) {
+            log.error("Failed to describe topics for record counts", e);
+            return sizes;
+        }
+        List<TopicPartition> allPartitions = topicToPartitions.values().stream()
+                .flatMap(List::stream).toList();
+        if (allPartitions.isEmpty()) return sizes;
 
-        try (KafkaConsumer<byte[], byte[]> consumer = new KafkaConsumer<>(props)) {
-            List<TopicPartition> allPartitions = new ArrayList<>();
-            Map<String, List<TopicPartition>> topicToPartitions = new HashMap<>();
+        try {
+            // Both bounds through the admin client rather than a throw-away KafkaConsumer. It is
+            // the same ListOffsets request either way, and the consumer bought nothing here: it
+            // reads no record, so the client it needed was pure overhead on the dashboard's
+            // hottest call — a connection, a handshake and a metadata fetch every 30 s. The two
+            // requests are also issued before either is awaited, so they overlap instead of
+            // queueing, and each partition is awaited on its own future: one that does not answer
+            // costs its own contribution where the consumer's map-returning form threw the batch.
+            ListOffsetsResult earliest = adminClient.listOffsets(specs(allPartitions, OffsetSpec.earliest()));
+            ListOffsetsResult latest = adminClient.listOffsets(specs(allPartitions, OffsetSpec.latest()));
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
 
-            try {
-                Map<String, TopicDescription> descriptions = adminClient.describeTopics(topicNames).allTopicNames().get(10, TimeUnit.SECONDS);
-                for (String name : topicNames) {
-                    TopicDescription desc = descriptions.get(name);
-                    if (desc != null) {
-                        List<TopicPartition> tps = desc.partitions().stream()
-                                .map(p -> new TopicPartition(name, p.partition()))
-                                .toList();
-                        allPartitions.addAll(tps);
-                        topicToPartitions.put(name, tps);
-                    }
-                }
-
-                if (allPartitions.isEmpty()) return sizes;
-
-                Map<TopicPartition, Long> beginningOffsets = consumer.beginningOffsets(allPartitions);
-                Map<TopicPartition, Long> endOffsets = consumer.endOffsets(allPartitions);
-
-                for (String name : topicNames) {
-                    List<TopicPartition> tps = topicToPartitions.get(name);
-                    if (tps == null) continue;
-                    long size = 0L;
-                    int measured = 0;
-                    for (TopicPartition tp : tps) {
-                        Long end = endOffsets.get(tp);
-                        Long start = beginningOffsets.get(tp);
-                        if (end == null || start == null) continue;
+            for (Map.Entry<String, List<TopicPartition>> entry : topicToPartitions.entrySet()) {
+                long size = 0L;
+                int measured = 0;
+                for (TopicPartition tp : entry.getValue()) {
+                    try {
+                        long start = awaitOffset(earliest, tp, deadline).offset();
+                        long end = awaitOffset(latest, tp, deadline).offset();
                         size += end - start;
                         measured++;
+                    } catch (Exception e) {
+                        log.debug("Offsets for {}-{} could not be read: {}", LogSafe.name(tp.topic()),
+                                tp.partition(), LogSafe.text(SqlErrorClassifier.explain(e)));
                     }
-                    // A partition that did not answer costs its own contribution, so the count is
-                    // a floor — which is harmless, since every caller here reads it as "is there
-                    // anything to measure". A topic where *none* answered is a different matter:
-                    // the sum would be 0, and 0 is the one value that must never be invented, so
-                    // the topic carries no entry at all rather than a fabricated emptiness.
-                    if (measured > 0) sizes.put(name, size);
                 }
-            } catch (Exception e) {
-                log.error("Failed to read record counts for: {}", topicNames, e);
+                // A partition that did not answer costs its own contribution, so the count is
+                // a floor — which is harmless, since every caller here reads it as "is there
+                // anything to measure". A topic where *none* answered is a different matter:
+                // the sum would be 0, and 0 is the one value that must never be invented, so
+                // the topic carries no entry at all rather than a fabricated emptiness.
+                if (measured > 0) sizes.put(entry.getKey(), size);
             }
+        } catch (Exception e) {
+            log.error("Failed to read record counts for: {}", topicNames, e);
         }
         return sizes;
     }
@@ -1290,12 +1343,91 @@ public class KafkaAdminService {
         return out;
     }
 
-    /** Cached (30s TTL) for the same reason as {@link #getTopicsSize}: consumer + seek + poll per call. */
+    /**
+     * When each topic last received a record — <b>read from offset metadata, not from records</b>.
+     *
+     * <p>This is the dashboard's "Last Message" column, and it used to be the most expensive read
+     * in the application by a wide margin. It opened a consumer, assigned <em>every non-empty
+     * partition of every topic on the cluster</em>, seeked each to {@code end - 1} and polled until
+     * a record came back from each — to keep one {@code long} per partition and throw the payloads
+     * away. A fetch does not return one record: it returns the batch the record sits in, up to
+     * {@code max.partition.fetch.bytes} (1 MiB by default) <em>per partition</em>. So a
+     * three-partition cluster of three hundred topics pulled the tail of nine hundred partitions
+     * across the network, every 30 s, to render a column of relative dates.
+     *
+     * <p>Kafka answers the question directly. {@code ListOffsets} with {@link
+     * OffsetSpec#maxTimestamp()} (KIP-734) returns the largest record timestamp a partition holds,
+     * from the broker's own index — no record is read, no consumer is created, and the whole
+     * cluster is one request. It is also the better measurement: the previous code read the record
+     * at the <em>end</em> of the log, whose timestamp is the newest only when producers stamp in
+     * order, while this is the maximum by definition.
+     *
+     * <p>The spec needs a broker at Kafka 3.0 or later, and this application supports 2.1+, so an
+     * older one is not an error — {@link #lastTimestampsByPolling} does what this method used to.
+     * Anything else that fails costs the topics it names and nothing more: each partition is
+     * awaited on its own future rather than through {@code .all()}, and a topic with no answer
+     * carries no entry rather than a fabricated instant, the rule every read here follows.
+     */
     @Cacheable(value = "topicLastMessages", key = "#topicNames")
     public Map<String, Long> getTopicsLastMessageTimestamps(List<String> topicNames) {
         Map<String, Long> timestamps = new HashMap<>();
-        if (topicNames.isEmpty()) return timestamps;
+        if (topicNames == null || topicNames.isEmpty()) return timestamps;
 
+        Map<String, List<TopicPartition>> topicToPartitions;
+        try {
+            topicToPartitions = cachedPartitions(topicNames, 10_000);
+        } catch (Exception e) {
+            log.error("Failed to describe topics for last-message timestamps", e);
+            return timestamps;
+        }
+        List<TopicPartition> all = topicToPartitions.values().stream().flatMap(List::stream).toList();
+        if (all.isEmpty()) return timestamps;
+
+        ListOffsetsResult result;
+        try {
+            result = adminClient.listOffsets(specs(all, OffsetSpec.maxTimestamp()));
+        } catch (Exception e) {
+            log.error("Failed to get topic last-message timestamps", e);
+            return timestamps;
+        }
+
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        for (Map.Entry<String, List<TopicPartition>> entry : topicToPartitions.entrySet()) {
+            long newest = Long.MIN_VALUE;
+            for (TopicPartition tp : entry.getValue()) {
+                long ts;
+                try {
+                    ts = awaitOffset(result, tp, deadline).timestamp();
+                } catch (Exception e) {
+                    if (isUnsupportedVersion(e)) {
+                        log.info("This broker does not implement ListOffsets(maxTimestamp) (Kafka 3.0+); "
+                            + "reading the last record of each partition instead.");
+                        return lastTimestampsByPolling(topicToPartitions);
+                    }
+                    // One partition that did not answer costs its own contribution. The topic's
+                    // instant is then the newest of the ones that did, which can only be older
+                    // than the truth — never a fabricated one.
+                    log.debug("maxTimestamp for {}-{} could not be read: {}", LogSafe.name(tp.topic()),
+                            tp.partition(), LogSafe.text(SqlErrorClassifier.explain(e)));
+                    continue;
+                }
+                // An empty partition answers -1 for both the offset and the timestamp, and so
+                // does one whose records predate message timestamps altogether. Neither is an
+                // instant, and 1970 rendered as "56 years ago" is a worse answer than none.
+                if (ts > 0) newest = Math.max(newest, ts);
+            }
+            if (newest > Long.MIN_VALUE) timestamps.put(entry.getKey(), newest);
+        }
+        return timestamps;
+    }
+
+    /**
+     * What {@link #getTopicsLastMessageTimestamps} did before the offset index could be asked, kept
+     * for brokers older than Kafka 3.0: seek every non-empty partition to its last record and poll
+     * until each has answered. Costs a consumer and the tail of every partition on the cluster.
+     */
+    private Map<String, Long> lastTimestampsByPolling(Map<String, List<TopicPartition>> topicToPartitions) {
+        Map<String, Long> timestamps = new HashMap<>();
         Properties props = new Properties();
         props.putAll(kafkaConfig.getKafkaProperties());
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
@@ -1303,23 +1435,8 @@ public class KafkaAdminService {
         ExplorerConsumerGroups.configure(props, "timestamps");
 
         try (KafkaConsumer<byte[], byte[]> consumer = new KafkaConsumer<>(props)) {
-            List<TopicPartition> allPartitions = new ArrayList<>();
-            Map<String, List<TopicPartition>> topicToPartitions = new HashMap<>();
-
-            Map<String, TopicDescription> descriptions = adminClient.describeTopics(topicNames)
-                    .allTopicNames().get(10, TimeUnit.SECONDS);
-
-            for (String name : topicNames) {
-                TopicDescription desc = descriptions.get(name);
-                if (desc != null) {
-                    List<TopicPartition> tps = desc.partitions().stream()
-                            .map(p -> new TopicPartition(name, p.partition()))
-                            .toList();
-                    allPartitions.addAll(tps);
-                    topicToPartitions.put(name, tps);
-                }
-            }
-
+            List<TopicPartition> allPartitions = topicToPartitions.values().stream()
+                    .flatMap(List::stream).toList();
             if (allPartitions.isEmpty()) return timestamps;
 
             Map<TopicPartition, Long> beginningOffsets = consumer.beginningOffsets(allPartitions);
@@ -1354,21 +1471,114 @@ public class KafkaAdminService {
             }
 
             // Aggregate per topic: keep the most recent partition timestamp
-            for (String name : topicNames) {
-                List<TopicPartition> tps = topicToPartitions.get(name);
-                if (tps == null) continue;
-                OptionalLong maxTs = tps.stream()
+            for (Map.Entry<String, List<TopicPartition>> entry : topicToPartitions.entrySet()) {
+                OptionalLong maxTs = entry.getValue().stream()
                         .filter(partitionTimestamps::containsKey)
                         .mapToLong(partitionTimestamps::get)
                         .max();
                 if (maxTs.isPresent()) {
-                    timestamps.put(name, maxTs.getAsLong());
+                    timestamps.put(entry.getKey(), maxTs.getAsLong());
                 }
             }
         } catch (Exception e) {
             log.error("Failed to get topic last-message timestamps", e);
         }
         return timestamps;
+    }
+
+    /**
+     * True when a failure is the broker saying it does not implement the request, at any depth of
+     * the cause chain — the admin client wraps it in an {@link ExecutionException}, and a
+     * {@code KafkaFuture} awaited per partition wraps it again.
+     *
+     * <p>It is the one failure that must not be reported as "this could not be read": the question
+     * is answerable here, just not by the cheap route, so it selects a fallback rather than an
+     * error message.
+     */
+    private static boolean isUnsupportedVersion(Throwable e) {
+        for (Throwable t = e; t != null && t != t.getCause(); t = t.getCause()) {
+            if (t instanceof org.apache.kafka.common.errors.UnsupportedVersionException) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Topic name to its partitions, from one {@code describeTopics}.
+     *
+     * <p>Per-topic futures rather than {@code allTopicNames()}: one topic the cluster does not know
+     * — deleted between the {@code listTopics} that named it and this call, which on a live cluster
+     * is an ordinary race — must cost that topic's row and not everybody else's. Its three callers
+     * are the bulk reads behind the dashboard: the record counts and the last-message timestamps,
+     * where {@code allTopicNames()} turned a single stale name into an empty table, and the
+     * activity curve, which had been fixed for that on its own and whose loop this is.
+     */
+    private Map<String, List<TopicPartition>> describePartitions(List<String> topicNames, long timeoutMs) {
+        return describePartitions(topicNames, timeoutMs, null);
+    }
+
+    /**
+     * The same map, memoized on the same 30 s TTL as everything else this service caches.
+     *
+     * <p>The dashboard's two bulk reads are separately {@code @Cacheable}, so on a cold entry they
+     * both run — and both began by describing every topic of the cluster, which is one metadata
+     * request more than the question needs. They share the answer here instead.
+     *
+     * <p>Deliberately not {@code @Cacheable} on this method: it is called from inside this bean,
+     * where self-invocation bypasses the Spring proxy and the annotation would do nothing at all —
+     * the trap {@code AuditService} carries a warning about for {@code @Async}. And deliberately
+     * not shared with {@link #getTopicActivity}, which collects a <em>reason</em> per topic it
+     * could not describe: a cache hit has no reasons to give, and that response states its own
+     * scope from them.
+     */
+    private Map<String, List<TopicPartition>> cachedPartitions(List<String> topicNames, long timeoutMs) {
+        Cache cache = cacheManager == null ? null : cacheManager.getCache("topicPartitions");
+        if (cache == null) return describePartitions(topicNames, timeoutMs);
+
+        List<String> key = List.copyOf(topicNames);
+        @SuppressWarnings("unchecked")
+        Map<String, List<TopicPartition>> hit = cache.get(key, Map.class);
+        if (hit != null) return hit;
+
+        Map<String, List<TopicPartition>> described = describePartitions(topicNames, timeoutMs);
+        // A read that described nothing is not cached: the broker being unreachable for one call
+        // must not freeze an empty cluster for the next thirty seconds, which is the rule the
+        // consumer and activity reads already follow with their `unless` clauses.
+        if (!described.isEmpty()) cache.put(key, described);
+        return described;
+    }
+
+    /**
+     * Same, naming what it could not describe.
+     *
+     * @param warnings collector for the topics that failed, or {@code null} to log them instead —
+     *     a caller that reports its own scope needs the names, one that does not must still not
+     *     swallow them silently
+     */
+    private Map<String, List<TopicPartition>> describePartitions(List<String> topicNames, long timeoutMs,
+                                                                List<String> warnings) {
+        Map<String, List<TopicPartition>> byTopic = new LinkedHashMap<>();
+        List<String> distinct = new ArrayList<>(new LinkedHashSet<>(topicNames));
+        Map<String, KafkaFuture<TopicDescription>> described =
+                adminClient.describeTopics(distinct).topicNameValues();
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs);
+        for (String name : distinct) {
+            KafkaFuture<TopicDescription> future = described.get(name);
+            if (future == null) continue;
+            try {
+                TopicDescription description = future.get(remainingMs(deadline), TimeUnit.MILLISECONDS);
+                byTopic.put(name, description.partitions().stream()
+                        .map(p -> new TopicPartition(name, p.partition()))
+                        .toList());
+            } catch (Exception e) {
+                String reason = SqlErrorClassifier.explain(e);
+                if (warnings != null) {
+                    warnings.add("Topic '" + name + "' could not be described: " + reason);
+                } else {
+                    log.debug("Topic {} could not be described: {}", LogSafe.name(name), LogSafe.text(reason));
+                }
+            }
+        }
+        return byTopic;
     }
 
     /** Fewer than four points is not a curve; more than sixty is a sparkline nobody can read. */
@@ -1448,25 +1658,12 @@ public class KafkaAdminService {
         }
 
         List<String> warnings = new ArrayList<>();
-        Map<String, List<TopicPartition>> topicPartitions = new LinkedHashMap<>();
+        Map<String, List<TopicPartition>> topicPartitions;
         try {
             // Per-topic futures rather than allTopicNames(): one topic the cluster does not know
-            // must cost that topic's row, not the whole column.
-            Map<String, KafkaFuture<TopicDescription>> described =
-                    adminClient.describeTopics(new ArrayList<>(new LinkedHashSet<>(topicNames))).topicNameValues();
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-            for (String name : topicNames) {
-                KafkaFuture<TopicDescription> future = described.get(name);
-                if (future == null || topicPartitions.containsKey(name)) continue;
-                try {
-                    TopicDescription description = future.get(remainingMs(deadline), TimeUnit.MILLISECONDS);
-                    topicPartitions.put(name, description.partitions().stream()
-                            .map(p -> new TopicPartition(name, p.partition()))
-                            .toList());
-                } catch (Exception e) {
-                    warnings.add("Topic '" + name + "' could not be described: " + SqlErrorClassifier.explain(e));
-                }
-            }
+            // must cost that topic's row, not the whole column. Shared with the two bulk reads the
+            // dashboard makes beside this one — see describePartitions.
+            topicPartitions = describePartitions(topicNames, 10_000, warnings);
         } catch (Exception e) {
             return TopicActivityResponse.unavailable(start, end, bucketMs, bucketCount,
                     "Topic metadata could not be read: " + SqlErrorClassifier.explain(e));
@@ -1629,6 +1826,136 @@ public class KafkaAdminService {
                 measured, partitions.size(), true, notes.isEmpty() ? null : String.join(" ", notes));
     }
 
+    /**
+     * A topic's partitions, taken from the consumer that is about to read them.
+     *
+     * <p>The three record fetchers each opened with {@code adminClient.describeTopics(topic)} and a
+     * five-second await, purely to turn a name into a partition list — while the consumer beside
+     * them fetched metadata for that same topic anyway, the moment it was assigned. That is one
+     * round trip and one client's worth of waiting, on every sample, per topic, and the audit
+     * takes one sample per topic of the cluster. {@code partitionsFor} answers from the metadata
+     * the read needs regardless.
+     *
+     * <p>It is safe to ask it about a topic that does not exist only because every internal
+     * consumer is configured with {@code allow.auto.create.topics=false} — see {@link
+     * ExplorerConsumerGroups#configure}. Without that, this question would answer itself by
+     * creating the topic.
+     *
+     * @return the partitions, or an empty list when the cluster has no such topic
+     */
+    private static List<TopicPartition> partitionsOf(Consumer<byte[], byte[]> consumer, String topicName) {
+        // Bounded explicitly: the no-argument overload waits default.api.timeout.ms, which is a
+        // minute, where the describeTopics await it replaces gave up after five seconds. A
+        // metadata read that hangs a request thread for a minute is not an improvement on a round
+        // trip. (A topic the cluster does not know answers null straight away, without retrying.)
+        List<org.apache.kafka.common.PartitionInfo> infos =
+                consumer.partitionsFor(topicName, METADATA_TIMEOUT);
+        if (infos == null) return List.of();
+        return infos.stream()
+                .map(info -> new TopicPartition(topicName, info.partition()))
+                .sorted(Comparator.comparingInt(TopicPartition::partition))
+                .toList();
+    }
+
+    /** The offsets a partition currently spans: its first surviving record, and one past its last. */
+    public record OffsetRange(long beginning, long end) {}
+
+    /**
+     * Both bounds of one partition, asked for together.
+     *
+     * <p>{@code Consumer.beginningOffsets} and {@code endOffsets} each block, so a caller needing
+     * both waits two round trips in series. These are futures: the two requests are issued before
+     * either is awaited, so the wait is one round trip.
+     *
+     * @return {@code null} when there is no admin client, or when the broker did not answer —
+     *     which is a different thing from an empty partition, and the caller has a slower way to
+     *     ask
+     */
+    public OffsetRange offsetRange(TopicPartition tp) {
+        AdminClient admin = this.adminClient;
+        if (admin == null) return null;
+        try {
+            List<TopicPartition> one = List.of(tp);
+            ListOffsetsResult earliest = admin.listOffsets(specs(one, OffsetSpec.earliest()));
+            ListOffsetsResult latest = admin.listOffsets(specs(one, OffsetSpec.latest()));
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            return new OffsetRange(awaitOffset(earliest, tp, deadline).offset(),
+                                   awaitOffset(latest, tp, deadline).offset());
+        } catch (Exception e) {
+            log.debug("Offset range for {}-{} could not be read: {}", LogSafe.name(tp.topic()),
+                    tp.partition(), LogSafe.text(SqlErrorClassifier.explain(e)));
+            return null;
+        }
+    }
+
+    /** Where the newest record of a topic sits, as the broker's offset index reports it. */
+    private record NewestRecord(TopicPartition partition, long offset, long timestamp) {}
+
+    /**
+     * The answer to "which partition holds the newest record?", which has <b>three</b> values.
+     *
+     * <p>"We could not ask" is one of them, and folding it into "there is none" is the flattening
+     * this codebase keeps removing: the question is still answerable, just not by the cheap route,
+     * so it has to select the fallback rather than empty the result.
+     *
+     * @param answered whether the broker implements {@code ListOffsets(maxTimestamp)} at all
+     * @param record where the newest record sits, or {@code null} when every partition is empty —
+     *     which is a measurement, not a failure
+     */
+    private record NewestLookup(boolean answered, NewestRecord record) {
+        static final NewestLookup UNANSWERED = new NewestLookup(false, null);
+        static NewestLookup of(NewestRecord record) { return new NewestLookup(true, record); }
+    }
+
+    /** The partition and offset of the topic's newest record, from {@code ListOffsets(maxTimestamp)}. */
+    private NewestLookup newestRecordOf(List<TopicPartition> partitions) {
+        ListOffsetsResult result;
+        try {
+            result = adminClient.listOffsets(specs(partitions, OffsetSpec.maxTimestamp()));
+        } catch (Exception e) {
+            log.debug("maxTimestamp offsets could not be requested: {}",
+                    LogSafe.text(SqlErrorClassifier.explain(e)));
+            return NewestLookup.UNANSWERED;
+        }
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        NewestRecord best = null;
+        for (TopicPartition tp : partitions) {
+            ListOffsetsResult.ListOffsetsResultInfo info;
+            try {
+                info = awaitOffset(result, tp, deadline);
+            } catch (Exception e) {
+                // The broker refusing the spec is answerable by the other route, so it selects the
+                // fallback; one partition that did not answer costs only its own candidacy.
+                if (isUnsupportedVersion(e)) return NewestLookup.UNANSWERED;
+                log.debug("maxTimestamp for {}-{} could not be read: {}", LogSafe.name(tp.topic()),
+                        tp.partition(), LogSafe.text(SqlErrorClassifier.explain(e)));
+                continue;
+            }
+            // -1 on both is an empty partition, or one whose records carry no timestamp.
+            if (info.timestamp() <= 0 || info.offset() < 0) continue;
+            if (best == null || info.timestamp() > best.timestamp()
+                    || (info.timestamp() == best.timestamp() && info.offset() > best.offset())) {
+                best = new NewestRecord(tp, info.offset(), info.timestamp());
+            }
+        }
+        return NewestLookup.of(best);
+    }
+
+    /**
+     * The newest record of a topic — <b>one partition read, not every partition</b>.
+     *
+     * <p>It used to seek the last record of every partition, poll until each had answered, and
+     * keep the one with the highest timestamp: N partition fetches, N-1 of them discarded, and on
+     * a topic of large payloads N batches pulled across the network for one record. The broker can
+     * say which partition holds the newest record before anything is read — {@code
+     * ListOffsets(maxTimestamp)} returns that timestamp <em>and</em> its offset — so the read is a
+     * single assigned partition at a known offset.
+     *
+     * <p>The selection rule is the one it replaces (highest timestamp, offset breaking a tie);
+     * only the cost changed. Where the broker predates that spec (Kafka 3.0) the offsets are read
+     * the old way — {@code end - 1} per partition — and every candidate is polled, exactly as
+     * before.
+     */
     public Optional<KafkaMessage> getLatestMessage(String topicName) {
         Properties props = new Properties();
         props.putAll(kafkaConfig.getKafkaProperties());
@@ -1636,50 +1963,56 @@ public class KafkaAdminService {
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
         ExplorerConsumerGroups.configure(props, "latest-message");
 
-        try (KafkaConsumer<byte[], byte[]> consumer = new KafkaConsumer<>(props)) {
-            Map<String, TopicDescription> descriptions = adminClient.describeTopics(Collections.singletonList(topicName))
-                .allTopicNames().get(5, TimeUnit.SECONDS);
-            TopicDescription desc = descriptions.get(topicName);
-            if (desc == null) return Optional.empty();
-
-            List<TopicPartition> partitions = desc.partitions().stream()
-                .map(p -> new TopicPartition(topicName, p.partition()))
-                .toList();
+        KafkaConsumerPool.Lease lease = consumerPool.lease(props);
+        try {
+            Consumer<byte[], byte[]> consumer = lease.consumer();
+            List<TopicPartition> partitions = partitionsOf(consumer, topicName);
             if (partitions.isEmpty()) return Optional.empty();
 
-            Map<TopicPartition, Long> beginningOffsets = consumer.beginningOffsets(partitions);
-            Map<TopicPartition, Long> endOffsets = consumer.endOffsets(partitions);
-            List<TopicPartition> nonEmpty = partitions.stream()
-                .filter(tp -> {
-                    Long begin = beginningOffsets.get(tp);
-                    Long end = endOffsets.get(tp);
-                    return begin != null && end != null && end > begin;
-                })
-                .toList();
-            if (nonEmpty.isEmpty()) return Optional.empty();
-
-            consumer.assign(nonEmpty);
-            for (TopicPartition tp : nonEmpty) {
-                consumer.seek(tp, endOffsets.get(tp) - 1);
+            List<TopicPartition> candidates;
+            NewestLookup newest = newestRecordOf(partitions);
+            if (newest.answered()) {
+                // The broker answered: exactly one partition holds the newest record, and at which
+                // offset is already known. Nothing else has to be fetched.
+                if (newest.record() == null) {
+                    return Optional.empty();   // every partition is empty — a measurement, not a failure
+                }
+                candidates = List.of(newest.record().partition());
+                consumer.assign(candidates);
+                consumer.seek(newest.record().partition(), newest.record().offset());
+            } else {
+                // The broker does not implement maxTimestamp: fall back to the last record of
+                // every partition, which is what this method used to do unconditionally.
+                Map<TopicPartition, Long> beginning = consumer.beginningOffsets(partitions);
+                Map<TopicPartition, Long> end = consumer.endOffsets(partitions);
+                candidates = partitions.stream()
+                    .filter(tp -> {
+                        Long begin = beginning.get(tp);
+                        Long last = end.get(tp);
+                        return begin != null && last != null && last > begin;
+                    })
+                    .toList();
+                if (candidates.isEmpty()) return Optional.empty();
+                consumer.assign(candidates);
+                candidates.forEach(tp -> consumer.seek(tp, end.get(tp) - 1));
             }
 
-            Map<TopicPartition, org.apache.kafka.clients.consumer.ConsumerRecord<byte[], byte[]>> latestByPartition = new HashMap<>();
-            Set<TopicPartition> pending = new HashSet<>(nonEmpty);
+            Map<TopicPartition, ConsumerRecord<byte[], byte[]>> latestByPartition = new HashMap<>();
+            Set<TopicPartition> pending = new HashSet<>(candidates);
             int retries = 4;
             while (retries-- > 0 && !pending.isEmpty()) {
-                org.apache.kafka.clients.consumer.ConsumerRecords<byte[], byte[]> polled =
-                    consumer.poll(java.time.Duration.ofMillis(500));
-                for (org.apache.kafka.clients.consumer.ConsumerRecord<byte[], byte[]> record : polled) {
+                ConsumerRecords<byte[], byte[]> polled = consumer.poll(java.time.Duration.ofMillis(500));
+                for (ConsumerRecord<byte[], byte[]> record : polled) {
                     TopicPartition tp = new TopicPartition(record.topic(), record.partition());
-                    latestByPartition.put(tp, record);
+                    latestByPartition.putIfAbsent(tp, record);
                     pending.remove(tp);
                 }
             }
 
             return latestByPartition.values().stream()
                 .max(Comparator
-                    .comparingLong(org.apache.kafka.clients.consumer.ConsumerRecord<byte[], byte[]>::timestamp)
-                    .thenComparingLong(org.apache.kafka.clients.consumer.ConsumerRecord<byte[], byte[]>::offset))
+                    .comparingLong(ConsumerRecord<byte[], byte[]>::timestamp)
+                    .thenComparingLong(ConsumerRecord<byte[], byte[]>::offset))
                 .map(record -> new KafkaMessage(
                     record.topic(),
                     record.partition(),
@@ -1689,8 +2022,11 @@ public class KafkaAdminService {
                     deserializeValue(record.topic(), record.value())
                 ));
         } catch (Exception e) {
+            lease.discard();
             log.error("Failed to get latest message for topic {}", LogSafe.name(topicName), e);
             return Optional.empty();
+        } finally {
+            lease.close();
         }
     }
 
@@ -1749,20 +2085,23 @@ public class KafkaAdminService {
         ExplorerConsumerGroups.configure(props, "records");
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
-        try (KafkaConsumer<byte[], byte[]> consumer = new KafkaConsumer<>(props)) {
-            Map<String, TopicDescription> descriptions = adminClient.describeTopics(Collections.singletonList(topicName)).allTopicNames().get(5, TimeUnit.SECONDS);
-            TopicDescription desc = descriptions.get(topicName);
-            if (desc == null) return records;
-            List<TopicPartition> partitions = desc.partitions().stream()
-                    .map(p -> new TopicPartition(topicName, p.partition())).toList();
+        KafkaConsumerPool.Lease lease = consumerPool.lease(props);
+        try {
+            Consumer<byte[], byte[]> consumer = lease.consumer();
+            List<TopicPartition> partitions = partitionsOf(consumer, topicName);
+            if (partitions.isEmpty()) return records;
             consumer.assign(partitions);
             // Seeked explicitly rather than through seekToBeginning, because drain() needs to be
             // told where the read starts — see the cursor it keeps. Same offsets either way.
             Map<TopicPartition, Long> startOffsets = consumer.beginningOffsets(partitions);
             startOffsets.forEach(consumer::seek);
-            records.addAll(drain(consumer, startOffsets, maxMessages));
+            records.addAll(drain(consumer, startOffsets, consumer.endOffsets(partitions), maxMessages));
         } catch (Exception e) {
+            // The borrower does not vouch for a client whose read threw: it is closed, not pooled.
+            lease.discard();
             log.error("Error fetching earliest records for topic {}", LogSafe.name(topicName), e);
+        } finally {
+            lease.close();
         }
         return records;
     }
@@ -1805,14 +2144,11 @@ public class KafkaAdminService {
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
 
-        try (KafkaConsumer<byte[], byte[]> consumer = new KafkaConsumer<>(props)) {
-            Map<String, TopicDescription> descriptions = adminClient.describeTopics(Collections.singletonList(topicName)).allTopicNames().get(5, TimeUnit.SECONDS);
-            TopicDescription desc = descriptions.get(topicName);
-            if (desc == null) return records;
-
-            List<TopicPartition> partitions = desc.partitions().stream()
-                    .map(p -> new TopicPartition(topicName, p.partition()))
-                    .toList();
+        KafkaConsumerPool.Lease lease = consumerPool.lease(props);
+        try {
+            Consumer<byte[], byte[]> consumer = lease.consumer();
+            List<TopicPartition> partitions = partitionsOf(consumer, topicName);
+            if (partitions.isEmpty()) return records;
 
             consumer.assign(partitions);
 
@@ -1867,12 +2203,21 @@ public class KafkaAdminService {
                 }
             }
 
-            records.addAll(drain(consumer, startOffsets, maxMessages));
+            // The end offsets are the ones already read above: drain() compares its cursor
+            // against them, and asking the broker a second time for numbers this method is
+            // holding is a listOffsets round trip per sample, on the audit's hot path.
+            records.addAll(drain(consumer, startOffsets, endOffsets, maxMessages));
         } catch (Exception e) {
+            lease.discard();
             log.error("Error fetching records for topic {}", LogSafe.name(topicName), e);
+        } finally {
+            lease.close();
         }
         return records;
     }
+
+    /** How long a record fetcher waits for a topic's metadata — what the describeTopics await used to be. */
+    private static final Duration METADATA_TIMEOUT = Duration.ofSeconds(5);
 
     /** Poll timeout of the record-drain loop. */
     private static final java.time.Duration DRAIN_POLL_TIMEOUT = java.time.Duration.ofMillis(500);
@@ -1915,10 +2260,23 @@ public class KafkaAdminService {
      *                     nobody has to ask the client where the read begins
      */
     private List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> drain(
-            KafkaConsumer<byte[], byte[]> consumer, Map<TopicPartition, Long> startOffsets, int maxMessages) {
+            Consumer<byte[], byte[]> consumer, Map<TopicPartition, Long> startOffsets, int maxMessages) {
+        return drain(consumer, startOffsets, consumer.endOffsets(List.copyOf(startOffsets.keySet())), maxMessages);
+    }
+
+    /**
+     * Same, against end offsets the caller already holds.
+     *
+     * <p>Both callers read them to decide where to seek, and this method then asked the broker for
+     * the same numbers again — a second {@code listOffsets} round trip per sample, and the audit
+     * takes a sample per topic. Reading them once also means the loop compares its cursor against
+     * the same instant it seeked from, rather than against an end that moved in between.
+     */
+    private List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> drain(
+            Consumer<byte[], byte[]> consumer, Map<TopicPartition, Long> startOffsets,
+            Map<TopicPartition, Long> endOffsets, int maxMessages) {
         List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records = new ArrayList<>();
         List<TopicPartition> partitions = List.copyOf(startOffsets.keySet());
-        Map<TopicPartition, Long> endOffsets = consumer.endOffsets(partitions);
         Map<TopicPartition, Long> nextOffsets = new HashMap<>(startOffsets);
         long deadline = System.nanoTime()
                 + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(DRAIN_BUDGET_MS);
@@ -1930,6 +2288,13 @@ public class KafkaAdminService {
                 log.debug("Record scan budget spent after {} record(s)", records.size());
                 break;
             }
+            // A partition this read has finished with is paused rather than left assigned. The
+            // fetcher keeps a request in flight for every assigned partition, so a drained one
+            // goes on being fetched — and, having nothing past its end offset, holds each poll for
+            // fetch.max.wait.ms while the partitions that still have records are already back.
+            // Nothing is ever resumed: the consumer is closed when the read ends, and a partition
+            // that has reached its end offset does not un-reach it.
+            pauseDrained(consumer, partitions, endOffsets, nextOffsets);
             org.apache.kafka.clients.consumer.ConsumerRecords<byte[], byte[]> polled = consumer.poll(DRAIN_POLL_TIMEOUT);
             if (polled.isEmpty()) {
                 if (++emptyPolls >= DRAIN_MAX_EMPTY_POLLS) break;
@@ -1948,6 +2313,20 @@ public class KafkaAdminService {
             }
         }
         return records;
+    }
+
+    /** Pauses every assigned partition whose cursor has reached the end offset this read seeked against. */
+    private static void pauseDrained(Consumer<byte[], byte[]> consumer, List<TopicPartition> partitions,
+                                     Map<TopicPartition, Long> endOffsets, Map<TopicPartition, Long> nextOffsets) {
+        Set<TopicPartition> paused = consumer.paused();
+        List<TopicPartition> toPause = new ArrayList<>();
+        for (TopicPartition tp : partitions) {
+            if (paused.contains(tp)) continue;
+            Long end = endOffsets.get(tp);
+            Long next = nextOffsets.get(tp);
+            if (end != null && next != null && next >= end) toPause.add(tp);
+        }
+        if (!toPause.isEmpty()) consumer.pause(toPause);
     }
 
     /**

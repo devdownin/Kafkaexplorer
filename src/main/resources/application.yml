@@ -113,6 +113,13 @@ explorer:
   audit-duplicate-scan-from: LATEST
   inference-sample-size: 10
   inference-poll-timeout-ms: 2000
+  # How many byte-array consumers the per-topic record readers keep between reads. 0 disables the
+  # pool, and that is deliberate: building a KafkaConsumer costs a connect, an ApiVersions exchange
+  # and a metadata fetch — plus a handshake and an authentication round trip on a TLS or SASL
+  # cluster, which is where the saving lives — but nothing here has measured it against a real
+  # cluster, and a pooled client handed out with a previous read's state answers the wrong question
+  # rather than answering slowly. Turn it on (4 matches the audit's fan-out) once you can measure.
+  consumer-pool-size: 0
   # Topic search (POST /api/topic/{name}/search). A pass stops at the first budget it hits and
   # returns a cursor, so the UI can show partial results and resume instead of blocking.
   search-max-hits: 100
