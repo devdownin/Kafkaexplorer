@@ -292,6 +292,41 @@ jobs:
           grep -q "already present" /tmp/reseed.log \
             || { echo "::error::the seeder re-seeded an already-seeded cluster"; exit 1; }
 
+      - name: Assert the planner can actually read a topic
+        run: |
+          set -euo pipefail
+          # What the warmup probe cannot say.
+          #
+          # That probe is `SELECT 1`: table-less, parallelism 1, one slot. It proves the job
+          # graph deserializes behind JarLauncher, which is real and is why the step above
+          # keeps it — and it proves nothing about reading a topic. Two defects lived here for
+          # months underneath a probe reporting success at every boot: a generated table option
+          # the connector refuses (never validated at CREATE TABLE, only when a source is
+          # built, so no table means no refusal) and a job asking for more slots than the
+          # embedded cluster owns (one slot is always available). Both degraded every SELECT to
+          # the direct reader, silently.
+          #
+          # This job is where that becomes checkable: a broker is up and the demo topics are
+          # seeded. `engine` is the assertion, never latency — a gate that flakes is a gate
+          # people learn to ignore — and the timeout in the body is generous for the same
+          # reason. Verified locally against the pre-fix build, where this reads KAFKA_DIRECT.
+          topic=demo.orders.1.received
+          table=$(printf '%s' "$topic" | tr '.-' '__')
+          body=$(printf '{"sql":"SELECT * FROM %s","maxRows":3,"timeout":45000,"readMode":"earliest-offset"}' "$table")
+
+          for _ in $(seq 1 24); do
+            out=$(curl -sS -m 90 -X POST http://localhost:8080/api/query/run-sync -H 'Content-Type: application/json' -d "$body" || true)
+            engine=$(printf '%s' "$out" | python3 -c 'import json,sys; print((json.load(sys.stdin) or {}).get("engine") or "")' 2>/dev/null || true)
+            if [ -n "$engine" ]; then break; fi
+            sleep 5
+          done
+
+          echo "$out" | head -c 600; echo
+          [ "$engine" = "FLINK" ] || {
+            echo "::error::a plain SELECT on a seeded topic was answered by $engine, not the Flink planner — the engine is degraded in the from-source image (a refused connector option, or a job that cannot get its slots)"
+            exit 1
+          }
+
       - name: Stop the stack and assert a clean shutdown
         run: |
           set -euo pipefail
@@ -467,12 +502,18 @@ jobs:
           # fallback, simply failed. The suite stayed green throughout: it runs on a plain
           # classpath, where the application loader *is* the system loader.
           #
-          # The warmup probe is what makes this checkable here: `SELECT 1`, no table, no
+          # The warmup probe is what makes *this* checkable here, and only this: `SELECT 1`, no
           # broker needed, and it submits a real job. Its success line is therefore the
           # cheapest possible proof that job submission works in the shipped image. Both
           # outcomes are asserted rather than just grepping for the failure, so this fails
           # if the probe stops running at all (disabled, renamed, moved off the boot path)
           # instead of quietly passing on an absent line.
+          #
+          # It says nothing about *reading a topic*, which is the half that needs a broker:
+          # the probe carries no table, so a connector option refused when a source is built
+          # cannot reach it, and it runs at parallelism 1, so a job that cannot obtain its
+          # slots cannot either. Both defects shipped under a green line here. That assertion
+          # lives in the `docker` job, where a broker and seeded topics already exist.
           if grep -q 'Failed to execute job' "$logs"; then
             grep -n -m3 -B2 'Failed to execute job' "$logs" || true
             echo "::error::a Flink job failed to submit in the release image — the packaged app cannot run SQL; see FlinkConfig.applyJobClasspath"
