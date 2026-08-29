@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.compagnonsdudev.kafkasqlexplorer.web;
 
+import com.compagnonsdudev.kafkasqlexplorer.domain.ApiError;
 import com.compagnonsdudev.kafkasqlexplorer.domain.SqlValidationResponse;
 import com.compagnonsdudev.kafkasqlexplorer.domain.DdlPreviewResponse;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryCancelResponse;
@@ -20,6 +21,7 @@ import com.compagnonsdudev.kafkasqlexplorer.service.SqlErrorClassifier;
 import com.compagnonsdudev.kafkasqlexplorer.service.SqlExplorationService;
 import com.compagnonsdudev.kafkasqlexplorer.service.SqlQueryValidator;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -110,12 +112,43 @@ public class QueryController {
         return sqlExplorationService.runSync(request);
     }
 
+    /**
+     * Soumet un {@code INSERT INTO} en mode Job Flink — et, quand ça échoue, <em>dit pourquoi</em>.
+     *
+     * <p>Ce point d'entrée répondait « Internal Server Error » et rien d'autre. Deux causes se
+     * cumulaient. Une {@code ResponseStatusException} porte sa raison dans le champ {@code message}
+     * du corps d'erreur par défaut de Spring, or {@code server.error.include-message} vaut
+     * {@code never} : le refus « Only INSERT INTO statements are allowed in Flink Job mode. »
+     * n'atteignait donc jamais l'appelant, qui recevait un 400 vide. Et tout le reste — une table
+     * introuvable, une option que le connecteur refuse, un runtime occupé — remontait en
+     * {@code RuntimeException} non attrapée, donc en 500 vide. Le navigateur lit {@code message}
+     * puis {@code error} dans le corps ({@code extractApiErrorMessage}), et n'avait ni l'un ni
+     * l'autre : {@code describeApiError} se rabattait sur le libellé du statut, si bien que
+     * l'unique geste de cette page qui n'a aucun repli était aussi le seul dont on ne pouvait rien
+     * apprendre.
+     *
+     * <p>Le corps est un {@link ApiError}, la forme que {@code MetricController.save} sert déjà —
+     * pas une troisième — et son texte passe par {@code SqlErrorClassifier.explain}, documenté pour
+     * n'être jamais nul ni blanc et pour aplatir la chaîne des causes, où Flink range la partie
+     * utile. Le statut suit la même classification que le moteur de requête : une erreur de
+     * l'utilisateur (table inconnue, colonne absente, type incompatible) est un 400, une panne du
+     * moteur reste un 500 — un refus mal classé en panne serveur envoie chercher un incident là où
+     * il y a une faute de frappe, et l'inverse fait porter à l'opérateur une panne qui n'est pas
+     * la sienne. Dans les deux cas la phrase est la même : celle du moteur.
+     */
     @PostMapping(value = "/jobs", produces = "application/json")
-    public FlinkJobSummary submitJob(@RequestBody QueryRequest request) {
+    public ResponseEntity<?> submitJob(@RequestBody QueryRequest request) {
         try {
-            return flinkJobService.submit(request);
+            return ResponseEntity.ok(flinkJobService.submit(request));
         } catch (IllegalArgumentException e) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage(), e);
+            // Un refus posé par cette application : whitelist de statements, validateur SQL.
+            return ResponseEntity.badRequest().body(ApiError.of(e));
+        } catch (RuntimeException e) {
+            SqlErrorClassifier.Classification classification = SqlErrorClassifier.classify(e);
+            HttpStatus status = classification.isUserError()
+                ? HttpStatus.BAD_REQUEST
+                : HttpStatus.INTERNAL_SERVER_ERROR;
+            return ResponseEntity.status(status).body(ApiError.of(classification.message()));
         }
     }
 

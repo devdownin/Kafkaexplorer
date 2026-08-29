@@ -275,4 +275,68 @@ class QueryControllerTest {
         mockMvc.perform(delete("/api/query/table/{name}", "orders'"))
             .andExpect(status().isBadRequest());
     }
+
+    /**
+     * Une soumission refusée dit pourquoi, et le statut dit à qui la faute.
+     *
+     * <p>{@code POST /api/query/jobs} répondait « Internal Server Error » et rien d'autre : le
+     * refus de la liste blanche voyageait dans une {@code ResponseStatusException}, dont la raison
+     * atterrit dans le champ {@code message} du corps d'erreur par défaut de Spring — supprimé,
+     * puisque {@code server.error.include-message} vaut {@code never} — et toute autre
+     * {@code RuntimeException} n'était pas attrapée du tout. Le navigateur lit {@code message}
+     * puis {@code error} dans le corps et n'avait ni l'un ni l'autre, si bien que le seul geste
+     * de l'éditeur qui n'a aucun repli était aussi le seul dont on n'apprenait rien.
+     *
+     * <p>Trois cas plutôt qu'un, parce qu'ils envoient l'opérateur à trois endroits : ce que cette
+     * application refuse d'exécuter, une faute de frappe dans un nom de table, et une panne du
+     * moteur — qui reste un 500, la classification étant celle du moteur de requête et non une
+     * seconde règle écrite ici.
+     */
+    @Test
+    void aRefusedJobSubmissionCarriesItsReason() throws Exception {
+        when(flinkJobService.submit(any()))
+            .thenThrow(new IllegalArgumentException("Only INSERT INTO statements are allowed in Flink Job mode."));
+
+        mockMvc.perform(post("/api/query/jobs")
+                .contentType("application/json")
+                .content("{\"sql\":\"SELECT 1\"}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error").value(
+                org.hamcrest.Matchers.containsString("Only INSERT INTO statements are allowed")));
+    }
+
+    @Test
+    void aTypoInTheSinkNameIsTheCallersFaultAndSaysSo() throws Exception {
+        when(flinkJobService.submit(any())).thenThrow(new IllegalStateException(
+            "Cannot find table '`default_catalog`.`default_database`.`no_such_sink`' in any of "
+                + "the catalogs [default_catalog], nor as a temporary table."));
+
+        mockMvc.perform(post("/api/query/jobs")
+                .contentType("application/json")
+                .content("{\"sql\":\"INSERT INTO no_such_sink SELECT id FROM orders\"}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error").value(
+                org.hamcrest.Matchers.containsString("no_such_sink")));
+    }
+
+    /**
+     * Une panne moteur reste un 500 — mais un 500 qui porte la phrase du moteur.
+     *
+     * <p>C'est le cas qui a produit le rapport : le connecteur refusait une option du DDL généré,
+     * et l'INSERT, seul chemin de cette page sans repli sur le lecteur direct, le rendait en
+     * « Internal Server Error ». La cause est corrigée ailleurs ; ce que ce cas fixe, c'est que la
+     * prochaine panne du même genre arrive nommée.
+     */
+    @Test
+    void anEngineFailureStaysAFiveHundredButNamesItself() throws Exception {
+        when(flinkJobService.submit(any())).thenThrow(new IllegalStateException(
+            "Unsupported options found for 'kafka'. Unsupported options: json.ignore-parse-errors"));
+
+        mockMvc.perform(post("/api/query/jobs")
+                .contentType("application/json")
+                .content("{\"sql\":\"INSERT INTO sink SELECT id FROM orders\"}"))
+            .andExpect(status().isInternalServerError())
+            .andExpect(jsonPath("$.error").value(
+                org.hamcrest.Matchers.containsString("Unsupported options")));
+    }
 }

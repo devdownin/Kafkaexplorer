@@ -30,7 +30,24 @@ public class FlinkConfig {
         // so only the typed NUM_TASK_SLOTS option is set here; the time zone is applied
         // through TableConfig after the environment is built.
         Configuration cfg = new Configuration();
-        cfg.set(TaskManagerOptions.NUM_TASK_SLOTS, 8);
+        // Les deux vont ensemble, et c'est tout l'objet de la constante : un job dont le
+        // parallélisme dépasse le nombre d'emplacements ne démarre jamais. Le parallélisme par
+        // défaut de Flink est le nombre de cœurs de la machine, donc sur n'importe quel poste
+        // au-delà de huit cœurs le planner demandait seize emplacements à un TaskManager qui en
+        // offre huit : les sous-tâches restaient en SCHEDULED jusqu'à expiration du budget de la
+        // requête, sans erreur ni ligne — un dépassement de délai, donc un repli silencieux sur
+        // le lecteur direct, sur *toutes* les lectures Flink d'un topic Kafka. La sonde de
+        // préchauffage, elle, passe : `SELECT 1` s'exécute en parallélisme 1 et rapporte donc un
+        // moteur en bon état. Mesuré sur une machine à seize cœurs : SCHEDULED pendant les
+        // quarante secondes du budget, aucune tâche déployée.
+        //
+        // Huit plutôt que le nombre de cœurs : ce runtime est intégré au processus qui sert
+        // l'interface, et il n'a pas à s'octroyer toute la machine. Un topic Kafka a de toute
+        // façon rarement plus de partitions que cela, et une sous-tâche sans partition ne lit
+        // rien.
+        int slots = 8;
+        cfg.set(TaskManagerOptions.NUM_TASK_SLOTS, slots);
+        cfg.set(CoreOptions.DEFAULT_PARALLELISM, slots);
         applyJobClasspath(cfg);
 
         EnvironmentSettings settings = EnvironmentSettings.newInstance()

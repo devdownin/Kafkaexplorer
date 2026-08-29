@@ -643,6 +643,11 @@ public class FlinkSqlService {
             );
             return summary;
         } catch (RuntimeException e) {
+            // explain(), et non getMessage() : c'est nul sur une NullPointerException, et ce champ
+            // est la seule trace de la raison — `FlinkJobCard` l'affiche sous la carte rouge, et
+            // rien d'autre ne la garde. Flink emballe par ailleurs le texte utile (la ligne et la
+            // colonne de Calcite, la clé d'option refusée par le connecteur) dans une exception
+            // externe générique, que explain() aplatit.
             flinkJobStore.create(
                 queryId,
                 null,
@@ -652,7 +657,7 @@ public class FlinkSqlService {
                 "Submission failed before a Flink JobClient was available",
                 strippedSql,
                 startedAt,
-                e.getMessage()
+                SqlErrorClassifier.explain(e)
             );
             throw e;
         }
@@ -1072,7 +1077,16 @@ public class FlinkSqlService {
                     try {
                         List<Map<String, Object>> resultRows = new ArrayList<>();
                         int count = 0;
-                        while (it.hasNext() && count < limit) {
+                        // L'ordre des deux termes est porteur : `hasNext()` bloque sur une
+                        // source non bornée, donc l'interroger une fois le quota atteint
+                        // fait attendre un enregistrement dont on n'a plus besoin. Écrit
+                        // `it.hasNext() && count < limit`, une lecture d'un topic qui tient
+                        // exactement dans la limite collectait toutes ses lignes puis
+                        // attendait la suivante jusqu'à expiration du budget — rapportée
+                        // comme un dépassement de délai, donc un repli silencieux sur le
+                        // lecteur direct. Le quota se vérifie en premier : il se lit sans
+                        // rien demander à personne.
+                        while (count < limit && it.hasNext()) {
                             Row row = it.next();
                             if (count == 0 && log.isDebugEnabled()) {
                                 log.debug("[FlinkSQL] queryId={} first row arity={} kind={} rowString='{}'",

@@ -5,7 +5,9 @@ package com.compagnonsdudev.kafkasqlexplorer.service;
 import com.compagnonsdudev.kafkasqlexplorer.config.ExplorerConfig;
 import com.compagnonsdudev.kafkasqlexplorer.config.KafkaConfig;
 import com.compagnonsdudev.kafkasqlexplorer.config.ProcessMiningConfig;
+import com.compagnonsdudev.kafkasqlexplorer.domain.FlinkJobSummary;
 import com.compagnonsdudev.kafkasqlexplorer.domain.KafkaMessage;
+import com.compagnonsdudev.kafkasqlexplorer.domain.MessageFormat;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryRequest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryResult;
 import com.compagnonsdudev.kafkasqlexplorer.domain.SnapshotConfig;
@@ -38,6 +40,7 @@ import org.testcontainers.utility.DockerImageName;
 
 import java.nio.file.Files;
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -91,6 +94,8 @@ class KafkaClusterIntegrationTest {
         .withStartupTimeout(Duration.ofMinutes(3));
 
     private static final String TOPIC = "it.orders.json";
+    /** Empty, and written to by the INSERT-job case below. */
+    private static final String SINK_TOPIC = "it.orders.json.sink";
     /** Three partitions, four records each, then everything below offset 2 deleted. */
     private static final String TRIMMED_TOPIC = "it.trimmed.multipart";
     private static final int TRIMMED_PARTITIONS = 3;
@@ -117,7 +122,8 @@ class KafkaClusterIntegrationTest {
         adminProps.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA.getBootstrapServers());
         try (Admin admin = Admin.create(adminProps)) {
             admin.createTopics(List.of(
-                new NewTopic(TRIMMED_TOPIC, TRIMMED_PARTITIONS, (short) 1))).all().get();
+                new NewTopic(TRIMMED_TOPIC, TRIMMED_PARTITIONS, (short) 1),
+                new NewTopic(SINK_TOPIC, 1, (short) 1))).all().get();
 
             try (KafkaProducer<String, String> producer = new KafkaProducer<>(props)) {
                 for (int i = 0; i < 3; i++) {
@@ -405,6 +411,83 @@ class KafkaClusterIntegrationTest {
         // and the templates ask the direct reader by name rather than hoping.
         QueryResult unbounded = flink.executeSql(QueryRequest.sql(count, 10_000, 4_000L, "earliest-offset"));
         assertEquals("KAFKA_DIRECT", unbounded.engine());
+    }
+
+    /**
+     * The generated table is one this connector accepts — asserted where only a real one can say so.
+     *
+     * <p>{@code DdlGeneratorService} declares the format as {@code value.format}, so its options
+     * have to carry the {@code value.} prefix too, and it wrote {@code json.ignore-parse-errors}
+     * bare. {@code FactoryUtil.validateUnconsumedKeys} rejects that — but only when Flink builds
+     * a source or a sink from the table, never at {@code CREATE TABLE}, which validates nothing.
+     * So registration succeeded, every JSON topic's table was unusable by the planner, and the
+     * SELECT path swallowed it whole: an unconsumed-option {@code ValidationException} is an
+     * engine failure, so the query fell back to the direct reader and returned rows — without
+     * JOIN or subquery support, with three such failures enough to disable the planner for the
+     * rest of the process. Nothing on screen said the engine had changed.
+     *
+     * <p>A string assertion on the generated DDL would have pinned whatever was written and
+     * caught nothing: the fact under test is that <em>Flink</em> accepts the key. Hence this
+     * class, on the rule it already follows — a defect produced by the client's own behaviour is
+     * asserted against the real client.
+     *
+     * <p>{@code maxRows} is the record count of the topic, because the collection loop stops at
+     * the row limit and a streaming source never ends: asking for more would spend the budget and
+     * come back as a timeout, which falls back too and would make this test pass for the wrong
+     * reason.
+     */
+    @Test
+    void theGeneratedTableIsOneThePlannerCanReadFrom() throws Exception {
+        FlinkSqlService flink = flinkService();
+        String table = DdlGeneratorService.toTableName(TOPIC);
+
+        QueryResult result = flink.executeSql(QueryRequest.sql(
+            "SELECT id, status FROM " + table, 3, 30_000L, "earliest-offset"));
+
+        assertNull(result.error(), String.valueOf(result.error()));
+        assertEquals("FLINK", result.engine(),
+            "the auto-registered table must be readable by the planner — KAFKA_DIRECT here means "
+                + "the connector refused an option in the generated WITH clause and the SELECT "
+                + "silently fell back");
+        assertEquals(3, result.rows().size());
+    }
+
+    /**
+     * And the same table works as a <em>sink</em>, which is the half that had no fallback at all.
+     *
+     * <p>{@code INSERT INTO} in Flink Job mode is the one gesture of the SQL editor that cannot
+     * degrade to the direct reader, so the refused option surfaced there as a bare
+     * "Internal Server Error" — the symptom this test exists for. The sink is generated by the
+     * same service as the source, since {@code createDynamicTableSink} validates the option list
+     * exactly as {@code createDynamicTableSource} does.
+     */
+    @Test
+    void anInsertJobSubmitsBetweenTwoGeneratedTables() throws Exception {
+        FlinkSqlService flink = flinkService();
+        DdlGeneratorService ddlGenerator = new DdlGeneratorService(kafkaConfig, new NamingConventionService());
+
+        Map<String, String> schema = new LinkedHashMap<>();
+        schema.put("id", "BIGINT");
+        schema.put("status", "STRING");
+
+        // Les deux tables sont enregistrées explicitement : `submitJob` n'auto-enregistre rien
+        // (seul un SELECT le fait), et chaque cas de cette classe construit son propre
+        // TableEnvironment, donc rien ne survit du test précédent.
+        for (String topic : List.of(TOPIC, SINK_TOPIC)) {
+            String ddl = ddlGenerator.generateDdl(topic, schema, MessageFormat.JSON);
+            QueryResult created = flink.executeSql(QueryRequest.sql(ddl, 10, 30_000L, "earliest-offset"));
+            assertNull(created.error(), String.valueOf(created.error()));
+        }
+
+        String source = DdlGeneratorService.toTableName(TOPIC);
+        String sink = DdlGeneratorService.toTableName(SINK_TOPIC);
+        FlinkJobSummary summary = flink.submitJob(QueryRequest.sql(
+            "INSERT INTO " + sink + " (id, status) SELECT id, status FROM " + source,
+            10, 30_000L, "earliest-offset"));
+
+        assertNotNull(summary.queryId());
+        assertNotNull(summary.flinkJobId(), "a submitted job carries the id Flink gave it");
+        flink.cancelJob(summary.queryId());
     }
 
     /**
