@@ -18,7 +18,7 @@ import {
   type StatementRun,
   sidebarSqlFor, sidebarActionLabel, insertableColumns, sinkNameRange, pickSinkTable,
   type HistoryEntry,
-} from './queryWorkbench';
+} from './queryWorkbenchLogic';
 
 describe('tokenizeSql', () => {
   it('keeps a string literal whole, doubled quotes included', () => {

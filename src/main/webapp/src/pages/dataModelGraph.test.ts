@@ -27,7 +27,7 @@ import {
   readSavedModels, saveModel, deleteSavedModel, clearSavedModels, MAX_SAVED_MODELS,
   SAVED_MODELS_KEY, joinAliasesFor, buildMultiJoinSql,
   describeBuildProgress, describeStaleGraphDuringBuild,
-} from './dataModel';
+} from './dataModelGraph';
 import type { RelationConfidence } from '../api/types';
 
 // Ce module écrit dans localStorage (brouillon de sélection, sélections nommées) : sans remise

@@ -646,6 +646,36 @@ class FlinkSqlServiceTest {
                 "The error must carry a line/column so the editor can point at it, got: " + result.error());
     }
 
+    /**
+     * Le disjoncteur se rouvre tout seul, et se referme s'il avait raison.
+     *
+     * <p>Il latchait pour la vie du processus, « redémarrez l'application » étant la seule sortie.
+     * Défendable tant que la cause supposée était un défaut de version de Flink ; ce dépôt a
+     * depuis vu une panne d'<em>environnement</em> le déclencher — un job qui n'obtenait pas ses
+     * emplacements — donc un redémarrage était exigé pour une chose déjà réparée.
+     */
+    @Test
+    void theSelectCircuitBreakerReopensOnceTheIntervalHasPassed() throws Exception {
+        stubRegisteredTopicWithRecords();
+
+        service.tripFlinkSelectAt(System.currentTimeMillis());
+        QueryResult stillClosed = service.executeSql(QueryRequest.sql(
+            "SELECT event_id FROM strict_mode_topic", 10, 5_000L, null));
+        assertEquals("KAFKA_DIRECT", stillClosed.engine(), "inside the interval the planner is not tried");
+        assertTrue(service.isFlinkSelectDisabled());
+
+        service.tripFlinkSelectAt(
+            System.currentTimeMillis() - FlinkSqlService.FLINK_SELECT_RETRY_AFTER_MS - 1);
+        QueryResult retried = service.executeSql(QueryRequest.sql(
+            "SELECT event_id FROM strict_mode_topic", 10, 5_000L, null));
+
+        assertNoError(retried);
+        assertEquals("FLINK", retried.engine(), "past the interval one attempt is allowed");
+        assertFalse(service.isFlinkSelectDisabled(),
+            "and a successful attempt clears the latch — leaving it up would make the warning "
+                + "say the engine is off while it answers");
+    }
+
     @Test
     void repeatedTyposDoNotTripTheSelectCircuitBreaker() throws Exception {
         stubRegisteredTopicWithRecords();
@@ -683,6 +713,104 @@ class FlinkSqlServiceTest {
         assertNoError(result);
         assertEquals(2, result.rows().size(), "The direct reader must still serve an unregistered topic");
         verify(ddlGeneratorService, never()).generateDdl(anyString(), any(), any());
+
+        // Et le changement de moteur est dit. Sans cela, la réponse est `engine: KAFKA_DIRECT`,
+        // `error: null`, `warnings: []` — indiscernable d'une requête que ce lecteur était censé
+        // traiter, alors que JOIN et sous-requêtes viennent d'être perdus en silence.
+        assertTrue(result.warnings().stream().anyMatch(w -> w.contains("direct Kafka reader")),
+                "the engine change must travel with the rows, got: " + result.warnings());
+        // Le motif est le nôtre — aucun schéma n'a pu être inféré — et non le « Object not found »
+        // du planner, qui enverrait chercher une faute de frappe dans un nom correct.
+        assertTrue(result.warnings().stream().anyMatch(w -> w.contains("No schema could be inferred")),
+                "a deliberate skip must not be reported as the planner's own complaint, got: "
+                    + result.warnings());
+        assertTrue(result.warnings().stream().noneMatch(w -> w.contains("not found")),
+                "got: " + result.warnings());
+    }
+
+    /**
+     * Une requête que le planner sert vraiment ne porte aucun avertissement de repli.
+     *
+     * <p>Le pendant du cas ci-dessus, et il compte autant : un avertissement qui apparaît toujours
+     * cesse d'être lu. C'est ce qui rend le premier utilisable comme signal.
+     */
+    @Test
+    void aQueryThePlannerAnswersCarriesNoFallbackWarning() throws Exception {
+        stubRegisteredTopicWithRecords();
+
+        QueryResult result = execute("SELECT event_id, payload FROM strict_mode_topic");
+
+        assertNoError(result);
+        assertEquals("FLINK", result.engine());
+        assertTrue(result.warnings().stream().noneMatch(w -> w.contains("direct Kafka reader")),
+                "got: " + result.warnings());
+    }
+
+    /**
+     * En mode Job, l'absence de schéma est un refus qui se nomme — pas un « table inconnue ».
+     *
+     * <p>{@code deferToDirect} veut dire « laisse le lecteur direct s'en charger », et il n'y en a
+     * pas ici : un job est soumis à Flink ou ne l'est pas. Laisser passer la requête rendrait
+     * l'« Object not found » du planner, sur un nom parfaitement correct, à propos d'une table que
+     * cette application a délibérément choisi de ne pas créer.
+     */
+    @Test
+    void inJobModeAnUninferableSourceIsRefusedByName() throws Exception {
+        doReturn(List.of("no.schema.topic")).when(kafkaAdminService).listTopics();
+        doReturn(MessageFormat.JSON).when(schemaInferenceService).detectFormat("no.schema.topic");
+        doReturn(Map.<String, String>of()).when(schemaInferenceService).inferSchema(anyString(), any());
+
+        IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
+            () -> service.submitJob(QueryRequest.sql(
+                "INSERT INTO some_sink SELECT id FROM no_schema_topic", 10, 5_000L, "earliest-offset")));
+
+        assertTrue(refused.getMessage().contains("No schema could be inferred"), refused.getMessage());
+        assertFalse(refused.getMessage().toLowerCase().contains("not found"),
+            "the planner's complaint about a correct name must not be what the caller reads: "
+                + refused.getMessage());
+    }
+
+    /**
+     * « Les plus récentes » est une question que seul le lecteur direct sait poser.
+     *
+     * <p>Tant que le planner ne répondait à rien, {@code readMode} était honoré par accident. Une
+     * fois le moteur réparé, la table auto-enregistrée démarre en {@code earliest-offset} et le
+     * sélecteur « Latest » rendait les lignes les plus <em>anciennes</em> — une réponse plausible
+     * et fausse, ce qui est le pire des deux sens.
+     */
+    @Test
+    void aNamedRecentReadModeIsAnsweredByTheReaderThatCanHonourIt() throws Exception {
+        stubRegisteredTopicWithRecords();
+
+        QueryResult latest = service.executeSql(QueryRequest.sql(
+            "SELECT event_id, payload FROM strict_mode_topic", 10, 5_000L, "latest-offset"));
+
+        assertNoError(latest);
+        assertEquals("KAFKA_DIRECT", latest.engine(),
+            "the planner cannot express \"the most recent N records\", so it must not answer it");
+        assertTrue(latest.warnings().stream().anyMatch(w -> w.contains("most recent")),
+            "and the reader change must say why, got: " + latest.warnings());
+    }
+
+    /**
+     * Mais seulement quand il est <em>nommé</em>. {@code null} veut dire « l'appelant ne se
+     * prononce pas » — l'audit, les aperçus de table, la plupart des tests — et le renvoyer au
+     * lecteur direct reviendrait à défaire la réparation du planner pour tout le monde.
+     */
+    @Test
+    void anAbsentReadModeIsNotAnIntentionAndStaysOnThePlanner() throws Exception {
+        stubRegisteredTopicWithRecords();
+
+        QueryResult unspecified = service.executeSql(QueryRequest.sql(
+            "SELECT event_id, payload FROM strict_mode_topic", 10, 5_000L, null));
+
+        assertNoError(unspecified);
+        assertEquals("FLINK", unspecified.engine());
+
+        QueryResult earliest = service.executeSql(QueryRequest.sql(
+            "SELECT event_id, payload FROM strict_mode_topic", 10, 5_000L, "earliest-offset"));
+        assertEquals("FLINK", earliest.engine(),
+            "earliest is the one mode the planner does express");
     }
 
     @Test
@@ -724,7 +852,12 @@ class FlinkSqlServiceTest {
 
         assertNoError(result);
         assertEquals(2, result.rows().size(), "two records 7 minutes apart fall in two 5-minute buckets");
-        assertTrue(result.warnings().isEmpty(), "TUMBLE is emulated exactly, got: " + result.warnings());
+        // Ce qui est affirmé, c'est l'absence de *caveat d'approximation* — pas l'absence de
+        // tout avertissement : cette requête tourne sur le lecteur direct, et le repli le dit
+        // désormais, ce qui est vrai ici comme ailleurs. HOP et SESSION, eux, ajoutent leur
+        // approximation par-dessus, et c'est cette phrase-là que les cas suivants cherchent.
+        assertTrue(result.warnings().stream().noneMatch(w -> w.contains("approximated")),
+                "TUMBLE is emulated exactly, got: " + result.warnings());
     }
 
     @Test
@@ -898,6 +1031,32 @@ class FlinkSqlServiceTest {
         assertEquals("SELECT 1", service.stripSqlComments("SELECT 1 -- trailing"). trim());
         // An unterminated block comment is not a comment: it must not swallow the statement.
         assertTrue(service.stripSqlComments("/* never closed SELECT 1").contains("SELECT 1"));
+    }
+
+    /**
+     * Un hint survit au nettoyage — c'est du SQL, pas un commentaire.
+     *
+     * <p>La syntaxe des hints de Calcite et de Flink est en forme de commentaire : seul le
+     * {@code +} qui suit l'ouverture les distingue. Ce nettoyage les effaçait donc tous avant que
+     * la requête n'atteigne le planner, si bien qu'un {@code OPTIONS(…)} écrit dans l'éditeur
+     * n'avait jamais aucun effet — et que l'expérience concluant que ce connecteur refuse
+     * {@code scan.bounded.mode} portait sur une option qui n'était jamais partie.
+     */
+    @Test
+    void aHintIsNotAComment() {
+        String hinted = "SELECT * FROM t /*+ OPTIONS('scan.startup.mode'='earliest-offset') */";
+        assertEquals(hinted, service.stripSqlComments(hinted),
+            "a hint must reach the planner verbatim");
+
+        // Et un commentaire ordinaire dans la même requête s'en va toujours.
+        String mixed = service.stripSqlComments("SELECT /* why */ * FROM t /*+ OPTIONS('k'='v') */");
+        assertFalse(mixed.contains("why"), mixed);
+        assertTrue(mixed.endsWith("/*+ OPTIONS('k'='v') */"), mixed);
+
+        // Le hint ne perturbe ni la reconnaissance de la table ni la liste blanche : les deux
+        // travaillent sur le texte nettoyé, qui le porte désormais.
+        assertEquals("t", service.extractPrimaryTable(hinted));
+        assertTrue(service.stripSqlComments("/* lead */ " + hinted).startsWith("SELECT"));
     }
 
     @Test

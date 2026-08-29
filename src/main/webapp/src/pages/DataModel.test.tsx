@@ -22,7 +22,7 @@ import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import axios from 'axios';
 import type { DataModelResponse } from '../api/types';
-import { readPanelOpen } from './dataModel';
+import { readPanelOpen } from './dataModelGraph';
 
 vi.mock('axios');
 const mockedAxios = vi.mocked(axios, true);

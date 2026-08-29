@@ -78,7 +78,7 @@ import {
   normalizeTopicDetail,
 } from './topicSearch';
 import type { TopicDetailResponse } from '../../api/types';
-import { buildTopicSearchQuery, parseTraceParams } from '../../pages/streamFlow';
+import { buildTopicSearchQuery, parseTraceParams } from '../../pages/streamFlowLogic';
 
 const criteria = (over: Partial<TopicSearchCriteria> = {}): TopicSearchCriteria =>
   ({ ...emptyCriteria, ...over });

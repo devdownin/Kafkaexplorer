@@ -7,7 +7,7 @@ import {
   MAX_FLOW_CHAIN_AGE_MS, pushFlowChain, readFlowChains, recordTracedChain, writeFlowChains,
 } from './flowChains';
 import type { FlowChainEvidence } from '../api/types';
-import type { FlowHit } from './streamFlow';
+import type { FlowHit } from './streamFlowLogic';
 
 const NOW = 1_700_000_000_000;
 

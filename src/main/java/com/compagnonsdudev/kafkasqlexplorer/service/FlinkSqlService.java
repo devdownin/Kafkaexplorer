@@ -107,6 +107,27 @@ public class FlinkSqlService {
     private static final int FLINK_SELECT_FAILURE_THRESHOLD = 3;
 
     /**
+     * Combien de temps le disjoncteur reste fermé avant de laisser passer une tentative.
+     *
+     * <p>Il latchait pour la vie du processus, et « redémarrez l'application » était la seule
+     * sortie. C'était défendable tant que la cause supposée était un défaut de version de Flink :
+     * une panne qui ne se répare pas toute seule. Ce dépôt a maintenant vu l'inverse — un job qui
+     * n'obtenait pas ses emplacements, c'est-à-dire une panne d'<em>environnement</em>, qui
+     * disparaît dès que la configuration est corrigée — et exige alors un redémarrage pour une
+     * chose déjà réparée.
+     *
+     * <p>Ce que le délai achète est borné et se compte : passé l'intervalle, une tentative est
+     * autorisée. Elle réussit, le disjoncteur et le compteur sont remis à zéro ; elle échoue,
+     * l'horodatage est réarmé et rien n'a coûté de plus qu'une tentative par intervalle. Plusieurs
+     * threads peuvent franchir la porte ensemble et en payer chacun une : c'est borné, et
+     * l'alternative — un verrou sur le chemin de lecture — coûterait plus cher que ce qu'elle
+     * évite. Une constante et non une propriété : aucun déploiement connu n'a besoin d'une autre
+     * valeur, et une propriété que personne ne règle est une surface de configuration de plus.
+     */
+    /** Package-private: {@code FlinkSqlServiceTest} drives the decay against it. */
+    static final long FLINK_SELECT_RETRY_AFTER_MS = 10 * 60 * 1000L;
+
+    /**
      * Floor on the wait for the Flink runtime, whatever the query's own timeout is. Entering a free
      * runtime costs milliseconds; this only matters when several statements arrive at once, and a
      * caller with a 1 s timeout should still be allowed to queue briefly rather than fail on the
@@ -181,6 +202,8 @@ public class FlinkSqlService {
 
     private final java.util.concurrent.atomic.AtomicInteger flinkSelectFailures = new java.util.concurrent.atomic.AtomicInteger(0);
     private volatile boolean flinkSelectDisabled = false;
+    /** Quand le disjoncteur a latché, pour que {@link #FLINK_SELECT_RETRY_AFTER_MS} soit lisible. */
+    private volatile long flinkSelectDisabledAt = 0L;
 
     public static final class JobInfo {
         private final String queryId;
@@ -344,7 +367,8 @@ public class FlinkSqlService {
      * registered, and the planner's resulting "Object 'orders' not found" looked exactly like a
      * typo. The window call is therefore consulted first — it carries the real name.
      */
-    private String extractPrimaryTable(String sql) {
+    /** Package-private: driven directly by {@code FlinkSqlServiceTest}, like {@link #stripSqlComments}. */
+    String extractPrimaryTable(String sql) {
         Matcher window = WINDOW_CALL.matcher(sql);
         if (window.find()) return window.group(2);
         Matcher from = FROM_TABLE.matcher(sql);
@@ -360,7 +384,16 @@ public class FlinkSqlService {
         // Past a leading CTE chain: a `WITH … SELECT` skipped registration entirely, so the topic
         // its body reads was never registered and the planner answered "Object not found" — which
         // is how supporting CTEs at the guard alone would have produced a different dead end.
-        if (!SqlStatements.classifiableBody(sql).startsWith("SELECT")) return AutoRegResult.skip();
+        //
+        // `INSERT INTO … SELECT` entre ici pour la même raison, et c'est le mode Job qui en avait
+        // besoin : `submitJob` ne passait par aucun enregistrement, donc le raccourci que la barre
+        // latérale propose elle-même — un INSERT depuis la table d'un topic — répondait « Object
+        // not found » tant qu'un SELECT n'était pas venu enregistrer la source d'abord. Seule la
+        // *source* est concernée : `extractPrimaryTable` lit le FROM, donc la cible de l'INSERT
+        // est exclue par construction, et c'est voulu — dériver un schéma d'un topic cible vide
+        // rendrait `raw_value STRING` et un échec d'arité, pire qu'un « table inconnue ».
+        String body = SqlStatements.classifiableBody(sql);
+        if (!body.startsWith("SELECT") && !body.startsWith("INSERT INTO")) return AutoRegResult.skip();
         // The first FROM is inside the CTE body, which is exactly the source table to register.
         String rawTableRef = extractPrimaryTable(sql);
         if (rawTableRef == null) return AutoRegResult.skip();
@@ -458,11 +491,34 @@ public class FlinkSqlService {
         while (open >= 0) {
             int close = sql.indexOf("*/", open + 2);
             if (close < 0) break;              // unterminated: keep the rest verbatim
-            out.append(sql, from, open).append(' ');
+            if (isHint(sql, open)) {
+                // Un hint n'est pas un commentaire, il porte juste le même habillage.
+                out.append(sql, from, close + 2);
+            } else {
+                out.append(sql, from, open).append(' ');
+            }
             from = close + 2;
             open = sql.indexOf("/*", from);
         }
         return out.append(sql, from, sql.length()).toString();
+    }
+
+    /**
+     * Un hint SQL — {@code /*+ … *}{@code /} — plutôt qu'un commentaire.
+     *
+     * <p>C'est la syntaxe de Calcite et de Flink pour les options de table
+     * ({@code FROM t /*+ OPTIONS('scan.startup.mode'='earliest-offset') *}{@code /}), et elle est
+     * <em>en forme de commentaire</em> : le seul caractère qui l'en distingue est le {@code +} qui
+     * suit l'ouverture. Ce nettoyage-ci les effaçait donc tous, en silence, avant que la requête
+     * n'atteigne le planner — un hint écrit dans l'éditeur n'a jamais rien fait, et la preuve
+     * était dans le journal du moteur lui-même, qui rapportait la requête sans son hint.
+     *
+     * <p>Ce que cela coûtait dépasse l'éditeur : c'est sur ce mécanisme que reposait l'expérience
+     * ayant conclu que ce connecteur refuse {@code scan.bounded.mode}. L'option n'était jamais
+     * partie, et la clé réellement refusée dans le même {@code WITH (…)} était une autre.
+     */
+    private static boolean isHint(String sql, int open) {
+        return open + 2 < sql.length() && sql.charAt(open + 2) == '+';
     }
 
     private String extractStatementType(String sql) {
@@ -623,6 +679,33 @@ public class FlinkSqlService {
         try {
             sqlQueryValidator.validate(strippedSql);
 
+            /*
+             * Enregistrer la table source, comme le fait une lecture.
+             *
+             * Ce chemin ne le faisait pas, si bien que le raccourci proposé par la barre latérale
+             * elle-même — un `INSERT INTO … SELECT … FROM <table d'un topic>` — échouait sur
+             * « Object not found » tant qu'un SELECT n'était pas venu enregistrer la source dans
+             * ce processus. Le mode Job devenait donc dépendant d'un geste fait ailleurs, ce que
+             * rien n'indiquait.
+             *
+             * Un échec est rapporté ici plutôt que laissé remonter en erreur de planner : c'est la
+             * même règle qu'en lecture, à une exception près qui compte. `deferToDirect` n'a aucun
+             * sens en mode Job — il n'y a pas de lecteur direct pour rattraper la requête — donc
+             * l'absence de schéma devient un refus qui nomme sa cause, au lieu d'un « table
+             * inconnue » sur un nom parfaitement correct.
+             */
+            AutoRegResult autoReg = autoRegisterTableIfNeeded(strippedSql);
+            if (autoReg.error() != null) {
+                throw new IllegalStateException(autoReg.error());
+            }
+            if (autoReg.deferredToDirectReader()) {
+                throw new IllegalArgumentException(
+                    "No schema could be inferred for the topic this statement reads, so no Flink "
+                  + "table could be registered for it — the topic may be empty, or its messages "
+                  + "unreadable. A streaming job needs a typed source: create the table yourself "
+                  + "with CREATE TABLE, then submit the INSERT.");
+            }
+
             TableResult result = executeMutationSql("submit-job", strippedSql);
             JobClient client = result.getJobClient()
                 .orElseThrow(() -> new IllegalStateException("Flink did not return a JobClient for the submitted job."));
@@ -643,6 +726,11 @@ public class FlinkSqlService {
             );
             return summary;
         } catch (RuntimeException e) {
+            // explain(), et non getMessage() : c'est nul sur une NullPointerException, et ce champ
+            // est la seule trace de la raison — `FlinkJobCard` l'affiche sous la carte rouge, et
+            // rien d'autre ne la garde. Flink emballe par ailleurs le texte utile (la ligne et la
+            // colonne de Calcite, la clé d'option refusée par le connecteur) dans une exception
+            // externe générique, que explain() aplatit.
             flinkJobStore.create(
                 queryId,
                 null,
@@ -652,7 +740,7 @@ public class FlinkSqlService {
                 "Submission failed before a Flink JobClient was available",
                 strippedSql,
                 startedAt,
-                e.getMessage()
+                SqlErrorClassifier.explain(e)
             );
             throw e;
         }
@@ -707,6 +795,9 @@ public class FlinkSqlService {
                 // caller was told whatever the *direct reader* complained about, which describes a
                 // different query engine's opinion of a statement it was never meant to run.
                 String engineFailure = null;
+                // Le mode de lecture demandé que le planner ne sait pas exprimer, gardé pour que
+                // le résultat le dise plutôt que de le laisser passer pour honoré.
+                String unhonouredReadMode = null;
                 /*
                  * One caller asks for the direct reader by name, and the planner is not consulted
                  * at all for it: `readMode` is honoured by that reader alone, so "the most recent
@@ -720,11 +811,51 @@ public class FlinkSqlService {
                     QueryResult direct = kafkaDirectSelect(sqlToExecute, readMode, limit, startTime);
                     return autoReg.registered() ? withRegisteredFlag(direct) : direct;
                 }
-                if (explorerConfig.isFlinkSelectEnabled() && !flinkSelectDisabled) {
+                /*
+                 * Un mode de lecture nommé est une question que seul ce lecteur sait poser.
+                 *
+                 * Tant que le planner ne répondait à rien, chaque SELECT sur un topic Kafka
+                 * retombait ici et `readMode` était honoré par accident. Le planner réparé, la
+                 * table auto-enregistrée démarre toujours en `earliest-offset` : le sélecteur
+                 * « Latest » de l'éditeur rendait alors exactement les mêmes lignes que
+                 * « Earliest » — les plus anciennes, à la question « les plus récentes ». C'est le
+                 * pire sens : une réponse plausible et fausse plutôt qu'un refus.
+                 *
+                 * Passer `latest-offset` au planner ne réparerait rien — un scan Kafka qui
+                 * commence et s'arrête à `latest-offset` ne lit rien du tout — donc c'est le
+                 * lecteur direct qui répond, comme il le fait déjà pour les modèles de métrique
+                 * qui le demandent nommément.
+                 *
+                 * Deux garde-fous. Le mode doit être **nommé** : `null` tombe sur la branche
+                 * « récent » de `fetchForDirectRead`, donc réagir à l'absence renverrait au
+                 * lecteur direct tout appelant qui ne se prononce pas — l'audit, les aperçus de
+                 * table, les tests — et défertait la réparation du moteur. Et la forme doit être
+                 * une lecture que ce lecteur sait honorer : sur un JOIN ou une sous-requête il
+                 * lirait une seule table et ignorerait le reste, donc là c'est le planner qui
+                 * répond et l'avertissement dit que le mode n'a pas pu l'être.
+                 */
+                if (namesARecentReadMode(readMode) && extractPrimaryTable(sqlToExecute) != null) {
+                    if (MetricService.isSingleTableRead(sqlToExecute)) {
+                        QueryResult direct = kafkaDirectSelect(sqlToExecute, readMode, limit, startTime);
+                        direct = withExtraWarning(direct, DIRECT_READER_CAVEAT
+                            + " It answered because \"" + readMode + "\" asks for the most recent "
+                            + "records, which the Flink planner has no way to express.");
+                        return autoReg.registered() ? withRegisteredFlag(direct) : direct;
+                    }
+                    unhonouredReadMode = readMode;
+                }
+                if (explorerConfig.isFlinkSelectEnabled() && takePlannerAttempt()) {
                     try {
                         QueryResult flinkResult = executeViaFlinkPlanner(queryId, sqlToExecute, "SELECT", limit, timeout, startTime);
                         if (flinkResult.error() == null) {
-                            flinkSelectFailures.set(0);
+                            clearFlinkSelectLatch();
+                            if (unhonouredReadMode != null) {
+                                flinkResult = withExtraWarning(flinkResult, "The read mode \""
+                                    + unhonouredReadMode + "\" was not applied: this statement needs "
+                                    + "the Flink planner, which reads a Kafka table from the offset "
+                                    + "its definition names (earliest by default). These rows are "
+                                    + "not necessarily the most recent ones.");
+                            }
                             return autoReg.registered() ? withRegisteredFlag(flinkResult) : flinkResult;
                         }
                         // A timeout means the planner worked but the job was slow (empty/large topic):
@@ -779,6 +910,38 @@ public class FlinkSqlService {
                             engineFailure != null ? engineFailure : plannerUnavailableMessage());
                 }
                 QueryResult qr = kafkaDirectSelect(sqlToExecute, readMode, limit, startTime);
+                /*
+                 * Dire *pourquoi* cette requête-ci a changé de moteur, et pas seulement que le
+                 * planner a fini par être coupé.
+                 *
+                 * `engineFailure` était calculé ici, lu nulle part, et jeté. Un repli ponctuel
+                 * rendait donc `engine: KAFKA_DIRECT`, `error: null`, `warnings: []` — indiscernable
+                 * d'une requête que le lecteur direct était censé traiter. C'est ce silence qui a
+                 * gardé trois défauts distincts invisibles : une option refusée par le connecteur,
+                 * un job qui ne pouvait pas obtenir ses emplacements, et une boucle de collecte qui
+                 * bloquait sur sa dernière ligne. Les trois se lisaient « la requête a marché ».
+                 *
+                 * Le verrou ne suffisait pas à le remplacer, et pas seulement parce qu'il arrive
+                 * après trois échecs : un *dépassement de délai* remet le compteur à zéro
+                 * délibérément (le planner a fonctionné, le job était lent), donc la panne la plus
+                 * courante ici ne l'atteint jamais. Une dégradation permanente et le motif de cette
+                 * requête sont deux faits différents, alors les deux phrases s'ajoutent au lieu de
+                 * se remplacer.
+                 *
+                 * Une erreur *utilisateur* ne passe pas par là : `rejectIfUserError` a déjà rendu
+                 * le message du planner à l'appelant.
+                 */
+                if (autoReg.deferredToDirectReader()) {
+                    // Le repli est *notre* décision, pas une panne : l'inférence n'a rien trouvé
+                    // (topic vide ou illisible), donc la table n'a jamais été enregistrée et le
+                    // « Object not found » du planner dit notre propre choix. Répercuter ce
+                    // message enverrait chercher une faute de frappe dans un nom correct.
+                    qr = withExtraWarning(qr, DIRECT_READER_CAVEAT
+                        + " No schema could be inferred for this topic, so no Flink table was "
+                        + "registered for it — the topic may be empty, or its messages unreadable.");
+                } else if (engineFailure != null) {
+                    qr = withExtraWarning(qr, DIRECT_READER_CAVEAT + " " + engineFailure);
+                }
                 // Say that the planner is out of the picture for the rest of this process, on the
                 // queries it actually affects. The latch was written in one place and read in one
                 // place and surfaced nowhere, so a user got `engine: KAFKA_DIRECT` — no JOIN, no
@@ -957,24 +1120,84 @@ public class FlinkSqlService {
     }
 
     /**
+     * Le mode de lecture demande-t-il explicitement les enregistrements <em>récents</em> ?
+     *
+     * <p>Explicitement : {@code null} veut dire « l'appelant ne se prononce pas », et le lecteur
+     * direct le traite comme récent par défaut — mais en déduire une intention renverrait vers lui
+     * tout appelant silencieux, ce qui reviendrait à défaire la réparation du planner.
+     * {@code earliest-offset} est la seule des trois valeurs que le planner sache exprimer.
+     */
+    private static boolean namesARecentReadMode(String readMode) {
+        if (readMode == null || readMode.isBlank()) return false;
+        String mode = readMode.trim();
+        return "latest-offset".equals(mode) || mode.startsWith(SINCE_READ_MODE_PREFIX);
+    }
+
+    /**
+     * L'ouverture commune des avertissements de repli : ce que l'appelant perd en changeant de
+     * moteur. Une phrase, pas deux, parce que les deux motifs — notre décision de ne pas
+     * enregistrer la table, et une panne du planner — se distinguent par ce qui la suit.
+     */
+    private static final String DIRECT_READER_CAVEAT =
+        "This query fell back to the direct Kafka reader, which supports neither JOIN nor subqueries.";
+
+    /**
      * Why the Flink planner is not answering, in the words a user can act on.
      *
      * <p>Two different states read identically from the outside — an operator turned the planner
      * off, or the circuit breaker turned it off after {@link #FLINK_SELECT_FAILURE_THRESHOLD}
-     * failures — and the second one is invisible without this: it latches for the lifetime of the
-     * process, so every later query silently gets an engine that supports neither JOIN nor
-     * subqueries.
+     * failures — and the second one is invisible without this: every later query silently gets an
+     * engine that supports neither JOIN nor subqueries.
      */
+    /**
+     * Le planner a-t-il le droit d'être tenté ?
+     *
+     * <p>Vrai tant que le disjoncteur n'a pas latché, et de nouveau une fois
+     * {@link #FLINK_SELECT_RETRY_AFTER_MS} écoulé depuis le dernier échec — une tentative, dont
+     * l'issue décide de la suite : {@code clearFlinkSelectLatch} sur un succès,
+     * {@code recordFlinkSelectFailure} réarme l'horodatage sinon.
+     */
+    private boolean takePlannerAttempt() {
+        if (!flinkSelectDisabled) return true;
+        if (System.currentTimeMillis() - flinkSelectDisabledAt < FLINK_SELECT_RETRY_AFTER_MS) return false;
+        // Le jeton est consommé ici plutôt qu'au vu du résultat, et c'est ce qui rend la borne
+        // vraie : une tentative qui expire ne passe ni par le succès ni par l'échec compté, donc
+        // réarmer là-bas laisserait un planner qui n'aboutit jamais être retenté à *chaque*
+        // requête une fois l'intervalle écoulé. Plusieurs threads peuvent franchir la porte
+        // ensemble et en payer chacun une : c'est borné, et un verrou sur le chemin de lecture
+        // coûterait plus que ce qu'il éviterait.
+        flinkSelectDisabledAt = System.currentTimeMillis();
+        return true;
+    }
+
+    /**
+     * Le planner a répondu : le disjoncteur se rouvre.
+     *
+     * <p>Le compteur seul ne suffit pas — {@code flinkSelectDisabled} est ce que lisent
+     * {@code plannerUnavailableMessage} et {@code isFlinkSelectDisabled()}, donc le laisser levé
+     * après une tentative réussie ferait dire à l'avertissement que le moteur est coupé pendant
+     * qu'il répond.
+     */
+    private void clearFlinkSelectLatch() {
+        flinkSelectFailures.set(0);
+        if (flinkSelectDisabled) {
+            flinkSelectDisabled = false;
+            log.info("The Flink planner answered again — the circuit breaker is cleared");
+        }
+    }
+
     private String plannerUnavailableMessage() {
         if (!explorerConfig.isFlinkSelectEnabled()) {
             return "The Flink planner is disabled (explorer.flink-select-enabled=false), and this "
                  + "query needs it — the direct Kafka reader only reads a topic named after FROM.";
         }
         if (flinkSelectDisabled) {
-            return "The Flink planner failed " + FLINK_SELECT_FAILURE_THRESHOLD + " times and is "
-                 + "disabled for the rest of this process, so queries fall back to the direct Kafka "
-                 + "reader, which supports neither JOIN nor subqueries. Restart the application to "
-                 + "retry it; the log records why it failed.";
+            return "The Flink planner failed " + FLINK_SELECT_FAILURE_THRESHOLD + " times, so "
+                 + "queries fall back to the direct Kafka reader, which supports neither JOIN nor "
+                 + "subqueries. It is retried automatically about "
+                 + (FLINK_SELECT_RETRY_AFTER_MS / 60_000L) + " minutes after the last failure, so "
+                 + "a cause that has been fixed since needs no restart; the log records why it "
+                 + "failed.";
         }
         return "The Flink planner did not answer, and this query needs it — the direct Kafka reader "
              + "only reads a topic named after FROM.";
@@ -988,6 +1211,17 @@ public class FlinkSqlService {
     }
 
     /** Whether the circuit breaker has taken the Flink planner out for this process. */
+    /**
+     * Sème de test : lever le disjoncteur comme si le dernier échec datait de {@code at}.
+     *
+     * <p>L'intervalle se compte en minutes ; un test qui l'attendrait ne serait pas un test. Le
+     * même idiome que {@code setAdminClientForTest} et {@code createConsumer()} ailleurs.
+     */
+    void tripFlinkSelectAt(long at) {
+        flinkSelectDisabled = true;
+        flinkSelectDisabledAt = at;
+    }
+
     public boolean isFlinkSelectDisabled() {
         return flinkSelectDisabled;
     }
@@ -1000,6 +1234,7 @@ public class FlinkSqlService {
         int failures = flinkSelectFailures.incrementAndGet();
         if (failures >= FLINK_SELECT_FAILURE_THRESHOLD && !flinkSelectDisabled) {
             flinkSelectDisabled = true;
+            flinkSelectDisabledAt = System.currentTimeMillis();
             log.warn("Flink SELECT failed {} times (last: {}); disabling the Flink planner path for SELECT "
                 + "for this process and using the direct Kafka reader instead. Restart after upgrading Flink to retry.",
                 failures, reason);
@@ -1072,7 +1307,16 @@ public class FlinkSqlService {
                     try {
                         List<Map<String, Object>> resultRows = new ArrayList<>();
                         int count = 0;
-                        while (it.hasNext() && count < limit) {
+                        // L'ordre des deux termes est porteur : `hasNext()` bloque sur une
+                        // source non bornée, donc l'interroger une fois le quota atteint
+                        // fait attendre un enregistrement dont on n'a plus besoin. Écrit
+                        // `it.hasNext() && count < limit`, une lecture d'un topic qui tient
+                        // exactement dans la limite collectait toutes ses lignes puis
+                        // attendait la suivante jusqu'à expiration du budget — rapportée
+                        // comme un dépassement de délai, donc un repli silencieux sur le
+                        // lecteur direct. Le quota se vérifie en premier : il se lit sans
+                        // rien demander à personne.
+                        while (count < limit && it.hasNext()) {
                             Row row = it.next();
                             if (count == 0 && log.isDebugEnabled()) {
                                 log.debug("[FlinkSQL] queryId={} first row arity={} kind={} rowString='{}'",

@@ -5,7 +5,7 @@ import { describe, it, expect } from 'vitest';
 import {
   tryParse, messageText, diffFields, valuesDiffer, pairSamples, visiblePairs,
   countDiffs, countCompared, coordinates, type TopicMessage,
-} from './compare';
+} from './compareMessages';
 
 const message = (offset: number, value: string | null, partition = 0): TopicMessage => ({
   partition, offset, timestamp: 1_700_000_000_000 + offset, key: `K-${offset}`, value,

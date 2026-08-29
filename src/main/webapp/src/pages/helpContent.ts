@@ -328,7 +328,7 @@ GROUP BY customer_id`,
   'properties.bootstrap.servers' = 'localhost:9092',
   'properties.group.id' = 'flink_orders_typed',
   'value.format' = 'json',
-  'json.ignore-parse-errors' = 'true',
+  'value.json.ignore-parse-errors' = 'true',
   'scan.startup.mode' = 'earliest-offset'
 )`,
     reading: [
@@ -337,7 +337,7 @@ GROUP BY customer_id`,
       'Any DDL the app shows you is masked: passwords and the Confluent SASL secret are replaced before the string leaves the server, so paste your own credentials back in when you copy one.',
     ],
     pitfall:
-      'json.ignore-parse-errors is what keeps one malformed message from failing the whole read. Dropping it turns a poison record into a failed query.',
+      'value.json.ignore-parse-errors is what keeps one malformed message from failing the whole read. Dropping it turns a poison record into a failed query. The value. prefix is not decoration: the format is declared as value.format, so its options carry that prefix too, and the connector refuses the bare key — not at CREATE TABLE, which validates nothing, but the first time the table is read from or written to.',
     engine: 'FLINK',
     runnable: true,
     keywords: ['create table', 'ddl', 'connector', 'schema', 'startup mode'],

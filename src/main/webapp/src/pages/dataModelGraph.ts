@@ -16,7 +16,7 @@ import type {
   RelationConfidence,
 } from '../api/types';
 import { clearDraft, readDraft, writeDraft } from '../draftStore';
-import { isTopicPattern, topicPatternMatcher } from './streamFlow';
+import { isTopicPattern, topicPatternMatcher } from './streamFlowLogic';
 import { isInternalTopic } from '../internalTopics';
 
 /**

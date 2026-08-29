@@ -18,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * and `/actuator/health/liveness` answering 404, which the HEALTHCHECK reads as a dead
  * container. Both groups are asserted to exist here, where a rename fails the build.
  */
-@SpringBootTest
+@ExplorerContextTest
 class HealthProbesTest {
 
     @DynamicPropertySource

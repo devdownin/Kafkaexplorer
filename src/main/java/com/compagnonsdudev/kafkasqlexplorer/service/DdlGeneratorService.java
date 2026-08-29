@@ -161,14 +161,25 @@ public class DdlGeneratorService {
             sb.append("    'properties.").append(key).append("' = '").append(value).append("',\n");
         });
 
+        // Le format est déclaré en `value.format`, donc ses options se préfixent `value.` elles
+        // aussi — et ce n'est pas une convention de style : le connecteur *refuse* la clé nue.
+        // Écrite `json.ignore-parse-errors`, chaque table JSON générée ici était rejetée par
+        // `FactoryUtil.validateUnconsumedKeys` au moment où Flink construisait la source ou le
+        // puits — pas à la création de la table, qui ne valide rien, et c'est précisément ce qui
+        // l'a rendu invisible : le SELECT retombait sur le lecteur direct (une panne moteur, donc
+        // un repli silencieux — des lignes arrivaient, sans JOIN ni sous-requête, et trois échecs
+        // coupent le planner pour le reste du processus), et l'INSERT, qui n'a pas de repli,
+        // répondait 500 sans corps. Mesuré contre flink-connector-kafka 5.0.0-2.2, dont la liste
+        // « Supported options » de l'exception nomme `value.json.ignore-parse-errors`.
         if (format == MessageFormat.XML) {
             sb.append("    'value.format' = 'raw',\n");
         } else if (format == MessageFormat.AVRO) {
             sb.append("    'value.format' = 'avro-confluent',\n");
-            sb.append("    'avro-confluent.url' = '").append(kafkaConfig.getSchemaRegistryUrl()).append("',\n");
+            // Même règle, non mesurée : aucune stack de ce dépôt ne porte de Schema Registry.
+            sb.append("    'value.avro-confluent.url' = '").append(kafkaConfig.getSchemaRegistryUrl()).append("',\n");
         } else {
             sb.append("    'value.format' = 'json',\n");
-            sb.append("    'json.ignore-parse-errors' = 'true',\n");
+            sb.append("    'value.json.ignore-parse-errors' = 'true',\n");
         }
 
         sb.append("    'scan.startup.mode' = '").append(startupMode).append("'\n");
