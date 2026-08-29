@@ -161,20 +161,32 @@ public final class ExplorerConsumerGroups {
     }
 
     /**
-     * Names an internal consumer and stops it committing.
+     * Names an internal consumer, stops it committing, and stops it creating topics.
      *
-     * <p>Both, always: a group id without {@code enable.auto.commit=false} is exactly the
+     * <p>All three, always: a group id without {@code enable.auto.commit=false} is exactly the
      * combination that produced the phantom groups.
+     *
+     * <p>The third is the same rule one level down. {@code allow.auto.create.topics} defaults to
+     * <strong>true</strong>, so asking a consumer about a topic that does not exist — a
+     * {@code partitionsFor} on a name typed into the search box, a subscribe to a topic deleted
+     * since the catalogue was cached — <em>creates</em> it, with one partition and the broker's
+     * defaults, on the cluster under exploration. This application makes exactly two deliberate
+     * writes to a user's cluster ({@code InternalTopicProvisioner}, {@code
+     * ExplorerGroupCleanupService}), both opt-out and both loud; a read inventing a topic is
+     * neither. It is also what makes {@code KafkaConsumer.partitionsFor} usable as the metadata
+     * read the record fetchers now take instead of a separate {@code describeTopics} round trip.
      */
     public static void configure(Properties props, String purpose) {
         props.put(ConsumerConfig.GROUP_ID_CONFIG, transientGroup(purpose));
         props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
+        props.put(ConsumerConfig.ALLOW_AUTO_CREATE_TOPICS_CONFIG, "false");
     }
 
     /** Same, for a consumer whose id must stay stable for the life of a session. */
     public static void configureForSession(Properties props, String purpose, String sessionId) {
         props.put(ConsumerConfig.GROUP_ID_CONFIG, forSession(purpose, sessionId));
         props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
+        props.put(ConsumerConfig.ALLOW_AUTO_CREATE_TOPICS_CONFIG, "false");
     }
 
     /**

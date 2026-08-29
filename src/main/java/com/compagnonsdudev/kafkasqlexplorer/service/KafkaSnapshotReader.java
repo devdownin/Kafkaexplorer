@@ -213,11 +213,12 @@ public class KafkaSnapshotReader {
             // straight away can still answer the end of the log. Seeded from it, the cursor started
             // at the end and the read returned nothing at all. Nobody has to ask where the read
             // begins: this code chose it.
-            Map<TopicPartition, Long> startOffsets = switch (config.mode()) {
+            Seek seek = switch (config.mode()) {
                 case "LATEST_N" -> seekToLatestN(consumer, partitions, config.maxMessages());
                 case "TIMESTAMP" -> seekToTimestamp(consumer, partitions, config.fromTimestamp());
                 default -> seekToBeginning(consumer, partitions);
             };
+            Map<TopicPartition, Long> startOffsets = seek.start();
 
             // Termination is driven by the offsets this read has actually been *handed*, and by
             // nothing else. Two things it must not be driven by, both of which were:
@@ -243,7 +244,14 @@ public class KafkaSnapshotReader {
             // So the read keeps its own per-partition cursor: seeded from the seek, advanced only
             // by records the handler was given, compared against end offsets taken once up front.
             Map<TopicPartition, Long> nextOffsets = new HashMap<>(startOffsets);
-            Map<TopicPartition, Long> endOffsets = consumer.endOffsets(partitions);
+            // Two of the three seek modes have to read the end offsets to decide where to start,
+            // and this line then asked the broker for the same numbers again — a second
+            // listOffsets round trip over every partition of every topic in the snapshot, on the
+            // Process Mining read path. Reading them once also means the cursor is compared
+            // against the same instant the seek was computed from.
+            Map<TopicPartition, Long> endOffsets = seek.end() != null
+                ? seek.end()
+                : consumer.endOffsets(partitions);
 
             // What this read is about to do, before it does it. Its absence is what made three
             // separate causes of "the topics came back empty" indistinguishable from one another:
@@ -374,8 +382,8 @@ public class KafkaSnapshotReader {
      * the only one whose log still began at 0, came back complete. It is the same rule
      * {@code KafkaAdminService} already follows for its recent-record seeks, applied here too.
      */
-    private <V> Map<TopicPartition, Long> seekToLatestN(Consumer<String, V> consumer,
-                                                        List<TopicPartition> partitions, int n) {
+    private <V> Seek seekToLatestN(Consumer<String, V> consumer,
+                                   List<TopicPartition> partitions, int n) {
         Map<String, Long> partitionsPerTopic = partitions.stream()
             .collect(java.util.stream.Collectors.groupingBy(TopicPartition::topic, java.util.stream.Collectors.counting()));
         // Read rather than inferred from a seekToEnd + position() pair: that pair asks the client
@@ -394,7 +402,7 @@ public class KafkaSnapshotReader {
             consumer.seek(tp, startOffset);
             startOffsets.put(tp, startOffset);
         }
-        return startOffsets;
+        return new Seek(startOffsets, ends);
     }
 
     /**
@@ -404,8 +412,8 @@ public class KafkaSnapshotReader {
      * it starts — see the switch in {@link #consume} — and reading that back off the consumer is
      * the thing this class no longer does.
      */
-    private <V> Map<TopicPartition, Long> seekToBeginning(Consumer<String, V> consumer,
-                                                          List<TopicPartition> partitions) {
+    private <V> Seek seekToBeginning(Consumer<String, V> consumer,
+                                     List<TopicPartition> partitions) {
         Map<TopicPartition, Long> beginnings = consumer.beginningOffsets(partitions);
         Map<TopicPartition, Long> startOffsets = new HashMap<>();
         for (TopicPartition tp : partitions) {
@@ -413,12 +421,15 @@ public class KafkaSnapshotReader {
             consumer.seek(tp, start);
             startOffsets.put(tp, start);
         }
-        return startOffsets;
+        // This mode never needs the end offsets to decide where to start, so it has none to hand
+        // back and the caller reads them itself. Inventing an empty map here would say "every
+        // partition is already read", which is the opposite of what this seek means.
+        return new Seek(startOffsets, null);
     }
 
-    private <V> Map<TopicPartition, Long> seekToTimestamp(Consumer<String, V> consumer,
-                                                          List<TopicPartition> partitions,
-                                                          Long fromTimestamp) {
+    private <V> Seek seekToTimestamp(Consumer<String, V> consumer,
+                                     List<TopicPartition> partitions,
+                                     Long fromTimestamp) {
         if (fromTimestamp == null) {
             return seekToBeginning(consumer, partitions);
         }
@@ -456,8 +467,18 @@ public class KafkaSnapshotReader {
             // loop alive nor be mistaken for holding unread records.
             consumer.seekToEnd(List.of(tp));
         }
-        return startOffsets;
+        return new Seek(startOffsets, ends);
     }
+
+    /**
+     * Where a seek left each partition, and the end offsets it had to read to work that out.
+     *
+     * @param start the offset each partition was seeked to — what the read's cursor starts from
+     * @param end the end offsets this seek read, or {@code null} when the mode did not need them
+     *     — never an empty map standing in for that, which the loop would read as "nothing left to
+     *     fetch anywhere"
+     */
+    private record Seek(Map<TopicPartition, Long> start, Map<TopicPartition, Long> end) {}
 
     private boolean allTopicsReachedLimit(Map<String, Integer> collectedByTopic, int maxMessagesPerTopic) {
         return collectedByTopic.values().stream().allMatch(count -> count >= maxMessagesPerTopic);
