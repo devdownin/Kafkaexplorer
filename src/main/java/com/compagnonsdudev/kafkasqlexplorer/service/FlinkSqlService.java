@@ -361,7 +361,16 @@ public class FlinkSqlService {
         // Past a leading CTE chain: a `WITH … SELECT` skipped registration entirely, so the topic
         // its body reads was never registered and the planner answered "Object not found" — which
         // is how supporting CTEs at the guard alone would have produced a different dead end.
-        if (!SqlStatements.classifiableBody(sql).startsWith("SELECT")) return AutoRegResult.skip();
+        //
+        // `INSERT INTO … SELECT` entre ici pour la même raison, et c'est le mode Job qui en avait
+        // besoin : `submitJob` ne passait par aucun enregistrement, donc le raccourci que la barre
+        // latérale propose elle-même — un INSERT depuis la table d'un topic — répondait « Object
+        // not found » tant qu'un SELECT n'était pas venu enregistrer la source d'abord. Seule la
+        // *source* est concernée : `extractPrimaryTable` lit le FROM, donc la cible de l'INSERT
+        // est exclue par construction, et c'est voulu — dériver un schéma d'un topic cible vide
+        // rendrait `raw_value STRING` et un échec d'arité, pire qu'un « table inconnue ».
+        String body = SqlStatements.classifiableBody(sql);
+        if (!body.startsWith("SELECT") && !body.startsWith("INSERT INTO")) return AutoRegResult.skip();
         // The first FROM is inside the CTE body, which is exactly the source table to register.
         String rawTableRef = extractPrimaryTable(sql);
         if (rawTableRef == null) return AutoRegResult.skip();
@@ -646,6 +655,33 @@ public class FlinkSqlService {
 
         try {
             sqlQueryValidator.validate(strippedSql);
+
+            /*
+             * Enregistrer la table source, comme le fait une lecture.
+             *
+             * Ce chemin ne le faisait pas, si bien que le raccourci proposé par la barre latérale
+             * elle-même — un `INSERT INTO … SELECT … FROM <table d'un topic>` — échouait sur
+             * « Object not found » tant qu'un SELECT n'était pas venu enregistrer la source dans
+             * ce processus. Le mode Job devenait donc dépendant d'un geste fait ailleurs, ce que
+             * rien n'indiquait.
+             *
+             * Un échec est rapporté ici plutôt que laissé remonter en erreur de planner : c'est la
+             * même règle qu'en lecture, à une exception près qui compte. `deferToDirect` n'a aucun
+             * sens en mode Job — il n'y a pas de lecteur direct pour rattraper la requête — donc
+             * l'absence de schéma devient un refus qui nomme sa cause, au lieu d'un « table
+             * inconnue » sur un nom parfaitement correct.
+             */
+            AutoRegResult autoReg = autoRegisterTableIfNeeded(strippedSql);
+            if (autoReg.error() != null) {
+                throw new IllegalStateException(autoReg.error());
+            }
+            if (autoReg.deferredToDirectReader()) {
+                throw new IllegalArgumentException(
+                    "No schema could be inferred for the topic this statement reads, so no Flink "
+                  + "table could be registered for it — the topic may be empty, or its messages "
+                  + "unreadable. A streaming job needs a typed source: create the table yourself "
+                  + "with CREATE TABLE, then submit the INSERT.");
+            }
 
             TableResult result = executeMutationSql("submit-job", strippedSql);
             JobClient client = result.getJobClient()
