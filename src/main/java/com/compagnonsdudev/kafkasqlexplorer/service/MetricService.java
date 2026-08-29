@@ -941,20 +941,61 @@ public class MetricService {
     }
 
     private MetricComputationResult computeRawSqlMetric(MetricConfig config) {
+        /*
+         * Le SQL de l'opérateur, sur le moteur qui peut y répondre honnêtement.
+         *
+         * Ce chemin demandait le planner sans condition, sous un commentaire disant « jamais le
+         * lecteur direct : le SQL libre est celui de l'opérateur et peut avoir besoin du
+         * planner ». C'était écrit quand le planner ne répondait à rien : dans les faits chaque
+         * métrique retombait sur le lecteur direct, qui rend un agrégat en une ligne. Le moteur
+         * réparé, le planner répond vraiment — et un COUNT(*) en streaming est un changelog sans
+         * fin, ce qui donne deux mauvaises réponses selon la taille du topic. Sur un gros topic il
+         * remplit le plafond de lignes et la dernière est un compte *partiel* publié comme un
+         * total. Sur un petit, il ne l'atteint jamais, bloque, et la métrique paie son budget de
+         * temps entier à chaque rafraîchissement avant de retomber — mesuré à 30 s sur un topic de
+         * huit enregistrements.
+         *
+         * La forme décide, pas le mode : une lecture d'une seule table est ce que le lecteur
+         * direct sait honorer (`isSingleTableRead`, la règle que les modèles appliquent déjà), et
+         * elle rend le nombre que cette métrique publiait avant. Tout le reste — une jointure, une
+         * sous-requête — a réellement besoin du planner, et c'est un progrès qu'il y aille : le
+         * lecteur direct y lisait une table et ignorait le reste en silence.
+         */
+        boolean directRead = isSingleTableRead(config.sql());
         QueryResult result = executeMetricQuery(
             config.sql(),
             DEFAULT_TEMPLATE_MAX_ROWS,
             DEFAULT_TEMPLATE_TIMEOUT_MS,
             DEFAULT_TEMPLATE_READ_MODE,
-            // Never the direct reader: raw SQL is the operator's own, and may need the planner.
-            false
+            directRead
         );
         if (result.error() != null) return MetricComputationResult.error(result.error());
         if (result.rows().isEmpty()) {
             return MetricComputationResult.error("No rows returned — check table name and Kafka connectivity");
         }
+        // Le même refus que pour un écart entre deux requêtes, et pour la même raison : publier la
+        // dernière ligne d'un changelog tronqué, c'est publier un compte partiel sous les traits
+        // d'un total, sur la valeur même qui déclenche une alerte.
+        if (isTruncatedChangelog(result, DEFAULT_TEMPLATE_MAX_ROWS)) {
+            return MetricComputationResult.error("The query filled its row budget ("
+                + DEFAULT_TEMPLATE_MAX_ROWS + " rows), so the value it returned is a partial "
+                + "aggregate taken mid-changelog rather than a total. Add a LIMIT, or write a "
+                + "query the direct reader can answer (a single table, no join and no subquery).");
+        }
 
-        Double displayValue = extractPrimaryMetricValue(result.rows());
+        /*
+         * Sur un changelog, la valeur est la *dernière* ligne.
+         *
+         * `extractPrimaryMetricValue` rend la première valeur numérique rencontrée, ce qui est
+         * l'agrégat sur le lecteur direct — une ligne — et `+I(1)` sur un changelog rétractable du
+         * planner. C'est exactement le défaut que le chemin des écarts entre deux requêtes a dû
+         * corriger, resté debout ici et devenu atteignable le jour où le planner s'est mis à
+         * répondre. Le changement est borné au moteur qui produit des changelogs : ce que publie
+         * une métrique servie par le lecteur direct ne bouge pas.
+         */
+        Double displayValue = "FLINK".equals(result.engine())
+            ? lastNumericMetricValue(result.rows())
+            : extractPrimaryMetricValue(result.rows());
         return new MetricComputationResult(
             result.rows(),
             displayValue,
@@ -1616,12 +1657,27 @@ public class MetricService {
      * why a result that filled the row budget is refused instead: the last row of a truncated
      * changelog is a partial count that looks exactly like a total.
      */
+    /**
+     * La lecture s'est-elle arrêtée <em>au milieu</em> d'un changelog ?
+     *
+     * <p>Un {@code COUNT(*)} en streaming rend un changelog rétractable : la dernière ligne n'est
+     * l'agrégat final que si le changelog est <em>complet</em>. Arrêtée sur le plafond de lignes,
+     * sa dernière ligne est un compte partiel qui ressemble exactement à un total.
+     *
+     * <p>Une seule définition, parce que deux endroits la lisent — l'écart entre deux requêtes et
+     * le SQL libre — et que deux copies de « FLINK et lignes >= plafond » finissent par diverger.
+     * Le lecteur direct est hors sujet : il rend une ligne pour un agrégat, jamais un changelog.
+     */
+    private static boolean isTruncatedChangelog(QueryResult result, int maxRows) {
+        return "FLINK".equals(result.engine()) && result.rows().size() >= maxRows;
+    }
+
     private SideRead aggregateValue(QueryResult result, int maxRows, String side) {
         if (result.rows().isEmpty()) {
             return SideRead.failed("The " + side + " query returned no row — the topic may hold "
                 + "nothing, or its table may not resolve on this cluster.");
         }
-        if ("FLINK".equals(result.engine()) && result.rows().size() >= maxRows) {
+        if (isTruncatedChangelog(result, maxRows)) {
             return SideRead.failed("The " + side + " query filled its row budget (" + maxRows
                 + " rows), so the aggregate it returned is a partial count taken mid-changelog "
                 + "rather than a total. Raise maxRowsPerSide, or write a query the direct reader "

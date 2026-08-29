@@ -394,6 +394,89 @@ class MetricServiceTest {
             "gauge series must not reappear after switching to COUNTER");
     }
 
+    /**
+     * Un SQL libre d'une seule table va au lecteur direct, qui rend un agrégat en une ligne.
+     *
+     * <p>Ce chemin demandait le planner sans condition — écrit quand le planner ne répondait à
+     * rien, donc chaque métrique retombait de toute façon sur ce lecteur. Le moteur réparé, un
+     * {@code COUNT(*)} en streaming devient un changelog sans fin : il remplit le plafond de
+     * lignes sur un gros topic, et sur un petit il bloque jusqu'au budget de temps, à chaque
+     * rafraîchissement.
+     */
+    @Test
+    void aSingleTableRawSqlMetricAsksTheReaderThatAnswersInOneRow() {
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(new QueryResult(
+            List.of("metric_value"), List.of(Map.of("metric_value", 42.0)), 5L, null, false, "KAFKA_DIRECT"));
+
+        service.save(new MetricConfig(
+            null, "raw-count", "GAUGE", "SELECT COUNT(*) AS metric_value FROM demo_orders_in", null,
+            null, null, null, null, null, List.of(), Map.of(), null, null, null, null, null, List.of()));
+        service.refreshMetrics();
+
+        ArgumentCaptor<QueryRequest> sent = ArgumentCaptor.forClass(QueryRequest.class);
+        Mockito.verify(flinkSqlService, Mockito.atLeastOnce()).executeSql(sent.capture());
+        assertTrue(sent.getAllValues().stream().anyMatch(QueryRequest::wantsDirectRead),
+            "a single-table aggregate must be asked of the reader that answers it in one row");
+    }
+
+    /**
+     * Et un changelog tronqué est refusé, jamais publié.
+     *
+     * <p>La dernière ligne n'est l'agrégat final que si le changelog est complet. Arrêtée sur le
+     * plafond, c'est un compte partiel qui ressemble exactement à un total — sur la valeur même
+     * qui déclenche une alerte. C'est le refus que le chemin des écarts entre deux requêtes
+     * appliquait déjà, et que celui-ci n'avait pas.
+     */
+    @Test
+    void aRawSqlMetricRefusesAPartialCountTakenMidChangelog() {
+        List<Map<String, Object>> changelog = new java.util.ArrayList<>();
+        for (int i = 1; i <= 10_000; i++) changelog.add(Map.of("metric_value", (double) i));
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(new QueryResult(
+            List.of("metric_value"), changelog, 5L, null, false, "FLINK"));
+
+        // Une jointure : la forme qui a réellement besoin du planner, donc celle où un changelog
+        // tronqué peut arriver.
+        service.save(new MetricConfig(
+            null, "raw-join", "GAUGE",
+            "SELECT COUNT(*) AS metric_value FROM a JOIN b ON a.id = b.id", null,
+            null, null, null, null, null, List.of(), Map.of(), null, null, null, null, null, List.of()));
+        service.refreshMetrics();
+
+        MetricConfig stored = service.getAllMetrics().stream()
+            .filter(m -> "raw-join".equals(m.name())).findFirst().orElseThrow();
+        assertNull(stored.lastValue(),
+            "a partial count must not be published as a value, got: " + stored.lastValue());
+        assertNotNull(stored.errorMessage());
+        assertTrue(stored.errorMessage().contains("row budget"), stored.errorMessage());
+    }
+
+    /**
+     * Et sur un changelog complet, la valeur publiée est la dernière ligne, pas la première.
+     *
+     * <p>{@code extractPrimaryMetricValue} rend la première valeur numérique — l'agrégat sur le
+     * lecteur direct, {@code +I(1)} sur un changelog rétractable. Le défaut que le chemin des
+     * écarts a corrigé, resté debout ici.
+     */
+    @Test
+    void aRawSqlMetricOnThePlannerPublishesTheFinalAggregate() {
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(new QueryResult(
+            List.of("metric_value"),
+            List.of(Map.of("metric_value", 1.0), Map.of("metric_value", 1.0),
+                    Map.of("metric_value", 2.0), Map.of("metric_value", 7.0)),
+            5L, null, false, "FLINK"));
+
+        service.save(new MetricConfig(
+            null, "raw-changelog", "GAUGE",
+            "SELECT COUNT(*) AS metric_value FROM a JOIN b ON a.id = b.id", null,
+            null, null, null, null, null, List.of(), Map.of(), null, null, null, null, null, List.of()));
+        service.refreshMetrics();
+
+        MetricConfig stored = service.getAllMetrics().stream()
+            .filter(m -> "raw-changelog".equals(m.name())).findFirst().orElseThrow();
+        assertEquals(7.0, stored.lastValue(),
+            "the last row of a complete changelog is the aggregate; the first is +I(1)");
+    }
+
     @Test
     void histogramDoesNotRecordTheSameBacklogEveryRefresh() {
         // The bounded earliest-offset scan re-reads the full backlog every cycle: same 3 rows.
