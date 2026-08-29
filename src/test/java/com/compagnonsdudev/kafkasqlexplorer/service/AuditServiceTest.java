@@ -611,10 +611,19 @@ class AuditServiceTest {
 
     @Test
     void aRunThatOutlivesItsTimeBudgetStopsAndSaysSo() throws Exception {
-        // Budget of 1 ms: the deadline is already past by the time the first topic is picked up,
-        // so every topic is skipped and the run reports why rather than grinding on.
+        // Budget of 1 ms, and a first call that takes longer than that. The budget alone used to
+        // be the whole fixture, on the reasoning that "the deadline is already past by the time
+        // the first topic is picked up" — which is an assumption about how long a mocked audit
+        // takes, not something 1 ms guarantees. Every mock here answers instantly, so the run
+        // really can finish inside the budget, and it began doing so on CI as soon as the audit
+        // got faster: the same run now reads each topic once instead of twice. Racing the clock
+        // is not a way to test a deadline. The sleep sits on the first call made *after* the
+        // deadline is computed, so the run outlives its budget by construction.
         explorerConfig.setAuditMaxDurationMs(1);
-        when(kafkaAdminService.listTopics()).thenReturn(List.of("a.one", "a.two", "a.three"));
+        when(kafkaAdminService.listTopics()).thenAnswer(invocation -> {
+            Thread.sleep(50);
+            return List.of("a.one", "a.two", "a.three");
+        });
         when(kafkaAdminService.getTopicsSize(any()))
                 .thenReturn(Map.of("a.one", 1L, "a.two", 1L, "a.three", 1L));
 

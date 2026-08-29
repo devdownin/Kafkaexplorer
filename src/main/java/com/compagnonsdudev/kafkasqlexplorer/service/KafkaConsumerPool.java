@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.compagnonsdudev.kafkasqlexplorer.service;
 
+import org.apache.kafka.clients.consumer.CloseOptions;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.slf4j.Logger;
@@ -57,8 +58,15 @@ final class KafkaConsumerPool implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(KafkaConsumerPool.class);
 
-    /** Bounded so a pooled client that will not close cannot hold shutdown open. */
-    private static final Duration CLOSE_TIMEOUT = Duration.ofSeconds(5);
+    /**
+     * Bounded so a pooled client that will not close cannot hold shutdown open.
+     *
+     * <p>Through {@code CloseOptions} rather than {@code close(Duration)}: that overload is
+     * deprecated in the 4.x client, and the tree already carries several
+     * {@code java/deprecated-call} findings for it. There is no reason to add one more on a file
+     * being written today.
+     */
+    private static final CloseOptions CLOSE_OPTIONS = CloseOptions.timeout(Duration.ofSeconds(5));
 
     /** Seam for tests: a pool with no broker to build against. */
     interface ConsumerFactory {
@@ -128,7 +136,7 @@ final class KafkaConsumerPool implements AutoCloseable {
 
     private static void closeQuietly(Consumer<byte[], byte[]> consumer) {
         try {
-            consumer.close(CLOSE_TIMEOUT);
+            consumer.close(CLOSE_OPTIONS);
         } catch (Exception e) {
             log.debug("A pooled consumer did not close cleanly: {}", e.toString());
         }
