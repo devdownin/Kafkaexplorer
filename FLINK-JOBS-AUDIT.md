@@ -23,8 +23,15 @@ derived from the code, names where it comes from, and is ranked.
 
 > **What this audit is derived from.** The code and the shipped configuration, plus the test
 > harness: `packages.confluent.io` is blocked from this sandbox, so the suite runs through
-> `./verify-offline.sh` rather than `mvn verify`. Every defect claimed below as a defect was
-> checked to fail against the revision it describes — except where the section says otherwise.
+> `./verify-offline.sh` rather than `mvn verify`. **Every defect below was checked to fail against
+> the behaviour it describes**: the eight fixes were reverted in one pass and the suite re-run, and
+> exactly the nine cases that name them went red while the other twelve stayed green. The two that
+> did not move are the ones that never claimed to — `anObservationThatChangedSomethingIsWritten`
+> (the positive control for F6) and `aFileThatWillNotParseCostsItsContentAndNothingElse`, which
+> pins behaviour the old `load()` also had and is a regression guard rather than a defect proof.
+>
+> **What is *not* measured here is cost.** Every figure below about what a poll or a write costs is
+> arithmetic on the configured cadences, not an observation — see the last item of the worklist.
 
 The single sentence, if there is only room for one: **three different states of the world were all
 being written down as "the job is over"** — the job ended, the runtime no longer holds it, and we

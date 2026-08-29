@@ -88,7 +88,7 @@ NOT_A_PATH = {
     # gitignored — so they are real paths on a running deployment and never in a checkout.
     # The Docker Hub page documents them because an operator has to know what the volume
     # holds; resolving them against the repository would require running the app first.
-    'data/settings.json', 'data/flink-tables.json', 'flink-jobs.json',
+    'data/settings.json', 'data/flink-tables.json', 'data/flink-jobs.json', 'flink-jobs.json',
     # An OpenRouter model identifier, which that gateway writes `vendor/model`. Le seul jeton
     # de cette forme que la prose nomme hors d'un bloc clôturé.
     'openai/gpt-4o-mini',
