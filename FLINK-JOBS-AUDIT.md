@@ -301,6 +301,60 @@ are the service-level halves of F1, F2 and F3.
    `activeJobs` beside `getActiveJobs()`, which answers from the store on a different definition of
    active. It is `heldJobs` / `getHeldJobs()` now, with the two populations and their two lifetimes
    written down where the field is declared.
-3. **Measure a poll.** Everything above about cost is arithmetic on the configured cadences, not an
-   observation. What one `getActiveJobs()` costs with a handful of live jobs is one number nobody
-   has taken, and it is what says whether F13 stays an observation.
+3. ~~**Measure a poll.**~~ **Done — see below.** It closes F13 and it is what turns F4 and F6 from
+   arguments into arithmetic.
+
+---
+
+## The measurement, taken
+
+Everything above about cost was arithmetic on the configured cadences. These are numbers.
+
+**Method.** A throwaway JUnit harness under `./verify-offline.sh`, since that is the only way to
+build here: a real `FlinkJobStore` on a temporary file, a `FlinkSqlService` around it with the rest
+mocked, and `heldJobs` populated with N `JobInfo`s whose `JobClient` answers `RUNNING` from an
+already-completed future. Median of 100–200 iterations after 20 warm-up calls. The harness is not
+committed — a benchmark CI never runs is the same dead weight as an endpoint nobody calls — so what
+is kept is the numbers and what produced them.
+
+**What it does not measure**, and the omission matters in one direction only: the status call
+answers instantly, where the real one is bounded at 150 ms; the store file is on this sandbox's
+temporary filesystem, not a named volume; and the JVM is warm. So these are floors on a real
+deployment, and the first of them is the reason the poll is fanned out at all.
+
+### One `getActiveJobs()` poll
+
+| held jobs | nothing changed | something changed |
+|---|---|---|
+| 1 | 161 µs | 195 µs |
+| 5 | 128 µs | 242 µs |
+| 20 | 258 µs | 372 µs |
+| 50 | 420 µs | 601 µs |
+
+**F13 is closed by this, as an observation rather than as work.** The fan-out costs about **8 µs per
+job** in submit-and-join overhead, against the up-to-150 ms of *serialised* waiting it exists to
+avoid on a runtime that is slow to answer. At fifty live jobs — far more than this application
+produces now that a synchronous read hands its job back — the whole bookkeeping half of a poll is
+under half a millisecond. There is nothing here to fix.
+
+### What one record's write costs, against how many the store holds
+
+| records retained | file | one write |
+|---|---|---|
+| 10 | 15 kB | 111 µs |
+| 200 (`MAX_RETAINED_JOBS`) | 116 kB | 436 µs |
+| 2 000 | 1.07 MB | 3.5 ms |
+| 10 000 | 5.31 MB | 17.3 ms |
+
+**This is F4 and F6 in one table**, and it is the measurement that was missing when both were argued
+from first principles. Every write serialises the whole list, so the cost is linear in what the
+store has accumulated — and what accumulates is not the handful of submitted jobs the file was
+written for but every statement the planner runs as a job. Four planner-answered metrics on the
+default 30 s loop reach ~11 500 records inside the 24 h retention window: a 5 MB file, **17 ms per
+write**, and — before F6 — one write per live job on every five-second dashboard poll, to record
+that a running job was still running.
+
+The count bound puts the ceiling at the second row, where a write is under half a millisecond; F6
+removes the write entirely in the case that was producing almost all of them. Neither number is
+alarming on its own, which is precisely why an unbounded store went unnoticed: the file has to grow
+for a day before the cost is visible, and then it is visible every five seconds.
