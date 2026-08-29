@@ -11,7 +11,7 @@
 
 import React from 'react';
 import { cn } from '../ui';
-import { detailValue } from '../../pages/queryWorkbench';
+import { detailValue } from '../../pages/queryWorkbenchLogic';
 
 /**
  * Détail d'une ligne de résultat.

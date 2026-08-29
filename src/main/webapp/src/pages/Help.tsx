@@ -12,7 +12,7 @@ import {
   LESSONS, ENGINE_MATRIX, ERROR_GUIDE, EDITOR_TIPS, WINDOW_ANATOMY, WINDOW_KINDS,
   FORMATS, SHORTCUTS, topicToTable, editorLink, filterLessons, numberSections,
   type Lesson,
-} from './help';
+} from './helpContent';
 
 /**
  * Page d'aide.

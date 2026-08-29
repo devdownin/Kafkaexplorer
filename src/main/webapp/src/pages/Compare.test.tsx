@@ -8,7 +8,7 @@ import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import axios from 'axios';
 import Compare from './Compare';
 import { ToastProvider } from '../components/Toast';
-import type { TopicMessage } from './compare';
+import type { TopicMessage } from './compareMessages';
 
 /*
  * The regression this file exists for: `GET /api/topic/{name}` returns `TopicMessage` objects, and

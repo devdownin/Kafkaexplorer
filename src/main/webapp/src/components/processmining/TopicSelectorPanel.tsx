@@ -6,7 +6,7 @@ import axios from 'axios';
 import { Checkbox, Combobox, Field, Input, NumberInput, Select } from '../ui';
 import { useToast } from '../Toast';
 import { addTopicEntries, describeTopicEntry } from '../../topicSelection';
-import { filterTopics } from '../../pages/dataModel';
+import { filterTopics } from '../../pages/dataModelGraph';
 
 export interface SnapshotConfig {
   mode: 'EARLIEST' | 'LATEST_N' | 'TIMESTAMP';

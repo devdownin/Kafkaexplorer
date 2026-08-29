@@ -6,7 +6,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import Help from './Help';
-import { LESSONS } from './help';
+import { LESSONS } from './helpContent';
 
 /*
  * The wiring, not the content.

@@ -60,3 +60,33 @@ if (!window.matchMedia) {
     dispatchEvent: () => false,
   });
 }
+
+// La locale par défaut du poste ne décide pas du verdict d'un test.
+//
+// Une dizaine d'assertions comparent des nombres passés par `toLocaleString()` sans argument.
+// Node prend alors la locale du système : sur une machine française, « 1 200 » avec une espace
+// fine insécable (U+202F) là où le test attend « 1,200 ». La suite passait donc en CI (Linux,
+// locale C) et échouait chez qui développe, ce qui est la seule chose qu'un test ne doit jamais
+// faire — on ne peut plus distinguer « j'ai cassé quelque chose » de « je ne suis pas sur le bon
+// système ». `LANG` / `LC_ALL` ne suffisent pas : ICU fixe la locale par défaut au démarrage du
+// processus, avant que la configuration de Vitest ne s'applique (mesuré, pas supposé).
+//
+// Seuls les appels *sans* locale explicite sont réécrits : un test qui en nomme une la garde.
+// Ce que ce bouchon ne corrige pas est délibéré : en production, une interface entièrement en
+// anglais formate ses nombres dans la locale du navigateur. C'est une question de produit, et
+// elle est nommée dans la PR plutôt que réglée ici par un effet de bord de la suite de tests.
+const DISPLAY_LOCALE = 'en-US';
+for (const proto of [Number.prototype, Date.prototype] as const) {
+  for (const method of ['toLocaleString', 'toLocaleDateString', 'toLocaleTimeString'] as const) {
+    const original = (proto as Record<string, unknown>)[method];
+    if (typeof original !== 'function') continue;
+    (proto as Record<string, unknown>)[method] = function localeFixed(
+      this: unknown,
+      locales?: Intl.LocalesArgument,
+      options?: unknown,
+    ) {
+      return (original as (...args: unknown[]) => string).call(
+        this, locales ?? DISPLAY_LOCALE, options);
+    };
+  }
+}

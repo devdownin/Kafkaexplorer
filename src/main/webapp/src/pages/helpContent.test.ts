@@ -5,7 +5,7 @@ import { describe, it, expect } from 'vitest';
 import {
   LESSONS, LESSON_GROUPS, ENGINE_MATRIX, ERROR_GUIDE, EDITOR_TIPS, WINDOW_KINDS, FORMATS,
   topicToTable, editorLink, filterLessons, groupLessons, numberSections,
-} from './help';
+} from './helpContent';
 
 describe('topicToTable', () => {
   it('replaces dots and dashes with underscores, like the backend does', () => {
