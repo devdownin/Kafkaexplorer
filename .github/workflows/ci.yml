@@ -1017,9 +1017,10 @@ jobs:
       #                     which TypeScript believes without checking: when an endpoint started
       #                     returning records instead of strings nothing failed to compile and the
       #                     Compare page died at runtime, months later.
-      #   check-doc-paths   every repository path CLAUDE.md and CONTRIBUTING.md name in PROSE
-      #                     rather than in a link — check-links.py never saw those, and three
-      #                     pointed at documents and a directory deleted months earlier.
+      #   check-doc-paths   every repository path the maintainer docs name in PROSE rather than
+      #                     in a link — check-links.py never saw those, and three pointed at
+      #                     documents and a directory deleted months earlier. docs/notes/ is
+      #                     globbed, so a note added without being checked is not a hole.
       #   check-image-pins  the images the stacks pull: nothing floating, the llama.cpp CPU and
       #                     CUDA tags naming the same build, and no pin ahead of the newest
       #                     release. Its --published half asks the registry and runs in
