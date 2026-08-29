@@ -7,6 +7,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.junit.jupiter.api.BeforeEach;
+import com.compagnonsdudev.kafkasqlexplorer.ExplorerContextTest;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -41,7 +42,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * <p>The property matches {@code HealthProbesTest}'s so the two share one cached context rather
  * than booting twice; the address is deliberately unreachable, since none of this needs a broker.
  */
-@SpringBootTest
+@ExplorerContextTest
 class SpaRoutingTest {
 
     @DynamicPropertySource
