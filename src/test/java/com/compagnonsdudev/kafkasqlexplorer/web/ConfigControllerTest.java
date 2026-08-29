@@ -69,7 +69,7 @@ class ConfigControllerTest {
         auditService = Mockito.mock(AuditService.class);
         flinkSqlService = Mockito.mock(FlinkSqlService.class);
         sseEmitterManager = Mockito.mock(SseEmitterManager.class);
-        when(flinkSqlService.getActiveJobsDetails()).thenReturn(Map.of());
+        when(flinkSqlService.getHeldJobs()).thenReturn(Map.of());
         when(sseEmitterManager.activeSessions()).thenReturn(0);
         // The default this fixture used to get for free from a boolean `ping()`. Every answer of
         // this controller carries reachability, so the mock has to have one — an unstubbed
@@ -744,7 +744,7 @@ class ConfigControllerTest {
     /** Live Process Mining sessions and Flink jobs count as work in flight too. */
     @Test
     void flinkJobsAndLiveSessionsAlsoRefuseTheChange() throws Exception {
-        when(flinkSqlService.getActiveJobsDetails())
+        when(flinkSqlService.getHeldJobs())
             .thenReturn(Map.of("j1", Mockito.mock(FlinkSqlService.JobInfo.class)));
         when(sseEmitterManager.activeSessions()).thenReturn(2);
 

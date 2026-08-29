@@ -53,7 +53,7 @@ class LineageServiceTest {
         when(tableDdlIt.next()).thenReturn(Row.of("CREATE TABLE table1 (...) WITH ('topic' = 'topic1')"));
         when(tableEnv.executeSql("SHOW CREATE TABLE table1")).thenReturn(tableDdlResult);
 
-        when(flinkSqlService.getActiveJobsDetails()).thenReturn(Collections.emptyMap());
+        when(flinkSqlService.getHeldJobs()).thenReturn(Collections.emptyMap());
 
         Map<String, Object> lineage = lineageService.getLineage();
 
@@ -86,7 +86,7 @@ class LineageServiceTest {
         when(viewDdlIt.next()).thenReturn(Row.of("CREATE VIEW view1 AS SELECT * FROM table1"));
         when(tableEnv.executeSql("SHOW CREATE VIEW view1")).thenReturn(viewDdlResult);
 
-        when(flinkSqlService.getActiveJobsDetails()).thenReturn(Collections.emptyMap());
+        when(flinkSqlService.getHeldJobs()).thenReturn(Collections.emptyMap());
 
         Map<String, Object> lineage = lineageService.getLineage();
 
@@ -110,7 +110,7 @@ class LineageServiceTest {
     }
 
     private void noActiveJobs() {
-        when(flinkSqlService.getActiveJobsDetails()).thenReturn(Collections.emptyMap());
+        when(flinkSqlService.getHeldJobs()).thenReturn(Collections.emptyMap());
     }
 
     private void activeInsertJob(String queryId, String sql) {
@@ -118,7 +118,7 @@ class LineageServiceTest {
         when(client.getJobID()).thenReturn(new JobID());
         FlinkSqlService.JobInfo info =
             new FlinkSqlService.JobInfo(queryId, sql, "INSERT", "streaming", client, 0L);
-        when(flinkSqlService.getActiveJobsDetails()).thenReturn(Map.of(queryId, info));
+        when(flinkSqlService.getHeldJobs()).thenReturn(Map.of(queryId, info));
     }
 
     @SuppressWarnings("unchecked")

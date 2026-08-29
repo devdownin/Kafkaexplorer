@@ -110,7 +110,7 @@ public class MetricSuggestionService {
      * every load of the Metrics page — so it is bounded like every other family here rather than
      * scaling with whatever the cluster happens to be running. The cut is by start time, newest
      * first: a job started recently is the one an operator is most likely to be watching, and the
-     * map {@code getActiveJobsDetails} hands back has no order of its own, so without a sort the
+     * map {@code getHeldJobs} hands back has no order of its own, so without a sort the
      * jobs that got read would vary between two calls.
      */
     private static final int MAX_LINEAGE_JOBS = 12;
@@ -1101,7 +1101,7 @@ public class MetricSuggestionService {
     private List<MetricSuggestion> fromLineage(List<String> notes) {
         Map<String, FlinkSqlService.JobInfo> jobs;
         try {
-            jobs = flinkSqlService.getActiveJobsDetails();
+            jobs = flinkSqlService.getHeldJobs();
         } catch (Exception e) {
             log.debug("Active jobs could not be read while suggesting metrics: {}", e.toString());
             return List.of();

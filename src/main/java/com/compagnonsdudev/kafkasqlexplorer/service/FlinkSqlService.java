@@ -66,10 +66,36 @@ public class FlinkSqlService {
     });
 
     /**
-     * Stores metadata about currently running Flink jobs.
-     * This is crucial for lineage tracking and manual job cancellation.
+     * The jobs this process currently holds a live {@link JobClient} for.
+     *
+     * <p>It was called {@code activeJobs}, and that name collided with a different notion of
+     * "active" one method away: {@link #getActiveJobs()} answers from the <em>store</em>, filtered
+     * on {@link FlinkJobStore#isTerminal}, while this map is what the runtime is holding right now.
+     * Two meanings under one word, on the two methods a caller has to choose between.
+     *
+     * <p><b>Two populations, two lifetimes, and knowing which is which is the point.</b> A job
+     * submitted in Flink Job mode stays here for as long as it runs, which may be days — that is
+     * what {@code POST /api/config}'s 409 guard, the lineage graph and the KPI suggestions are
+     * asking about. A synchronous read is here only for the duration of its HTTP request, because
+     * {@code POST /api/query/cancel/{queryId}} has to find it while the query runs; it is handed
+     * back by {@link #releaseSyncJob} on the way out, and before that fix it was not, which is how
+     * this map came to accumulate a {@code JobClient} per planner-answered metric refresh.
+     *
+     * <p>So: a job leaves here when it ends, when its read returns, or when the status sweep finds
+     * it terminal. Nothing else should be put in it — an entry that no path removes is a leak with
+     * a Flink job attached, and this map has already been that once.
      */
-    private final Map<String, JobInfo> activeJobs = new ConcurrentHashMap<>();
+    private final Map<String, JobInfo> heldJobs = new ConcurrentHashMap<>();
+
+    /**
+     * The status of a job whose status could not be read.
+     *
+     * <p>Deliberately not {@code UNKNOWN}: {@link FlinkJobStore#isTerminal} counts that one as the
+     * job being over — it is what a record recovered from the file carries, and what a job whose
+     * MiniCluster has been shut down under it carries. A status poll that timed out is neither.
+     * Reusing UNKNOWN for it meant a single slow answer ended a running job on paper.
+     */
+    static final String STATUS_UNAVAILABLE = "UNAVAILABLE";
 
     /**
      * Circuit breaker for the Flink SELECT path. If the planner keeps failing (e.g. the
@@ -465,7 +491,7 @@ public class FlinkSqlService {
             // "MiniCluster is not yet running or has already been shut down". That is an answer
             // about the *job*: it is over. Read as a mere unreadable status — which is what this
             // catch did, all exceptions together — the job kept `endedAt == null` and therefore
-            // never left `activeJobs`, so `getActiveJobsDetails()` went on reporting a finished
+            // never left `heldJobs`, so `getHeldJobs()` went on reporting a finished
             // query as running: `POST /api/config` refused a cluster repoint with 409, the lineage
             // graph drew a node for it, and the KPI suggestions derived an edge from it, for the
             // rest of the process. What we do *not* know is how it ended, so the status stays
@@ -477,7 +503,16 @@ public class FlinkSqlService {
             log.debug("[FlinkSQL] queryId={} is no longer held by the Flink runtime: {}",
                 info.queryId(), gone.getMessage());
         } catch (Exception e) {
-            status = info.cancelRequested() ? "CANCEL_REQUESTED" : "UNKNOWN";
+            // Anything else — a status call that ran out of its 150 ms, an interrupt — says
+            // nothing about the job. It used to be reported as UNKNOWN, which the job store
+            // counts as *terminal*: one slow answer stamped an `endedAt` on a job that was still
+            // running, dropped it out of `getActiveJobs()` (the dashboard's list) and put it on
+            // the retention clock, so a long INSERT could be pruned out of the store while it ran.
+            // STATUS_UNAVAILABLE is the same distinction the branch above draws from the other
+            // side: "the runtime no longer holds this job" is an answer, "we could not ask" is not.
+            status = info.cancelRequested() ? "CANCEL_REQUESTED" : STATUS_UNAVAILABLE;
+            log.debug("[FlinkSQL] queryId={} status could not be read: {}",
+                info.queryId(), SqlErrorClassifier.explain(e));
         }
 
         if (info.cancelRequested() && "RUNNING".equals(status)) {
@@ -526,7 +561,7 @@ public class FlinkSqlService {
         // buildJobSummary blocks up to 150ms on the Flink status call per job, so a serial sweep of
         // N jobs would block up to N×150ms. Poll the statuses in parallel; keep persistence serial
         // (single writer to the job store) and remove jobs that have reached a terminal state.
-        List<Map.Entry<String, JobInfo>> entries = new ArrayList<>(activeJobs.entrySet());
+        List<Map.Entry<String, JobInfo>> entries = new ArrayList<>(heldJobs.entrySet());
         if (entries.isEmpty()) return;
 
         Map<String, FlinkJobSummary> summaries = entries.stream()
@@ -542,7 +577,7 @@ public class FlinkSqlService {
             String statusDetail = summary.cancelRequested() ? "Cancellation requested by user" : null;
             persistJobSnapshot(info, summary, statusDetail, null);
             if (summary.endedAt() != null) {
-                activeJobs.remove(e.getKey());
+                heldJobs.remove(e.getKey());
             }
         }
     }
@@ -593,7 +628,7 @@ public class FlinkSqlService {
                 .orElseThrow(() -> new IllegalStateException("Flink did not return a JobClient for the submitted job."));
 
             JobInfo info = new JobInfo(queryId, strippedSql, statementType, "ASYNC_JOB", client, startedAt);
-            activeJobs.put(queryId, info);
+            heldJobs.put(queryId, info);
             FlinkJobSummary summary = buildJobSummary(info);
             flinkJobStore.create(
                 queryId,
@@ -606,7 +641,6 @@ public class FlinkSqlService {
                 startedAt,
                 null
             );
-            persistJobSnapshot(info, summary, "Submitted via Flink Job mode", null);
             return summary;
         } catch (RuntimeException e) {
             flinkJobStore.create(
@@ -982,6 +1016,14 @@ public class FlinkSqlService {
     private QueryResult executeViaFlinkPlanner(String queryId, String finalSql, String statementType,
                                                int limit, long timeout, long startTime) {
         TableResult result = null;
+        // The job this call registers, so the finally below can hand it back. It has to be
+        // released here: a synchronous read is over when this method returns, and nothing else
+        // knows that. Left in `heldJobs`, it stayed there until some *other* caller happened to
+        // run the status sweep — which on a headless deployment is nobody, while the metric
+        // refresh loop keeps adding one every thirty seconds, each holding a JobClient. An open
+        // browser hid it, the dashboard poll being the only sweeper there is.
+        final java.util.concurrent.atomic.AtomicReference<JobInfo> registered =
+            new java.util.concurrent.atomic.AtomicReference<>();
         try {
             // Le budget d'attente vaut celui de la requête, avec un plancher : sur un runtime
             // libre, entrer coûte quelques millisecondes ; sur un runtime occupé, l'appelant doit
@@ -991,8 +1033,12 @@ public class FlinkSqlService {
                 "execute-sql-" + statementType.toLowerCase(Locale.ROOT), statementType, finalSql, enterBudgetMs);
             result.getJobClient().ifPresent(client -> {
                 JobInfo info = new JobInfo(queryId, finalSql, statementType, "SYNC_READ", client, System.currentTimeMillis());
-                activeJobs.put(queryId, info);
+                heldJobs.put(queryId, info);
+                registered.set(info);
                 FlinkJobSummary summary = buildJobSummary(info);
+                // create() writes the record; the update that used to follow it repeated the same
+                // status and the same detail, so it bought a second full rewrite of the store file
+                // and nothing else.
                 flinkJobStore.create(
                     queryId,
                     info.flinkJobId(),
@@ -1004,7 +1050,6 @@ public class FlinkSqlService {
                     info.startedAt(),
                     null
                 );
-                persistJobSnapshot(info, summary, "Executed through synchronous exploration mode", null);
             });
 
             final TableResult tableResult = result;
@@ -1097,6 +1142,33 @@ public class FlinkSqlService {
             // crash as a successful run of zero rows.
             return new QueryResult(Collections.emptyList(), Collections.emptyList(), duration,
                 SqlErrorClassifier.explain(e));
+        } finally {
+            releaseSyncJob(registered.get());
+        }
+    }
+
+    /**
+     * Hands back the job a synchronous read registered, once that read has returned.
+     *
+     * <p>The cancel endpoint needs the entry <em>while</em> the query runs — that is the whole
+     * point of {@code POST /api/query/cancel/{queryId}} — and nothing needs it afterwards: the
+     * fetcher closes the iterator, which takes the Flink job with it. Whatever the runtime still
+     * says about it is recorded rather than invented, so a job whose MiniCluster is already gone
+     * is filed as UNKNOWN exactly as the status sweep would have filed it.
+     */
+    private void releaseSyncJob(JobInfo info) {
+        if (info == null) return;
+        if (info.endedAt() == null) {
+            info.markEnded(System.currentTimeMillis());
+        }
+        heldJobs.remove(info.queryId());
+        try {
+            persistJobSnapshot(info, buildJobSummary(info), "Synchronous read finished", null);
+        } catch (RuntimeException e) {
+            // Bookkeeping must never replace the answer the caller is holding — this runs from a
+            // finally, including the one on the failure path.
+            log.debug("[FlinkSQL] queryId={} could not be filed after its read: {}",
+                info.queryId(), SqlErrorClassifier.explain(e));
         }
     }
 
@@ -1849,7 +1921,7 @@ public class FlinkSqlService {
     }
 
     public CancelOutcome cancelQuery(String queryId) {
-        JobInfo info = activeJobs.get(queryId);
+        JobInfo info = heldJobs.get(queryId);
         if (info != null) {
             info.markCancelRequested();
             persistJobSnapshot(info, buildJobSummary(info), "Cancellation requested by user", null);
@@ -1861,15 +1933,26 @@ public class FlinkSqlService {
             // unguarded `cancel()` that used to sit here answered the Stop button with a 500
             // instead, on the most ordinary race there is: pressing Stop as the query completes.
             info.markEnded(System.currentTimeMillis());
-            activeJobs.remove(queryId);
+            heldJobs.remove(queryId);
             persistJobSnapshot(info, buildJobSummary(info),
                 "Cancellation requested, but the Flink job had already finished", null);
             return CancelOutcome.NO_ACTIVE_JOB;
         }
+        // A job that already ended keeps the status it ended with. Writing UNKNOWN here — which is
+        // what this did — erased how the job finished, in the store and in the history the details
+        // endpoint serves, on the most ordinary gesture there is: pressing Kill on a dashboard card
+        // whose job completed between two five-second polls. The attempt is still recorded, as a
+        // history entry under the status that was actually observed; only the verdict is left
+        // alone. `null` status means "keep what is there" to the store.
+        boolean alreadyEnded = flinkJobStore.findById(queryId)
+            .map(job -> FlinkJobStore.isTerminal(job.status()))
+            .orElse(false);
         flinkJobStore.update(
             queryId,
-            "UNKNOWN",
-            "Cancellation requested but no live Flink JobClient was available",
+            alreadyEnded ? null : "UNKNOWN",
+            alreadyEnded
+                ? "Cancellation requested after the job had already ended"
+                : "Cancellation requested but no live Flink JobClient was available",
             null,
             true,
             System.currentTimeMillis(),
@@ -1902,9 +1985,17 @@ public class FlinkSqlService {
         return flinkJobStore.findById(queryId);
     }
 
-    public Map<String, JobInfo> getActiveJobsDetails() {
+    /**
+     * The live registry, reconciled — <em>not</em> the store's idea of what is active.
+     *
+     * <p>Named {@code getActiveJobsDetails} while {@link #getActiveJobs()} sat beside it answering
+     * a different question from a different source: this one is the {@code JobClient}s the runtime
+     * holds, that one is the job records the store does not count as terminal. A suffix is not a
+     * distinction, and the three callers here act on the answer.
+     */
+    public Map<String, JobInfo> getHeldJobs() {
         // Reconcile first, exactly as getActiveJobs() does. This method used to skip it, and the
-        // asymmetry was not cosmetic: a finished query stays in `activeJobs` until *something*
+        // asymmetry was not cosmetic: a finished query stays in `heldJobs` until *something*
         // sweeps it, and the three callers here are the ones that act on the answer —
         // `POST /api/config` counts them to refuse a cluster repoint with 409, the lineage graph
         // draws a node per job, and the KPI suggestions derive a pipeline edge from each. A query
@@ -1918,7 +2009,7 @@ public class FlinkSqlService {
         // job is not worth trading correctness for.
         syncPersistedJobs();
         // Defensive snapshot — callers only read; never hand out the live internal map.
-        return Map.copyOf(activeJobs);
+        return Map.copyOf(heldJobs);
     }
 
     @PreDestroy

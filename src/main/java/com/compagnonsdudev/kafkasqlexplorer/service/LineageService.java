@@ -92,7 +92,7 @@ public class LineageService {
         List<String> guessed = new ArrayList<>();
 
         // 1. Active INSERT INTO jobs
-        flinkSqlService.getActiveJobsDetails().forEach((id, info) -> {
+        flinkSqlService.getHeldJobs().forEach((id, info) -> {
             String sql = info.sql();
             if (sql.toUpperCase(Locale.ROOT).contains("INSERT INTO")) {
                 SqlDependencies dependencies = dependenciesOf(sql);

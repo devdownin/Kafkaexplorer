@@ -81,7 +81,7 @@ class MetricSuggestionServiceTest {
             .thenReturn(TopicConsumers.unavailable("unset", "No stub for this topic."));
 
         // No running job by default: the lineage family is evidence-gated like the others.
-        when(flinkSqlService.getActiveJobsDetails()).thenReturn(Map.of());
+        when(flinkSqlService.getHeldJobs()).thenReturn(Map.of());
 
         service = new MetricSuggestionService(auditService, auditHistoryService, metricService,
             flinkSqlService, kafkaAdminService, lineageService, fieldMappingStore, new ExplorerConfig());
@@ -483,7 +483,7 @@ class MetricSuggestionServiceTest {
         when(job.sql()).thenReturn(sql);
         when(job.queryId()).thenReturn(queryId);
         when(job.startedAt()).thenReturn(1_700_000_000_000L);
-        when(flinkSqlService.getActiveJobsDetails()).thenReturn(Map.of(queryId, job));
+        when(flinkSqlService.getHeldJobs()).thenReturn(Map.of(queryId, job));
         when(lineageService.dependenciesOf(sql))
             .thenReturn(new LineageService.SqlDependencies(sources, target, parsed));
     }
@@ -538,7 +538,7 @@ class MetricSuggestionServiceTest {
             when(lineageService.dependenciesOf(sql))
                 .thenReturn(new LineageService.SqlDependencies(java.util.Set.of(source), target, true));
         }
-        when(flinkSqlService.getActiveJobsDetails()).thenReturn(jobs);
+        when(flinkSqlService.getHeldJobs()).thenReturn(jobs);
 
         MetricSuggestions result = service.suggest(null);
 

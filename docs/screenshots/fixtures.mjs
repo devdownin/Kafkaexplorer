@@ -91,6 +91,31 @@ export const dashboard = {
 };
 
 /**
+ * `GET /api/query/jobs/{queryId}` — ce que la carte de job déplie.
+ *
+ * **Dérivée du job du tableau de bord**, jamais réécrite à côté : le résumé et le détail décrivent
+ * le même job, et deux fixtures indépendantes finiraient par le décrire différemment — ce que la
+ * page rendrait sans broncher. L'historique est ce que le magasin écrirait vraiment pour ce
+ * job-là : une création, puis la fin.
+ */
+export const flinkJobDetails = {
+  ...dashboard.jobs[0],
+  executionMode: 'SYNC_READ',
+  statusDetail: 'Executed through synchronous exploration mode',
+  cancelRequestedAt: null,
+  errorMessage: null,
+  lastUpdatedAt: dashboard.jobs[0].endedAt,
+  history: [
+    {
+      timestamp: dashboard.jobs[0].startedAt,
+      status: 'RUNNING',
+      detail: 'Executed through synchronous exploration mode',
+    },
+    { timestamp: dashboard.jobs[0].endedAt, status: 'FINISHED', detail: null },
+  ],
+};
+
+/**
  * `GET /api/dashboard/activity` — la colonne de sparklines du tableau des topics.
  *
  * Dérivée de la requête, comme le vrai endpoint : la page ne demande que les lignes affichées, et
