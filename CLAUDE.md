@@ -1,532 +1,154 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code (claude.ai/code) working in this repository.
 
 ## What This App Does
 
-Kafka SQL Explorer is a Spring Boot + React web application for exploring Kafka clusters and executing Flink SQL queries against Kafka topics. It provides schema inference, message navigation, lineage tracking, stream flow tracing, and cluster auditing.
+Kafka SQL Explorer is a Spring Boot + React web application for exploring Kafka clusters and
+executing Flink SQL queries against Kafka topics. It provides schema inference, message
+navigation, lineage tracking, stream flow tracing, cluster auditing and LLM-assisted process
+mining.
+
+## Deep-dive notes — read the relevant one before changing that area
+
+This file is the map. The rationale lives in `docs/notes/`, because almost every odd-looking
+choice in this codebase is a fix and the paragraph beside it is the defect it closes. Changing
+one of these areas without reading its note is how a correction gets un-corrected.
+
+| Note | Covers |
+|---|---|
+| `docs/notes/backend-services.md` | Every service in `service/`: Flink engine, Kafka admin reads, audit, process mining, LLM clients, metrics, stores |
+| `docs/notes/frontend.md` | The SPA: app shell, design system, form conventions, and the rationale for each page |
+| `docs/notes/docker-and-stacks.md` | Compose stacks and their overlays, both Dockerfiles, GHCR / Docker Hub publishing |
+| `docs/notes/ci-and-checks.md` | Workflows, the `docs/check-*.py` family, testing strategy, governance and supply chain |
+| `docs/notes/configuration-and-routing.md` | Every `explorer.*` / `claude.*` / `process-mining.*` knob, and the SPA routing rules |
+| `docs/notes/audits.md` | What each root `*-AUDIT.md` / `*-SCOPE.md` report concluded and left open |
+
+The audit reports themselves are at the root: `AUDIT-FEATURE-REVIEW.md`, `DOCKER-AUDIT.md`,
+`FLINK-JOBS-AUDIT.md`, `METRICS-TWO-QUERY-AUDIT.md`, `MOBILE-LAYOUT-SCOPE.md`,
+`PROCESS-MINING-LLM-SCOPE.md`, `PROCESS-MINING-LLM-CALLS-AUDIT.md`, `SQL-EDITOR-AUDIT.md`,
+`CODE-SIMPLIFICATION-AUDIT.md`.
 
 ## Commands
 
 ### Backend (Maven / Spring Boot)
 
 ```bash
-# Full build (includes frontend via frontend-maven-plugin)
-mvn clean package
-
-# Run the app
-./mvnw spring-boot:run
-
-# The complete gate: Java tests + frontend ESLint + frontend Vitest. This is what CI runs.
-mvn verify
-
-# Run the Java tests only — stays a fast backend loop, no npm involved
-mvn test
-
-# Run a single test class
-mvn test -Dtest=AuditServiceTest
+mvn verify                       # The complete gate: Java tests + ESLint + Vitest. What CI runs.
+mvn test                         # Java tests only — a fast backend loop, no npm involved
+mvn test -Dtest=AuditServiceTest # A single test class
+./mvnw spring-boot:run           # Run the app
+mvn clean package                # Full build (frontend included via frontend-maven-plugin)
+mvn clean package -DskipTests    # No tests; never reaches verify, so the frontend checks are skipped too
 
 # The Process Mining eval against a real model — excluded from every other command on purpose
 CLAUDE_PROVIDER=OPENROUTER OPENROUTER_API_KEY=sk-... CLAUDE_MODEL=openai/gpt-4o-mini \
   ./mvnw test -P llm-eval
-
-# Build without tests (never reaches the verify phase, so the frontend checks are skipped too)
-mvn clean package -DskipTests
 ```
 
-**`mvn verify` is the only command that runs everything.** `npm run lint` and `npm test` are bound to the
-`verify` phase of the `build-frontend` profile — deliberately not to `test`, which keeps
-`mvn test -Dtest=SomeClass` a Java-only loop and leaves `mvn package -DskipTests` (what
-`release.yml` uses) untouched, since `package` runs before `verify`. The Vitest execution also reads
-`${skipTests}`, so `mvn verify -DskipTests` skips both suites. Before this wiring, `mvn verify` ran
-`npm run build` (tsc + vite) and nothing else: ESLint and the 169 Vitest cases never ran in CI, and a
-broken pure module (`queryError`, `sqlScope`, `windowSql`, `resultExport`) went green.
+**`mvn verify` is the only command that runs everything.** `npm run lint` and `npm test` bind to
+the `verify` phase of the `build-frontend` profile — deliberately not to `test`, which keeps
+`mvn test -Dtest=SomeClass` a Java-only loop and leaves `mvn package -DskipTests` untouched.
+`mvn verify -DskipTests` skips both suites.
 
-A Maven wrapper is checked in (`./mvnw`, Maven 3.9.9, `distributionType=only-script` so there is no wrapper JAR in the tree). Both CI workflows build through it.
+A Maven wrapper is checked in (`./mvnw`, `distributionType=only-script`, so no wrapper JAR in the
+tree). Both CI workflows build through it.
 
-`ci.yml` triggers on `push` to **main only**, plus `pull_request`. Listing feature branches under `push` as well built every commit twice once its PR existed — the `push` and `pull_request` events both fired, and the `concurrency` guard cannot collapse them because `github.ref` differs (`refs/heads/<branch>` vs `refs/pull/<n>/merge`), putting them in separate groups. Branch work is covered by its PR; `workflow_dispatch` builds a branch before one is opened.
+### When `packages.confluent.io` is blocked
 
-Every job carries a `timeout-minutes` (the GitHub default is 360, so a wedged test would burn six hours of runner), and a failed build uploads `target/surefire-reports/` as an artifact — a run that is green locally but red here is expected from time to time, since CI resolves the real `io.confluent` jars while the local offline harness uses stubs.
+`io.confluent:kafka-avro-serializer` and `io.confluent:kafka-schema-registry-client` are published
+**only** there, not on Maven Central, and `flink-avro-confluent-registry` pulls the schema-registry
+client transitively — so behind a proxy that blocks that host, Maven cannot even *collect* the
+dependency graph and every goal fails before compiling anything.
 
-`release.yml` runs `./mvnw -B clean verify -P build-frontend`, **not** `package -DskipTests`. A tag can be pushed at any commit and nothing verified that commit had ever been green, so a release could ship code no suite had run against; the `docker` job inherits the gate through `needs: build`.
+`./verify-offline.sh` restores a local compile-and-test loop: it resolves from a Confluent-free
+pom, stubs the five Confluent types the code touches, compiles with `javac` and runs the suite
+through the JUnit console launcher. It accepts extra ConsoleLauncher arguments —
+`./verify-offline.sh "--include-classname=.*LineageServiceTest"`. Use `--include-classname` (a
+filter), **not** `--select-class`: the script always passes `--scan-classpath`, and the JUnit 6
+launcher refuses both at once.
 
-The `docker` job builds **`Dockerfile.release` from the JAR the `build` job produced**, not the multi-stage `Dockerfile` from source. It used to do the latter, which meant the release recompiled everything a second time, *without* the test gate, and the published image could drift from the JAR attached to the Release; the `upload-artifact`/`download-artifact` hand-off between the jobs fed nothing. Now the artefact is downloaded to `dist/` (**not** `target/` — `.dockerignore` excludes that, so the JAR would be missing from the build context), staged as `./app.jar`, and copied into a runtime-only image. Both ends are guarded: the build fails if `target/` does not hold exactly one JAR (`spring-boot:repackage` leaves the plain one as `*.jar.original`, which the glob does not match), `upload-artifact` uses `if-no-files-found: error` and the release step `fail_on_unmatched_files: true` — the default `warn` would publish a Release whose only content is its notes. A `SHA256SUMS.txt` is attached alongside the JAR.
-
-`ci.yml` builds the multi-stage `Dockerfile` on every run (`push: false`, GHA layer cache). Nothing built the image before a tag was pushed, and that is precisely how it broke: `vite.config.ts` sets `build.outDir: '../resources/static'` (the path Maven wants for an in-place build), so from `/app` the frontend stage wrote to `/resources/static` while the next stage copied `/app/dist` — `"/app/dist": not found`. main stayed green and **v1.2 shipped a Release JAR with no GHCR image behind it**. The Dockerfile now pins the output itself (`npm run build -- --outDir /app/dist --emptyOutDir`) rather than depending on that config value; keep it that way, and keep the CI image build, or the same class of breakage returns unnoticed.
-
-#### When `packages.confluent.io` is blocked
-
-`io.confluent:kafka-avro-serializer` and `io.confluent:kafka-schema-registry-client` are published **only** on `packages.confluent.io` — they are not on Maven Central. Behind a proxy that blocks that host, Maven cannot even *collect* the dependency graph (`flink-avro-confluent-registry` pulls the schema-registry client transitively), so it downloads nothing and every Maven goal fails before compiling a single file.
-
-`./verify-offline.sh` gives back a local compile-and-test loop in that situation: it resolves dependencies from a temporary Confluent-free pom, generates stubs for the five Confluent types the code touches, compiles main + test with `javac`, and runs the suite with the JUnit console launcher. It accepts extra ConsoleLauncher arguments, e.g. `./verify-offline.sh "--include-classname=.*LineageServiceTest"`. Use `--include-classname` (a filter), **not** `--select-class`: the script always passes `--scan-classpath`, and the JUnit 6 launcher refuses "scanning the classpath and using explicit selectors at the same time".
-
-Two things to know: Avro / Schema Registry paths run against the stubs, not the real Confluent client, so those results are indicative only; and the launcher must be started as `java -cp … org.junit.platform.console.ConsoleLauncher`, never `java -jar`. With `-jar` the system classpath holds only the launcher, Flink's job-graph deserialization cannot find `flink-table-runtime`, every SELECT fails to submit, the planner circuit breaker trips, and a dozen `FlinkSqlServiceTest` cases fail for no real reason. CI remains the authority — it builds against the real Confluent jars.
-
-### Building without a local toolchain
-
-`compose/build.yml` runs the same commands inside containers, so a machine with only Docker
-can build, test and package. Always `run --rm` — these are one-shot services, never `up`.
-
-```bash
-docker compose -f compose/build.yml run --rm verify    # the full gate (= mvn verify)
-docker compose -f compose/build.yml run --rm package   # JAR into ./target, no tests
-docker compose -f compose/build.yml run --rm frontend  # ESLint + Vitest only, no JVM
-docker compose -f compose/build.yml run --rm shell     # interactive toolchain
-```
-
-Everything downloaded (Maven repository, npm cache, the Node toolchain frontend-maven-plugin
-fetches) lands in the `build_cache` named volume, so the second run is fast; `down -v` resets it.
-The source tree is bind-mounted, so `target/` appears in the checkout — root-owned on Linux, same
-as the dev stack.
-
-`compose/dev.yml` is the hot-reload stack (Kafka + `spring-boot:run` + Vite). Three things
-about it are load-bearing: the backend runs with `-P '!build-frontend'` (the profile is
-`activeByDefault`, so a plain `spring-boot:run` downloaded a whole Node toolchain into `target/` and
-rebuilt the SPA on every container start); `node_modules` and `target/` are **named volumes
-shadowing the bind mounts**, keeping Linux-native binaries and root-owned build output out of the
-host checkout; and `VITE_PROXY_TARGET=http://backend:8080` is read by `vite.config.ts` — Vite's
-proxy pointed at `localhost:8080`, which inside the frontend container is the frontend itself, so
-every `/api` call in the dev stack was proxied into the void. The `~/.m2` bind mount it used to
-carry is gone: requiring a Maven directory on the host defeats the point of the stack.
-
-The production `Dockerfile` needs BuildKit (Docker 23+ default) for the `RUN --mount=type=cache` in
-its frontend stage. Do not reorder the backend stage to copy sources before resolving dependencies —
-that was the original layout, and it re-downloaded the whole Flink/Kafka/Spring tree on every source
-edit. That stage resolves them into a **layer** (`dependency:go-offline` keyed on `pom.xml`, with an
-in-image `-Dmaven.repo.local`) rather than a cache mount, because BuildKit cache mounts are not
-exported with the layers: `cache-to: type=gha` carried none of it, so CI re-downloaded everything on
-every run. The `|| true` on that step is deliberate — it is pure cache warming, the `package` below
-runs online and fetches whatever go-offline missed, and a warming step must never fail a build. The
-accepted cost is that a local build which *changes the pom* re-downloads, where the mount did not.
-`.dockerignore` uses `**/node_modules`, not `node_modules/`: the latter only matches the repository
-root, while the real one is at `src/main/webapp/node_modules`.
+Two things to know: Avro / Schema Registry paths run against stubs, so those results are
+indicative only; and the launcher must be started as
+`java -cp … org.junit.platform.console.ConsoleLauncher`, **never** `java -jar` — with `-jar` the
+system classpath holds only the launcher, Flink's job-graph deserialization cannot find
+`flink-table-runtime`, every SELECT fails to submit and a dozen `FlinkSqlServiceTest` cases fail
+for no real reason. CI is the authority: it builds against the real Confluent jars.
 
 ### Frontend (React / Vite)
 
 ```bash
 cd src/main/webapp
-
-npm install          # Install dependencies
-npm run dev          # Dev server with hot reload (proxies /api to localhost:8080)
-npm run build        # Production build (tsc + vite) → src/main/resources/static/
-npm run lint         # ESLint (flat config, --max-warnings 0)
-npm test             # Vitest (jsdom + @testing-library/react); test:watch for watch mode
+npm install
+npm run dev     # Dev server, proxies /api to localhost:8080
+npm run build   # tsc + vite → src/main/resources/static/
+npm run lint    # ESLint (flat config, --max-warnings 0)
+npm test        # Vitest (jsdom + @testing-library/react); test:watch for watch mode
 ```
 
 ### Docker
 
-All bundled compose stacks run **Kafka 4.3 in KRaft mode** (`apache/kafka:4.3.1`, single combined broker+controller node — no Zookeeper anywhere, `compose/image.yml` included). CI runs no broker of its own: `KafkaClusterIntegrationTest` starts one through Testcontainers (`apache/kafka-native:4.3.1`), which is also why it works on a developer machine. Prefer that over a workflow-level `services:` block if a new test needs a broker.
+All bundled stacks run **Kafka 4.3 in KRaft mode** (`apache/kafka:4.3.1`, single combined node, no
+Zookeeper anywhere). There is **one base file at the repository root** and everything else in
+`compose/` is an overlay or a standalone stack.
 
 ```bash
-# Kafka 4.3 (KRaft) + Schema Registry + app + demo topics (recommended)
-docker compose -f docker-compose.yml -f compose/schema-registry.yml up -d
-
-# Kafka 4.3 (KRaft) + app + demo topics, without Schema Registry
-docker compose up -d
-
-# Demo data setup (creates 79 topics)
-./setup-demo.sh localhost:9092
-
-# Avro topics — needs Schema Registry and the Confluent CLI, so it is a separate
-# script wired only into compose/schema-registry.yml
-./setup-demo-avro.sh localhost:9092 http://localhost:8081
+docker compose -f docker-compose.yml -f compose/schema-registry.yml up -d  # + Schema Registry
+docker compose up -d                                                       # base: broker + app + demo topics
+./setup-demo.sh localhost:9092                                             # demo data (79 topics)
+./setup-demo-avro.sh localhost:9092 http://localhost:8081                  # Avro topics (needs Schema Registry)
 ```
 
-#### The prompt has to fit the model's window
+Building without a local toolchain — always `run --rm`, these are one-shot services, never `up`:
 
-`process-mining.prompt-char-budget` is 120 000 characters — ~30k tokens — and **the window
-belongs to the endpoint, so nothing in this application can check that it fits** — with one
-exception, added later and narrow: OpenRouter *publishes* each model's `context_length`, so there
-the Test button compares the two and says which way it came out (`OpenRouterModelCatalog`, below).
-Everywhere else the sentence stands as written, and even there it is a floor rather than a
-calibration. It is sized for
-the default provider, which is hosted and has the room; what it is wrong for is a **local** model,
-which is therefore the thing that changes underfoot the day somebody switches to one — and it
-changes in silence: Ollama gives a model
-**4 096 tokens** unless the machine has the VRAM for more, `OpenAiCompatibleLlmClient` sends
-`model` / `messages` / `max_tokens` / `temperature` / `stream` and **never `num_ctx`** (which
-that endpoint would not read from the body anyway), and Ollama does not refuse the excess — it
-drops the oldest messages until the prompt fits and logs it at DEBUG, i.e. nowhere on a default
-install. Every Process Mining analysis on `compose/ollama.yml` was therefore reasoning on a
-fraction of what it had been handed, with nothing on screen or in the log naming the fraction.
-The bundled stacks now set both halves together (`OLLAMA_CONTEXT_LENGTH` / `LLM_CONTEXT` against
-`PROCESS_MINING_PROMPT_CHAR_BUDGET`) and say so where they set them; the default in
-`application.yml` is unchanged, since the provider it now ships pointed at can afford it, and
-carries the rule beside it. Raising one without the other buys nothing or truncates again — and the KV cache is what a
-wider window costs (~2 GB for a 7B at 16k).
+```bash
+docker compose -f compose/build.yml run --rm verify    # the full gate
+docker compose -f compose/build.yml run --rm package   # JAR into ./target, no tests
+docker compose -f compose/build.yml run --rm frontend  # ESLint + Vitest only, no JVM
+docker compose -f compose/build.yml run --rm shell     # interactive toolchain
+```
 
-#### The SpectraLLM stack
-
-Process Mining can be answered by a **local SpectraLLM** instance rather than Ollama or Anthropic
-(`CLAUDE_PROVIDER=SPECTRA`, whose client posts to Spectra's single-turn `POST /api/query`). One
-file wires the pair. There were two, and the deletion of the other is the point:
-
-- **The developer stack is gone.** It `include:`d SpectraLLM's own compose from a sibling
-  checkout (`SPECTRALLM_DIR`, default `../SpectraLLM`) and **built** the explorer from source,
-  so running it needed that checkout on disk, a Maven build and an npm build — and it was the
-  only file in the tree whose syntax could not be resolved without CI **fabricating a stub of
-  somebody else's repository**, which is a check that tests the stub as much as the file. It was
-  also never booted end to end by anything, where the hub stack has its own CI job. What it
-  bought was following a live SpectraLLM checkout as you edit it; the replacement is to point
-  the pins at what you built (`SPECTRA_IMAGE_TAG`, `EXPLORER_IMAGE_TAG` — already how every
-  image in that stack is chosen), which is one variable rather than a second stack to maintain.
-  Two things it taught are worth keeping, because they are traps rather than history. A service
-  named identically to one carried by an `include:` **merges with it and inherits its profile**,
-  so a profile-gated upstream `kafka` makes your broker vanish unless that profile is on —
-  `depends_on` then stops resolving and the whole project is rejected as invalid, and
-  `profiles: []` does not clear it; `extends` is what reuses a definition under a *different*
-  name, which a second `-f` cannot do. And a broker renamed that way needs every setting that
-  embeds the service name overridden with it (`KAFKA_CONTROLLER_QUORUM_VOTERS`,
-  `KAFKA_ADVERTISED_LISTENERS`) — a broker advertising a name nothing can resolve does not
-  refuse the connection, it accepts it and hands the client an address it cannot reach, which
-  surfaces as a timeout somewhere else entirely.
-- **`compose/spectra-hub.yml`** builds nothing. Both projects publish their images under
-  `compagnonsdudev` on Docker Hub (`kafkaexplorer`, `spectrallm`, `spectrallm-frontend`), so a
-  machine with only Docker runs the pair — no Maven, no npm, no SpectraLLM checkout, and
-  nothing built. It does need **this** repository checked out, which the page it is
-  advertised on used to deny: it mounts the demo seeder and the three service entrypoints,
-  so a `curl -O` of the single file left Docker to create directories where those files
-  should be. That was true before the entrypoints moved out of the YAML; extracting them
-  made it definitive rather than introducing it, and `docs/DOCKERHUB.md` now says `git
-  clone` where it said `curl`:
-
-  ```bash
-  docker compose -f compose/spectra-hub.yml pull
-  docker compose -f compose/spectra-hub.yml up -d
-  ```
-
-  **The three services that run a shell take it from `scripts/spectra-hub/`**, not from a YAML
-  literal: compose interpolates `${…}` inside an entrypoint, so every shell variable had to be
-  written `$${…}` — around forty escapes across the three, and a single `$` written where two
-  belong yields an empty string at runtime rather than an error, which is the failure mode with
-  no symptom. They are mounted read-only, and `.gitattributes` pins `*.sh` to LF on every
-  platform so a Windows checkout still mounts something the image's `/bin/sh` can run. Note what
-  this is **not**: it is not a copy of upstream's `scripts/llm-chat-entrypoint.sh` — see the
-  registry-pointer note below, which is exactly the thing this repository refuses to duplicate.
-  These are our own three, and they were already ours; only their address changed.
-
-  Four things in it are load-bearing. **The models live in a named volume** (`spectra_data`), not
-  in `./data` as upstream: there is no SpectraLLM checkout here to hold that directory, and a
-  bind mount created by Docker is root-owned while the API image runs as `spectra` — so a
-  `spectra-data-init` one-shot settles ownership before anything else mounts it, the same idiom
-  as `kafka-data-init` and for the same reason (`llm-chat` / `llm-embed` run a llama.cpp image
-  that carries no `/app/data`, so one of them initialising that volume would leave it empty and
-  root-owned). **`llm-chat` reads the registry pointer once, at start**, rather than watching it:
-  upstream's supervisor lives in `scripts/llm-chat-entrypoint.sh`, which is not in this
-  repository, and inlining a copy of it here would be a copy that drifts — so activating another
-  model in the Spectra UI needs a `restart llm-chat`, which the file says. **Nothing waits on the
-  first-boot model download** (~4.8 GB): `spectra-api` installs the chat model itself
-  (`spectra.startup.auto-install-models`), a `spectra-models` one-shot fetches the embedding
-  GGUF that the API does *not* install — with **`wget`, never `curl`**: the Spectra image
-  installs both to run the llmfit installer and purges curl at the end of that same layer, so a
-  curl there finds nothing at runtime, which is what the CI boot caught (`curl: not found`, and
-  no model fetched, on a stack that otherwise looked healthy). It verifies a
-  `SPECTRA_*_MODEL_SHA256` when one is pinned and deletes the file rather than serving it when
-  the digest does not match, and it does **not** resume a partial transfer: `wget -c` with `-O`
-  appends blindly when the server ignores a Range request, which yields the right size and the
-  wrong bytes. The two llama.cpp containers poll until the file they serve appears — so the Explorer, the broker and the Spectra UI are up in seconds, and
-  `up --wait` is the one thing not to use. **And the two prompt budgets are sized against each
-  other**: `LLM_CONTEXT` (16384, split across 2 slots = 8192 tokens per request) against the
-  Explorer's `PROCESS_MINING_PROMPT_CHAR_BUDGET`, lowered to 16 000 from the shipped 120 000 —
-  ~30k tokens does not fit in that window, and what a model cannot see it does not say it missed.
-  The request timeouts follow (`CLAUDE_REQUEST_TIMEOUT_SECONDS` / Spectra's generation timeout,
-  300 s each): a 7B Q4 model on CPU takes minutes, and a request timeout is *terminal* on that
-  path. Every image is pinned and overridable (`SPECTRA_IMAGE_TAG`, `EXPLORER_IMAGE_TAG`,
-  `LLAMA_CPP_IMAGE_TAG`, `CHROMADB_IMAGE_TAG`), and only three ports are published — chromadb's
-  is read *and write* access to the ingested corpus and llama-server has no authentication.
-
-  **Do not set `SPECTRA_API_KEY` in that stack.** Spectra's `ApiKeyFilter` reads `X-API-Key`
-  while `SpectraLlmClient` sends `Authorization: Bearer`, so a key there leaves the whole stack
-  looking healthy while every Process Mining call answers 401. Neither application authenticates:
-  what protects the stack is `BIND_ADDR` on the loopback.
-
-  **Three overlays sit beside it**, and each survives for one reason: what it changes cannot be expressed as a variable, which is the test the fourth failed.
-  `compose/spectra-hub.gpu.yml` swaps both llama.cpp servers for the CUDA image *pinned to
-  the same build number* (`server-cuda-b9828` against `server-b9828` — a floating `server-cuda`
-  would put a different engine revision under a stack that pins everything else) and requests the
-  devices; it is not safe to leave on where there is no GPU, which is precisely why it is an
-  overlay. `compose/spectra-hub.limits.yml` is this stack's own limits file rather than a
-  few lines added to `compose/limits.yml`: that one names `explorer` and `kafka`, and a
-  service named in an overlay but absent from the base file becomes a new imageless service and
-  fails the whole `up` — so this stack needs its own, and it bounds the **seven long-running
-  services of its eleven** (the four it leaves out are one-shots that exit) instead of leaving the
-  four heaviest unbounded. It deliberately sets **no `cpus` on the llama.cpp
-  servers**: on CPU inference throughput *is* the core count.
-
-  **A 3B chat model instead of the default 7B** — ~2 GB of weights rather than 4.7, half the
-  memory, and an answer in a fraction of the time, which is what stops the 300 s timeouts
-  being load-bearing — used to be a fourth overlay and is now **four lines of `.env`**. That
-  is all it ever was: every value it set already had an interpolated default in the stack
-  file, so the overlay expressed nothing a variable could not, which is exactly the test for
-  whether something deserves to be a file. It is also why `spectra-models` fetches *two*
-  models: `spectra-api` installs the default chat model itself and **only** that one, so
-  serving another means naming its URL (`SPECTRA_CHAT_MODEL_URL`) and turning the
-  auto-install off, together with the file name and the alias — the four have to agree, and
-  `.env.example` sets them in one block for that reason.
-
-  `compose/spectra-hub.ingest.yml` is the one that makes the pair more than a shared
-  model — SpectraLLM consumes the topics and indexes what is *in* the messages, so the corpus
-  answers questions with cited sources and the Explorer's audits can read it (`EXPLORER_USE_RAG`,
-  whose collection defaults to the one the ingestion writes to, so one variable lines both halves
-  up; with use-rag false Spectra answers directly and never looks at a collection). It is an
-  overlay rather than a bare `SPECTRA_KAFKA_ENABLED=true` because the flag alone gets two things
-  wrong on a cold stack, and both are **ordering** problems, which is what a compose file can
-  express: a consumer subscribing to a topic that does not exist yet **creates** it
-  (`allow.auto.create.topics` defaults to true and the demo broker allows it) with one partition
-  instead of three, and `setup-demo.sh` then leaves the existing topic alone — the multi-partition
-  dataset the key-narrowing and window features are calibrated on silently becomes
-  single-partition; and indexing a record means embedding it, so on a first boot every record
-  fails three times a second apart and lands in `<topic>.DLT`, a new topic on the cluster under
-  exploration, while the embedding model is still downloading. The overlay waits for
-  `demo-setup` to complete and for `llm-embed` to be healthy. Its accepted cost is stated where
-  it is paid: the Spectra API, and therefore its UI, now waits for both — the Explorer does not,
-  it still depends on the broker alone. Topic lists are explicit, with no patterns (Spring
-  resolves a comma-separated list, and an **empty** list subscribes to a topic named `""` rather
-  than to nothing, which fails at startup), and `internal.*` is excluded: that is the Explorer's
-  own bookkeeping, not domain content.
-
-`setup-demo.sh` is the sandbox every stack seeds, and it is written to exercise the features that
-have no data otherwise. **Every business record carries a record key and Kafka headers**
-(`correlation-id`, W3C `traceparent`, `source-system`, `event-type`, `produced-at`) — without them,
-exact-key tracing, key-partition narrowing, HEADER search, log compaction and the audit's key-based
-duplicate detection have nothing to run against, which is what the demo looked like before. The
-order pipeline and `demo.orders.nested` are **multi-partition** (3 and 6), because "only this key's
-partition" narrows nothing on a single-partition topic. `demo.payments.*` / `demo.shipments.*` are
-correlated to the orders **by header only** — their payloads carry `PAY-`/`SHP-` references and
-never the order id — so they are the dataset that proves the "search headers too" switch does
-something. `demo.iot.sensors` and `demo.orders.nested` spread `event_time` over ~2 hours, which is
-what makes `TUMBLE`/`HOP` return more than one bucket; with every record stamped "now" the whole
-window feature collapsed into a single row. Duplicates (`ORD-103`/`ORD-105` redelivered) and poison
-records *inside a healthy topic* (`demo.orders.3.enriched`) exist so the cluster audit reports
-findings rather than a clean-room zero. **`demo.orders.2.retry.5m`, `demo.orders.2.dlt` and
-`demo.payments.dlq`** exist for the same reason one notch over: nothing seeded here carried a retry
-or a dead-letter name, so the Dashboard's retry marker and its dead-letter badge had no row to run
-against on the very cluster the README recommends, and the documentation screenshots could never
-show either. ORD-107 is received, retried twice and buried, so a trace on it crosses the three; the
-payments side spells it `.dlq` **on purpose**, a cluster grown through more than one team carrying
-both spellings, which is exactly what a rule recognising a single one lets through.
-
-Two constraints when extending it: **one producer call per topic, not per message** (a JVM start
-costs ~1.5 s, and docker-compose blocks the app on this container — the per-message version spent
-minutes seeding 400 records), and **no `bc`, no `date -d`, no `${var,,}`** — it runs inside the
-busybox-based `apache/kafka` image as well as on macOS. Money is integer cents through `printf`,
-and event times are epoch seconds (the query engine reads any value below 10^10 as seconds).
-Header values must contain no comma, colon or tab: `kafka-console-producer` parses headers as
-`k1:v1,k2:v2` ahead of a `key<TAB>value` line, which is why timestamps travel as epoch millis.
-`DEMO_HOP_DELAY` (default 2 s) is the real pause between the traced order's hops — record
-timestamps come from the broker at produce time, so a real pause is the only way to give Stream
-Flow a hop latency to chart; set it to 0 for the fastest seeding and flat latencies.
-
-`seed-demo-once.sh` is the `demo-setup` entrypoint in every stack: it waits for the broker, then seeds **unless the marker topic `internal.demo.seeded` is present *and* the demo data is still there**, creating that marker after a successful run. Both halves are needed because they answer different questions and only one of them expires: the marker is a *topic*, and a topic never goes away, while the records it vouches for are deleted by retention. A stack brought back up past that point came back with eighty topic names, no records in any of them, and a seeder that skipped for ever — the state this file was found in, with Process Mining profiling an empty cluster while everything looked healthy, and the documented way out (`down -v`) also wiping the explorer's own volume and the operator's stored settings with it. So a canary topic (`demo.orders.1.received`, end offsets minus beginning offsets over its partitions) is checked for records. **It has four answers, not two, and "we could not ask" is its own** (`canary_state`: `populated` / `empty` / `absent` / `unknown`). A topic that is provably empty, or gone altogether, has lost its data and is seeded again — topics do not expire, records do. A read that *failed* says nothing about the data, and folding it into "empty" looks like the safe direction and is not: it is not paid once but at **every** `up`, each replay adding one more generation of duplicates to the dataset the audit's duplicate detection and the Stream Flow traces are calibrated against, which is the exact damage the marker exists to prevent. The marker's presence is itself evidence that a seed once succeeded, so on an unreadable canary that evidence stands — loudly, with the one command that forces a re-seed. The topic list is read once for both questions, retried three times, and if it cannot be read at all the script seeds nothing and says so: it cannot see the marker either, so seeding would be seeding blind, and a compose one-shot runs again at the next `up` anyway. `KAFKA_BIN` and `SETUP_SCRIPT` are overridable so those decisions can be exercised against stub CLIs, which is what `seed-demo-once.test.sh` does — seven cases, no broker and no daemon, run by the `seeder-logic` job. Two of them are measurements the seeder must act on and three are non-answers it must not mistake for one; each was checked to fail against the revision it describes. A broker would cost minutes here and prove nothing extra: what is under test is a decision taken from two command outputs, and a claim about how Kafka itself behaves belongs in `KafkaClusterIntegrationTest`. Kafka data lives in a named volume that survives `docker compose down`, and Compose re-runs a one-shot on every `up`, so the seeder used to replay its ~400 records into topics that already held them — a minute repaid at each start, and one extra generation of duplicates each time, which silently changes what the audit's duplicate detection and the Stream Flow traces report on a dataset calibrated to report a known value. `down -v` wipes the volume and therefore the marker.
-
-KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `CLUSTER_ID` env var (a `KAFKA_CLUSTER_ID` var would be translated into an ignored `cluster.id` server property); all internal-topic replication factors (`offsets`, `transaction state`, share-group state) are pinned to 1 and `__consumer_offsets` runs with a single partition for faster startup. Kafka data persists in a named `kafka_data` volume (`KAFKA_LOG_DIRS=/var/lib/kafka/data`) so `internal.*` topics survive `docker compose down` (`down -v` resets); the image runs as non-root `appuser`, so a `kafka-data-init` one-shot service chowns the volume before the broker starts — don't remove it.
-
-### Starting and stopping the stacks
-
-`DOCKER-AUDIT.md` is the full review; the load-bearing points:
-
-- **The app depends on the broker only.** It used to also wait for `demo-setup: service_completed_successfully` (and, in the LLM stack, for the multi-gigabyte `ollama-pull-model`), so the UI was unreachable for the whole seed — for data it does not need to boot. The Dashboard polls every 30s, so topics appear as they are created. Keep the seeder beside the app, not in front of it.
-- **The broker healthcheck is `interval: 30s`, not 5s.** `kafka-broker-api-versions.sh` starts a JVM, and Docker runs a healthcheck for the container's whole life — at 5s that was roughly a fifth of a core, permanently. `start_period: 30s` covers the boot, where failures don't count against `retries`. `start_interval` would give back both but needs Docker 25+/Compose 2.20+, which the main stacks deliberately don't require.
-- **`stop_grace_period` is set everywhere and is not decoration.** Docker's default is 10s; the app gets 35s, which is `spring.lifecycle.timeout-per-shutdown-phase` (15s of graceful web shutdown) plus `ShutdownBudget.TOTAL_MS` (10s of bean destruction) plus the JVM's exit. Raise either and you must raise the grace period, or Docker SIGKILLs exactly what they were meant to protect. The broker gets 30s so a stopping KRaft node finishes its flush instead of being SIGKILLed into a log recovery on the next start.
-- **`ShutdownBudget` is one deadline shared by every executor pool**, not five seconds each. Six services own a pool (`FlinkSqlService`, `StreamFlowService`, `FlinkRuntimeCoordinator`, `AuditService` ×2, `KafkaLiveConsumer` ×2) and bean destruction is sequential, so the private waits added up to ~35s and grew by five seconds with every pool the codebase gained. The first pool destroyed starts the clock; the rest inherit what is left, with a 500 ms floor each so the last one is not interrupted the instant the budget runs out. Use it for any new pool — do not reintroduce a private `awaitTermination`.
-- **Liveness and readiness are split, and the container healthcheck targets liveness.** The project uses `kafka-clients` directly rather than `spring-kafka`, so Boot auto-configures no Kafka health indicator and `/actuator/health` reported UP whatever the broker was doing. `KafkaHealthIndicator` (bean id `kafka`, a 2s `describeCluster` probe) joins the **readiness** group only: an unreachable broker means "not ready to answer queries", not "restart this process" — the UI still serves and the Settings page can repoint the app, which is what an operator needs at that moment. `HealthProbesTest` pins both groups against the real context, because a typo in the `include` would leave the group absent and the HEALTHCHECK reading a 404 as a dead container.
-- **Published ports bind to `${BIND_ADDR:-127.0.0.1}` and are parameterized** (`EXPLORER_PORT`, `KAFKA_PORT`, `SCHEMA_REGISTRY_PORT`, `OLLAMA_PORT`, `VITE_PORT` — see `.env.example`, which compose reads from a root `.env` automatically). The app has no authentication and `POST /api/config` can repoint the Kafka cluster at runtime; the Docker default of `0.0.0.0` offered that to the whole LAN on a plain `up`. Expose deliberately with `BIND_ADDR=0.0.0.0 docker compose up -d`. `KAFKA_PORT` also rewrites the broker's advertised `PLAINTEXT_HOST` listener — without that, a host client told to use the new port is redirected straight back to 9092 by the broker itself.
-- **Base images are pinned by digest** (`tag@sha256:…`, tag kept in front — it is the only thing that says what the digest is), with Dependabot's `docker` ecosystem grouped so the bumps still arrive. Pinning without that would trade reproducibility for a frozen JRE, which is a worse deal than either.
-- **Every `close()` on a Kafka client at shutdown is bounded** (`AdminClient`, the audit-history and metrics-config producers, the live consumers): the no-arg overloads wait without a deadline, and shutdown is exactly when the broker is likely gone — an unbounded close hands the JVM to the SIGKILL mid-teardown. `KafkaLiveConsumer.shutdown()` also completes the SSE emitters of sessions whose polling task never reached `finishSession()`.
-- **The app writes under `/app` and both paths are volumes**: `logs/` (`logging.file.name`) and `data/` (`explorer.flink-job-store-path` — Flink job history was lost on every recreate). They are named volumes, never a bind-mounted *file*: `./Kafkaexplorer.log:/app/logs/kafkaexplorer.log` pointed at a path absent from the checkout, so Docker created a directory there and Logback could not open its log at all. That broken mount was also the stated reason the runtime image stayed root; both images now run as `USER 10001:10001`, owning `/app/logs` and `/app/data`, and a named volume inherits that ownership where a host bind mount would not.
-- **Both runtime images ship the JAR as Spring Boot's four layers**, most stable first (`dependencies` → `spring-boot-loader` → `snapshot-dependencies` → `application`), extracted with `-Djarmode=tools … extract --layers --launcher` (the Boot 3.3+ entry point; `layertools` is gone). There is no fat JAR in the image any more, so the entrypoint is `java org.springframework.boot.loader.launch.JarLauncher`, and a patch release re-pushes only the small application layer instead of a few hundred megabytes that are ~95% identical to the previous version's. Keep the four COPY lines in that order — a COPY invalidates every layer after it. **A Class Data Sharing archive is built on top of them**, by a training run in the runtime stage (`-XX:ArchiveClassesAtExit` with `-Dspring.context.exit=onRefresh`, which refreshes the context and exits without opening a port). Measured against this exact layout — the extracted layers behind `JarLauncher`, with no broker listening: **7.74 s without it, 6.39 s with**, and 12 911 of the 24 343 classes loaded are served from the archive, application classes included. Three things about it are load-bearing. It is dumped in the **runtime** stage rather than a `--platform=$BUILDPLATFORM` one like the extractor, because a CDS archive is architecture-specific — so the arm64 variant produces its own under emulation, which is the real cost of this alongside ~90 MB of image. The flag goes on the **ENTRYPOINT, not into `JAVA_TOOL_OPTIONS`**: that variable is documented as replaced wholesale when an operator sets one, so a container started with a tuned `-XX:MaxRAMPercentage` would have silently dropped the archive and paid the 90 MB anyway. And it stays on the JVM default `-Xshare:auto`, so a JVM that cannot map the archive starts normally instead of refusing to boot over an optimisation — which is exactly why `ci.yml` runs `-Xshare:on` against it once in the `release-image` job: that leniency is also what would let a mis-wiring ship 90 MB buying nothing, in silence.
-- `release.yml` publishes `linux/amd64,linux/arm64` (free here — a JRE base plus architecture-independent bytecode, and the extraction stage is pinned to `--platform=$BUILDPLATFORM` so it is not replayed under QEMU) and gates `latest` on the absence of a `-` in the tag, so a `v1.3.0-rc1` no longer becomes what `docker run …/kafkaexplorer` pulls.
-- **One base, and everything else is an overlay of it.** The tree carried **sixteen** compose
-  files, of which *five* answered the same question — "how do I run this?" — by restating each
-  other: `docker-compose.yml`, `-kafka4`, `-llm`, `-spectra` and `.release` were all **bases**,
-  each with its own copy of the explorer service, and the first refactor had already reduced
-  their brokers to `extends:` after `docker compose config` reported the copies byte-identical.
-  Being separate *bases* was the remaining cost, and it was not only duplication: Schema
-  Registry and Ollama **could never run together**, because two bases cannot be layered.
-  There is now **one base file at the repository root** and everything else in `compose/`:
-
-  | File | Kind | What it is |
-  |---|---|---|
-  | `docker-compose.yml` | base | Kafka 4.3 KRaft + explorer + demo seeder. The one everything layers onto. |
-  | `compose/schema-registry.yml` | overlay | Schema Registry + the Avro seeder. Was `docker-compose-kafka4.yml`. |
-  | `compose/ollama.yml` | overlay | A local Ollama model for Process Mining. Was `docker-compose-llm.yml`. |
-  | `compose/image.yml` | overlay | Run the published image instead of building. Was `docker-compose.release.yml`. |
-  | `compose/limits.yml` | overlay | Opt-in `mem_limit` / `cpus`. |
-  | `compose/ci.yml` | overlay | CI-only, layered on `image.yml`. |
-  | `compose/dev.yml` | standalone | Hot reload: broker + `spring-boot:run` + Vite. |
-  | `compose/build.yml` | standalone | One-shot toolchain (`run --rm`), not a stack. |
-  | `compose/spectra-hub.yml` + `.gpu` / `.ingest` / `.limits` | standalone + overlays | The SpectraLLM pair, from published images. |
-
-  **The `kafka4` name was a lie worth removing.** Every stack here runs Kafka 4.3 in KRaft —
-  `docker-compose.yml` included — so a file named for that advertised a choice that had stopped
-  existing, on the stack the README recommends, which is the first thing a newcomer reads. What
-  it adds is a Schema Registry, and it is named for that now.
-
-  **Where relative paths resolve is the one rule to know**, and it was measured rather than
-  assumed. Compose sets the *project directory* to the directory of the **first `-f` file**, and
-  every `./…` in *any* of the layered files resolves against that — so an overlay under
-  `compose/` mounting `./setup-demo-avro.sh` gets the repository root, because the base always
-  comes first. A **standalone** file under `compose/` is its own project directory, so its paths
-  carry `../` and it must declare `name:` explicitly, or its volumes would come back under a
-  `compose_` prefix and a warm Maven cache would be silently discarded. Paths inherited through
-  **`extends`** are the exception: they resolve against the *extended* file's directory, which
-  is why `compose/dev.yml` inherits the base broker without a single `../`.
-
-  **`compose/dev.yml` no longer restates the broker either** — it was the last verbatim copy in
-  the tree, sixty lines of KRaft settings duplicated so that *one* thing could differ, the name
-  of the data volume. `extends` merges sequences, so the base's `kafka_data` mount and this
-  file's `kafka_data_dev` would both land on `/var/lib/kafka/data`; **`volumes: !override`** is
-  what replaces the list outright, and it works with `extends` (verified, not assumed). The dev
-  broker keeps its existing volume name, so nobody loses a broker to the refactor.
-
-  **`compose/image.yml` needs `build: !reset null`**, and that is what makes it an overlay
-  rather than a base: without it the base's `build: .` survives the merge and `up` compiles the
-  source tree and tags the result with the published image's name — the opposite of the point.
-  `compose/ci.yml` now layers on top of it, so the file real deployments use is exercised on
-  every CI run instead of only by `compose-lint`.
-
-  **Two files were deleted outright.** `docker-compose-spectra.yml` — see the SpectraLLM
-  section above. And `docker-compose-spectra-hub.small.yml`, which set four values that already
-  had interpolated defaults in the stack file: it expressed **nothing a variable could not**,
-  which is the test for whether something deserves to be a file at all. It is four lines of
-  `.env.example` now.
-
-  The whole transform is verifiable the way the previous one was: `docker compose config` over
-  every stack is **unchanged**, with one deliberate exception — the explorer no longer waits on
-  `schema-registry: service_healthy`, which contradicted this file's own rule that the app
-  depends on the broker and nothing else.
-- **No `container_name`, and the app service is `explorer` in every stack.** `container_name` is daemon-global, so the shared `kafka` / `kafka-sql-explorer` names meant two stacks could never coexist and switching files without a `down` first collided; compose derives `<project>-<service>-<n>` instead, and `docker compose -p other … up` gives a second independent stack. The project name still defaults to the directory, so `kafka_data` keeps its name and already-seeded topics survive. Address services by service name (`docker compose logs kafka`). The `app` → `explorer` rename removes an inconsistency and is what lets an overlay target the service at all — a name present in an overlay but absent from the base file becomes a new, imageless service and fails the whole `up`.
-- **Resource limits are an opt-in overlay** (`compose/limits.yml`, layered onto `docker-compose.yml` and anything layered with it — it used to have to name four separate bases, and forgetting a fifth was silent). Not in the stacks themselves, because a limit set too low is worse than none — the JVM is OOM-killed instead of running a GC. But without *any* limit, `-XX:MaxRAMPercentage=75.0` reads the host's memory, so on a 32 GB workstation the JVM believes it may take 24 GB: `mem_limit` is what gives that flag a meaning. Use `mem_limit`/`cpus`, never a `deploy:` block — that is Swarm syntax, silently ignored by `docker compose up`.
-- **Every compose file is parsed by CI** (`compose-lint` in `ci.yml`), each overlay layered onto
-  its base rather than alone — an overlay on its own is a set of services with no image. Twelve
-  files shipped here and the build parsed none of them; the job found what was then
-  `docker-compose-kafka4.yml`, the stack this file recommends, refusing to start at all since
-  the day two volume mounts were
-  added without their top-level declarations (`service "explorer" refers to undefined volume
-  explorer_logs: invalid compose project`). It takes seconds, needs no daemon and pulls nothing,
-  and it **fails on a compose file that no combination names**, so a new stack cannot be added
-  without being checked. It also no longer fabricates a stub of SpectraLLM's own compose, that
-  having been needed by exactly one file which no longer exists — a check whose fixture is an
-  invention of somebody else's repository is partly testing the invention.
-- **The images the stacks pull are checked too** (`docs/check-image-pins.py`, in the
-  `docs-links` job): nothing floats (`curlimages/curl:latest` sat two services below the comment
-  claiming Ollama was "the only floating tag left in the tree"), the llama.cpp CPU and CUDA tags
-  name the **same build** (the GPU overlay must change the hardware, not the engine's revision),
-  and the Explorer pin does not name a release **nobody has published yet**. That default is
-  hand-written and Dependabot cannot read a `${VAR:-1.8.9}` form, so nothing else would ever
-  move it — but whether it has gone *stale* is a question for the **registry**, not for the git
-  tags, and that half is `--published`, run in the `spectra-hub-stack` job. A tag exists the
-  moment it is pushed and the image only when the release workflow finishes: asking the tags
-  made this check demand a bump to an image that was still building, and a release whose
-  publication *failed* — which has happened here — would leave a tag with no image behind it,
-  blocking every pull request on a bump that could never be made. So the offline half gates
-  every PR, the registry half runs where the network is already a dependency, and a registry
-  that cannot be reached is reported rather than failing the build: "we asked and it is stale"
-  and "we could not ask" are different answers. It needs tags, hence `fetch-tags` on both jobs'
-  checkouts, and it fails rather than skipping when they are absent.
-- **The documentation checks are discovered, not listed** (`for check in docs/check-*.py`).
-  That step was six `- run:` lines, so a seventh script would have been executed by nothing
-  until somebody remembered to add one — the same structural argument `compose-lint` was
-  rewritten for, left standing one job below it. What each check answers is now a comment block
-  above the loop rather than a line beside each invocation. `check-image-pins.py --published`
-  stays a separate step in `spectra-hub-stack`: it takes an argument and needs the network.
-- **The stacks are also checked against `.env.example`, and against themselves**
-  (`docs/check-compose.py`, in the `docs-links` job). `.env.example` exists so that changing
-  where a stack is published does not mean editing six compose files, which only holds if it
-  lists them all — **five variables had a default in compose and no line there**
-  (`SPECTRALLM_DIR`, `SPECTRA_JAVA_OPTS`, `LLM_EMBED_MODEL_NAME`, `LLM_EMBED_PARALLEL`,
-  `LLM_EMBED_EXTRA_ARGS`), and nothing noticed, because `check-config-table.py` resolves
-  `application.yml` and the Dockerfiles and never reads a compose file. The reverse is checked
-  too: a documented knob no stack reads invites an operator to set a value that changes
-  nothing. Defaults are compared against **the set the stacks use** rather than one value, so
-  an overlay that changes one deliberately (`LLM_EMBED_EXTRA_ARGS` is empty in the base and
-  `--n-gpu-layers 99` in the GPU one) is not a finding, while the ordinary single-default case
-  stays an exact comparison. The interpolation scan is hand-rolled rather than a regex for two
-  reasons a regex gets wrong: `$${…}` is a literal `$` for a shell inside an entrypoint and is
-  not an interpolation at all, and a default can itself be one (`${A:-${B:-c}}`), which
-  `[^}]*` truncates at the first brace and attributes to the wrong variable. **And the third
-  pass is not documentation**: it asserts that `PROCESS_MINING_PROMPT_CHAR_BUDGET` fits the
-  window the stack serves — the whole context for Ollama, the context divided by
-  `--parallel` slots for llama.cpp. Those two halves are written in three files, each with a
-  comment saying it is "kept in step" with the others, and nothing executes a comment; a prompt
-  that exceeds the window is dropped in silence and logged at DEBUG rather than refused. The
-  4 characters-per-token ratio is deliberately optimistic, so a budget it passes may still not
-  fit while one it rejects certainly does not — a floor, not a calibration.
-- **The published-images stack is booted too** (`spectra-hub-stack`), and **on a pull request
-  that touches it**. It used to run on main and `workflow_dispatch` only — it pulls ~2 GB to test
-  a deployment file whose content does not move with the code, the same trade-off as the arm64
-  boot — and the cost of that was measured rather than guessed: **five of six consecutive `main`
-  runs were red on this job**, every failure found *after* a merge, each costing a merge, a fix
-  and a second merge. The trade is right for every pull request and wrong for the handful that
-  edit those files, so a `hub-changes` job makes the distinction from a plain `git diff`. It is a
-  job with an `if:` and deliberately **not** a `paths:` filter: `paths:` makes a job *skip*, and
-  a required check that skips blocks a merge for ever, where a job whose `if:` is false reports
-  success. The file list includes `ci.yml` (this job is defined there), the seeders and
-  `.env.example` (the stack mounts and reads them). **The model fetch is not allowed to redden
-  `main` on somebody else's outage**: it reaches `huggingface.co`, and a red default branch
-  meaning "HuggingFace was unavailable" is indistinguishable from one meaning "the stack broke".
-  A failed *transfer* warns and skips the end-to-end assertion; every other failure of the
-  fetcher still fails the job — which is why the outcome is read from the fetcher's own message
-  and not from its exit code, a mismatched digest being a substituted file rather than a network
-  problem. The same rule `check-image-pins.py --published` already applies to the registry: "we
-  asked and it is stale" and "we could not ask" are different answers. The CI model is **pinned
-  by digest** (`CI_CHAT_MODEL_SHA256`, observed on two independent downloads before being
-  written down), which also stops the fetcher's verification branch from being code CI never
-  runs. It runs with
-  `SPECTRA_AUTO_INSTALL_MODELS=false`, because the interesting assertion about a missing model is
-  that the containers **wait** for it rather than crash-looping — which is what the inline
-  entrypoints exist for. It also pins the wiring nothing else can: that `GET /api/config` really
-  reports `SPECTRA` and `http://spectra-api:8080` (so a renamed variable fails here, not in
-  production), and that the UI reaches the API through nginx's `/api/` proxy — whose upstream is
-  baked into the published image, which is what forces the service to keep the name `spectra-api`.
-  It then drops a **0.5B model** into the volume — through the stack's own `spectra-models`
-  one-shot, so the fetcher is exercised rather than bypassed — and asserts that
-  `POST /api/config/test-llm` answers `ok`. That is the assertion the job existed without: a
-  Process Mining call really travelling explorer → spectra-api → llm-chat and coming back, which
-  is what would have caught the `X-API-Key` / `Bearer` mismatch this stack documents instead of
-  leaving it a paragraph nobody executes.
-- **CI runs the stack, it does not merely build it.** The `docker` job starts `docker-compose.yml` over the image it just built (`compose/ci.yml` supplies it) and asserts the deployment contract: the container reaches `healthy`, both probes answer UP, `/api/dashboard` responds, the process runs as uid 10001, `/app/logs/kafkaexplorer.log` is non-empty, a second seeding run skips, and the app's exit code after `stop` is not 137 (SIGKILL). Each assertion corresponds to a bug that lived here for months precisely because nothing ever ran these files. A second job, `release-image`, builds `Dockerfile.release` from the `build` job's JAR and boots it with no broker — that file used to be exercised for the first time by the release itself. **That job is also where the startup audit's findings are guarded**, because it is the one place in CI that runs the app with *no broker* — the `docker` job's stack has a healthy one, so the failure mode measured there cannot occur in it. After liveness it holds the container for a fixed 30 s window and asserts three things: the log stays under **5 000 lines** (the flood was ~2 300 lines a second from a single class, so a return of it is ~70 000 in that window — the ceiling sits more than tenfold from both, deliberately, because a gate that flakes is a gate people learn to ignore); the startup summary names the broker that did not answer; and each of the two state restores reports itself, naming its topic, since both used to fail at DEBUG and therefore silently.
+`compose/dev.yml` is the hot-reload stack (Kafka + `spring-boot:run` + Vite).
+See `docs/notes/docker-and-stacks.md` for what is load-bearing in each of them.
 
 ### Typical local dev workflow
 
-1. `docker compose up -d kafka` — the broker alone. The base file is enough: it carries the broker,
-   and layering `compose/schema-registry.yml` here changed nothing, since that overlay adds services
-   rather than touching `kafka`. Add `schema-registry` to the service list if you are working on Avro.
-2. `./mvnw spring-boot:run` — start backend on port 8080
-3. `cd src/main/webapp && npm run dev` — start frontend dev server (port 5173)
+1. `docker compose up -d kafka` — the broker alone (add `schema-registry` when working on Avro).
+2. `./mvnw spring-boot:run` — backend on port 8080.
+3. `cd src/main/webapp && npm run dev` — frontend dev server on port 5173.
 
 ## Architecture
 
 ### Stack
 
-- **Backend**: Spring Boot 4.1.x, **Java 25** (`java.version` in pom.xml, pinned by `requireJavaVersion` in the enforcer plugin), embedded Apache Flink 2.3.x (`flink.version` in pom.xml). Kafka connector: `flink-connector-kafka:5.0.0-2.2`. The suffix names the **Flink minor the connector was built against**, not a range — it does not cover the whole 2.x line, which is why `5.0.0-2.2` is what runs on Flink 2.3: no `-2.3` build is published yet, and this is the newest release on Maven Central. Check there before assuming a bump exists.
-- **Frontend**: React 19, TypeScript, Vite, Tailwind CSS, Monaco Editor
-- **Kafka**: `kafka-clients` 4.3.1 (`kafka.version` override in pom.xml, which wins over Spring Boot's managed version *and* over what `io.confluent` 8.3.1 pulls transitively — one client version across the whole build, never two). Compatible with Kafka 2.1+ brokers on the classic protocol; all bundled Docker stacks run Kafka 4.3 in KRaft mode. The live Process Mining consumer speaks the KIP-848 rebalance protocol (`kafka.consumer-group-protocol`, **shipped as `consumer`** — every bundled stack already set it explicitly, so the shipped configuration now matches the brokers this project runs). That protocol **needs a Kafka 4.x broker**: a deployment against an older one sets `classic`, which is also what `KafkaConfig` falls back to when the property is absent, so the code default stays the compatible one and only the shipped YAML asserts the newer protocol.
-- **Build**: Single JAR — Maven's `frontend-maven-plugin` builds the React app and copies it to `src/main/resources/static/`
+- **Backend**: Spring Boot 4.1.x, **Java 25** (`java.version` in pom.xml, pinned by
+  `requireJavaVersion` in the enforcer plugin), embedded Apache Flink 2.3.x (`flink.version`).
+  Kafka connector `flink-connector-kafka:5.0.0-2.2` — the suffix names the **Flink minor the
+  connector was built against**, not a range, and no `-2.3` build is published yet. Check Maven
+  Central before assuming a bump exists.
+- **Frontend**: React 19, TypeScript, Vite, Tailwind CSS, Monaco Editor.
+- **Kafka**: `kafka-clients` 4.3.1 (`kafka.version` override in pom.xml, which wins over Spring
+  Boot's managed version *and* over what `io.confluent` 8.3.1 pulls transitively — one client
+  version across the whole build, never two). Compatible with Kafka 2.1+ brokers on the classic
+  protocol. The live Process Mining consumer speaks the KIP-848 protocol
+  (`kafka.consumer-group-protocol`, shipped as `consumer`), which **needs a Kafka 4.x broker**;
+  `KafkaConfig` falls back to `classic` when the property is absent, so the code default stays the
+  compatible one.
+- **Build**: single JAR — `frontend-maven-plugin` builds the SPA into `src/main/resources/static/`.
 
-**On Java 25.** This file and `CONTRIBUTING.md` both asserted that Flink 2.x supports "Java 17/21,
-**not** 25" — that had stopped being true, and it was contradicted inside the repository itself: both
-runtime images have run on an `eclipse-temurin:25-jre-alpine` base for several releases, and the
-backend builder stage on a JDK 26 Maven image, so the JAR was already *executing* on a JVM 25 while
-the language level stayed at 21. What the bump changes is the bytecode target and the toolchain
-required to build, not the runtime, which had already moved. The whole suite (485 tests, Flink
-planner path included) passes on 25; the only cost is that `maven-enforcer-plugin` now refuses a
-JDK 21, so a contributor must upgrade rather than discover the mismatch at the first Flink test.
+Two JVM warnings are expected on Java 25 and are **not** ours to fix: Flink's shaded Guava calls
+`sun.misc.Unsafe::objectFieldOffset` (a Flink-version problem, not a flag to add here), and under
+the offline harness Testcontainers' JNA calls a restricted `System::load` (test-only). No
+`--add-opens` is added: a flag added pre-emptively outlives the reason for it.
 
-Two JVM warnings are expected on 25 and are **not** ours to fix: Flink's shaded Guava calls
-`sun.misc.Unsafe::objectFieldOffset` (terminally deprecated — it will *throw* in a future release,
-which is a Flink-version problem, not a flag to add here), and under the offline harness
-Testcontainers' JNA calls a restricted `System::load` (`--enable-native-access`, test-only). Neither
-needs an `--add-opens`, and none is added: a flag added pre-emptively outlives the reason for it.
-
-### Backend Layers
+### Backend layers
 
 ```
-web/          REST controllers (one per domain: Query, Topic, Audit, Lineage, etc.)
+web/          REST controllers (one per domain: Query, Topic, Audit, Lineage, …)
 service/      Business logic — FlinkSqlService is the core engine
 config/       Spring configuration (Kafka, Flink, Explorer settings, CORS)
-domain/       DTOs — implemented as Java Records
-parser/       JSON, XML, and Avro (via Confluent Schema Registry) schema inference
+domain/       DTOs — Java Records
+parser/       JSON, XML and Avro (via Confluent Schema Registry) schema inference
 ```
 
 **Key services:**
@@ -1373,19 +995,49 @@ without being a phone — turns out to be painful in practice. What is load-bear
   nothing while their cards are still arriving. Making those counts stable enough to gate a build
   is W6.
 
-An earlier full bug & optimisation audit covered the whole codebase: all critical (C1–C4), major (M1–M8), minor and optimisation findings have been fixed here. Its report, `AUDIT.md`, was deleted from the tree in 31767bd — so the corrective decisions survive only as the behaviour of the code and the notes in this file, which is worth knowing before refactoring `AuditService`, `KafkaLiveConsumer`, `MetricService` or the direct SELECT engine: what looks like an odd choice in those four is usually a fix, and `git show 31767bd^:AUDIT.md` is where the reasoning is.
+- **SQL injection**: `FlinkSqlService.executeSql` whitelists `SELECT`, `EXPLAIN` and
+  `CREATE TABLE`; `SqlQueryValidator` is the cross-join and system-table guard on top of it, not
+  the whitelist itself.
+- **XXE**: every XML parser comes from `SecureXml`, with external DTD loading disabled.
+- **Credential masking**: see the rule above — every DDL exit, logs included.
+- **No authentication** out of the box; intended for internal, controlled environments.
+  `POST /api/config` repoints Kafka and LLM settings at runtime, so protect the app before
+  exposing it beyond a trusted network. `SECURITY.md` states this as a deployment constraint.
+- **Never put a real key in a Spring fallback**: `${ANTHROPIC_API_KEY:sk-ant-...}` commits it.
+  Use an empty fallback, `${ANTHROPIC_API_KEY:}`.
+
+## Claude API Java SDK (anthropic-java 2.57.0)
+
+- Streaming collect pattern:
+  `.flatMap(e -> e.contentBlockDelta().stream()).flatMap(d -> d.delta().text().stream()).map(TextDelta::text).collect(joining())`
+- `.maxTokens()` expects `long` — cast explicitly: `(long) config.getMaxTokens()`.
+- Always propagate exceptions from LLM call methods (no silent catch returning null) — callers
+  must surface the real error message in API responses.
+- `MessageFormat` enum values are `JSON, XML, AVRO, AUTO` — there is **no `UNKNOWN`**; `AUTO` is
+  the default.
+
+## XML / JSON field access in FlinkSqlService
+
+- A `DocumentBuilderFactory` without `setNamespaceAware(true)` makes `element.getLocalName()`
+  return `null`. Always use `element.getTagName()`.
+- `parseMessageToRow()` — XML flattens to a dot-notation map (`{"customer.name": "John"}`), JSON
+  stays nested. `getNestedValue(row, path)` unifies both: it tries `row.get(path)` first (XML),
+  then walks segment by segment (JSON).
+- `flattenXmlElement(element, prefix, row)` is recursive, ignores the root element (`prefix=""`),
+  and uses `getTagName()` — never `getLocalName()`.
 
 ## License
 
-**AGPL v3** — `LICENSE` file at root. All Java **and** frontend source files carry the header:
+**AGPL v3** — `LICENSE` at root. Every Java **and** frontend source file carries the header:
+
 ```
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 ```
 
-It applies to `src/main/java`, `src/test/java` and every `.ts`/`.tsx` under `src/main/webapp/src`
-— the SPA ships inside the AGPL jar and image, and had no header on a single file. The one
-exception is `vite-env.d.ts`, a line of Vite boilerplate. `package.json` declares
+It applies to `src/main/java`, `src/test/java` and every `.ts` / `.tsx` under
+`src/main/webapp/src` — the SPA ships inside the AGPL jar and image. The one exception is
+`vite-env.d.ts`, a line of Vite boilerplate. `package.json` declares
 `"license": "AGPL-3.0-or-later"` beside it.
 
 ## Project governance & supply chain
