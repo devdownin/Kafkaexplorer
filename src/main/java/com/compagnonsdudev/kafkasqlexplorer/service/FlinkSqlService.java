@@ -772,6 +772,9 @@ public class FlinkSqlService {
                 // caller was told whatever the *direct reader* complained about, which describes a
                 // different query engine's opinion of a statement it was never meant to run.
                 String engineFailure = null;
+                // Le mode de lecture demandé que le planner ne sait pas exprimer, gardé pour que
+                // le résultat le dise plutôt que de le laisser passer pour honoré.
+                String unhonouredReadMode = null;
                 /*
                  * One caller asks for the direct reader by name, and the planner is not consulted
                  * at all for it: `readMode` is honoured by that reader alone, so "the most recent
@@ -785,11 +788,51 @@ public class FlinkSqlService {
                     QueryResult direct = kafkaDirectSelect(sqlToExecute, readMode, limit, startTime);
                     return autoReg.registered() ? withRegisteredFlag(direct) : direct;
                 }
+                /*
+                 * Un mode de lecture nommé est une question que seul ce lecteur sait poser.
+                 *
+                 * Tant que le planner ne répondait à rien, chaque SELECT sur un topic Kafka
+                 * retombait ici et `readMode` était honoré par accident. Le planner réparé, la
+                 * table auto-enregistrée démarre toujours en `earliest-offset` : le sélecteur
+                 * « Latest » de l'éditeur rendait alors exactement les mêmes lignes que
+                 * « Earliest » — les plus anciennes, à la question « les plus récentes ». C'est le
+                 * pire sens : une réponse plausible et fausse plutôt qu'un refus.
+                 *
+                 * Passer `latest-offset` au planner ne réparerait rien — un scan Kafka qui
+                 * commence et s'arrête à `latest-offset` ne lit rien du tout — donc c'est le
+                 * lecteur direct qui répond, comme il le fait déjà pour les modèles de métrique
+                 * qui le demandent nommément.
+                 *
+                 * Deux garde-fous. Le mode doit être **nommé** : `null` tombe sur la branche
+                 * « récent » de `fetchForDirectRead`, donc réagir à l'absence renverrait au
+                 * lecteur direct tout appelant qui ne se prononce pas — l'audit, les aperçus de
+                 * table, les tests — et défertait la réparation du moteur. Et la forme doit être
+                 * une lecture que ce lecteur sait honorer : sur un JOIN ou une sous-requête il
+                 * lirait une seule table et ignorerait le reste, donc là c'est le planner qui
+                 * répond et l'avertissement dit que le mode n'a pas pu l'être.
+                 */
+                if (namesARecentReadMode(readMode) && extractPrimaryTable(sqlToExecute) != null) {
+                    if (MetricService.isSingleTableRead(sqlToExecute)) {
+                        QueryResult direct = kafkaDirectSelect(sqlToExecute, readMode, limit, startTime);
+                        direct = withExtraWarning(direct, DIRECT_READER_CAVEAT
+                            + " It answered because \"" + readMode + "\" asks for the most recent "
+                            + "records, which the Flink planner has no way to express.");
+                        return autoReg.registered() ? withRegisteredFlag(direct) : direct;
+                    }
+                    unhonouredReadMode = readMode;
+                }
                 if (explorerConfig.isFlinkSelectEnabled() && !flinkSelectDisabled) {
                     try {
                         QueryResult flinkResult = executeViaFlinkPlanner(queryId, sqlToExecute, "SELECT", limit, timeout, startTime);
                         if (flinkResult.error() == null) {
                             flinkSelectFailures.set(0);
+                            if (unhonouredReadMode != null) {
+                                flinkResult = withExtraWarning(flinkResult, "The read mode \""
+                                    + unhonouredReadMode + "\" was not applied: this statement needs "
+                                    + "the Flink planner, which reads a Kafka table from the offset "
+                                    + "its definition names (earliest by default). These rows are "
+                                    + "not necessarily the most recent ones.");
+                            }
                             return autoReg.registered() ? withRegisteredFlag(flinkResult) : flinkResult;
                         }
                         // A timeout means the planner worked but the job was slow (empty/large topic):
@@ -1067,6 +1110,20 @@ public class FlinkSqlService {
      * moteur. Une phrase, pas deux, parce que les deux motifs — notre décision de ne pas
      * enregistrer la table, et une panne du planner — se distinguent par ce qui la suit.
      */
+    /**
+     * Le mode de lecture demande-t-il explicitement les enregistrements <em>récents</em> ?
+     *
+     * <p>Explicitement : {@code null} veut dire « l'appelant ne se prononce pas », et le lecteur
+     * direct le traite comme récent par défaut — mais en déduire une intention renverrait vers lui
+     * tout appelant silencieux, ce qui reviendrait à défaire la réparation du planner.
+     * {@code earliest-offset} est la seule des trois valeurs que le planner sache exprimer.
+     */
+    private static boolean namesARecentReadMode(String readMode) {
+        if (readMode == null || readMode.isBlank()) return false;
+        String mode = readMode.trim();
+        return "latest-offset".equals(mode) || mode.startsWith(SINCE_READ_MODE_PREFIX);
+    }
+
     private static final String DIRECT_READER_CAVEAT =
         "This query fell back to the direct Kafka reader, which supports neither JOIN nor subqueries.";
 

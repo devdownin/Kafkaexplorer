@@ -740,6 +740,49 @@ class FlinkSqlServiceTest {
                 + refused.getMessage());
     }
 
+    /**
+     * « Les plus récentes » est une question que seul le lecteur direct sait poser.
+     *
+     * <p>Tant que le planner ne répondait à rien, {@code readMode} était honoré par accident. Une
+     * fois le moteur réparé, la table auto-enregistrée démarre en {@code earliest-offset} et le
+     * sélecteur « Latest » rendait les lignes les plus <em>anciennes</em> — une réponse plausible
+     * et fausse, ce qui est le pire des deux sens.
+     */
+    @Test
+    void aNamedRecentReadModeIsAnsweredByTheReaderThatCanHonourIt() throws Exception {
+        stubRegisteredTopicWithRecords();
+
+        QueryResult latest = service.executeSql(QueryRequest.sql(
+            "SELECT event_id, payload FROM strict_mode_topic", 10, 5_000L, "latest-offset"));
+
+        assertNoError(latest);
+        assertEquals("KAFKA_DIRECT", latest.engine(),
+            "the planner cannot express \"the most recent N records\", so it must not answer it");
+        assertTrue(latest.warnings().stream().anyMatch(w -> w.contains("most recent")),
+            "and the reader change must say why, got: " + latest.warnings());
+    }
+
+    /**
+     * Mais seulement quand il est <em>nommé</em>. {@code null} veut dire « l'appelant ne se
+     * prononce pas » — l'audit, les aperçus de table, la plupart des tests — et le renvoyer au
+     * lecteur direct reviendrait à défaire la réparation du planner pour tout le monde.
+     */
+    @Test
+    void anAbsentReadModeIsNotAnIntentionAndStaysOnThePlanner() throws Exception {
+        stubRegisteredTopicWithRecords();
+
+        QueryResult unspecified = service.executeSql(QueryRequest.sql(
+            "SELECT event_id, payload FROM strict_mode_topic", 10, 5_000L, null));
+
+        assertNoError(unspecified);
+        assertEquals("FLINK", unspecified.engine());
+
+        QueryResult earliest = service.executeSql(QueryRequest.sql(
+            "SELECT event_id, payload FROM strict_mode_topic", 10, 5_000L, "earliest-offset"));
+        assertEquals("FLINK", earliest.engine(),
+            "earliest is the one mode the planner does express");
+    }
+
     @Test
     void aTrulyMissingTableIsReportedRatherThanScannedForNothing() throws Exception {
         doReturn(List.of("some.other.topic")).when(kafkaAdminService).listTopics();
