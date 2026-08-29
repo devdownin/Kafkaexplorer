@@ -76,11 +76,18 @@ if (!window.matchMedia) {
 // anglais formate ses nombres dans la locale du navigateur. C'est une question de produit, et
 // elle est nommée dans la PR plutôt que réglée ici par un effet de bord de la suite de tests.
 const DISPLAY_LOCALE = 'en-US';
-for (const proto of [Number.prototype, Date.prototype] as const) {
+// `as unknown as` et non un cast direct : `Number.prototype | Date.prototype` ne recouvre pas
+// `Record<string, unknown>` (TS2352), et le passage par `unknown` est la forme que TypeScript
+// nomme lui-même. Le tableau est typé une fois plutôt qu'à chaque accès.
+const localeAwarePrototypes: Record<string, unknown>[] = [
+  Number.prototype as unknown as Record<string, unknown>,
+  Date.prototype as unknown as Record<string, unknown>,
+];
+for (const proto of localeAwarePrototypes) {
   for (const method of ['toLocaleString', 'toLocaleDateString', 'toLocaleTimeString'] as const) {
-    const original = (proto as Record<string, unknown>)[method];
+    const original = proto[method];
     if (typeof original !== 'function') continue;
-    (proto as Record<string, unknown>)[method] = function localeFixed(
+    proto[method] = function localeFixed(
       this: unknown,
       locales?: Intl.LocalesArgument,
       options?: unknown,
