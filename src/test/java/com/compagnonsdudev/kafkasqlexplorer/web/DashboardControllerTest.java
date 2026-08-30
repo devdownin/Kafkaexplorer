@@ -64,7 +64,6 @@ class DashboardControllerTest {
         kafkaConfig = new KafkaConfig();
 
         when(flinkSqlService.listTables()).thenReturn(List.of());
-        when(flinkSqlService.getActiveJobs()).thenReturn(List.of());
 
         mockMvc = MockMvcBuilders
             .standaloneSetup(new DashboardController(kafkaAdminService, flinkSqlService, explorerConfig, kafkaConfig))

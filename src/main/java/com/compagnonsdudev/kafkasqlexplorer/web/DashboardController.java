@@ -67,7 +67,6 @@ public class DashboardController {
                 topicSizes,
                 totalMessages,
                 flinkSqlService.listTables(),
-                flinkSqlService.getActiveJobs(),
                 health,
                 explorerConfig.getClusterName(),
                 kafkaConfig.getBootstrapServers(),

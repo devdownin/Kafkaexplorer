@@ -54,7 +54,6 @@ class FlinkTableRestoreTest {
 
         ExplorerConfig config = new ExplorerConfig();
         config.setDefaultQueryTimeoutMs(30_000);
-        config.setFlinkJobStorePath(Files.createTempFile("flink-jobs-restore-", ".json").toString());
         config.setFlinkTableStorePath(storePath.toString());
 
         FlinkRuntimeCoordinator coordinator = new FlinkRuntimeCoordinator(tableEnv);
@@ -63,7 +62,7 @@ class FlinkTableRestoreTest {
             tableEnv, coordinator, config,
             new SqlQueryValidator(config, tableEnv, coordinator),
             mock(KafkaAdminService.class), mock(SchemaInferenceService.class),
-            mock(DdlGeneratorService.class), new FlinkJobStore(config), store);
+            mock(DdlGeneratorService.class), store);
         return new Process(service, store);
     }
 

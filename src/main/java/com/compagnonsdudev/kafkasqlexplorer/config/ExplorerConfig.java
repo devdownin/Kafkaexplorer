@@ -421,8 +421,6 @@ public class ExplorerConfig {
      * any read.
      */
     private boolean lagMetricsTime = false;
-    private String flinkJobStorePath = "data/flink-jobs.json";
-    private long flinkJobRetentionHours = 24;
 
     /** Default for {@link #settingsStorePath}, also read by the boot-time replay. */
     public static final String DEFAULT_SETTINGS_STORE_PATH = "data/settings.json";
@@ -811,22 +809,6 @@ public class ExplorerConfig {
 
     public void setLagMetricsMaxSeries(int lagMetricsMaxSeries) {
         this.lagMetricsMaxSeries = lagMetricsMaxSeries;
-    }
-
-    public String getFlinkJobStorePath() {
-        return flinkJobStorePath;
-    }
-
-    public void setFlinkJobStorePath(String flinkJobStorePath) {
-        this.flinkJobStorePath = flinkJobStorePath;
-    }
-
-    public long getFlinkJobRetentionHours() {
-        return flinkJobRetentionHours;
-    }
-
-    public void setFlinkJobRetentionHours(long flinkJobRetentionHours) {
-        this.flinkJobRetentionHours = flinkJobRetentionHours;
     }
 
     public boolean isFlinkWarmupEnabled() {

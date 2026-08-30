@@ -45,14 +45,13 @@ class FlinkSqlServiceTablelessSelectTest {
         config = new ExplorerConfig();
         config.setDefaultMaxRows(50);
         config.setDefaultQueryTimeoutMs(30_000);
-        config.setFlinkJobStorePath(Files.createTempFile("flink-jobs-tableless-", ".json").toString());
 
         FlinkRuntimeCoordinator coordinator = new FlinkRuntimeCoordinator(tableEnv);
         service = new FlinkSqlService(
                 tableEnv, coordinator, config,
                 new SqlQueryValidator(config, tableEnv, coordinator),
                 mock(KafkaAdminService.class), mock(SchemaInferenceService.class),
-                mock(DdlGeneratorService.class), new FlinkJobStore(config),
+                mock(DdlGeneratorService.class),
                 mock(FlinkTableStore.class));
     }
 

@@ -69,7 +69,6 @@ class FlinkSqlServiceStatementKindsTest {
         ExplorerConfig config = new ExplorerConfig();
         config.setDefaultMaxRows(20);
         config.setDefaultQueryTimeoutMs(15_000);
-        config.setFlinkJobStorePath(Files.createTempFile("kinds-jobs-", ".json").toString());
         config.setFlinkTableStorePath(Files.createTempFile("kinds-tables-", ".json").toString());
 
         KafkaAdminService kafkaAdminService = mock(KafkaAdminService.class);
@@ -81,7 +80,7 @@ class FlinkSqlServiceStatementKindsTest {
         service = new FlinkSqlService(tableEnv, coordinator, config,
                 new SqlQueryValidator(config, tableEnv, coordinator), kafkaAdminService,
                 mock(SchemaInferenceService.class), mock(DdlGeneratorService.class),
-                new FlinkJobStore(config), new FlinkTableStore(config));
+                new FlinkTableStore(config));
 
         tableEnv.createTemporaryView("k_orders",
                 tableEnv.fromValues(

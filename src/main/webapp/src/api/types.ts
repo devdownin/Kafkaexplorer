@@ -69,69 +69,6 @@ export interface TopicDetailResponse {
   samples: TopicMessage[];
 }
 
-/** @java FlinkJobSummary */
-export interface FlinkJobSummary {
-  queryId: string;
-  /**
-   * Nul quand un enregistrement a été écrit avant qu'un JobClient existe. C'était le fait de
-   * `submitJob`, qui filait le refus avant de lever ; ce chemin a été retiré avec le mode « Flink
-   * job », mais un enregistrement écrit par une version antérieure porte toujours la forme, et un
-   * store doit relire ce qu'il a écrit. Le résumé et le détail décrivent le même champ et le déclaraient
-   * différemment, ce qui est la moitié de F11 dans `FLINK-JOBS-AUDIT.md` : la carte faisait un
-   * `substring` dessus. Inatteignable aujourd'hui (un tel enregistrement est terminal, donc filtré
-   * hors de la liste que le tableau de bord reçoit), à un filtre près.
-   */
-  flinkJobId: string | null;
-  statementType: string;
-  status: string;
-  sql: string;
-  startedAt: number;
-  endedAt: number | null;
-  cancelRequested: boolean;
-}
-
-/**
- * Une transition de l'état d'un job, telle que le magasin l'a enregistrée.
- *
- * @java FlinkJobHistoryEntry
- */
-export interface FlinkJobHistoryEntry {
-  timestamp: number;
-  status: string;
-  /** Ce que le serveur savait à ce moment-là — souvent nul sur une transition ordinaire. */
-  detail: string | null;
-}
-
-/**
- * `GET /api/query/jobs/{queryId}` — ce que `FlinkJobSummary` laisse tomber.
- *
- * Le résumé porte huit champs ; le magasin en garde quatorze, dont les trois qui répondent à
- * « qu'est-il arrivé à mon INSERT » : `statusDetail`, `errorMessage` et l'historique daté. Ils
- * étaient servis par cet endpoint et lus par personne.
- *
- * `flinkJobId` est nul quand la soumission a échoué avant qu'un JobClient existe, et `history`
- * peut l'être sur un enregistrement écrit par une version antérieure — la nullabilité est
- * l'affaire du front, et ces deux-là sont réelles.
- *
- * @java FlinkManagedJobDetails
- */
-export interface FlinkManagedJobDetails {
-  queryId: string;
-  flinkJobId: string | null;
-  statementType: string;
-  executionMode: string;
-  status: string;
-  statusDetail: string | null;
-  sql: string;
-  startedAt: number;
-  endedAt: number | null;
-  cancelRequested: boolean;
-  cancelRequestedAt: number | null;
-  errorMessage: string | null;
-  lastUpdatedAt: number;
-  history: FlinkJobHistoryEntry[] | null;
-}
-
 /**
  * Ce qu'un résultat de *changelog* contient, quand il en est un.
  *
@@ -184,7 +121,6 @@ export interface DashboardResponse {
   topicSizes: Record<string, number>;
   totalMessages: number;
   tables: string[];
-  jobs: FlinkJobSummary[];
   health: boolean;
   /** Nom d'affichage choisi au déploiement — pas une information sur le broker. */
   clusterName: string;

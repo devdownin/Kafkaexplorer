@@ -34,7 +34,6 @@ import java.lang.annotation.Target;
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.RUNTIME)
 @SpringBootTest(properties = {
-    "explorer.flink-job-store-path=${java.io.tmpdir}/kse-test-flink-jobs.json",
     "explorer.flink-table-store-path=${java.io.tmpdir}/kse-test-flink-tables.json",
     "explorer.settings-store-path=${java.io.tmpdir}/kse-test-settings.json",
 })

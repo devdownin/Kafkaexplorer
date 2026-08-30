@@ -22,6 +22,27 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   fails leaves the server's reason under the card rather than in a toast — it is what you came to
   read. `UNAVAILABLE` is described there as a status that could not be read, never as an ending.
 
+### Removed
+
+- **The Dashboard's "Flink SQL Jobs" table, and the job registry behind it.** It was written for the
+  SQL editor's Flink Job mode, which submitted a continuous `INSERT INTO`. That mode did not work
+  and was removed; afterwards the table no longer listed jobs but the synchronous reads
+  `FlinkJobStore` recorded on the way past — already finished, one per Run in the editor and ~2 900
+  a day per planner-answered metric. A panel of running jobs that never shows one is misleading
+  rather than merely reduced, so it is gone, and with it `GET /api/query/jobs`,
+  `GET /api/query/jobs/{queryId}`, `POST /api/query/jobs/{queryId}/cancel` (an alias of the cancel
+  endpoint below, called only by that table's Kill button), `FlinkJobService`, `FlinkJobStore`,
+  `FlinkManagedJobDetails`, `FlinkJobHistoryEntry`, the `jobs` field of `GET /api/dashboard`, and
+  the `explorer.flink-job-store-path` and `explorer.flink-job-retention-hours` settings. The store
+  went last and for its own reason: with no reader it was a whole-list JSON rewrite per planner
+  answer — 17.3 ms at 10 000 records, measured in `FLINK-JOBS-AUDIT.md` — written for nobody.
+  `data/flink-jobs.json` can be deleted from an existing deployment; nothing reads it.
+
+- The KPI tile that counted those jobs now reports **Cluster Health**, which is what its colour and
+  its subtitle already said. `POST /api/query/cancel/{queryId}` is unchanged and still backs the
+  editor's Stop button: it reads the in-memory registry, which synchronous reads still feed for the
+  length of their HTTP request.
+
 ### Changed
 
 - **The live job registry is `heldJobs`, and its accessor `getHeldJobs()`.** "Active" meant two
